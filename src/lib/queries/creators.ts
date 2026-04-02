@@ -195,7 +195,13 @@ export async function getCreators(params: {
       orderBy,
       skip: (page - 1) * perPage,
       take: perPage,
-      include: {
+      select: {
+        user_id: true,
+        affiliate_level: true,
+        total_referred: true,
+        total_earned_usd: true,
+        available_usd: true,
+        total_paid_out_usd: true,
         user: {
           select: {
             username: true,
@@ -239,7 +245,17 @@ export async function getCreators(params: {
 export async function getCreatorDetail(userId: string, refPage?: number, refPerPage?: number) {
   const account = await db.affiliate_accounts.findUnique({
     where: { user_id: userId },
-    include: {
+    select: {
+      user_id: true,
+      affiliate_level: true,
+      total_referred: true,
+      total_wager_volume_usd: true,
+      total_earned_usd: true,
+      available_usd: true,
+      total_paid_out_usd: true,
+      total_bonus_distributed_usd: true,
+      last_payout_at: true,
+      created_at: true,
       user: { select: { username: true, email: true, role: true, affiliate_code: true, affiliate_code_active: true } },
     },
   });
