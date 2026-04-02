@@ -27,10 +27,16 @@ function ggrAgg(gte: Date) {
   return db.$queryRaw<{ ggr: string }[]>`
     SELECT (
       COALESCE(SUM(CASE
-        WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
+        WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship', 'withdrawal_shipping_fee')
         THEN ABS(amount::numeric) ELSE 0 END), 0)
       - COALESCE(SUM(CASE
-        WHEN type IN ('battle_refund', 'card_sale', 'reward_card_sale')
+        WHEN type IN (
+          'battle_refund', 'card_sale', 'reward_card_sale',
+          'card_exchange', 'exchange_excess_credit',
+          'deposit_bonus', 'race_prize', 'gift_card_redeemed',
+          'promo_code_redeemed', 'rakeback_claim', 'balance_reward_claim',
+          'affiliate_claim', 'rain_win', 'waitlist_prize'
+        )
         THEN ABS(amount::numeric) ELSE 0 END), 0)
     )::text AS ggr
     FROM ledger_transactions
