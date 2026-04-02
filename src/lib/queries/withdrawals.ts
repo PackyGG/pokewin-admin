@@ -1,0 +1,198 @@
+import { db } from "@/lib/db";
+import { toNumber } from "@/lib/utils/decimal";
+import type { PaginatedResult } from "@/lib/types";
+import { Prisma } from "@/generated/prisma/client";
+
+export type WithdrawalListItem = {
+  id: string;
+  userId: string;
+  username: string | null;
+  method: string;
+  status: string;
+  totalValueUsd: number;
+  itemCount: number;
+  requestedAt: string;
+  processedBy: string | null;
+  shippedBy: string | null;
+  trackingNumber: string | null;
+  carrier: string | null;
+  failureReason: string | null;
+  shippingAddressSnapshot: unknown;
+};
+
+export async function getWithdrawals(params: {
+  page?: number;
+  perPage?: number;
+  status?: string;
+  statuses?: string[];
+  method?: string;
+  search?: string;
+  minValue?: number;
+  maxValue?: number;
+}): Promise<PaginatedResult<WithdrawalListItem>> {
+  const { page = 1, perPage = 20, status, statuses, method, search, minValue, maxValue } = params;
+
+  const where: Prisma.card_withdrawal_requestsWhereInput = {};
+
+  if (statuses && statuses.length > 0) {
+    where.status = { in: statuses as Prisma.Enumcard_withdrawal_statusFilter["in"] };
+  } else if (status && status !== "all") {
+    where.status = status as Prisma.Enumcard_withdrawal_statusFilter["equals"];
+  }
+
+  if (method) {
+    where.method = method as Prisma.Enumcard_withdrawal_methodFilter["equals"];
+  }
+
+  if (minValue !== undefined || maxValue !== undefined) {
+    where.total_value_usd = {};
+    if (minValue !== undefined) where.total_value_usd.gte = minValue;
+    if (maxValue !== undefined) where.total_value_usd.lte = maxValue;
+  }
+
+  if (search) {
+    where.OR = [
+      { id: search },
+      { user_card_withdrawal_requests_user_idTouser: { username: { contains: search, mode: "insensitive" } } },
+      { user_card_withdrawal_requests_user_idTouser: { email: { contains: search, mode: "insensitive" } } },
+    ];
+  }
+
+  const [withdrawals, total] = await Promise.all([
+    db.card_withdrawal_requests.findMany({
+      where,
+      orderBy: { requested_at: "desc" },
+      skip: (page - 1) * perPage,
+      take: perPage,
+      include: {
+        user_card_withdrawal_requests_user_idTouser: {
+          select: { username: true, email: true },
+        },
+        user_card_withdrawal_requests_processed_byTouser: {
+          select: { username: true },
+        },
+        user_card_withdrawal_requests_shipped_byTouser: {
+          select: { username: true },
+        },
+      },
+    }),
+    db.card_withdrawal_requests.count({ where }),
+  ]);
+
+  return {
+    data: withdrawals.map((w) => ({
+      id: w.id,
+      userId: w.user_id,
+      username:
+        w.user_card_withdrawal_requests_user_idTouser.username ??
+        w.user_card_withdrawal_requests_user_idTouser.email,
+      method: w.method,
+      status: w.status,
+      totalValueUsd: toNumber(w.total_value_usd),
+      itemCount: w.inventory_item_ids.length + w.voucher_ids.length,
+      requestedAt: w.requested_at.toISOString(),
+      processedBy:
+        (w.metadata as Record<string, unknown>)?.processed_by_admin as string ??
+        w.user_card_withdrawal_requests_processed_byTouser?.username ??
+        null,
+      shippedBy:
+        (w.metadata as Record<string, unknown>)?.shipped_by_admin as string ??
+        w.user_card_withdrawal_requests_shipped_byTouser?.username ??
+        null,
+      trackingNumber: w.tracking_number,
+      carrier: w.carrier,
+      failureReason: w.failure_reason,
+      shippingAddressSnapshot: w.shipping_address_snapshot,
+    })),
+    total,
+    page,
+    perPage,
+    totalPages: Math.ceil(total / perPage),
+  };
+}
+
+export async function getWithdrawalDetail(id: string) {
+  const withdrawal = await db.card_withdrawal_requests.findUnique({
+    where: { id },
+    include: {
+      user_card_withdrawal_requests_user_idTouser: {
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          shipping_addresses: true,
+        },
+      },
+      user_card_withdrawal_requests_processed_byTouser: {
+        select: { username: true },
+      },
+      user_card_withdrawal_requests_shipped_byTouser: {
+        select: { username: true },
+      },
+    },
+  });
+
+  if (!withdrawal) return null;
+
+  const user = withdrawal.user_card_withdrawal_requests_user_idTouser;
+
+  // Fetch inventory items
+  let items: { id: string; cardName: string; imageUrl: string | null; rarity: string | null; value: number }[] = [];
+  if (withdrawal.inventory_item_ids.length > 0) {
+    const inventoryItems = await db.user_inventory.findMany({
+      where: { id: { in: withdrawal.inventory_item_ids } },
+    });
+
+    const cardIds = [...new Set(inventoryItems.map((i) => i.card_id))];
+    const cards = cardIds.length > 0
+      ? await db.cards.findMany({
+          where: { id: { in: cardIds } },
+          select: { id: true, name: true, image_url: true, rarity: true },
+        })
+      : [];
+    const cardMap = new Map(cards.map((c) => [c.id, c]));
+
+    items = inventoryItems.map((item) => {
+      const card = cardMap.get(item.card_id);
+      return {
+        id: item.id,
+        cardName: card?.name ?? "Unknown Card",
+        imageUrl: card?.image_url ?? null,
+        rarity: card?.rarity ?? null,
+        value: toNumber(item.value_at_obtained),
+      };
+    });
+  }
+
+  return {
+    id: withdrawal.id,
+    userId: withdrawal.user_id,
+    username: user.username ?? user.email,
+    userEmail: user.email,
+    method: withdrawal.method,
+    status: withdrawal.status,
+    totalValueUsd: toNumber(withdrawal.total_value_usd),
+    shippingFeeUsd: toNumber(withdrawal.shipping_fee_usd),
+    shippingAddressSnapshot: withdrawal.shipping_address_snapshot,
+    shippingAddress: user.shipping_addresses,
+    trackingNumber: withdrawal.tracking_number,
+    carrier: withdrawal.carrier,
+    cryptoAsset: withdrawal.crypto_asset,
+    cryptoAmount: toNumber(withdrawal.crypto_amount),
+    destinationAddress: withdrawal.destination_address,
+    txHash: withdrawal.tx_hash,
+    failureReason: withdrawal.failure_reason,
+    requestedAt: withdrawal.requested_at.toISOString(),
+    processingAt: withdrawal.processing_at?.toISOString() ?? null,
+    shippedAt: withdrawal.shipped_at?.toISOString() ?? null,
+    completedAt: withdrawal.completed_at?.toISOString() ?? null,
+    failedAt: withdrawal.failed_at?.toISOString() ?? null,
+    cancelledAt: withdrawal.cancelled_at?.toISOString() ?? null,
+    processedBy: (withdrawal.metadata as Record<string, unknown>)?.processed_by_admin as string ?? withdrawal.user_card_withdrawal_requests_processed_byTouser?.username ?? null,
+    shippedBy: (withdrawal.metadata as Record<string, unknown>)?.shipped_by_admin as string ?? withdrawal.user_card_withdrawal_requests_shipped_byTouser?.username ?? null,
+    items,
+    requiresConfirmation: withdrawal.requires_confirmation,
+    confirmationReason: withdrawal.confirmation_reason,
+    confirmedAt: withdrawal.confirmed_at?.toISOString() ?? null,
+  };
+}

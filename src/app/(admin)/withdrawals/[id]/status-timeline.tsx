@@ -1,0 +1,44 @@
+import { CheckCircle, Circle, XCircle } from "lucide-react";
+import { formatDateTime } from "@/lib/utils/format";
+
+type TimelineStep = {
+  label: string;
+  date: string | null;
+  active: boolean;
+  failed?: boolean;
+};
+
+export function StatusTimeline({ steps }: { steps: TimelineStep[] }) {
+  return (
+    <div className="flex items-center gap-2">
+      {steps.map((step, i) => (
+        <div key={step.label} className="flex items-center gap-2">
+          {i > 0 && (
+            <div
+              className={`h-0.5 w-8 ${
+                step.active || step.date ? "bg-primary" : "bg-muted"
+              }`}
+            />
+          )}
+          <div className="flex flex-col items-center gap-1">
+            {step.failed ? (
+              <XCircle className="size-5 text-red-400" />
+            ) : step.date ? (
+              <CheckCircle className="size-5 text-green-400" />
+            ) : step.active ? (
+              <Circle className="size-5 text-blue-400 fill-blue-400" />
+            ) : (
+              <Circle className="size-5 text-muted-foreground" />
+            )}
+            <span className="text-xs font-medium">{step.label}</span>
+            {step.date && (
+              <span className="text-[10px] text-muted-foreground">
+                {formatDateTime(step.date)}
+              </span>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}

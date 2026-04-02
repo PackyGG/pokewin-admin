@@ -1,0 +1,150 @@
+import { SignJWT, jwtVerify } from "jose";
+import { cookies } from "next/headers";
+
+const secretKey = process.env.SESSION_SECRET!;
+const encodedKey = new TextEncoder().encode(secretKey);
+const COOKIE_NAME = "admin_session";
+const PENDING_COOKIE_NAME = "admin_2fa_pending";
+const TOTP_SETUP_COOKIE_NAME = "admin_totp_setup";
+
+export type SessionPayload = {
+  userId: string;
+  role: string;
+  email: string;
+  username: string;
+  expiresAt: Date;
+};
+
+type PendingSessionPayload = {
+  adminUserId: string;
+  email: string;
+  username: string;
+  role: string;
+  expiresAt: Date;
+};
+
+type TOTPSetupPayload = {
+  secret: string;
+  adminUserId: string;
+  expiresAt: Date;
+};
+
+export async function encrypt(payload: SessionPayload) {
+  return new SignJWT(payload as unknown as Record<string, unknown>)
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime("8h")
+    .sign(encodedKey);
+}
+
+export async function decrypt(token: string): Promise<SessionPayload | null> {
+  try {
+    const { payload } = await jwtVerify(token, encodedKey, {
+      algorithms: ["HS256"],
+    });
+    return payload as unknown as SessionPayload;
+  } catch {
+    return null;
+  }
+}
+
+async function encryptGeneric(payload: Record<string, unknown>, expiry: string) {
+  return new SignJWT(payload)
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime(expiry)
+    .sign(encodedKey);
+}
+
+async function decryptGeneric<T>(token: string): Promise<T | null> {
+  try {
+    const { payload } = await jwtVerify(token, encodedKey, {
+      algorithms: ["HS256"],
+    });
+    return payload as unknown as T;
+  } catch {
+    return null;
+  }
+}
+
+export async function createSession(payload: Omit<SessionPayload, "expiresAt">) {
+  const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000);
+  const session = await encrypt({ ...payload, expiresAt });
+  const cookieStore = await cookies();
+
+  cookieStore.set(COOKIE_NAME, session, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    expires: expiresAt,
+    path: "/",
+  });
+}
+
+export async function getSession(): Promise<SessionPayload | null> {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(COOKIE_NAME)?.value;
+  if (!token) return null;
+  return decrypt(token);
+}
+
+export async function deleteSession() {
+  const cookieStore = await cookies();
+  cookieStore.delete(COOKIE_NAME);
+}
+
+// --- Pending 2FA session (5-min expiry) ---
+
+export async function createPendingSession(payload: Omit<PendingSessionPayload, "expiresAt">) {
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+  const token = await encryptGeneric({ ...payload, expiresAt: expiresAt.toISOString() }, "5m");
+  const cookieStore = await cookies();
+
+  cookieStore.set(PENDING_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    expires: expiresAt,
+    path: "/",
+  });
+}
+
+export async function getPendingSession(): Promise<PendingSessionPayload | null> {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(PENDING_COOKIE_NAME)?.value;
+  if (!token) return null;
+  return decryptGeneric<PendingSessionPayload>(token);
+}
+
+export async function deletePendingSession() {
+  const cookieStore = await cookies();
+  cookieStore.delete(PENDING_COOKIE_NAME);
+}
+
+// --- TOTP setup cookie (10-min expiry) ---
+
+export async function createTOTPSetupCookie(payload: Omit<TOTPSetupPayload, "expiresAt">) {
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  const token = await encryptGeneric({ ...payload, expiresAt: expiresAt.toISOString() }, "10m");
+  const cookieStore = await cookies();
+
+  cookieStore.set(TOTP_SETUP_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    expires: expiresAt,
+    path: "/",
+  });
+}
+
+export async function getTOTPSetupCookie(): Promise<TOTPSetupPayload | null> {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(TOTP_SETUP_COOKIE_NAME)?.value;
+  if (!token) return null;
+  return decryptGeneric<TOTPSetupPayload>(token);
+}
+
+export async function deleteTOTPSetupCookie() {
+  const cookieStore = await cookies();
+  cookieStore.delete(TOTP_SETUP_COOKIE_NAME);
+}

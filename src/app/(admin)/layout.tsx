@@ -1,0 +1,23 @@
+import { SidebarProvider } from "@/components/ui/sidebar";
+import { AppSidebar } from "@/components/app-sidebar";
+import { AdminHeader } from "@/components/admin-header";
+import { verifySession, getUserPermissions } from "@/lib/dal";
+
+export default async function AdminLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const session = await verifySession();
+  const allowedPages = await getUserPermissions(session.userId);
+
+  return (
+    <SidebarProvider>
+      <AppSidebar role={session.role} allowedPages={allowedPages} />
+      <div className="flex flex-1 flex-col">
+        <AdminHeader username={session.username} role={session.role} />
+        <main className="flex-1 overflow-auto p-6">{children}</main>
+      </div>
+    </SidebarProvider>
+  );
+}

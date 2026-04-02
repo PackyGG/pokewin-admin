@@ -1,0 +1,97 @@
+import {
+  DollarSign,
+  TrendingUp,
+  Eye,
+  UserPlus,
+  Package,
+  Swords,
+} from "lucide-react";
+import { requirePageAccess } from "@/lib/dal";
+import { getAnalyticsData } from "@/lib/queries/analytics";
+import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { StatCard } from "../dashboard/stat-card";
+import { AutoRefresh } from "../dashboard/auto-refresh";
+import { PeriodFilter } from "./period-filter";
+import { AnalyticsCharts } from "./charts";
+
+export default async function AnalyticsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
+  await requirePageAccess("/analytics");
+  const params = await searchParams;
+  const period = (params.period ?? "30d") as
+    | "today"
+    | "7d"
+    | "30d"
+    | "90d"
+    | "all";
+
+  const data = await getAnalyticsData(period);
+
+  const totalWager = data.packWager + data.battleWager;
+  const packPct =
+    totalWager > 0 ? ((data.packWager / totalWager) * 100).toFixed(1) : "0";
+  const battlePct =
+    totalWager > 0 ? ((data.battleWager / totalWager) * 100).toFixed(1) : "0";
+
+  return (
+    <div className="space-y-6">
+      <AutoRefresh />
+      <div className="flex items-center justify-between">
+        <h1 className="text-page-title">Analytics</h1>
+        <PeriodFilter />
+      </div>
+
+      {/* Stat Cards */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <StatCard
+          title="NGR (Net Gaming Revenue)"
+          value={formatCurrency(data.ngr)}
+          subtitle={`GGR: ${formatCurrency(data.ggr)} minus bonuses`}
+          icon={TrendingUp}
+          color="green"
+        />
+        <StatCard
+          title="GGR (Gross Gaming Revenue)"
+          value={formatCurrency(data.ggr)}
+          subtitle={`${formatCurrency(totalWager)} wagered total`}
+          icon={DollarSign}
+          color="blue"
+        />
+        <StatCard
+          title="Unique Visitors"
+          value={formatNumber(data.uniqueVisitors)}
+          subtitle="Distinct users with transactions"
+          icon={Eye}
+          color="cyan"
+        />
+        <StatCard
+          title="New Signups"
+          value={formatNumber(data.newSignups)}
+          subtitle={`${data.uniqueVisitors > 0 ? ((data.newSignups / data.uniqueVisitors) * 100).toFixed(1) : "0"}% of active users`}
+          icon={UserPlus}
+          color="purple"
+        />
+        <StatCard
+          title="Pack Wagers"
+          value={formatCurrency(data.packWager)}
+          subtitle={`${packPct}% of total wagers`}
+          icon={Package}
+          color="orange"
+        />
+        <StatCard
+          title="Battle Wagers"
+          value={formatCurrency(data.battleWager)}
+          subtitle={`${battlePct}% of total wagers`}
+          icon={Swords}
+          color="pink"
+        />
+      </div>
+
+      {/* Charts */}
+      <AnalyticsCharts data={data.daily} />
+    </div>
+  );
+}

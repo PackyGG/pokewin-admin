@@ -1,0 +1,455 @@
+"use client";
+
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { toggleCountryRestriction, updateCountryRestrictionArray, upsertVaultLockTime, deleteVaultLockTime } from "./actions";
+import { Pencil, Trash2, X, Check, ChevronDown } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Badge } from "@/components/ui/badge";
+
+type SettingsData = {
+  vaultLockTimes: {
+    id: string;
+    hours: number;
+    label: string;
+  }[];
+  countryRestrictions: {
+    countryCode: string;
+    physicalWithdrawal: boolean;
+    digitalWithdrawal: boolean;
+    giftCardDeposit: boolean;
+    promoCodeDeposit: boolean;
+    blocked: boolean;
+    lockedDepositsCrypto: string[];
+    lockedDepositsFiat: string[];
+    lockedWithdrawalsCrypto: string[];
+  }[];
+};
+
+export function SettingsContent({ data }: { data: SettingsData }) {
+  const [isPending, startTransition] = useTransition();
+  const router = useRouter();
+
+  function handleCountryToggle(countryCode: string, field: string, currentValue: boolean) {
+    startTransition(async () => {
+      try {
+        await toggleCountryRestriction(countryCode, field, !currentValue);
+        toast.success("Restriction updated");
+        router.refresh();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Failed");
+      }
+    });
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Vault Lock Times */}
+      <VaultLockTimesCard
+        vaultLockTimes={data.vaultLockTimes}
+        isPending={isPending}
+        startTransition={startTransition}
+        router={router}
+      />
+
+      {/* Country Restrictions */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm font-medium">Country Restrictions</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Country</TableHead>
+                <TableHead>Physical</TableHead>
+                <TableHead>Digital</TableHead>
+                <TableHead>Gift Card</TableHead>
+                <TableHead>Promo Code</TableHead>
+                <TableHead>Blocked</TableHead>
+                <TableHead>Locked Deposits Crypto</TableHead>
+                <TableHead>Locked Deposits Fiat</TableHead>
+                <TableHead>Locked Withdrawals Crypto</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.countryRestrictions.map((c) => (
+                <TableRow key={c.countryCode}>
+                  <TableCell className="font-medium">{c.countryCode}</TableCell>
+                  <TableCell>
+                    <Switch
+                      checked={c.physicalWithdrawal}
+                      onCheckedChange={() => handleCountryToggle(c.countryCode, "physical_withdrawal", c.physicalWithdrawal)}
+                      disabled={isPending}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Switch
+                      checked={c.digitalWithdrawal}
+                      onCheckedChange={() => handleCountryToggle(c.countryCode, "digital_withdrawal", c.digitalWithdrawal)}
+                      disabled={isPending}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Switch
+                      checked={c.giftCardDeposit}
+                      onCheckedChange={() => handleCountryToggle(c.countryCode, "gift_card_deposit", c.giftCardDeposit)}
+                      disabled={isPending}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Switch
+                      checked={c.promoCodeDeposit}
+                      onCheckedChange={() => handleCountryToggle(c.countryCode, "promo_code_deposit", c.promoCodeDeposit)}
+                      disabled={isPending}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Switch
+                      checked={c.blocked}
+                      onCheckedChange={() => handleCountryToggle(c.countryCode, "blocked", c.blocked)}
+                      disabled={isPending}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <CurrencyMultiSelect
+                      countryCode={c.countryCode}
+                      field="locked_deposits_crypto"
+                      values={c.lockedDepositsCrypto}
+                      options={CRYPTO_OPTIONS}
+                      disabled={isPending}
+                      startTransition={startTransition}
+                      router={router}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <CurrencyMultiSelect
+                      countryCode={c.countryCode}
+                      field="locked_deposits_fiat"
+                      values={c.lockedDepositsFiat}
+                      options={FIAT_OPTIONS}
+                      disabled={isPending}
+                      startTransition={startTransition}
+                      router={router}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <CurrencyMultiSelect
+                      countryCode={c.countryCode}
+                      field="locked_withdrawals_crypto"
+                      values={c.lockedWithdrawalsCrypto}
+                      options={CRYPTO_OPTIONS}
+                      disabled={isPending}
+                      startTransition={startTransition}
+                      router={router}
+                    />
+                  </TableCell>
+                </TableRow>
+              ))}
+              {data.countryRestrictions.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={9} className="h-24 text-center text-muted-foreground">
+                    No country restrictions configured.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+const CRYPTO_OPTIONS = [
+  { value: "bitcoin", label: "Bitcoin" },
+  { value: "ethereum", label: "Ethereum" },
+  { value: "solana", label: "Solana" },
+  { value: "usdt_erc20", label: "USDT (ERC20)" },
+  { value: "usdt_trc20", label: "USDT (TRC20)" },
+];
+
+const FIAT_OPTIONS = [
+  { value: "gift_card", label: "Gift Card" },
+  { value: "promo_code", label: "Promo Code" },
+];
+
+function CurrencyMultiSelect({
+  countryCode,
+  field,
+  values,
+  options,
+  disabled,
+  startTransition,
+  router,
+}: {
+  countryCode: string;
+  field: string;
+  values: string[];
+  options: { value: string; label: string }[];
+  disabled: boolean;
+  startTransition: (fn: () => Promise<void>) => void;
+  router: ReturnType<typeof useRouter>;
+}) {
+  function handleToggle(optionValue: string) {
+    const newValues = values.includes(optionValue)
+      ? values.filter((v) => v !== optionValue)
+      : [...values, optionValue];
+    startTransition(async () => {
+      try {
+        await updateCountryRestrictionArray(countryCode, field, newValues);
+        toast.success("Restriction updated");
+        router.refresh();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Failed");
+      }
+    });
+  }
+
+  return (
+    <Popover>
+      <PopoverTrigger disabled={disabled} className="flex items-center gap-1 text-xs cursor-pointer rounded border px-2 py-1 hover:bg-muted">
+        {values.length === 0 ? (
+          <span className="text-muted-foreground">None</span>
+        ) : (
+          <span>{values.length} blocked</span>
+        )}
+        <ChevronDown className="h-3 w-3" />
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-48 p-2">
+        <div className="flex flex-col gap-1">
+          {options.map((opt) => (
+            <label
+              key={opt.value}
+              className="flex items-center gap-2 rounded px-2 py-1 text-sm cursor-pointer hover:bg-muted"
+            >
+              <input
+                type="checkbox"
+                checked={values.includes(opt.value)}
+                onChange={() => handleToggle(opt.value)}
+                disabled={disabled}
+                className="rounded"
+              />
+              {opt.label}
+            </label>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function VaultLockTimesCard({
+  vaultLockTimes,
+  isPending,
+  startTransition,
+  router,
+}: {
+  vaultLockTimes: SettingsData["vaultLockTimes"];
+  isPending: boolean;
+  startTransition: (fn: () => Promise<void>) => void;
+  router: ReturnType<typeof useRouter>;
+}) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editHours, setEditHours] = useState("");
+  const [editLabel, setEditLabel] = useState("");
+  const [newHours, setNewHours] = useState("");
+  const [newLabel, setNewLabel] = useState("");
+
+  function startEdit(v: SettingsData["vaultLockTimes"][number]) {
+    setEditingId(v.id);
+    setEditHours(String(v.hours));
+    setEditLabel(v.label);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+  }
+
+  function handleSaveEdit(id: string) {
+    const hours = parseInt(editHours);
+    if (isNaN(hours) || hours <= 0) {
+      toast.error("Hours must be a positive number");
+      return;
+    }
+    startTransition(async () => {
+      try {
+        await upsertVaultLockTime(id, hours, editLabel);
+        toast.success("Lock time updated");
+        setEditingId(null);
+        router.refresh();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Failed");
+      }
+    });
+  }
+
+  function handleAdd() {
+    const hours = parseInt(newHours);
+    if (isNaN(hours) || hours <= 0) {
+      toast.error("Hours must be a positive number");
+      return;
+    }
+    if (!newLabel.trim()) {
+      toast.error("Label is required");
+      return;
+    }
+    startTransition(async () => {
+      try {
+        await upsertVaultLockTime(null, hours, newLabel);
+        toast.success("Lock time added");
+        setNewHours("");
+        setNewLabel("");
+        router.refresh();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Failed");
+      }
+    });
+  }
+
+  function handleDelete(id: string) {
+    if (!confirm("Delete this vault lock time?")) return;
+    startTransition(async () => {
+      try {
+        await deleteVaultLockTime(id);
+        toast.success("Lock time deleted");
+        router.refresh();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Failed");
+      }
+    });
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm font-medium">Vault Lock Times</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Hours</TableHead>
+              <TableHead>Label</TableHead>
+              <TableHead className="w-[100px]" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {vaultLockTimes.map((v) =>
+              editingId === v.id ? (
+                <TableRow key={v.id}>
+                  <TableCell>
+                    <Input
+                      type="number"
+                      value={editHours}
+                      onChange={(e) => setEditHours(e.target.value)}
+                      className="h-8 w-24"
+                      disabled={isPending}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Input
+                      value={editLabel}
+                      onChange={(e) => setEditLabel(e.target.value)}
+                      className="h-8"
+                      disabled={isPending}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        disabled={isPending}
+                        onClick={() => handleSaveEdit(v.id)}
+                      >
+                        <Check className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={cancelEdit}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ) : (
+                <TableRow key={v.id}>
+                  <TableCell>{v.hours}h</TableCell>
+                  <TableCell>{v.label}</TableCell>
+                  <TableCell>
+                    <div className="flex gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        disabled={isPending}
+                        onClick={() => startEdit(v)}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        disabled={isPending}
+                        onClick={() => handleDelete(v.id)}
+                      >
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )
+            )}
+            {vaultLockTimes.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={3} className="text-center text-muted-foreground">
+                  No vault lock times configured.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+
+        <div className="flex items-end gap-4">
+          <div className="space-y-1">
+            <Label>Hours</Label>
+            <Input
+              type="number"
+              placeholder="e.g. 48"
+              value={newHours}
+              onChange={(e) => setNewHours(e.target.value)}
+              className="w-24"
+            />
+          </div>
+          <div className="space-y-1 flex-1">
+            <Label>Label</Label>
+            <Input
+              placeholder="e.g. 2 Days"
+              value={newLabel}
+              onChange={(e) => setNewLabel(e.target.value)}
+            />
+          </div>
+          <Button onClick={handleAdd} disabled={isPending}>
+            Add
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}

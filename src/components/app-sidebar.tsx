@@ -1,0 +1,342 @@
+"use client";
+
+import { useState, useEffect, useCallback, useMemo } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import {
+  LayoutDashboard,
+  BarChart3,
+  Users,
+  ArrowDownToLine,
+  Receipt,
+  FileText,
+  Package,
+  Settings,
+  Swords,
+  Tag,
+  Share2,
+  MessageSquare,
+  Gift,
+  CalendarDays,
+  CloudRain,
+  Bot,
+  Shield,
+  ShieldCheck,
+  SquareKanban,
+  Trophy,
+  Ticket,
+  Award,
+  Layers,
+  Percent,
+  TrendingUp,
+  UserCircle,
+  Wallet,
+  ChevronRight,
+  type LucideIcon,
+} from "lucide-react";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from "@/components/ui/sidebar";
+import {
+  Collapsible,
+  CollapsibleTrigger,
+  CollapsibleContent,
+} from "@/components/ui/collapsible";
+import { cn } from "@/lib/utils";
+import { getDefaultRoute } from "@/lib/admin-roles";
+import { ThemeToggle } from "@/components/theme-toggle";
+
+const ICONS: Record<string, LucideIcon> = {
+  LayoutDashboard,
+  BarChart3,
+  Users,
+  ArrowDownToLine,
+  Receipt,
+  FileText,
+  Package,
+  Settings,
+  Swords,
+  Tag,
+  Share2,
+  MessageSquare,
+  Gift,
+  CalendarDays,
+  CloudRain,
+  Bot,
+  Shield,
+  ShieldCheck,
+  SquareKanban,
+  Trophy,
+  Ticket,
+  Award,
+  Layers,
+  Percent,
+  TrendingUp,
+  UserCircle,
+  Wallet,
+};
+
+type NavItem = {
+  label: string;
+  href: string;
+  icon: string;
+};
+
+type NavGroup = {
+  label: string;
+  items: NavItem[];
+  creatorOnly?: boolean;
+};
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    label: "Overview",
+    items: [
+      { label: "Dashboard", href: "/dashboard", icon: "LayoutDashboard" },
+      { label: "Analytics", href: "/analytics", icon: "BarChart3" },
+      { label: "Users", href: "/users", icon: "Users" },
+      { label: "Withdrawals", href: "/withdrawals", icon: "ArrowDownToLine" },
+    ],
+  },
+  {
+    label: "Transactions",
+    items: [
+      { label: "All", href: "/transactions", icon: "Receipt" },
+      { label: "Packs", href: "/transactions/packs", icon: "Package" },
+      { label: "Battles", href: "/transactions/battles", icon: "Swords" },
+      { label: "Rewards", href: "/transactions/rewards", icon: "Award" },
+      { label: "Deposits & Withdrawals", href: "/transactions/deposits", icon: "ArrowDownToLine" },
+    ],
+  },
+  {
+    label: "Content",
+    items: [
+      { label: "Packs", href: "/packs", icon: "Package" },
+      { label: "Cards", href: "/cards", icon: "Layers" },
+      { label: "Battles", href: "/battles", icon: "Swords" },
+    ],
+  },
+  {
+    label: "Rewards",
+    items: [
+      { label: "Rewards", href: "/rewards", icon: "Award" },
+      { label: "Rakeback", href: "/rewards/rakeback", icon: "Percent" },
+      { label: "Raffles", href: "/rewards/raffles", icon: "Ticket" },
+      { label: "Races", href: "/rewards/races", icon: "Trophy" },
+      { label: "Leaderboards", href: "/rewards/leaderboards", icon: "Trophy" },
+      { label: "Level Up", href: "/rewards/level-up", icon: "TrendingUp" },
+      { label: "Settings", href: "/rewards/settings", icon: "Settings" },
+    ],
+  },
+  {
+    label: "Marketing",
+    items: [
+      { label: "Promo Codes", href: "/promo-codes", icon: "Tag" },
+      { label: "Gift Cards", href: "/gift-cards", icon: "Gift" },
+      { label: "Vouchers", href: "/vouchers", icon: "Ticket" },
+      { label: "Rain", href: "/rain", icon: "CloudRain" },
+    ],
+  },
+  {
+    label: "Finance",
+    items: [
+      { label: "Spending", href: "/spending", icon: "Wallet" },
+    ],
+  },
+  {
+    label: "Creator Portal",
+    creatorOnly: true,
+    items: [
+      { label: "My Profile", href: "/my-profile", icon: "UserCircle" },
+    ],
+  },
+  {
+    label: "Creators",
+    items: [
+      { label: "Creators", href: "/creators", icon: "Users" },
+      { label: "Codes", href: "/creators/codes", icon: "Share2" },
+      { label: "Analytics", href: "/creators/analytics", icon: "BarChart3" },
+      { label: "Settings", href: "/creators/settings", icon: "Settings" },
+    ],
+  },
+  {
+    label: "Moderation",
+    items: [
+      { label: "Chat", href: "/chat", icon: "MessageSquare" },
+    ],
+  },
+  {
+    label: "Security",
+    items: [
+      { label: "Security", href: "/security", icon: "Shield" },
+    ],
+  },
+  {
+    label: "Trello",
+    items: [
+      { label: "Board", href: "/trello", icon: "SquareKanban" },
+    ],
+  },
+  {
+    label: "System",
+    items: [
+      { label: "Admin Users", href: "/admin-users", icon: "ShieldCheck" },
+      { label: "Bots", href: "/bots", icon: "Bot" },
+      { label: "Settings", href: "/settings", icon: "Settings" },
+      { label: "Audit Log", href: "/audit", icon: "FileText" },
+    ],
+  },
+];
+
+const STORAGE_KEY = "sidebar-collapsed-groups";
+
+function useCollapsedGroups(activeGroupLabel: string | undefined) {
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
+    const defaults: Record<string, boolean> = {};
+    NAV_GROUPS.forEach((g) => { defaults[g.label] = false; });
+    return defaults;
+  });
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as Record<string, boolean>;
+        if (activeGroupLabel) parsed[activeGroupLabel] = true;
+        setOpenGroups(parsed);
+      } else if (activeGroupLabel) {
+        setOpenGroups((prev) => ({ ...prev, [activeGroupLabel]: true }));
+      }
+    } catch {
+      // fallback: keep defaults (all collapsed)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (activeGroupLabel) {
+      setOpenGroups((prev) => {
+        if (prev[activeGroupLabel]) return prev;
+        const next = { ...prev, [activeGroupLabel]: true };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        return next;
+      });
+    }
+  }, [activeGroupLabel]);
+
+  const toggleGroup = useCallback((label: string) => {
+    setOpenGroups((prev) => {
+      const next = { ...prev, [label]: !prev[label] };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  return { openGroups, toggleGroup };
+}
+
+export function AppSidebar({ role, allowedPages }: { role: string; allowedPages: string[] }) {
+  const pathname = usePathname();
+  const isAdmin = role === "admin";
+
+  const groupsWithVisibility = useMemo(() =>
+    NAV_GROUPS.map((group) => ({
+      ...group,
+      visibleItems: group.items.filter((item) => isAdmin || allowedPages.includes(item.href)),
+    })),
+  [isAdmin, allowedPages]);
+
+  const activeGroupLabel = useMemo(() =>
+    groupsWithVisibility.find((group) =>
+      group.visibleItems.some(
+        (item) =>
+          pathname === item.href ||
+          (item.href !== "/dashboard" && pathname.startsWith(item.href + "/"))
+      )
+    )?.label,
+  [groupsWithVisibility, pathname]);
+
+  const { openGroups, toggleGroup } = useCollapsedGroups(activeGroupLabel);
+
+  return (
+    <Sidebar>
+      <SidebarHeader className="border-b border-border px-4 h-14 flex items-center justify-center">
+        <Link href={getDefaultRoute(role, allowedPages)} className="flex justify-center">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo-dark.png" alt="Pokewin" className="h-6 dark:hidden" />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt="Pokewin" className="h-6 hidden dark:block" />
+        </Link>
+      </SidebarHeader>
+      <SidebarContent>
+        {groupsWithVisibility.map((group) => {
+          if (group.creatorOnly && role !== "creator") return null;
+          const { visibleItems } = group;
+          if (visibleItems.length === 0) return null;
+          const isOpen = openGroups[group.label] ?? false;
+          return (
+            <Collapsible
+              key={group.label}
+              open={isOpen}
+              onOpenChange={() => toggleGroup(group.label)}
+            >
+              <SidebarGroup className="px-2 py-1">
+                <CollapsibleTrigger className={cn("flex h-9 w-full shrink-0 cursor-pointer select-none items-center justify-between rounded-md px-2 text-xs font-semibold uppercase tracking-wider transition-colors hover:text-sidebar-foreground", group.label === activeGroupLabel ? "bg-sidebar-accent text-sidebar-foreground" : "text-sidebar-foreground/50")}>
+                  <span>{group.label}</span>
+                  <ChevronRight
+                    className={cn(
+                      "size-3 transition-transform duration-200",
+                      isOpen && "rotate-90"
+                    )}
+                  />
+                </CollapsibleTrigger>
+                <CollapsibleContent className="mt-0.5">
+                  <SidebarGroupContent>
+                    <SidebarMenu>
+                      {visibleItems.map((item) => {
+                        const Icon = ICONS[item.icon];
+                        const isActive =
+                          pathname === item.href ||
+                          (item.href !== "/dashboard" &&
+                            pathname.startsWith(item.href + "/") &&
+                            !visibleItems.some(
+                              (other) => other.href !== item.href && pathname.startsWith(other.href)
+                            ));
+                        return (
+                          <SidebarMenuItem key={item.href}>
+                            <SidebarMenuButton
+                              isActive={isActive}
+                              render={<Link href={item.href} />}
+                              className={undefined}
+                            >
+                              <Icon className={cn("size-4", isActive ? "text-primary" : "text-muted-foreground")} />
+                              <span>{item.label}</span>
+                            </SidebarMenuButton>
+                          </SidebarMenuItem>
+                        );
+                      })}
+                    </SidebarMenu>
+                  </SidebarGroupContent>
+                </CollapsibleContent>
+              </SidebarGroup>
+            </Collapsible>
+          );
+        })}
+      </SidebarContent>
+      <SidebarFooter className="border-t border-border">
+        <div className="flex items-center justify-between px-2">
+          <span className="text-xs text-muted-foreground">Theme</span>
+          <ThemeToggle />
+        </div>
+      </SidebarFooter>
+    </Sidebar>
+  );
+}
