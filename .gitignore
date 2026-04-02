@@ -45,3 +45,4 @@ next-env.d.ts
 # admin frontend (separate repo)
 admin-frontend/
 admin-frontend.zip
+bun.lock

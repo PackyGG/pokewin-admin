@@ -128,7 +128,18 @@ export async function getUserDetail(id: string) {
       db.user_statistics.findUnique({ where: { user_id: id } }),
       db.user_feature_locks.findUnique({ where: { user_id: id } }),
       db.user_inventory.count({ where: { user_id: id, sold_at: null, exchanged_at: null } }),
-      db.affiliate_accounts.findUnique({ where: { user_id: id } }),
+      db.affiliate_accounts.findUnique({
+        where: { user_id: id },
+        select: {
+          total_referred: true,
+          total_wager_volume_usd: true,
+          total_earned_usd: true,
+          available_usd: true,
+          total_paid_out_usd: true,
+          total_bonus_distributed_usd: true,
+          last_payout_at: true,
+        },
+      }),
       db.shipping_addresses.findUnique({ where: { user_id: id } }),
       db.vaults.findUnique({ where: { user_id: id } }),
       db.user_mutes.findMany({
