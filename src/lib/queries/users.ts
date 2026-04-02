@@ -75,6 +75,21 @@ export async function getUsers(params: {
     db.user.count({ where }),
   ]);
 
+  // Fetch unsold inventory values for all users in the page
+  const userIds = users.map((u) => u.id);
+  const inventoryValues = await db.user_inventory.groupBy({
+    by: ["user_id"],
+    where: {
+      user_id: { in: userIds },
+      sold_at: null,
+      exchanged_at: null,
+    },
+    _sum: { value_at_obtained: true },
+  });
+  const inventoryMap = new Map(
+    inventoryValues.map((iv) => [iv.user_id, toNumber(iv._sum.value_at_obtained)])
+  );
+
   return {
     data: users.map((u) => ({
       id: u.id,
@@ -82,7 +97,7 @@ export async function getUsers(params: {
       email: u.email,
       role: u.role,
       status: u.is_banned ? "banned" : u.is_locked ? "locked" : "active",
-      availableBalance: toNumber(u.balances?.available_balance),
+      availableBalance: toNumber(u.balances?.available_balance) + (inventoryMap.get(u.id) ?? 0),
       totalDeposited: toNumber(u.balances?.total_deposited),
       createdAt: u.created_at.toISOString(),
     })),
