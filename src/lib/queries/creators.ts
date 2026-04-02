@@ -184,57 +184,86 @@ export async function getCreators(params: {
     delete where.user;
   }
 
-  const orderBy: Record<string, string> = {};
-  const validSortFields = ["created_at", "total_earned_usd", "total_referred", "total_wager_volume_usd"];
+  const validSortFields = ["created_at", "total_earned_usd", "total_referred"];
   const field = validSortFields.includes(sortBy) ? sortBy : "created_at";
-  orderBy[field] = sortOrder === "asc" ? "asc" : "desc";
+  const direction = sortOrder === "asc" ? "ASC" : "DESC";
 
-  const [creators, total] = await Promise.all([
-    db.affiliate_accounts.findMany({
-      where,
-      orderBy,
-      skip: (page - 1) * perPage,
-      take: perPage,
-      select: {
-        user_id: true,
-        affiliate_level: true,
-        total_referred: true,
-        total_earned_usd: true,
-        available_usd: true,
-        total_paid_out_usd: true,
-        user: {
-          select: {
-            username: true,
-            affiliate_code: true,
-            affiliate_codes: { take: 1, orderBy: { created_at: "asc" } },
-            creator_withdrawal_limits: true,
-          },
-        },
-      },
-    }),
-    db.affiliate_accounts.count({ where }),
+  // Build WHERE clause
+  let whereClause = "WHERE u.role = 'creator'";
+  const queryParams: string[] = [];
+  if (search) {
+    queryParams.push(`%${search}%`);
+    whereClause = `WHERE u.role = 'creator' AND (u.username ILIKE $1 OR u.affiliate_code ILIKE $1)`;
+  }
+
+  const offset = (page - 1) * perPage;
+
+  const [rows, countRows] = await Promise.all([
+    db.$queryRawUnsafe<
+      {
+        user_id: string;
+        total_referred: number;
+        total_earned_usd: string;
+        available_usd: string;
+        total_paid_out_usd: string;
+        username: string | null;
+        affiliate_code: string | null;
+        first_code: string | null;
+        currency_limit_amount: string | null;
+        percentage_limit: string | null;
+        tip_limit: string | null;
+        currency_limit_reset_days: number | null;
+      }[]
+    >(
+      `SELECT
+        aa.user_id,
+        aa.total_referred,
+        aa.total_earned_usd::text,
+        aa.available_usd::text,
+        aa.total_paid_out_usd::text,
+        u.username,
+        u.affiliate_code,
+        (SELECT ac.code FROM affiliate_codes ac WHERE ac.user_id = aa.user_id ORDER BY ac.created_at ASC LIMIT 1) AS first_code,
+        cwl.currency_limit_amount::text,
+        cwl.percentage_limit::text,
+        cwl.tip_limit::text,
+        cwl.currency_limit_reset_days
+      FROM affiliate_accounts aa
+      JOIN "user" u ON u.id = aa.user_id
+      LEFT JOIN creator_withdrawal_limits cwl ON cwl.user_id = aa.user_id
+      ${whereClause}
+      ORDER BY aa.${field} ${direction}
+      LIMIT ${perPage} OFFSET ${offset}`,
+      ...(search ? [`%${search}%`] : [])
+    ),
+    db.$queryRawUnsafe<{ count: string }[]>(
+      `SELECT COUNT(*)::text AS count
+      FROM affiliate_accounts aa
+      JOIN "user" u ON u.id = aa.user_id
+      ${whereClause}`,
+      ...(search ? [`%${search}%`] : [])
+    ),
   ]);
 
+  const total = Number(countRows[0]?.count ?? 0);
+
   return {
-    data: creators.map((a) => {
-      const lim = a.user?.creator_withdrawal_limits;
-      return {
-        userId: a.user_id,
-        username: a.user?.username ?? null,
-        code: a.user?.affiliate_code ?? a.user?.affiliate_codes?.[0]?.code ?? "",
-        level: a.affiliate_level,
-        totalReferred: a.total_referred,
-        totalEarnedUsd: toNumber(a.total_earned_usd),
-        availableUsd: toNumber(a.available_usd),
-        totalPaidOutUsd: toNumber(a.total_paid_out_usd),
-        limits: {
-          currencyLimitAmount: lim ? toNumber(lim.currency_limit_amount) : null,
-          percentageLimit: lim ? toNumber(lim.percentage_limit) : null,
-          tipLimit: lim ? toNumber(lim.tip_limit) : null,
-          currencyLimitResetDays: lim?.currency_limit_reset_days ?? null,
-        },
-      };
-    }),
+    data: rows.map((r) => ({
+      userId: r.user_id,
+      username: r.username ?? null,
+      code: r.affiliate_code ?? r.first_code ?? "",
+      level: 1,
+      totalReferred: r.total_referred,
+      totalEarnedUsd: toNumber(r.total_earned_usd),
+      availableUsd: toNumber(r.available_usd),
+      totalPaidOutUsd: toNumber(r.total_paid_out_usd),
+      limits: {
+        currencyLimitAmount: r.currency_limit_amount ? toNumber(r.currency_limit_amount) : null,
+        percentageLimit: r.percentage_limit ? toNumber(r.percentage_limit) : null,
+        tipLimit: r.tip_limit ? toNumber(r.tip_limit) : null,
+        currencyLimitResetDays: r.currency_limit_reset_days ?? null,
+      },
+    })),
     total,
     page,
     perPage,
