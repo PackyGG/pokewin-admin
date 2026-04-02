@@ -26,21 +26,28 @@ function revenueAgg(gte: Date) {
 function ggrAgg(gte: Date) {
   return db.$queryRaw<{ ggr: string }[]>`
     SELECT (
-      COALESCE(SUM(CASE
-        WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship', 'withdrawal_shipping_fee')
-        THEN ABS(amount::numeric) ELSE 0 END), 0)
-      - COALESCE(SUM(CASE
-        WHEN type IN (
-          'battle_refund', 'card_sale', 'reward_card_sale',
-          'card_exchange', 'exchange_excess_credit',
-          'deposit_bonus', 'race_prize', 'gift_card_redeemed',
-          'promo_code_redeemed', 'rakeback_claim', 'balance_reward_claim',
-          'affiliate_claim', 'rain_win', 'waitlist_prize'
-        )
-        THEN ABS(amount::numeric) ELSE 0 END), 0)
+      (
+        SELECT COALESCE(SUM(CASE
+          WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship', 'withdrawal_shipping_fee')
+          THEN ABS(amount::numeric) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE
+          WHEN type IN (
+            'battle_refund', 'card_sale', 'reward_card_sale',
+            'card_exchange', 'exchange_excess_credit',
+            'deposit_bonus', 'race_prize', 'gift_card_redeemed',
+            'promo_code_redeemed', 'rakeback_claim', 'balance_reward_claim',
+            'affiliate_claim', 'rain_win', 'waitlist_prize'
+          )
+          THEN ABS(amount::numeric) ELSE 0 END), 0)
+        FROM ledger_transactions
+        WHERE status = 'completed' AND created_at >= ${gte}
+      )
+      - (
+        SELECT COALESCE(SUM(value_at_obtained::numeric), 0)
+        FROM user_inventory
+        WHERE sold_at IS NULL AND exchanged_at IS NULL AND obtained_at >= ${gte}
+      )
     )::text AS ggr
-    FROM ledger_transactions
-    WHERE status = 'completed' AND created_at >= ${gte}
   `;
 }
 
