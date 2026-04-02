@@ -121,7 +121,7 @@ export async function getDashboardStats() {
     }),
     db.balances.aggregate({ _sum: { available_balance: true } }),
     db.card_withdrawal_requests.aggregate({
-      where: { status: "pending" },
+      where: { status: { in: ["pending", "processing"] } },
       _count: true,
       _sum: { total_value_usd: true },
     }),

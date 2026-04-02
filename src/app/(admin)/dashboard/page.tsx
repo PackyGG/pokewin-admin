@@ -42,7 +42,7 @@ export default async function DashboardPage({
         <StatCard
           title="Deposits & Withdrawals"
           value={formatCurrency(stats.financials.totalDeposited)}
-          subtitle={`${formatCurrency(stats.financials.totalWithdrawn)} withdrawn · ${stats.financials.pendingWithdrawalsCount} pending (${formatCurrency(stats.financials.pendingWithdrawalsValue)})`}
+          subtitle={`${formatCurrency(stats.financials.totalWithdrawn)} withdrawn · ${stats.financials.pendingWithdrawalsCount} in progress (${formatCurrency(stats.financials.pendingWithdrawalsValue)})`}
           icon={ArrowDownToLine}
           color="orange"
         />
