@@ -17,6 +17,12 @@ import { cn } from "@/lib/utils";
 
 const TABS = [
   {
+    value: "all",
+    label: "All",
+    statuses: [] as string[],
+    columns: finishedColumns,
+  },
+  {
     value: "requests",
     label: "Withdrawal Requests",
     statuses: ["pending"],
