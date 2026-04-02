@@ -211,7 +211,6 @@ export async function getCreators(params: {
         first_code: string | null;
         currency_limit_amount: string | null;
         percentage_limit: string | null;
-        tip_limit: string | null;
         currency_limit_reset_days: number | null;
       }[]
     >(
@@ -226,7 +225,6 @@ export async function getCreators(params: {
         (SELECT ac.code FROM affiliate_codes ac WHERE ac.user_id = aa.user_id ORDER BY ac.created_at ASC LIMIT 1) AS first_code,
         cwl.currency_limit_amount::text,
         cwl.percentage_limit::text,
-        cwl.tip_limit::text,
         cwl.currency_limit_reset_days
       FROM affiliate_accounts aa
       JOIN "user" u ON u.id = aa.user_id
@@ -260,7 +258,7 @@ export async function getCreators(params: {
       limits: {
         currencyLimitAmount: r.currency_limit_amount ? toNumber(r.currency_limit_amount) : null,
         percentageLimit: r.percentage_limit ? toNumber(r.percentage_limit) : null,
-        tipLimit: r.tip_limit ? toNumber(r.tip_limit) : null,
+        tipLimit: null,
         currencyLimitResetDays: r.currency_limit_reset_days ?? null,
       },
     })),
