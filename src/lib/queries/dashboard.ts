@@ -90,6 +90,7 @@ export async function getDashboardStats() {
     ggr7d,
     ggr30d,
     avgSessionValueResult,
+    totalInventoryValue,
   ] = await Promise.all([
     db.user.count(),
     db.user.count({ where: { created_at: { gte: startOfDay } } }),
@@ -195,6 +196,10 @@ export async function getDashboardStats() {
       SELECT COALESCE(AVG(session_wager), 0)::text as avg_session_value
       FROM session_wagers
     `,
+    db.user_inventory.aggregate({
+      where: { sold_at: null, exchanged_at: null },
+      _sum: { value_at_obtained: true },
+    }),
   ]);
 
   const totalWagered = toNumber(balanceAggregates._sum.total_wagered);
@@ -234,6 +239,7 @@ export async function getDashboardStats() {
       totalWagered,
       totalWon,
       totalSiteBalance: toNumber(totalSiteBalance._sum.available_balance),
+      totalInventoryValue: toNumber(totalInventoryValue._sum.value_at_obtained),
       avgWagerPerDeposit: depositCount > 0 ? totalWagered / depositCount : 0,
       avgSessionValue: Number(avgSessionValueResult[0]?.avg_session_value ?? 0),
       pendingWithdrawalsCount: pendingWithdrawals._count,

@@ -3,6 +3,7 @@ import {
   ArrowDownToLine,
   Package,
   Percent,
+  Wallet,
 } from "lucide-react";
 import { getDashboardStats, getRecentActivity } from "@/lib/queries/dashboard";
 import { requirePageAccess } from "@/lib/dal";
@@ -55,7 +56,14 @@ export default async function DashboardPage({
       </div>
 
       {/* Secondary stat cards */}
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-3">
+        <StatCard
+          title="Users Total Balance"
+          value={formatCurrency(stats.financials.totalSiteBalance + stats.financials.totalInventoryValue)}
+          subtitle={`${formatCurrency(stats.financials.totalSiteBalance)} cash · ${formatCurrency(stats.financials.totalInventoryValue)} unsold inventory`}
+          icon={Wallet}
+          color="green"
+        />
         <StatCard
           title="Pack Openings"
           value={formatNumber(stats.activity.totalPacksOpened)}
