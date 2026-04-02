@@ -22,7 +22,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { updateCard, uploadCardImage } from "../actions";
+import { updateCard } from "../actions";
+import { uploadImageClient } from "@/lib/upload-image-client";
 
 type CardData = {
   id: string;
@@ -136,15 +137,20 @@ export function EditCardButton({
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(card.imageUrl);
 
+  const imageCleared = imagePreview === null && imageFile === null;
+
   function handleSubmit() {
     startTransition(async () => {
       try {
+        if (imageCleared) {
+          toast.error("Please select a new image");
+          return;
+        }
+
         let imageUrl = card.imageUrl;
 
         if (imageFile) {
-          const fd = new FormData();
-          fd.append("file", imageFile);
-          imageUrl = await uploadCardImage(fd);
+          imageUrl = await uploadImageClient(imageFile, "/cards");
         }
 
         await updateCard(card.id, {
@@ -186,7 +192,7 @@ export function EditCardButton({
             <ImageDropzone
               preview={imagePreview}
               onFile={(file) => { setImageFile(file); setImagePreview(URL.createObjectURL(file)); }}
-              onClear={() => { setImageFile(null); setImagePreview(card.imageUrl); }}
+              onClear={() => { setImageFile(null); setImagePreview(null); }}
             />
           </div>
 
@@ -268,7 +274,7 @@ export function EditCardButton({
         </div>
 
         <DialogFooter>
-          <Button onClick={handleSubmit} disabled={isPending || !name}>
+          <Button onClick={handleSubmit} disabled={isPending || !name || imageCleared}>
             {isPending ? "Saving..." : "Save Changes"}
           </Button>
         </DialogFooter>

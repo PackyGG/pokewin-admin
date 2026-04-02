@@ -22,7 +22,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { createCard, uploadCardImage } from "./actions";
+import { createCard } from "./actions";
+import { uploadImageClient } from "@/lib/upload-image-client";
 
 function ImageDropzone({
   preview,
@@ -123,9 +124,7 @@ export function CreateCardButton({ sets }: { sets: { id: string; name: string }[
           return;
         }
 
-        const fd = new FormData();
-        fd.append("file", imageFile);
-        const imageUrl = await uploadCardImage(fd);
+        const imageUrl = await uploadImageClient(imageFile, "/cards");
 
         await createCard({
           name,
