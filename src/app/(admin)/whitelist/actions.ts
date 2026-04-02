@@ -16,7 +16,7 @@ function generateReferralCode(): string {
     .join("-");
 }
 
-export async function addWhitelistUser(discordId: string, username: string) {
+export async function addWhitelistUser(discordId: string, username: string, customReferralCode?: string) {
   await requireAdmin();
 
   if (!discordId.trim() || !username.trim()) {
@@ -24,7 +24,7 @@ export async function addWhitelistUser(discordId: string, username: string) {
   }
 
   const id = crypto.randomUUID();
-  const referralCode = generateReferralCode();
+  const referralCode = customReferralCode?.trim() || generateReferralCode();
 
   await whitelistPool.query(
     `INSERT INTO "User" (id, "discordId", username, "referralCode") VALUES ($1, $2, $3, $4)`,

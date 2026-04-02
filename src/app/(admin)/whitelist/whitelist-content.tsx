@@ -42,6 +42,7 @@ export function WhitelistContent({ data }: { data: WhitelistUser[] }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [discordId, setDiscordId] = useState("");
   const [username, setUsername] = useState("");
+  const [referralCode, setReferralCode] = useState("");
 
   function handleCreate() {
     if (!discordId.trim() || !username.trim()) {
@@ -50,11 +51,12 @@ export function WhitelistContent({ data }: { data: WhitelistUser[] }) {
     }
     startTransition(async () => {
       try {
-        await addWhitelistUser(discordId.trim(), username.trim());
+        await addWhitelistUser(discordId.trim(), username.trim(), referralCode.trim() || undefined);
         toast.success("User added to whitelist");
         setCreateOpen(false);
         setDiscordId("");
         setUsername("");
+        setReferralCode("");
         router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to add user");
@@ -106,6 +108,14 @@ export function WhitelistContent({ data }: { data: WhitelistUser[] }) {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="username"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Referral Code <span className="text-muted-foreground font-normal">(optional, auto-generated if empty)</span></Label>
+              <Input
+                value={referralCode}
+                onChange={(e) => setReferralCode(e.target.value)}
+                placeholder="leave empty for random"
               />
             </div>
           </div>
