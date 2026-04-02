@@ -50,6 +50,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Trello", label: "Boards", key: "/trello" },
   // System
   { group: "System", label: "Admin Users", key: "/admin-users" },
+  { group: "System", label: "Whitelist", key: "/whitelist" },
   { group: "System", label: "Bots", key: "/bots" },
   { group: "System", label: "Settings", key: "/settings" },
   { group: "System", label: "Audit Log", key: "/audit" },
