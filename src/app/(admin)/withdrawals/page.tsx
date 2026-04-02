@@ -25,7 +25,7 @@ const TABS = [
   {
     value: "requests",
     label: "Withdrawal Requests",
-    statuses: ["pending"],
+    statuses: ["pending", "processing"],
     columns: requestColumns,
   },
   {
