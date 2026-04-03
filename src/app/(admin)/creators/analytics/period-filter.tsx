@@ -1,6 +1,7 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { usePathname, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 
 const PERIODS = [
@@ -12,16 +13,18 @@ const PERIODS = [
 ] as const;
 
 export function PeriodFilter() {
-  const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const current = searchParams.get("period") ?? "30d";
 
   return (
     <div className="flex gap-1 rounded-lg border bg-muted/50 p-1">
       {PERIODS.map(({ label, value }) => (
-        <button
+        <Link
           key={value}
-          onClick={() => router.push(`/creators/analytics?period=${value}`)}
+          href={`${pathname}?period=${value}`}
+          replace
+          prefetch={false}
           className={cn(
             "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
             current === value
@@ -30,7 +33,7 @@ export function PeriodFilter() {
           )}
         >
           {label}
-        </button>
+        </Link>
       ))}
     </div>
   );
