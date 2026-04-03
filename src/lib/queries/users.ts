@@ -695,7 +695,12 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
   const [rows, inventoryValue] = await Promise.all([
     db.$queryRaw<{ type: string; net: string }[]>`
       SELECT type,
-             COALESCE(SUM(balance_after - balance_before), 0)::text AS net
+             COALESCE(SUM(
+               CASE WHEN type IN ('exchange_excess_to_voucher','battle_excess_to_voucher','voucher_redeemed','voucher_exchange')
+                    THEN amount
+                    ELSE balance_after - balance_before
+               END
+             ), 0)::text AS net
       FROM ledger_transactions
       WHERE user_id = ${userId} AND status = 'completed'
         AND type IN (
