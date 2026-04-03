@@ -15,7 +15,7 @@ const STATUS_TABS = [
   { value: "failed", label: "Failed" },
 ];
 
-const TYPES = ["battle_bet", "battle_sponsorship", "battle_refund"];
+const TYPES = ["battle_bet", "battle_sponsorship", "battle_refund", "battle_excess_to_voucher"];
 
 export default async function BattleTransactionsPage({
   searchParams,

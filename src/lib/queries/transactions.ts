@@ -35,7 +35,7 @@ export async function getTransactions(params: {
   if (search) {
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(search);
     where.OR = [
-      ...(isUuid ? [{ id: search }, { user_id: search }] : []),
+      ...(isUuid ? [{ id: search }, { user_id: search }, { metadata: { path: ["battle_id"], equals: search } }] : []),
       { user: { username: { contains: search, mode: "insensitive" as const } } },
     ];
   }
