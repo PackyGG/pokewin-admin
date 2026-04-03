@@ -548,6 +548,23 @@ export async function getUserTransactions(
   const cardMap = new Map(cards.map((c) => [c.id, c]));
   const inventoryMap = new Map(inventoryItems.map((i) => [i.id, { ...i, card: cardMap.get(i.card_id) ?? null }]));
 
+  // Compute inventory value snapshot at each transaction's timestamp
+  const allInventory = await db.user_inventory.findMany({
+    where: { user_id: userId },
+    select: { value_at_obtained: true, obtained_at: true, sold_at: true, exchanged_at: true },
+  });
+  const inventoryValueByTx = new Map<string, number>();
+  for (const t of transactions) {
+    const ts = t.created_at;
+    let total = 0;
+    for (const item of allInventory) {
+      if (item.obtained_at <= ts && (!item.sold_at || item.sold_at > ts) && (!item.exchanged_at || item.exchanged_at > ts)) {
+        total += toNumber(item.value_at_obtained);
+      }
+    }
+    inventoryValueByTx.set(t.id, total);
+  }
+
   // Compute cards value for gaming transactions from included provably_fair_results
   const cardsValueByTx = new Map<string, number>();
   for (const t of transactions) {
@@ -580,6 +597,7 @@ export async function getUserTransactions(
         packId: pack?.id ?? null,
         packName: pack?.name ?? null,
         cardsValue: cardsValueByTx.has(t.id) ? cardsValueByTx.get(t.id)! : null,
+        inventoryValue: inventoryValueByTx.get(t.id) ?? 0,
         soldCard: soldItem?.card ? {
           name: soldItem.card.name,
           imageUrl: soldItem.card.image_url,

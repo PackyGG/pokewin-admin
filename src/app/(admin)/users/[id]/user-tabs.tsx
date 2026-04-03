@@ -210,6 +210,7 @@ type Transaction = {
   packId: string | null;
   packName: string | null;
   cardsValue: number | null;
+  inventoryValue: number;
   soldCard: {
     name: string;
     imageUrl: string | null;
@@ -1189,6 +1190,7 @@ const CategoryTransactionsTable = React.memo(function CategoryTransactionsTable(
               {showCardsValue && <TableHead>House Edge</TableHead>}
               <TableHead>Before</TableHead>
               <TableHead>After</TableHead>
+              <TableHead>Inventory</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Description</TableHead>
               <TableHead>Date</TableHead>
@@ -1246,6 +1248,9 @@ const CategoryTransactionsTable = React.memo(function CategoryTransactionsTable(
                   {formatCurrency(t.balanceBefore)}
                 </TableCell>
                 <TableCell>{formatCurrency(t.balanceAfter)}</TableCell>
+                <TableCell className="text-muted-foreground tabular-nums">
+                  {formatCurrency(t.inventoryValue)}
+                </TableCell>
                 <TableCell>
                   <Badge variant="outline" className={STATUS_COLORS[t.status] ?? ""}>
                     {t.status}
@@ -1269,7 +1274,7 @@ const CategoryTransactionsTable = React.memo(function CategoryTransactionsTable(
             ))}
             {txData.data.length === 0 && (
               <TableRow>
-                <TableCell colSpan={showCardsValue ? 10 : 8} className="text-center text-muted-foreground">
+                <TableCell colSpan={showCardsValue ? 11 : 9} className="text-center text-muted-foreground">
                   No transactions
                 </TableCell>
               </TableRow>
@@ -1935,6 +1940,7 @@ const TransactionsTable = React.memo(function TransactionsTable({
               <TableHead>Amount</TableHead>
               <TableHead>Before</TableHead>
               <TableHead>After</TableHead>
+              <TableHead>Inventory</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Description</TableHead>
               <TableHead>Date</TableHead>
@@ -1965,6 +1971,9 @@ const TransactionsTable = React.memo(function TransactionsTable({
                   {formatCurrency(t.balanceBefore)}
                 </TableCell>
                 <TableCell>{formatCurrency(t.balanceAfter)}</TableCell>
+                <TableCell className="text-muted-foreground tabular-nums">
+                  {formatCurrency(t.inventoryValue)}
+                </TableCell>
                 <TableCell>
                   <Badge variant="outline" className={STATUS_COLORS[t.status] ?? ""}>
                     {t.status}
@@ -1988,7 +1997,7 @@ const TransactionsTable = React.memo(function TransactionsTable({
             ))}
             {data.length === 0 && (
               <TableRow>
-                <TableCell colSpan={8} className="text-center text-muted-foreground">
+                <TableCell colSpan={9} className="text-center text-muted-foreground">
                   No transactions
                 </TableCell>
               </TableRow>
@@ -2327,6 +2336,7 @@ function TransactionDetailModal({
     },
     { label: "Balance Before", value: formatCurrency(t.balanceBefore) },
     { label: "Balance After", value: formatCurrency(t.balanceAfter) },
+    { label: "Inventory Value", value: formatCurrency(t.inventoryValue) },
     {
       label: "Status",
       value: <Badge variant="outline" className={STATUS_COLORS[t.status] ?? ""}>{t.status}</Badge>,
