@@ -164,6 +164,20 @@ export async function getWithdrawalDetail(id: string) {
     });
   }
 
+  // Fetch vouchers
+  let vouchers: { id: string; value: number; origin: string; description: string | null }[] = [];
+  if (withdrawal.voucher_ids.length > 0) {
+    const voucherRows = await db.vouchers.findMany({
+      where: { id: { in: withdrawal.voucher_ids } },
+    });
+    vouchers = voucherRows.map((v) => ({
+      id: v.id,
+      value: toNumber(v.value),
+      origin: v.origin,
+      description: v.description,
+    }));
+  }
+
   return {
     id: withdrawal.id,
     userId: withdrawal.user_id,
@@ -191,6 +205,7 @@ export async function getWithdrawalDetail(id: string) {
     processedBy: (withdrawal.metadata as Record<string, unknown>)?.processed_by_admin as string ?? withdrawal.user_card_withdrawal_requests_processed_byTouser?.username ?? null,
     shippedBy: (withdrawal.metadata as Record<string, unknown>)?.shipped_by_admin as string ?? withdrawal.user_card_withdrawal_requests_shipped_byTouser?.username ?? null,
     items,
+    vouchers,
     requiresConfirmation: withdrawal.requires_confirmation,
     confirmationReason: withdrawal.confirmation_reason,
     confirmedAt: withdrawal.confirmed_at?.toISOString() ?? null,

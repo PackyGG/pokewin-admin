@@ -138,6 +138,32 @@ export default async function WithdrawalDetailPage({
         </CardContent>
       </Card>
 
+      {/* Vouchers */}
+      {data.vouchers.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium">
+              Vouchers ({data.vouchers.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="divide-y">
+              {data.vouchers.map((voucher) => (
+                <div key={voucher.id} className="flex items-center justify-between py-2">
+                  <div>
+                    <p className="text-sm font-medium">{formatCurrency(voucher.value)}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {voucher.origin}{voucher.description ? ` — ${voucher.description}` : ""}
+                    </p>
+                  </div>
+                  <span className="font-mono text-xs text-muted-foreground">{voucher.id.slice(0, 8)}...</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Items grid */}
       <Card>
         <CardHeader>
