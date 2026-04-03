@@ -36,7 +36,9 @@ function ggrAgg(gte: Date) {
             'card_exchange', 'exchange_excess_credit',
             'deposit_bonus', 'race_prize', 'gift_card_redeemed',
             'promo_code_redeemed', 'rakeback_claim', 'balance_reward_claim',
-            'affiliate_claim', 'rain_win', 'waitlist_prize'
+            'affiliate_claim', 'rain_win', 'waitlist_prize',
+            'creator_tip', 'voucher_redeemed', 'voucher_exchange',
+            'exchange_excess_to_voucher', 'battle_excess_to_voucher'
           )
           THEN ABS(amount::numeric) ELSE 0 END), 0)
         FROM ledger_transactions

@@ -66,7 +66,8 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
           COALESCE(SUM(CASE
             WHEN type IN ('deposit_bonus', 'promo_code_redeemed', 'gift_card_redeemed',
               'rakeback_claim', 'affiliate_claim', 'rain_win', 'race_prize',
-              'creator_tip', 'waitlist_prize')
+              'creator_tip', 'waitlist_prize', 'voucher_redeemed', 'voucher_exchange',
+              'exchange_excess_credit', 'exchange_excess_to_voucher', 'battle_excess_to_voucher')
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS total_bonuses,
           COALESCE(SUM(CASE
             WHEN type = 'pack_opening'
@@ -105,7 +106,8 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
           COALESCE(SUM(CASE
             WHEN type IN ('deposit_bonus', 'promo_code_redeemed', 'gift_card_redeemed',
               'rakeback_claim', 'affiliate_claim', 'rain_win', 'race_prize',
-              'creator_tip', 'waitlist_prize')
+              'creator_tip', 'waitlist_prize', 'voucher_redeemed', 'voucher_exchange',
+              'exchange_excess_credit', 'exchange_excess_to_voucher', 'battle_excess_to_voucher')
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS total_bonuses,
           COALESCE(SUM(CASE
             WHEN type = 'pack_opening'
