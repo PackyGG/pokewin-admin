@@ -478,7 +478,15 @@ export async function getUserTransactions(
       take: perPage,
       include: {
         game_sessions_ledger_transactions_game_session_idTogame_sessions: {
-          select: { game_id: true, game_type: true },
+          select: {
+            game_id: true,
+            game_type: true,
+            provably_fair_results: {
+              select: {
+                user_inventory: { select: { value_at_obtained: true } },
+              },
+            },
+          },
         },
       },
     }),
@@ -540,28 +548,16 @@ export async function getUserTransactions(
   const cardMap = new Map(cards.map((c) => [c.id, c]));
   const inventoryMap = new Map(inventoryItems.map((i) => [i.id, { ...i, card: cardMap.get(i.card_id) ?? null }]));
 
-  // Resolve cards value for gaming transactions via provably_fair_results
-  const gamingSessionIds = transactions
-    .filter((t) => (t.type === "pack_opening" || t.type === "battle_bet" || t.type === "battle_sponsorship") && t.game_session_id)
-    .map((t) => t.game_session_id!);
-  const cardsValueBySession = new Map<string, number>();
-  if (gamingSessionIds.length > 0) {
-    try {
-      const pfResults = await db.provably_fair_results.findMany({
-        where: { game_session_id: { in: gamingSessionIds }, inventory_item_id: { not: null } },
-        select: {
-          game_session_id: true,
-          user_inventory: { select: { value_at_obtained: true } },
-        },
-      });
-      for (const pf of pfResults) {
-        if (pf.user_inventory?.value_at_obtained) {
-          const current = cardsValueBySession.get(pf.game_session_id) ?? 0;
-          cardsValueBySession.set(pf.game_session_id, current + toNumber(pf.user_inventory.value_at_obtained));
-        }
-      }
-    } catch (e) {
-      console.error("[getUserTransactions] provably_fair_results query failed:", e);
+  // Compute cards value for gaming transactions from included provably_fair_results
+  const cardsValueByTx = new Map<string, number>();
+  for (const t of transactions) {
+    if ((t.type === "pack_opening" || t.type === "battle_bet" || t.type === "battle_sponsorship") && t.game_sessions_ledger_transactions_game_session_idTogame_sessions) {
+      const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
+      const value = gs.provably_fair_results.reduce(
+        (sum, pf) => sum + (pf.user_inventory ? toNumber(pf.user_inventory.value_at_obtained) : 0),
+        0
+      );
+      cardsValueByTx.set(t.id, value);
     }
   }
 
@@ -583,7 +579,7 @@ export async function getUserTransactions(
         gameSessionId: t.game_session_id,
         packId: pack?.id ?? null,
         packName: pack?.name ?? null,
-        cardsValue: t.game_session_id ? cardsValueBySession.get(t.game_session_id) ?? null : null,
+        cardsValue: cardsValueByTx.has(t.id) ? cardsValueByTx.get(t.id)! : null,
         soldCard: soldItem?.card ? {
           name: soldItem.card.name,
           imageUrl: soldItem.card.image_url,
