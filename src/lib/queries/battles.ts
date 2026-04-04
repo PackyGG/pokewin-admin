@@ -222,6 +222,7 @@ export async function getBattleDetail(id: string) {
   // All PF results may be on the winner's game_session, but metadata.participant_id
   // tells us who originally pulled each card
   const cardsByParticipantId = new Map<string, CardEntry[]>();
+  const assignedPfResultIds = new Set<string>();
 
   for (const r of allPfResults) {
     const meta = r.result_metadata as Record<string, unknown> | null;
@@ -244,27 +245,28 @@ export async function getBattleDetail(id: string) {
     const existing = cardsByParticipantId.get(participantId) ?? [];
     existing.push(entry);
     cardsByParticipantId.set(participantId, existing);
+    assignedPfResultIds.add(r.id);
   }
 
-  // Fallback for battles where result_metadata has no participant_id:
-  // assign cards from game_session directly
+  // Fallback: supplement any participant missing cards from their game_session inventory
+  // (handles PF results with no participant_id in metadata, even if they already have some cards)
   for (const p of battle.battle_participants) {
-    if (cardsByParticipantId.has(p.id)) continue;
-    const playerCards: CardEntry[] = [];
+    const existing = cardsByParticipantId.get(p.id) ?? [];
     for (const r of p.game_sessions.provably_fair_results) {
-      if (r.user_inventory) {
-        const card = cardMap.get(r.user_inventory.card_id);
-        playerCards.push({
-          id: r.user_inventory.id,
-          cardName: card?.name ?? "Unknown",
-          imageUrl: card?.image_url ?? null,
-          rarity: card?.rarity ?? null,
-          valueAtObtained: toNumber(r.user_inventory.value_at_obtained),
-        });
-      }
+      if (assignedPfResultIds.has(r.id)) continue;
+      if (!r.user_inventory) continue;
+      const card = cardMap.get(r.user_inventory.card_id);
+      existing.push({
+        id: r.user_inventory.id,
+        cardName: card?.name ?? "Unknown",
+        imageUrl: card?.image_url ?? null,
+        rarity: card?.rarity ?? null,
+        valueAtObtained: toNumber(r.user_inventory.value_at_obtained),
+      });
+      assignedPfResultIds.add(r.id);
     }
-    if (playerCards.length > 0) {
-      cardsByParticipantId.set(p.id, playerCards);
+    if (existing.length > 0) {
+      cardsByParticipantId.set(p.id, existing);
     }
   }
 
