@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { backendApiRequest } from "@/lib/backend-api";
 
 export async function processWithdrawal(withdrawalId: string) {
   const session = await requirePageAccess("/withdrawals");
@@ -29,20 +30,13 @@ export async function processWithdrawal(withdrawalId: string) {
 
   // For crypto withdrawals, call backend to initiate the Fireblocks transfer
   if (withdrawal.method === "crypto") {
-    const res = await fetch(
-      `${process.env.BACKEND_API_URL}/admin/process-approved`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": process.env.BACKEND_API_KEY!,
-        },
-        body: JSON.stringify({ withdrawal_id: withdrawalId }),
-      }
-    );
+    let result: { data?: { fireblocks_tx_id?: string } };
 
-    if (!res.ok) {
-      const error = await res.json().catch(() => ({ message: "Unknown error" }));
+    try {
+      result = await backendApiRequest("/admin/process-approved", {
+        withdrawal_id: withdrawalId,
+      });
+    } catch (error) {
       // Revert status back to pending since the transfer failed to initiate
       await db.card_withdrawal_requests.update({
         where: { id: withdrawalId },
@@ -51,12 +45,8 @@ export async function processWithdrawal(withdrawalId: string) {
           processing_at: null,
         },
       });
-      throw new Error(
-        `Failed to initiate crypto transfer: ${error.message || res.statusText}`
-      );
+      throw error;
     }
-
-    const result = await res.json();
 
     // Store the Fireblocks transfer ID
     await db.card_withdrawal_requests.update({
@@ -134,12 +124,8 @@ export async function completeWithdrawal(withdrawalId: string) {
     throw new Error("Withdrawal cannot be completed from current status");
   }
 
-  await db.card_withdrawal_requests.update({
-    where: { id: withdrawalId },
-    data: {
-      status: "completed",
-      completed_at: new Date(),
-    },
+  await backendApiRequest("/admin/complete", {
+    withdrawal_id: withdrawalId,
   });
 
   await createAdminAuditEvent({
@@ -163,24 +149,10 @@ export async function cancelWithdrawal(withdrawalId: string, reason: string) {
     throw new Error("Withdrawal cannot be cancelled from current status");
   }
 
-  await db.$transaction([
-    db.card_withdrawal_requests.update({
-      where: { id: withdrawalId },
-      data: {
-        status: "cancelled",
-        cancelled_at: new Date(),
-        failure_reason: reason,
-      },
-    }),
-    ...(withdrawal.inventory_item_ids.length > 0
-      ? [
-          db.user_inventory.updateMany({
-            where: { id: { in: withdrawal.inventory_item_ids } },
-            data: { withdrawal_locked_at: null },
-          }),
-        ]
-      : []),
-  ]);
+  await backendApiRequest("/admin/cancel", {
+    withdrawal_id: withdrawalId,
+    reason,
+  });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -203,13 +175,9 @@ export async function failWithdrawal(withdrawalId: string, reason: string) {
     throw new Error("Only shipped withdrawals can be marked as failed");
   }
 
-  await db.card_withdrawal_requests.update({
-    where: { id: withdrawalId },
-    data: {
-      status: "failed",
-      failed_at: new Date(),
-      failure_reason: reason,
-    },
+  await backendApiRequest("/admin/fail", {
+    withdrawal_id: withdrawalId,
+    reason,
   });
 
   await createAdminAuditEvent({
