@@ -14,7 +14,7 @@ type Limits = {
   id: string;
   currencyLimitAmount: number;
   percentageLimit: number;
-  tipLimit: number;
+  tipLimit: number | null;
   currencyLimitResetDays: number | null;
 } | null;
 

@@ -42,15 +42,14 @@ model active_seeds {
 model affiliate_accounts {
   user_id                     String    @id
   total_referred              Int       @default(0)
-  total_wager_volume_usd      Decimal   @default(0.00) @db.Decimal(20, 2)
-  total_earned_usd            Decimal   @default(0.00) @db.Decimal(20, 2)
-  available_usd               Decimal   @default(0.00) @db.Decimal(20, 2)
-  total_paid_out_usd          Decimal   @default(0.00) @db.Decimal(20, 2)
-  total_bonus_distributed_usd Decimal   @default(0.00) @db.Decimal(20, 2)
+  total_wager_volume_usd      Decimal   @default(0) @db.Decimal(20, 2)
+  total_earned_usd            Decimal   @default(0) @db.Decimal(20, 2)
+  available_usd               Decimal   @default(0) @db.Decimal(20, 2)
+  total_paid_out_usd          Decimal   @default(0) @db.Decimal(20, 2)
+  total_bonus_distributed_usd Decimal   @default(0) @db.Decimal(20, 2)
   last_payout_at              DateTime? @db.Timestamp(6)
   created_at                  DateTime  @default(now()) @db.Timestamp(6)
   updated_at                  DateTime  @default(now()) @db.Timestamp(6)
-  affiliate_level             Int       @default(1)
   user                        User      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "affiliate_accounts_user_id_user_id_fk")
 }
 
@@ -84,15 +83,15 @@ model affiliate_code_usages {
   affiliate_user_id                                  String
   code                                               String
   referred_user_id                                   String
-  deposit_amount_usd                                 Decimal              @default(0.00) @db.Decimal(20, 2)
-  referrer_cut_usd                                   Decimal              @default(0.00) @db.Decimal(20, 2)
-  user_bonus_usd                                     Decimal              @default(0.00) @db.Decimal(20, 2)
+  deposit_amount_usd                                 Decimal              @default(0) @db.Decimal(20, 2)
+  referrer_cut_usd                                   Decimal              @default(0) @db.Decimal(20, 2)
+  user_bonus_usd                                     Decimal              @default(0) @db.Decimal(20, 2)
   status                                             String               @default("completed")
+  usage_type                                         affiliate_usage_type @default(deposit)
+  wager_amount_usd                                   Decimal              @default(0) @db.Decimal(20, 2)
+  game_session_id                                    String?              @db.Uuid
   created_at                                         DateTime             @default(now()) @db.Timestamp(6)
   updated_at                                         DateTime             @default(now()) @db.Timestamp(6)
-  usage_type                                         affiliate_usage_type @default(deposit)
-  wager_amount_usd                                   Decimal              @default(0.00) @db.Decimal(20, 2)
-  game_session_id                                    String?              @db.Uuid
   user_affiliate_code_usages_affiliate_user_idTouser User                 @relation("affiliate_code_usages_affiliate_user_idTouser", fields: [affiliate_user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "affiliate_code_usages_affiliate_user_id_user_id_fk")
   game_sessions                                      game_sessions?       @relation(fields: [game_session_id], references: [id], onUpdate: NoAction, map: "affiliate_code_usages_game_session_id_game_sessions_id_fk")
   user_affiliate_code_usages_referred_user_idTouser  User                 @relation("affiliate_code_usages_referred_user_idTouser", fields: [referred_user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "affiliate_code_usages_referred_user_id_user_id_fk")
@@ -101,7 +100,7 @@ model affiliate_code_usages {
 model affiliate_payouts {
   id                String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   affiliate_user_id String
-  amount_usd        Decimal                 @default(0.00) @db.Decimal(20, 2)
+  amount_usd        Decimal                 @default(0) @db.Decimal(20, 2)
   status            affiliate_payout_status @default(pending)
   metadata          Json?
   created_at        DateTime                @default(now()) @db.Timestamp(6)
@@ -112,14 +111,10 @@ model affiliate_payouts {
 model affiliate_codes {
   id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   user_id    String
-  code       String   @unique
-  is_active  Boolean  @default(true)
+  code       String   @unique(map: "affiliate_codes_code_unique")
   created_at DateTime @default(now()) @db.Timestamp(6)
   updated_at DateTime @default(now()) @db.Timestamp(6)
-  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
-
-  @@index([user_id])
-  @@index([user_id], map: "idx_affiliate_codes_user_id")
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "affiliate_codes_user_id_user_id_fk")
 }
 
 model affiliate_level_configs {
@@ -146,18 +141,18 @@ model audit_events {
 model balances {
   id                  String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   user_id             String               @unique(map: "balances_user_id_unique")
-  available_balance   Decimal              @default(0.00) @db.Decimal(20, 2)
-  locked_balance      Decimal              @default(0.00) @db.Decimal(20, 2)
-  total_deposited     Decimal              @default(0.00) @db.Decimal(20, 2)
-  total_withdrawn     Decimal              @default(0.00) @db.Decimal(20, 2)
-  total_wagered       Decimal              @default(0.00) @db.Decimal(20, 2)
-  total_won           Decimal              @default(0.00) @db.Decimal(20, 2)
+  available_balance   Decimal              @default(0) @db.Decimal(20, 2)
+  locked_balance      Decimal              @default(0) @db.Decimal(20, 2)
+  total_deposited     Decimal              @default(0) @db.Decimal(20, 2)
+  total_withdrawn     Decimal              @default(0) @db.Decimal(20, 2)
+  total_wagered       Decimal              @default(0) @db.Decimal(20, 2)
+  total_won           Decimal              @default(0) @db.Decimal(20, 2)
+  bonus_points        Int                  @default(0)
   last_transaction_id String?              @db.Uuid
+  unlock_at           DateTime?            @db.Timestamp(6)
   version             Int                  @default(1)
   created_at          DateTime             @default(now()) @db.Timestamp(6)
   updated_at          DateTime             @default(now()) @db.Timestamp(6)
-  bonus_points        Int                  @default(0)
-  unlock_at           DateTime?            @db.Timestamp(6)
   ledger_transactions ledger_transactions? @relation(fields: [last_transaction_id], references: [id], onUpdate: NoAction, map: "balances_last_transaction_id_ledger_transactions_id_fk")
   user                User                 @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "balances_user_id_user_id_fk")
 }
@@ -175,19 +170,16 @@ model battle_participants {
   battle_id       String        @db.Uuid
   game_session_id String        @unique(map: "battle_participants_game_session_id_unique") @db.Uuid
   user_id         String?
+  bot_id          String?       @db.Uuid
   team_number     Int
+  team_position   Int           @default(0)
   client_seed     String
   created_at      DateTime      @default(now()) @db.Timestamp(6)
   updated_at      DateTime      @default(now()) @db.Timestamp(6)
-  bot_id          String?       @db.Uuid
-  team_position   Int           @default(0)
   battles         battles       @relation(fields: [battle_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "battle_participants_battle_id_battles_id_fk")
   bots            bots?         @relation(fields: [bot_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "battle_participants_bot_id_bots_id_fk")
   game_sessions   game_sessions @relation(fields: [game_session_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "battle_participants_game_session_id_game_sessions_id_fk")
   user            User?         @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "battle_participants_user_id_user_id_fk")
-
-  @@index([battle_id], map: "idx_battle_participants_battle_id")
-  @@index([user_id], map: "idx_battle_participants_user_id", where: raw("(user_id IS NOT NULL)"))
 }
 
 model battles {
@@ -203,17 +195,17 @@ model battles {
   server_seed               String
   server_seed_hash          String
   eos_block_hash            String?
-  created_at                DateTime                @default(now()) @db.Timestamp(6)
-  updated_at                DateTime                @default(now()) @db.Timestamp(6)
   region_code               region_code             @default(NA)
   additional_settings       String[]                @default([])
   animation_complete_at     DateTime?               @db.Timestamp(6)
   password                  String?
   sponsorship_percentage    Int                     @default(0)
-  sponsorship_amount_paid   Decimal                 @default(0.00) @db.Decimal(20, 2)
+  sponsorship_amount_paid   Decimal                 @default(0) @db.Decimal(20, 2)
   borrow_percentage         Int                     @default(0)
-  pending_distribution_data Json?
   total_unpacked            Decimal?                @db.Decimal(20, 2)
+  pending_distribution_data Json?
+  created_at                DateTime                @default(now()) @db.Timestamp(6)
+  updated_at                DateTime                @default(now()) @db.Timestamp(6)
   battle_participants       battle_participants[]
   user                      User                    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "battles_user_id_user_id_fk")
   provably_fair_results     provably_fair_results[]
@@ -225,9 +217,9 @@ model bots {
   id                  String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   username            String                @unique(map: "bots_username_unique") @db.VarChar(50)
   image_url           String?
-  total_wagered_usd   Decimal               @default(0.00) @db.Decimal(20, 2)
-  total_won_usd       Decimal               @default(0.00) @db.Decimal(20, 2)
-  total_lost_usd      Decimal               @default(0.00) @db.Decimal(20, 2)
+  total_wagered_usd   Decimal               @default(0) @db.Decimal(20, 2)
+  total_won_usd       Decimal               @default(0) @db.Decimal(20, 2)
+  total_lost_usd      Decimal               @default(0) @db.Decimal(20, 2)
   battles_played      Int                   @default(0)
   battles_won         Int                   @default(0)
   is_active           Boolean               @default(true)
@@ -251,6 +243,7 @@ model card_withdrawal_requests {
   crypto_amount                                    Decimal?               @db.Decimal(20, 8)
   exchange_rate                                    Decimal?               @db.Decimal(20, 8)
   destination_address                              String?
+  fireblocks_tx_id                                 String?                @unique(map: "card_withdrawal_requests_fireblocks_tx_id_unique")
   tx_hash                                          String?
   status                                           card_withdrawal_status @default(pending)
   failure_reason                                   String?
@@ -262,15 +255,14 @@ model card_withdrawal_requests {
   cancelled_at                                     DateTime?              @db.Timestamp(6)
   processed_by                                     String?
   shipped_by                                       String?
-  ip_address                                       String?
-  metadata                                         Json?
-  created_at                                       DateTime               @default(now()) @db.Timestamp(6)
-  updated_at                                       DateTime               @default(now()) @db.Timestamp(6)
   requires_confirmation                            Boolean                @default(false)
   confirmation_reason                              String?
   confirmed_at                                     DateTime?              @db.Timestamp(6)
   confirmed_by                                     String?
-  fireblocks_tx_id                                 String?                @unique(map: "card_withdrawal_requests_fireblocks_tx_id_unique")
+  ip_address                                       String?
+  metadata                                         Json?
+  created_at                                       DateTime               @default(now()) @db.Timestamp(6)
+  updated_at                                       DateTime               @default(now()) @db.Timestamp(6)
   user_card_withdrawal_requests_confirmed_byTouser User?                  @relation("card_withdrawal_requests_confirmed_byTouser", fields: [confirmed_by], references: [id], onUpdate: NoAction, map: "card_withdrawal_requests_confirmed_by_user_id_fk")
   user_card_withdrawal_requests_processed_byTouser User?                  @relation("card_withdrawal_requests_processed_byTouser", fields: [processed_by], references: [id], onUpdate: NoAction, map: "card_withdrawal_requests_processed_by_user_id_fk")
   user_card_withdrawal_requests_shipped_byTouser   User?                  @relation("card_withdrawal_requests_shipped_byTouser", fields: [shipped_by], references: [id], onUpdate: NoAction, map: "card_withdrawal_requests_shipped_by_user_id_fk")
@@ -278,23 +270,22 @@ model card_withdrawal_requests {
 }
 
 model cards {
-  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name           String
-  image_url      String
-  created_at     DateTime         @default(now()) @db.Timestamp(6)
-  updated_at     DateTime         @default(now()) @db.Timestamp(6)
-  set_id         String?          @db.Uuid
-  price          Decimal          @db.Decimal(20, 2)
-  hp             Int?             @default(0)
-  rarity         String?
-  artist         String?
-  tcgplayer_id   Int?             @unique(map: "cards_tcgplayer_id_unique")
-  type           String           @default("card")
-  card_number    String?
-  price_raw      Decimal          @db.Decimal(20, 2)
-  sets           sets?            @relation(fields: [set_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "cards_set_id_sets_id_fk")
-  pack_cards     pack_cards[]
-  user_inventory user_inventory[]
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String
+  image_url    String
+  price        Decimal      @db.Decimal(20, 2)
+  price_raw    Decimal      @db.Decimal(20, 2)
+  hp           Int?         @default(0)
+  rarity       String?
+  artist       String?
+  card_number  String?
+  type         String       @default("card")
+  tcgplayer_id Int?         @unique(map: "cards_tcgplayer_id_unique")
+  set_id       String?      @db.Uuid
+  created_at   DateTime     @default(now()) @db.Timestamp(6)
+  updated_at   DateTime     @default(now()) @db.Timestamp(6)
+  sets         sets?        @relation(fields: [set_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "cards_set_id_sets_id_fk")
+  pack_cards   pack_cards[]
 
   @@index([card_number], map: "idx_cards_card_number")
   @@index([type], map: "idx_cards_type")
@@ -316,16 +307,16 @@ model chat_messages {
 
 model country_restrictions {
   country_code              String   @id
+  blocked                   Boolean  @default(false)
   physical_withdrawal       Boolean  @default(true)
   digital_withdrawal        Boolean  @default(true)
   gift_card_deposit         Boolean  @default(true)
   promo_code_deposit        Boolean  @default(true)
-  created_at                DateTime @default(now()) @db.Timestamp(6)
-  updated_at                DateTime @default(now()) @db.Timestamp(6)
-  blocked                   Boolean  @default(false)
   locked_deposits_crypto    String[] @default([])
   locked_deposits_fiat      String[] @default([])
   locked_withdrawals_crypto String[] @default([])
+  created_at                DateTime @default(now()) @db.Timestamp(6)
+  updated_at                DateTime @default(now()) @db.Timestamp(6)
 }
 
 model creator_withdrawal_limits {
@@ -337,20 +328,7 @@ model creator_withdrawal_limits {
   percentage_limit          Decimal?  @db.Decimal(5, 4)
   created_at                DateTime  @default(now()) @db.Timestamp(6)
   updated_at                DateTime  @default(now()) @db.Timestamp(6)
-  tip_limit                 Decimal?  @db.Decimal(20, 2)
-  tip_limit_reset_days      Int?
   user                      User      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "creator_withdrawal_limits_user_id_user_id_fk")
-}
-
-model creator_tip_tracking {
-  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  sender_user_id   String
-  receiver_user_id String
-  amount           Decimal  @db.Decimal(20, 2)
-  period_start     DateTime @db.Timestamp(6)
-  created_at       DateTime @default(now()) @db.Timestamp(6)
-
-  @@index([sender_user_id, period_start])
 }
 
 model deposit_addresses {
@@ -366,22 +344,20 @@ model deposit_addresses {
   user                User                  @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "deposit_addresses_user_id_user_id_fk")
   vaults              vaults                @relation(fields: [vault_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "deposit_addresses_vault_id_vaults_id_fk")
   ledger_transactions ledger_transactions[]
-
-  @@unique([address, asset_id], map: "deposit_addresses_address_asset_unique")
 }
 
 model game_sessions {
   id                                                                      String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   user_id                                                                 String?
+  bot_id                                                                  String?                 @db.Uuid
   game_type                                                               game_type
   game_id                                                                 String                  @db.Uuid
   bet_amount                                                              Decimal                 @db.Decimal(20, 2)
   result                                                                  game_session_result?
   bet_ledger_tx_id                                                        String?                 @db.Uuid
+  user_reward_id                                                          String?                 @db.Uuid
   created_at                                                              DateTime                @default(now()) @db.Timestamp(6)
   updated_at                                                              DateTime                @default(now()) @db.Timestamp(6)
-  bot_id                                                                  String?                 @db.Uuid
-  user_reward_id                                                          String?                 @db.Uuid
   affiliate_code_usages                                                   affiliate_code_usages[]
   battle_participants                                                     battle_participants?
   ledger_transactions_game_sessions_bet_ledger_tx_idToledger_transactions ledger_transactions?    @relation("game_sessions_bet_ledger_tx_idToledger_transactions", fields: [bet_ledger_tx_id], references: [id], onUpdate: NoAction, map: "game_sessions_bet_ledger_tx_id_ledger_transactions_id_fk")
@@ -392,6 +368,8 @@ model game_sessions {
 
 model gift_cards {
   id                  String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code                String?              @db.VarChar(32)
+  code_hash           String?              @db.VarChar(64)
   value               Decimal              @db.Decimal(20, 2)
   region              gift_card_region
   redeemed_at         DateTime?            @db.Timestamp(6)
@@ -401,8 +379,6 @@ model gift_cards {
   metadata            Json?
   created_at          DateTime             @default(now()) @db.Timestamp(6)
   updated_at          DateTime             @default(now()) @db.Timestamp(6)
-  code_hash           String?              @db.VarChar(64)
-  code                String?              @db.VarChar(32)
   ledger_transactions ledger_transactions? @relation(fields: [ledger_tx_id], references: [id], onUpdate: NoAction, map: "gift_cards_ledger_tx_id_ledger_transactions_id_fk")
   user                User?                @relation(fields: [redeemed_by_user_id], references: [id], onUpdate: NoAction, map: "gift_cards_redeemed_by_user_id_user_id_fk")
 }
@@ -418,6 +394,8 @@ model ledger_transactions {
   crypto_asset                                                      String?
   crypto_amount                                                     Decimal?                  @db.Decimal(20, 8)
   exchange_rate                                                     Decimal?                  @db.Decimal(20, 8)
+  fireblocks_tx_id                                                  String?                   @unique(map: "ledger_transactions_fireblocks_tx_id_unique")
+  external_tx_id                                                    String?                   @unique(map: "ledger_transactions_external_tx_id_unique")
   blockchain_tx_hash                                                String?
   source_address                                                    String?
   destination_address                                               String?
@@ -428,8 +406,6 @@ model ledger_transactions {
   metadata                                                          Json?
   created_at                                                        DateTime                  @default(now()) @db.Timestamp(6)
   updated_at                                                        DateTime                  @default(now()) @db.Timestamp(6)
-  fireblocks_tx_id                                                  String?                   @unique(map: "ledger_transactions_fireblocks_tx_id_unique")
-  external_tx_id                                                    String?                   @unique(map: "ledger_transactions_external_tx_id_unique")
   balances                                                          balances[]
   game_sessions_game_sessions_bet_ledger_tx_idToledger_transactions game_sessions[]           @relation("game_sessions_bet_ledger_tx_idToledger_transactions")
   gift_cards                                                        gift_cards[]
@@ -446,9 +422,9 @@ model pack_cards {
   pack_id   String  @db.Uuid
   card_id   String  @db.Uuid
   weight    Int     @default(1)
+  order     Int     @default(0)
   color     String?
   animation Boolean @default(false)
-  order     Int     @default(0)
   cards     cards   @relation(fields: [card_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "pack_cards_card_id_cards_id_fk")
   packs     packs   @relation(fields: [pack_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "pack_cards_pack_id_packs_id_fk")
 
@@ -471,22 +447,22 @@ model pack_favorites {
 model packs {
   id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name              String           @db.VarChar(60)
+  slug              String           @unique(map: "packs_slug_unique") @db.VarChar(60)
   description       String?
   image_url         String?
   active            Boolean          @default(true)
-  price             Decimal          @db.Decimal(20, 2)
-  created_at        DateTime         @default(now()) @db.Timestamp(6)
-  updated_at        DateTime         @default(now()) @db.Timestamp(6)
-  cards_per_open    Int              @default(5)
-  slug              String           @unique(map: "packs_slug_unique") @db.VarChar(60)
-  total_openings    BigInt           @default(0)
-  total_revenue     Decimal          @default(0.00) @db.Decimal(20, 2)
-  total_payout      Decimal          @default(0.00) @db.Decimal(20, 2)
-  actual_rtp        Decimal          @default(0.0000) @db.Decimal(10, 4)
-  actual_house_edge Decimal          @default(0.0000) @db.Decimal(10, 4)
   pack_type         String           @default("official")
+  cards_per_open    Int              @default(5)
   difficulty        Float?           @db.Real
   tags              pack_tag[]
+  price             Decimal          @db.Decimal(20, 2)
+  total_openings    BigInt           @default(0)
+  total_revenue     Decimal          @default(0) @db.Decimal(20, 2)
+  total_payout      Decimal          @default(0) @db.Decimal(20, 2)
+  actual_rtp        Decimal          @default(0) @db.Decimal(10, 4)
+  actual_house_edge Decimal          @default(0) @db.Decimal(10, 4)
+  created_at        DateTime         @default(now()) @db.Timestamp(6)
+  updated_at        DateTime         @default(now()) @db.Timestamp(6)
   pack_cards        pack_cards[]
   pack_favorites    pack_favorites[]
   user_packs        user_packs[]
@@ -523,16 +499,15 @@ model promo_codes {
   value                    Decimal                  @db.Decimal(20, 2)
   region                   gift_card_region
   minimum_level            Int                      @default(0)
-  minimum_wager_amount     Decimal                  @default(0.00) @db.Decimal(20, 2)
+  minimum_wager_amount     Decimal                  @default(0) @db.Decimal(20, 2)
   wager_period_days        Int                      @default(0)
+  minimum_account_age_days Int                      @default(0)
+  requires_discord         Boolean                  @default(true)
+  max_uses                 Int                      @default(1)
   expires_at               DateTime?                @db.Timestamp(6)
   metadata                 Json?
   created_at               DateTime                 @default(now()) @db.Timestamp(6)
   updated_at               DateTime                 @default(now()) @db.Timestamp(6)
-  max_uses                 Int                      @default(1)
-  minimum_account_age_days Int                      @default(0)
-  requires_discord         Boolean                  @default(true)
-  code                     String?                  @db.VarChar(64)
   promo_code_redemptions   promo_code_redemptions[]
 }
 
@@ -542,6 +517,7 @@ model provably_fair_results {
   battle_id         String?         @db.Uuid
   inventory_item_id String?         @db.Uuid
   client_seed       String
+  server_seed       String?
   server_seed_hash  String
   nonce             Int
   cursor            Int             @default(0)
@@ -550,12 +526,9 @@ model provably_fair_results {
   result_metadata   Json?
   created_at        DateTime        @default(now()) @db.Timestamp(6)
   updated_at        DateTime        @default(now()) @db.Timestamp(6)
-  server_seed       String?
   battles           battles?        @relation(fields: [battle_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "provably_fair_results_battle_id_battles_id_fk")
   game_sessions     game_sessions   @relation(fields: [game_session_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "provably_fair_results_game_session_id_game_sessions_id_fk")
   user_inventory    user_inventory? @relation(fields: [inventory_item_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "provably_fair_results_inventory_item_id_user_inventory_id_fk")
-
-  @@index([battle_id], map: "idx_provably_fair_results_battle_id", where: raw("(battle_id IS NOT NULL)"))
 }
 
 model race_claims {
@@ -619,19 +592,19 @@ model raffles {
   name                 String           @db.VarChar(100)
   description          String?
   status               raffle_status    @default(active)
+  prizes               Json             @default("[]")
   min_points_per_entry Int?
   max_points_per_entry Int?
   starts_at            DateTime         @default(now()) @db.Timestamp(6)
   ends_at              DateTime         @db.Timestamp(6)
   winner_user_id       String?
   winner_entry_id      String?          @db.Uuid
+  participant_count    Int              @default(0)
   total_entries        Int              @default(0)
   completed_at         DateTime?        @db.Timestamp(6)
   metadata             Json?
   created_at           DateTime         @default(now()) @db.Timestamp(6)
   updated_at           DateTime         @default(now()) @db.Timestamp(6)
-  participant_count    Int              @default(0)
-  prizes               Json             @default("[]")
   raffle_entries       raffle_entries[]
   user                 User?            @relation(fields: [winner_user_id], references: [id], onUpdate: NoAction, map: "raffles_winner_user_id_user_id_fk")
 }
@@ -663,9 +636,9 @@ model rain_tips {
 
 model rains {
   id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  base_amount_usd   Decimal        @default(2.00) @db.Decimal(10, 2)
-  tip_amount_usd    Decimal        @default(0.00) @db.Decimal(10, 2)
-  total_pool_usd    Decimal        @default(2.00) @db.Decimal(10, 2)
+  base_amount_usd   Decimal        @default(2) @db.Decimal(10, 2)
+  tip_amount_usd    Decimal        @default(0) @db.Decimal(10, 2)
+  total_pool_usd    Decimal        @default(2) @db.Decimal(10, 2)
   status            rain_status    @default(active)
   starts_at         DateTime       @db.Timestamp(6)
   ends_at           DateTime       @db.Timestamp(6)
@@ -719,11 +692,11 @@ model rewards {
   name           String
   pack_ids       String[]       @db.Uuid
   metadata       Json?
-  created_at     DateTime       @default(now()) @db.Timestamp(6)
-  updated_at     DateTime       @default(now()) @db.Timestamp(6)
   type           reward_type    @default(one_time)
   level_required Int            @default(0)
   cash_amount    Decimal?       @db.Decimal(10, 2)
+  created_at     DateTime       @default(now()) @db.Timestamp(6)
+  updated_at     DateTime       @default(now()) @db.Timestamp(6)
   user_rewards   user_rewards[]
 }
 
@@ -749,11 +722,11 @@ model Session {
   expiresAt    DateTime  @db.Timestamp(6)
   ipAddress    String?
   userAgent    String?
-  created_at   DateTime? @default(now()) @db.Timestamp(6)
-  updated_at   DateTime? @db.Timestamp(6)
   country      String?
   country_code String?
   city         String?
+  created_at   DateTime? @default(now()) @db.Timestamp(6)
+  updated_at   DateTime? @db.Timestamp(6)
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "session_userId_user_id_fk")
 
   @@index([userId], map: "idx_session_user_id")
@@ -763,13 +736,13 @@ model Session {
 model sets {
   id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name         String
-  release_date DateTime? @db.Timestamp(6)
-  image_url    String
   series       String
+  image_url    String
+  language     String
+  release_date DateTime? @db.Timestamp(6)
+  tcgplayer_id Int       @unique(map: "sets_tcgplayer_id_unique")
   created_at   DateTime  @default(now()) @db.Timestamp(6)
   updated_at   DateTime  @default(now()) @db.Timestamp(6)
-  language     String
-  tcgplayer_id Int       @unique(map: "sets_tcgplayer_id_unique")
   cards        cards[]
 }
 
@@ -804,20 +777,23 @@ model User {
   email                                                                 String?                      @unique(map: "user_email_unique")
   email_verified                                                        Boolean                      @default(false)
   image                                                                 String?
+  name                                                                  String?
   username                                                              String?                      @unique(map: "user_username_unique")
+  display_username                                                      String?
   two_factor_enabled                                                    Boolean?                     @default(false)
-  created_at                                                            DateTime                     @default(now()) @db.Timestamp(6)
-  updated_at                                                            DateTime                     @default(now()) @db.Timestamp(6)
+  role                                                                  user_role                    @default(user)
   country                                                               String?
   country_code                                                          String?
-  city                                                                  String?
-  signup_ip                                                             String?
   continent_code                                                        String                       @default("NA")
   state                                                                 String?
+  city                                                                  String?
+  signup_ip                                                             String?
   affiliate_code                                                        String?
   affiliate_code_expires_at                                             DateTime?                    @db.Timestamp(6)
   affiliate_code_active                                                 Boolean?                     @default(false)
-  role                                                                  user_role                    @default(user)
+  affiliate_bonus_opted_in                                              Boolean?                     @default(false)
+  referred_by                                                           String?
+  api_key                                                               String?                      @unique(map: "user_api_key_unique")
   is_locked                                                             Boolean                      @default(false)
   locked_reason                                                         String?
   locked_at                                                             DateTime?                    @db.Timestamp(6)
@@ -827,13 +803,10 @@ model User {
   banned_reason                                                         String?
   banned_at                                                             DateTime?                    @db.Timestamp(6)
   banned_by                                                             String?
-  api_key                                                               String?                      @unique(map: "user_api_key_unique")
-  referred_by                                                           String?
-  affiliate_bonus_opted_in                                              Boolean?                     @default(false)
-  name                                                                  String?
-  display_username                                                      String?
   is_suspected_alt                                                      Boolean                      @default(false)
   suspected_alt_at                                                      DateTime?                    @db.Timestamp(6)
+  created_at                                                            DateTime                     @default(now()) @db.Timestamp(6)
+  updated_at                                                            DateTime                     @default(now()) @db.Timestamp(6)
   account                                                               account[]
   active_seeds                                                          active_seeds?
   affiliate_accounts                                                    affiliate_accounts?
@@ -854,6 +827,7 @@ model User {
   chat_messages_chat_messages_user_idTouser                             chat_messages[]              @relation("chat_messages_user_idTouser")
   creator_withdrawal_limits                                             creator_withdrawal_limits?
   deposit_addresses                                                     deposit_addresses[]
+  fingerprints                                                          fingerprints[]
   game_sessions                                                         game_sessions[]
   gift_cards                                                            gift_cards[]
   ledger_transactions                                                   ledger_transactions[]
@@ -896,6 +870,12 @@ model User {
 model user_feature_locks {
   id                                                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   user_id                                                 String    @unique(map: "user_feature_locks_user_id_unique")
+  locked_deposits_crypto                                  String[]  @default([])
+  locked_deposits_fiat                                    String[]  @default([])
+  locked_deposits_at                                      DateTime? @db.Timestamp(6)
+  locked_deposits_by                                      String?
+  locked_deposits_reason                                  String?
+  locked_withdrawals_crypto                               String[]  @default([])
   locked_withdrawals_items                                Boolean   @default(false)
   locked_withdrawals_at                                   DateTime? @db.Timestamp(6)
   locked_withdrawals_by                                   String?
@@ -909,17 +889,11 @@ model user_feature_locks {
   locked_openings                                         Boolean   @default(false)
   locked_openings_at                                      DateTime? @db.Timestamp(6)
   locked_openings_by                                      String?
-  created_at                                              DateTime  @default(now()) @db.Timestamp(6)
-  updated_at                                              DateTime  @default(now()) @db.Timestamp(6)
   locked_vault                                            Boolean   @default(false)
   locked_vault_at                                         DateTime? @db.Timestamp(6)
   locked_vault_by                                         String?
-  locked_deposits_crypto                                  String[]  @default([])
-  locked_deposits_fiat                                    String[]  @default([])
-  locked_deposits_at                                      DateTime? @db.Timestamp(6)
-  locked_deposits_by                                      String?
-  locked_deposits_reason                                  String?
-  locked_withdrawals_crypto                               String[]  @default([])
+  created_at                                              DateTime  @default(now()) @db.Timestamp(6)
+  updated_at                                              DateTime  @default(now()) @db.Timestamp(6)
   user_user_feature_locks_locked_deposits_byTouser        User?     @relation("user_feature_locks_locked_deposits_byTouser", fields: [locked_deposits_by], references: [id], onUpdate: NoAction, map: "user_feature_locks_locked_deposits_by_user_id_fk")
   user_user_feature_locks_locked_exchanges_byTouser       User?     @relation("user_feature_locks_locked_exchanges_byTouser", fields: [locked_exchanges_by], references: [id], onUpdate: NoAction, map: "user_feature_locks_locked_exchanges_by_user_id_fk")
   user_user_feature_locks_locked_inventory_sales_byTouser User?     @relation("user_feature_locks_locked_inventory_sales_byTouser", fields: [locked_inventory_sales_by], references: [id], onUpdate: NoAction, map: "user_feature_locks_locked_inventory_sales_by_user_id_fk")
@@ -940,14 +914,11 @@ model user_inventory {
   obtained_at           DateTime                @default(now()) @db.Timestamp(6)
   sold_at               DateTime?               @db.Timestamp(6)
   exchanged_at          DateTime?               @db.Timestamp(6)
+  withdrawal_locked_at  DateTime?               @db.Timestamp(6)
   created_at            DateTime                @default(now()) @db.Timestamp(6)
   updated_at            DateTime                @default(now()) @db.Timestamp(6)
-  withdrawal_locked_at  DateTime?               @db.Timestamp(6)
   provably_fair_results provably_fair_results[]
-  cards                 cards                   @relation(fields: [card_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "user_inventory_card_id_cards_id_fk")
   user                  User                    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "user_inventory_user_id_user_id_fk")
-
-  @@index([source_type, source_id], map: "idx_user_inventory_source", where: raw("(source_id IS NOT NULL)"))
 }
 
 model user_mutes {
@@ -985,11 +956,11 @@ model user_rewards {
   granted_at               DateTime  @default(now()) @db.Timestamp(6)
   opened_at                DateTime? @db.Timestamp(6)
   metadata                 Json?
-  created_at               DateTime  @default(now()) @db.Timestamp(6)
-  updated_at               DateTime  @default(now()) @db.Timestamp(6)
   daily_period_start       DateTime? @db.Timestamp(6)
   daily_unlock_xp_baseline Int?
   last_claimed_at          DateTime? @db.Timestamp(6)
+  created_at               DateTime  @default(now()) @db.Timestamp(6)
+  updated_at               DateTime  @default(now()) @db.Timestamp(6)
   rewards                  rewards   @relation(fields: [reward_id], references: [id], onUpdate: NoAction, map: "user_rewards_reward_id_rewards_id_fk")
   user                     User      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "user_rewards_user_id_user_id_fk")
 }
@@ -1000,18 +971,18 @@ model user_statistics {
   opened_packs_count        Int       @default(0)
   battles_played            Int       @default(0)
   xp                        Int       @default(0)
+  level                     Int       @default(0)
+  current_day_start         DateTime  @default(dbgenerated("(date_trunc('day'::text, now()))::date")) @db.Date
+  current_day_wagered_usd   Decimal   @default(0) @db.Decimal(20, 2)
+  current_week_start        DateTime  @default(dbgenerated("(date_trunc('week'::text, now()))::date")) @db.Date
+  current_week_wagered_usd  Decimal   @default(0) @db.Decimal(20, 2)
+  current_month_start       DateTime  @default(dbgenerated("(date_trunc('month'::text, now()))::date")) @db.Date
+  current_month_wagered_usd Decimal   @default(0) @db.Decimal(20, 2)
+  last_wagered_at           DateTime? @db.Timestamp(6)
+  weekly_wager_count        Int       @default(0)
+  is_profile_private        Boolean   @default(false)
   created_at                DateTime  @default(now()) @db.Timestamp(6)
   updated_at                DateTime  @default(now()) @db.Timestamp(6)
-  weekly_wager_count        Int       @default(0)
-  last_wagered_at           DateTime? @db.Timestamp(6)
-  current_day_start         DateTime  @default(dbgenerated("(date_trunc('day'::text, now()))::date")) @db.Date
-  current_day_wagered_usd   Decimal   @default(0.00) @db.Decimal(20, 2)
-  current_week_start        DateTime  @default(dbgenerated("(date_trunc('week'::text, now()))::date")) @db.Date
-  current_week_wagered_usd  Decimal   @default(0.00) @db.Decimal(20, 2)
-  level                     Int       @default(0)
-  is_profile_private        Boolean   @default(false)
-  current_month_start       DateTime  @default(dbgenerated("(date_trunc('month'::text, now()))::date")) @db.Date
-  current_month_wagered_usd Decimal   @default(0.00) @db.Decimal(20, 2)
   user                      User      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "user_statistics_user_id_user_id_fk")
 }
 
@@ -1026,11 +997,11 @@ model vault_lock_times {
 model vaults {
   id                  String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   user_id             String              @unique(map: "vaults_user_id_unique")
+  fireblocks_vault_id String?
   name                String
   customer_ref_id     String?
   created_at          DateTime            @default(now()) @db.Timestamp(6)
   updated_at          DateTime            @default(now()) @db.Timestamp(6)
-  fireblocks_vault_id String?
   deposit_addresses   deposit_addresses[]
   user                User                @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "vaults_user_id_user_id_fk")
 }
@@ -1071,17 +1042,28 @@ model wager_period_snapshots {
   @@unique([user_id, period_type, period_start], map: "wager_period_snapshots_user_id_period_type_period_start_unique")
 }
 
-model schema_migrations {
-  version BigInt  @id
-  dirty   Boolean
-}
-
 model site_config {
   key         String   @id
   value       String
   description String?
   created_at  DateTime @default(now()) @db.Timestamp(6)
   updated_at  DateTime @default(now()) @updatedAt @db.Timestamp(6)
+}
+
+model fingerprints {
+  id                      String                 @id
+  user_id                 String?
+  visitor_id              String
+  request_id              String                 @unique(map: "idx_fingerprints_request_id")
+  confidence              Float                  @db.Real
+  event_type              fingerprint_event_type
+  suspected_alt_triggered Boolean                @default(false)
+  ip                      String?                @db.Inet
+  created_at              DateTime               @default(now()) @db.Timestamptz(6)
+  user                    User?                  @relation(fields: [user_id], references: [id], onUpdate: NoAction, map: "fingerprints_user_id_user_id_fk")
+
+  @@index([user_id], map: "idx_fingerprints_user_id")
+  @@index([visitor_id], map: "idx_fingerprints_visitor_id")
 }
 
 enum affiliate_payout_status {
@@ -1119,6 +1101,7 @@ enum audit_event_type {
   account_unlocked
   account_banned
   account_unbanned
+  alt_account_detected
   chat_muted
   chat_unmuted
   chat_banned
@@ -1141,7 +1124,6 @@ enum audit_event_type {
   openings_unlocked
   crypto_withdrawal_processed
   error
-  alt_account_detected
 }
 
 enum battle_mode {
@@ -1282,7 +1264,6 @@ enum voucher_origin {
   exchange_excess_to_voucher
   battle_excess_to_voucher
   pack_borrow_to_voucher
-  manual
 }
 
 enum pack_tag {
@@ -1291,3 +1272,10 @@ enum pack_tag {
   pct10   @map("%10")
   fifty50 @map("50/50")
 }
+
+enum fingerprint_event_type {
+  login
+  signup
+}
+
+

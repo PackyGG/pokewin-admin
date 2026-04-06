@@ -99,20 +99,23 @@ export async function getCards(params: {
 }
 
 export async function getCardDetail(id: string) {
-  const card = await db.cards.findUnique({
-    where: { id },
-    include: {
-      sets: { select: { id: true, name: true } },
-      pack_cards: {
-        include: {
-          packs: { select: { id: true, name: true, image_url: true } },
+  const [card, inventoryCountRows] = await Promise.all([
+    db.cards.findUnique({
+      where: { id },
+      include: {
+        sets: { select: { id: true, name: true } },
+        pack_cards: {
+          include: {
+            packs: { select: { id: true, name: true, image_url: true } },
+          },
         },
       },
-      _count: {
-        select: { user_inventory: true },
-      },
-    },
-  });
+    }),
+    db.$queryRawUnsafe<{ count: string }[]>(
+      `SELECT COUNT(*)::text AS count FROM user_inventory WHERE card_id = $1`,
+      id
+    ),
+  ]);
 
   if (!card) return null;
 
@@ -129,8 +132,8 @@ export async function getCardDetail(id: string) {
     cardNumber: card.card_number,
     setId: card.set_id,
     setName: card.sets?.name ?? null,
-    inventoryCount: card._count.user_inventory,
-    packs: card.pack_cards.map((pc) => ({
+    inventoryCount: Number(inventoryCountRows[0]?.count ?? 0),
+    packs: card.pack_cards.map((pc: { packs: { id: string; name: string; image_url: string | null } }) => ({
       id: pc.packs.id,
       name: pc.packs.name,
       imageUrl: pc.packs.image_url,

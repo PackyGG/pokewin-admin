@@ -1129,7 +1129,7 @@ export async function getProvablyFairResults(
         user_inventory: {
           select: {
             value_at_obtained: true,
-            cards: { select: { name: true } },
+            card_id: true,
           },
         },
       },
@@ -1150,7 +1150,7 @@ export async function getProvablyFairResults(
       resultMetadata: r.result_metadata,
       gameType: r.game_sessions.game_type,
       battleId: r.battle_id,
-      cardName: r.user_inventory?.cards?.name ?? null,
+      cardName: null,
       cardValue: r.user_inventory ? toNumber(r.user_inventory.value_at_obtained) : null,
       createdAt: r.created_at.toISOString(),
     })),

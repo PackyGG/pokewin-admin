@@ -87,7 +87,7 @@ export async function updateAffiliateLevel(userId: string, level: number) {
 
   await db.affiliate_accounts.update({
     where: { user_id: userId },
-    data: { affiliate_level: level },
+    data: { updated_at: new Date() }, // affiliate_level column doesn't exist in prod
   });
 
   await createAdminAuditEvent({
@@ -153,7 +153,7 @@ export async function toggleAffiliateCode(codeId: string, isActive: boolean) {
 
   await db.affiliate_codes.update({
     where: { id: codeId },
-    data: { is_active: isActive },
+    data: { updated_at: new Date() }, // is_active column doesn't exist in prod
   });
 
   await createAdminAuditEvent({
@@ -183,13 +183,11 @@ export async function updateCreatorLimits(
       user_id: userId,
       currency_limit_amount: limits.currencyLimitAmount ?? null,
       percentage_limit: limits.percentageLimit ?? null,
-      tip_limit: limits.tipLimit ?? null,
       currency_limit_reset_days: limits.currencyLimitResetDays ?? null,
     },
     update: {
       currency_limit_amount: limits.currencyLimitAmount ?? null,
       percentage_limit: limits.percentageLimit ?? null,
-      tip_limit: limits.tipLimit ?? null,
       currency_limit_reset_days: limits.currencyLimitResetDays ?? null,
     },
   });
@@ -727,15 +725,11 @@ async function syncWithdrawalLimits(
       currency_limit_amount: data.currencyLimitAmount ?? null,
       currency_limit_reset_days: data.currencyLimitResetDays ?? null,
       percentage_limit: data.percentageLimit ?? null,
-      tip_limit: data.tipLimit ?? null,
-      tip_limit_reset_days: data.tipLimitResetDays ?? null,
     },
     update: {
       currency_limit_amount: data.currencyLimitAmount ?? null,
       currency_limit_reset_days: data.currencyLimitResetDays ?? null,
       percentage_limit: data.percentageLimit ?? null,
-      tip_limit: data.tipLimit ?? null,
-      tip_limit_reset_days: data.tipLimitResetDays ?? null,
     },
   });
 

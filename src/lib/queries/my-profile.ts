@@ -109,7 +109,7 @@ export async function getMyProfileData(adminUserId: string) {
     email: mainUser.email,
     code: mainUser.affiliate_code ?? "",
     codeActive: mainUser.affiliate_code_active ?? false,
-    level: account?.affiliate_level ?? 1,
+    level: 1,
     linked: true,
     totalReferred: referrals.length,
     totalWagerVolumeUsd: account ? toNumber(account.total_wager_volume_usd) : 0,

@@ -274,7 +274,6 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
     where: { user_id: userId },
     select: {
       user_id: true,
-      affiliate_level: true,
       total_referred: true,
       total_wager_volume_usd: true,
       total_earned_usd: true,
@@ -384,7 +383,7 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
     role: account.user?.role ?? "user",
     code: primaryCode,
     codeActive: account.user?.affiliate_code_active ?? false,
-    level: account.affiliate_level,
+    level: 1,
     totalReferred: account.total_referred,
     totalWagerVolumeUsd: toNumber(account.total_wager_volume_usd),
     totalEarnedUsd: toNumber(account.total_earned_usd),
@@ -407,7 +406,7 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
           id: limits.id,
           currencyLimitAmount: toNumber(limits.currency_limit_amount),
           percentageLimit: toNumber(limits.percentage_limit),
-          tipLimit: toNumber(limits.tip_limit),
+          tipLimit: null,
           currencyLimitResetDays: limits.currency_limit_reset_days,
         }
       : null,

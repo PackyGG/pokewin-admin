@@ -40,14 +40,14 @@ export async function createVoucher(data: {
   const user = await db.user.findUnique({ where: { id: data.userId } });
   if (!user) throw new Error("User not found");
 
-  const voucher = await db.vouchers.create({
-    data: {
-      user_id: data.userId,
-      value: data.value,
-      origin: "manual",
-      description: data.description || null,
-    },
-  });
+  const [voucher] = await db.$queryRawUnsafe<{ id: string }[]>(
+    `INSERT INTO vouchers (user_id, value, origin, description)
+     VALUES ($1, $2, 'manual', $3)
+     RETURNING id`,
+    data.userId,
+    data.value,
+    data.description || null,
+  );
 
   await adminDb.admin_voucher_actions.create({
     data: {

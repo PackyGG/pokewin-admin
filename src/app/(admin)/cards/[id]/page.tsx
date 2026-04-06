@@ -54,7 +54,7 @@ export default async function CardDetailPage({
               </Badge>
             )}
             <EditCardButton card={data} sets={sets} />
-            <DeleteCardButton cardId={data.id} cardName={data.name} packCount={data.packs.length} packNames={data.packs.map((p) => p.name)} />
+            <DeleteCardButton cardId={data.id} cardName={data.name} packCount={data.packs.length} packNames={data.packs.map((p: { name: string }) => p.name)} />
           </div>
         </div>
       </div>
@@ -77,7 +77,7 @@ export default async function CardDetailPage({
         <div className="space-y-3">
           <h2 className="text-lg font-semibold">Packs containing this card</h2>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-            {data.packs.map((pack) => (
+            {data.packs.map((pack: { id: string; name: string; imageUrl: string | null }) => (
               <Link
                 key={pack.id}
                 href={`/packs/${pack.id}`}

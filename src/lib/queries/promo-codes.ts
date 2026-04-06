@@ -55,7 +55,7 @@ export async function getPromoCodes(params: {
   return {
     data: codes.map((c) => ({
       id: c.id,
-      code: c.code ?? null,
+      code: null,
       codeHash: c.code_hash,
       value: toNumber(c.value),
       region: c.region,

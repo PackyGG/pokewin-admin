@@ -26,7 +26,6 @@ export async function createPromoCode(data: {
   await db.promo_codes.create({
     data: {
       id: crypto.randomUUID(),
-      code: data.code.toUpperCase(),
       code_hash: codeHash,
       value: data.value,
       region: data.region,
