@@ -309,8 +309,8 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
       orderBy: { created_at: "desc" },
       take: 50,
     }),
-    db.$queryRawUnsafe<{ id: string; code: string; is_active: boolean; created_at: Date }[]>(
-      `SELECT id, code, is_active, created_at FROM affiliate_codes WHERE user_id = $1 ORDER BY created_at ASC`,
+    db.$queryRawUnsafe<{ id: string; code: string; created_at: Date }[]>(
+      `SELECT id, code, created_at FROM affiliate_codes WHERE user_id = $1 ORDER BY created_at ASC`,
       userId
     ),
     db.creator_withdrawal_limits.findUnique({
@@ -399,7 +399,7 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
     additionalCodes: allCodes.map((c) => ({
       id: c.id,
       code: c.code,
-      isActive: c.is_active,
+      isActive: true,
       createdAt: c.created_at.toISOString(),
     })),
     limits: limits
@@ -538,9 +538,9 @@ export async function getCodes(params: {
 
   const [codes, countRows] = await Promise.all([
     db.$queryRawUnsafe<
-      { code: string; user_id: string; is_active: boolean; created_at: Date; username: string | null }[]
+      { code: string; user_id: string; created_at: Date; username: string | null }[]
     >(
-      `SELECT ac.code, ac.user_id, ac.is_active, ac.created_at, u.username
+      `SELECT ac.code, ac.user_id, ac.created_at, u.username
        FROM affiliate_codes ac
        JOIN "user" u ON u.id = ac.user_id
        ${whereClause}
@@ -564,7 +564,7 @@ export async function getCodes(params: {
       code: c.code,
       ownerUserId: c.user_id,
       ownerUsername: c.username ?? null,
-      isActive: c.is_active,
+      isActive: true,
       createdAt: c.created_at.toISOString(),
     })),
     total,
@@ -582,14 +582,14 @@ export async function getCodeAnalytics(code: string) {
     dailyUsages,
     dailyClicks,
   ] = await Promise.all([
-    db.$queryRawUnsafe<{ is_active: boolean; user_id: string; username: string | null }[]>(
-      `SELECT ac.is_active, ac.user_id, u.username
+    db.$queryRawUnsafe<{ user_id: string; username: string | null }[]>(
+      `SELECT ac.user_id, u.username
        FROM affiliate_codes ac
        JOIN "user" u ON u.id = ac.user_id
        WHERE ac.code = $1
        LIMIT 1`,
       code
-    ).then((rows) => rows[0] ?? null),
+    ).then((rows) => rows[0] ? { ...rows[0], is_active: true } : null),
     db.affiliate_code_usages.findMany({
       where: { code },
       include: {
