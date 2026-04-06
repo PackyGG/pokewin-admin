@@ -141,6 +141,8 @@ export async function getPackDetail(id: string) {
     actualHouseEdge: toNumber(pack.actual_house_edge),
     active: pack.active,
     packType: pack.pack_type,
+    tags: pack.tags,
+    difficulty: pack.difficulty,
     cards: pack.pack_cards.map((pc) => ({
       id: pc.id,
       cardId: pc.card_id,

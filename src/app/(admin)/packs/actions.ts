@@ -8,6 +8,7 @@ import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { uploadImage } from "@/lib/imagekit";
 import { getCards, getRarities, getSets } from "@/lib/queries/cards";
 import { reloadPacks } from "@/app/(admin)/rewards/actions";
+import type { pack_tag } from "@/generated/prisma/enums";
 
 export type CardPickerItem = {
   id: string;
@@ -112,6 +113,8 @@ export async function createPack(data: {
   cardsPerOpen: number;
   packType: string;
   imageUrl: string | null;
+  tags: pack_tag[];
+  difficulty: number | null;
   cards: PackCardInput[];
 }): Promise<string> {
   const session = await requirePageAccess("/packs");
@@ -130,6 +133,8 @@ export async function createPack(data: {
         price: data.price,
         cards_per_open: data.cardsPerOpen,
         pack_type: data.packType,
+        tags: data.tags,
+        difficulty: data.difficulty,
         active: false,
       },
     });
@@ -172,6 +177,8 @@ export async function updatePack(
     cardsPerOpen: number;
     packType: string;
     imageUrl: string | null;
+    tags: pack_tag[];
+    difficulty: number | null;
     cards: PackCardInput[];
   },
 ): Promise<void> {
@@ -192,6 +199,8 @@ export async function updatePack(
         price: data.price,
         cards_per_open: data.cardsPerOpen,
         pack_type: data.packType,
+        tags: data.tags,
+        difficulty: data.difficulty,
         updated_at: new Date(),
       },
     });

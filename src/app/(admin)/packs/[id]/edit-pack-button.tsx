@@ -28,8 +28,17 @@ import { SortableCardTable, type SortableCard } from "../sortable-card-table";
 import { formatCurrency } from "@/lib/utils/format";
 import { updatePack, getCardPickerFilters } from "../actions";
 import { uploadImageClient } from "@/lib/upload-image-client";
+import { pack_tag } from "@/generated/prisma/enums";
+import { RiskLevelSlider } from "../risk-level-slider";
 
 type PackCard = SortableCard;
+
+const TAG_LABELS: Record<pack_tag, string> = {
+  pct1: "%1",
+  pct5: "%5",
+  pct10: "%10",
+  fifty50: "50/50",
+};
 
 type PackData = {
   id: string;
@@ -40,6 +49,8 @@ type PackData = {
   priceUsd: number;
   cardsPerOpen: number;
   packType: string;
+  tags: pack_tag[];
+  difficulty: number | null;
   cards: {
     cardId: string;
     name: string;
@@ -134,6 +145,8 @@ export function EditPackButton({ pack }: { pack: PackData }) {
   const [price, setPrice] = useState(String(pack.priceUsd));
   const [cardsPerOpen, setCardsPerOpen] = useState(String(pack.cardsPerOpen));
   const [packType, setPackType] = useState(pack.packType);
+  const [tags, setTags] = useState<pack_tag[]>(pack.tags);
+  const [difficulty, setDifficulty] = useState<number>(pack.difficulty ?? 0);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(pack.imageUrl);
   const [cards, setCards] = useState<PackCard[]>(
@@ -222,6 +235,8 @@ export function EditPackButton({ pack }: { pack: PackData }) {
         cardsPerOpen: parseInt(cardsPerOpen) || 5,
         packType,
         imageUrl,
+        tags,
+        difficulty: difficulty || null,
         cards: cards.map((c, i) => ({
           cardId: c.cardId,
           weight: weights[i],
@@ -294,6 +309,41 @@ export function EditPackButton({ pack }: { pack: PackData }) {
                     <SelectItem value="promo">Promo</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label>Tags</Label>
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(TAG_LABELS).map(([value, label]) => {
+                    const selected = tags.includes(value as pack_tag);
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() =>
+                          setTags((prev) =>
+                            selected
+                              ? prev.filter((t) => t !== value)
+                              : [...prev, value as pack_tag],
+                          )
+                        }
+                        className={`rounded-md border px-3 py-1.5 text-sm font-medium transition-colors ${
+                          selected
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-border bg-background text-muted-foreground hover:bg-muted"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Risk Level</Label>
+                <RiskLevelSlider value={difficulty} onChange={setDifficulty} />
               </div>
             </div>
 
