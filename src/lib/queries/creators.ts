@@ -309,11 +309,10 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
       orderBy: { created_at: "desc" },
       take: 50,
     }),
-    db.affiliate_codes.findMany({
-      where: { user_id: userId },
-      select: { id: true, code: true, is_active: true, created_at: true },
-      orderBy: { created_at: "asc" },
-    }),
+    db.$queryRawUnsafe<{ id: string; code: string; is_active: boolean; created_at: Date }[]>(
+      `SELECT id, code, is_active, created_at FROM affiliate_codes WHERE user_id = $1 ORDER BY created_at ASC`,
+      userId
+    ),
     db.creator_withdrawal_limits.findUnique({
       where: { user_id: userId },
     }),
@@ -524,41 +523,47 @@ export async function getCodes(params: {
     sortOrder = "desc",
   } = params;
 
-  const where: Record<string, unknown> = {};
-  if (search) {
-    where.OR = [
-      { code: { contains: search, mode: "insensitive" } },
-      { user: { username: { contains: search, mode: "insensitive" } } },
-    ];
-  }
-
-  const orderBy: Record<string, string> = {};
   const validFields = ["code", "created_at"];
   const sortField = validFields.includes(sortBy) ? sortBy : "created_at";
-  orderBy[sortField] = sortOrder === "asc" ? "asc" : "desc";
+  const direction = sortOrder === "asc" ? "ASC" : "DESC";
 
-  const [codes, total] = await Promise.all([
-    db.affiliate_codes.findMany({
-      where,
-      select: {
-        code: true,
-        user_id: true,
-        is_active: true,
-        created_at: true,
-        user: { select: { username: true } },
-      },
-      orderBy,
-      skip: (page - 1) * perPage,
-      take: perPage,
-    }),
-    db.affiliate_codes.count({ where }),
+  let whereClause = "WHERE 1=1";
+  const queryParams: string[] = [];
+  if (search) {
+    queryParams.push(`%${search}%`);
+    whereClause = `WHERE (ac.code ILIKE $1 OR u.username ILIKE $1)`;
+  }
+
+  const offset = (page - 1) * perPage;
+
+  const [codes, countRows] = await Promise.all([
+    db.$queryRawUnsafe<
+      { code: string; user_id: string; is_active: boolean; created_at: Date; username: string | null }[]
+    >(
+      `SELECT ac.code, ac.user_id, ac.is_active, ac.created_at, u.username
+       FROM affiliate_codes ac
+       JOIN "user" u ON u.id = ac.user_id
+       ${whereClause}
+       ORDER BY ac.${sortField} ${direction}
+       LIMIT ${perPage} OFFSET ${offset}`,
+      ...queryParams
+    ),
+    db.$queryRawUnsafe<{ count: string }[]>(
+      `SELECT COUNT(*)::text AS count
+       FROM affiliate_codes ac
+       JOIN "user" u ON u.id = ac.user_id
+       ${whereClause}`,
+      ...queryParams
+    ),
   ]);
+
+  const total = Number(countRows[0]?.count ?? 0);
 
   return {
     data: codes.map((c) => ({
       code: c.code,
       ownerUserId: c.user_id,
-      ownerUsername: c.user?.username ?? null,
+      ownerUsername: c.username ?? null,
       isActive: c.is_active,
       createdAt: c.created_at.toISOString(),
     })),
@@ -577,14 +582,14 @@ export async function getCodeAnalytics(code: string) {
     dailyUsages,
     dailyClicks,
   ] = await Promise.all([
-    db.affiliate_codes.findFirst({
-      where: { code },
-      select: {
-        is_active: true,
-        user_id: true,
-        user: { select: { username: true } },
-      },
-    }),
+    db.$queryRawUnsafe<{ is_active: boolean; user_id: string; username: string | null }[]>(
+      `SELECT ac.is_active, ac.user_id, u.username
+       FROM affiliate_codes ac
+       JOIN "user" u ON u.id = ac.user_id
+       WHERE ac.code = $1
+       LIMIT 1`,
+      code
+    ).then((rows) => rows[0] ?? null),
     db.affiliate_code_usages.findMany({
       where: { code },
       include: {
@@ -661,7 +666,7 @@ export async function getCodeAnalytics(code: string) {
   return {
     code,
     ownerUserId: codeRecord.user_id,
-    ownerUsername: codeRecord.user?.username ?? null,
+    ownerUsername: codeRecord.username ?? null,
     isActive,
     totalReferrals,
     totalDeposits,
