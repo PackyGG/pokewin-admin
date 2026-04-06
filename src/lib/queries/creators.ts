@@ -311,6 +311,7 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
     }),
     db.affiliate_codes.findMany({
       where: { user_id: userId },
+      select: { id: true, code: true, is_active: true, created_at: true },
       orderBy: { created_at: "asc" },
     }),
     db.creator_withdrawal_limits.findUnique({
@@ -539,7 +540,11 @@ export async function getCodes(params: {
   const [codes, total] = await Promise.all([
     db.affiliate_codes.findMany({
       where,
-      include: {
+      select: {
+        code: true,
+        user_id: true,
+        is_active: true,
+        created_at: true,
         user: { select: { username: true } },
       },
       orderBy,
@@ -574,7 +579,11 @@ export async function getCodeAnalytics(code: string) {
   ] = await Promise.all([
     db.affiliate_codes.findFirst({
       where: { code },
-      include: { user: { select: { username: true } } },
+      select: {
+        is_active: true,
+        user_id: true,
+        user: { select: { username: true } },
+      },
     }),
     db.affiliate_code_usages.findMany({
       where: { code },
