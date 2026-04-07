@@ -1208,6 +1208,7 @@ enum ledger_transaction_type {
   creator_tip
   waitlist_prize
   pack_borrow_to_voucher
+  card_withdrawal
 }
 
 enum race_type {
