@@ -121,7 +121,7 @@ export async function getUserDetail(id: string) {
         by: ["type"],
         where: {
           user_id: id,
-          type: { in: ["pack_opening", "battle_bet"] },
+          type: { in: ["pack_opening", "battle_bet", "battle_sponsorship"] },
           status: "completed",
         },
         _sum: { amount: true },
@@ -239,9 +239,10 @@ export async function getUserDetail(id: string) {
           packsWagered: Math.abs(toNumber(
             wagerBreakdown.find((w) => w.type === "pack_opening")?._sum.amount ?? 0,
           )),
-          battlesWagered: Math.abs(toNumber(
-            wagerBreakdown.find((w) => w.type === "battle_bet")?._sum.amount ?? 0,
-          )),
+          battlesWagered: Math.abs(
+            toNumber(wagerBreakdown.find((w) => w.type === "battle_bet")?._sum.amount ?? 0) +
+              toNumber(wagerBreakdown.find((w) => w.type === "battle_sponsorship")?._sum.amount ?? 0),
+          ),
         }
       : null,
     statistics: statistics
@@ -942,7 +943,7 @@ export async function getUserSessions(userId: string): Promise<UserSession[]> {
 
   const timeline: TimelineEvent[] = [];
 
-  const wagerTypes = new Set(["pack_opening", "battle_bet"]);
+  const wagerTypes = new Set(["pack_opening", "battle_bet", "battle_sponsorship"]);
   const winTypes = new Set(["card_sale", "reward_card_sale", "race_prize", "rain_win", "balance_reward_claim"]);
 
   for (const t of transactions) {
