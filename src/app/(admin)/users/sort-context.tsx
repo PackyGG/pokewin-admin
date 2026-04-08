@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { UserRow } from "./columns";
 
 type Order = "asc" | "desc";
@@ -46,6 +46,7 @@ export function UsersSortProvider({
   initialRows: UserRow[];
   children: (rows: UserRow[]) => React.ReactNode;
 }) {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const urlSortBy = searchParams.get("sortBy") ?? "created_at";
   const urlSortOrder = (searchParams.get("sortOrder") ?? "desc") as Order;
@@ -56,8 +57,9 @@ export function UsersSortProvider({
     sortRowsLocally(initialRows, urlSortBy, urlSortOrder),
   );
 
-  // When the server returns a brand-new dataset (e.g. user navigated pages /
-  // changed filters / search), reset to it sorted by current sort.
+  // When new server data arrives (after navigation, filter change, OR sort
+  // refetch), merge it in. We re-sort it locally to be safe in case the server
+  // ordering doesn't perfectly match what we asked for due to ties / pagination.
   React.useEffect(() => {
     setLocalRows(sortRowsLocally(initialRows, sortBy, sortOrder));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -65,18 +67,21 @@ export function UsersSortProvider({
 
   const setSort = React.useCallback(
     (key: string, order: Order) => {
-      // Instant client-side reorder. No server roundtrip — the URL is updated
-      // silently so pagination/filter/refresh still pick up the right sort.
+      // 1) Instant client-side reorder of CURRENTLY visible rows so the user
+      //    sees feedback in the same frame as their click.
       setSortBy(key);
       setSortOrder(order);
       setLocalRows((current) => sortRowsLocally(current, key, order));
 
+      // 2) In the background, ask the server for the *correct* sorted page
+      //    (different users may belong on this page now). When the new data
+      //    arrives, the FLIP animation in the table smooths the transition.
       const params = new URLSearchParams(searchParams.toString());
       params.set("sortBy", key);
       params.set("sortOrder", order);
-      window.history.replaceState(null, "", `?${params.toString()}`);
+      router.replace(`?${params.toString()}`, { scroll: false });
     },
-    [searchParams],
+    [router, searchParams],
   );
 
   const ctx = React.useMemo(
