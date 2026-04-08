@@ -3,7 +3,7 @@
 import { ColumnDef } from "@tanstack/react-table";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header";
+import { UsersSortHeader } from "./sort-header";
 import { ROLE_COLORS, USER_STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency, formatDate } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
@@ -54,7 +54,7 @@ function initialsFor(name: string | null, email: string | null): string {
 export const columns: ColumnDef<UserRow>[] = [
   {
     accessorKey: "username",
-    header: () => <DataTableColumnHeader title="User" sortKey="username" />,
+    header: () => <UsersSortHeader title="User" sortKey="username" />,
     cell: ({ row }) => (
       <div className="flex items-center gap-3">
         <Avatar className="size-8 shrink-0">
@@ -107,7 +107,7 @@ export const columns: ColumnDef<UserRow>[] = [
   },
   {
     accessorKey: "availableBalance",
-    header: () => <DataTableColumnHeader title="Balance" sortKey="balance" />,
+    header: () => <UsersSortHeader title="Balance" sortKey="balance" />,
     cell: ({ row }) => (
       <span className="font-medium tabular-nums">
         {formatCurrency(row.original.availableBalance)}
@@ -125,7 +125,7 @@ export const columns: ColumnDef<UserRow>[] = [
   },
   {
     accessorKey: "totalWagered",
-    header: () => <DataTableColumnHeader title="Wagered" sortKey="totalWagered" />,
+    header: () => <UsersSortHeader title="Wagered" sortKey="totalWagered" />,
     cell: ({ row }) => (
       <span className="tabular-nums text-muted-foreground">
         {formatCurrency(row.original.totalWagered)}
@@ -135,7 +135,7 @@ export const columns: ColumnDef<UserRow>[] = [
   {
     accessorKey: "totalDeposited",
     header: () => (
-      <DataTableColumnHeader title="Deposited" sortKey="totalDeposited" />
+      <UsersSortHeader title="Deposited" sortKey="totalDeposited" />
     ),
     cell: ({ row }) => (
       <span className="tabular-nums">
@@ -146,7 +146,7 @@ export const columns: ColumnDef<UserRow>[] = [
   {
     accessorKey: "totalWithdrawn",
     header: () => (
-      <DataTableColumnHeader title="Withdrawn" sortKey="totalWithdrawn" />
+      <UsersSortHeader title="Withdrawn" sortKey="totalWithdrawn" />
     ),
     cell: ({ row }) => (
       <span className="tabular-nums">
@@ -156,13 +156,13 @@ export const columns: ColumnDef<UserRow>[] = [
   },
   {
     accessorKey: "pnl",
-    header: () => <DataTableColumnHeader title="P&L" sortKey="pnl" />,
+    header: () => <UsersSortHeader title="P&L" sortKey="pnl" />,
     cell: ({ row }) => <PnlCell value={row.original.pnl} />,
   },
   {
     accessorKey: "createdAt",
     header: () => (
-      <DataTableColumnHeader title="Registered" sortKey="created_at" />
+      <UsersSortHeader title="Registered" sortKey="created_at" />
     ),
     cell: ({ row }) => (
       <span className="text-xs text-muted-foreground">

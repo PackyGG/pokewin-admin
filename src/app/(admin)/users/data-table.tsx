@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   flexRender,
   getCoreRowModel,
@@ -15,53 +15,75 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  TablePendingProvider,
-  useTablePending,
-} from "@/components/data-table/table-pending-context";
 import { columns, type UserRow } from "./columns";
-import { cn } from "@/lib/utils";
+import { UsersSortProvider } from "./sort-context";
 
 export function UsersDataTable({ data }: { data: UserRow[] }) {
   return (
-    <TablePendingProvider>
-      <UsersDataTableInner data={data} />
-    </TablePendingProvider>
+    <UsersSortProvider initialRows={data}>
+      {(rows) => <Inner rows={rows} />}
+    </UsersSortProvider>
   );
 }
 
-function UsersDataTableInner({ data }: { data: UserRow[] }) {
+/**
+ * FLIP-style row animation: capture each row's bounding rect before the React
+ * commit, then on the next layout subtract the new rect, set a translateY for
+ * the delta, and clear it on the next frame so the row glides into place.
+ */
+function useFlipRows(rowKey: string) {
+  const containerRef = React.useRef<HTMLTableSectionElement | null>(null);
+  const positionsRef = React.useRef<Map<string, number>>(new Map());
+
+  React.useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const rows = Array.from(
+      container.querySelectorAll<HTMLTableRowElement>("tr[data-row-id]"),
+    );
+    const previous = positionsRef.current;
+    const next = new Map<string, number>();
+
+    rows.forEach((row) => {
+      const id = row.getAttribute("data-row-id");
+      if (!id) return;
+      const top = row.getBoundingClientRect().top;
+      next.set(id, top);
+      const prev = previous.get(id);
+      if (prev !== undefined && prev !== top) {
+        const delta = prev - top;
+        row.style.transition = "none";
+        row.style.transform = `translateY(${delta}px)`;
+        // Force reflow before applying the animation
+        // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+        row.offsetHeight;
+        row.style.transition = "transform 350ms cubic-bezier(0.22, 1, 0.36, 1)";
+        row.style.transform = "translateY(0)";
+      }
+    });
+
+    positionsRef.current = next;
+  }, [rowKey]);
+
+  return containerRef;
+}
+
+function Inner({ rows }: { rows: UserRow[] }) {
   const router = useRouter();
-  const { pending, setPending } = useTablePending();
-  const searchParams = useSearchParams();
-
-  // Whenever a new server-rendered `data` prop arrives, the fetch is done.
-  React.useEffect(() => {
-    setPending(false);
-    // We intentionally only depend on data and searchParams string;
-    // setPending is stable from the context.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, searchParams.toString()]);
-
   const table = useReactTable({
-    data,
+    data: rows,
     columns,
     getCoreRowModel: getCoreRowModel(),
+    getRowId: (r) => r.id,
   });
 
+  // Use the row order signature as the key — every reorder re-runs the FLIP.
+  const orderKey = rows.map((r) => r.id).join(",");
+  const tbodyRef = useFlipRows(orderKey);
+
   return (
-    <div className="relative rounded-md border">
-      {pending && (
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-0.5 overflow-hidden rounded-t-md bg-primary/20">
-          <div className="h-full w-1/3 animate-pulse bg-primary" />
-        </div>
-      )}
-      <Table
-        className={cn(
-          "transition-opacity duration-150",
-          pending && "opacity-50",
-        )}
-      >
+    <div className="rounded-md border">
+      <Table>
         <TableHeader>
           {table.getHeaderGroups().map((hg) => (
             <TableRow key={hg.id}>
@@ -78,12 +100,13 @@ function UsersDataTableInner({ data }: { data: UserRow[] }) {
             </TableRow>
           ))}
         </TableHeader>
-        <TableBody>
+        <TableBody ref={tbodyRef}>
           {table.getRowModel().rows.length ? (
             table.getRowModel().rows.map((row) => (
               <TableRow
                 key={row.id}
-                className="cursor-pointer hover:bg-accent/40"
+                data-row-id={row.id}
+                className="cursor-pointer hover:bg-accent/40 will-change-transform"
                 onClick={() => router.push(`/users/${row.original.id}`)}
               >
                 {row.getVisibleCells().map((cell) => (
