@@ -27,45 +27,84 @@ export function UsersDataTable({ data }: { data: UserRow[] }) {
 }
 
 /**
- * FLIP-style row animation: capture each row's bounding rect before the React
- * commit, then on the next layout subtract the new rect, set a translateY for
- * the delta, and clear it on the next frame so the row glides into place.
+ * FLIP-style row animation. Captures both top AND left positions of every row
+ * before the React commit, then on the next layout subtracts the new position
+ * and applies an inverse transform that's transitioned to zero — giving the
+ * row a smooth glide on both axes.
  */
-function useFlipRows(rowKey: string) {
-  const containerRef = React.useRef<HTMLTableSectionElement | null>(null);
-  const positionsRef = React.useRef<Map<string, number>>(new Map());
+function useFlipRows(orderKey: string) {
+  const tbodyRef = React.useRef<HTMLTableSectionElement | null>(null);
+  const positionsRef = React.useRef<Map<string, { top: number; left: number }>>(
+    new Map(),
+  );
 
   React.useLayoutEffect(() => {
-    const container = containerRef.current;
+    const container = tbodyRef.current;
     if (!container) return;
     const rows = Array.from(
       container.querySelectorAll<HTMLTableRowElement>("tr[data-row-id]"),
     );
     const previous = positionsRef.current;
-    const next = new Map<string, number>();
+    const next = new Map<string, { top: number; left: number }>();
 
     rows.forEach((row) => {
       const id = row.getAttribute("data-row-id");
       if (!id) return;
-      const top = row.getBoundingClientRect().top;
-      next.set(id, top);
+      const rect = row.getBoundingClientRect();
+      next.set(id, { top: rect.top, left: rect.left });
       const prev = previous.get(id);
-      if (prev !== undefined && prev !== top) {
-        const delta = prev - top;
+      if (!prev) {
+        // Newly entered row — fade it in
         row.style.transition = "none";
-        row.style.transform = `translateY(${delta}px)`;
-        // Force reflow before applying the animation
+        row.style.opacity = "0";
         // eslint-disable-next-line @typescript-eslint/no-unused-expressions
         row.offsetHeight;
-        row.style.transition = "transform 350ms cubic-bezier(0.22, 1, 0.36, 1)";
-        row.style.transform = "translateY(0)";
+        row.style.transition = "opacity 280ms ease-out";
+        row.style.opacity = "1";
+        return;
       }
+      const dx = prev.left - rect.left;
+      const dy = prev.top - rect.top;
+      if (dx === 0 && dy === 0) return;
+      row.style.transition = "none";
+      row.style.transform = `translate(${dx}px, ${dy}px)`;
+      // Force reflow before applying the animation
+      // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+      row.offsetHeight;
+      row.style.transition = "transform 380ms cubic-bezier(0.22, 1, 0.36, 1)";
+      row.style.transform = "translate(0, 0)";
     });
 
     positionsRef.current = next;
-  }, [rowKey]);
+  }, [orderKey]);
 
-  return containerRef;
+  return tbodyRef;
+}
+
+/**
+ * Lock the table column widths after the first paint so that swapping row
+ * content (different badges, longer usernames, etc.) doesn't make the layout
+ * jump.
+ */
+function useLockedColumnWidths(
+  wrapperRef: React.RefObject<HTMLDivElement | null>,
+) {
+  React.useLayoutEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+    const table = wrapper.querySelector<HTMLTableElement>("table");
+    if (!table) return;
+    if (table.style.tableLayout === "fixed") return;
+    const ths = Array.from(
+      table.querySelectorAll<HTMLTableCellElement>("thead th"),
+    );
+    if (ths.length === 0) return;
+    const widths = ths.map((th) => th.getBoundingClientRect().width);
+    ths.forEach((th, i) => {
+      th.style.width = `${widths[i]}px`;
+    });
+    table.style.tableLayout = "fixed";
+  }, [wrapperRef]);
 }
 
 function Inner({ rows }: { rows: UserRow[] }) {
@@ -77,12 +116,13 @@ function Inner({ rows }: { rows: UserRow[] }) {
     getRowId: (r) => r.id,
   });
 
-  // Use the row order signature as the key — every reorder re-runs the FLIP.
   const orderKey = rows.map((r) => r.id).join(",");
   const tbodyRef = useFlipRows(orderKey);
+  const wrapperRef = React.useRef<HTMLDivElement>(null);
+  useLockedColumnWidths(wrapperRef);
 
   return (
-    <div className="rounded-md border">
+    <div ref={wrapperRef} className="rounded-md border">
       <Table>
         <TableHeader>
           {table.getHeaderGroups().map((hg) => (
@@ -110,7 +150,7 @@ function Inner({ rows }: { rows: UserRow[] }) {
                 onClick={() => router.push(`/users/${row.original.id}`)}
               >
                 {row.getVisibleCells().map((cell) => (
-                  <TableCell key={cell.id}>
+                  <TableCell key={cell.id} className="overflow-hidden">
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </TableCell>
                 ))}
