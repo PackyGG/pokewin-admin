@@ -250,7 +250,7 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
         FROM ledger_transactions lt
         JOIN game_sessions gs ON lt.game_session_id = gs.id AND gs.game_type = 'pack'
         JOIN packs p ON gs.game_id = p.id
-        WHERE lt.type = 'pack_opening' AND lt.status = 'completed' ${dateFilter}
+        WHERE lt.type = 'pack_opening' AND lt.status = 'completed' ${dateFilter.replace(/created_at/g, "lt.created_at")}
         GROUP BY p.id, p.name
         ORDER BY opens_total DESC
         LIMIT 20
