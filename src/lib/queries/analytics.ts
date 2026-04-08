@@ -19,6 +19,33 @@ function periodToDateFilter(period: Period): string {
   }
 }
 
+export type BattleModeStats = {
+  totalBattles: number;
+  byMode: { mode: string; count: number }[];
+  bySetting: { setting: string; count: number }[];
+  byFormat: { format: string; count: number }[];
+  borrowCount: number;
+  sponsoredCount: number;
+  privateCount: number;
+  topBattlePacks: { id: string; name: string; count: number }[];
+};
+
+export type PackPopularityStats = {
+  topPacks: {
+    id: string;
+    name: string;
+    opensTotal: number;
+    opensBorrowed: number;
+    opensNormal: number;
+  }[];
+  topBorrowedPacks: {
+    id: string;
+    name: string;
+    opensBorrowed: number;
+    opensTotal: number;
+  }[];
+};
+
 export type AnalyticsData = {
   ggr: number;
   ngr: number;
@@ -26,6 +53,10 @@ export type AnalyticsData = {
   newSignups: number;
   packWager: number;
   battleWager: number;
+  packWagerBorrowed: number;
+  battleWagerBorrowed: number;
+  battleStats: BattleModeStats;
+  packStats: PackPopularityStats;
   daily: {
     date: string;
     ggr: number;
@@ -39,14 +70,34 @@ export type AnalyticsData = {
 
 export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
   const dateFilter = periodToDateFilter(period);
+  // Same filter, but without the leading "AND " because it'll be the only WHERE condition
+  const battleDateWhere =
+    period === "all"
+      ? ""
+      : `WHERE created_at >= NOW() - INTERVAL '${parseDays(period)} days'`;
+  const battleDateWhereAliased =
+    period === "all"
+      ? ""
+      : `WHERE b.created_at >= NOW() - INTERVAL '${parseDays(period)} days'`;
 
   const signupsDateFilter =
     period !== "all"
       ? { created_at: { gte: new Date(Date.now() - parseDays(period) * 86_400_000) } }
       : {};
 
-  const [aggregates, signups, visitors, dailyTx, dailySignups] =
-    await Promise.all([
+  const [
+    aggregates,
+    signups,
+    visitors,
+    dailyTx,
+    dailySignups,
+    battleModeRows,
+    battleSettingRows,
+    battleFlags,
+    battleFormatRows,
+    topBattlePackRows,
+    topPacksRows,
+  ] = await Promise.all([
       db.$queryRawUnsafe<
         {
           total_wagers: string;
@@ -54,6 +105,8 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
           total_bonuses: string;
           pack_wager: string;
           battle_wager: string;
+          pack_wager_borrowed: string;
+          battle_wager_borrowed: string;
         }[]
       >(`
         SELECT
@@ -74,7 +127,13 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager,
           COALESCE(SUM(CASE
             WHEN type IN ('battle_bet', 'battle_sponsorship')
-            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager
+            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager,
+          COALESCE(SUM(CASE
+            WHEN type = 'pack_opening' AND description ILIKE '%borrow%'
+            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager_borrowed,
+          COALESCE(SUM(CASE
+            WHEN type = 'battle_bet' AND description ILIKE '%borrow%'
+            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_borrowed
         FROM ledger_transactions
         WHERE status = 'completed' ${dateFilter}
       `),
@@ -127,6 +186,74 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
         WHERE 1=1 ${dateFilter}
         GROUP BY DATE(created_at)
         ORDER BY date
+      `),
+      db.$queryRawUnsafe<{ mode: string; count: string }[]>(`
+        SELECT mode::text AS mode, COUNT(*)::text AS count
+        FROM battles
+        ${battleDateWhere}
+        GROUP BY mode
+        ORDER BY count DESC
+      `),
+      db.$queryRawUnsafe<{ setting: string; count: string }[]>(`
+        SELECT setting, COUNT(*)::text AS count
+        FROM battles, UNNEST(additional_settings) AS setting
+        ${battleDateWhere}
+        GROUP BY setting
+        ORDER BY count DESC
+      `),
+      db.$queryRawUnsafe<
+        {
+          total_battles: string;
+          borrow_count: string;
+          sponsored_count: string;
+          private_count: string;
+        }[]
+      >(`
+        SELECT
+          COUNT(*)::text AS total_battles,
+          COUNT(*) FILTER (WHERE borrow_percentage > 0)::text AS borrow_count,
+          COUNT(*) FILTER (WHERE sponsorship_percentage > 0)::text AS sponsored_count,
+          COUNT(*) FILTER (WHERE password IS NOT NULL)::text AS private_count
+        FROM battles
+        ${battleDateWhere}
+      `),
+      db.$queryRawUnsafe<{ teams: number; players_per_team: number; count: string }[]>(`
+        SELECT teams, players_per_team, COUNT(*)::text AS count
+        FROM battles
+        ${battleDateWhere}
+        GROUP BY teams, players_per_team
+        ORDER BY count DESC
+      `),
+      db.$queryRawUnsafe<{ id: string; name: string; count: string }[]>(`
+        SELECT p.id::text AS id, p.name AS name, COUNT(*)::text AS count
+        FROM battles b
+        CROSS JOIN LATERAL UNNEST(b.pack_ids::uuid[]) AS pid
+        JOIN packs p ON p.id = pid
+        ${battleDateWhereAliased}
+        GROUP BY p.id, p.name
+        ORDER BY count DESC
+        LIMIT 10
+      `),
+      db.$queryRawUnsafe<
+        {
+          id: string;
+          name: string;
+          opens_total: string;
+          opens_borrowed: string;
+        }[]
+      >(`
+        SELECT
+          p.id::text AS id,
+          p.name AS name,
+          COUNT(*)::text AS opens_total,
+          COUNT(*) FILTER (WHERE lt.description ILIKE '%borrow%')::text AS opens_borrowed
+        FROM ledger_transactions lt
+        JOIN game_sessions gs ON lt.game_session_id = gs.id AND gs.game_type = 'pack'
+        JOIN packs p ON gs.game_id = p.id
+        WHERE lt.type = 'pack_opening' AND lt.status = 'completed' ${dateFilter}
+        GROUP BY p.id, p.name
+        ORDER BY opens_total DESC
+        LIMIT 20
       `),
     ]);
 
@@ -185,6 +312,56 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
     newSignups: signups,
     packWager: toNumber(agg?.pack_wager),
     battleWager: toNumber(agg?.battle_wager),
+    packWagerBorrowed: toNumber(agg?.pack_wager_borrowed),
+    battleWagerBorrowed: toNumber(agg?.battle_wager_borrowed),
+    battleStats: {
+      totalBattles: Number(battleFlags[0]?.total_battles ?? 0),
+      byMode: battleModeRows.map((r) => ({ mode: r.mode, count: Number(r.count) })),
+      bySetting: battleSettingRows.map((r) => ({
+        setting: r.setting,
+        count: Number(r.count),
+      })),
+      byFormat: battleFormatRows.map((r) => ({
+        format:
+          r.teams === 2 && r.players_per_team === 1
+            ? "1v1"
+            : Array(Number(r.teams))
+                .fill(String(Number(r.players_per_team)))
+                .join("v"),
+        count: Number(r.count),
+      })),
+      borrowCount: Number(battleFlags[0]?.borrow_count ?? 0),
+      sponsoredCount: Number(battleFlags[0]?.sponsored_count ?? 0),
+      privateCount: Number(battleFlags[0]?.private_count ?? 0),
+      topBattlePacks: topBattlePackRows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        count: Number(r.count),
+      })),
+    },
+    packStats: {
+      topPacks: topPacksRows.map((r) => {
+        const total = Number(r.opens_total);
+        const borrowed = Number(r.opens_borrowed);
+        return {
+          id: r.id,
+          name: r.name,
+          opensTotal: total,
+          opensBorrowed: borrowed,
+          opensNormal: total - borrowed,
+        };
+      }),
+      topBorrowedPacks: [...topPacksRows]
+        .map((r) => ({
+          id: r.id,
+          name: r.name,
+          opensBorrowed: Number(r.opens_borrowed),
+          opensTotal: Number(r.opens_total),
+        }))
+        .filter((p) => p.opensBorrowed > 0)
+        .sort((a, b) => b.opensBorrowed - a.opensBorrowed)
+        .slice(0, 10),
+    },
     daily,
   };
 }
