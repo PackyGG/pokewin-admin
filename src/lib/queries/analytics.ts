@@ -49,6 +49,13 @@ export type PackPopularityStats = {
 export type AnalyticsData = {
   ggr: number;
   ngr: number;
+  realizedProfit: number;
+  realizedProfitBreakdown: {
+    totalDeposits: number;
+    totalWithdrawals: number;
+    openBalances: number;
+    rewardsClaimed: number;
+  };
   uniqueVisitors: number;
   newSignups: number;
   packWager: number;
@@ -65,6 +72,8 @@ export type AnalyticsData = {
     battleWager: number;
     uniqueVisitors: number;
     newSignups: number;
+    avgDeposit: number;
+    avgBet: number;
   }[];
 };
 
@@ -97,6 +106,7 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
     battleFormatRows,
     topBattlePackRows,
     topPacksRows,
+    realizedProfitRow,
   ] = await Promise.all([
       db.$queryRawUnsafe<
         {
@@ -152,6 +162,8 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
           pack_wager: string;
           battle_wager: string;
           unique_visitors: string;
+          avg_deposit: string;
+          avg_bet: string;
         }[]
       >(`
         SELECT
@@ -174,7 +186,13 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
           COALESCE(SUM(CASE
             WHEN type IN ('battle_bet', 'battle_sponsorship')
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager,
-          COUNT(DISTINCT user_id)::text AS unique_visitors
+          COUNT(DISTINCT user_id)::text AS unique_visitors,
+          COALESCE(AVG(CASE
+            WHEN type = 'deposit'
+            THEN ABS(amount::numeric) END), 0)::text AS avg_deposit,
+          COALESCE(AVG(CASE
+            WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
+            THEN ABS(amount::numeric) END), 0)::text AS avg_bet
         FROM ledger_transactions
         WHERE status = 'completed' ${dateFilter}
         GROUP BY DATE(created_at)
@@ -192,14 +210,14 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
         FROM battles
         ${battleDateWhere}
         GROUP BY mode
-        ORDER BY count DESC
+        ORDER BY COUNT(*) DESC
       `),
       db.$queryRawUnsafe<{ setting: string; count: string }[]>(`
         SELECT setting, COUNT(*)::text AS count
         FROM battles, UNNEST(additional_settings) AS setting
         ${battleDateWhere}
         GROUP BY setting
-        ORDER BY count DESC
+        ORDER BY COUNT(*) DESC
       `),
       db.$queryRawUnsafe<
         {
@@ -222,7 +240,7 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
         FROM battles
         ${battleDateWhere}
         GROUP BY teams, players_per_team
-        ORDER BY count DESC
+        ORDER BY COUNT(*) DESC
       `),
       db.$queryRawUnsafe<{ id: string; name: string; count: string }[]>(`
         SELECT p.id::text AS id, p.name AS name, COUNT(*)::text AS count
@@ -231,7 +249,7 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
         JOIN packs p ON p.id = pid
         ${battleDateWhereAliased}
         GROUP BY p.id, p.name
-        ORDER BY count DESC
+        ORDER BY COUNT(*) DESC
         LIMIT 10
       `),
       db.$queryRawUnsafe<
@@ -252,8 +270,34 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
         JOIN packs p ON gs.game_id = p.id
         WHERE lt.type = 'pack_opening' AND lt.status = 'completed' ${dateFilter.replace(/created_at/g, "lt.created_at")}
         GROUP BY p.id, p.name
-        ORDER BY opens_total DESC
+        ORDER BY COUNT(*) DESC
         LIMIT 20
+      `),
+      db.$queryRawUnsafe<
+        {
+          total_deposits: string;
+          total_withdrawals: string;
+          open_balances: string;
+          rewards_claimed: string;
+        }[]
+      >(`
+        SELECT
+          (SELECT COALESCE(SUM(ABS(amount::numeric)), 0)
+             FROM ledger_transactions
+             WHERE type = 'deposit' AND status = 'completed')::text AS total_deposits,
+          (SELECT COALESCE(SUM(total_value_usd::numeric), 0)
+             FROM card_withdrawal_requests
+             WHERE status IN ('completed', 'shipped'))::text AS total_withdrawals,
+          (SELECT COALESCE(SUM(available_balance::numeric + locked_balance::numeric), 0)
+             FROM balances)::text AS open_balances,
+          (SELECT COALESCE(SUM(ABS(amount::numeric)), 0)
+             FROM ledger_transactions
+             WHERE status = 'completed'
+               AND type IN (
+                 'deposit_bonus','promo_code_redeemed','gift_card_redeemed',
+                 'rakeback_claim','balance_reward_claim','affiliate_claim',
+                 'rain_win','race_prize','creator_tip','waitlist_prize'
+               ))::text AS rewards_claimed
       `),
     ]);
 
@@ -285,6 +329,8 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
       battleWager: toNumber(d.battle_wager),
       uniqueVisitors: Number(d.unique_visitors),
       newSignups: signupsMap.get(dateStr) ?? 0,
+      avgDeposit: toNumber(d.avg_deposit),
+      avgBet: toNumber(d.avg_bet),
     };
   });
 
@@ -299,15 +345,31 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
         battleWager: 0,
         uniqueVisitors: 0,
         newSignups: count,
+        avgDeposit: 0,
+        avgBet: 0,
       });
     }
   }
 
   daily.sort((a, b) => a.date.localeCompare(b.date));
 
+  const rp = realizedProfitRow[0];
+  const totalDeposits = toNumber(rp?.total_deposits);
+  const totalWithdrawals = toNumber(rp?.total_withdrawals);
+  const openBalances = toNumber(rp?.open_balances);
+  const rewardsClaimed = toNumber(rp?.rewards_claimed);
+  const realizedProfit = totalDeposits - totalWithdrawals - openBalances;
+
   return {
     ggr,
     ngr,
+    realizedProfit,
+    realizedProfitBreakdown: {
+      totalDeposits,
+      totalWithdrawals,
+      openBalances,
+      rewardsClaimed,
+    },
     uniqueVisitors: Number(visitors[0]?.count ?? 0),
     newSignups: signups,
     packWager: toNumber(agg?.pack_wager),

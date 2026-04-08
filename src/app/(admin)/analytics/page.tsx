@@ -56,9 +56,9 @@ export default async function AnalyticsPage({
       {/* Stat Cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <StatCard
-          title="NGR (Net Gaming Revenue)"
-          value={formatCurrency(data.ngr)}
-          subtitle={`GGR: ${formatCurrency(data.ggr)} minus bonuses`}
+          title="Realized Profit"
+          value={formatCurrency(data.realizedProfit)}
+          subtitle={`Deposits ${formatCurrency(data.realizedProfitBreakdown.totalDeposits)} − Withdrawals ${formatCurrency(data.realizedProfitBreakdown.totalWithdrawals)} − Open balances ${formatCurrency(data.realizedProfitBreakdown.openBalances)}`}
           icon={TrendingUp}
           color="green"
         />

@@ -25,6 +25,8 @@ type DailyData = {
   battleWager: number;
   uniqueVisitors: number;
   newSignups: number;
+  avgDeposit: number;
+  avgBet: number;
 };
 
 const revenueConfig = {
@@ -40,6 +42,14 @@ const wagersConfig = {
 const usersConfig = {
   uniqueVisitors: { label: "Unique Visitors", color: "var(--color-chart-1)" },
   newSignups: { label: "New Signups", color: "var(--color-chart-5)" },
+} satisfies ChartConfig;
+
+const avgDepositConfig = {
+  avgDeposit: { label: "Avg Deposit", color: "var(--color-chart-2)" },
+} satisfies ChartConfig;
+
+const avgBetConfig = {
+  avgBet: { label: "Avg Bet", color: "var(--color-chart-4)" },
 } satisfies ChartConfig;
 
 const currencyFormatter = (v: number) => {
@@ -147,6 +157,90 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
                 radius={[4, 4, 0, 0]}
               />
             </BarChart>
+          </ChartContainer>
+        </CardContent>
+      </Card>
+
+      {/* Avg Deposit */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm font-medium">Avg Deposit</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ChartContainer config={avgDepositConfig} className="h-[300px] w-full">
+            <LineChart data={data} accessibilityLayer>
+              <CartesianGrid vertical={false} />
+              <XAxis
+                dataKey="date"
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                tickFormatter={(v) => v.slice(5)}
+              />
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                width={70}
+                tickFormatter={currencyFormatter}
+              />
+              <ChartTooltip
+                content={
+                  <ChartTooltipContent
+                    formatter={(value) => `$${Number(value).toFixed(2)}`}
+                  />
+                }
+              />
+              <Line
+                type="monotone"
+                dataKey="avgDeposit"
+                stroke="var(--color-avgDeposit)"
+                strokeWidth={2}
+                dot={false}
+              />
+            </LineChart>
+          </ChartContainer>
+        </CardContent>
+      </Card>
+
+      {/* Avg Bet */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm font-medium">Avg Bet</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ChartContainer config={avgBetConfig} className="h-[300px] w-full">
+            <LineChart data={data} accessibilityLayer>
+              <CartesianGrid vertical={false} />
+              <XAxis
+                dataKey="date"
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                tickFormatter={(v) => v.slice(5)}
+              />
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                width={70}
+                tickFormatter={currencyFormatter}
+              />
+              <ChartTooltip
+                content={
+                  <ChartTooltipContent
+                    formatter={(value) => `$${Number(value).toFixed(2)}`}
+                  />
+                }
+              />
+              <Line
+                type="monotone"
+                dataKey="avgBet"
+                stroke="var(--color-avgBet)"
+                strokeWidth={2}
+                dot={false}
+              />
+            </LineChart>
           </ChartContainer>
         </CardContent>
       </Card>
