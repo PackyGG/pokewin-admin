@@ -275,7 +275,11 @@ export async function getUserDetail(id: string) {
     await Promise.all([
       db.user.findUnique({
         where: { id },
-        include: { account: { select: { providerId: true } } },
+        include: {
+          account: {
+            select: { providerId: true, accountId: true, created_at: true },
+          },
+        },
       }),
       db.balances.findUnique({ where: { user_id: id } }),
       db.user_statistics.findUnique({ where: { user_id: id } }),
@@ -360,6 +364,14 @@ export async function getUserDetail(id: string) {
       createdAt: user.created_at.toISOString(),
       updatedAt: user.updated_at.toISOString(),
       providers: user.account.map((a) => a.providerId),
+      discord: (() => {
+        const dc = user.account.find((a) => a.providerId === "discord");
+        if (!dc) return null;
+        return {
+          id: dc.accountId,
+          linkedAt: dc.created_at?.toISOString() ?? null,
+        };
+      })(),
     },
     balances: balances
       ? {
@@ -764,29 +776,98 @@ export async function getUserTransactions(
   };
 }
 
+// Only the audit_events.event_type values that the backend actually emits
+// AND are relevant to the "important account activity" view. Verified
+// against the prod audit_events table.
+// Deposits/withdrawals are merged in separately from ledger_transactions /
+// card_withdrawal_requests below.
+export const RELEVANT_AUDIT_EVENT_TYPES = [
+  "login",
+  "logout",
+  "register",
+  "username_changed",
+  "settings_changed",
+] as const;
+
 export async function getUserAuditLog(
   userId: string,
   page: number = 1,
   perPage: number = 20,
   filters?: { eventType?: string }
 ) {
-  const where: Record<string, unknown> = { user_id: userId };
-  if (filters?.eventType && filters.eventType !== "all") {
-    where.event_type = filters.eventType;
-  }
+  const explicitFilter =
+    filters?.eventType && filters.eventType !== "all"
+      ? filters.eventType
+      : null;
 
-  const [events, total] = await Promise.all([
+  // 1) Audit events from audit_events table, restricted to the relevant set
+  const auditWhere: Prisma.audit_eventsWhereInput = {
+    user_id: userId,
+    event_type: (explicitFilter
+      ? (explicitFilter as Prisma.audit_eventsWhereInput["event_type"])
+      : {
+          in: [...RELEVANT_AUDIT_EVENT_TYPES],
+        }) as Prisma.audit_eventsWhereInput["event_type"],
+  };
+
+  // 2) Synthetic events from ledger_transactions (deposits + crypto withdrawals)
+  //    and card_withdrawal_requests (item withdrawals). These run in parallel
+  //    so we get one merged, paginated, time-ordered stream.
+  const showFinancials =
+    !explicitFilter || ["deposit", "withdrawal"].includes(explicitFilter);
+
+  const [auditRows, depositRows, cardWithdrawalRows] = await Promise.all([
     db.audit_events.findMany({
-      where,
+      where: auditWhere,
       orderBy: { created_at: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
+      // Take a generous slice — we paginate after merging.
+      take: 200,
     }),
-    db.audit_events.count({ where }),
+    showFinancials
+      ? db.ledger_transactions.findMany({
+          where: {
+            user_id: userId,
+            type: "deposit",
+            status: "completed",
+          },
+          orderBy: { created_at: "desc" },
+          take: 200,
+          select: {
+            id: true,
+            amount: true,
+            crypto_asset: true,
+            crypto_amount: true,
+            created_at: true,
+          },
+        })
+      : Promise.resolve([]),
+    showFinancials
+      ? db.card_withdrawal_requests.findMany({
+          where: { user_id: userId },
+          orderBy: { requested_at: "desc" },
+          take: 200,
+          select: {
+            id: true,
+            total_value_usd: true,
+            status: true,
+            method: true,
+            requested_at: true,
+          },
+        })
+      : Promise.resolve([]),
   ]);
 
-  return {
-    data: events.map((e) => ({
+  type Row = {
+    id: string;
+    eventType: string;
+    ip: string | null;
+    country: string | null;
+    createdAt: string;
+    metadata: unknown;
+  };
+
+  const merged: Row[] = [
+    ...auditRows.map((e) => ({
       id: e.id,
       eventType: e.event_type,
       ip: e.ip,
@@ -794,6 +875,40 @@ export async function getUserAuditLog(
       createdAt: e.created_at.toISOString(),
       metadata: e.metadata,
     })),
+    ...depositRows.map((d) => ({
+      id: `dep_${d.id}`,
+      eventType: "deposit",
+      ip: null,
+      country: null,
+      createdAt: d.created_at.toISOString(),
+      metadata: {
+        amountUsd: toNumber(d.amount),
+        cryptoAsset: d.crypto_asset,
+        cryptoAmount: d.crypto_amount ? toNumber(d.crypto_amount) : null,
+      },
+    })),
+    ...cardWithdrawalRows.map((w) => ({
+      id: `wd_${w.id}`,
+      eventType: "withdrawal",
+      ip: null,
+      country: null,
+      createdAt: w.requested_at.toISOString(),
+      metadata: {
+        amountUsd: toNumber(w.total_value_usd),
+        method: w.method,
+        status: w.status,
+      },
+    })),
+  ];
+
+  merged.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  const total = merged.length;
+  const start = (page - 1) * perPage;
+  const data = merged.slice(start, start + perPage);
+
+  return {
+    data,
     total,
     page,
     perPage,
@@ -1343,6 +1458,50 @@ export async function getSeedRotationHistory(
     page,
     perPage,
     totalPages: Math.ceil(total / perPage),
+  };
+}
+
+export type UserRewards = {
+  openOneTimeCount: number;
+  rakebackClaimableUsd: number;
+  rakebackClaimedUsd: number;
+};
+
+export async function getUserRewards(userId: string): Promise<UserRewards> {
+  const [userRewards, rakebackRows] = await Promise.all([
+    db.user_rewards.findMany({
+      where: { user_id: userId },
+      include: {
+        rewards: { select: { type: true } },
+      },
+    }),
+    db.rakeback_claims.findMany({
+      where: { user_id: userId },
+      select: { rakeback_amount_usd: true, claimed_at: true },
+    }),
+  ]);
+
+  // Open one-time rewards = those that haven't been opened yet
+  let openOneTimeCount = 0;
+  for (const ur of userRewards) {
+    if (ur.rewards.type === "one_time" && ur.opened_at == null) {
+      openOneTimeCount++;
+    }
+  }
+
+  // Rakeback split (claimed vs claimable)
+  let rakebackClaimableUsd = 0;
+  let rakebackClaimedUsd = 0;
+  for (const r of rakebackRows) {
+    const amt = toNumber(r.rakeback_amount_usd);
+    if (r.claimed_at) rakebackClaimedUsd += amt;
+    else rakebackClaimableUsd += amt;
+  }
+
+  return {
+    openOneTimeCount,
+    rakebackClaimableUsd,
+    rakebackClaimedUsd,
   };
 }
 

@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { getUserDetail, getUserTransactions, getUserAuditLog, getUserInventory, getUserPnlBreakdown } from "@/lib/queries/users";
+import { getUserDetail, getUserTransactions, getUserAuditLog, getUserInventory, getUserPnlBreakdown, getUserRewards } from "@/lib/queries/users";
 import { getNotesForUser } from "@/lib/queries/admin-notes";
 import { requirePageAccess } from "@/lib/dal";
 import { UserTabs } from "./user-tabs";
@@ -30,7 +30,7 @@ export default async function UserDetailPage({
   const CARD_SALE_TYPES = ["card_sale", "reward_card_sale"];
   const EXCHANGE_TYPES = ["card_exchange", "exchange_excess_to_voucher", "exchange_excess_credit", "battle_excess_to_voucher", "voucher_exchange"];
 
-  const [data, transactions, auditLog, inventory, soldInventory, exchangedInventory, pnlBreakdown, notes, gamingTx, financialTx] = await Promise.all([
+  const [data, transactions, auditLog, inventory, soldInventory, exchangedInventory, pnlBreakdown, notes, gamingTx, financialTx, rewards] = await Promise.all([
     getUserDetail(id),
     getUserTransactions(id, txPage, txPerPage, {
       type: typeof sp.txType === "string" ? sp.txType : undefined,
@@ -48,6 +48,7 @@ export default async function UserDetailPage({
     getNotesForUser(id),
     getUserTransactions(id, 1, 10, { types: GAMING_TYPES }),
     getUserTransactions(id, 1, 10, { types: FINANCIAL_TYPES }),
+    getUserRewards(id),
   ]);
 
   if (!data) notFound();
@@ -65,7 +66,7 @@ export default async function UserDetailPage({
           <p className="text-sm text-muted-foreground">{data.user.email}</p>
         </div>
       </div>
-      <UserTabs data={{ ...data, sessionRole: session.role }} transactions={transactions} auditLog={auditLog} inventory={inventory} soldInventory={soldInventory} exchangedInventory={exchangedInventory} pnlBreakdown={pnlBreakdown} notes={notes} gamingTx={gamingTx} financialTx={financialTx} />
+      <UserTabs data={{ ...data, sessionRole: session.role }} transactions={transactions} auditLog={auditLog} inventory={inventory} soldInventory={soldInventory} exchangedInventory={exchangedInventory} pnlBreakdown={pnlBreakdown} notes={notes} gamingTx={gamingTx} financialTx={financialTx} rewards={rewards} />
     </div>
   );
 }

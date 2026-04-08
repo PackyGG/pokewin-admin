@@ -56,6 +56,7 @@ import {
 import { ROLE_COLORS, USER_STATUS_COLORS, STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency, formatDateTime, formatRelative } from "@/lib/utils/format";
 import { banUser, unbanUser, lockUser, unlockUser } from "../actions";
+import type { UserRewards } from "@/lib/queries/users";
 import { adjustBalance, adjustXp, changeRole, toggleFeatureLock, getGameSessionDetails, fetchInventory, fetchUserTransactions, updateWithdrawalLimits, fetchCreatorClicks, fetchCreatorCodeUsages, assignAffiliateCode, createAffiliateCode, fetchBalanceHistory, fetchCreatorWithdrawalLimits } from "./actions";
 import { createNote, deleteNote } from "./note-actions";
 import { Switch } from "@/components/ui/switch";
@@ -97,6 +98,10 @@ type UserDetail = {
     createdAt: string;
     updatedAt: string;
     providers: string[];
+    discord: {
+      id: string;
+      linkedAt: string | null;
+    } | null;
   };
   balances: {
     availableBalance: number;
@@ -359,7 +364,7 @@ type CreatorData = {
   withdrawalLimits: WithdrawalLimits;
 };
 
-export function UserTabs({ data, transactions, auditLog, inventory, soldInventory, exchangedInventory, pnlBreakdown, notes, gamingTx, financialTx }: { data: UserDetail; transactions: PaginatedTransactions; auditLog: PaginatedAuditLog; inventory: PaginatedInventory; soldInventory: PaginatedInventory; exchangedInventory: PaginatedInventory; pnlBreakdown: PnlBreakdown; notes: AdminNote[]; gamingTx: PaginatedTransactions; financialTx: PaginatedTransactions }) {
+export function UserTabs({ data, transactions, auditLog, inventory, soldInventory, exchangedInventory, pnlBreakdown, notes, gamingTx, financialTx, rewards }: { data: UserDetail; transactions: PaginatedTransactions; auditLog: PaginatedAuditLog; inventory: PaginatedInventory; soldInventory: PaginatedInventory; exchangedInventory: PaginatedInventory; pnlBreakdown: PnlBreakdown; notes: AdminNote[]; gamingTx: PaginatedTransactions; financialTx: PaginatedTransactions; rewards: UserRewards }) {
   const { user, balances, statistics, featureLocks, sessionRole, affiliate, shippingAddress, vault, mutes, cardWithdrawals, activeSeed, depositAddresses } = data;
   const searchParams = useSearchParams();
   const initialTab = searchParams.has("txPage") ? "transactions" : searchParams.has("auditPage") ? "audit" : "overview";
@@ -483,6 +488,7 @@ export function UserTabs({ data, transactions, auditLog, inventory, soldInventor
             <BalanceSummaryCard balances={balances} userId={user.id} isAdmin={isAdmin} />
             <PnlCard pnlBreakdown={pnlBreakdown} />
             <ActivityStatsCard statistics={statistics} balances={balances} inventoryCount={data.inventoryCount} bonusPoints={balances?.bonusPoints ?? 0} userId={user.id} isAdmin={isAdmin} />
+            <RewardsCard rewards={rewards} />
           </div>
         </CollapsibleSection>
 
@@ -829,6 +835,33 @@ const UserHeaderStrip = React.memo(function UserHeaderStrip({
         <span>·</span>
         <span>Joined {formatRelative(user.createdAt)}</span>
       </div>
+
+      {/* Discord */}
+      <div className="mt-3 ml-16">
+        {user.discord ? (
+          <div className="inline-flex items-center gap-2 rounded-md border border-indigo-500/20 bg-indigo-500/[0.05] px-2.5 py-1.5 text-xs">
+            <svg viewBox="0 0 24 24" fill="currentColor" className="size-3.5 text-indigo-400">
+              <path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.331c-1.183 0-2.157-1.085-2.157-2.42 0-1.333.956-2.418 2.157-2.418 1.21 0 2.176 1.094 2.157 2.418 0 1.335-.956 2.42-2.157 2.42zm7.974 0c-1.183 0-2.157-1.085-2.157-2.42 0-1.333.955-2.418 2.157-2.418 1.21 0 2.176 1.094 2.157 2.418 0 1.335-.946 2.42-2.157 2.42z" />
+            </svg>
+            <span className="font-medium text-indigo-300">Discord</span>
+            <a
+              href={`https://discord.com/users/${user.discord.id}`}
+              target="_blank"
+              rel="noreferrer"
+              className="font-mono text-muted-foreground hover:text-foreground hover:underline"
+            >
+              {user.discord.id}
+            </a>
+            {user.discord.linkedAt && (
+              <span className="text-muted-foreground">
+                · linked {formatRelative(user.discord.linkedAt)}
+              </span>
+            )}
+          </div>
+        ) : (
+          <div className="text-xs text-muted-foreground italic">Discord not linked</div>
+        )}
+      </div>
     </div>
   );
 });
@@ -1015,13 +1048,35 @@ const BalanceSummaryCard = React.memo(function BalanceSummaryCard({
         )}
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="flex items-baseline gap-3 pb-2 border-b">
-          <span className="text-sm text-muted-foreground">Available</span>
-          <span className="text-2xl font-bold tabular-nums">{formatCurrency(balances.availableBalance)}</span>
+        {/* Available = liquid balance + inventory value combined */}
+        <div className="pb-2 border-b">
+          <div className="flex items-baseline justify-between">
+            <span className="text-sm text-muted-foreground">Available</span>
+            <span className="text-2xl font-bold tabular-nums">
+              {formatCurrency(balances.availableBalance + balances.inventoryValue)}
+            </span>
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded-md border bg-muted/30 px-2.5 py-1.5">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                Balance
+              </div>
+              <div className="font-semibold tabular-nums">
+                {formatCurrency(balances.availableBalance)}
+              </div>
+            </div>
+            <div className="rounded-md border bg-muted/30 px-2.5 py-1.5">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                Inventory
+              </div>
+              <div className="font-semibold tabular-nums">
+                {formatCurrency(balances.inventoryValue)}
+              </div>
+            </div>
+          </div>
         </div>
         <InfoRow label="Locked" value={formatCurrency(balances.lockedBalance)} />
         {balances.unlockAt && <InfoRow label="Unlock At" value={formatDateTime(balances.unlockAt)} />}
-        <InfoRow label="Inventory Value" value={formatCurrency(balances.inventoryValue)} />
         <InfoRow label="Deposited" value={formatCurrency(balances.totalDeposited)} />
         <InfoRow label="Withdrawn" value={formatCurrency(balances.totalWithdrawn)} />
         {(() => {
@@ -1631,6 +1686,48 @@ const ActivityStatsCard = React.memo(function ActivityStatsCard({
   );
 });
 
+const RewardsCard = React.memo(function RewardsCard({
+  rewards,
+}: {
+  rewards: UserRewards;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm font-medium">Rewards</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="rounded-md border bg-muted/30 px-3 py-2">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            Open one-time rewards
+          </div>
+          <div className="text-2xl font-bold tabular-nums">
+            {rewards.openOneTimeCount}
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="rounded-md border bg-muted/30 px-2.5 py-1.5">
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              Rakeback claimable
+            </div>
+            <div className="text-lg font-semibold tabular-nums text-emerald-400">
+              {formatCurrency(rewards.rakebackClaimableUsd)}
+            </div>
+          </div>
+          <div className="rounded-md border bg-muted/30 px-2.5 py-1.5">
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              Rakeback claimed
+            </div>
+            <div className="text-lg font-semibold tabular-nums text-muted-foreground">
+              {formatCurrency(rewards.rakebackClaimedUsd)}
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+});
+
 const FeatureLocksCard = React.memo(function FeatureLocksCard({
   userId,
   featureLocks,
@@ -1846,7 +1943,7 @@ const TX_TYPES = [
   "deposit_bonus", "vault_lock", "vault_unlock", "race_prize", "gift_card_redeemed",
   "promo_code_redeemed", "rakeback_claim", "balance_reward_claim", "affiliate_claim",
   "withdrawal_shipping_fee", "admin_balance_adjustment", "rain_tip", "rain_win",
-  "creator_tip", "waitlist_prize", "pack_borrow_to_voucher",
+  "creator_tip", "waitlist_prize", "pack_borrow_to_voucher", "card_withdrawal",
 ] as const;
 
 const TX_STATUSES = ["all", "pending", "completed", "failed"] as const;
@@ -2107,21 +2204,17 @@ const TransactionsTable = React.memo(function TransactionsTable({
   );
 });
 
+// Only events the backend actually emits (verified against prod
+// audit_events table) plus the synthetic deposit/withdrawal entries
+// merged in by getUserAuditLog.
 const AUDIT_EVENT_TYPES = [
-  "login", "login_failed", "logout", "register", "register_failed",
-  "session_started", "session_expired", "kill_all_sessions", "rate_limited",
-  "two_factor_enabled", "two_factor_disabled", "email_verification_sent",
-  "forgot_password_request", "password_changed", "password_reset",
-  "username_changed", "email_updated", "settings_changed",
-  "account_locked", "account_unlocked", "account_banned", "account_unbanned",
-  "chat_muted", "chat_unmuted", "chat_banned", "chat_unbanned",
-  "chat_message_deleted", "chat_message_pinned", "chat_message_unpinned",
-  "country_blocked", "locked_deposits_crypto", "locked_deposits_fiat",
-  "withdrawals_crypto_locked", "withdrawals_crypto_unlocked",
-  "withdrawals_items_locked", "withdrawals_items_unlocked",
-  "inventory_sales_locked", "inventory_sales_unlocked",
-  "exchanges_locked", "exchanges_unlocked", "openings_locked", "openings_unlocked",
-  "crypto_withdrawal_processed", "error",
+  "login",
+  "logout",
+  "register",
+  "username_changed",
+  "settings_changed",
+  "deposit",
+  "withdrawal",
 ] as const;
 
 const AuditTable = React.memo(function AuditTable({ auditLog }: { auditLog: PaginatedAuditLog }) {
@@ -2182,31 +2275,64 @@ const AuditTable = React.memo(function AuditTable({ auditLog }: { auditLog: Pagi
           <TableHeader>
             <TableRow>
               <TableHead>Event</TableHead>
+              <TableHead>Details</TableHead>
               <TableHead>IP</TableHead>
               <TableHead>Country</TableHead>
               <TableHead>Date</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {data.map((e) => (
-              <TableRow key={e.id}>
-                <TableCell>
-                  <Badge variant="outline" className="font-mono text-xs">
-                    {e.eventType}
-                  </Badge>
-                </TableCell>
-                <TableCell className="font-mono text-xs text-muted-foreground">
-                  {e.ip ?? "-"}
-                </TableCell>
-                <TableCell className="text-sm">{e.country ?? "-"}</TableCell>
-                <TableCell className="text-xs text-muted-foreground">
-                  {formatRelative(e.createdAt)}
-                </TableCell>
-              </TableRow>
-            ))}
+            {data.map((e) => {
+              const meta = e.metadata as Record<string, unknown> | null;
+              let details: React.ReactNode = "-";
+              if (e.eventType === "deposit" && meta) {
+                details = (
+                  <span className="text-emerald-400 tabular-nums">
+                    +{formatCurrency(Number(meta.amountUsd ?? 0))}
+                    {meta.cryptoAsset ? ` (${meta.cryptoAsset})` : ""}
+                  </span>
+                );
+              } else if (e.eventType === "withdrawal" && meta) {
+                details = (
+                  <span className="tabular-nums">
+                    {formatCurrency(Number(meta.amountUsd ?? 0))}
+                    <span className="ml-1 text-muted-foreground">
+                      · {String(meta.method ?? "")} · {String(meta.status ?? "")}
+                    </span>
+                  </span>
+                );
+              }
+              const badgeColor =
+                e.eventType === "deposit"
+                  ? "bg-emerald-500/15 text-emerald-400"
+                  : e.eventType === "withdrawal"
+                    ? "bg-amber-500/15 text-amber-400"
+                    : e.eventType.includes("failed") ||
+                        e.eventType.includes("banned") ||
+                        e.eventType.includes("locked")
+                      ? "bg-red-500/15 text-red-400"
+                      : "";
+              return (
+                <TableRow key={e.id}>
+                  <TableCell>
+                    <Badge variant="outline" className={`font-mono text-xs ${badgeColor}`}>
+                      {e.eventType.replace(/_/g, " ")}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-xs">{details}</TableCell>
+                  <TableCell className="font-mono text-xs text-muted-foreground">
+                    {e.ip ?? "-"}
+                  </TableCell>
+                  <TableCell className="text-sm">{e.country ?? "-"}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {formatRelative(e.createdAt)}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
             {data.length === 0 && (
               <TableRow>
-                <TableCell colSpan={4} className="text-center text-muted-foreground">
+                <TableCell colSpan={5} className="text-center text-muted-foreground">
                   No audit events
                 </TableCell>
               </TableRow>
