@@ -70,43 +70,129 @@ export async function getUsers(params: {
   ]);
   const userSortFields = new Set(["created_at", "email", "username", "role"]);
 
-  let orderBy: Prisma.UserOrderByWithRelationInput;
-  if (balanceSortFields.has(sortBy)) {
-    const balanceField = (
-      {
-        balance: "available_balance",
-        totalDeposited: "total_deposited",
-        totalWithdrawn: "total_withdrawn",
-        totalWagered: "total_wagered",
-      } as Record<string, string>
-    )[sortBy];
-    orderBy = {
-      balances: { [balanceField]: order } as Prisma.balancesOrderByWithRelationInput,
-    };
-  } else {
-    const field = userSortFields.has(sortBy) ? sortBy : "created_at";
-    orderBy = { [field]: order } as Prisma.UserOrderByWithRelationInput;
-  }
-
-  const [users, total] = await Promise.all([
-    db.user.findMany({
-      where,
-      orderBy,
-      skip: (page - 1) * perPage,
-      take: perPage,
+  let users: Array<
+    Prisma.UserGetPayload<{
       include: {
         balances: {
           select: {
-            available_balance: true,
-            total_deposited: true,
-            total_withdrawn: true,
-            total_wagered: true,
+            available_balance: true;
+            total_deposited: true;
+            total_withdrawn: true;
+            total_wagered: true;
+          };
+        };
+      };
+    }>
+  >;
+  let total: number;
+
+  if (sortBy === "pnl") {
+    // P&L is computed (withdrawn + balance + inventory − deposited).
+    // Use raw SQL to order by the computed expression, then re-fetch via Prisma.
+    const orderSql = order === "asc" ? "ASC" : "DESC";
+    const whereSql: string[] = [];
+    if (search) {
+      const safe = search.replace(/'/g, "''");
+      whereSql.push(
+        `(u.username ILIKE '%${safe}%' OR u.email ILIKE '%${safe}%' OR u.id = '${safe}')`,
+      );
+    }
+    if (role && role !== "all") {
+      whereSql.push(`u.role = '${role.replace(/'/g, "''")}'::user_role`);
+    }
+    if (status === "banned") whereSql.push("u.is_banned = true");
+    else if (status === "locked") whereSql.push("u.is_locked = true");
+    else if (status === "active")
+      whereSql.push("u.is_banned = false AND u.is_locked = false");
+    const whereClause = whereSql.length ? `WHERE ${whereSql.join(" AND ")}` : "";
+
+    const orderedRows = await db.$queryRawUnsafe<{ id: string }[]>(`
+      SELECT u.id
+      FROM "user" u
+      LEFT JOIN balances b ON b.user_id = u.id
+      LEFT JOIN (
+        SELECT user_id, COALESCE(SUM(value_at_obtained::numeric), 0) AS inv_value
+        FROM user_inventory
+        WHERE sold_at IS NULL AND exchanged_at IS NULL
+        GROUP BY user_id
+      ) inv ON inv.user_id = u.id
+      ${whereClause}
+      ORDER BY (
+        COALESCE(b.total_withdrawn::numeric, 0)
+        + COALESCE(b.available_balance::numeric, 0)
+        + COALESCE(inv.inv_value, 0)
+        - COALESCE(b.total_deposited::numeric, 0)
+      ) ${orderSql} NULLS LAST, u.id ${orderSql}
+      LIMIT ${perPage} OFFSET ${(page - 1) * perPage}
+    `);
+
+    const ids = orderedRows.map((r) => r.id);
+    const [unordered, totalCount] = await Promise.all([
+      ids.length > 0
+        ? db.user.findMany({
+            where: { id: { in: ids } },
+            include: {
+              balances: {
+                select: {
+                  available_balance: true,
+                  total_deposited: true,
+                  total_withdrawn: true,
+                  total_wagered: true,
+                },
+              },
+            },
+          })
+        : Promise.resolve([]),
+      db.user.count({ where }),
+    ]);
+    const byId = new Map(unordered.map((u) => [u.id, u]));
+    users = ids
+      .map((id) => byId.get(id))
+      .filter((u): u is (typeof unordered)[number] => Boolean(u));
+    total = totalCount;
+  } else {
+    let orderBy: Prisma.UserOrderByWithRelationInput;
+    if (balanceSortFields.has(sortBy)) {
+      const balanceField = (
+        {
+          balance: "available_balance",
+          totalDeposited: "total_deposited",
+          totalWithdrawn: "total_withdrawn",
+          totalWagered: "total_wagered",
+        } as Record<string, string>
+      )[sortBy];
+      orderBy = {
+        balances: {
+          [balanceField]: order,
+        } as Prisma.balancesOrderByWithRelationInput,
+      };
+    } else {
+      const field = userSortFields.has(sortBy) ? sortBy : "created_at";
+      orderBy = { [field]: order } as Prisma.UserOrderByWithRelationInput;
+    }
+
+    const result = await Promise.all([
+      db.user.findMany({
+        where,
+        orderBy,
+        skip: (page - 1) * perPage,
+        take: perPage,
+        include: {
+          balances: {
+            select: {
+              available_balance: true,
+              total_deposited: true,
+              total_withdrawn: true,
+              total_wagered: true,
+            },
           },
         },
-      },
-    }),
-    db.user.count({ where }),
-  ]);
+      }),
+      db.user.count({ where }),
+    ]);
+    users = result[0];
+    total = result[1];
+  }
 
   // Fetch unsold inventory values for all users in the page
   const userIds = users.map((u) => u.id);

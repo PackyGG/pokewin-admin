@@ -1,6 +1,7 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import * as React from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   flexRender,
   getCoreRowModel,
@@ -14,10 +15,34 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  TablePendingProvider,
+  useTablePending,
+} from "@/components/data-table/table-pending-context";
 import { columns, type UserRow } from "./columns";
+import { cn } from "@/lib/utils";
 
 export function UsersDataTable({ data }: { data: UserRow[] }) {
+  return (
+    <TablePendingProvider>
+      <UsersDataTableInner data={data} />
+    </TablePendingProvider>
+  );
+}
+
+function UsersDataTableInner({ data }: { data: UserRow[] }) {
   const router = useRouter();
+  const { pending, setPending } = useTablePending();
+  const searchParams = useSearchParams();
+
+  // Whenever a new server-rendered `data` prop arrives, the fetch is done.
+  React.useEffect(() => {
+    setPending(false);
+    // We intentionally only depend on data and searchParams string;
+    // setPending is stable from the context.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, searchParams.toString()]);
+
   const table = useReactTable({
     data,
     columns,
@@ -25,8 +50,18 @@ export function UsersDataTable({ data }: { data: UserRow[] }) {
   });
 
   return (
-    <div className="rounded-md border">
-      <Table>
+    <div className="relative rounded-md border">
+      {pending && (
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-0.5 overflow-hidden rounded-t-md bg-primary/20">
+          <div className="h-full w-1/3 animate-pulse bg-primary" />
+        </div>
+      )}
+      <Table
+        className={cn(
+          "transition-opacity duration-150",
+          pending && "opacity-50",
+        )}
+      >
         <TableHeader>
           {table.getHeaderGroups().map((hg) => (
             <TableRow key={hg.id}>

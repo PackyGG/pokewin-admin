@@ -156,7 +156,7 @@ export const columns: ColumnDef<UserRow>[] = [
   },
   {
     accessorKey: "pnl",
-    header: "P&L",
+    header: () => <DataTableColumnHeader title="P&L" sortKey="pnl" />,
     cell: ({ row }) => <PnlCell value={row.original.pnl} />,
   },
   {
