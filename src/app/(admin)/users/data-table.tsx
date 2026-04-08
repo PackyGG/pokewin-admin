@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import {
   flexRender,
   getCoreRowModel,
@@ -16,6 +17,7 @@ import {
 import { columns, type UserRow } from "./columns";
 
 export function UsersDataTable({ data }: { data: UserRow[] }) {
+  const router = useRouter();
   const table = useReactTable({
     data,
     columns,
@@ -32,7 +34,10 @@ export function UsersDataTable({ data }: { data: UserRow[] }) {
                 <TableHead key={header.id}>
                   {header.isPlaceholder
                     ? null
-                    : flexRender(header.column.columnDef.header, header.getContext())}
+                    : flexRender(
+                        header.column.columnDef.header,
+                        header.getContext(),
+                      )}
                 </TableHead>
               ))}
             </TableRow>
@@ -41,7 +46,11 @@ export function UsersDataTable({ data }: { data: UserRow[] }) {
         <TableBody>
           {table.getRowModel().rows.length ? (
             table.getRowModel().rows.map((row) => (
-              <TableRow key={row.id}>
+              <TableRow
+                key={row.id}
+                className="cursor-pointer hover:bg-accent/40"
+                onClick={() => router.push(`/users/${row.original.id}`)}
+              >
                 {row.getVisibleCells().map((cell) => (
                   <TableCell key={cell.id}>
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}

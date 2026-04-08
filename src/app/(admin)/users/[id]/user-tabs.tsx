@@ -1024,6 +1024,31 @@ const BalanceSummaryCard = React.memo(function BalanceSummaryCard({
         <InfoRow label="Inventory Value" value={formatCurrency(balances.inventoryValue)} />
         <InfoRow label="Deposited" value={formatCurrency(balances.totalDeposited)} />
         <InfoRow label="Withdrawn" value={formatCurrency(balances.totalWithdrawn)} />
+        {(() => {
+          const pnl =
+            balances.totalWithdrawn +
+            balances.availableBalance +
+            balances.lockedBalance +
+            balances.inventoryValue -
+            balances.totalDeposited;
+          // Positive = user is in profit (we lose) -> RED
+          // Negative = user is in loss (we earn) -> GREEN
+          const cls =
+            pnl > 0
+              ? "text-rose-400"
+              : pnl < 0
+                ? "text-emerald-400"
+                : "text-foreground";
+          return (
+            <div className="flex items-center justify-between border-t pt-2">
+              <span className="text-sm text-muted-foreground">P&L</span>
+              <span className={`font-semibold tabular-nums ${cls}`}>
+                {pnl >= 0 ? "+" : ""}
+                {formatCurrency(pnl)}
+              </span>
+            </div>
+          );
+        })()}
         <InfoRow label="Wagered" value={formatCurrency(balances.totalWagered)} />
         <InfoRow label="↳ Packs" value={formatCurrency(balances.packsWagered)} />
         <InfoRow label="↳ Battles" value={formatCurrency(balances.battlesWagered)} />

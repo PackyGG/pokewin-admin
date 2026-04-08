@@ -7,10 +7,17 @@ type UserListItem = {
   id: string;
   username: string | null;
   email: string | null;
+  image: string | null;
   role: string;
   status: string;
+  country: string | null;
+  countryCode: string | null;
   availableBalance: number;
+  inventoryValue: number;
   totalDeposited: number;
+  totalWithdrawn: number;
+  totalWagered: number;
+  pnl: number;
   createdAt: string;
 };
 
@@ -54,11 +61,32 @@ export async function getUsers(params: {
     where.is_locked = false;
   }
 
-  const orderBy: Prisma.UserOrderByWithRelationInput = {};
-  const validSortFields = ["created_at", "email", "username", "role"];
-  const field = validSortFields.includes(sortBy) ? sortBy : "created_at";
   const order = sortOrder === "asc" ? "asc" : "desc";
-  (orderBy as Record<string, string>)[field] = order;
+  const balanceSortFields = new Set([
+    "balance",
+    "totalDeposited",
+    "totalWithdrawn",
+    "totalWagered",
+  ]);
+  const userSortFields = new Set(["created_at", "email", "username", "role"]);
+
+  let orderBy: Prisma.UserOrderByWithRelationInput;
+  if (balanceSortFields.has(sortBy)) {
+    const balanceField = (
+      {
+        balance: "available_balance",
+        totalDeposited: "total_deposited",
+        totalWithdrawn: "total_withdrawn",
+        totalWagered: "total_wagered",
+      } as Record<string, string>
+    )[sortBy];
+    orderBy = {
+      balances: { [balanceField]: order } as Prisma.balancesOrderByWithRelationInput,
+    };
+  } else {
+    const field = userSortFields.has(sortBy) ? sortBy : "created_at";
+    orderBy = { [field]: order } as Prisma.UserOrderByWithRelationInput;
+  }
 
   const [users, total] = await Promise.all([
     db.user.findMany({
@@ -68,7 +96,12 @@ export async function getUsers(params: {
       take: perPage,
       include: {
         balances: {
-          select: { available_balance: true, total_deposited: true },
+          select: {
+            available_balance: true,
+            total_deposited: true,
+            total_withdrawn: true,
+            total_wagered: true,
+          },
         },
       },
     }),
@@ -91,16 +124,35 @@ export async function getUsers(params: {
   );
 
   return {
-    data: users.map((u) => ({
-      id: u.id,
-      username: u.username,
-      email: u.email,
-      role: u.role,
-      status: u.is_banned ? "banned" : u.is_locked ? "locked" : "active",
-      availableBalance: toNumber(u.balances?.available_balance) + (inventoryMap.get(u.id) ?? 0),
-      totalDeposited: toNumber(u.balances?.total_deposited),
-      createdAt: u.created_at.toISOString(),
-    })),
+    data: users.map((u) => {
+      const availableBalance = toNumber(u.balances?.available_balance);
+      const totalDeposited = toNumber(u.balances?.total_deposited);
+      const totalWithdrawn = toNumber(u.balances?.total_withdrawn);
+      const totalWagered = toNumber(u.balances?.total_wagered);
+      const inventoryValue = inventoryMap.get(u.id) ?? 0;
+      // P&L from the user's perspective: positive = user is in profit (we lose),
+      // negative = user is in loss (we earn).
+      // Withdrawn + remaining balance + inventory value − deposited.
+      const pnl =
+        totalWithdrawn + availableBalance + inventoryValue - totalDeposited;
+      return {
+        id: u.id,
+        username: u.username,
+        email: u.email,
+        image: u.image,
+        role: u.role,
+        status: u.is_banned ? "banned" : u.is_locked ? "locked" : "active",
+        country: u.country,
+        countryCode: u.country_code,
+        availableBalance,
+        inventoryValue,
+        totalDeposited,
+        totalWithdrawn,
+        totalWagered,
+        pnl,
+        createdAt: u.created_at.toISOString(),
+      };
+    }),
     total,
     page,
     perPage,
