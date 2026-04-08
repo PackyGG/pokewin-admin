@@ -27,7 +27,61 @@ type DailyData = {
   newSignups: number;
   avgDeposit: number;
   avgBet: number;
+  totalDeposit: number;
+  totalBet: number;
+  minDeposit: number;
+  maxDeposit: number;
+  minBet: number;
+  maxBet: number;
 };
+
+type AvgTooltipPayload = {
+  payload?: DailyData;
+};
+
+function AvgTooltip({
+  active,
+  payload,
+  label,
+  kind,
+}: {
+  active?: boolean;
+  payload?: AvgTooltipPayload[];
+  label?: string;
+  kind: "deposit" | "bet";
+}) {
+  if (!active || !payload?.length || !payload[0]?.payload) return null;
+  const d = payload[0].payload;
+  const avg = kind === "deposit" ? d.avgDeposit : d.avgBet;
+  const total = kind === "deposit" ? d.totalDeposit : d.totalBet;
+  const min = kind === "deposit" ? d.minDeposit : d.minBet;
+  const max = kind === "deposit" ? d.maxDeposit : d.maxBet;
+  const fmt = (v: number) =>
+    `$${v.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+  return (
+    <div className="rounded-md border bg-popover px-3 py-2 text-xs shadow-lg">
+      <div className="mb-1.5 font-medium">{label}</div>
+      <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-muted-foreground">
+        <span>Median</span>
+        <span className="text-right font-semibold tabular-nums text-foreground">
+          {fmt(avg)}
+        </span>
+        <span>Total</span>
+        <span className="text-right font-semibold tabular-nums text-foreground">
+          {fmt(total)}
+        </span>
+        <span>Highest</span>
+        <span className="text-right tabular-nums text-foreground">
+          {fmt(max)}
+        </span>
+        <span>Lowest</span>
+        <span className="text-right tabular-nums text-foreground">
+          {fmt(min)}
+        </span>
+      </div>
+    </div>
+  );
+}
 
 const revenueConfig = {
   ggr: { label: "GGR", color: "var(--color-chart-1)" },
@@ -164,7 +218,9 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
       {/* Avg Deposit */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm font-medium">Avg Deposit</CardTitle>
+          <CardTitle className="text-sm font-medium">
+            Avg Deposit <span className="text-xs font-normal text-muted-foreground">(median, outlier-resistant)</span>
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <ChartContainer config={avgDepositConfig} className="h-[300px] w-full">
@@ -184,13 +240,7 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
                 width={70}
                 tickFormatter={currencyFormatter}
               />
-              <ChartTooltip
-                content={
-                  <ChartTooltipContent
-                    formatter={(value) => `$${Number(value).toFixed(2)}`}
-                  />
-                }
-              />
+              <ChartTooltip content={<AvgTooltip kind="deposit" />} />
               <Line
                 type="monotone"
                 dataKey="avgDeposit"
@@ -206,7 +256,9 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
       {/* Avg Bet */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm font-medium">Avg Bet</CardTitle>
+          <CardTitle className="text-sm font-medium">
+            Avg Bet <span className="text-xs font-normal text-muted-foreground">(median, outlier-resistant)</span>
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <ChartContainer config={avgBetConfig} className="h-[300px] w-full">
@@ -226,13 +278,7 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
                 width={70}
                 tickFormatter={currencyFormatter}
               />
-              <ChartTooltip
-                content={
-                  <ChartTooltipContent
-                    formatter={(value) => `$${Number(value).toFixed(2)}`}
-                  />
-                }
-              />
+              <ChartTooltip content={<AvgTooltip kind="bet" />} />
               <Line
                 type="monotone"
                 dataKey="avgBet"

@@ -74,6 +74,12 @@ export type AnalyticsData = {
     newSignups: number;
     avgDeposit: number;
     avgBet: number;
+    totalDeposit: number;
+    totalBet: number;
+    minDeposit: number;
+    maxDeposit: number;
+    minBet: number;
+    maxBet: number;
   }[];
 };
 
@@ -164,6 +170,12 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
           unique_visitors: string;
           avg_deposit: string;
           avg_bet: string;
+          total_deposit: string;
+          total_bet: string;
+          min_deposit: string;
+          max_deposit: string;
+          min_bet: string;
+          max_bet: string;
         }[]
       >(`
         SELECT
@@ -187,12 +199,32 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
             WHEN type IN ('battle_bet', 'battle_sponsorship')
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager,
           COUNT(DISTINCT user_id)::text AS unique_visitors,
-          COALESCE(AVG(CASE
+          COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY
+            CASE WHEN type = 'deposit'
+              THEN ABS(amount::numeric) END
+          ), 0)::text AS avg_deposit,
+          COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY
+            CASE WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
+              THEN ABS(amount::numeric) END
+          ), 0)::text AS avg_bet,
+          COALESCE(SUM(CASE
             WHEN type = 'deposit'
-            THEN ABS(amount::numeric) END), 0)::text AS avg_deposit,
-          COALESCE(AVG(CASE
+            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS total_deposit,
+          COALESCE(SUM(CASE
             WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
-            THEN ABS(amount::numeric) END), 0)::text AS avg_bet
+            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS total_bet,
+          COALESCE(MIN(CASE
+            WHEN type = 'deposit'
+            THEN ABS(amount::numeric) END), 0)::text AS min_deposit,
+          COALESCE(MAX(CASE
+            WHEN type = 'deposit'
+            THEN ABS(amount::numeric) END), 0)::text AS max_deposit,
+          COALESCE(MIN(CASE
+            WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
+            THEN ABS(amount::numeric) END), 0)::text AS min_bet,
+          COALESCE(MAX(CASE
+            WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
+            THEN ABS(amount::numeric) END), 0)::text AS max_bet
         FROM ledger_transactions
         WHERE status = 'completed' ${dateFilter}
         GROUP BY DATE(created_at)
@@ -331,6 +363,12 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
       newSignups: signupsMap.get(dateStr) ?? 0,
       avgDeposit: toNumber(d.avg_deposit),
       avgBet: toNumber(d.avg_bet),
+      totalDeposit: toNumber(d.total_deposit),
+      totalBet: toNumber(d.total_bet),
+      minDeposit: toNumber(d.min_deposit),
+      maxDeposit: toNumber(d.max_deposit),
+      minBet: toNumber(d.min_bet),
+      maxBet: toNumber(d.max_bet),
     };
   });
 
@@ -347,6 +385,12 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
         newSignups: count,
         avgDeposit: 0,
         avgBet: 0,
+        totalDeposit: 0,
+        totalBet: 0,
+        minDeposit: 0,
+        maxDeposit: 0,
+        minBet: 0,
+        maxBet: 0,
       });
     }
   }
