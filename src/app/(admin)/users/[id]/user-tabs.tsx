@@ -1553,16 +1553,16 @@ const PnlCard = React.memo(function PnlCard({
   balances: UserDetail["balances"];
 }) {
   // Platform P&L = deposited − withdrawn − balance − locked − inventory
-  const grossPnl = balances
+  // This already includes ALL effects (bonuses, rakeback etc. flow through
+  // balance — when given they increase it, when wagered away they decrease it).
+  // Costs below are informational only, NOT subtracted again.
+  const platformPnl = balances
     ? balances.totalDeposited -
       balances.totalWithdrawn -
       balances.availableBalance -
       balances.lockedBalance -
       balances.inventoryValue
     : 0;
-  // Subtract costs (bonuses, rakeback, affiliate, other) for the true net
-  const totalCosts = p.bonusesCost + p.rakebackCost + p.affiliateCost + p.otherCosts;
-  const netPnl = grossPnl - totalCosts;
 
   return (
     <Card>
@@ -1570,18 +1570,12 @@ const PnlCard = React.memo(function PnlCard({
         <CardTitle className="text-sm font-medium">Platform P&L</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* Net P&L header */}
+        {/* P&L header */}
         <div className="pb-2 border-b">
           <div className="flex items-baseline gap-3">
-            <span className="text-sm text-muted-foreground">Net P&L</span>
-            <span className={`text-2xl font-bold tabular-nums ${netPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-              {netPnl >= 0 ? "+" : ""}{formatCurrency(netPnl)}
-            </span>
-          </div>
-          <div className="flex items-center gap-3 mt-1">
-            <span className="text-xs text-muted-foreground">Gross</span>
-            <span className={`text-sm font-medium tabular-nums ${grossPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-              {grossPnl >= 0 ? "+" : ""}{formatCurrency(grossPnl)}
+            <span className="text-sm text-muted-foreground">P&L</span>
+            <span className={`text-2xl font-bold tabular-nums ${platformPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+              {platformPnl >= 0 ? "+" : ""}{formatCurrency(platformPnl)}
             </span>
           </div>
           {balances && (
@@ -1592,7 +1586,7 @@ const PnlCard = React.memo(function PnlCard({
         </div>
 
         {/* Cost breakdown — supplementary detail */}
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground pt-1">Cost Breakdown</p>
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground pt-1">Costs Given (included in P&L)</p>
         <InfoRow label="↳ Bonuses & Promos" value={<PnlValue value={-p.bonusesCost} />} />
         <InfoRow label="↳ Rakeback" value={<PnlValue value={-p.rakebackCost} />} />
         <InfoRow label="↳ Affiliate" value={<PnlValue value={-p.affiliateCost} />} />
