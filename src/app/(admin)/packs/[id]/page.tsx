@@ -1,12 +1,12 @@
 import { notFound } from "next/navigation";
 import { BackButton } from "@/components/back-button";
-import { getPackDetail, getPackRevenueHistory, getPackGames } from "@/lib/queries/packs";
+import { getPackDetail, getPackStats, getPackGames } from "@/lib/queries/packs";
 import { requirePageAccess } from "@/lib/dal";
 import { Badge } from "@/components/ui/badge";
 import { CardImage } from "@/components/card-image";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { PackTabs } from "./pack-tabs";
-import { PackRevenueChart } from "./revenue-chart";
+import { PackStatsSection } from "./revenue-chart";
 import { TogglePackButton } from "./toggle-pack-button";
 import { EditPackButton } from "./edit-pack-button";
 import { DeletePackButton } from "./delete-pack-button";
@@ -18,21 +18,25 @@ export default async function PackDetailPage({
 }) {
   await requirePageAccess("/packs");
   const { id } = await params;
-  const [data, revenueHistory, initialGames] = await Promise.all([
+  const [data, packStats, initialGames] = await Promise.all([
     getPackDetail(id),
-    getPackRevenueHistory(id),
+    getPackStats(id),
     getPackGames(id, 1, 20),
   ]);
 
   if (!data) notFound();
 
+  // RTP computed from actual revenue/payout data, not DB pre-computed field
+  const rtp = packStats.rtp;
+  const houseEdge = packStats.houseEdge;
+
   const stats = [
     { label: "Price", value: formatCurrency(data.priceUsd) },
-    { label: "Openings", value: formatNumber(data.totalOpenings) },
-    { label: "Revenue", value: formatCurrency(data.totalRevenue) },
-    { label: "Payout", value: formatCurrency(data.totalPayout) },
-    { label: "RTP", value: `${(data.actualRtp * 100).toFixed(2)}%`, warn: data.actualRtp > 1 },
-    { label: "House Edge", value: `${(data.actualHouseEdge * 100).toFixed(2)}%`, warn: data.actualHouseEdge < 0 },
+    { label: "Openings", value: formatNumber(packStats.openings.all) },
+    { label: "Revenue", value: formatCurrency(packStats.revenue.all) },
+    { label: "Payout", value: formatCurrency(packStats.payout.all) },
+    { label: "RTP", value: `${(rtp * 100).toFixed(2)}%`, warn: rtp > 1 },
+    { label: "House Edge", value: `${(houseEdge * 100).toFixed(2)}%`, warn: houseEdge < 0 },
     { label: "Cards/Open", value: String(data.cardsPerOpen) },
     { label: "Total Cards", value: String(data.cards.length) },
   ];
@@ -73,7 +77,7 @@ export default async function PackDetailPage({
         </div>
       </div>
 
-      <PackRevenueChart data={revenueHistory} />
+      <PackStatsSection stats={packStats} />
 
       <PackTabs data={data} initialGames={initialGames} />
     </div>

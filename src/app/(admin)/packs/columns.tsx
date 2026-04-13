@@ -50,12 +50,22 @@ export const columns: ColumnDef<PackListItem>[] = [
   {
     accessorKey: "actualRtp",
     header: "RTP %",
-    cell: ({ row }) => `${(row.original.actualRtp * 100).toFixed(2)}%`,
+    cell: ({ row }) => {
+      // DB stores actual_rtp as percentage (e.g. 85.85 for 85.85%).
+      // If > 2 it's already percentage; if <= 2 it's decimal (0.8585).
+      const v = row.original.actualRtp;
+      const pct = v > 2 ? v : v * 100;
+      return `${pct.toFixed(2)}%`;
+    },
   },
   {
     accessorKey: "actualHouseEdge",
     header: "House Edge %",
-    cell: ({ row }) => `${(row.original.actualHouseEdge * 100).toFixed(2)}%`,
+    cell: ({ row }) => {
+      const v = row.original.actualHouseEdge;
+      const pct = v > 2 ? v : v * 100;
+      return `${pct.toFixed(2)}%`;
+    },
   },
   {
     accessorKey: "active",

@@ -160,25 +160,121 @@ export async function getPackDetail(id: string) {
   };
 }
 
-export async function getPackRevenueHistory(packId: string) {
-  const sessions = await db.game_sessions.findMany({
-    where: { game_type: "pack", game_id: packId },
-    orderBy: { created_at: "asc" },
-    select: { bet_amount: true, created_at: true },
-  });
+export type PackStats = {
+  openings: { d1: number; d3: number; d7: number; d30: number; all: number };
+  revenue: { d1: number; d3: number; d7: number; d30: number; all: number };
+  payout: { d1: number; d3: number; d7: number; d30: number; all: number };
+  rtp: number; // 0-1 decimal
+  houseEdge: number; // 0-1 decimal
+  daily: {
+    date: string;
+    openings: number;
+    revenue: number;
+    payout: number;
+  }[];
+};
 
-  const byDate = new Map<string, number>();
-  for (const s of sessions) {
-    const date = s.created_at.toISOString().slice(0, 10);
-    byDate.set(date, (byDate.get(date) ?? 0) + toNumber(s.bet_amount));
+export async function getPackStats(packId: string): Promise<PackStats> {
+  // game_sessions.game_id can reference packs.id directly OR user_packs.id.
+  // Find all user_packs IDs that point to this pack, then query game_sessions
+  // for both the direct pack ID and any user_pack IDs.
+  const userPackIds = await db.user_packs.findMany({
+    where: { pack_id: packId },
+    select: { id: true },
+  });
+  const gameIds = [packId, ...userPackIds.map((up) => up.id)];
+
+  const rows = await db.$queryRawUnsafe<
+    {
+      date: Date;
+      openings: string;
+      revenue: string;
+      payout: string;
+    }[]
+  >(`
+    SELECT
+      DATE(gs.created_at) AS date,
+      COUNT(*)::text AS openings,
+      COALESCE(SUM(gs.bet_amount::numeric), 0)::text AS revenue,
+      COALESCE(SUM(sub.payout), 0)::text AS payout
+    FROM game_sessions gs
+    LEFT JOIN LATERAL (
+      SELECT COALESCE(SUM(ui.value_at_obtained::numeric), 0) AS payout
+      FROM provably_fair_results pf
+      JOIN user_inventory ui ON ui.id = pf.inventory_item_id
+      WHERE pf.game_session_id = gs.id
+    ) sub ON true
+    WHERE gs.game_type = 'pack'
+      AND gs.game_id = ANY($1::uuid[])
+    GROUP BY DATE(gs.created_at)
+    ORDER BY date
+  `, gameIds);
+
+  const now = new Date();
+  const day = 24 * 60 * 60 * 1000;
+  const since1 = new Date(now.getTime() - 1 * day);
+  const since3 = new Date(now.getTime() - 3 * day);
+  const since7 = new Date(now.getTime() - 7 * day);
+  const since30 = new Date(now.getTime() - 30 * day);
+
+  const buckets = { d1: 0, d3: 0, d7: 0, d30: 0, all: 0 };
+  const revBuckets = { ...buckets };
+  const payBuckets = { ...buckets };
+
+  const daily: PackStats["daily"] = [];
+
+  for (const r of rows) {
+    const d = new Date(r.date);
+    const openings = Number(r.openings);
+    const revenue = parseFloat(r.revenue);
+    const payout = parseFloat(r.payout);
+
+    daily.push({
+      date: d.toISOString().slice(0, 10),
+      openings,
+      revenue,
+      payout,
+    });
+
+    buckets.all += openings;
+    revBuckets.all += revenue;
+    payBuckets.all += payout;
+
+    if (d >= since30) {
+      buckets.d30 += openings;
+      revBuckets.d30 += revenue;
+      payBuckets.d30 += payout;
+    }
+    if (d >= since7) {
+      buckets.d7 += openings;
+      revBuckets.d7 += revenue;
+      payBuckets.d7 += payout;
+    }
+    if (d >= since3) {
+      buckets.d3 += openings;
+      revBuckets.d3 += revenue;
+      payBuckets.d3 += payout;
+    }
+    if (d >= since1) {
+      buckets.d1 += openings;
+      revBuckets.d1 += revenue;
+      payBuckets.d1 += payout;
+    }
   }
 
-  // Cumulative revenue
-  let cumulative = 0;
-  return Array.from(byDate, ([date, daily]) => {
-    cumulative += daily;
-    return { date, daily, cumulative };
-  });
+  const totalRevenue = revBuckets.all;
+  const totalPayout = payBuckets.all;
+  const rtp = totalRevenue > 0 ? totalPayout / totalRevenue : 0;
+  const houseEdge = 1 - rtp;
+
+  return {
+    openings: buckets,
+    revenue: revBuckets,
+    payout: payBuckets,
+    rtp,
+    houseEdge,
+    daily,
+  };
 }
 
 export async function getPackGames(
