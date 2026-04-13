@@ -54,19 +54,48 @@ export default async function PromoCodeDetailPage({
           <CardTitle className="text-sm font-medium">Details</CardTitle>
           <DeletePromoCodeButton promoCodeId={data.id} />
         </CardHeader>
-        <CardContent>
-          <div className="flex justify-between">
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-3 gap-4 sm:grid-cols-5">
             <InfoItem label="Value">{formatCurrency(data.value)}</InfoItem>
             <InfoItem label="Region">{data.region}</InfoItem>
-            <InfoItem label="Min Level">{data.minimumLevel}</InfoItem>
-            <InfoItem label="Min Wager">{formatCurrency(data.minimumWagerAmount)}</InfoItem>
-            <InfoItem label="Wager Period">{data.wagerPeriodDays} days</InfoItem>
             <InfoItem label="Max Uses">{data.maxUses}</InfoItem>
-            <InfoItem label="Redemptions">{data.redemptions.length}</InfoItem>
+            <InfoItem label="Redemptions">{data.redemptions.length} / {data.maxUses}</InfoItem>
             <InfoItem label="Expires">
               {data.expiresAt ? formatDate(data.expiresAt) : "Never"}
             </InfoItem>
-            <InfoItem label="Created">{formatDate(data.createdAt)}</InfoItem>
+          </div>
+          <div className="border-t pt-3">
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Requirements
+            </p>
+            <div className="grid grid-cols-3 gap-4 sm:grid-cols-5">
+              <InfoItem label="Discord">
+                <Badge variant="outline" className={data.requiresDiscord ? "bg-green-500/15 text-green-400 border-green-500/30" : ""}>
+                  {data.requiresDiscord ? "Required" : "Not required"}
+                </Badge>
+              </InfoItem>
+              <InfoItem label="Min Level">{data.minimumLevel || "None"}</InfoItem>
+              <InfoItem label="Min Wager">
+                {data.minimumWagerAmount > 0
+                  ? formatCurrency(data.minimumWagerAmount)
+                  : "None"}
+              </InfoItem>
+              <InfoItem label="Wager Period">
+                {data.wagerPeriodDays > 0
+                  ? `${data.wagerPeriodDays} days`
+                  : data.minimumWagerAmount > 0
+                    ? "Lifetime"
+                    : "—"}
+              </InfoItem>
+              <InfoItem label="Min Account Age">
+                {data.minimumAccountAgeDays > 0
+                  ? `${data.minimumAccountAgeDays} days`
+                  : "None"}
+              </InfoItem>
+            </div>
+          </div>
+          <div className="text-xs text-muted-foreground">
+            Created {formatDate(data.createdAt)}
           </div>
         </CardContent>
       </Card>

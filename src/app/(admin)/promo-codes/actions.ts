@@ -11,6 +11,10 @@ export async function createPromoCode(data: {
   value: number;
   region: "NA" | "EU";
   minimumLevel: number;
+  minimumWagerAmount: number;
+  wagerPeriodDays: number;
+  minimumAccountAgeDays: number;
+  requiresDiscord: boolean;
   maxUses: number;
   expiresAt: string | null;
 }) {
@@ -30,6 +34,10 @@ export async function createPromoCode(data: {
       value: data.value,
       region: data.region,
       minimum_level: data.minimumLevel,
+      minimum_wager_amount: data.minimumWagerAmount,
+      wager_period_days: data.wagerPeriodDays,
+      minimum_account_age_days: data.minimumAccountAgeDays,
+      requires_discord: data.requiresDiscord,
       max_uses: data.maxUses,
       expires_at: data.expiresAt ? new Date(data.expiresAt) : null,
     },
@@ -42,6 +50,27 @@ export async function createPromoCode(data: {
   });
 
   revalidatePath("/promo-codes");
+}
+
+export async function getRedemptions(promoCodeId: string) {
+  await requirePageAccess("/promo-codes");
+  const redemptions = await db.promo_code_redemptions.findMany({
+    where: { promo_code_id: promoCodeId },
+    include: {
+      user: { select: { username: true, email: true, image: true } },
+    },
+    orderBy: { redeemed_at: "desc" },
+    take: 100,
+  });
+  return redemptions.map((r) => ({
+    id: r.id,
+    userId: r.user_id,
+    username: r.user?.username ?? null,
+    email: r.user?.email ?? null,
+    image: r.user?.image ?? null,
+    ipAddress: r.ip_address,
+    redeemedAt: r.redeemed_at.toISOString(),
+  }));
 }
 
 export async function deletePromoCode(promoCodeId: string) {
