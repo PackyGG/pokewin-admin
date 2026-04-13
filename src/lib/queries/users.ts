@@ -123,12 +123,19 @@ export async function getUsers(params: {
         WHERE status IN ('completed', 'shipped')
         GROUP BY user_id
       ) cw ON cw.user_id = u.id
+      LEFT JOIN (
+        SELECT user_id, COALESCE(SUM(value::numeric), 0) AS voucher_value
+        FROM vouchers
+        WHERE claimed_at IS NULL
+        GROUP BY user_id
+      ) vc ON vc.user_id = u.id
       ${whereClause}
       ORDER BY (
         COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)
         + COALESCE(b.available_balance::numeric, 0)
         + COALESCE(b.locked_balance::numeric, 0)
         + COALESCE(inv.inv_value, 0)
+        + COALESCE(vc.voucher_value, 0)
         - COALESCE(b.total_deposited::numeric, 0)
       ) ${orderSql} NULLS LAST, u.id ${orderSql}
       LIMIT ${perPage} OFFSET ${(page - 1) * perPage}
@@ -234,6 +241,21 @@ export async function getUsers(params: {
     cardWithdrawalValues.map((cw) => [cw.user_id, toNumber(cw._sum.total_value_usd)])
   );
 
+  // Open vouchers per user
+  const voucherValues = userIds.length > 0
+    ? await db.vouchers.groupBy({
+        by: ["user_id"],
+        where: {
+          user_id: { in: userIds },
+          claimed_at: null,
+        },
+        _sum: { value: true },
+      })
+    : [];
+  const voucherMap = new Map(
+    voucherValues.map((v) => [v.user_id, toNumber(v._sum.value)])
+  );
+
   return {
     data: users.map((u) => {
       const availableBalance = toNumber(u.balances?.available_balance);
@@ -242,11 +264,10 @@ export async function getUsers(params: {
       const totalWithdrawn = toNumber(u.balances?.total_withdrawn) + (cardWithdrawalMap.get(u.id) ?? 0);
       const totalWagered = toNumber(u.balances?.total_wagered);
       const inventoryValue = inventoryMap.get(u.id) ?? 0;
-      // P&L from the user's perspective: positive = user is in profit (we lose),
-      // negative = user is in loss (we earn).
-      // Withdrawn + remaining balance (available + locked) + inventory value − deposited.
+      const vouchersValue = voucherMap.get(u.id) ?? 0;
+      // P&L: withdrawn + balance + locked + inventory + vouchers − deposited
       const pnl =
-        totalWithdrawn + availableBalance + lockedBalance + inventoryValue - totalDeposited;
+        totalWithdrawn + availableBalance + lockedBalance + inventoryValue + vouchersValue - totalDeposited;
       return {
         id: u.id,
         username: u.username,
@@ -275,8 +296,9 @@ export async function getUsers(params: {
 export async function getUserDetail(id: string) {
   let inventoryValueResult: { _sum: { value_at_obtained: unknown } };
   let wagerBreakdown: { type: string; _sum: { amount: unknown } }[];
+  let vouchersResult: { _sum: { value: unknown } };
   try {
-    [inventoryValueResult, wagerBreakdown] = await Promise.all([
+    [inventoryValueResult, wagerBreakdown, vouchersResult] = await Promise.all([
       db.user_inventory.aggregate({
         where: { user_id: id, sold_at: null, exchanged_at: null },
         _sum: { value_at_obtained: true },
@@ -290,11 +312,16 @@ export async function getUserDetail(id: string) {
         },
         _sum: { amount: true },
       }),
+      db.vouchers.aggregate({
+        where: { user_id: id, claimed_at: null },
+        _sum: { value: true },
+      }),
     ]);
   } catch (e) {
-    console.error("[getUserDetail] inventory/wager query failed:", e);
+    console.error("[getUserDetail] inventory/wager/vouchers query failed:", e);
     inventoryValueResult = { _sum: { value_at_obtained: null } };
     wagerBreakdown = [];
+    vouchersResult = { _sum: { value: null } };
   }
 
   const [user, balances, statistics, featureLocks, inventoryCount, affiliateAccount, shippingAddress, vault, mutes, cardWithdrawals, activeSeed, depositAddresses, cardWithdrawalTotal] =
@@ -418,6 +445,9 @@ export async function getUserDetail(id: string) {
           unlockAt: balances.unlock_at?.toISOString() ?? null,
           inventoryValue: inventoryValueResult._sum.value_at_obtained
             ? toNumber(inventoryValueResult._sum.value_at_obtained)
+            : 0,
+          vouchersValue: vouchersResult._sum.value
+            ? toNumber(vouchersResult._sum.value)
             : 0,
           packsWagered: Math.abs(toNumber(
             wagerBreakdown.find((w) => w.type === "pack_opening")?._sum.amount ?? 0,

@@ -114,6 +114,7 @@ type UserDetail = {
     bonusPoints: number;
     unlockAt: string | null;
     inventoryValue: number;
+    vouchersValue: number;
     packsWagered: number;
     battlesWagered: number;
   } | null;
@@ -1133,15 +1134,15 @@ const BalanceSummaryCard = React.memo(function BalanceSummaryCard({
         )}
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* Available = liquid balance + inventory value combined */}
+        {/* Available = balance + inventory + vouchers */}
         <div className="pb-2 border-b">
           <div className="flex items-baseline justify-between">
             <span className="text-sm text-muted-foreground">Available</span>
             <span className="text-2xl font-bold tabular-nums">
-              {formatCurrency(balances.availableBalance + balances.inventoryValue)}
+              {formatCurrency(balances.availableBalance + balances.inventoryValue + balances.vouchersValue)}
             </span>
           </div>
-          <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+          <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
             <div className="rounded-md border bg-muted/30 px-2.5 py-1.5">
               <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
                 Balance
@@ -1158,6 +1159,14 @@ const BalanceSummaryCard = React.memo(function BalanceSummaryCard({
                 {formatCurrency(balances.inventoryValue)}
               </div>
             </div>
+            <div className="rounded-md border bg-muted/30 px-2.5 py-1.5">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                Vouchers
+              </div>
+              <div className="font-semibold tabular-nums">
+                {formatCurrency(balances.vouchersValue)}
+              </div>
+            </div>
           </div>
         </div>
         <InfoRow label="Locked" value={formatCurrency(balances.lockedBalance)} />
@@ -1170,7 +1179,8 @@ const BalanceSummaryCard = React.memo(function BalanceSummaryCard({
             balances.totalWithdrawn -
             balances.availableBalance -
             balances.lockedBalance -
-            balances.inventoryValue;
+            balances.inventoryValue -
+            balances.vouchersValue;
           const cls =
             platformPnl > 0
               ? "text-emerald-400"
@@ -1646,7 +1656,8 @@ const PnlCard = React.memo(function PnlCard({
       balances.totalWithdrawn -
       balances.availableBalance -
       balances.lockedBalance -
-      balances.inventoryValue
+      balances.inventoryValue -
+      balances.vouchersValue
     : 0;
 
   return (
@@ -1665,7 +1676,7 @@ const PnlCard = React.memo(function PnlCard({
           </div>
           {balances && (
             <div className="mt-1 text-[10px] text-muted-foreground">
-              Deposited {formatCurrency(balances.totalDeposited)} − Withdrawn {formatCurrency(balances.totalWithdrawn)} − Balance {formatCurrency(balances.availableBalance + balances.lockedBalance)} − Inventory {formatCurrency(balances.inventoryValue)}
+              Deposited {formatCurrency(balances.totalDeposited)} − Withdrawn {formatCurrency(balances.totalWithdrawn)} − Balance {formatCurrency(balances.availableBalance + balances.lockedBalance)} − Inventory {formatCurrency(balances.inventoryValue)} − Vouchers {formatCurrency(balances.vouchersValue)}
             </div>
           )}
         </div>
