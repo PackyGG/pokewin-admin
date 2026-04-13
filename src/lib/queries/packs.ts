@@ -300,7 +300,10 @@ export async function getPackStats(
   >(`
     SELECT
       (pf.battle_id IS NOT NULL) AS is_battle,
-      COALESCE((pf.result_metadata->>'borrow_percentage')::int, 0) AS borrow_pct,
+      CASE
+        WHEN pf.battle_id IS NOT NULL THEN COALESCE(b.borrow_percentage, 0)
+        ELSE COALESCE((pf.result_metadata->>'borrow_percentage')::int, 0)
+      END AS borrow_pct,
       COALESCE(b.sponsorship_percentage, 0) AS sponsor_pct,
       COUNT(*)::text AS count
     FROM provably_fair_results pf
