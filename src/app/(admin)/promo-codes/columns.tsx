@@ -32,14 +32,32 @@ type Redemption = {
   redeemedAt: string;
 };
 
+function codeStatus(
+  row: PromoCodeListItem,
+): { label: string; cls: string } {
+  const isExpired =
+    row.expiresAt && new Date(row.expiresAt) < new Date();
+  const isUsedUp = row.redemptionCount >= row.maxUses;
+  if (isExpired)
+    return {
+      label: "Expired",
+      cls: "border-red-500/30 bg-red-500/15 text-red-400",
+    };
+  if (isUsedUp)
+    return {
+      label: "Used up",
+      cls: "border-amber-500/30 bg-amber-500/15 text-amber-400",
+    };
+  return {
+    label: "Active",
+    cls: "border-green-500/30 bg-green-500/15 text-green-400",
+  };
+}
+
 function RedemptionsCell({
-  promoCodeId,
-  count,
-  maxUses,
+  row,
 }: {
-  promoCodeId: string;
-  count: number;
-  maxUses: number;
+  row: PromoCodeListItem;
 }) {
   const [open, setOpen] = useState(false);
   const [data, setData] = useState<Redemption[] | null>(null);
@@ -49,11 +67,13 @@ function RedemptionsCell({
     setOpen(true);
     if (!data) {
       startTransition(async () => {
-        const result = await getRedemptions(promoCodeId);
+        const result = await getRedemptions(row.id);
         setData(result);
       });
     }
   }
+
+  const status = codeStatus(row);
 
   return (
     <>
@@ -61,15 +81,37 @@ function RedemptionsCell({
         onClick={handleOpen}
         className="font-medium tabular-nums hover:underline"
       >
-        {count} / {maxUses}
+        {row.redemptionCount} / {row.maxUses}
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>
-              Redemptions ({count})
+            <DialogTitle className="flex items-center gap-2">
+              Redemptions
+              <Badge variant="outline" className={status.cls}>
+                {status.label}
+              </Badge>
             </DialogTitle>
           </DialogHeader>
+          {/* Code summary */}
+          <div className="flex items-center gap-4 rounded-md border bg-muted/30 px-3 py-2 text-xs">
+            <div>
+              <span className="text-muted-foreground">Value</span>
+              <div className="font-semibold">{formatCurrency(row.value)}</div>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Uses</span>
+              <div className="font-semibold tabular-nums">
+                {row.redemptionCount} / {row.maxUses}
+              </div>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Expires</span>
+              <div className="font-semibold">
+                {row.expiresAt ? formatDate(row.expiresAt) : "Never"}
+              </div>
+            </div>
+          </div>
           {isPending && (
             <p className="py-4 text-center text-sm text-muted-foreground">
               Loading…
@@ -168,13 +210,19 @@ export const columns: ColumnDef<PromoCodeListItem>[] = [
   {
     accessorKey: "redemptionCount",
     header: "Redemptions",
-    cell: ({ row }) => (
-      <RedemptionsCell
-        promoCodeId={row.original.id}
-        count={row.original.redemptionCount}
-        maxUses={row.original.maxUses}
-      />
-    ),
+    cell: ({ row }) => <RedemptionsCell row={row.original} />,
+  },
+  {
+    id: "status",
+    header: "Status",
+    cell: ({ row }) => {
+      const s = codeStatus(row.original);
+      return (
+        <Badge variant="outline" className={s.cls}>
+          {s.label}
+        </Badge>
+      );
+    },
   },
   {
     accessorKey: "expiresAt",
