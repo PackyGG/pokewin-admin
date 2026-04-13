@@ -180,6 +180,7 @@ export type PackStats = {
 export async function getPackStats(
   packId: string,
   packPrice: number,
+  dbTotals: { totalPayout: number; actualRtp: number },
 ): Promise<PackStats> {
   // The single source of truth: provably_fair_results.result_metadata->>'pack_id'
   // tells us exactly which pack produced each card in both solo and battle openings.
@@ -272,8 +273,13 @@ export async function getPackStats(
   }
 
   const totalRevenue = revBuckets.all;
-  const totalPayout = payBuckets.all;
-  const rtp = totalRevenue > 0 ? totalPayout / totalRevenue : 0;
+  // Payout from our query is unreliable (unassigned high-value cards have no
+  // inventory_item_id). Use the backend's pre-computed value instead.
+  const totalPayout = dbTotals.totalPayout;
+  payBuckets.all = totalPayout;
+  // RTP from the backend's pre-computed value (stored as percentage, e.g. 85.85)
+  const dbRtp = dbTotals.actualRtp;
+  const rtp = dbRtp > 2 ? dbRtp / 100 : dbRtp; // normalize to 0-1
   const houseEdge = 1 - rtp;
 
   return {

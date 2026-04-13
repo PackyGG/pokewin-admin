@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, XAxis, YAxis } from "recharts";
 import {
   type ChartConfig,
   ChartContainer,
@@ -169,15 +169,27 @@ export function PackStatsSection({ stats }: { stats: PackStats }) {
                       />
                     }
                   />
+                  <Legend
+                    verticalAlign="top"
+                    height={28}
+                    iconType="square"
+                    iconSize={10}
+                    formatter={(value: string) =>
+                      value === "revenue" ? "Revenue" : "Payout"
+                    }
+                    wrapperStyle={{ fontSize: 11, color: "var(--muted-foreground)" }}
+                  />
                   <Bar
                     dataKey="revenue"
                     fill="var(--color-revenue)"
                     radius={[4, 4, 0, 0]}
+                    name="Revenue"
                   />
                   <Bar
                     dataKey="payout"
                     fill="var(--color-payout)"
                     radius={[4, 4, 0, 0]}
+                    name="Payout"
                   />
                 </BarChart>
               </ChartContainer>
@@ -218,16 +230,25 @@ export function PackStatsSection({ stats }: { stats: PackStats }) {
                     width={30}
                   />
                   <ChartTooltip content={<ChartTooltipContent />} />
+                  <Legend
+                    verticalAlign="top"
+                    height={28}
+                    iconType="square"
+                    iconSize={10}
+                    wrapperStyle={{ fontSize: 11, color: "var(--muted-foreground)" }}
+                  />
                   <Bar
                     dataKey="soloOpenings"
                     stackId="opens"
                     fill="var(--color-soloOpenings)"
+                    name="Solo"
                   />
                   <Bar
                     dataKey="battleOpenings"
                     stackId="opens"
                     fill="var(--color-battleOpenings)"
                     radius={[4, 4, 0, 0]}
+                    name="Battles"
                   />
                 </BarChart>
               </ChartContainer>
