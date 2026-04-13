@@ -5,7 +5,6 @@ import {
   getBoardCards,
   getBoardLabels,
   getBoardMembers,
-  signPreviewUrl,
 } from "@/lib/trello";
 import { BoardView } from "./board-view";
 import { LabelFilter } from "./label-filter";
@@ -61,12 +60,16 @@ export default async function TrelloPage({
     cardsByList[listId].sort((a, b) => a.pos - b.pos);
   }
 
-  // Sign attachment preview URLs
+  // Proxy attachment URLs through our API route so credentials stay
+  // server-side and S3/CDN URLs aren't broken by appended auth params.
+  const proxyUrl = (u: string) =>
+    `/api/trello-image?url=${encodeURIComponent(u)}`;
   for (const card of cards) {
     for (const att of card.attachments || []) {
+      att.url = proxyUrl(att.url);
       att.previews = att.previews.map((p) => ({
         ...p,
-        url: signPreviewUrl(p.url),
+        url: proxyUrl(p.url),
       }));
     }
   }
