@@ -174,16 +174,14 @@ export type PackStats = {
   }[];
 };
 
-export async function getPackStats(packId: string): Promise<PackStats> {
-  // game_sessions.game_id can reference packs.id directly OR user_packs.id.
-  // Find all user_packs IDs that point to this pack, then query game_sessions
-  // for both the direct pack ID and any user_pack IDs.
-  const userPackIds = await db.user_packs.findMany({
-    where: { pack_id: packId },
-    select: { id: true },
-  });
-  const gameIds = [packId, ...userPackIds.map((up) => up.id)];
-
+export async function getPackStats(
+  packId: string,
+  dbFallback?: { totalOpenings: number; totalRevenue: number; totalPayout: number },
+): Promise<PackStats> {
+  // game_sessions.game_id can reference packs.id, user_packs.id, or something
+  // else entirely. The most reliable path: go through ledger_transactions
+  // (type='pack_opening') → game_sessions → and match the pack via EITHER
+  // direct game_id = packId OR user_packs.pack_id = packId.
   const rows = await db.$queryRawUnsafe<
     {
       date: Date;
@@ -193,22 +191,25 @@ export async function getPackStats(packId: string): Promise<PackStats> {
     }[]
   >(`
     SELECT
-      DATE(gs.created_at) AS date,
-      COUNT(*)::text AS openings,
-      COALESCE(SUM(gs.bet_amount::numeric), 0)::text AS revenue,
+      DATE(lt.created_at) AS date,
+      COUNT(DISTINCT lt.game_session_id)::text AS openings,
+      COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS revenue,
       COALESCE(SUM(sub.payout), 0)::text AS payout
-    FROM game_sessions gs
+    FROM ledger_transactions lt
+    JOIN game_sessions gs ON gs.id = lt.game_session_id AND gs.game_type = 'pack'
+    LEFT JOIN user_packs up ON up.id = gs.game_id
     LEFT JOIN LATERAL (
       SELECT COALESCE(SUM(ui.value_at_obtained::numeric), 0) AS payout
       FROM provably_fair_results pf
       JOIN user_inventory ui ON ui.id = pf.inventory_item_id
       WHERE pf.game_session_id = gs.id
     ) sub ON true
-    WHERE gs.game_type = 'pack'
-      AND gs.game_id = ANY($1::uuid[])
-    GROUP BY DATE(gs.created_at)
+    WHERE lt.type = 'pack_opening'
+      AND lt.status = 'completed'
+      AND (gs.game_id = $1::uuid OR up.pack_id = $1::uuid)
+    GROUP BY DATE(lt.created_at)
     ORDER BY date
-  `, gameIds);
+  `, packId);
 
   const now = new Date();
   const day = 24 * 60 * 60 * 1000;
@@ -260,6 +261,18 @@ export async function getPackStats(packId: string): Promise<PackStats> {
       revBuckets.d1 += revenue;
       payBuckets.d1 += payout;
     }
+  }
+
+  // If game_sessions query returned nothing but the DB has pre-computed totals,
+  // use those as the "all" bucket (no daily breakdown available).
+  if (
+    buckets.all === 0 &&
+    dbFallback &&
+    (dbFallback.totalOpenings > 0 || dbFallback.totalRevenue > 0)
+  ) {
+    buckets.all = dbFallback.totalOpenings;
+    revBuckets.all = dbFallback.totalRevenue;
+    payBuckets.all = dbFallback.totalPayout;
   }
 
   const totalRevenue = revBuckets.all;

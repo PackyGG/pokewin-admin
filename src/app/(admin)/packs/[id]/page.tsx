@@ -18,13 +18,17 @@ export default async function PackDetailPage({
 }) {
   await requirePageAccess("/packs");
   const { id } = await params;
-  const [data, packStats, initialGames] = await Promise.all([
-    getPackDetail(id),
-    getPackStats(id),
+  const data = await getPackDetail(id);
+  if (!data) notFound();
+
+  const [packStats, initialGames] = await Promise.all([
+    getPackStats(id, {
+      totalOpenings: data.totalOpenings,
+      totalRevenue: data.totalRevenue,
+      totalPayout: data.totalPayout,
+    }),
     getPackGames(id, 1, 20),
   ]);
-
-  if (!data) notFound();
 
   // RTP computed from actual revenue/payout data, not DB pre-computed field
   const rtp = packStats.rtp;
