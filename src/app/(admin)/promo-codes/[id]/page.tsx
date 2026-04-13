@@ -45,6 +45,9 @@ export default async function PromoCodeDetailPage({
               </Badge>
             )}
           </div>
+          {data.code && (
+            <p className="text-sm font-medium font-mono">{data.code}</p>
+          )}
           <p className="font-mono text-xs text-muted-foreground">{data.codeHash}</p>
         </div>
       </div>

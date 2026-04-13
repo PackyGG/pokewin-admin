@@ -40,6 +40,7 @@ export async function createPromoCode(data: {
       requires_discord: data.requiresDiscord,
       max_uses: data.maxUses,
       expires_at: data.expiresAt ? new Date(data.expiresAt) : null,
+      metadata: { code: data.code.trim() },
     },
   });
 

@@ -53,18 +53,21 @@ export async function getPromoCodes(params: {
   ]);
 
   return {
-    data: codes.map((c) => ({
-      id: c.id,
-      code: null,
-      codeHash: c.code_hash,
-      value: toNumber(c.value),
-      region: c.region,
-      minimumLevel: c.minimum_level,
-      maxUses: c.max_uses,
-      redemptionCount: c._count.promo_code_redemptions,
-      expiresAt: c.expires_at?.toISOString() ?? null,
-      createdAt: c.created_at.toISOString(),
-    })),
+    data: codes.map((c) => {
+      const meta = c.metadata as Record<string, unknown> | null;
+      return {
+        id: c.id,
+        code: (meta?.code as string) ?? null,
+        codeHash: c.code_hash,
+        value: toNumber(c.value),
+        region: c.region,
+        minimumLevel: c.minimum_level,
+        maxUses: c.max_uses,
+        redemptionCount: c._count.promo_code_redemptions,
+        expiresAt: c.expires_at?.toISOString() ?? null,
+        createdAt: c.created_at.toISOString(),
+      };
+    }),
     total,
     page,
     perPage,
@@ -88,8 +91,10 @@ export async function getPromoCodeDetail(id: string) {
 
   if (!code) return null;
 
+  const meta = code.metadata as Record<string, unknown> | null;
   return {
     id: code.id,
+    code: (meta?.code as string) ?? null,
     codeHash: code.code_hash,
     value: toNumber(code.value),
     region: code.region,

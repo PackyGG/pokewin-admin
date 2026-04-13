@@ -313,7 +313,10 @@ export async function getPackStats(
     FROM provably_fair_results pf
     LEFT JOIN battles b ON b.id = pf.battle_id
     LEFT JOIN game_sessions gs ON gs.id = pf.game_session_id
-    LEFT JOIN ledger_transactions lt ON lt.id = gs.bet_ledger_tx_id
+    LEFT JOIN ledger_transactions lt
+      ON lt.game_session_id = gs.id
+      AND lt.type = 'pack_opening'
+      AND lt.status = 'completed'
     WHERE pf.result_metadata->>'pack_id' = $1
     GROUP BY is_battle, borrow_pct, sponsor_pct
     ORDER BY count DESC
