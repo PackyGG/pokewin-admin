@@ -1,9 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, XAxis, YAxis } from "recharts";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import {
   type ChartConfig,
   ChartContainer,
@@ -32,6 +44,14 @@ const openingsConfig = {
   sponsoredOpenings: { label: "Sponsored", color: "var(--color-chart-5)" },
 } satisfies ChartConfig;
 
+const PIE_COLORS = [
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+  "var(--chart-4)",
+  "var(--chart-5)",
+];
+
 const formatValue = (v: number) => {
   if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
   if (v >= 1_000) return `$${(v / 1_000).toFixed(0)}K`;
@@ -47,21 +67,59 @@ const PERIOD_LABELS: Record<string, string> = {
   all: "All",
 };
 
+const tooltipStyle = {
+  background: "var(--popover)",
+  border: "1px solid var(--border)",
+  borderRadius: "6px",
+  fontSize: "12px",
+  padding: "6px 10px",
+  boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+};
+const tooltipItemStyle = { color: "var(--foreground)" };
+const tooltipLabelStyle = { color: "var(--muted-foreground)", marginBottom: 2 };
+
 export function PackStatsSection({ stats }: { stats: PackStats }) {
   const [range, setRange] = useState(30);
 
-  const filtered =
-    range > 0
-      ? (() => {
-          const cutoff = new Date();
-          cutoff.setDate(cutoff.getDate() - range);
-          const cutoffStr = cutoff.toISOString().slice(0, 10);
-          return stats.daily.filter((d) => d.date >= cutoffStr);
-        })()
-      : stats.daily;
+  const filtered = useMemo(() => {
+    if (range === 0) return stats.daily;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - range);
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+    const f = stats.daily.filter((d) => d.date >= cutoffStr);
+    return f.length > 0 ? f : stats.daily;
+  }, [stats.daily, range]);
 
-  const chartData = filtered.length > 0 ? filtered : stats.daily;
-  const hasDaily = chartData.length > 0;
+  const hasDaily = stats.daily.length > 0;
+
+  // Aggregate for pie chart
+  const totals = useMemo(() => {
+    let solo = 0, battle = 0, borrowed = 0, sponsored = 0, normal = 0;
+    for (const d of stats.daily) {
+      solo += d.soloOpenings;
+      battle += d.battleOpenings;
+      borrowed += d.borrowedOpenings;
+      sponsored += d.sponsoredOpenings;
+    }
+    normal = solo + battle - borrowed - sponsored;
+    if (normal < 0) normal = 0;
+    return { solo, battle, borrowed, sponsored, normal, total: solo + battle };
+  }, [stats.daily]);
+
+  const pieData = useMemo(() => {
+    const items: { name: string; value: number }[] = [];
+    if (totals.solo > 0) items.push({ name: "Solo", value: totals.solo });
+    if (totals.battle > 0) {
+      const normalBattle = totals.battle - totals.borrowed - totals.sponsored;
+      if (normalBattle > 0)
+        items.push({ name: "Battle (normal)", value: normalBattle });
+      if (totals.borrowed > 0)
+        items.push({ name: "Battle (borrowed)", value: totals.borrowed });
+      if (totals.sponsored > 0)
+        items.push({ name: "Battle (sponsored)", value: totals.sponsored });
+    }
+    return items;
+  }, [totals]);
 
   return (
     <div className="space-y-4">
@@ -74,14 +132,19 @@ export function PackStatsSection({ stats }: { stats: PackStats }) {
               const pay = stats.payout[k];
               const rtp = rev > 0 ? ((pay / rev) * 100).toFixed(1) : "—";
               return (
-                <div key={k} className="rounded-lg border bg-card/40 p-3 text-center">
+                <div
+                  key={k}
+                  className="rounded-lg border bg-card/40 p-3 text-center"
+                >
                   <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                     {PERIOD_LABELS[k]}
                   </div>
                   <div className="mt-1 text-lg font-bold tabular-nums">
                     {formatNumber(stats.openings[k])}
                   </div>
-                  <div className="text-[10px] text-muted-foreground">openings</div>
+                  <div className="text-[10px] text-muted-foreground">
+                    openings
+                  </div>
                   <div className="mt-1.5 grid grid-cols-2 gap-1 text-[10px]">
                     <div>
                       <span className="text-muted-foreground">Rev</span>
@@ -137,14 +200,14 @@ export function PackStatsSection({ stats }: { stats: PackStats }) {
           <CardContent>
             {!hasDaily ? (
               <p className="py-8 text-center text-sm text-muted-foreground">
-                No daily breakdown — totals from DB shown above
+                No daily data
               </p>
             ) : (
               <ChartContainer
                 config={revenueConfig}
                 className="h-[250px] w-full"
               >
-                <BarChart data={chartData} accessibilityLayer>
+                <BarChart data={filtered} accessibilityLayer>
                   <CartesianGrid vertical={false} />
                   <XAxis
                     dataKey="date"
@@ -169,16 +232,7 @@ export function PackStatsSection({ stats }: { stats: PackStats }) {
                       />
                     }
                   />
-                  <Legend
-                    verticalAlign="top"
-                    height={28}
-                    iconType="square"
-                    iconSize={10}
-                    formatter={(value: string) =>
-                      value === "revenue" ? "Revenue" : "Payout"
-                    }
-                    wrapperStyle={{ fontSize: 11, color: "var(--muted-foreground)" }}
-                  />
+                  <Legend verticalAlign="top" height={28} iconType="square" iconSize={10} />
                   <Bar
                     dataKey="revenue"
                     fill="var(--color-revenue)"
@@ -197,24 +251,24 @@ export function PackStatsSection({ stats }: { stats: PackStats }) {
           </CardContent>
         </Card>
 
-        {/* Openings chart — stacked: solo + battles, with borrowed/sponsored overlay */}
+        {/* Daily Openings stacked bar — all 4 categories */}
         <Card>
           <CardHeader>
             <CardTitle className="text-sm font-medium">
-              Daily Openings (solo / battles / borrowed / sponsored)
+              Daily Openings
             </CardTitle>
           </CardHeader>
           <CardContent>
             {!hasDaily ? (
               <p className="py-8 text-center text-sm text-muted-foreground">
-                No daily breakdown — totals from DB shown above
+                No daily data
               </p>
             ) : (
               <ChartContainer
                 config={openingsConfig}
                 className="h-[250px] w-full"
               >
-                <BarChart data={chartData} accessibilityLayer>
+                <BarChart data={filtered} accessibilityLayer>
                   <CartesianGrid vertical={false} />
                   <XAxis
                     dataKey="date"
@@ -230,13 +284,7 @@ export function PackStatsSection({ stats }: { stats: PackStats }) {
                     width={30}
                   />
                   <ChartTooltip content={<ChartTooltipContent />} />
-                  <Legend
-                    verticalAlign="top"
-                    height={28}
-                    iconType="square"
-                    iconSize={10}
-                    wrapperStyle={{ fontSize: 11, color: "var(--muted-foreground)" }}
-                  />
+                  <Legend verticalAlign="top" height={28} iconType="square" iconSize={10} />
                   <Bar
                     dataKey="soloOpenings"
                     stackId="opens"
@@ -247,8 +295,20 @@ export function PackStatsSection({ stats }: { stats: PackStats }) {
                     dataKey="battleOpenings"
                     stackId="opens"
                     fill="var(--color-battleOpenings)"
-                    radius={[4, 4, 0, 0]}
                     name="Battles"
+                  />
+                  <Bar
+                    dataKey="borrowedOpenings"
+                    stackId="flags"
+                    fill="var(--color-borrowedOpenings)"
+                    name="Borrowed"
+                  />
+                  <Bar
+                    dataKey="sponsoredOpenings"
+                    stackId="flags"
+                    fill="var(--color-sponsoredOpenings)"
+                    name="Sponsored"
+                    radius={[4, 4, 0, 0]}
                   />
                 </BarChart>
               </ChartContainer>
@@ -256,6 +316,77 @@ export function PackStatsSection({ stats }: { stats: PackStats }) {
           </CardContent>
         </Card>
       </div>
+
+      {/* Pie chart — opening breakdown */}
+      {totals.total > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium">
+              Opening Breakdown ({formatNumber(totals.total)} total)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center gap-8">
+              <div className="h-[180px] w-[180px] shrink-0">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={pieData}
+                      innerRadius={50}
+                      outerRadius={80}
+                      paddingAngle={2}
+                      dataKey="value"
+                      stroke="none"
+                    >
+                      {pieData.map((_, i) => (
+                        <Cell
+                          key={i}
+                          fill={PIE_COLORS[i % PIE_COLORS.length]}
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={tooltipStyle}
+                      itemStyle={tooltipItemStyle}
+                      labelStyle={tooltipLabelStyle}
+                      formatter={(value) => [formatNumber(Number(value)), ""]}
+                      separator=""
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="flex-1 space-y-1.5">
+                {pieData.map((item, i) => {
+                  const pct =
+                    totals.total > 0
+                      ? ((item.value / totals.total) * 100).toFixed(1)
+                      : "0";
+                  return (
+                    <div
+                      key={item.name}
+                      className="flex items-center gap-3 text-sm"
+                    >
+                      <span
+                        className="size-2.5 shrink-0 rounded-full"
+                        style={{
+                          background: PIE_COLORS[i % PIE_COLORS.length],
+                        }}
+                      />
+                      <span className="flex-1">{item.name}</span>
+                      <span className="w-12 text-right text-xs text-muted-foreground tabular-nums">
+                        {pct}%
+                      </span>
+                      <span className="w-12 text-right font-medium tabular-nums">
+                        {formatNumber(item.value)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
