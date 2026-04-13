@@ -30,15 +30,17 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Add auth only for trello.com API URLs (S3/CDN URLs don't need it)
+    // Try multiple auth strategies — Trello download endpoints can be picky
+    const headers: Record<string, string> = { Accept: "image/*" };
     if (target.hostname.endsWith("trello.com")) {
+      // Strategy 1: OAuth header (preferred for download endpoints)
+      headers.Authorization = `OAuth oauth_consumer_key="${API_KEY}", oauth_token="${TOKEN}"`;
+      // Strategy 2: also add query params as fallback
       target.searchParams.set("key", API_KEY);
       target.searchParams.set("token", TOKEN);
     }
 
-    const res = await fetch(target.toString(), {
-      headers: { Accept: "image/*" },
-    });
+    const res = await fetch(target.toString(), { headers });
 
     if (!res.ok) {
       return NextResponse.json(
