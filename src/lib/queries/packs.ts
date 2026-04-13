@@ -202,9 +202,9 @@ export async function getPackStats(
       COUNT(*) FILTER (WHERE pf.battle_id IS NOT NULL)::text AS battle,
       COUNT(*) FILTER (WHERE b.borrow_percentage > 0)::text AS borrowed,
       COUNT(*) FILTER (WHERE b.sponsorship_percentage > 0)::text AS sponsored,
-      COALESCE(SUM(CASE WHEN ui.id IS NOT NULL THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS payout
+      COALESCE(SUM(c.price::numeric), 0)::text AS payout
     FROM provably_fair_results pf
-    LEFT JOIN user_inventory ui ON ui.id = pf.inventory_item_id
+    LEFT JOIN cards c ON c.id = (pf.result_metadata->>'card_id')::uuid
     LEFT JOIN battles b ON b.id = pf.battle_id
     WHERE pf.result_metadata->>'pack_id' = $1
     GROUP BY DATE(pf.created_at)
