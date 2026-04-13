@@ -288,6 +288,8 @@ export async function getPackStats(
   // Breakdown for pie charts: borrow% / sponsored% per mode.
   // For battles: borrow_percentage / sponsorship_percentage from battles table.
   // For solo: borrow% from ledger_transactions description (e.g. "90% borrowed").
+  // result_metadata contains borrow_percentage for BOTH solo and battle results.
+  // For battles, sponsorship_percentage comes from the battles table.
   const breakdownRows = await db.$queryRawUnsafe<
     {
       is_battle: boolean;
@@ -298,25 +300,11 @@ export async function getPackStats(
   >(`
     SELECT
       (pf.battle_id IS NOT NULL) AS is_battle,
-      CASE
-        WHEN pf.battle_id IS NOT NULL THEN COALESCE(b.borrow_percentage, 0)
-        ELSE COALESCE(
-          (regexp_match(lt.description, '(\d+)%\s*borrow'))[1]::int,
-          0
-        )
-      END AS borrow_pct,
-      CASE
-        WHEN pf.battle_id IS NOT NULL THEN COALESCE(b.sponsorship_percentage, 0)
-        ELSE 0
-      END AS sponsor_pct,
+      COALESCE((pf.result_metadata->>'borrow_percentage')::int, 0) AS borrow_pct,
+      COALESCE(b.sponsorship_percentage, 0) AS sponsor_pct,
       COUNT(*)::text AS count
     FROM provably_fair_results pf
     LEFT JOIN battles b ON b.id = pf.battle_id
-    LEFT JOIN game_sessions gs ON gs.id = pf.game_session_id
-    LEFT JOIN ledger_transactions lt
-      ON lt.game_session_id = gs.id
-      AND lt.type = 'pack_opening'
-      AND lt.status = 'completed'
     WHERE pf.result_metadata->>'pack_id' = $1
     GROUP BY is_battle, borrow_pct, sponsor_pct
     ORDER BY count DESC
