@@ -2,7 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { requirePageAccess } from "@/lib/dal";
+import { requirePageAccess, requireAdmin } from "@/lib/dal";
+import { require2FA } from "@/lib/require-2fa";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 
 export async function banUser(userId: string, reason: string) {
@@ -108,4 +109,28 @@ export async function unlockUser(userId: string) {
 
   revalidatePath("/users");
   revalidatePath(`/users/${userId}`);
+}
+
+export async function deleteUser(userId: string, totpCode: string) {
+  const session = await requireAdmin();
+  await require2FA(session.userId, totpCode);
+
+  // Fetch username for audit log before deleting
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    select: { username: true, email: true },
+  });
+  if (!user) throw new Error("User not found");
+
+  const label = user.username ?? user.email ?? userId;
+
+  await db.user.delete({ where: { id: userId } });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "user_deleted",
+    metadata: { deleted_user_id: userId, username: label },
+  });
+
+  revalidatePath("/users");
 }

@@ -51,11 +51,12 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogTrigger,
   DialogFooter,
 } from "@/components/ui/dialog";
 import { ROLE_COLORS, USER_STATUS_COLORS, STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency, formatDateTime, formatRelative } from "@/lib/utils/format";
-import { banUser, unbanUser, lockUser, unlockUser } from "../actions";
+import { banUser, unbanUser, lockUser, unlockUser, deleteUser } from "../actions";
 import type { UserRewards } from "@/lib/queries/users";
 import { adjustBalance, adjustXp, changeRole, toggleFeatureLock, getGameSessionDetails, fetchInventory, fetchUserTransactions, updateWithdrawalLimits, fetchCreatorClicks, fetchCreatorCodeUsages, assignAffiliateCode, createAffiliateCode, fetchBalanceHistory, fetchCreatorWithdrawalLimits } from "./actions";
 import { createNote, deleteNote } from "./note-actions";
@@ -824,6 +825,10 @@ const UserHeaderStrip = React.memo(function UserHeaderStrip({
               Unlock
             </Button>
           )}
+
+          {isAdmin && (
+            <DeleteUserDialog user={user} isPending={isPending} />
+          )}
         </div>
       </div>
 
@@ -865,6 +870,86 @@ const UserHeaderStrip = React.memo(function UserHeaderStrip({
     </div>
   );
 });
+
+function DeleteUserDialog({
+  user,
+  isPending: parentPending,
+}: {
+  user: UserDetail["user"];
+  isPending: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [confirm, setConfirm] = useState("");
+  const [totpCode, setTotpCode] = useState("");
+  const [isPending, startTransition] = useTransition();
+  const router = useRouter();
+
+  const username = user.username ?? user.email ?? user.id.slice(0, 8);
+  const isConfirmed = confirm === username;
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) { setConfirm(""); setTotpCode(""); } }}>
+      <DialogTrigger render={
+        <Button variant="destructive" size="sm" disabled={parentPending} />
+      }>
+        Delete
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="text-red-400">Delete User Permanently</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            This will <span className="font-semibold text-red-400">permanently delete</span>{" "}
+            <span className="font-semibold text-foreground">{username}</span> and all their data
+            (balances, inventory, transactions, sessions). This cannot be undone.
+          </p>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">
+              Type <span className="font-mono font-semibold text-foreground">{username}</span> to confirm
+            </Label>
+            <Input
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              placeholder={username}
+              autoComplete="off"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">2FA Code</Label>
+            <Input
+              type="text"
+              inputMode="numeric"
+              placeholder="Enter your 6-digit code"
+              value={totpCode}
+              onChange={(e) => setTotpCode(e.target.value)}
+              maxLength={6}
+              autoComplete="one-time-code"
+            />
+          </div>
+          <Button
+            variant="destructive"
+            className="w-full"
+            disabled={!isConfirmed || !totpCode.trim() || isPending}
+            onClick={() => {
+              startTransition(async () => {
+                try {
+                  await deleteUser(user.id, totpCode.trim());
+                  toast.success("User deleted");
+                  router.push("/users");
+                } catch (e) {
+                  toast.error(e instanceof Error ? e.message : "Failed to delete user");
+                }
+              });
+            }}
+          >
+            {isPending ? "Deleting..." : "Delete User Permanently"}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function BalanceAdjustDialog({
   userId,
