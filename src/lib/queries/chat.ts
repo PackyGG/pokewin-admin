@@ -5,6 +5,9 @@ export type ChatMessageItem = {
   id: string;
   userId: string;
   username: string | null;
+  image: string | null;
+  level: number;
+  role: string;
   content: string;
   isDeleted: boolean;
   isPinned: boolean;
@@ -45,7 +48,14 @@ export async function getChatMessages(params: {
       skip: (page - 1) * perPage,
       take: perPage,
       include: {
-        user_chat_messages_user_idTouser: { select: { username: true } },
+        user_chat_messages_user_idTouser: {
+          select: {
+            username: true,
+            image: true,
+            role: true,
+            user_statistics: { select: { level: true } },
+          },
+        },
         pinned_chat_messages: { select: { id: true } },
       },
     }),
@@ -74,6 +84,9 @@ export async function getChatMessages(params: {
       id: m.id,
       userId: m.user_id,
       username: m.user_chat_messages_user_idTouser?.username ?? null,
+      image: m.user_chat_messages_user_idTouser?.image ?? null,
+      level: m.user_chat_messages_user_idTouser?.user_statistics?.level ?? 0,
+      role: m.user_chat_messages_user_idTouser?.role ?? "user",
       content: m.content,
       isDeleted: m.is_deleted,
       isPinned: !!m.pinned_chat_messages,

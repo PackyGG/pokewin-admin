@@ -16,7 +16,7 @@ export default async function ChatPage({
   const session = await requirePageAccess("/chat");
   const params = await searchParams;
   const page = Number(params.page) || 1;
-  const perPage = Number(params.perPage) || 20;
+  const perPage = Number(params.perPage) || 50;
   const tab = params.tab || "messages";
 
   const [messages, mutes] = await Promise.all([
@@ -24,42 +24,50 @@ export default async function ChatPage({
     tab === "mutes" ? getMutes({ page, perPage }) : null,
   ]);
 
+  // For chat view: reverse so oldest message is at the top, newest at the bottom
+  const chatMessages = messages?.data ? [...messages.data].reverse() : [];
   const result = tab === "messages" ? messages! : mutes!;
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-bold">Chat Moderation</h1>
-      <div className="flex gap-1 rounded-lg bg-muted p-1">
-        {[
-          { value: "messages", label: "Messages" },
-          { value: "mutes", label: "Mutes" },
-        ].map((t) => (
-          <Link
-            key={t.value}
-            href={`/chat?tab=${t.value}`}
-            className={cn(
-              "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-              tab === t.value
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            {t.label}
-          </Link>
-        ))}
+    <div className="flex h-[calc(100vh-80px)] flex-col gap-4">
+      <div className="flex shrink-0 items-center justify-between">
+        <h1 className="text-2xl font-bold">Chat</h1>
+        <div className="flex gap-1 rounded-lg bg-muted p-1">
+          {[
+            { value: "messages", label: "Messages" },
+            { value: "mutes", label: "Mutes" },
+          ].map((t) => (
+            <Link
+              key={t.value}
+              href={`/chat?tab=${t.value}`}
+              className={cn(
+                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                tab === t.value
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {t.label}
+            </Link>
+          ))}
+        </div>
       </div>
       {tab === "messages" && (
         <Suspense fallback={<Skeleton className="h-10 w-full" />}>
           <DataTableToolbar searchPlaceholder="Search messages or username..." />
         </Suspense>
       )}
-      <ChatContent tab={tab} messages={messages?.data ?? []} mutes={mutes?.data ?? []} role={session.role} />
-      <DataTablePagination
-        page={result.page}
-        totalPages={result.totalPages}
-        total={result.total}
-        perPage={result.perPage}
-      />
+      <div className="min-h-0 flex-1">
+        <ChatContent tab={tab} messages={chatMessages} mutes={mutes?.data ?? []} role={session.role} />
+      </div>
+      {tab === "mutes" && (
+        <DataTablePagination
+          page={result.page}
+          totalPages={result.totalPages}
+          total={result.total}
+          perPage={result.perPage}
+        />
+      )}
     </div>
   );
 }

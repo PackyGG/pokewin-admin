@@ -1,21 +1,14 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useEffect, useRef, useTransition, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
+import { Trash2, Pin, PinOff, Ban, VolumeX, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -34,14 +27,29 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { formatDateTime } from "@/lib/utils/format";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { formatDateTime, formatRelative } from "@/lib/utils/format";
 import type { ChatMessageItem, MuteItem } from "@/lib/queries/chat";
-import { deleteMessage, pinMessage, unpinMessage, muteUser, unmuteUser } from "./actions";
+import { deleteMessage, pinMessage, unpinMessage, muteUser, unmuteUser, pollMessages } from "./actions";
 import { banUser } from "../users/actions";
+
+const ROLE_BADGE: Record<string, string> = {
+  admin: "bg-red-500/20 text-red-400",
+  support: "bg-blue-500/20 text-blue-400",
+  creator: "bg-purple-500/20 text-purple-400",
+  marketing: "bg-amber-500/20 text-amber-400",
+};
 
 export function ChatContent({
   tab,
-  messages,
+  messages: initialMessages,
   mutes,
   role,
 }: {
@@ -50,237 +58,404 @@ export function ChatContent({
   mutes: MuteItem[];
   role: string;
 }) {
-  if (tab === "messages") return <MessagesTable messages={messages} role={role} />;
+  if (tab === "messages")
+    return <ChatView initialMessages={initialMessages} role={role} />;
   return <MutesTable mutes={mutes} role={role} />;
 }
 
-function MessagesTable({ messages, role }: { messages: ChatMessageItem[]; role: string }) {
+// ── Chat bubble view ─────────────────────────────────────────────────
+
+function ChatView({
+  initialMessages,
+  role,
+}: {
+  initialMessages: ChatMessageItem[];
+  role: string;
+}) {
+  const [messages, setMessages] = useState<ChatMessageItem[]>(initialMessages);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const lastPollRef = useRef<string>(
+    initialMessages.length
+      ? initialMessages[initialMessages.length - 1].createdAt
+      : new Date().toISOString(),
+  );
+
+  // Sync when server sends a new batch (page change / search)
+  useEffect(() => {
+    setMessages(initialMessages);
+    if (initialMessages.length) {
+      lastPollRef.current =
+        initialMessages[initialMessages.length - 1].createdAt;
+    }
+  }, [initialMessages]);
+
+  // Auto-scroll on new messages
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length]);
+
+  // Poll every 3s for new messages
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      if (!alive) return;
+      try {
+        const newer = await pollMessages(lastPollRef.current);
+        if (newer.length && alive) {
+          setMessages((prev) => {
+            const ids = new Set(prev.map((m) => m.id));
+            const fresh = newer.filter((m) => !ids.has(m.id));
+            if (!fresh.length) return prev;
+            lastPollRef.current = fresh[fresh.length - 1].createdAt;
+            return [...prev, ...fresh.map((m) => ({ ...m, activeMuteId: null }))];
+          });
+        }
+      } catch {
+        // silently ignore polling errors
+      }
+    };
+    const id = setInterval(tick, 3000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  return (
+    <div
+      ref={containerRef}
+      className="flex flex-col gap-1 overflow-y-auto rounded-lg border bg-card p-3"
+      style={{ maxHeight: "calc(100vh - 220px)" }}
+    >
+      {messages.length === 0 && (
+        <p className="py-12 text-center text-sm text-muted-foreground">
+          No messages
+        </p>
+      )}
+      {messages.map((m) => (
+        <ChatBubble key={m.id} message={m} role={role} />
+      ))}
+      <div ref={bottomRef} />
+    </div>
+  );
+}
+
+function ChatBubble({
+  message: m,
+  role,
+}: {
+  message: ChatMessageItem;
+  role: string;
+}) {
   const canDelete = role === "admin" || role === "support";
   const canPin = role === "admin" || role === "marketing";
   const canMute = role === "admin" || role === "support";
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
-  const [banReason, setBanReason] = useState("");
-  const [muteReason, setMuteReason] = useState("");
-  const [muteExpires, setMuteExpires] = useState("");
 
-  function handleDelete(id: string) {
-    startTransition(async () => {
-      try {
-        await deleteMessage(id);
-        toast.success("Message deleted");
-        router.refresh();
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Failed");
-      }
-    });
-  }
+  const act = useCallback(
+    (fn: () => Promise<void>, msg: string) => {
+      startTransition(async () => {
+        try {
+          await fn();
+          toast.success(msg);
+          router.refresh();
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : "Failed");
+        }
+      });
+    },
+    [router],
+  );
 
-  function handlePin(id: string) {
-    startTransition(async () => {
-      try {
-        await pinMessage(id);
-        toast.success("Message pinned");
-        router.refresh();
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Failed");
-      }
-    });
-  }
-
-  function handleUnpin(id: string) {
-    startTransition(async () => {
-      try {
-        await unpinMessage(id);
-        toast.success("Message unpinned");
-        router.refresh();
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Failed");
-      }
-    });
-  }
-
-  function handleBan(userId: string) {
-    if (!banReason.trim()) {
-      toast.error("Please enter a ban reason");
-      return;
-    }
-    startTransition(async () => {
-      try {
-        await banUser(userId, banReason.trim());
-        toast.success("User banned");
-        setBanReason("");
-        router.refresh();
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Failed");
-      }
-    });
-  }
-
-  function handleUnmute(muteId: string) {
-    startTransition(async () => {
-      try {
-        await unmuteUser(muteId);
-        toast.success("User unmuted");
-        router.refresh();
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Failed");
-      }
-    });
-  }
-
-  function handleMute(userId: string) {
-    startTransition(async () => {
-      try {
-        await muteUser({
-          userId,
-          reason: muteReason.trim(),
-          expiresAt: muteExpires || null,
-        });
-        toast.success("User muted");
-        setMuteReason("");
-        setMuteExpires("");
-        router.refresh();
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Failed");
-      }
-    });
-  }
+  const time = new Date(m.createdAt);
+  const timeStr = `${time.getHours().toString().padStart(2, "0")}:${time.getMinutes().toString().padStart(2, "0")}`;
+  const isStaff = m.role !== "user";
 
   return (
-    <div className="rounded-md border">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>User</TableHead>
-            <TableHead>Content</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Date</TableHead>
-            <TableHead>Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {messages.map((m) => (
-            <TableRow key={m.id}>
-              <TableCell>
-                <Link href={`/users/${m.userId}`} className="hover:underline">
-                  {m.username ?? m.userId.slice(0, 8)}
-                </Link>
-              </TableCell>
-              <TableCell className="max-w-md truncate">{m.content}</TableCell>
-              <TableCell>
-                <div className="flex gap-1">
-                  {m.isDeleted && (
-                    <Badge variant="outline" className="bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30">
-                      Deleted
-                    </Badge>
-                  )}
-                  {m.isPinned && (
-                    <Badge variant="outline" className="bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30">
-                      Pinned
-                    </Badge>
-                  )}
-                </div>
-              </TableCell>
-              <TableCell>{formatDateTime(m.createdAt)}</TableCell>
-              <TableCell>
-                <div className="flex gap-1">
-                  {canDelete && !m.isDeleted && (
-                    <Button size="sm" variant="destructive" onClick={() => handleDelete(m.id)} disabled={isPending}>
-                      Delete
-                    </Button>
-                  )}
-                  {canDelete && (
-                    <AlertDialog>
-                      <AlertDialogTrigger render={<Button size="sm" variant="destructive" disabled={isPending} />}>
-                        Ban
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Ban {m.username ?? m.userId.slice(0, 8)}?</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            This will ban the user and terminate all their sessions.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <div className="space-y-2">
-                          <Label>Reason</Label>
-                          <Input
-                            value={banReason}
-                            onChange={(e) => setBanReason(e.target.value)}
-                            placeholder="Reason for ban"
-                          />
-                        </div>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel onClick={() => setBanReason("")}>Cancel</AlertDialogCancel>
-                          <AlertDialogAction onClick={() => handleBan(m.userId)}>
-                            Ban User
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  )}
-                  {canMute && (m.activeMuteId ? (
-                    <Button size="sm" variant="outline" onClick={() => handleUnmute(m.activeMuteId!)} disabled={isPending}>
-                      Unmute
-                    </Button>
-                  ) : (
-                    <Dialog>
-                      <DialogTrigger render={<Button size="sm" variant="outline" disabled={isPending} />}>
-                        Mute
-                      </DialogTrigger>
-                      <DialogContent>
-                        <DialogHeader>
-                          <DialogTitle>Mute {m.username ?? m.userId.slice(0, 8)}</DialogTitle>
-                        </DialogHeader>
-                        <div className="space-y-4">
-                          <div className="space-y-2">
-                            <Label>Reason (optional)</Label>
-                            <Input
-                              value={muteReason}
-                              onChange={(e) => setMuteReason(e.target.value)}
-                              placeholder="Reason for mute"
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label>Expires At (optional)</Label>
-                            <Input
-                              type="datetime-local"
-                              value={muteExpires}
-                              onChange={(e) => setMuteExpires(e.target.value)}
-                            />
-                          </div>
-                          <Button onClick={() => handleMute(m.userId)} disabled={isPending} className="w-full">
-                            {isPending ? "Muting..." : "Mute User"}
-                          </Button>
-                        </div>
-                      </DialogContent>
-                    </Dialog>
-                  ))}
-                  {canPin && (m.isPinned ? (
-                    <Button size="sm" variant="outline" onClick={() => handleUnpin(m.id)} disabled={isPending}>
-                      Unpin
-                    </Button>
-                  ) : (
-                    <Button size="sm" variant="outline" onClick={() => handlePin(m.id)} disabled={isPending}>
-                      Pin
-                    </Button>
-                  ))}
-                </div>
-              </TableCell>
-            </TableRow>
-          ))}
-          {messages.length === 0 && (
-            <TableRow>
-              <TableCell colSpan={5} className="h-24 text-center">
-                No messages found.
-              </TableCell>
-            </TableRow>
+    <div
+      className={`group relative flex items-start gap-2.5 rounded-lg px-3 py-2 transition-colors hover:bg-accent/30 ${
+        m.isDeleted ? "opacity-40" : ""
+      }`}
+    >
+      {/* Avatar */}
+      <Link
+        href={`/users/${m.userId}`}
+        className="shrink-0"
+      >
+        <div className="size-7 overflow-hidden rounded-full bg-muted">
+          {m.image ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={m.image}
+              alt=""
+              className="size-full object-cover"
+            />
+          ) : (
+            <div className="flex size-full items-center justify-center text-xs font-bold text-muted-foreground">
+              {(m.username ?? "?")[0].toUpperCase()}
+            </div>
           )}
-        </TableBody>
-      </Table>
+        </div>
+      </Link>
+
+      {/* Content */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex items-center gap-1.5">
+          <Link
+            href={`/users/${m.userId}`}
+            className="text-sm font-semibold leading-none hover:underline"
+          >
+            {m.username ?? m.userId.slice(0, 8)}
+          </Link>
+          {m.level > 0 && (
+            <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+              {m.level}
+            </span>
+          )}
+          {isStaff && (
+            <span
+              className={`rounded px-1.5 py-0.5 text-[10px] font-semibold capitalize ${ROLE_BADGE[m.role] ?? ""}`}
+            >
+              {m.role}
+            </span>
+          )}
+          <span className="text-[11px] leading-none text-muted-foreground">
+            {timeStr}
+          </span>
+          {m.isPinned && (
+            <Pin className="size-3 text-blue-400" />
+          )}
+          {m.isDeleted && (
+            <Badge
+              variant="outline"
+              className="ml-1 border-red-500/30 bg-red-500/10 px-1 py-0 text-[9px] text-red-400"
+            >
+              deleted
+            </Badge>
+          )}
+        </div>
+        <p className="mt-0.5 break-words text-sm leading-5 text-muted-foreground">
+          {m.content}
+        </p>
+      </div>
+
+      {/* Hover actions */}
+      <div className="invisible absolute right-2 top-1.5 flex items-center gap-0.5 rounded-md border bg-popover p-0.5 shadow group-hover:visible">
+        {canDelete && !m.isDeleted && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-6"
+            disabled={isPending}
+            onClick={() =>
+              act(() => deleteMessage(m.id), "Message deleted")
+            }
+          >
+            <Trash2 className="size-3 text-red-400" />
+          </Button>
+        )}
+        {canPin &&
+          (m.isPinned ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              disabled={isPending}
+              onClick={() =>
+                act(() => unpinMessage(m.id), "Unpinned")
+              }
+            >
+              <PinOff className="size-3" />
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              disabled={isPending}
+              onClick={() =>
+                act(() => pinMessage(m.id), "Pinned")
+              }
+            >
+              <Pin className="size-3" />
+            </Button>
+          ))}
+        {canMute &&
+          (m.activeMuteId ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              disabled={isPending}
+              onClick={() =>
+                act(() => unmuteUser(m.activeMuteId!), "Unmuted")
+              }
+            >
+              <Volume2 className="size-3" />
+            </Button>
+          ) : (
+            <MuteDialog
+              userId={m.userId}
+              username={m.username}
+              isPending={isPending}
+            />
+          ))}
+        {canDelete && (
+          <BanDialog
+            userId={m.userId}
+            username={m.username}
+            isPending={isPending}
+          />
+        )}
+      </div>
     </div>
   );
 }
+
+// ── Mute dialog ──────────────────────────────────────────────────────
+
+function MuteDialog({
+  userId,
+  username,
+  isPending,
+}: {
+  userId: string;
+  username: string | null;
+  isPending: boolean;
+}) {
+  const [reason, setReason] = useState("");
+  const [expires, setExpires] = useState("");
+  const [pending, start] = useTransition();
+  const router = useRouter();
+
+  return (
+    <Dialog>
+      <DialogTrigger render={
+        <Button variant="ghost" size="icon" className="size-6" disabled={isPending} />
+      }>
+        <VolumeX className="size-3" />
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Mute {username ?? userId.slice(0, 8)}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <Label className="text-xs">Reason</Label>
+            <Input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Optional reason"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Expires</Label>
+            <Input
+              type="datetime-local"
+              value={expires}
+              onChange={(e) => setExpires(e.target.value)}
+            />
+          </div>
+          <Button
+            className="w-full"
+            disabled={pending}
+            onClick={() => {
+              start(async () => {
+                try {
+                  await muteUser({
+                    userId,
+                    reason: reason.trim(),
+                    expiresAt: expires || null,
+                  });
+                  toast.success("Muted");
+                  router.refresh();
+                } catch (e) {
+                  toast.error(
+                    e instanceof Error ? e.message : "Failed",
+                  );
+                }
+              });
+            }}
+          >
+            {pending ? "Muting…" : "Mute"}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Ban dialog ───────────────────────────────────────────────────────
+
+function BanDialog({
+  userId,
+  username,
+  isPending,
+}: {
+  userId: string;
+  username: string | null;
+  isPending: boolean;
+}) {
+  const [reason, setReason] = useState("");
+  const [pending, start] = useTransition();
+  const router = useRouter();
+
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger render={
+        <Button variant="ghost" size="icon" className="size-6" disabled={isPending} />
+      }>
+        <Ban className="size-3 text-red-400" />
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            Ban {username ?? userId.slice(0, 8)}?
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            Terminates all sessions and bans the user.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="space-y-1">
+          <Label className="text-xs">Reason</Label>
+          <Input
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Ban reason"
+          />
+        </div>
+        <AlertDialogFooter>
+          <AlertDialogCancel onClick={() => setReason("")}>
+            Cancel
+          </AlertDialogCancel>
+          <AlertDialogAction
+            disabled={pending || !reason.trim()}
+            onClick={() => {
+              start(async () => {
+                try {
+                  await banUser(userId, reason.trim());
+                  toast.success("Banned");
+                  setReason("");
+                  router.refresh();
+                } catch (e) {
+                  toast.error(
+                    e instanceof Error ? e.message : "Failed",
+                  );
+                }
+              });
+            }}
+          >
+            Ban
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+// ── Mutes table (unchanged tab) ──────────────────────────────────────
 
 function MutesTable({ mutes, role }: { mutes: MuteItem[]; role: string }) {
   const canMute = role === "admin" || role === "support";
@@ -329,33 +504,49 @@ function MutesTable({ mutes, role }: { mutes: MuteItem[]; role: string }) {
 
   return (
     <div className="space-y-4">
-      {canMute && <Dialog open={muteOpen} onOpenChange={setMuteOpen}>
-        <DialogTrigger render={<Button />}>
-          Mute User
-        </DialogTrigger>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Mute User</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>User ID</Label>
-              <Input value={muteUserId} onChange={(e) => setMuteUserId(e.target.value)} placeholder="User ID" />
+      {canMute && (
+        <Dialog open={muteOpen} onOpenChange={setMuteOpen}>
+          <DialogTrigger render={<Button />}>Mute User</DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Mute User</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>User ID</Label>
+                <Input
+                  value={muteUserId}
+                  onChange={(e) => setMuteUserId(e.target.value)}
+                  placeholder="User ID"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Reason</Label>
+                <Input
+                  value={muteReason}
+                  onChange={(e) => setMuteReason(e.target.value)}
+                  placeholder="Reason for mute"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Expires At (optional)</Label>
+                <Input
+                  type="datetime-local"
+                  value={muteExpires}
+                  onChange={(e) => setMuteExpires(e.target.value)}
+                />
+              </div>
+              <Button
+                onClick={handleMute}
+                disabled={isPending}
+                className="w-full"
+              >
+                {isPending ? "Muting..." : "Mute"}
+              </Button>
             </div>
-            <div className="space-y-2">
-              <Label>Reason</Label>
-              <Input value={muteReason} onChange={(e) => setMuteReason(e.target.value)} placeholder="Reason for mute" />
-            </div>
-            <div className="space-y-2">
-              <Label>Expires At (optional)</Label>
-              <Input type="datetime-local" value={muteExpires} onChange={(e) => setMuteExpires(e.target.value)} />
-            </div>
-            <Button onClick={handleMute} disabled={isPending} className="w-full">
-              {isPending ? "Muting..." : "Mute"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>}
+          </DialogContent>
+        </Dialog>
+      )}
 
       <div className="rounded-md border">
         <Table>
@@ -374,20 +565,31 @@ function MutesTable({ mutes, role }: { mutes: MuteItem[]; role: string }) {
             {mutes.map((m) => (
               <TableRow key={m.id}>
                 <TableCell>
-                  <Link href={`/users/${m.userId}`} className="hover:underline">
+                  <Link
+                    href={`/users/${m.userId}`}
+                    className="hover:underline"
+                  >
                     {m.username ?? m.userId.slice(0, 8)}
                   </Link>
                 </TableCell>
                 <TableCell>{m.mutedByUsername ?? "-"}</TableCell>
                 <TableCell>{m.reason ?? "-"}</TableCell>
-                <TableCell>{m.expiresAt ? formatDateTime(m.expiresAt) : "Permanent"}</TableCell>
+                <TableCell>
+                  {m.expiresAt ? formatDateTime(m.expiresAt) : "Permanent"}
+                </TableCell>
                 <TableCell>
                   {m.unmutedAt ? (
-                    <Badge variant="outline" className="bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30">
+                    <Badge
+                      variant="outline"
+                      className="border-green-500/30 bg-green-500/15 text-green-400"
+                    >
                       Unmuted
                     </Badge>
                   ) : (
-                    <Badge variant="outline" className="bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30">
+                    <Badge
+                      variant="outline"
+                      className="border-red-500/30 bg-red-500/15 text-red-400"
+                    >
                       Active
                     </Badge>
                   )}
@@ -395,7 +597,12 @@ function MutesTable({ mutes, role }: { mutes: MuteItem[]; role: string }) {
                 <TableCell>{formatDateTime(m.createdAt)}</TableCell>
                 <TableCell>
                   {canMute && !m.unmutedAt && (
-                    <Button size="sm" variant="outline" onClick={() => handleUnmute(m.id)} disabled={isPending}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleUnmute(m.id)}
+                      disabled={isPending}
+                    >
                       Unmute
                     </Button>
                   )}
@@ -404,7 +611,10 @@ function MutesTable({ mutes, role }: { mutes: MuteItem[]; role: string }) {
             ))}
             {mutes.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="h-24 text-center">
+                <TableCell
+                  colSpan={7}
+                  className="h-24 text-center"
+                >
                   No mutes found.
                 </TableCell>
               </TableRow>

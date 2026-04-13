@@ -108,6 +108,50 @@ export async function muteUser(data: {
   revalidatePath("/chat");
 }
 
+export async function pollMessages(sinceIso: string): Promise<{
+  id: string;
+  userId: string;
+  username: string | null;
+  image: string | null;
+  level: number;
+  role: string;
+  content: string;
+  isDeleted: boolean;
+  isPinned: boolean;
+  createdAt: string;
+}[]> {
+  await requirePageAccess("/chat");
+  const since = new Date(sinceIso);
+  const rows = await db.chat_messages.findMany({
+    where: { created_at: { gt: since } },
+    orderBy: { created_at: "asc" },
+    take: 100,
+    include: {
+      user_chat_messages_user_idTouser: {
+        select: {
+          username: true,
+          image: true,
+          role: true,
+          user_statistics: { select: { level: true } },
+        },
+      },
+      pinned_chat_messages: { select: { id: true } },
+    },
+  });
+  return rows.map((m) => ({
+    id: m.id,
+    userId: m.user_id,
+    username: m.user_chat_messages_user_idTouser?.username ?? null,
+    image: m.user_chat_messages_user_idTouser?.image ?? null,
+    level: m.user_chat_messages_user_idTouser?.user_statistics?.level ?? 0,
+    role: m.user_chat_messages_user_idTouser?.role ?? "user",
+    content: m.content,
+    isDeleted: m.is_deleted,
+    isPinned: !!m.pinned_chat_messages,
+    createdAt: m.created_at.toISOString(),
+  }));
+}
+
 export async function unmuteUser(muteId: string) {
   const session = await requirePageAccess("/chat");
 
