@@ -76,6 +76,7 @@ export async function getUsers(params: {
         balances: {
           select: {
             available_balance: true;
+            locked_balance: true;
             total_deposited: true;
             total_withdrawn: true;
             total_wagered: true;
@@ -116,10 +117,17 @@ export async function getUsers(params: {
         WHERE sold_at IS NULL AND exchanged_at IS NULL
         GROUP BY user_id
       ) inv ON inv.user_id = u.id
+      LEFT JOIN (
+        SELECT user_id, COALESCE(SUM(total_value_usd::numeric), 0) AS wd_value
+        FROM card_withdrawal_requests
+        WHERE status IN ('completed', 'shipped')
+        GROUP BY user_id
+      ) cw ON cw.user_id = u.id
       ${whereClause}
       ORDER BY (
-        COALESCE(b.total_withdrawn::numeric, 0)
+        COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)
         + COALESCE(b.available_balance::numeric, 0)
+        + COALESCE(b.locked_balance::numeric, 0)
         + COALESCE(inv.inv_value, 0)
         - COALESCE(b.total_deposited::numeric, 0)
       ) ${orderSql} NULLS LAST, u.id ${orderSql}
@@ -135,6 +143,7 @@ export async function getUsers(params: {
               balances: {
                 select: {
                   available_balance: true,
+                  locked_balance: true,
                   total_deposited: true,
                   total_withdrawn: true,
                   total_wagered: true,
@@ -181,6 +190,7 @@ export async function getUsers(params: {
           balances: {
             select: {
               available_balance: true,
+              locked_balance: true,
               total_deposited: true,
               total_withdrawn: true,
               total_wagered: true,
@@ -209,18 +219,34 @@ export async function getUsers(params: {
     inventoryValues.map((iv) => [iv.user_id, toNumber(iv._sum.value_at_obtained)])
   );
 
+  // Card withdrawals (completed/shipped) per user — not tracked in balances.total_withdrawn
+  const cardWithdrawalValues = userIds.length > 0
+    ? await db.card_withdrawal_requests.groupBy({
+        by: ["user_id"],
+        where: {
+          user_id: { in: userIds },
+          status: { in: ["completed", "shipped"] },
+        },
+        _sum: { total_value_usd: true },
+      })
+    : [];
+  const cardWithdrawalMap = new Map(
+    cardWithdrawalValues.map((cw) => [cw.user_id, toNumber(cw._sum.total_value_usd)])
+  );
+
   return {
     data: users.map((u) => {
       const availableBalance = toNumber(u.balances?.available_balance);
+      const lockedBalance = toNumber(u.balances?.locked_balance);
       const totalDeposited = toNumber(u.balances?.total_deposited);
-      const totalWithdrawn = toNumber(u.balances?.total_withdrawn);
+      const totalWithdrawn = toNumber(u.balances?.total_withdrawn) + (cardWithdrawalMap.get(u.id) ?? 0);
       const totalWagered = toNumber(u.balances?.total_wagered);
       const inventoryValue = inventoryMap.get(u.id) ?? 0;
       // P&L from the user's perspective: positive = user is in profit (we lose),
       // negative = user is in loss (we earn).
-      // Withdrawn + remaining balance + inventory value − deposited.
+      // Withdrawn + remaining balance (available + locked) + inventory value − deposited.
       const pnl =
-        totalWithdrawn + availableBalance + inventoryValue - totalDeposited;
+        totalWithdrawn + availableBalance + lockedBalance + inventoryValue - totalDeposited;
       return {
         id: u.id,
         username: u.username,
@@ -271,7 +297,7 @@ export async function getUserDetail(id: string) {
     wagerBreakdown = [];
   }
 
-  const [user, balances, statistics, featureLocks, inventoryCount, affiliateAccount, shippingAddress, vault, mutes, cardWithdrawals, activeSeed, depositAddresses] =
+  const [user, balances, statistics, featureLocks, inventoryCount, affiliateAccount, shippingAddress, vault, mutes, cardWithdrawals, activeSeed, depositAddresses, cardWithdrawalTotal] =
     await Promise.all([
       db.user.findUnique({
         where: { id },
@@ -313,6 +339,13 @@ export async function getUserDetail(id: string) {
       db.deposit_addresses.findMany({
         where: { user_id: id },
         orderBy: { created_at: "desc" },
+      }),
+      db.card_withdrawal_requests.aggregate({
+        where: {
+          user_id: id,
+          status: { in: ["completed", "shipped"] },
+        },
+        _sum: { total_value_usd: true },
       }),
     ]);
 
@@ -378,7 +411,7 @@ export async function getUserDetail(id: string) {
           availableBalance: toNumber(balances.available_balance),
           lockedBalance: toNumber(balances.locked_balance),
           totalDeposited: toNumber(balances.total_deposited),
-          totalWithdrawn: toNumber(balances.total_withdrawn),
+          totalWithdrawn: toNumber(balances.total_withdrawn) + toNumber(cardWithdrawalTotal._sum.total_value_usd),
           totalWagered: toNumber(balances.total_wagered),
           totalWon: toNumber(balances.total_won),
           bonusPoints: balances.bonus_points,
