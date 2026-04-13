@@ -1080,26 +1080,24 @@ const BalanceSummaryCard = React.memo(function BalanceSummaryCard({
         <InfoRow label="Deposited" value={formatCurrency(balances.totalDeposited)} />
         <InfoRow label="Withdrawn" value={formatCurrency(balances.totalWithdrawn)} />
         {(() => {
-          const pnl =
-            balances.totalWithdrawn +
-            balances.availableBalance +
-            balances.lockedBalance +
-            balances.inventoryValue -
-            balances.totalDeposited;
-          // Positive = user is in profit (we lose) -> RED
-          // Negative = user is in loss (we earn) -> GREEN
+          // Platform perspective: positive = we earn, negative = we lose
+          const platformPnl = balances.totalDeposited -
+            balances.totalWithdrawn -
+            balances.availableBalance -
+            balances.lockedBalance -
+            balances.inventoryValue;
           const cls =
-            pnl > 0
-              ? "text-rose-400"
-              : pnl < 0
-                ? "text-emerald-400"
+            platformPnl > 0
+              ? "text-emerald-400"
+              : platformPnl < 0
+                ? "text-rose-400"
                 : "text-foreground";
           return (
             <div className="flex items-center justify-between border-t pt-2">
               <span className="text-sm text-muted-foreground">P&L</span>
               <span className={`font-semibold tabular-nums ${cls}`}>
-                {pnl >= 0 ? "+" : ""}
-                {formatCurrency(pnl)}
+                {platformPnl >= 0 ? "+" : ""}
+                {formatCurrency(platformPnl)}
               </span>
             </div>
           );
@@ -1554,16 +1552,17 @@ const PnlCard = React.memo(function PnlCard({
   pnlBreakdown: PnlBreakdown;
   balances: UserDetail["balances"];
 }) {
-  // Real P&L = deposited − withdrawn − balance − locked − inventory (from platform perspective, negated)
-  const userPnl = balances
-    ? balances.totalWithdrawn +
-      balances.availableBalance +
-      balances.lockedBalance +
-      balances.inventoryValue -
-      balances.totalDeposited
+  // Platform P&L = deposited − withdrawn − balance − locked − inventory
+  const grossPnl = balances
+    ? balances.totalDeposited -
+      balances.totalWithdrawn -
+      balances.availableBalance -
+      balances.lockedBalance -
+      balances.inventoryValue
     : 0;
-  // Platform earns what the user loses
-  const platformPnl = -userPnl;
+  // Subtract costs (bonuses, rakeback, affiliate, other) for the true net
+  const totalCosts = p.bonusesCost + p.rakebackCost + p.affiliateCost + p.otherCosts;
+  const netPnl = grossPnl - totalCosts;
 
   return (
     <Card>
@@ -1571,12 +1570,18 @@ const PnlCard = React.memo(function PnlCard({
         <CardTitle className="text-sm font-medium">Platform P&L</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* Real P&L header */}
+        {/* Net P&L header */}
         <div className="pb-2 border-b">
           <div className="flex items-baseline gap-3">
             <span className="text-sm text-muted-foreground">Net P&L</span>
-            <span className={`text-2xl font-bold tabular-nums ${platformPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-              {platformPnl >= 0 ? "+" : ""}{formatCurrency(platformPnl)}
+            <span className={`text-2xl font-bold tabular-nums ${netPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+              {netPnl >= 0 ? "+" : ""}{formatCurrency(netPnl)}
+            </span>
+          </div>
+          <div className="flex items-center gap-3 mt-1">
+            <span className="text-xs text-muted-foreground">Gross</span>
+            <span className={`text-sm font-medium tabular-nums ${grossPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+              {grossPnl >= 0 ? "+" : ""}{formatCurrency(grossPnl)}
             </span>
           </div>
           {balances && (
