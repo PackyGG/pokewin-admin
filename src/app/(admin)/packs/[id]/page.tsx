@@ -22,11 +22,7 @@ export default async function PackDetailPage({
   if (!data) notFound();
 
   const [packStats, initialGames] = await Promise.all([
-    getPackStats(id, {
-      totalOpenings: data.totalOpenings,
-      totalRevenue: data.totalRevenue,
-      totalPayout: data.totalPayout,
-    }),
+    getPackStats(id, data.priceUsd),
     getPackGames(id, 1, 20),
   ]);
 

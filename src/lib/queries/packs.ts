@@ -179,91 +179,36 @@ export type PackStats = {
 
 export async function getPackStats(
   packId: string,
-  dbFallback?: { totalOpenings: number; totalRevenue: number; totalPayout: number },
+  packPrice: number,
 ): Promise<PackStats> {
-  // Two sources of pack openings:
-  // 1) Solo: ledger type='pack_opening' → game_sessions game_type='pack'
-  // 2) Battles: battles.pack_ids contains this pack
-  const [soloRows, battleRows] = await Promise.all([
-    db.$queryRawUnsafe<
-      { date: Date; openings: string; revenue: string; payout: string; borrowed: string }[]
-    >(`
-      SELECT
-        DATE(lt.created_at) AS date,
-        COUNT(DISTINCT lt.game_session_id)::text AS openings,
-        COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS revenue,
-        COALESCE(SUM(sub.payout), 0)::text AS payout,
-        COUNT(DISTINCT lt.game_session_id) FILTER (
-          WHERE lt.description ILIKE '%borrow%'
-        )::text AS borrowed
-      FROM ledger_transactions lt
-      JOIN game_sessions gs ON gs.id = lt.game_session_id AND gs.game_type = 'pack'
-      LEFT JOIN user_packs up ON up.id = gs.game_id
-      LEFT JOIN LATERAL (
-        SELECT COALESCE(SUM(ui.value_at_obtained::numeric), 0) AS payout
-        FROM provably_fair_results pf
-        JOIN user_inventory ui ON ui.id = pf.inventory_item_id
-        WHERE pf.game_session_id = gs.id
-      ) sub ON true
-      WHERE lt.type = 'pack_opening' AND lt.status = 'completed'
-        AND (gs.game_id = $1::uuid OR up.pack_id = $1::uuid)
-      GROUP BY DATE(lt.created_at)
-      ORDER BY date
-    `, packId),
-    db.$queryRawUnsafe<
-      { date: Date; openings: string; revenue: string; payout: string; borrowed: string; sponsored: string }[]
-    >(`
-      SELECT
-        DATE(b.created_at) AS date,
-        COUNT(*)::text AS openings,
-        COALESCE(SUM(b.bet_amount::numeric * b.teams * b.players_per_team), 0)::text AS revenue,
-        COALESCE(SUM(b.total_unpacked::numeric), 0)::text AS payout,
-        COUNT(*) FILTER (WHERE b.borrow_percentage > 0)::text AS borrowed,
-        COUNT(*) FILTER (WHERE b.sponsorship_percentage > 0)::text AS sponsored
-      FROM battles b
-      WHERE $1::text = ANY(b.pack_ids::text[])
-        AND b.status = 'completed'
-      GROUP BY DATE(b.created_at)
-      ORDER BY date
-    `, packId),
-  ]);
-
-  // Merge solo + battle rows by date
-  type DayEntry = {
-    soloOpenings: number;
-    battleOpenings: number;
-    borrowedOpenings: number;
-    sponsoredOpenings: number;
-    revenue: number;
-    payout: number;
-  };
-  const byDate = new Map<string, DayEntry>();
-  const ensure = (date: string): DayEntry => {
-    let e = byDate.get(date);
-    if (!e) {
-      e = { soloOpenings: 0, battleOpenings: 0, borrowedOpenings: 0, sponsoredOpenings: 0, revenue: 0, payout: 0 };
-      byDate.set(date, e);
-    }
-    return e;
-  };
-
-  for (const r of soloRows) {
-    const date = new Date(r.date).toISOString().slice(0, 10);
-    const e = ensure(date);
-    e.soloOpenings += Number(r.openings);
-    e.borrowedOpenings += Number(r.borrowed);
-    e.revenue += parseFloat(r.revenue);
-    e.payout += parseFloat(r.payout);
-  }
-  for (const r of battleRows) {
-    const date = new Date(r.date).toISOString().slice(0, 10);
-    const e = ensure(date);
-    e.battleOpenings += Number(r.openings);
-    e.borrowedOpenings += Number(r.borrowed);
-    e.sponsoredOpenings += Number(r.sponsored);
-    e.revenue += parseFloat(r.revenue);
-    e.payout += parseFloat(r.payout);
-  }
+  // The single source of truth: provably_fair_results.result_metadata->>'pack_id'
+  // tells us exactly which pack produced each card in both solo and battle openings.
+  const rows = await db.$queryRawUnsafe<
+    {
+      date: Date;
+      openings: string;
+      solo: string;
+      battle: string;
+      borrowed: string;
+      sponsored: string;
+      payout: string;
+    }[]
+  >(`
+    SELECT
+      DATE(pf.created_at) AS date,
+      COUNT(*)::text AS openings,
+      COUNT(*) FILTER (WHERE pf.battle_id IS NULL)::text AS solo,
+      COUNT(*) FILTER (WHERE pf.battle_id IS NOT NULL)::text AS battle,
+      COUNT(*) FILTER (WHERE b.borrow_percentage > 0)::text AS borrowed,
+      COUNT(*) FILTER (WHERE b.sponsorship_percentage > 0)::text AS sponsored,
+      COALESCE(SUM(CASE WHEN ui.id IS NOT NULL THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS payout
+    FROM provably_fair_results pf
+    LEFT JOIN user_inventory ui ON ui.id = pf.inventory_item_id
+    LEFT JOIN battles b ON b.id = pf.battle_id
+    WHERE pf.result_metadata->>'pack_id' = $1
+    GROUP BY DATE(pf.created_at)
+    ORDER BY date
+  `, packId);
 
   const now = new Date();
   const day = 24 * 60 * 60 * 1000;
@@ -276,52 +221,54 @@ export async function getPackStats(
   const revBuckets = { ...buckets };
   const payBuckets = { ...buckets };
 
-  const sortedDates = [...byDate.keys()].sort();
   const daily: PackStats["daily"] = [];
 
-  for (const dateStr of sortedDates) {
-    const e = byDate.get(dateStr)!;
-    const d = new Date(dateStr);
-    const totalOpenings = e.soloOpenings + e.battleOpenings;
+  for (const r of rows) {
+    const dateStr = new Date(r.date).toISOString().slice(0, 10);
+    const d = new Date(r.date);
+    const totalOpenings = Number(r.openings);
+    const soloOpenings = Number(r.solo);
+    const battleOpenings = Number(r.battle);
+    const borrowedOpenings = Number(r.borrowed);
+    const sponsoredOpenings = Number(r.sponsored);
+    const payout = parseFloat(r.payout);
+    // Revenue = openings × pack price (each opening = one instance of this pack)
+    const revenue = totalOpenings * packPrice;
 
-    daily.push({ date: dateStr, ...e });
+    daily.push({
+      date: dateStr,
+      soloOpenings,
+      battleOpenings,
+      borrowedOpenings,
+      sponsoredOpenings,
+      revenue,
+      payout,
+    });
 
     buckets.all += totalOpenings;
-    revBuckets.all += e.revenue;
-    payBuckets.all += e.payout;
+    revBuckets.all += revenue;
+    payBuckets.all += payout;
 
     if (d >= since30) {
       buckets.d30 += totalOpenings;
-      revBuckets.d30 += e.revenue;
-      payBuckets.d30 += e.payout;
+      revBuckets.d30 += revenue;
+      payBuckets.d30 += payout;
     }
     if (d >= since7) {
       buckets.d7 += totalOpenings;
-      revBuckets.d7 += e.revenue;
-      payBuckets.d7 += e.payout;
+      revBuckets.d7 += revenue;
+      payBuckets.d7 += payout;
     }
     if (d >= since3) {
       buckets.d3 += totalOpenings;
-      revBuckets.d3 += e.revenue;
-      payBuckets.d3 += e.payout;
+      revBuckets.d3 += revenue;
+      payBuckets.d3 += payout;
     }
     if (d >= since1) {
       buckets.d1 += totalOpenings;
-      revBuckets.d1 += e.revenue;
-      payBuckets.d1 += e.payout;
+      revBuckets.d1 += revenue;
+      payBuckets.d1 += payout;
     }
-  }
-
-  // If game_sessions query returned nothing but the DB has pre-computed totals,
-  // use those as the "all" bucket (no daily breakdown available).
-  if (
-    buckets.all === 0 &&
-    dbFallback &&
-    (dbFallback.totalOpenings > 0 || dbFallback.totalRevenue > 0)
-  ) {
-    buckets.all = dbFallback.totalOpenings;
-    revBuckets.all = dbFallback.totalRevenue;
-    payBuckets.all = dbFallback.totalPayout;
   }
 
   const totalRevenue = revBuckets.all;
