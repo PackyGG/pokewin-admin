@@ -185,12 +185,13 @@ function ChatBubble({
         className="shrink-0"
       >
         <div className="size-7 overflow-hidden rounded-full bg-muted">
-          {m.image ? (
+          {m.image && (m.image.startsWith("https://") || m.image.startsWith("http://")) ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={m.image}
               alt=""
               className="size-full object-cover"
+              referrerPolicy="no-referrer"
             />
           ) : (
             <div className="flex size-full items-center justify-center text-xs font-bold text-muted-foreground">
@@ -236,65 +237,52 @@ function ChatBubble({
             </Badge>
           )}
         </div>
-        <p className="mt-0.5 break-words text-sm leading-5 text-muted-foreground">
+        <p className="mt-0.5 break-words text-sm leading-5 text-foreground/80">
           {m.content}
         </p>
       </div>
 
-      {/* Hover actions */}
-      <div className="invisible absolute right-2 top-1.5 flex items-center gap-0.5 rounded-md border bg-popover p-0.5 shadow group-hover:visible">
+      {/* Hover actions — no animation, instant show/hide */}
+      <div className="absolute right-2 top-1.5 hidden items-center gap-0.5 rounded-md border bg-popover p-0.5 shadow group-hover:flex">
         {canDelete && !m.isDeleted && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6"
-            disabled={isPending}
-            onClick={() =>
-              act(() => deleteMessage(m.id), "Message deleted")
-            }
+          <ConfirmAction
+            title="Delete message?"
+            description={`"${m.content.slice(0, 80)}${m.content.length > 80 ? "…" : ""}"`}
+            onConfirm={() => act(() => deleteMessage(m.id), "Message deleted")}
+            isPending={isPending}
+            tooltip="Delete message"
           >
             <Trash2 className="size-3 text-red-400" />
-          </Button>
+          </ConfirmAction>
         )}
         {canPin &&
           (m.isPinned ? (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-6"
+            <ActionButton
+              tooltip="Unpin message"
               disabled={isPending}
-              onClick={() =>
-                act(() => unpinMessage(m.id), "Unpinned")
-              }
+              onClick={() => act(() => unpinMessage(m.id), "Unpinned")}
             >
               <PinOff className="size-3" />
-            </Button>
+            </ActionButton>
           ) : (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-6"
+            <ActionButton
+              tooltip="Pin message"
               disabled={isPending}
-              onClick={() =>
-                act(() => pinMessage(m.id), "Pinned")
-              }
+              onClick={() => act(() => pinMessage(m.id), "Pinned")}
             >
               <Pin className="size-3" />
-            </Button>
+            </ActionButton>
           ))}
         {canMute &&
           (m.activeMuteId ? (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-6"
-              disabled={isPending}
-              onClick={() =>
-                act(() => unmuteUser(m.activeMuteId!), "Unmuted")
-              }
+            <ConfirmAction
+              title={`Unmute ${m.username ?? m.userId.slice(0, 8)}?`}
+              onConfirm={() => act(() => unmuteUser(m.activeMuteId!), "Unmuted")}
+              isPending={isPending}
+              tooltip="Unmute user"
             >
               <Volume2 className="size-3" />
-            </Button>
+            </ConfirmAction>
           ) : (
             <MuteDialog
               userId={m.userId}
@@ -311,6 +299,73 @@ function ChatBubble({
         )}
       </div>
     </div>
+  );
+}
+
+// ── Shared action helpers ─────────────────────────────────────────────
+
+function ActionButton({
+  tooltip,
+  disabled,
+  onClick,
+  children,
+}: {
+  tooltip: string;
+  disabled: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="size-6"
+      title={tooltip}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      {children}
+    </Button>
+  );
+}
+
+function ConfirmAction({
+  title,
+  description,
+  onConfirm,
+  isPending,
+  tooltip,
+  children,
+}: {
+  title: string;
+  description?: string;
+  onConfirm: () => void;
+  isPending: boolean;
+  tooltip: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger render={
+        <Button variant="ghost" size="icon" className="size-6" title={tooltip} disabled={isPending} />
+      }>
+        {children}
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          {description && (
+            <AlertDialogDescription className="break-words">
+              {description}
+            </AlertDialogDescription>
+          )}
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={onConfirm}>Confirm</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
