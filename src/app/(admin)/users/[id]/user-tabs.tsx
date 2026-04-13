@@ -486,7 +486,7 @@ export function UserTabs({ data, transactions, auditLog, inventory, soldInventor
         <CollapsibleSection title="Key Metrics" sectionKey="metrics" open={openSections.metrics} onToggle={handleToggleSection}>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             <BalanceSummaryCard balances={balances} userId={user.id} isAdmin={isAdmin} />
-            <PnlCard pnlBreakdown={pnlBreakdown} />
+            <PnlCard pnlBreakdown={pnlBreakdown} balances={balances} />
             <ActivityStatsCard statistics={statistics} balances={balances} inventoryCount={data.inventoryCount} bonusPoints={balances?.bonusPoints ?? 0} userId={user.id} isAdmin={isAdmin} />
             <RewardsCard rewards={rewards} />
           </div>
@@ -1547,41 +1547,47 @@ function CardWithdrawalsSubTable({ withdrawals }: { withdrawals: UserDetail["car
   );
 }
 
-const PnlCard = React.memo(function PnlCard({ pnlBreakdown: p }: { pnlBreakdown: PnlBreakdown }) {
+const PnlCard = React.memo(function PnlCard({
+  pnlBreakdown: p,
+  balances,
+}: {
+  pnlBreakdown: PnlBreakdown;
+  balances: UserDetail["balances"];
+}) {
+  // Real P&L = deposited − withdrawn − balance − locked − inventory (from platform perspective, negated)
+  const userPnl = balances
+    ? balances.totalWithdrawn +
+      balances.availableBalance +
+      balances.lockedBalance +
+      balances.inventoryValue -
+      balances.totalDeposited
+    : 0;
+  // Platform earns what the user loses
+  const platformPnl = -userPnl;
+
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-sm font-medium">Platform P&L</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* Net P&L header — shows true (with unrealized) */}
-        <div className="space-y-1 pb-2 border-b">
+        {/* Real P&L header */}
+        <div className="pb-2 border-b">
           <div className="flex items-baseline gap-3">
-            <span className="text-sm text-muted-foreground">Net P&L (True)</span>
-            <span className={`text-2xl font-bold tabular-nums ${p.netPnlTrue >= 0 ? "text-green-400" : "text-red-400"}`}>
-              {p.netPnlTrue >= 0 ? "+" : ""}{formatCurrency(Math.abs(p.netPnlTrue))}
+            <span className="text-sm text-muted-foreground">Net P&L</span>
+            <span className={`text-2xl font-bold tabular-nums ${platformPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+              {platformPnl >= 0 ? "+" : ""}{formatCurrency(platformPnl)}
             </span>
           </div>
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-muted-foreground">Realized</span>
-            <span className={`text-sm font-medium tabular-nums ${p.netPnlRealized >= 0 ? "text-green-400" : "text-red-400"}`}>
-              {p.netPnlRealized >= 0 ? "+" : ""}{formatCurrency(Math.abs(p.netPnlRealized))}
-            </span>
-          </div>
+          {balances && (
+            <div className="mt-1 text-[10px] text-muted-foreground">
+              Deposited {formatCurrency(balances.totalDeposited)} − Withdrawn {formatCurrency(balances.totalWithdrawn)} − Balance {formatCurrency(balances.availableBalance + balances.lockedBalance)} − Inventory {formatCurrency(balances.inventoryValue)}
+            </div>
+          )}
         </div>
 
-        {/* Gambling Revenue */}
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground pt-1">Gambling Revenue</p>
-        <InfoRow label="↳ Packs" value={<PnlValue value={p.packRevenue} />} />
-        <InfoRow label="↳ Battles" value={<PnlValue value={p.battleRevenue} />} />
-        <InfoRow label="↳ Card Sales" value={<PnlValue value={p.cardSalesPayouts} />} />
-        <InfoRow label="Realized P&L" value={<PnlValue value={p.gamblingPnlRealized} />} />
-        <InfoRow label="Unsold Inventory Value" value={<PnlValue value={-p.unrealizedLiability} />} />
-        <InfoRow label="True Gambling P&L" value={<PnlValue value={p.gamblingPnlTrue} />} />
-
-        {/* Costs */}
-        <div className="border-t pt-2" />
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Costs</p>
+        {/* Cost breakdown — supplementary detail */}
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground pt-1">Cost Breakdown</p>
         <InfoRow label="↳ Bonuses & Promos" value={<PnlValue value={-p.bonusesCost} />} />
         <InfoRow label="↳ Rakeback" value={<PnlValue value={-p.rakebackCost} />} />
         <InfoRow label="↳ Affiliate" value={<PnlValue value={-p.affiliateCost} />} />
