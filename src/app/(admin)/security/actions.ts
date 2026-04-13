@@ -6,14 +6,16 @@ import { requireAdmin } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 
 async function refreshSiteConfig() {
+  const headers: Record<string, string> = {
+    "x-api-key": process.env.BACKEND_API_KEY!,
+  };
+  if (process.env.BACKEND_BYPASS_SECRET) {
+    headers["x-bypass-secret"] = process.env.BACKEND_BYPASS_SECRET;
+  }
+
   const res = await fetch(
     `${process.env.BACKEND_API_URL}/admin/refresh_site_config`,
-    {
-      method: "POST",
-      headers: {
-        "x-api-key": process.env.BACKEND_API_KEY!,
-      },
-    }
+    { method: "POST", headers },
   );
 
   if (!res.ok) {
