@@ -30,22 +30,18 @@ const RARITY_COLORS: Record<string, string> = {
   secret: "bg-pink-700/90 text-pink-100",
 };
 
-type CardWon = {
-  name: string;
-  imageUrl: string | null;
-  rarity: string | null;
-  priceUsd: number;
-};
-
 type GameItem = {
   id: string;
   userId: string | null;
   username: string | null;
   email: string | null;
-  betAmount: number;
-  cardsWon: CardWon[];
-  totalPayout: number;
-  betTxId: string | null;
+  type: "solo" | "battle";
+  isBorrowed: boolean;
+  isSponsored: boolean;
+  cardName: string | null;
+  cardImageUrl: string | null;
+  cardRarity: string | null;
+  cardPrice: number;
   createdAt: string;
 };
 
@@ -152,6 +148,19 @@ export function PackTabs({ data, initialGames }: { data: PackDetailData; initial
   );
 }
 
+const TYPE_OPTIONS = [
+  { label: "All", value: "all" },
+  { label: "Solo", value: "solo" },
+  { label: "Battle", value: "battle" },
+];
+
+const SORT_OPTIONS = [
+  { label: "Newest", value: "date-desc" },
+  { label: "Oldest", value: "date-asc" },
+  { label: "Payout ↑", value: "payout-asc" },
+  { label: "Payout ↓", value: "payout-desc" },
+];
+
 function GamesTable({ packId, initialGames }: { packId: string; initialGames: PaginatedGames }) {
   const [games, setGames] = useState(initialGames);
   const [loading, setLoading] = useState(false);
@@ -160,17 +169,22 @@ function GamesTable({ packId, initialGames }: { packId: string; initialGames: Pa
   const [dateTo, setDateTo] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [sort, setSort] = useState("date-desc");
 
   const { data, totalPages, total } = games;
-
-  const hasFilters = dateFrom !== "" || dateTo !== "" || search !== "";
+  const hasFilters = dateFrom !== "" || dateTo !== "" || search !== "" || typeFilter !== "all";
 
   const load = async (overrides: Record<string, unknown> = {}) => {
     const p = (overrides.page as number) ?? page;
+    const [sortBy, sortOrder] = ((overrides.sort as string) ?? sort).split("-");
     const filters = {
       dateFrom: ((overrides.dateFrom as string) ?? dateFrom) || undefined,
       dateTo: ((overrides.dateTo as string) ?? dateTo) || undefined,
       search: ((overrides.search as string) ?? search) || undefined,
+      type: ((overrides.type as string) ?? typeFilter) || undefined,
+      sortBy,
+      sortOrder,
     };
     setLoading(true);
     try {
@@ -186,6 +200,8 @@ function GamesTable({ packId, initialGames }: { packId: string; initialGames: Pa
     if (key === "dateFrom") setDateFrom(value);
     else if (key === "dateTo") setDateTo(value);
     else if (key === "search") setSearch(value);
+    else if (key === "type") setTypeFilter(value);
+    else if (key === "sort") setSort(value);
     setPage(1);
     load(updates);
   };
@@ -200,8 +216,10 @@ function GamesTable({ packId, initialGames }: { packId: string; initialGames: Pa
     setDateTo("");
     setSearch("");
     setSearchInput("");
+    setTypeFilter("all");
+    setSort("date-desc");
     setPage(1);
-    load({ dateFrom: "", dateTo: "", search: "", page: 1 });
+    load({ dateFrom: "", dateTo: "", search: "", type: "all", sort: "date-desc", page: 1 });
   };
 
   return (
@@ -228,7 +246,7 @@ function GamesTable({ packId, initialGames }: { packId: string; initialGames: Pa
           )}
         </div>
         <div className="flex flex-wrap items-end gap-2 pt-2">
-          <div className="relative flex-1 min-w-[140px] max-w-[220px]">
+          <div className="relative flex-1 min-w-[140px] max-w-[200px]">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
             <Input
               placeholder="Search user..."
@@ -238,23 +256,38 @@ function GamesTable({ packId, initialGames }: { packId: string; initialGames: Pa
               className="h-8 pl-7 text-xs"
             />
           </div>
-          <Input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => updateFilter("dateFrom", e.target.value)}
-            className="h-8 w-[130px] text-xs"
-          />
-          <span className="text-xs text-muted-foreground">-</span>
-          <Input
-            type="date"
-            value={dateTo}
-            onChange={(e) => updateFilter("dateTo", e.target.value)}
-            className="h-8 w-[130px] text-xs"
-          />
+          <div className="flex items-center gap-1">
+            {TYPE_OPTIONS.map((t) => (
+              <Button
+                key={t.value}
+                variant={typeFilter === t.value ? "default" : "outline"}
+                size="sm"
+                className="h-8 px-2 text-xs"
+                onClick={() => updateFilter("type", t.value)}
+              >
+                {t.label}
+              </Button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1">
+            {SORT_OPTIONS.map((s) => (
+              <Button
+                key={s.value}
+                variant={sort === s.value ? "default" : "outline"}
+                size="sm"
+                className="h-8 px-2 text-xs"
+                onClick={() => updateFilter("sort", s.value)}
+              >
+                {s.label}
+              </Button>
+            ))}
+          </div>
+          <Input type="date" value={dateFrom} onChange={(e) => updateFilter("dateFrom", e.target.value)} className="h-8 w-[120px] text-xs" />
+          <span className="text-xs text-muted-foreground">–</span>
+          <Input type="date" value={dateTo} onChange={(e) => updateFilter("dateTo", e.target.value)} className="h-8 w-[120px] text-xs" />
           {hasFilters && (
             <Button variant="ghost" size="sm" className="h-8 text-xs px-2" onClick={clearFilters}>
-              <X className="size-3 mr-1" />
-              Clear
+              <X className="size-3 mr-1" /> Clear
             </Button>
           )}
         </div>
@@ -274,72 +307,73 @@ function GamesTable({ packId, initialGames }: { packId: string; initialGames: Pa
             <TableHeader>
               <TableRow>
                 <TableHead>User</TableHead>
-                <TableHead>Bet</TableHead>
-                <TableHead>Cards Won</TableHead>
-                <TableHead>Payout</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Card</TableHead>
+                <TableHead>Card Value</TableHead>
                 <TableHead>Date</TableHead>
-                <TableHead className="w-[100px]" />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.map((game) => (
-                <TableRow key={game.id}>
+              {data.map((g) => (
+                <TableRow key={g.id}>
                   <TableCell>
-                    {game.userId ? (
-                      <Link href={`/users/${game.userId}`} className="hover:underline">
-                        <span className="font-medium">{game.username ?? game.email ?? "Unknown"}</span>
+                    {g.userId ? (
+                      <Link href={`/users/${g.userId}`} className="hover:underline">
+                        <span className="font-medium">{g.username ?? g.email ?? "Unknown"}</span>
                       </Link>
                     ) : (
-                      <span className="text-muted-foreground">Bot</span>
+                      <span className="text-muted-foreground">—</span>
                     )}
                   </TableCell>
-                  <TableCell className="font-medium">{formatCurrency(game.betAmount)}</TableCell>
                   <TableCell>
-                    {game.cardsWon.length > 0 ? (
-                      <div className="flex items-center gap-1">
-                        {game.cardsWon.slice(0, 3).map((card, i) => (
-                          <div key={i} className="group relative">
-                            <div className="size-8 rounded border bg-muted overflow-hidden">
-                              <CardImage src={card.imageUrl} alt={card.name} className="size-full" />
-                            </div>
-                            <div className="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1 hidden group-hover:block z-50">
-                              <div className="rounded bg-popover border px-2 py-1 text-xs shadow-md whitespace-nowrap">
-                                <p className="font-medium">{card.name}</p>
-                                {card.rarity && (
-                                  <span className={`inline-block rounded px-1 py-0.5 text-[10px] mt-0.5 ${RARITY_COLORS[card.rarity.toLowerCase()] ?? "bg-black/80 text-white"}`}>
-                                    {card.rarity}
-                                  </span>
-                                )}
-                                <p className="text-muted-foreground">{formatCurrency(card.priceUsd)}</p>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                        {game.cardsWon.length > 3 && (
-                          <span className="text-xs text-muted-foreground">+{game.cardsWon.length - 3}</span>
-                        )}
+                    <div className="flex items-center gap-1">
+                      <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                        g.type === "battle"
+                          ? "bg-blue-500/15 text-blue-400"
+                          : "bg-zinc-500/15 text-zinc-400"
+                      }`}>
+                        {g.type}
+                      </span>
+                      {g.isBorrowed && (
+                        <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-amber-500/15 text-amber-400">
+                          borrow
+                        </span>
+                      )}
+                      {g.isSponsored && (
+                        <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-purple-500/15 text-purple-400">
+                          sponsored
+                        </span>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    {g.cardName ? (
+                      <div className="flex items-center gap-2">
+                        <div className="size-8 shrink-0 rounded border bg-muted overflow-hidden">
+                          <CardImage src={g.cardImageUrl} alt={g.cardName} className="size-full" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium truncate">{g.cardName}</p>
+                          {g.cardRarity && (
+                            <span className={`inline-block rounded px-1 py-0.5 text-[9px] ${
+                              RARITY_COLORS[g.cardRarity.toLowerCase()] ?? "bg-black/80 text-white"
+                            }`}>
+                              {g.cardRarity}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     ) : (
-                      <span className="text-muted-foreground text-xs">-</span>
+                      <span className="text-xs text-muted-foreground">—</span>
                     )}
                   </TableCell>
                   <TableCell>
-                    <span className={`font-medium ${game.totalPayout > game.betAmount ? "text-red-400" : "text-green-400"}`}>
-                      {formatCurrency(game.totalPayout)}
+                    <span className="font-medium tabular-nums">
+                      {formatCurrency(g.cardPrice)}
                     </span>
                   </TableCell>
                   <TableCell className="text-muted-foreground text-xs">
-                    {formatDateTime(game.createdAt)}
-                  </TableCell>
-                  <TableCell>
-                    {game.betTxId && (
-                      <Link
-                        href={`/transactions/${game.betTxId}`}
-                        className="text-xs text-primary hover:underline whitespace-nowrap"
-                      >
-                        View game
-                      </Link>
-                    )}
+                    {formatDateTime(g.createdAt)}
                   </TableCell>
                 </TableRow>
               ))}

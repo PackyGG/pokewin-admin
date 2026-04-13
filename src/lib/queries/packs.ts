@@ -175,6 +175,9 @@ export type PackStats = {
     revenue: number;
     payout: number;
   }[];
+  // Pie chart breakdown: solo vs battle, each with borrow% / sponsored% detail
+  soloBreakdown: { label: string; count: number }[];
+  battleBreakdown: { label: string; count: number }[];
 };
 
 export async function getPackStats(
@@ -282,6 +285,50 @@ export async function getPackStats(
   const rtp = dbRtp > 2 ? dbRtp / 100 : dbRtp; // normalize to 0-1
   const houseEdge = 1 - rtp;
 
+  // Breakdown for pie charts: borrow_percentage / sponsorship_percentage per mode
+  const breakdownRows = await db.$queryRawUnsafe<
+    {
+      is_battle: boolean;
+      borrow_pct: number;
+      sponsor_pct: number;
+      count: string;
+    }[]
+  >(`
+    SELECT
+      (pf.battle_id IS NOT NULL) AS is_battle,
+      COALESCE(b.borrow_percentage, 0) AS borrow_pct,
+      COALESCE(b.sponsorship_percentage, 0) AS sponsor_pct,
+      COUNT(*)::text AS count
+    FROM provably_fair_results pf
+    LEFT JOIN battles b ON b.id = pf.battle_id
+    WHERE pf.result_metadata->>'pack_id' = $1
+    GROUP BY is_battle, borrow_pct, sponsor_pct
+    ORDER BY count DESC
+  `, packId);
+
+  function buildBreakdown(isBattle: boolean) {
+    const filtered = breakdownRows.filter((r) => r.is_battle === isBattle);
+    const items: { label: string; count: number }[] = [];
+    for (const r of filtered) {
+      const count = Number(r.count);
+      if (r.borrow_pct > 0) {
+        items.push({ label: `Borrowed ${r.borrow_pct}%`, count });
+      } else if (r.sponsor_pct > 0) {
+        items.push({ label: `Sponsored ${r.sponsor_pct}%`, count });
+      } else {
+        items.push({ label: "Normal", count });
+      }
+    }
+    // Merge same labels (e.g. multiple rows with borrow 90% from different sponsor combos)
+    const merged = new Map<string, number>();
+    for (const i of items) {
+      merged.set(i.label, (merged.get(i.label) ?? 0) + i.count);
+    }
+    return [...merged.entries()]
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count);
+  }
+
   return {
     openings: buckets,
     revenue: revBuckets,
@@ -289,6 +336,8 @@ export async function getPackStats(
     rtp,
     houseEdge,
     daily,
+    soloBreakdown: buildBreakdown(false),
+    battleBreakdown: buildBreakdown(true),
   };
 }
 
@@ -300,94 +349,113 @@ export async function getPackGames(
     dateFrom?: string;
     dateTo?: string;
     search?: string;
+    sortBy?: string;
+    sortOrder?: string;
+    type?: string; // "all" | "solo" | "battle"
   }
 ) {
-  const where: Prisma.game_sessionsWhereInput = {
-    game_type: "pack",
-    game_id: packId,
-  };
+  // Build WHERE clauses for the raw query
+  const conditions: string[] = [`pf.result_metadata->>'pack_id' = $1`];
+  const params: unknown[] = [packId];
+  let paramIdx = 2;
 
-  if (filters?.dateFrom || filters?.dateTo) {
-    where.created_at = {};
-    if (filters.dateFrom) where.created_at.gte = new Date(filters.dateFrom);
-    if (filters?.dateTo) {
-      const to = new Date(filters.dateTo);
-      to.setDate(to.getDate() + 1);
-      where.created_at.lte = to;
-    }
+  if (filters?.type === "solo") {
+    conditions.push("pf.battle_id IS NULL");
+  } else if (filters?.type === "battle") {
+    conditions.push("pf.battle_id IS NOT NULL");
   }
 
+  if (filters?.dateFrom) {
+    conditions.push(`pf.created_at >= $${paramIdx}::timestamp`);
+    params.push(new Date(filters.dateFrom));
+    paramIdx++;
+  }
+  if (filters?.dateTo) {
+    const to = new Date(filters.dateTo);
+    to.setDate(to.getDate() + 1);
+    conditions.push(`pf.created_at < $${paramIdx}::timestamp`);
+    params.push(to);
+    paramIdx++;
+  }
   if (filters?.search) {
-    where.user = {
-      OR: [
-        { username: { contains: filters.search, mode: "insensitive" } },
-        { email: { contains: filters.search, mode: "insensitive" } },
-        { id: filters.search },
-      ],
-    };
+    conditions.push(`(u.username ILIKE $${paramIdx} OR u.email ILIKE $${paramIdx} OR u.id = $${paramIdx + 1})`);
+    params.push(`%${filters.search}%`, filters.search);
+    paramIdx += 2;
   }
 
-  const [sessions, total] = await Promise.all([
-    db.game_sessions.findMany({
-      where,
-      orderBy: { created_at: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
-      include: {
-        user: { select: { id: true, username: true, email: true } },
-        provably_fair_results: {
-          include: {
-            user_inventory: {
-              select: { card_id: true, value_at_obtained: true },
-            },
-          },
-        },
-      },
-    }),
-    db.game_sessions.count({ where }),
-  ]);
+  const whereClause = conditions.join(" AND ");
+  const orderCol =
+    filters?.sortBy === "payout"
+      ? "card_price"
+      : filters?.sortBy === "date"
+        ? "pf.created_at"
+        : "pf.created_at";
+  const orderDir = filters?.sortOrder === "asc" ? "ASC" : "DESC";
 
-  // Collect all card IDs to fetch in one batch
-  const cardIds = new Set<string>();
-  for (const s of sessions) {
-    for (const pf of s.provably_fair_results) {
-      if (pf.user_inventory?.card_id) cardIds.add(pf.user_inventory.card_id);
-    }
-  }
+  const countResult = await db.$queryRawUnsafe<{ count: string }[]>(
+    `SELECT COUNT(*)::text AS count
+     FROM provably_fair_results pf
+     LEFT JOIN "user" u ON u.id = (pf.result_metadata->>'user_id')
+     WHERE ${whereClause}`,
+    ...params,
+  );
+  const total = Number(countResult[0]?.count ?? 0);
 
-  const cardsMap = new Map<string, { name: string; image_url: string | null; rarity: string | null; price: unknown }>();
-  if (cardIds.size > 0) {
-    const cards = await db.cards.findMany({
-      where: { id: { in: Array.from(cardIds) } },
-      select: { id: true, name: true, image_url: true, rarity: true, price: true },
-    });
-    for (const c of cards) cardsMap.set(c.id, c);
-  }
+  const rows = await db.$queryRawUnsafe<
+    {
+      id: string;
+      user_id: string | null;
+      username: string | null;
+      email: string | null;
+      battle_id: string | null;
+      card_id: string | null;
+      card_name: string | null;
+      card_image_url: string | null;
+      card_rarity: string | null;
+      card_price: string;
+      is_borrowed: boolean;
+      is_sponsored: boolean;
+      created_at: Date;
+    }[]
+  >(
+    `SELECT
+       pf.id,
+       (pf.result_metadata->>'user_id') AS user_id,
+       u.username,
+       u.email,
+       pf.battle_id,
+       c.id AS card_id,
+       c.name AS card_name,
+       c.image_url AS card_image_url,
+       c.rarity AS card_rarity,
+       COALESCE(c.price::text, '0') AS card_price,
+       COALESCE(b.borrow_percentage > 0, false) AS is_borrowed,
+       COALESCE(b.sponsorship_percentage > 0, false) AS is_sponsored,
+       pf.created_at
+     FROM provably_fair_results pf
+     LEFT JOIN cards c ON c.id = (pf.result_metadata->>'card_id')::uuid
+     LEFT JOIN "user" u ON u.id = (pf.result_metadata->>'user_id')
+     LEFT JOIN battles b ON b.id = pf.battle_id
+     WHERE ${whereClause}
+     ORDER BY ${orderCol} ${orderDir}
+     LIMIT ${perPage} OFFSET ${(page - 1) * perPage}`,
+    ...params,
+  );
 
   return {
-    data: sessions.map((s) => ({
-      id: s.id,
-      userId: s.user_id,
-      username: s.user?.username ?? null,
-      email: s.user?.email ?? null,
-      betAmount: toNumber(s.bet_amount),
-      cardsWon: s.provably_fair_results
-        .filter((pf) => pf.user_inventory?.card_id && cardsMap.has(pf.user_inventory.card_id))
-        .map((pf) => {
-          const card = cardsMap.get(pf.user_inventory!.card_id)!;
-          return {
-            name: card.name,
-            imageUrl: card.image_url,
-            rarity: card.rarity,
-            priceUsd: toNumber(card.price),
-          };
-        }),
-      totalPayout: s.provably_fair_results.reduce((sum, pf) => {
-        if (pf.user_inventory) return sum + toNumber(pf.user_inventory.value_at_obtained);
-        return sum;
-      }, 0),
-      betTxId: s.bet_ledger_tx_id,
-      createdAt: s.created_at.toISOString(),
+    data: rows.map((r) => ({
+      id: r.id,
+      userId: r.user_id,
+      username: r.username,
+      email: r.email,
+      type: r.battle_id ? "battle" : "solo" as "battle" | "solo",
+      isBorrowed: r.is_borrowed,
+      isSponsored: r.is_sponsored,
+      cardName: r.card_name,
+      cardImageUrl: r.card_image_url,
+      cardRarity: r.card_rarity,
+      cardPrice: parseFloat(r.card_price),
+      createdAt: r.created_at.toISOString(),
     })),
     total,
     page,

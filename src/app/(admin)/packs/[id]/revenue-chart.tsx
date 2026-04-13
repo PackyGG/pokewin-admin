@@ -92,34 +92,6 @@ export function PackStatsSection({ stats }: { stats: PackStats }) {
 
   const hasDaily = stats.daily.length > 0;
 
-  // Aggregate for pie chart
-  const totals = useMemo(() => {
-    let solo = 0, battle = 0, borrowed = 0, sponsored = 0, normal = 0;
-    for (const d of stats.daily) {
-      solo += d.soloOpenings;
-      battle += d.battleOpenings;
-      borrowed += d.borrowedOpenings;
-      sponsored += d.sponsoredOpenings;
-    }
-    normal = solo + battle - borrowed - sponsored;
-    if (normal < 0) normal = 0;
-    return { solo, battle, borrowed, sponsored, normal, total: solo + battle };
-  }, [stats.daily]);
-
-  const pieData = useMemo(() => {
-    const items: { name: string; value: number }[] = [];
-    if (totals.solo > 0) items.push({ name: "Solo", value: totals.solo });
-    if (totals.battle > 0) {
-      const normalBattle = totals.battle - totals.borrowed - totals.sponsored;
-      if (normalBattle > 0)
-        items.push({ name: "Battle (normal)", value: normalBattle });
-      if (totals.borrowed > 0)
-        items.push({ name: "Battle (borrowed)", value: totals.borrowed });
-      if (totals.sponsored > 0)
-        items.push({ name: "Battle (sponsored)", value: totals.sponsored });
-    }
-    return items;
-  }, [totals]);
 
   return (
     <div className="space-y-4">
@@ -317,76 +289,113 @@ export function PackStatsSection({ stats }: { stats: PackStats }) {
         </Card>
       </div>
 
-      {/* Pie chart — opening breakdown */}
-      {totals.total > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">
-              Opening Breakdown ({formatNumber(totals.total)} total)
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-8">
-              <div className="h-[180px] w-[180px] shrink-0">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={pieData}
-                      innerRadius={50}
-                      outerRadius={80}
-                      paddingAngle={2}
-                      dataKey="value"
-                      stroke="none"
-                    >
-                      {pieData.map((_, i) => (
-                        <Cell
-                          key={i}
-                          fill={PIE_COLORS[i % PIE_COLORS.length]}
-                        />
-                      ))}
-                    </Pie>
-                    <Tooltip
-                      contentStyle={tooltipStyle}
-                      itemStyle={tooltipItemStyle}
-                      labelStyle={tooltipLabelStyle}
-                      formatter={(value) => [formatNumber(Number(value)), ""]}
-                      separator=""
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="flex-1 space-y-1.5">
-                {pieData.map((item, i) => {
-                  const pct =
-                    totals.total > 0
-                      ? ((item.value / totals.total) * 100).toFixed(1)
-                      : "0";
-                  return (
-                    <div
-                      key={item.name}
-                      className="flex items-center gap-3 text-sm"
-                    >
-                      <span
-                        className="size-2.5 shrink-0 rounded-full"
-                        style={{
-                          background: PIE_COLORS[i % PIE_COLORS.length],
-                        }}
-                      />
-                      <span className="flex-1">{item.name}</span>
-                      <span className="w-12 text-right text-xs text-muted-foreground tabular-nums">
-                        {pct}%
-                      </span>
-                      <span className="w-12 text-right font-medium tabular-nums">
-                        {formatNumber(item.value)}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      {/* Pie charts — solo + battle breakdown side by side */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <BreakdownPie
+          title="Solo Openings"
+          data={stats.soloBreakdown}
+        />
+        <BreakdownPie
+          title="Battle Openings"
+          data={stats.battleBreakdown}
+        />
+      </div>
     </div>
+  );
+}
+
+function BreakdownPie({
+  title,
+  data,
+}: {
+  title: string;
+  data: { label: string; count: number }[];
+}) {
+  const total = data.reduce((s, d) => s + d.count, 0);
+  const pieData = data.map((d) => ({ name: d.label, value: d.count }));
+
+  if (total === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm font-medium">{title}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="py-6 text-center text-sm text-muted-foreground">
+            No openings
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm font-medium">
+          {title} ({formatNumber(total)})
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-center gap-6">
+          <div className="h-[160px] w-[160px] shrink-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={pieData}
+                  innerRadius={42}
+                  outerRadius={72}
+                  paddingAngle={2}
+                  dataKey="value"
+                  stroke="none"
+                >
+                  {pieData.map((_, i) => (
+                    <Cell
+                      key={i}
+                      fill={PIE_COLORS[i % PIE_COLORS.length]}
+                    />
+                  ))}
+                </Pie>
+                <Tooltip
+                  contentStyle={tooltipStyle}
+                  itemStyle={tooltipItemStyle}
+                  labelStyle={tooltipLabelStyle}
+                  formatter={(value, name) => [
+                    `${formatNumber(Number(value))} (${total > 0 ? ((Number(value) / total) * 100).toFixed(1) : 0}%)`,
+                    String(name),
+                  ]}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="flex-1 space-y-1.5">
+            {pieData.map((item, i) => {
+              const pct =
+                total > 0 ? ((item.value / total) * 100).toFixed(1) : "0";
+              return (
+                <div
+                  key={item.name}
+                  className="flex items-center gap-3 text-sm"
+                >
+                  <span
+                    className="size-2.5 shrink-0 rounded-full"
+                    style={{
+                      background: PIE_COLORS[i % PIE_COLORS.length],
+                    }}
+                  />
+                  <span className="flex-1 truncate">{item.name}</span>
+                  <span className="w-12 text-right text-xs text-muted-foreground tabular-nums">
+                    {pct}%
+                  </span>
+                  <span className="w-10 text-right font-medium tabular-nums">
+                    {formatNumber(item.value)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

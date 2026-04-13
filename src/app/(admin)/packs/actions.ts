@@ -266,6 +266,9 @@ export async function fetchPackGames(
     dateFrom?: string;
     dateTo?: string;
     search?: string;
+    sortBy?: string;
+    sortOrder?: string;
+    type?: string;
   }
 ) {
   await requirePageAccess("/packs");
