@@ -164,11 +164,14 @@ export type PackStats = {
   openings: { d1: number; d3: number; d7: number; d30: number; all: number };
   revenue: { d1: number; d3: number; d7: number; d30: number; all: number };
   payout: { d1: number; d3: number; d7: number; d30: number; all: number };
-  rtp: number; // 0-1 decimal
-  houseEdge: number; // 0-1 decimal
+  rtp: number;
+  houseEdge: number;
   daily: {
     date: string;
-    openings: number;
+    soloOpenings: number;
+    battleOpenings: number;
+    borrowedOpenings: number;
+    sponsoredOpenings: number;
     revenue: number;
     payout: number;
   }[];
@@ -178,38 +181,89 @@ export async function getPackStats(
   packId: string,
   dbFallback?: { totalOpenings: number; totalRevenue: number; totalPayout: number },
 ): Promise<PackStats> {
-  // game_sessions.game_id can reference packs.id, user_packs.id, or something
-  // else entirely. The most reliable path: go through ledger_transactions
-  // (type='pack_opening') → game_sessions → and match the pack via EITHER
-  // direct game_id = packId OR user_packs.pack_id = packId.
-  const rows = await db.$queryRawUnsafe<
-    {
-      date: Date;
-      openings: string;
-      revenue: string;
-      payout: string;
-    }[]
-  >(`
-    SELECT
-      DATE(lt.created_at) AS date,
-      COUNT(DISTINCT lt.game_session_id)::text AS openings,
-      COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS revenue,
-      COALESCE(SUM(sub.payout), 0)::text AS payout
-    FROM ledger_transactions lt
-    JOIN game_sessions gs ON gs.id = lt.game_session_id AND gs.game_type = 'pack'
-    LEFT JOIN user_packs up ON up.id = gs.game_id
-    LEFT JOIN LATERAL (
-      SELECT COALESCE(SUM(ui.value_at_obtained::numeric), 0) AS payout
-      FROM provably_fair_results pf
-      JOIN user_inventory ui ON ui.id = pf.inventory_item_id
-      WHERE pf.game_session_id = gs.id
-    ) sub ON true
-    WHERE lt.type = 'pack_opening'
-      AND lt.status = 'completed'
-      AND (gs.game_id = $1::uuid OR up.pack_id = $1::uuid)
-    GROUP BY DATE(lt.created_at)
-    ORDER BY date
-  `, packId);
+  // Two sources of pack openings:
+  // 1) Solo: ledger type='pack_opening' → game_sessions game_type='pack'
+  // 2) Battles: battles.pack_ids contains this pack
+  const [soloRows, battleRows] = await Promise.all([
+    db.$queryRawUnsafe<
+      { date: Date; openings: string; revenue: string; payout: string; borrowed: string }[]
+    >(`
+      SELECT
+        DATE(lt.created_at) AS date,
+        COUNT(DISTINCT lt.game_session_id)::text AS openings,
+        COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS revenue,
+        COALESCE(SUM(sub.payout), 0)::text AS payout,
+        COUNT(DISTINCT lt.game_session_id) FILTER (
+          WHERE lt.description ILIKE '%borrow%'
+        )::text AS borrowed
+      FROM ledger_transactions lt
+      JOIN game_sessions gs ON gs.id = lt.game_session_id AND gs.game_type = 'pack'
+      LEFT JOIN user_packs up ON up.id = gs.game_id
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(ui.value_at_obtained::numeric), 0) AS payout
+        FROM provably_fair_results pf
+        JOIN user_inventory ui ON ui.id = pf.inventory_item_id
+        WHERE pf.game_session_id = gs.id
+      ) sub ON true
+      WHERE lt.type = 'pack_opening' AND lt.status = 'completed'
+        AND (gs.game_id = $1::uuid OR up.pack_id = $1::uuid)
+      GROUP BY DATE(lt.created_at)
+      ORDER BY date
+    `, packId),
+    db.$queryRawUnsafe<
+      { date: Date; openings: string; revenue: string; payout: string; borrowed: string; sponsored: string }[]
+    >(`
+      SELECT
+        DATE(b.created_at) AS date,
+        COUNT(*)::text AS openings,
+        COALESCE(SUM(b.bet_amount::numeric * b.teams * b.players_per_team), 0)::text AS revenue,
+        COALESCE(SUM(b.total_unpacked::numeric), 0)::text AS payout,
+        COUNT(*) FILTER (WHERE b.borrow_percentage > 0)::text AS borrowed,
+        COUNT(*) FILTER (WHERE b.sponsorship_percentage > 0)::text AS sponsored
+      FROM battles b
+      WHERE $1::text = ANY(b.pack_ids::text[])
+        AND b.status = 'completed'
+      GROUP BY DATE(b.created_at)
+      ORDER BY date
+    `, packId),
+  ]);
+
+  // Merge solo + battle rows by date
+  type DayEntry = {
+    soloOpenings: number;
+    battleOpenings: number;
+    borrowedOpenings: number;
+    sponsoredOpenings: number;
+    revenue: number;
+    payout: number;
+  };
+  const byDate = new Map<string, DayEntry>();
+  const ensure = (date: string): DayEntry => {
+    let e = byDate.get(date);
+    if (!e) {
+      e = { soloOpenings: 0, battleOpenings: 0, borrowedOpenings: 0, sponsoredOpenings: 0, revenue: 0, payout: 0 };
+      byDate.set(date, e);
+    }
+    return e;
+  };
+
+  for (const r of soloRows) {
+    const date = new Date(r.date).toISOString().slice(0, 10);
+    const e = ensure(date);
+    e.soloOpenings += Number(r.openings);
+    e.borrowedOpenings += Number(r.borrowed);
+    e.revenue += parseFloat(r.revenue);
+    e.payout += parseFloat(r.payout);
+  }
+  for (const r of battleRows) {
+    const date = new Date(r.date).toISOString().slice(0, 10);
+    const e = ensure(date);
+    e.battleOpenings += Number(r.openings);
+    e.borrowedOpenings += Number(r.borrowed);
+    e.sponsoredOpenings += Number(r.sponsored);
+    e.revenue += parseFloat(r.revenue);
+    e.payout += parseFloat(r.payout);
+  }
 
   const now = new Date();
   const day = 24 * 60 * 60 * 1000;
@@ -222,44 +276,39 @@ export async function getPackStats(
   const revBuckets = { ...buckets };
   const payBuckets = { ...buckets };
 
+  const sortedDates = [...byDate.keys()].sort();
   const daily: PackStats["daily"] = [];
 
-  for (const r of rows) {
-    const d = new Date(r.date);
-    const openings = Number(r.openings);
-    const revenue = parseFloat(r.revenue);
-    const payout = parseFloat(r.payout);
+  for (const dateStr of sortedDates) {
+    const e = byDate.get(dateStr)!;
+    const d = new Date(dateStr);
+    const totalOpenings = e.soloOpenings + e.battleOpenings;
 
-    daily.push({
-      date: d.toISOString().slice(0, 10),
-      openings,
-      revenue,
-      payout,
-    });
+    daily.push({ date: dateStr, ...e });
 
-    buckets.all += openings;
-    revBuckets.all += revenue;
-    payBuckets.all += payout;
+    buckets.all += totalOpenings;
+    revBuckets.all += e.revenue;
+    payBuckets.all += e.payout;
 
     if (d >= since30) {
-      buckets.d30 += openings;
-      revBuckets.d30 += revenue;
-      payBuckets.d30 += payout;
+      buckets.d30 += totalOpenings;
+      revBuckets.d30 += e.revenue;
+      payBuckets.d30 += e.payout;
     }
     if (d >= since7) {
-      buckets.d7 += openings;
-      revBuckets.d7 += revenue;
-      payBuckets.d7 += payout;
+      buckets.d7 += totalOpenings;
+      revBuckets.d7 += e.revenue;
+      payBuckets.d7 += e.payout;
     }
     if (d >= since3) {
-      buckets.d3 += openings;
-      revBuckets.d3 += revenue;
-      payBuckets.d3 += payout;
+      buckets.d3 += totalOpenings;
+      revBuckets.d3 += e.revenue;
+      payBuckets.d3 += e.payout;
     }
     if (d >= since1) {
-      buckets.d1 += openings;
-      revBuckets.d1 += revenue;
-      payBuckets.d1 += payout;
+      buckets.d1 += totalOpenings;
+      revBuckets.d1 += e.revenue;
+      payBuckets.d1 += e.payout;
     }
   }
 

@@ -26,7 +26,10 @@ const revenueConfig = {
 } satisfies ChartConfig;
 
 const openingsConfig = {
-  openings: { label: "Openings", color: "var(--color-chart-2)" },
+  soloOpenings: { label: "Solo", color: "var(--color-chart-1)" },
+  battleOpenings: { label: "Battles", color: "var(--color-chart-2)" },
+  borrowedOpenings: { label: "Borrowed", color: "var(--color-chart-4)" },
+  sponsoredOpenings: { label: "Sponsored", color: "var(--color-chart-5)" },
 } satisfies ChartConfig;
 
 const formatValue = (v: number) => {
@@ -58,6 +61,7 @@ export function PackStatsSection({ stats }: { stats: PackStats }) {
       : stats.daily;
 
   const chartData = filtered.length > 0 ? filtered : stats.daily;
+  const hasDaily = chartData.length > 0;
 
   return (
     <div className="space-y-4">
@@ -87,7 +91,13 @@ export function PackStatsSection({ stats }: { stats: PackStats }) {
                     </div>
                     <div>
                       <span className="text-muted-foreground">RTP</span>
-                      <div className={`font-semibold tabular-nums ${Number(rtp) > 100 ? "text-red-400" : ""}`}>
+                      <div
+                        className={`font-semibold tabular-nums ${
+                          typeof rtp === "string" && parseFloat(rtp) > 100
+                            ? "text-red-400"
+                            : ""
+                        }`}
+                      >
                         {rtp}%
                       </div>
                     </div>
@@ -100,33 +110,40 @@ export function PackStatsSection({ stats }: { stats: PackStats }) {
       </Card>
 
       {/* Range filter */}
-      <div className="flex items-center gap-1">
-        {RANGES.map((r) => (
-          <Button
-            key={r.label}
-            variant={range === r.days ? "default" : "outline"}
-            size="sm"
-            className="h-7 px-2 text-xs"
-            onClick={() => setRange(r.days)}
-          >
-            {r.label}
-          </Button>
-        ))}
-      </div>
+      {hasDaily && (
+        <div className="flex items-center gap-1">
+          {RANGES.map((r) => (
+            <Button
+              key={r.label}
+              variant={range === r.days ? "default" : "outline"}
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => setRange(r.days)}
+            >
+              {r.label}
+            </Button>
+          ))}
+        </div>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-2">
         {/* Revenue + Payout chart */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium">Revenue & Payout</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              Revenue & Payout
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            {chartData.length === 0 ? (
+            {!hasDaily ? (
               <p className="py-8 text-center text-sm text-muted-foreground">
-                No data yet
+                No daily breakdown — totals from DB shown above
               </p>
             ) : (
-              <ChartContainer config={revenueConfig} className="h-[250px] w-full">
+              <ChartContainer
+                config={revenueConfig}
+                className="h-[250px] w-full"
+              >
                 <BarChart data={chartData} accessibilityLayer>
                   <CartesianGrid vertical={false} />
                   <XAxis
@@ -146,31 +163,46 @@ export function PackStatsSection({ stats }: { stats: PackStats }) {
                   <ChartTooltip
                     content={
                       <ChartTooltipContent
-                        formatter={(value) => `$${Number(value).toFixed(2)}`}
+                        formatter={(value) =>
+                          `$${Number(value).toFixed(2)}`
+                        }
                       />
                     }
                   />
-                  <Bar dataKey="revenue" fill="var(--color-revenue)" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="payout" fill="var(--color-payout)" radius={[4, 4, 0, 0]} />
+                  <Bar
+                    dataKey="revenue"
+                    fill="var(--color-revenue)"
+                    radius={[4, 4, 0, 0]}
+                  />
+                  <Bar
+                    dataKey="payout"
+                    fill="var(--color-payout)"
+                    radius={[4, 4, 0, 0]}
+                  />
                 </BarChart>
               </ChartContainer>
             )}
           </CardContent>
         </Card>
 
-        {/* Openings chart */}
+        {/* Openings chart — stacked: solo + battles, with borrowed/sponsored overlay */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium">Daily Openings</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              Daily Openings (solo / battles / borrowed / sponsored)
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            {chartData.length === 0 ? (
+            {!hasDaily ? (
               <p className="py-8 text-center text-sm text-muted-foreground">
-                No data yet
+                No daily breakdown — totals from DB shown above
               </p>
             ) : (
-              <ChartContainer config={openingsConfig} className="h-[250px] w-full">
-                <LineChart data={chartData} accessibilityLayer>
+              <ChartContainer
+                config={openingsConfig}
+                className="h-[250px] w-full"
+              >
+                <BarChart data={chartData} accessibilityLayer>
                   <CartesianGrid vertical={false} />
                   <XAxis
                     dataKey="date"
@@ -183,17 +215,21 @@ export function PackStatsSection({ stats }: { stats: PackStats }) {
                     tickLine={false}
                     axisLine={false}
                     tickMargin={8}
-                    width={40}
+                    width={30}
                   />
                   <ChartTooltip content={<ChartTooltipContent />} />
-                  <Line
-                    type="monotone"
-                    dataKey="openings"
-                    stroke="var(--color-openings)"
-                    strokeWidth={2}
-                    dot={false}
+                  <Bar
+                    dataKey="soloOpenings"
+                    stackId="opens"
+                    fill="var(--color-soloOpenings)"
                   />
-                </LineChart>
+                  <Bar
+                    dataKey="battleOpenings"
+                    stackId="opens"
+                    fill="var(--color-battleOpenings)"
+                    radius={[4, 4, 0, 0]}
+                  />
+                </BarChart>
               </ChartContainer>
             )}
           </CardContent>
