@@ -16,6 +16,43 @@ type VerifyState = {
   error?: string;
 };
 
+// Per-admin-user failure counter. Same in-memory caveat as the login
+// rate limiter in src/app/(auth)/login/actions.ts: this resets on every
+// server restart and doesn't cross instances. Good enough to slow down a
+// casual brute-force of a 6-digit TOTP against a single pending session;
+// move to a persistent store when the rate-limit infra (see flagged #6)
+// is in place.
+const MAX_FAILED_VERIFIES = 5;
+const VERIFY_WINDOW_MS = 5 * 60_000;
+const verifyFailures = new Map<
+  string,
+  { count: number; resetAt: number }
+>();
+
+function recordVerifyFailure(adminUserId: string): void {
+  const now = Date.now();
+  const entry = verifyFailures.get(adminUserId);
+  if (!entry || now > entry.resetAt) {
+    verifyFailures.set(adminUserId, { count: 1, resetAt: now + VERIFY_WINDOW_MS });
+    return;
+  }
+  entry.count++;
+}
+
+function isVerifyRateLimited(adminUserId: string): boolean {
+  const entry = verifyFailures.get(adminUserId);
+  if (!entry) return false;
+  if (Date.now() > entry.resetAt) {
+    verifyFailures.delete(adminUserId);
+    return false;
+  }
+  return entry.count >= MAX_FAILED_VERIFIES;
+}
+
+function clearVerifyFailures(adminUserId: string): void {
+  verifyFailures.delete(adminUserId);
+}
+
 export async function verify2FA(
   _prevState: VerifyState,
   formData: FormData
@@ -24,6 +61,13 @@ export async function verify2FA(
   const pending = await getPendingSession();
   if (!pending) {
     return { error: "Session expired. Please login again." };
+  }
+
+  if (isVerifyRateLimited(pending.adminUserId)) {
+    return {
+      error:
+        "Too many failed verification attempts. Try again in a few minutes.",
+    };
   }
 
   const adminUser = await adminDb.admin_users.findUnique({
@@ -41,6 +85,7 @@ export async function verify2FA(
 
     const index = await verifyRecoveryCode(recoveryCode, adminUser.recovery_codes);
     if (index === -1) {
+      recordVerifyFailure(pending.adminUserId);
       return { error: "Invalid recovery code." };
     }
 
@@ -59,9 +104,14 @@ export async function verify2FA(
 
     const isValid = verifyTOTP(adminUser.totp_secret, code);
     if (!isValid) {
+      recordVerifyFailure(pending.adminUserId);
       return { error: "Invalid code. Please try again." };
     }
   }
+
+  // Successful verification — clear the failure counter so the user isn't
+  // held back by old failed attempts on subsequent logins.
+  clearVerifyFailures(pending.adminUserId);
 
   // Create real session
   await createSession({

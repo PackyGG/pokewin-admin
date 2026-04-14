@@ -2,10 +2,12 @@
 
 import { z } from "zod";
 import bcrypt from "bcryptjs";
+import { headers } from "next/headers";
 import { adminDb } from "@/lib/admin-db";
 import { createSession, createPendingSession } from "@/lib/session";
 import { redirect } from "next/navigation";
 import { getDefaultRouteForUser } from "@/lib/dal";
+import { createAdminAuditEvent } from "@/lib/admin-audit";
 
 const loginSchema = z.object({
   email: z.string().email("Invalid email"),
@@ -91,13 +93,37 @@ export async function login(
     return { requiresSetup: true };
   }
 
-  // No 2FA configured but secret exists (shouldn't happen, but handle gracefully)
+  // No 2FA configured but secret exists (shouldn't happen, but handle gracefully).
+  // Still log this login event so the audit trail stays complete — the
+  // verify-2fa flow writes its own admin_login event, this branch must too.
+  const headersList = await headers();
+  const ip = headersList.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+  const userAgent = headersList.get("user-agent") ?? null;
+
   await createSession({
     userId: adminUser.id,
     role: adminUser.role,
     email: adminUser.email,
     username: adminUser.username,
   });
+
+  await Promise.all([
+    createAdminAuditEvent({
+      adminUserId: adminUser.id,
+      eventType: "admin_login",
+      ip,
+      metadata: { method: "no_2fa" },
+    }),
+    adminDb.admin_sessions.create({
+      data: {
+        admin_user_id: adminUser.id,
+        ip,
+        user_agent: userAgent,
+        auth_method: "no_2fa",
+        expires_at: new Date(Date.now() + 8 * 60 * 60 * 1000),
+      },
+    }),
+  ]);
 
   redirect(await getDefaultRouteForUser(adminUser.id, adminUser.role));
 }

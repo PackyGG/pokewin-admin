@@ -40,7 +40,10 @@ async function main() {
     },
   });
 
-  console.log(`Created admin user: ${email} (password: ${password})`);
+  console.log(`Created admin user: ${email}`);
+  console.log(
+    "Password was read from ADMIN_SEED_PASSWORD env var (not logged for safety)."
+  );
   console.log("TOTP setup will happen on first login.");
 }
 
