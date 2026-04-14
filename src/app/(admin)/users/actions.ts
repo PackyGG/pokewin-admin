@@ -134,3 +134,33 @@ export async function deleteUser(userId: string, totpCode: string) {
 
   revalidatePath("/users");
 }
+
+export async function bulkDeleteUsers(userIds: string[], totpCode: string) {
+  const session = await requireAdmin();
+  await require2FA(session.userId, totpCode);
+
+  if (userIds.length === 0) throw new Error("No users selected");
+  if (userIds.length > 100) throw new Error("Max 100 users at once");
+
+  const users = await db.user.findMany({
+    where: { id: { in: userIds } },
+    select: { id: true, username: true, email: true },
+  });
+
+  const labels = new Map(
+    users.map((u) => [u.id, u.username ?? u.email ?? u.id]),
+  );
+
+  await db.user.deleteMany({ where: { id: { in: userIds } } });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "users_bulk_deleted",
+    metadata: {
+      count: userIds.length,
+      users: userIds.map((id) => ({ id, username: labels.get(id) ?? id })),
+    },
+  });
+
+  revalidatePath("/users");
+}
