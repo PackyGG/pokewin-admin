@@ -1,21 +1,37 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
+import { Badge } from "@/components/ui/badge";
 import { columns as sharedColumns } from "../columns";
+import { formatCurrency } from "@/lib/utils/format";
 import type { TransactionListItem } from "@/lib/queries/transactions";
 
 /**
  * Column set for the Deposits & Withdrawals transactions view.
  *
- * Deposits/withdrawals are pure money movements — payout and house edge
- * are game-session metrics and meaningless here. We drop those two columns
- * from the shared set and add a "Coin" column that surfaces the on-chain
- * crypto asset + amount stored on ledger_transactions.
+ * Differences from the shared column set:
+ *   1. Drop payout + houseEdge (game-session metrics, meaningless here).
+ *   2. Override the Type column to surface any merged deposit_bonus inline,
+ *      e.g. "deposit (+$0.62 bonus)". The bonus row itself is filtered out
+ *      of the result set by getDepositTransactions.
+ *   3. Add a "Coin" column showing the on-chain crypto asset + amount.
+ *
+ * Amount / Before / After columns come from the shared set and already
+ * reflect the merged deposit+bonus values because getDepositTransactions
+ * folds the bonus's balance_after into the deposit row.
  */
 
-// Keys to hide on the deposits view because they only make sense for
-// game-session rows (packs / battles / rewards).
+// Hidden because they are game-session metrics only.
 const HIDDEN_KEYS = new Set(["payout", "houseEdge"]);
+
+const TYPE_COLORS: Record<string, string> = {
+  deposit:
+    "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
+  deposit_bonus:
+    "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
+  withdrawal_shipping_fee:
+    "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",
+};
 
 function getColumnKey(
   col: ColumnDef<TransactionListItem>
@@ -27,14 +43,42 @@ function getColumnKey(
 }
 
 // Trim trailing zeros on the crypto amount while keeping up to 8 decimals
-// of precision (the schema stores Decimal(20,8)). Falls back to the raw
-// number on formatter edge cases.
+// of precision (the schema stores Decimal(20,8)).
 function formatCryptoAmount(amount: number): string {
   if (!Number.isFinite(amount)) return String(amount);
   const fixed = amount.toFixed(8);
   const trimmed = parseFloat(fixed);
   return Number.isFinite(trimmed) ? trimmed.toString() : fixed;
 }
+
+// Deposit-specific Type cell: shows the type badge + an inline "(+$X bonus)"
+// annotation when a deposit_bonus was merged into the row.
+const typeColumn: ColumnDef<TransactionListItem> = {
+  accessorKey: "type",
+  header: "Type",
+  cell: ({ row }) => {
+    const type = row.original.type;
+    const bonus = row.original.bonusAmount;
+    return (
+      <div className="flex items-center gap-2">
+        <Badge
+          variant="outline"
+          className={
+            TYPE_COLORS[type] ??
+            "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"
+          }
+        >
+          {type.replace(/_/g, " ")}
+        </Badge>
+        {bonus != null && bonus > 0 && (
+          <span className="text-xs text-muted-foreground">
+            (+{formatCurrency(bonus)} bonus)
+          </span>
+        )}
+      </div>
+    );
+  },
+};
 
 const coinColumn: ColumnDef<TransactionListItem> = {
   accessorKey: "cryptoAsset",
@@ -53,14 +97,16 @@ const coinColumn: ColumnDef<TransactionListItem> = {
   },
 };
 
-const baseColumns = sharedColumns.filter((col) => {
-  const key = getColumnKey(col);
-  return key ? !HIDDEN_KEYS.has(key) : true;
-});
+// Start from the shared columns, drop payout + houseEdge, then replace the
+// Type column with our deposit-specific one.
+const baseColumns = sharedColumns
+  .filter((col) => {
+    const key = getColumnKey(col);
+    return key ? !HIDDEN_KEYS.has(key) : true;
+  })
+  .map((col) => (getColumnKey(col) === "type" ? typeColumn : col));
 
-// Place the Coin column directly before Status so it sits with the other
-// transaction metadata. If for some reason Status isn't found (shared
-// columns changed), fall back to appending at the end.
+// Insert Coin directly before Status so it sits with the other metadata.
 const statusIdx = baseColumns.findIndex(
   (c) => getColumnKey(c) === "status"
 );

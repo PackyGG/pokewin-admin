@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { getTransactions } from "@/lib/queries/transactions";
+import { getDepositTransactions } from "@/lib/queries/transactions";
 import { requirePageAccess } from "@/lib/dal";
 import { TransactionsDataTable } from "../data-table";
 import { columns as depositsColumns } from "./columns";
@@ -16,8 +16,6 @@ const STATUS_TABS = [
   { value: "failed", label: "Failed" },
 ];
 
-const TYPES = ["deposit", "deposit_bonus", "withdrawal_shipping_fee"];
-
 export default async function DepositsTransactionsPage({
   searchParams,
 }: {
@@ -29,11 +27,10 @@ export default async function DepositsTransactionsPage({
   const perPage = Number(params.perPage) || 20;
   const tab = params.tab || "all";
 
-  const result = await getTransactions({
+  const result = await getDepositTransactions({
     page,
     perPage,
     search: params.search,
-    types: TYPES,
     status: tab === "all" ? undefined : tab,
   });
 

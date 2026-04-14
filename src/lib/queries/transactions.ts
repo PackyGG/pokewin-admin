@@ -18,7 +18,201 @@ export type TransactionListItem = {
   payout: number | null;
   cryptoAsset: string | null;
   cryptoAmount: number | null;
+  // Set by mergeDepositBonuses() when a deposit_bonus ledger row has been
+  // folded into its parent deposit row. Null means no merged bonus.
+  bonusAmount: number | null;
 };
+
+/**
+ * Paginated query specifically for the Deposits & Withdrawals view.
+ *
+ * Why a separate raw SQL query instead of reusing getTransactions + a
+ * post-query merge: on the deposits view, each logical "deposit" may be
+ * stored as two ledger rows (a `deposit` + a `deposit_bonus`). We want a
+ * single merged row per logical deposit. Doing the merge AFTER a normal
+ * `findMany` would return fewer rows per page than requested (because we'd
+ * drop merged bonus rows after pagination). Doing it in SQL keeps the page
+ * size exact and handles page-boundary edge cases correctly.
+ *
+ * Pairing rule (verified against real sample data — not guessed):
+ *   - same user_id
+ *   - bonus.balance_before exactly equals deposit.balance_after
+ *   - bonus.created_at is within 2 minutes after deposit.created_at
+ * The ledger is sequential per user and the bonus fires right after its
+ * deposit with no intervening row, so balance continuity is a deterministic
+ * link. Orphan `deposit_bonus` rows (e.g. manual admin bonus with no parent
+ * deposit) are still returned as their own row.
+ *
+ * Filters supported: search (UUID or username), status.
+ */
+export async function getDepositTransactions(params: {
+  page?: number;
+  perPage?: number;
+  search?: string;
+  status?: string;
+}): Promise<PaginatedResult<TransactionListItem>> {
+  const {
+    page = 1,
+    perPage = 20,
+    search,
+    status,
+  } = params;
+  const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
+  const safePage = Math.max(1, Math.floor(page));
+  const offset = (safePage - 1) * safePerPage;
+
+  // Bind user-provided values via positional parameters to avoid SQL injection.
+  const queryParams: unknown[] = [];
+  let searchFilter = "";
+  if (search) {
+    const isUuid =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        search
+      );
+    if (isUuid) {
+      queryParams.push(search);
+      const idx = queryParams.length;
+      searchFilter = `AND (t.id::text = $${idx} OR t.user_id = $${idx})`;
+    } else {
+      queryParams.push(`%${search.toLowerCase()}%`);
+      const idx = queryParams.length;
+      searchFilter = `AND LOWER(u.username) LIKE $${idx}`;
+    }
+  }
+
+  // Status is a whitelisted enum — safe to inline after validation.
+  const VALID_STATUSES = new Set(["pending", "completed", "failed"]);
+  const statusFilter =
+    status && VALID_STATUSES.has(status)
+      ? `AND t.status = '${status}'`
+      : "";
+
+  // Exclude bonus rows that are paired with a deposit already in the set.
+  // This keeps page sizes exact and avoids showing the bonus twice (once
+  // merged into its deposit, once as its own row).
+  const bonusPairedExclusion = `
+    AND NOT (
+      t.type = 'deposit_bonus'
+      AND EXISTS (
+        SELECT 1 FROM ledger_transactions d
+        WHERE d.user_id = t.user_id
+          AND d.type = 'deposit'
+          AND d.balance_after = t.balance_before
+          AND d.created_at <= t.created_at
+          AND d.created_at > t.created_at - INTERVAL '2 minutes'
+      )
+    )
+  `;
+
+  const baseWhere = `
+    WHERE t.type IN ('deposit', 'deposit_bonus', 'withdrawal_shipping_fee')
+      ${searchFilter}
+      ${statusFilter}
+      ${bonusPairedExclusion}
+  `;
+
+  const countSql = `
+    SELECT COUNT(*)::text AS total
+    FROM ledger_transactions t
+    LEFT JOIN "user" u ON u.id = t.user_id
+    ${baseWhere}
+  `;
+
+  const dataSql = `
+    SELECT
+      t.id,
+      t.user_id,
+      u.username,
+      t.type::text AS type,
+      t.balance_before::text AS balance_before,
+      t.balance_after::text AS balance_after,
+      t.status::text AS status,
+      t.description,
+      t.created_at,
+      t.crypto_asset,
+      t.crypto_amount::text AS crypto_amount,
+      b.amount::text AS bonus_amount,
+      b.balance_after::text AS bonus_balance_after
+    FROM ledger_transactions t
+    LEFT JOIN "user" u ON u.id = t.user_id
+    LEFT JOIN LATERAL (
+      SELECT amount, balance_after
+      FROM ledger_transactions
+      WHERE user_id = t.user_id
+        AND type = 'deposit_bonus'
+        AND balance_before = t.balance_after
+        AND created_at >= t.created_at
+        AND created_at < t.created_at + INTERVAL '2 minutes'
+      ORDER BY created_at ASC
+      LIMIT 1
+    ) b ON t.type = 'deposit'
+    ${baseWhere}
+    ORDER BY t.created_at DESC
+    LIMIT ${safePerPage}
+    OFFSET ${offset}
+  `;
+
+  type Raw = {
+    id: string;
+    user_id: string;
+    username: string | null;
+    type: string;
+    balance_before: string;
+    balance_after: string;
+    status: string;
+    description: string;
+    created_at: Date;
+    crypto_asset: string | null;
+    crypto_amount: string | null;
+    bonus_amount: string | null;
+    bonus_balance_after: string | null;
+  };
+
+  const [countResult, rows] = await Promise.all([
+    db.$queryRawUnsafe<{ total: string }[]>(countSql, ...queryParams),
+    db.$queryRawUnsafe<Raw[]>(dataSql, ...queryParams),
+  ]);
+
+  const total = Number(countResult[0]?.total ?? "0");
+
+  const data: TransactionListItem[] = rows.map((r) => {
+    const balanceBefore = Number(r.balance_before);
+    const rawBalanceAfter = Number(r.balance_after);
+    const bonusAmount = r.bonus_amount != null ? Number(r.bonus_amount) : null;
+    // When a bonus is attached, surface the post-bonus balance as the row's
+    // final balance so the After column reflects the combined deposit+bonus.
+    const finalBalanceAfter =
+      bonusAmount != null && r.bonus_balance_after != null
+        ? Number(r.bonus_balance_after)
+        : rawBalanceAfter;
+    return {
+      id: r.id,
+      userId: r.user_id,
+      username: r.username,
+      type: r.type,
+      amount: finalBalanceAfter - balanceBefore,
+      balanceBefore,
+      balanceAfter: finalBalanceAfter,
+      status: r.status,
+      description: r.description,
+      createdAt: r.created_at.toISOString(),
+      // houseEdge/payout are game-session metrics — not applicable here.
+      houseEdge: null,
+      payout: null,
+      cryptoAsset: r.crypto_asset,
+      cryptoAmount: r.crypto_amount != null ? Number(r.crypto_amount) : null,
+      bonusAmount,
+    };
+  });
+
+  return {
+    data,
+    total,
+    page: safePage,
+    perPage: safePerPage,
+    totalPages: Math.ceil(total / safePerPage),
+  };
+}
 
 export async function getTransactions(params: {
   page?: number;
@@ -114,6 +308,9 @@ export async function getTransactions(params: {
         payout,
         cryptoAsset: t.crypto_asset,
         cryptoAmount: t.crypto_amount ? toNumber(t.crypto_amount) : null,
+        // Shared query doesn't pair deposit_bonus rows — only the
+        // deposits-specific getDepositTransactions does that merging.
+        bonusAmount: null,
       };
     }),
     total,
