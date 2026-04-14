@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { getRealizedPnlSnapshot } from "./_realized-pnl";
 // SQL fragment for user_id filtering — injected via string concat (safe: hardcoded role name)
 const EXCL_STAFF_FRAG = `AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))`;
 
@@ -55,8 +56,10 @@ export type AnalyticsData = {
   realizedProfitBreakdown: {
     totalDeposits: number;
     totalWithdrawals: number;
-    openBalances: number;
-    rewardsClaimed: number;
+    userBalance: number;
+    inventory: number;
+    vouchers: number;
+    unclaimedRakeback: number;
   };
   uniqueVisitors: number;
   newSignups: number;
@@ -118,7 +121,7 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
     battleFormatRows,
     topBattlePackRows,
     topPacksRows,
-    realizedProfitRow,
+    realizedPnl,
   ] = await Promise.all([
       db.$queryRawUnsafe<
         {
@@ -312,43 +315,9 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
         ORDER BY COUNT(*) DESC
         LIMIT 20
       `),
-      db.$queryRawUnsafe<
-        {
-          total_deposits: string;
-          total_withdrawals: string;
-          open_balances: string;
-          rewards_claimed: string;
-        }[]
-      >(`
-        SELECT
-          (SELECT COALESCE(SUM(ABS(amount::numeric)), 0)
-             FROM ledger_transactions
-             WHERE type = 'deposit' AND status = 'completed'
-               AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator')))::text AS total_deposits,
-          (SELECT COALESCE(SUM(total_value_usd::numeric), 0)
-             FROM card_withdrawal_requests
-             WHERE status IN ('completed', 'shipped')
-               AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator')))::text AS total_withdrawals,
-          (
-             (SELECT COALESCE(SUM(available_balance::numeric + locked_balance::numeric), 0)
-                FROM balances
-                WHERE user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator')))
-             +
-             (SELECT COALESCE(SUM(value_at_obtained::numeric), 0)
-                FROM user_inventory
-                WHERE sold_at IS NULL AND exchanged_at IS NULL
-                  AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator')))
-          )::text AS open_balances,
-          (SELECT COALESCE(SUM(ABS(amount::numeric)), 0)
-             FROM ledger_transactions
-             WHERE status = 'completed'
-               AND type IN (
-                 'deposit_bonus','promo_code_redeemed','gift_card_redeemed',
-                 'rakeback_claim','balance_reward_claim','affiliate_claim',
-                 'rain_win','race_prize','creator_tip','waitlist_prize'
-               )
-               AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator')))::text AS rewards_claimed
-      `),
+      // Realized P&L is period-independent (balance-sheet snapshot). Uses the
+      // shared helper so the number matches the Dashboard page exactly.
+      getRealizedPnlSnapshot(),
     ]);
 
   const agg = aggregates[0];
@@ -415,22 +384,17 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
 
   daily.sort((a, b) => a.date.localeCompare(b.date));
 
-  const rp = realizedProfitRow[0];
-  const totalDeposits = toNumber(rp?.total_deposits);
-  const totalWithdrawals = toNumber(rp?.total_withdrawals);
-  const openBalances = toNumber(rp?.open_balances);
-  const rewardsClaimed = toNumber(rp?.rewards_claimed);
-  const realizedProfit = totalDeposits - totalWithdrawals - openBalances;
-
   return {
     ggr,
     ngr,
-    realizedProfit,
+    realizedProfit: realizedPnl.pnl,
     realizedProfitBreakdown: {
-      totalDeposits,
-      totalWithdrawals,
-      openBalances,
-      rewardsClaimed,
+      totalDeposits: realizedPnl.totalDeposited,
+      totalWithdrawals: realizedPnl.totalWithdrawn,
+      userBalance: realizedPnl.userBalance,
+      inventory: realizedPnl.inventory,
+      vouchers: realizedPnl.vouchers,
+      unclaimedRakeback: realizedPnl.unclaimedRakeback,
     },
     uniqueVisitors: Number(visitors[0]?.count ?? 0),
     newSignups: signups,

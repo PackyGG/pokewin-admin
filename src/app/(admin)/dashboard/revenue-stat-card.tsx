@@ -9,7 +9,7 @@ import { formatCurrency } from "@/lib/utils/format";
 const ranges = ["24h", "3d", "7d", "30d"] as const;
 
 // Lifetime realized P&L — a single snapshot number, not period-based. The
-// number comes straight from realizedPnlSnapshot() in the dashboard query and
+// number comes straight from getRealizedPnlSnapshot() in the dashboard query and
 // already accounts for deposits, withdrawals, user balances, inventory,
 // unclaimed vouchers, and unclaimed rakeback. No range selector — adding one
 // would be misleading because the underlying liabilities are current-state,

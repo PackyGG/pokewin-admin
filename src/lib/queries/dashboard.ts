@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
 import { EXCLUDE_STAFF_USER_RELATION, EXCLUDE_STAFF_SQL } from "./_exclude-staff";
+import { getRealizedPnlSnapshot } from "./_realized-pnl";
 
 export type ActivityItem = {
   id: string;
@@ -32,7 +33,7 @@ function revenueAgg(gte: Date) {
 // Pure gaming margin: wagers − payouts back to users, for the given period.
 // This is the industry-standard GGR definition and does NOT subtract open
 // inventory — that's a balance-sheet adjustment that belongs on the lifetime
-// realized P&L (see realizedPnlSnapshot below), not on a period-based gaming
+// realized P&L (see getRealizedPnlSnapshot in ./_realized-pnl), not on a period-based gaming
 // revenue number.
 function ggrAgg(gte: Date) {
   return db.$queryRaw<{ ggr: string }[]>`
@@ -58,42 +59,8 @@ function ggrAgg(gte: Date) {
   `;
 }
 
-// Lifetime realized P&L from the house perspective — a balance-sheet snapshot,
-// not a period-based metric. Mirrors the per-user P&L definition in
-// src/lib/queries/users.ts (just negated: there it's user-profit, here it's
-// house-profit).
-//
-//   P&L =   total deposits
-//         − total withdrawals (crypto + shipped/completed card withdrawals)
-//         − current user balance (available + locked)
-//         − unsold inventory
-//         − unclaimed vouchers
-//         − unclaimed rakeback claims
-//
-// Everything on-site that the user could still turn back into cash (balance,
-// inventory, vouchers, rakeback) is a liability and reduces the number. Only
-// "rewards" flavor kept in the liability list is rakeback, per product
-// decision — other reward types either pay out through the ledger (and are
-// therefore already captured in total_deposited/withdrawn deltas) or have no
-// guaranteed cash value.
-// Staff (admin/creator roles) are excluded throughout.
-function realizedPnlSnapshot() {
-  return db.$queryRaw<{ pnl: string }[]>`
-    WITH real_users AS (
-      SELECT id FROM "user" WHERE role NOT IN ('admin','creator')
-    )
-    SELECT (
-        COALESCE((SELECT SUM(total_deposited::numeric)       FROM balances                 WHERE user_id IN (SELECT id FROM real_users)), 0)
-      - COALESCE((SELECT SUM(total_withdrawn::numeric)       FROM balances                 WHERE user_id IN (SELECT id FROM real_users)), 0)
-      - COALESCE((SELECT SUM(total_value_usd::numeric)       FROM card_withdrawal_requests  WHERE status IN ('completed','shipped') AND user_id IN (SELECT id FROM real_users)), 0)
-      - COALESCE((SELECT SUM(available_balance::numeric)     FROM balances                 WHERE user_id IN (SELECT id FROM real_users)), 0)
-      - COALESCE((SELECT SUM(locked_balance::numeric)        FROM balances                 WHERE user_id IN (SELECT id FROM real_users)), 0)
-      - COALESCE((SELECT SUM(value_at_obtained::numeric)     FROM user_inventory            WHERE sold_at IS NULL AND exchanged_at IS NULL AND user_id IN (SELECT id FROM real_users)), 0)
-      - COALESCE((SELECT SUM(value::numeric)                 FROM vouchers                  WHERE claimed_at IS NULL AND user_id IN (SELECT id FROM real_users)), 0)
-      - COALESCE((SELECT SUM(rakeback_amount_usd::numeric)   FROM rakeback_claims           WHERE claimed_at IS NULL AND user_id IN (SELECT id FROM real_users)), 0)
-    )::text AS pnl
-  `;
-}
+// Lifetime realized P&L lives in src/lib/queries/_realized-pnl.ts so the
+// Analytics page can use the exact same definition. Do not inline it here.
 
 function wagerAgg(gte: Date) {
   return db.ledger_transactions.aggregate({
@@ -233,7 +200,7 @@ export async function getDashboardStats() {
     ggrAgg(threeDaysAgo),
     ggrAgg(sevenDaysAgo),
     ggrAgg(thirtyDaysAgo),
-    realizedPnlSnapshot(),
+    getRealizedPnlSnapshot(),
     db.$queryRaw<{ avg_session_value: string }[]>`
       WITH real_users AS (
         SELECT id FROM "user" WHERE role NOT IN ('admin','creator')
@@ -321,9 +288,9 @@ export async function getDashboardStats() {
       "7d": Number(ggr7d[0]?.ggr ?? 0),
       "30d": Number(ggr30d[0]?.ggr ?? 0),
     },
-    // Lifetime realized P&L from the house perspective — see realizedPnlSnapshot.
+    // Lifetime realized P&L from the house perspective — see getRealizedPnlSnapshot.
     // This is a single snapshot value, not a period series.
-    realizedPnl: Number(realizedPnlResult[0]?.pnl ?? 0),
+    realizedPnl: realizedPnlResult.pnl,
     deposits: {
       "24h": toNumber(revenue24h._sum?.amount),
       "3d": toNumber(revenue3d._sum?.amount),
