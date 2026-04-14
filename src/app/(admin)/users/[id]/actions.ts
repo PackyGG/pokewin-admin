@@ -54,6 +54,11 @@ export async function adjustBalance(data: {
         balance_after: newBalance,
         description: `Admin adjustment: ${parsed.reason}`,
         status: "completed",
+        metadata: {
+          admin_user_id: session.userId,
+          admin_username: session.username ?? session.email ?? session.userId,
+          reason: parsed.reason,
+        },
       },
     }),
   ]);
