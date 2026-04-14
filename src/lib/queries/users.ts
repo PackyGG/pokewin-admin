@@ -88,7 +88,7 @@ export async function getUsers(params: {
 
   // These computed sorts need raw SQL because the displayed value combines
   // multiple tables (e.g. totalWithdrawn = balances.total_withdrawn + card_withdrawal_requests).
-  const rawSqlSorts = new Set(["pnl", "totalWithdrawn"]);
+  const rawSqlSorts = new Set(["pnl", "totalWithdrawn", "inventoryValue"]);
 
   if (rawSqlSorts.has(sortBy)) {
     const orderSql = order === "asc" ? "ASC" : "DESC";
@@ -134,12 +134,14 @@ export async function getUsers(params: {
       ORDER BY (${
         sortBy === "totalWithdrawn"
           ? `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)`
-          : `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)
-             + COALESCE(b.available_balance::numeric, 0)
-             + COALESCE(b.locked_balance::numeric, 0)
-             + COALESCE(inv.inv_value, 0)
-             + COALESCE(vc.voucher_value, 0)
-             - COALESCE(b.total_deposited::numeric, 0)`
+          : sortBy === "inventoryValue"
+            ? `COALESCE(inv.inv_value, 0)`
+            : `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)
+               + COALESCE(b.available_balance::numeric, 0)
+               + COALESCE(b.locked_balance::numeric, 0)
+               + COALESCE(inv.inv_value, 0)
+               + COALESCE(vc.voucher_value, 0)
+               - COALESCE(b.total_deposited::numeric, 0)`
       }) ${orderSql} NULLS LAST, u.id ${orderSql}
       LIMIT ${perPage} OFFSET ${(page - 1) * perPage}
     `);

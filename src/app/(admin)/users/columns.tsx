@@ -116,7 +116,7 @@ export const columns: ColumnDef<UserRow>[] = [
   },
   {
     accessorKey: "inventoryValue",
-    header: "Inventory",
+    header: () => <UsersSortHeader title="Inventory" sortKey="inventoryValue" />,
     cell: ({ row }) => (
       <span className="tabular-nums text-muted-foreground">
         {formatCurrency(row.original.inventoryValue)}

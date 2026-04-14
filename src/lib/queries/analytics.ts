@@ -329,9 +329,16 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
              FROM card_withdrawal_requests
              WHERE status IN ('completed', 'shipped')
                AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator')))::text AS total_withdrawals,
-          (SELECT COALESCE(SUM(available_balance::numeric + locked_balance::numeric), 0)
-             FROM balances
-             WHERE user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator')))::text AS open_balances,
+          (
+             (SELECT COALESCE(SUM(available_balance::numeric + locked_balance::numeric), 0)
+                FROM balances
+                WHERE user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator')))
+             +
+             (SELECT COALESCE(SUM(value_at_obtained::numeric), 0)
+                FROM user_inventory
+                WHERE sold_at IS NULL AND exchanged_at IS NULL
+                  AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator')))
+          )::text AS open_balances,
           (SELECT COALESCE(SUM(ABS(amount::numeric)), 0)
              FROM ledger_transactions
              WHERE status = 'completed'
