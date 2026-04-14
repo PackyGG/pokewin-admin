@@ -32,6 +32,7 @@ import {
   TrendingUp,
   UserCircle,
   Wallet,
+  Globe,
   ChevronRight,
   type LucideIcon,
 } from "lucide-react";
@@ -84,6 +85,7 @@ const ICONS: Record<string, LucideIcon> = {
   TrendingUp,
   UserCircle,
   Wallet,
+  Globe,
 };
 
 type NavItem = {
@@ -104,6 +106,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Dashboard", href: "/dashboard", icon: "LayoutDashboard" },
       { label: "Analytics", href: "/analytics", icon: "BarChart3" },
+      { label: "Map", href: "/map", icon: "Globe" },
       { label: "Users", href: "/users", icon: "Users" },
       { label: "Withdrawals", href: "/withdrawals", icon: "ArrowDownToLine" },
     ],

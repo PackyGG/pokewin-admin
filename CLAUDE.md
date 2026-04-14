@@ -191,18 +191,33 @@ Das Projekt hat ein **cleanes, konsistentes UI** — dieser Stil ist verbindlich
 
 ### Dual-Database-Architektur (CRITICAL)
 
-Das Projekt nutzt **zwei getrennte Prisma-Clients** gegen zwei getrennte PostgreSQL-Datenbanken:
+Das Projekt nutzt **zwei vollständig getrennte PostgreSQL-Datenbanken** mit jeweils eigenem Prisma-Client. Diese Trennung ist strikt, nicht optional, und darf unter keinen Umständen aufgeweicht werden.
 
-| Client | Datei | Zweck | Env-Var |
-|---|---|---|---|
-| `db` | `src/lib/db.ts` | Main-DB: User-Accounts, Balances, Ledger, Packs, Cards, Battles, Inventory, Rewards | `DATABASE_URL` |
-| `adminDb` | `src/lib/admin-db.ts` | Admin-DB: `admin_users`, `admin_sessions`, `admin_audit_events`, `creator_deals`, `expenses`, `admin_balance_limits` | `ADMIN_DATABASE_URL` |
+#### 1. Main DB — die Produktions-DB der eigentlichen Website (packy.gg)
 
-**Regel:** Immer den richtigen Client für die richtige Domain. Niemals raten. Im Zweifel bestehende Queries in `src/lib/queries/` oder `src/app/(admin)/*/actions.ts` referenzieren.
+- **Client:** `db` aus `src/lib/db.ts`
+- **Schema:** `prisma/schema.prisma`
+- **Env-Var:** `DATABASE_URL`
+- **Inhalt:** alles was die eigentliche Game-Plattform betrifft — User-Accounts, Balances, Ledger-Transaktionen, Packs, Cards, Battles, Inventory, Rewards, Affiliate-System, Deposits/Withdrawals, Promo-Codes, Gift-Cards, Vouchers, Rain/Raffles/Races, etc.
+- **Diese DB ist die Live-Produktion der Website.** Sie enthält echte User, echtes Geld, echte Transaktionen. Jeder Zugriff — auch lesend, auch beim lokalen Entwickeln — wird so behandelt, als würde er gegen Produktion laufen. Schreibzugriffe auf diese DB ohne ausdrückliche Absprache mit dem User sind nicht erlaubt.
 
-**Schemas liegen getrennt:**
-- Main: `prisma/schema.prisma`
-- Admin: `prisma/admin/schema.prisma` (eigene `prisma.config.ts`)
+#### 2. Admin DB — ausschließlich für das Admin-Panel
+
+- **Client:** `adminDb` aus `src/lib/admin-db.ts`
+- **Schema:** `prisma/admin/schema.prisma` (eigene `prisma.config.ts`)
+- **Env-Var:** `ADMIN_DATABASE_URL`
+- **Inhalt:** nur Daten, die das Admin-Panel selbst betreffen — `admin_users`, `admin_sessions`, `admin_audit_events`, `admin_notes`, `admin_gift_card_actions`, `admin_voucher_actions`, `admin_balance_limits`, `creator_deals`, `creator_balance_fills`, `creator_webhooks`, `expenses`, `recurring_expenses`.
+- **Keine Game- oder User-Daten.** Hier liegen nur Informationen darüber, wer sich wann als Admin eingeloggt hat, welcher Admin was getan hat, welche Creator-Deals existieren, welche Ausgaben getrackt werden, etc.
+
+#### Strikte Trennungs-Regeln
+
+- `db` darf **niemals** Admin-Tables lesen oder schreiben.
+- `adminDb` darf **niemals** Game-/User-Tables lesen oder schreiben.
+- **Cross-DB-Joins existieren nicht.** Wenn Daten aus beiden DBs gebraucht werden, werden sie separat abgefragt und in Code zusammengeführt (z.B. `admin_audit_events.target_user_id` → separater Query auf `users` in Main-DB).
+- Bei neuen Features: erst entscheiden welche Domain, dann den passenden Client wählen. Niemals raten, niemals "den anderen" Client nehmen weil es gerade schneller geht.
+- Jede neue Tabelle gehört eindeutig in eine der beiden DBs — im Zweifel fragen.
+
+**Merkregel:** Main-DB = was User sehen. Admin-DB = wie wir User verwalten. Wenn eine Info im User-Frontend auftauchen könnte, gehört sie in Main-DB. Wenn sie nur im Admin-Panel Sinn ergibt, gehört sie in Admin-DB.
 
 ### Auth- & Permission-Pattern (verbindlich)
 
