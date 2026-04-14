@@ -115,6 +115,7 @@ export async function getDashboardStats() {
     ggr30d,
     avgSessionValueResult,
     totalInventoryValue,
+    pendingConfirmationWithdrawals,
   ] = await Promise.all([
     db.user.count({ where: { role: { notIn: ["admin", "creator"] } } }),
     db.user.count({ where: { role: { notIn: ["admin", "creator"] }, created_at: { gte: startOfDay } } }),
@@ -242,8 +243,24 @@ export async function getDashboardStats() {
       FROM session_wagers
     `,
     db.user_inventory.aggregate({
-      where: { sold_at: null, exchanged_at: null, user: EXCLUDE_STAFF_USER_RELATION },
+      where: {
+        sold_at: null,
+        exchanged_at: null,
+        // Exclude items that are locked for a pending card withdrawal —
+        // they are effectively "on their way out" of the user's on-site
+        // holdings and shouldn't inflate the aggregate balance.
+        withdrawal_locked_at: null,
+        user: EXCLUDE_STAFF_USER_RELATION,
+      },
       _sum: { value_at_obtained: true },
+    }),
+    db.card_withdrawal_requests.aggregate({
+      where: {
+        status: "pending",
+        user_card_withdrawal_requests_user_idTouser: EXCLUDE_STAFF_USER_RELATION,
+      },
+      _count: true,
+      _sum: { total_value_usd: true },
     }),
   ]);
 
@@ -289,6 +306,13 @@ export async function getDashboardStats() {
       avgSessionValue: Number(avgSessionValueResult[0]?.avg_session_value ?? 0),
       pendingWithdrawalsCount: pendingWithdrawals._count,
       pendingWithdrawalsValue: toNumber(pendingWithdrawals._sum?.total_value_usd),
+      // Separate from pendingWithdrawalsCount/Value above: those include
+      // both `pending` and `processing` (everything in-flight). This one
+      // is strictly `pending` — withdrawals waiting for admin to pick up.
+      pendingConfirmationCount: pendingConfirmationWithdrawals._count,
+      pendingConfirmationValue: toNumber(
+        pendingConfirmationWithdrawals._sum?.total_value_usd
+      ),
     },
     packs: {
       totalOpenings: Number(packStats._sum.total_openings ?? 0),
