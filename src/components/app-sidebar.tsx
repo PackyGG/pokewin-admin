@@ -313,9 +313,22 @@ export function AppSidebar({ role, allowedPages }: { role: string; allowedPages:
                       isActive={isActive}
                       tooltip={item.label}
                       render={<Link href={item.href} />}
-                      className={undefined}
+                      // In icon mode bump the button + icon so the collapsed
+                      // sidebar reads as a tap target, not tiny bullet points.
+                      // The `!` modifiers beat the base size-8!/p-2! rules
+                      // from the sidebar primitive.
+                      className={
+                        isIconMode
+                          ? "size-10! p-2! gap-0"
+                          : undefined
+                      }
                     >
-                      <Icon className={cn("size-4", isActive ? "text-primary" : "text-muted-foreground")} />
+                      <Icon
+                        className={cn(
+                          isIconMode ? "size-5!" : "size-4",
+                          isActive ? "text-primary" : "text-muted-foreground",
+                        )}
+                      />
                       <span>{item.label}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>

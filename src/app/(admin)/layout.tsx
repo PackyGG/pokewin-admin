@@ -12,7 +12,11 @@ export default async function AdminLayout({
   const allowedPages = await getUserPermissions(session.userId);
 
   return (
-    <SidebarProvider>
+    <SidebarProvider
+      // Widen the icon-mode sidebar so the larger buttons (size-10, 40px)
+      // have comfortable margins inside the rail. Default is 3rem (48px).
+      style={{ "--sidebar-width-icon": "3.75rem" } as React.CSSProperties}
+    >
       <AppSidebar role={session.role} allowedPages={allowedPages} />
       <div className="flex flex-1 flex-col">
         <AdminHeader username={session.username} role={session.role} />
