@@ -16,6 +16,8 @@ export type TransactionListItem = {
   createdAt: string;
   houseEdge: number | null;
   payout: number | null;
+  cryptoAsset: string | null;
+  cryptoAmount: number | null;
 };
 
 export async function getTransactions(params: {
@@ -110,6 +112,8 @@ export async function getTransactions(params: {
         createdAt: t.created_at.toISOString(),
         houseEdge,
         payout,
+        cryptoAsset: t.crypto_asset,
+        cryptoAmount: t.crypto_amount ? toNumber(t.crypto_amount) : null,
       };
     }),
     total,

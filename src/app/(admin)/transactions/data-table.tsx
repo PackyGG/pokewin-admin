@@ -4,6 +4,7 @@ import {
   flexRender,
   getCoreRowModel,
   useReactTable,
+  type ColumnDef,
 } from "@tanstack/react-table";
 import {
   Table,
@@ -13,13 +14,20 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { columns } from "./columns";
+import { columns as defaultColumns } from "./columns";
 import type { TransactionListItem } from "@/lib/queries/transactions";
 
-export function TransactionsDataTable({ data }: { data: TransactionListItem[] }) {
+export function TransactionsDataTable({
+  data,
+  columns,
+}: {
+  data: TransactionListItem[];
+  columns?: ColumnDef<TransactionListItem>[];
+}) {
+  const resolvedColumns = columns ?? defaultColumns;
   const table = useReactTable({
     data,
-    columns,
+    columns: resolvedColumns,
     getCoreRowModel: getCoreRowModel(),
   });
 
@@ -52,7 +60,7 @@ export function TransactionsDataTable({ data }: { data: TransactionListItem[] })
             ))
           ) : (
             <TableRow>
-              <TableCell colSpan={columns.length} className="h-24 text-center">
+              <TableCell colSpan={resolvedColumns.length} className="h-24 text-center">
                 No transactions found.
               </TableCell>
             </TableRow>
