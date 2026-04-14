@@ -1636,6 +1636,7 @@ const FINANCIAL_TX_TYPES = [
   "deposit",
   "deposit_bonus",
   "admin_balance_adjustment",
+  "card_withdrawal",
   "withdrawal_shipping_fee",
   "rakeback_claim",
   "balance_reward_claim",
