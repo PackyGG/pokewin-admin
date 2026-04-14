@@ -214,36 +214,77 @@ export async function updateCreatorLimits(
 export async function processCreatorPayout(affiliateUserId: string) {
   const session = await requirePageAccess("/creators");
 
-  const account = await db.affiliate_accounts.findUnique({
-    where: { user_id: affiliateUserId },
-  });
-  if (!account) throw new Error("Affiliate account not found");
+  // Run everything inside a single interactive transaction so we can:
+  //   1. Lock the affiliate_accounts row (SELECT ... FOR UPDATE) to prevent
+  //      a double-payout race when two parallel calls both see a positive
+  //      `available_usd` before either has zeroed it.
+  //   2. Write a paired ledger_transactions entry alongside the balance
+  //      update — required by the CLAUDE.md rule that every balance change
+  //      must go through the ledger for the immutable audit trail.
+  const { available } = await db.$transaction(async (tx) => {
+    const lockedRows = await tx.$queryRaw<
+      { available_usd: string }[]
+    >`
+      SELECT available_usd::text AS available_usd
+      FROM affiliate_accounts
+      WHERE user_id = ${affiliateUserId}
+      FOR UPDATE
+    `;
+    if (lockedRows.length === 0) {
+      throw new Error("Affiliate account not found");
+    }
+    const available = Number(lockedRows[0].available_usd);
+    if (available <= 0) {
+      throw new Error("No available balance to pay out");
+    }
 
-  const available = toNumber(account.available_usd);
-  if (available <= 0) throw new Error("No available balance to pay out");
+    const balance = await tx.balances.findUnique({
+      where: { user_id: affiliateUserId },
+      select: { available_balance: true },
+    });
+    if (!balance) {
+      throw new Error("User balance not found");
+    }
+    const balanceBefore = toNumber(balance.available_balance);
+    const balanceAfter = balanceBefore + available;
 
-  await db.$transaction([
-    db.affiliate_payouts.create({
+    await tx.affiliate_payouts.create({
       data: {
         id: crypto.randomUUID(),
         affiliate_user_id: affiliateUserId,
         amount_usd: available,
         status: "paid",
       },
-    }),
-    db.affiliate_accounts.update({
+    });
+
+    await tx.affiliate_accounts.update({
       where: { user_id: affiliateUserId },
       data: {
         available_usd: 0,
         total_paid_out_usd: { increment: available },
         last_payout_at: new Date(),
       },
-    }),
-    db.balances.update({
+    });
+
+    await tx.balances.update({
       where: { user_id: affiliateUserId },
-      data: { available_balance: { increment: available } },
-    }),
-  ]);
+      data: { available_balance: balanceAfter },
+    });
+
+    await tx.ledger_transactions.create({
+      data: {
+        user_id: affiliateUserId,
+        type: "affiliate_claim",
+        amount: available,
+        balance_before: balanceBefore,
+        balance_after: balanceAfter,
+        description: "Creator payout",
+        status: "completed",
+      },
+    });
+
+    return { available };
+  });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -672,13 +713,43 @@ export async function manualFill(targetUserId: string, dealId: string) {
   const amount = toNumber(deal.daily_fill_amount);
   if (amount <= 0) throw new Error("Invalid fill amount");
 
-  // Add balance to user
-  await db.balances.update({
-    where: { user_id: targetUserId },
-    data: { available_balance: { increment: amount } },
+  // Main DB writes are wrapped in an interactive transaction so the balance
+  // update and its paired ledger entry land atomically. creator_balance_fills
+  // lives in admin DB — cross-DB transactions aren't supported by Prisma,
+  // so that write happens after the main DB commit. If the admin-side write
+  // fails the user still has the money + a ledger entry; an admin just has
+  // to re-run the fill to produce the tracking row (logged via audit event
+  // regardless).
+  await db.$transaction(async (tx) => {
+    const balance = await tx.balances.findUnique({
+      where: { user_id: targetUserId },
+      select: { available_balance: true },
+    });
+    if (!balance) {
+      throw new Error("User balance not found");
+    }
+    const balanceBefore = toNumber(balance.available_balance);
+    const balanceAfter = balanceBefore + amount;
+
+    await tx.balances.update({
+      where: { user_id: targetUserId },
+      data: { available_balance: balanceAfter },
+    });
+
+    await tx.ledger_transactions.create({
+      data: {
+        user_id: targetUserId,
+        type: "admin_balance_adjustment",
+        amount,
+        balance_before: balanceBefore,
+        balance_after: balanceAfter,
+        description: `Manual creator fill — deal ${deal.deal_name}`,
+        status: "completed",
+      },
+    });
   });
 
-  // Record the fill
+  // Record the fill in the admin DB (separate database, see comment above).
   await adminDb.creator_balance_fills.create({
     data: {
       target_user_id: targetUserId,
