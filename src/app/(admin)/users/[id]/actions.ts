@@ -65,7 +65,12 @@ export async function adjustBalance(data: {
     metadata: { amount: parsed.amount, reason: parsed.reason },
   });
 
-  // Fire balance_fill webhooks (non-blocking)
+  // Fire balance_fill webhooks (non-blocking — we intentionally don't
+  // await the admin UI on webhook delivery). We still LOG failures
+  // instead of silently swallowing them so delivery issues are visible.
+  // Note: in serverless, fire-and-forget promises may not complete before
+  // the function terminates; if reliability becomes a concern, switch
+  // this to Next.js `after()` or a proper job queue.
   adminDb.creator_webhooks
     .findMany({
       where: { target_user_id: parsed.userId, type: "balance_fill", enabled: true },
@@ -100,10 +105,20 @@ export async function adjustBalance(data: {
           },
           body,
           signal: AbortSignal.timeout(10000),
-        }).catch(() => {}); // fire-and-forget
+        }).catch((err) => {
+          console.error(
+            `[balance_fill_webhook] dispatch failed for ${webhook.url}:`,
+            err instanceof Error ? err.message : err
+          );
+        });
       }
     })
-    .catch(() => {}); // don't block if webhook query fails
+    .catch((err) => {
+      console.error(
+        "[balance_fill_webhook] webhook query failed:",
+        err instanceof Error ? err.message : err
+      );
+    });
 
   revalidatePath(`/users/${parsed.userId}`);
 }

@@ -118,7 +118,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Packs", href: "/transactions/packs", icon: "Package" },
       { label: "Battles", href: "/transactions/battles", icon: "Swords" },
       { label: "Rewards", href: "/transactions/rewards", icon: "Award" },
-      { label: "Deposits & Withdrawals", href: "/transactions/deposits", icon: "ArrowDownToLine" },
+      { label: "Deposits", href: "/transactions/deposits", icon: "ArrowDownToLine" },
     ],
   },
   {

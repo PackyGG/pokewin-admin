@@ -39,15 +39,14 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Users with pending 2FA session
+  // Users with pending 2FA session — force them to complete the 2FA flow.
+  // Allowing /login access here would let a user restart the credential
+  // check while holding a pending-2FA cookie for another account.
   if (hasPendingSession) {
     if (isPending2FARoute) {
       return NextResponse.next();
     }
-    if (isPublicRoute) {
-      return NextResponse.next();
-    }
-    return NextResponse.redirect(new URL("/login", request.url));
+    return NextResponse.redirect(new URL("/verify-2fa", request.url));
   }
 
   // Unauthenticated users

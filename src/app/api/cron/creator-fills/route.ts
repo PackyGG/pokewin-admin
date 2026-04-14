@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { dispatchWebhook } from "@/lib/webhook-dispatcher";
+import { toNumber } from "@/lib/utils/decimal";
 
 export async function GET(request: Request) {
   // Verify cron secret (Vercel sets Authorization header for cron jobs)
@@ -41,10 +42,38 @@ export async function GET(request: Request) {
     if (amount <= 0) continue;
 
     try {
-      // Add balance to user
-      await db.balances.update({
-        where: { user_id: deal.target_user_id },
-        data: { available_balance: { increment: amount } },
+      // Wrap the main DB writes (balance update + paired ledger entry)
+      // in an interactive transaction so they land atomically. The admin
+      // DB write (creator_balance_fills) happens after commit because
+      // cross-DB transactions aren't supported — on admin-side failure the
+      // user still has the money + audit trail via ledger_transactions.
+      await db.$transaction(async (tx) => {
+        const balance = await tx.balances.findUnique({
+          where: { user_id: deal.target_user_id },
+          select: { available_balance: true },
+        });
+        if (!balance) {
+          throw new Error(`User balance not found for ${deal.target_user_id}`);
+        }
+        const balanceBefore = toNumber(balance.available_balance);
+        const balanceAfter = balanceBefore + amount;
+
+        await tx.balances.update({
+          where: { user_id: deal.target_user_id },
+          data: { available_balance: balanceAfter },
+        });
+
+        await tx.ledger_transactions.create({
+          data: {
+            user_id: deal.target_user_id,
+            type: "admin_balance_adjustment",
+            amount,
+            balance_before: balanceBefore,
+            balance_after: balanceAfter,
+            description: `Daily creator fill — deal ${deal.deal_name}`,
+            status: "completed",
+          },
+        });
       });
 
       // Record the fill

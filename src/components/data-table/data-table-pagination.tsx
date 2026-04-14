@@ -66,6 +66,7 @@ export function DataTablePagination({
             className="size-8"
             onClick={() => navigate(1)}
             disabled={page <= 1}
+            aria-label="Go to first page"
           >
             <ChevronsLeft className="size-4" />
           </Button>
@@ -75,6 +76,7 @@ export function DataTablePagination({
             className="size-8"
             onClick={() => navigate(page - 1)}
             disabled={page <= 1}
+            aria-label="Go to previous page"
           >
             <ChevronLeft className="size-4" />
           </Button>
@@ -84,6 +86,7 @@ export function DataTablePagination({
             className="size-8"
             onClick={() => navigate(page + 1)}
             disabled={page >= totalPages}
+            aria-label="Go to next page"
           >
             <ChevronRight className="size-4" />
           </Button>
@@ -93,6 +96,7 @@ export function DataTablePagination({
             className="size-8"
             onClick={() => navigate(totalPages)}
             disabled={page >= totalPages}
+            aria-label="Go to last page"
           >
             <ChevronsRight className="size-4" />
           </Button>

@@ -1,5 +1,6 @@
 "use server";
 
+import { randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
@@ -12,6 +13,9 @@ export async function deleteMessage(messageId: string) {
     where: { id: messageId },
     select: { user_id: true },
   });
+  if (!message) {
+    throw new Error("Message not found");
+  }
 
   await db.chat_messages.update({
     where: { id: messageId },
@@ -24,7 +28,7 @@ export async function deleteMessage(messageId: string) {
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "chat_message_deleted",
-    targetUserId: message?.user_id ?? undefined,
+    targetUserId: message.user_id,
     metadata: { message_id: messageId },
   });
 
@@ -38,10 +42,13 @@ export async function pinMessage(messageId: string) {
     where: { id: messageId },
     select: { user_id: true },
   });
+  if (!message) {
+    throw new Error("Message not found");
+  }
 
   await db.pinned_chat_messages.create({
     data: {
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       message_id: messageId,
       pinned_by: session.userId,
     },
@@ -50,7 +57,7 @@ export async function pinMessage(messageId: string) {
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "chat_message_pinned",
-    targetUserId: message?.user_id ?? undefined,
+    targetUserId: message.user_id,
     metadata: { message_id: messageId },
   });
 
@@ -64,6 +71,9 @@ export async function unpinMessage(messageId: string) {
     where: { message_id: messageId },
     select: { chat_messages: { select: { user_id: true } } },
   });
+  if (!pinned) {
+    throw new Error("Pinned message not found");
+  }
 
   await db.pinned_chat_messages.delete({
     where: { message_id: messageId },
@@ -72,7 +82,7 @@ export async function unpinMessage(messageId: string) {
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "chat_message_unpinned",
-    targetUserId: pinned?.chat_messages?.user_id ?? undefined,
+    targetUserId: pinned.chat_messages?.user_id,
     metadata: { message_id: messageId },
   });
 
@@ -90,7 +100,7 @@ export async function muteUser(data: {
   // The actual admin identity is tracked in the audit event below
   await db.user_mutes.create({
     data: {
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       user_id: data.userId,
       muted_by: data.userId,
       reason: data.reason || null,

@@ -51,7 +51,16 @@ export async function cancelBattle(battleId: string) {
     ),
     // Create refund ledger entries
     ...participantUserIds.map((userId) => {
-      const before = balanceMap.get(userId) ?? 0;
+      const before = balanceMap.get(userId);
+      // If a participant's balance row is missing something went wrong
+      // upstream — fail the whole cancellation rather than write a ledger
+      // entry with a bogus balance_before of 0, which would corrupt the
+      // immutable audit chain.
+      if (before === undefined) {
+        throw new Error(
+          `Cannot refund battle: balance missing for participant ${userId}`
+        );
+      }
       return db.ledger_transactions.create({
         data: {
           id: crypto.randomUUID(),
