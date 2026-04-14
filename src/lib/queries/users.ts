@@ -65,7 +65,6 @@ export async function getUsers(params: {
   const balanceSortFields = new Set([
     "balance",
     "totalDeposited",
-    "totalWithdrawn",
     "totalWagered",
   ]);
   const userSortFields = new Set(["created_at", "email", "username", "role"]);
@@ -87,9 +86,11 @@ export async function getUsers(params: {
   >;
   let total: number;
 
-  if (sortBy === "pnl") {
-    // P&L is computed (withdrawn + balance + inventory − deposited).
-    // Use raw SQL to order by the computed expression, then re-fetch via Prisma.
+  // These computed sorts need raw SQL because the displayed value combines
+  // multiple tables (e.g. totalWithdrawn = balances.total_withdrawn + card_withdrawal_requests).
+  const rawSqlSorts = new Set(["pnl", "totalWithdrawn"]);
+
+  if (rawSqlSorts.has(sortBy)) {
     const orderSql = order === "asc" ? "ASC" : "DESC";
     const whereSql: string[] = [];
     if (search) {
@@ -130,14 +131,16 @@ export async function getUsers(params: {
         GROUP BY user_id
       ) vc ON vc.user_id = u.id
       ${whereClause}
-      ORDER BY (
-        COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)
-        + COALESCE(b.available_balance::numeric, 0)
-        + COALESCE(b.locked_balance::numeric, 0)
-        + COALESCE(inv.inv_value, 0)
-        + COALESCE(vc.voucher_value, 0)
-        - COALESCE(b.total_deposited::numeric, 0)
-      ) ${orderSql} NULLS LAST, u.id ${orderSql}
+      ORDER BY (${
+        sortBy === "totalWithdrawn"
+          ? `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)`
+          : `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)
+             + COALESCE(b.available_balance::numeric, 0)
+             + COALESCE(b.locked_balance::numeric, 0)
+             + COALESCE(inv.inv_value, 0)
+             + COALESCE(vc.voucher_value, 0)
+             - COALESCE(b.total_deposited::numeric, 0)`
+      }) ${orderSql} NULLS LAST, u.id ${orderSql}
       LIMIT ${perPage} OFFSET ${(page - 1) * perPage}
     `);
 
@@ -173,7 +176,6 @@ export async function getUsers(params: {
         {
           balance: "available_balance",
           totalDeposited: "total_deposited",
-          totalWithdrawn: "total_withdrawn",
           totalWagered: "total_wagered",
         } as Record<string, string>
       )[sortBy];
