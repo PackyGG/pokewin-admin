@@ -46,6 +46,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import {
   Collapsible,
@@ -271,15 +272,21 @@ export function AppSidebar({ role, allowedPages }: { role: string; allowedPages:
   [groupsWithVisibility, pathname]);
 
   const { openGroups, toggleGroup } = useCollapsedGroups(activeGroupLabel);
+  // When the whole sidebar is collapsed to icon mode, skip the per-group
+  // Collapsible wrapper and render items flat. Otherwise the user has
+  // nowhere to click the group header (it's hidden in icon mode) so items
+  // in a closed group would be unreachable.
+  const { state } = useSidebar();
+  const isIconMode = state === "collapsed";
 
   return (
-    <Sidebar>
+    <Sidebar collapsible="icon">
       <SidebarHeader className="border-b border-border px-4 h-14 flex items-center justify-center">
         <Link href={getDefaultRoute(role, allowedPages)} className="flex justify-center">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo-dark.png" alt="Pokewin" className="h-6 dark:hidden" />
+          <img src="/logo-dark.png" alt="Pokewin" className="h-6 dark:hidden group-data-[collapsible=icon]:hidden" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.png" alt="Pokewin" className="h-6 hidden dark:block" />
+          <img src="/logo.png" alt="Pokewin" className="h-6 hidden dark:block group-data-[collapsible=icon]:hidden" />
         </Link>
       </SidebarHeader>
       <SidebarContent>
@@ -288,6 +295,46 @@ export function AppSidebar({ role, allowedPages }: { role: string; allowedPages:
           const { visibleItems } = group;
           if (visibleItems.length === 0) return null;
           const isOpen = openGroups[group.label] ?? false;
+
+          const menuItems = (
+            <SidebarMenu>
+              {visibleItems.map((item) => {
+                const Icon = ICONS[item.icon];
+                const isActive =
+                  pathname === item.href ||
+                  (item.href !== "/dashboard" &&
+                    pathname.startsWith(item.href + "/") &&
+                    !visibleItems.some(
+                      (other) => other.href !== item.href && pathname.startsWith(other.href)
+                    ));
+                return (
+                  <SidebarMenuItem key={item.href}>
+                    <SidebarMenuButton
+                      isActive={isActive}
+                      tooltip={item.label}
+                      render={<Link href={item.href} />}
+                      className={undefined}
+                    >
+                      <Icon className={cn("size-4", isActive ? "text-primary" : "text-muted-foreground")} />
+                      <span>{item.label}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          );
+
+          // Icon mode: render items flat, skip the Collapsible group header
+          // entirely so nothing is unreachable. Each button shows a tooltip
+          // on hover courtesy of shadcn's SidebarMenuButton.
+          if (isIconMode) {
+            return (
+              <SidebarGroup key={group.label} className="px-2 py-1">
+                <SidebarGroupContent>{menuItems}</SidebarGroupContent>
+              </SidebarGroup>
+            );
+          }
+
           return (
             <Collapsible
               key={group.label}
@@ -305,32 +352,7 @@ export function AppSidebar({ role, allowedPages }: { role: string; allowedPages:
                   />
                 </CollapsibleTrigger>
                 <CollapsibleContent className="mt-0.5">
-                  <SidebarGroupContent>
-                    <SidebarMenu>
-                      {visibleItems.map((item) => {
-                        const Icon = ICONS[item.icon];
-                        const isActive =
-                          pathname === item.href ||
-                          (item.href !== "/dashboard" &&
-                            pathname.startsWith(item.href + "/") &&
-                            !visibleItems.some(
-                              (other) => other.href !== item.href && pathname.startsWith(other.href)
-                            ));
-                        return (
-                          <SidebarMenuItem key={item.href}>
-                            <SidebarMenuButton
-                              isActive={isActive}
-                              render={<Link href={item.href} />}
-                              className={undefined}
-                            >
-                              <Icon className={cn("size-4", isActive ? "text-primary" : "text-muted-foreground")} />
-                              <span>{item.label}</span>
-                            </SidebarMenuButton>
-                          </SidebarMenuItem>
-                        );
-                      })}
-                    </SidebarMenu>
-                  </SidebarGroupContent>
+                  <SidebarGroupContent>{menuItems}</SidebarGroupContent>
                 </CollapsibleContent>
               </SidebarGroup>
             </Collapsible>
@@ -338,8 +360,8 @@ export function AppSidebar({ role, allowedPages }: { role: string; allowedPages:
         })}
       </SidebarContent>
       <SidebarFooter className="border-t border-border">
-        <div className="flex items-center justify-between px-2">
-          <span className="text-xs text-muted-foreground">Theme</span>
+        <div className="flex items-center justify-between px-2 group-data-[collapsible=icon]:justify-center">
+          <span className="text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">Theme</span>
           <ThemeToggle />
         </div>
       </SidebarFooter>
