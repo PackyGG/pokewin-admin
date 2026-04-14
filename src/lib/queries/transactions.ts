@@ -7,6 +7,7 @@ export type TransactionListItem = {
   id: string;
   userId: string;
   username: string | null;
+  image: string | null;
   type: string;
   amount: number;
   balanceBefore: number;
@@ -123,6 +124,7 @@ export async function getDepositTransactions(params: {
       t.id,
       t.user_id,
       u.username,
+      u.image,
       t.type::text AS type,
       t.balance_before::text AS balance_before,
       t.balance_after::text AS balance_after,
@@ -156,6 +158,7 @@ export async function getDepositTransactions(params: {
     id: string;
     user_id: string;
     username: string | null;
+    image: string | null;
     type: string;
     balance_before: string;
     balance_after: string;
@@ -189,6 +192,7 @@ export async function getDepositTransactions(params: {
       id: r.id,
       userId: r.user_id,
       username: r.username,
+      image: r.image,
       type: r.type,
       amount: finalBalanceAfter - balanceBefore,
       balanceBefore,
@@ -260,7 +264,7 @@ export async function getTransactions(params: {
       skip: (page - 1) * perPage,
       take: perPage,
       include: {
-        user: { select: { username: true } },
+        user: { select: { username: true, image: true } },
         game_sessions_ledger_transactions_game_session_idTogame_sessions: {
           select: {
             bet_amount: true,
@@ -297,6 +301,7 @@ export async function getTransactions(params: {
         id: t.id,
         userId: t.user_id,
         username: t.user?.username ?? null,
+        image: t.user?.image ?? null,
         type: t.type,
         amount: balanceAfter - balanceBefore,
         balanceBefore,

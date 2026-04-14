@@ -1,7 +1,9 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { columns as sharedColumns } from "../columns";
 import { formatCurrency } from "@/lib/utils/format";
 import type { TransactionListItem } from "@/lib/queries/transactions";
@@ -11,10 +13,12 @@ import type { TransactionListItem } from "@/lib/queries/transactions";
  *
  * Differences from the shared column set:
  *   1. Drop payout + houseEdge (game-session metrics, meaningless here).
- *   2. Override the Type column to surface any merged deposit_bonus inline,
+ *   2. Override the User column to show the user's profile picture to the
+ *      left of the username (shared column is text-only).
+ *   3. Override the Type column to surface any merged deposit_bonus inline,
  *      e.g. "deposit (+$0.62 bonus)". The bonus row itself is filtered out
  *      of the result set by getDepositTransactions.
- *   3. Add a "Coin" column showing the on-chain crypto asset + amount.
+ *   4. Add a "Coin" column showing the on-chain crypto asset + amount.
  *
  * Amount / Before / After columns come from the shared set and already
  * reflect the merged deposit+bonus values because getDepositTransactions
@@ -50,6 +54,38 @@ function formatCryptoAmount(amount: number): string {
   const trimmed = parseFloat(fixed);
   return Number.isFinite(trimmed) ? trimmed.toString() : fixed;
 }
+
+// Initials fallback for users without a profile picture — mirrors the
+// pattern used in src/app/(admin)/users/columns.tsx.
+function initialsFor(username: string | null, userId: string): string {
+  const src = username ?? userId;
+  return src.slice(0, 2).toUpperCase();
+}
+
+// Deposit-specific User cell: profile picture on the left, username on the
+// right, linking to the user detail page. The shared column is text-only.
+const userColumn: ColumnDef<TransactionListItem> = {
+  accessorKey: "username",
+  header: "User",
+  cell: ({ row }) => {
+    const { userId, username, image } = row.original;
+    const label = username ?? userId.slice(0, 8);
+    return (
+      <Link
+        href={`/users/${userId}`}
+        className="flex items-center gap-2 hover:underline"
+      >
+        <Avatar size="sm" className="shrink-0">
+          {image && <AvatarImage src={image} alt="" />}
+          <AvatarFallback className="text-[10px]">
+            {initialsFor(username, userId)}
+          </AvatarFallback>
+        </Avatar>
+        <span className="truncate">{label}</span>
+      </Link>
+    );
+  },
+};
 
 // Deposit-specific Type cell: shows the type badge + an inline "(+$X bonus)"
 // annotation when a deposit_bonus was merged into the row.
@@ -98,13 +134,18 @@ const coinColumn: ColumnDef<TransactionListItem> = {
 };
 
 // Start from the shared columns, drop payout + houseEdge, then replace the
-// Type column with our deposit-specific one.
+// User and Type columns with our deposit-specific ones.
 const baseColumns = sharedColumns
   .filter((col) => {
     const key = getColumnKey(col);
     return key ? !HIDDEN_KEYS.has(key) : true;
   })
-  .map((col) => (getColumnKey(col) === "type" ? typeColumn : col));
+  .map((col) => {
+    const key = getColumnKey(col);
+    if (key === "username") return userColumn;
+    if (key === "type") return typeColumn;
+    return col;
+  });
 
 // Insert Coin directly before Status so it sits with the other metadata.
 const statusIdx = baseColumns.findIndex(
