@@ -3157,6 +3157,7 @@ const AUDIT_EVENT_TYPES = [
   "settings_changed",
   "deposit",
   "withdrawal",
+  "admin_balance_adjustment",
 ] as const;
 
 const AuditTable = React.memo(function AuditTable({
@@ -3256,17 +3257,33 @@ const AuditTable = React.memo(function AuditTable({
                     </span>
                   </span>
                 );
+              } else if (e.eventType === "admin_balance_adjustment" && meta) {
+                const amt = Number(meta.amountUsd ?? 0);
+                details = (
+                  <span className="tabular-nums">
+                    <span className={amt >= 0 ? "text-emerald-400" : "text-rose-400"}>
+                      {amt >= 0 ? "+" : ""}{formatCurrency(amt)}
+                    </span>
+                    {typeof meta.description === "string" && meta.description && (
+                      <span className="ml-1 text-muted-foreground">
+                        · {meta.description}
+                      </span>
+                    )}
+                  </span>
+                );
               }
               const badgeColor =
                 e.eventType === "deposit"
                   ? "bg-emerald-500/15 text-emerald-400"
                   : e.eventType === "withdrawal"
                     ? "bg-amber-500/15 text-amber-400"
-                    : e.eventType.includes("failed") ||
-                        e.eventType.includes("banned") ||
-                        e.eventType.includes("locked")
-                      ? "bg-red-500/15 text-red-400"
-                      : "";
+                    : e.eventType === "admin_balance_adjustment"
+                      ? "bg-blue-500/15 text-blue-400"
+                      : e.eventType.includes("failed") ||
+                          e.eventType.includes("banned") ||
+                          e.eventType.includes("locked")
+                        ? "bg-red-500/15 text-red-400"
+                        : "";
               return (
                 <TableRow key={e.id}>
                   <TableCell>

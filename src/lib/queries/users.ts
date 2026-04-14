@@ -879,9 +879,9 @@ export async function getUserAuditLog(
   //    and card_withdrawal_requests (item withdrawals). These run in parallel
   //    so we get one merged, paginated, time-ordered stream.
   const showFinancials =
-    !explicitFilter || ["deposit", "withdrawal"].includes(explicitFilter);
+    !explicitFilter || ["deposit", "withdrawal", "admin_balance_adjustment"].includes(explicitFilter);
 
-  const [auditRows, depositRows, cardWithdrawalRows] = await Promise.all([
+  const [auditRows, depositRows, cardWithdrawalRows, balanceAdjustRows] = await Promise.all([
     db.audit_events.findMany({
       where: auditWhere,
       orderBy: { created_at: "desc" },
@@ -917,6 +917,23 @@ export async function getUserAuditLog(
             status: true,
             method: true,
             requested_at: true,
+          },
+        })
+      : Promise.resolve([]),
+    showFinancials
+      ? db.ledger_transactions.findMany({
+          where: {
+            user_id: userId,
+            type: "admin_balance_adjustment",
+            status: "completed",
+          },
+          orderBy: { created_at: "desc" },
+          take: 200,
+          select: {
+            id: true,
+            amount: true,
+            description: true,
+            created_at: true,
           },
         })
       : Promise.resolve([]),
@@ -962,6 +979,17 @@ export async function getUserAuditLog(
         amountUsd: toNumber(w.total_value_usd),
         method: w.method,
         status: w.status,
+      },
+    })),
+    ...balanceAdjustRows.map((a) => ({
+      id: `adj_${a.id}`,
+      eventType: "admin_balance_adjustment",
+      ip: null,
+      country: null,
+      createdAt: a.created_at.toISOString(),
+      metadata: {
+        amountUsd: toNumber(a.amount),
+        description: a.description,
       },
     })),
   ];
