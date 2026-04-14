@@ -3260,11 +3260,25 @@ const AuditTable = React.memo(function AuditTable({
                 );
               } else if (e.eventType === "admin_balance_adjustment" && meta) {
                 const amt = Number(meta.amountUsd ?? 0);
+                const adminName = meta.admin_username as string | undefined;
+                const adminId = meta.admin_user_id as string | undefined;
                 details = (
                   <span className="tabular-nums">
                     <span className={amt >= 0 ? "text-emerald-400" : "text-rose-400"}>
                       {amt >= 0 ? "+" : ""}{formatCurrency(amt)}
                     </span>
+                    {adminName && (
+                      <span className="ml-1">
+                        · by{" "}
+                        {adminId ? (
+                          <Link href={`/admin-users/${adminId}`} className="text-blue-400 hover:underline">
+                            {adminName}
+                          </Link>
+                        ) : (
+                          <span className="text-muted-foreground">{adminName}</span>
+                        )}
+                      </span>
+                    )}
                     {typeof meta.description === "string" && meta.description && (
                       <span className="ml-1 text-muted-foreground">
                         · {meta.description}
@@ -3499,6 +3513,27 @@ function TransactionDetailModal({
     { label: "Updated", value: formatDateTime(t.updatedAt) },
   ];
 
+  if (t.type === "admin_balance_adjustment" && t.metadata) {
+    const meta = t.metadata as Record<string, unknown>;
+    const adminName = meta.admin_username as string | undefined;
+    const adminId = meta.admin_user_id as string | undefined;
+    const reason = meta.reason as string | undefined;
+    if (adminName) {
+      rows.push({
+        label: "Adjusted By",
+        value: adminId ? (
+          <Link href={`/admin-users/${adminId}`} className="text-blue-400 hover:underline font-medium">
+            {adminName}
+          </Link>
+        ) : (
+          <span className="font-medium">{adminName}</span>
+        ),
+      });
+    }
+    if (reason) {
+      rows.push({ label: "Reason", value: reason });
+    }
+  }
   if (t.failureReason) {
     rows.push({
       label: "Failure Reason",
