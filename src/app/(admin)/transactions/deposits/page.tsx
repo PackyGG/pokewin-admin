@@ -3,6 +3,7 @@ import Link from "next/link";
 import { getTransactions } from "@/lib/queries/transactions";
 import { requirePageAccess } from "@/lib/dal";
 import { TransactionsDataTable } from "../data-table";
+import { columns as depositsColumns } from "./columns";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -60,7 +61,7 @@ export default async function DepositsTransactionsPage({
           searchPlaceholder="Search by user ID, username, or transaction ID..."
         />
       </Suspense>
-      <TransactionsDataTable data={result.data} />
+      <TransactionsDataTable data={result.data} columns={depositsColumns} />
       <DataTablePagination
         page={result.page}
         totalPages={result.totalPages}
