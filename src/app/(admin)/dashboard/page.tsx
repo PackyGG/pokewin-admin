@@ -10,7 +10,7 @@ import { getDashboardStats, getRecentActivity } from "@/lib/queries/dashboard";
 import { requirePageAccess } from "@/lib/dal";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { StatCard } from "./stat-card";
-import { PnlStatCard, WagerStatCard } from "./revenue-stat-card";
+import { PnlStatCard, GgrStatCard, WagerStatCard } from "./revenue-stat-card";
 import { AutoRefresh } from "./auto-refresh";
 import { RevenueChart, SignupsChart } from "./charts";
 import { RecentActivity } from "./recent-activity";
@@ -37,8 +37,9 @@ export default async function DashboardPage({
       <h1 className="text-page-title">Dashboard</h1>
 
       {/* Stat cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <PnlStatCard pnl={stats.revenue} />
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        <PnlStatCard pnl={stats.realizedPnl} />
+        <GgrStatCard ggr={stats.ggr} />
         <WagerStatCard wagers={stats.wagers} />
         <StatCard
           title="Deposits & Withdrawals"
