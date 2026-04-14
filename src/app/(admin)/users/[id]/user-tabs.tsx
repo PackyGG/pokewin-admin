@@ -619,14 +619,18 @@ export function UserTabs({
         <UserHeaderStrip user={user} isAdmin={isAdmin} />
 
         {/* Zone 2 — Key Metrics: Balances on the left, Statistics on the right.
-            Statistics is the merged view (P&L hero + Costs + Engagement + Wager Windows + Rewards). */}
+            Statistics is the merged view (P&L hero + Costs + Engagement + Wager Windows + Rewards).
+            Both cards stretch to the same height via the grid's default
+            align-items: stretch — do NOT add items-start here, the user
+            wants them visually matched. `h-full` on the Card children
+            forwards the row height down into the Card surface itself. */}
         <CollapsibleSection
           title="Key Metrics"
           sectionKey="metrics"
           open={openSections.metrics}
           onToggle={handleToggleSection}
         >
-          <div className="grid gap-4 md:grid-cols-2 items-start">
+          <div className="grid gap-4 md:grid-cols-2 [&>*]:h-full">
             <BalanceSummaryCard
               balances={balances}
               userId={user.id}
@@ -2225,12 +2229,9 @@ const StatisticsCard = React.memo(function StatisticsCard({
 
   const wagerLoss = balances ? balances.totalWagered - balances.totalWon : 0;
 
-  const pnlBorder =
-    platformPnl > 0
-      ? "border-emerald-500/40 bg-emerald-500/10"
-      : platformPnl < 0
-        ? "border-rose-500/40 bg-rose-500/10"
-        : "border-border bg-muted/10";
+  // Dial down the P&L hero: neutral muted surface, the only colored element
+  // is the number itself. Reviewers still spot positive vs. negative at a
+  // glance but the card no longer screams for attention.
   const pnlText =
     platformPnl > 0
       ? "text-emerald-400"
@@ -2254,13 +2255,13 @@ const StatisticsCard = React.memo(function StatisticsCard({
         )}
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Hero: Platform P&L — highly visible, bordered, colored */}
-        <div className={`rounded-md border-2 p-3 ${pnlBorder}`}>
+        {/* Hero: Platform P&L — still the first thing you see, but muted. */}
+        <div className="rounded-md border bg-muted/30 p-3">
           <div className="flex items-baseline justify-between gap-3">
             <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               Platform P&L
             </span>
-            <span className={`text-3xl font-bold tabular-nums ${pnlText}`}>
+            <span className={`text-2xl font-bold tabular-nums ${pnlText}`}>
               {platformPnl >= 0 ? "+" : ""}
               {formatCurrency(platformPnl)}
             </span>
