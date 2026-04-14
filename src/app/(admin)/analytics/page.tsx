@@ -58,7 +58,7 @@ export default async function AnalyticsPage({
         <StatCard
           title="Realized Profit"
           value={formatCurrency(data.realizedProfit)}
-          subtitle={`Deposits ${formatCurrency(data.realizedProfitBreakdown.totalDeposits)} − Withdrawals ${formatCurrency(data.realizedProfitBreakdown.totalWithdrawals)} − Open balances ${formatCurrency(data.realizedProfitBreakdown.openBalances)}`}
+          subtitle={`Deposits ${formatCurrency(data.realizedProfitBreakdown.totalDeposits)} − Withdrawals ${formatCurrency(data.realizedProfitBreakdown.totalWithdrawals)} − Open balances & inventory ${formatCurrency(data.realizedProfitBreakdown.openBalances)}`}
           icon={TrendingUp}
           color="green"
         />

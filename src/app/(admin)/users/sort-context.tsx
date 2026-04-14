@@ -25,6 +25,7 @@ const COMPARATORS: Record<string, (a: UserRow, b: UserRow) => number> = {
   totalDeposited: (a, b) => a.totalDeposited - b.totalDeposited,
   totalWithdrawn: (a, b) => a.totalWithdrawn - b.totalWithdrawn,
   totalWagered: (a, b) => a.totalWagered - b.totalWagered,
+  inventoryValue: (a, b) => a.inventoryValue - b.inventoryValue,
   pnl: (a, b) => a.pnl - b.pnl,
 };
 
