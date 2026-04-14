@@ -44,6 +44,7 @@ export function AdminHeader({
         size="icon"
         className="size-7"
         onClick={() => router.refresh()}
+        aria-label="Reload page"
         title="Reload page"
       >
         <RotateCw className="size-3.5" />
@@ -54,7 +55,14 @@ export function AdminHeader({
           {role}
         </Badge>
         <form action={logout}>
-          <Button variant="ghost" size="icon" type="submit" className="size-8">
+          <Button
+            variant="ghost"
+            size="icon"
+            type="submit"
+            className="size-8"
+            aria-label="Log out"
+            title="Log out"
+          >
             <LogOut className="size-4" />
           </Button>
         </form>

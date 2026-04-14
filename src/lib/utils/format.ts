@@ -15,6 +15,10 @@ export function formatDateTime(date: Date | string): string {
   return format(new Date(date), "MMM d, yyyy HH:mm");
 }
 
+export function formatMonthYear(date: Date | string): string {
+  return format(new Date(date), "MMM yyyy");
+}
+
 export function formatRelative(date: Date | string): string {
   return formatDistanceToNow(new Date(date), { addSuffix: true });
 }

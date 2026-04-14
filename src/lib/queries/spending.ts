@@ -1,5 +1,6 @@
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
+import { formatMonthYear } from "@/lib/utils/format";
 import type { PaginatedResult } from "@/lib/types";
 
 export type ExpenseListItem = {
@@ -216,7 +217,7 @@ export async function getMonthlyTrend(months: number = 6): Promise<MonthlyTrendI
       }),
     ]);
 
-    const label = d.toLocaleString("en-US", { month: "short", year: "numeric" });
+    const label = formatMonthYear(d);
     const monthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 
     results.push({
