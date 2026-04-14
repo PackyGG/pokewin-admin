@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
+import { EXCLUDE_STAFF_USER_RELATION, EXCLUDE_STAFF_SQL } from "./_exclude-staff";
 
 export type ActivityItem = {
   id: string;
@@ -18,7 +19,12 @@ export type ActivityItem = {
 
 function revenueAgg(gte: Date) {
   return db.ledger_transactions.aggregate({
-    where: { type: "deposit", status: "completed", created_at: { gte } },
+    where: {
+      type: "deposit",
+      status: "completed",
+      created_at: { gte },
+      user: EXCLUDE_STAFF_USER_RELATION,
+    },
     _sum: { amount: true },
   });
 }
@@ -43,11 +49,13 @@ function ggrAgg(gte: Date) {
           THEN ABS(amount::numeric) ELSE 0 END), 0)
         FROM ledger_transactions
         WHERE status = 'completed' AND created_at >= ${gte}
+          AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))
       )
       - (
-        SELECT COALESCE(SUM(value_at_obtained::numeric), 0)
-        FROM user_inventory
-        WHERE sold_at IS NULL AND exchanged_at IS NULL AND obtained_at >= ${gte}
+        SELECT COALESCE(SUM(ui.value_at_obtained::numeric), 0)
+        FROM user_inventory ui
+        WHERE ui.sold_at IS NULL AND ui.exchanged_at IS NULL AND ui.obtained_at >= ${gte}
+          AND ui.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))
       )
     )::text AS ggr
   `;
@@ -59,6 +67,7 @@ function wagerAgg(gte: Date) {
       type: { in: ["pack_opening", "battle_bet", "battle_sponsorship"] },
       status: "completed",
       created_at: { gte },
+      user: EXCLUDE_STAFF_USER_RELATION,
     },
     _sum: { amount: true },
   });
@@ -107,13 +116,14 @@ export async function getDashboardStats() {
     avgSessionValueResult,
     totalInventoryValue,
   ] = await Promise.all([
-    db.user.count(),
-    db.user.count({ where: { created_at: { gte: startOfDay } } }),
-    db.user.count({ where: { created_at: { gte: startOfWeek } } }),
-    db.user.count({ where: { created_at: { gte: startOfMonth } } }),
-    db.user.count({ where: { is_banned: true } }),
-    db.user.count({ where: { is_locked: true } }),
+    db.user.count({ where: { role: { notIn: ["admin", "creator"] } } }),
+    db.user.count({ where: { role: { notIn: ["admin", "creator"] }, created_at: { gte: startOfDay } } }),
+    db.user.count({ where: { role: { notIn: ["admin", "creator"] }, created_at: { gte: startOfWeek } } }),
+    db.user.count({ where: { role: { notIn: ["admin", "creator"] }, created_at: { gte: startOfMonth } } }),
+    db.user.count({ where: { role: { notIn: ["admin", "creator"] }, is_banned: true } }),
+    db.user.count({ where: { role: { notIn: ["admin", "creator"] }, is_locked: true } }),
     db.balances.aggregate({
+      where: { user: EXCLUDE_STAFF_USER_RELATION },
       _sum: {
         total_deposited: true,
         total_withdrawn: true,
@@ -121,9 +131,15 @@ export async function getDashboardStats() {
         total_won: true,
       },
     }),
-    db.balances.aggregate({ _sum: { available_balance: true } }),
+    db.balances.aggregate({
+      where: { user: EXCLUDE_STAFF_USER_RELATION },
+      _sum: { available_balance: true },
+    }),
     db.card_withdrawal_requests.aggregate({
-      where: { status: { in: ["pending", "processing"] } },
+      where: {
+        status: { in: ["pending", "processing"] },
+        user_card_withdrawal_requests_user_idTouser: EXCLUDE_STAFF_USER_RELATION,
+      },
       _count: true,
       _sum: { total_value_usd: true },
     }),
@@ -136,13 +152,16 @@ export async function getDashboardStats() {
       _avg: { actual_house_edge: true },
     }),
     adminDb.admin_audit_events.count(),
-    db.ledger_transactions.count(),
+    db.ledger_transactions.count({
+      where: { user: EXCLUDE_STAFF_USER_RELATION },
+    }),
     // Revenue last 60 days (pack openings = main revenue source)
     db.$queryRaw<{ date: Date; revenue: string }[]>`
       SELECT DATE(created_at) as date, COALESCE(SUM(amount::numeric), 0)::text as revenue
       FROM ledger_transactions
       WHERE type = 'pack_opening' AND status = 'completed'
         AND created_at >= NOW() - INTERVAL '60 days'
+        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))
       GROUP BY DATE(created_at)
       ORDER BY date
     `,
@@ -151,6 +170,7 @@ export async function getDashboardStats() {
       SELECT DATE(created_at) as date, COUNT(*)::text as count
       FROM "user"
       WHERE created_at >= NOW() - INTERVAL '60 days'
+        AND role NOT IN ('admin','creator')
       GROUP BY DATE(created_at)
       ORDER BY date
     `,
@@ -159,10 +179,15 @@ export async function getDashboardStats() {
     revenueAgg(sevenDaysAgo),
     revenueAgg(thirtyDaysAgo),
     db.user_statistics.aggregate({
+      where: { user: EXCLUDE_STAFF_USER_RELATION },
       _sum: { opened_packs_count: true, battles_played: true },
     }),
     db.ledger_transactions.count({
-      where: { type: "deposit", status: "completed" },
+      where: {
+        type: "deposit",
+        status: "completed",
+        user: EXCLUDE_STAFF_USER_RELATION,
+      },
     }),
     wagerAgg(startOfDay),
     wagerAgg(threeDaysAgo),
@@ -173,15 +198,20 @@ export async function getDashboardStats() {
     ggrAgg(sevenDaysAgo),
     ggrAgg(thirtyDaysAgo),
     db.$queryRaw<{ avg_session_value: string }[]>`
-      WITH withdrawal_events AS (
+      WITH real_users AS (
+        SELECT id FROM "user" WHERE role NOT IN ('admin','creator')
+      ),
+      withdrawal_events AS (
         SELECT user_id, created_at, 'withdrawal' as event_type
         FROM card_withdrawal_requests
         WHERE status IN ('processing', 'shipped', 'completed')
+          AND user_id IN (SELECT id FROM real_users)
       ),
       timeline AS (
         SELECT user_id, type::text as event_type, amount, balance_after, created_at
         FROM ledger_transactions
         WHERE status = 'completed'
+          AND user_id IN (SELECT id FROM real_users)
         UNION ALL
         SELECT user_id, event_type, 0 as amount, NULL as balance_after, created_at
         FROM withdrawal_events
@@ -212,13 +242,13 @@ export async function getDashboardStats() {
       FROM session_wagers
     `,
     db.user_inventory.aggregate({
-      where: { sold_at: null, exchanged_at: null },
+      where: { sold_at: null, exchanged_at: null, user: EXCLUDE_STAFF_USER_RELATION },
       _sum: { value_at_obtained: true },
     }),
   ]);
 
-  const totalWagered = toNumber(balanceAggregates._sum.total_wagered);
-  const totalWon = toNumber(balanceAggregates._sum.total_won);
+  const totalWagered = toNumber(balanceAggregates._sum?.total_wagered);
+  const totalWon = toNumber(balanceAggregates._sum?.total_won);
   const totalActivityCount = totalAuditEvents + totalTransactions;
 
   return {
@@ -237,28 +267,28 @@ export async function getDashboardStats() {
       "30d": Number(ggr30d[0]?.ggr ?? 0),
     },
     deposits: {
-      "24h": toNumber(revenue24h._sum.amount),
-      "3d": toNumber(revenue3d._sum.amount),
-      "7d": toNumber(revenue7d._sum.amount),
-      "30d": toNumber(revenue30d._sum.amount),
+      "24h": toNumber(revenue24h._sum?.amount),
+      "3d": toNumber(revenue3d._sum?.amount),
+      "7d": toNumber(revenue7d._sum?.amount),
+      "30d": toNumber(revenue30d._sum?.amount),
     },
     wagers: {
-      "24h": Math.abs(toNumber(wager24h._sum.amount)),
-      "3d": Math.abs(toNumber(wager3d._sum.amount)),
-      "7d": Math.abs(toNumber(wager7d._sum.amount)),
-      "30d": Math.abs(toNumber(wager30d._sum.amount)),
+      "24h": Math.abs(toNumber(wager24h._sum?.amount)),
+      "3d": Math.abs(toNumber(wager3d._sum?.amount)),
+      "7d": Math.abs(toNumber(wager7d._sum?.amount)),
+      "30d": Math.abs(toNumber(wager30d._sum?.amount)),
     },
     financials: {
-      totalDeposited: toNumber(balanceAggregates._sum.total_deposited),
-      totalWithdrawn: toNumber(balanceAggregates._sum.total_withdrawn),
+      totalDeposited: toNumber(balanceAggregates._sum?.total_deposited),
+      totalWithdrawn: toNumber(balanceAggregates._sum?.total_withdrawn),
       totalWagered,
       totalWon,
-      totalSiteBalance: toNumber(totalSiteBalance._sum.available_balance),
-      totalInventoryValue: toNumber(totalInventoryValue._sum.value_at_obtained),
+      totalSiteBalance: toNumber(totalSiteBalance._sum?.available_balance),
+      totalInventoryValue: toNumber(totalInventoryValue._sum?.value_at_obtained),
       avgWagerPerDeposit: depositCount > 0 ? totalWagered / depositCount : 0,
       avgSessionValue: Number(avgSessionValueResult[0]?.avg_session_value ?? 0),
       pendingWithdrawalsCount: pendingWithdrawals._count,
-      pendingWithdrawalsValue: toNumber(pendingWithdrawals._sum.total_value_usd),
+      pendingWithdrawalsValue: toNumber(pendingWithdrawals._sum?.total_value_usd),
     },
     packs: {
       totalOpenings: Number(packStats._sum.total_openings ?? 0),
@@ -267,8 +297,8 @@ export async function getDashboardStats() {
       avgHouseEdge: toNumber(packStats._avg.actual_house_edge),
     },
     activity: {
-      totalPacksOpened: Number(activityTotals._sum.opened_packs_count ?? 0),
-      totalBattlesPlayed: Number(activityTotals._sum.battles_played ?? 0),
+      totalPacksOpened: Number(activityTotals._sum?.opened_packs_count ?? 0),
+      totalBattlesPlayed: Number(activityTotals._sum?.battles_played ?? 0),
     },
     totalActivityCount,
     dailyRevenue: dailyRevenue.map((d) => ({

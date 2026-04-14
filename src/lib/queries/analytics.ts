@@ -1,5 +1,7 @@
 import { db } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+// SQL fragment for user_id filtering — injected via string concat (safe: hardcoded role name)
+const EXCL_STAFF_FRAG = `AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))`;
 
 type Period = "today" | "7d" | "30d" | "90d" | "all";
 
@@ -86,14 +88,18 @@ export type AnalyticsData = {
 export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
   const dateFilter = periodToDateFilter(period);
   // Same filter, but without the leading "AND " because it'll be the only WHERE condition
+  // Exclude battles created by admin/creator (support counts as normal user)
+  const battleStaffExcl = `user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))`;
+  const battleStaffExclAliased = `b.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))`;
+
   const battleDateWhere =
     period === "all"
-      ? ""
-      : `WHERE created_at >= NOW() - INTERVAL '${parseDays(period)} days'`;
+      ? `WHERE ${battleStaffExcl}`
+      : `WHERE created_at >= NOW() - INTERVAL '${parseDays(period)} days' AND ${battleStaffExcl}`;
   const battleDateWhereAliased =
     period === "all"
-      ? ""
-      : `WHERE b.created_at >= NOW() - INTERVAL '${parseDays(period)} days'`;
+      ? `WHERE ${battleStaffExclAliased}`
+      : `WHERE b.created_at >= NOW() - INTERVAL '${parseDays(period)} days' AND ${battleStaffExclAliased}`;
 
   const signupsDateFilter =
     period !== "all"
@@ -151,13 +157,13 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
             WHEN type = 'battle_bet' AND description ILIKE '%borrow%'
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_borrowed
         FROM ledger_transactions
-        WHERE status = 'completed' ${dateFilter}
+        WHERE status = 'completed' ${dateFilter} ${EXCL_STAFF_FRAG}
       `),
-      db.user.count({ where: signupsDateFilter }),
+      db.user.count({ where: { ...signupsDateFilter, role: { notIn: ["admin", "creator"] } } }),
       db.$queryRawUnsafe<{ count: string }[]>(`
         SELECT COUNT(DISTINCT user_id)::text AS count
         FROM ledger_transactions
-        WHERE status = 'completed' ${dateFilter}
+        WHERE status = 'completed' ${dateFilter} ${EXCL_STAFF_FRAG}
       `),
       db.$queryRawUnsafe<
         {
@@ -226,14 +232,14 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
             WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
             THEN ABS(amount::numeric) END), 0)::text AS max_bet
         FROM ledger_transactions
-        WHERE status = 'completed' ${dateFilter}
+        WHERE status = 'completed' ${dateFilter} ${EXCL_STAFF_FRAG}
         GROUP BY DATE(created_at)
         ORDER BY date
       `),
       db.$queryRawUnsafe<{ date: Date; count: string }[]>(`
         SELECT DATE(created_at) AS date, COUNT(*)::text AS count
         FROM "user"
-        WHERE 1=1 ${dateFilter}
+        WHERE role NOT IN ('admin','creator') ${dateFilter}
         GROUP BY DATE(created_at)
         ORDER BY date
       `),
@@ -301,6 +307,7 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
         JOIN game_sessions gs ON lt.game_session_id = gs.id AND gs.game_type = 'pack'
         JOIN packs p ON gs.game_id = p.id
         WHERE lt.type = 'pack_opening' AND lt.status = 'completed' ${dateFilter.replace(/created_at/g, "lt.created_at")}
+          AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))
         GROUP BY p.id, p.name
         ORDER BY COUNT(*) DESC
         LIMIT 20
@@ -316,12 +323,15 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
         SELECT
           (SELECT COALESCE(SUM(ABS(amount::numeric)), 0)
              FROM ledger_transactions
-             WHERE type = 'deposit' AND status = 'completed')::text AS total_deposits,
+             WHERE type = 'deposit' AND status = 'completed'
+               AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator')))::text AS total_deposits,
           (SELECT COALESCE(SUM(total_value_usd::numeric), 0)
              FROM card_withdrawal_requests
-             WHERE status IN ('completed', 'shipped'))::text AS total_withdrawals,
+             WHERE status IN ('completed', 'shipped')
+               AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator')))::text AS total_withdrawals,
           (SELECT COALESCE(SUM(available_balance::numeric + locked_balance::numeric), 0)
-             FROM balances)::text AS open_balances,
+             FROM balances
+             WHERE user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator')))::text AS open_balances,
           (SELECT COALESCE(SUM(ABS(amount::numeric)), 0)
              FROM ledger_transactions
              WHERE status = 'completed'
@@ -329,7 +339,8 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
                  'deposit_bonus','promo_code_redeemed','gift_card_redeemed',
                  'rakeback_claim','balance_reward_claim','affiliate_claim',
                  'rain_win','race_prize','creator_tip','waitlist_prize'
-               ))::text AS rewards_claimed
+               )
+               AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator')))::text AS rewards_claimed
       `),
     ]);
 
