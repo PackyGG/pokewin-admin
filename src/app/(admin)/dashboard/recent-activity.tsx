@@ -63,9 +63,16 @@ export function RecentActivity({ items }: { items: ActivityItem[] }) {
                   </Link>
                 </TableCell>
                 <TableCell className="text-sm">
-                  <Link href={getActivityHref(item)} className="contents">
-                    {item.username}
-                  </Link>
+                  {item.userId ? (
+                    <Link
+                      href={`/users/${item.userId}`}
+                      className="text-blue-400 hover:underline"
+                    >
+                      {item.username}
+                    </Link>
+                  ) : (
+                    <span>{item.username}</span>
+                  )}
                 </TableCell>
                 <TableCell className="text-sm">
                   {item.targetUserId ? (
