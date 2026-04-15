@@ -19,7 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { RainRangeFilters } from "./range-filters";
 import { InlineBaseCell } from "./inline-base-cell";
-import { RAIN_CONFIG_KEYS } from "./actions";
+import { RAIN_CONFIG_KEYS } from "./config-keys";
 import { RainConfigCard } from "./rain-config-card";
 
 const RAIN_STATUS_COLORS: Record<string, string> = {

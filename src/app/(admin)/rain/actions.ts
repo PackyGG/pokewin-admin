@@ -6,25 +6,7 @@ import { requirePageAccess } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { toNumber } from "@/lib/utils/decimal";
 import { refreshSiteConfig } from "@/lib/refresh-site-config";
-
-/**
- * site_config keys that drive rain defaults for the game backend.
- *
- * These are the SINGLE source of truth on the admin side — change them
- * here if the backend team uses different names. Everything else
- * (query helper, UI component, server action) references these
- * constants so a rename is a one-line change.
- *
- * IMPORTANT: these values only take effect if the game backend is
- * configured to read these keys when creating new rain instances. If
- * the backend still hardcodes the defaults, the admin UI will happily
- * persist new values but nothing downstream will use them. Verify with
- * the backend team before trusting the config.
- */
-export const RAIN_CONFIG_KEYS = {
-  defaultBaseAmount: "rain_default_base_amount",
-  durationMinutes: "rain_duration_minutes",
-} as const;
+import { RAIN_CONFIG_KEYS } from "./config-keys";
 
 export async function adjustRainBase(rainId: string, newBaseAmount: number) {
   const session = await requirePageAccess("/rain");
