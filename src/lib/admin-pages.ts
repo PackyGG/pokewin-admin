@@ -24,7 +24,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Rewards", label: "Rewards", key: "/rewards" },
   { group: "Rewards", label: "Rakeback", key: "/rewards/rakeback" },
   { group: "Rewards", label: "Raffles", key: "/rewards/raffles" },
-  { group: "Rewards", label: "Races", key: "/rewards/races" },
+  { group: "Rewards", label: "Rain", key: "/rain" },
   { group: "Rewards", label: "Leaderboards", key: "/rewards/leaderboards" },
   { group: "Rewards", label: "Level Up", key: "/rewards/level-up" },
   { group: "Rewards", label: "Settings", key: "/rewards/settings" },
@@ -32,7 +32,6 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Marketing", label: "Promo Codes", key: "/promo-codes" },
   { group: "Marketing", label: "Gift Cards", key: "/gift-cards" },
   { group: "Marketing", label: "Vouchers", key: "/vouchers" },
-  { group: "Marketing", label: "Rain", key: "/rain" },
   // Finance
   { group: "Finance", label: "Spending", key: "/spending" },
   // Creator Portal

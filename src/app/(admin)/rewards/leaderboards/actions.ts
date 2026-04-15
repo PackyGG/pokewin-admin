@@ -8,6 +8,8 @@ import { createAdminAuditEvent } from "@/lib/admin-audit";
 export async function updateRacePrizeTier(id: string, prizeAmountUsd: number) {
   const session = await requireAdmin();
 
+  if (prizeAmountUsd < 0) throw new Error("Prize amount cannot be negative");
+
   await db.race_prize_tiers.update({
     where: { id },
     data: { prize_amount_usd: prizeAmountUsd },
@@ -19,5 +21,5 @@ export async function updateRacePrizeTier(id: string, prizeAmountUsd: number) {
     metadata: { tier_id: id, prize_amount_usd: prizeAmountUsd },
   });
 
-  revalidatePath("/rewards/races");
+  revalidatePath("/rewards/leaderboards");
 }

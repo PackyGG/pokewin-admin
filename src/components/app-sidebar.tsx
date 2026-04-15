@@ -136,7 +136,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Rewards", href: "/rewards", icon: "Award" },
       { label: "Rakeback", href: "/rewards/rakeback", icon: "Percent" },
       { label: "Raffles", href: "/rewards/raffles", icon: "Ticket" },
-      { label: "Races", href: "/rewards/races", icon: "Trophy" },
+      { label: "Rain", href: "/rain", icon: "CloudRain" },
       { label: "Leaderboards", href: "/rewards/leaderboards", icon: "Trophy" },
       { label: "Level Up", href: "/rewards/level-up", icon: "TrendingUp" },
       { label: "Settings", href: "/rewards/settings", icon: "Settings" },
@@ -148,7 +148,6 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Promo Codes", href: "/promo-codes", icon: "Tag" },
       { label: "Gift Cards", href: "/gift-cards", icon: "Gift" },
       { label: "Vouchers", href: "/vouchers", icon: "Ticket" },
-      { label: "Rain", href: "/rain", icon: "CloudRain" },
     ],
   },
   {
