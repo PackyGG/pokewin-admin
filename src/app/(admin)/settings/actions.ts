@@ -4,32 +4,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requireAdmin } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
-
-/**
- * Notify the main backend to reload its cached site config.
- * Uses the same env vars as security/actions.ts (BACKEND_API_URL + BACKEND_API_KEY),
- * plus BACKEND_BYPASS_SECRET if available.
- */
-async function refreshSiteConfig() {
-  const headers: Record<string, string> = {
-    "x-api-key": process.env.BACKEND_API_KEY!,
-  };
-  if (process.env.BACKEND_BYPASS_SECRET) {
-    headers["x-bypass-secret"] = process.env.BACKEND_BYPASS_SECRET;
-  }
-
-  try {
-    const res = await fetch(
-      `${process.env.BACKEND_API_URL}/admin/refresh_site_config`,
-      { method: "POST", headers },
-    );
-    if (!res.ok) {
-      console.error("[refreshSiteConfig]", res.status, await res.text().catch(() => ""));
-    }
-  } catch (e) {
-    console.error("[refreshSiteConfig] Failed:", e);
-  }
-}
+import { refreshSiteConfig } from "@/lib/refresh-site-config";
 
 export async function upsertVaultLockTime(
   id: string | null,

@@ -18,6 +18,9 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Packy.gg Admin",
   description: "Admin panel for Packy.gg",
+  icons: {
+    icon: "/icon.png",
+  },
 };
 
 export default function RootLayout({

@@ -26,12 +26,15 @@ export function AdminHeader({
   const breadcrumbs = getBreadcrumbs(pathname);
 
   return (
-    <header className="flex h-14 items-center gap-3 border-b border-border px-4">
+    <header className="flex h-14 items-center gap-2 border-b border-border px-3 sm:gap-3 sm:px-4">
       <SidebarTrigger />
-      <Separator orientation="vertical" className="!self-auto h-5" />
-      <nav className="flex items-center gap-1 text-sm text-muted-foreground">
+      <Separator orientation="vertical" className="!self-auto h-5 hidden sm:block" />
+      {/* Breadcrumbs: shrink aggressively on narrow screens and horizontally
+          scroll if the crumb chain is longer than the remaining space.
+          min-w-0 is required so flex children don't overflow their parent. */}
+      <nav className="flex min-w-0 items-center gap-1 overflow-x-auto text-sm text-muted-foreground [scrollbar-width:none]">
         {breadcrumbs.map((crumb, i) => (
-          <span key={i} className="flex items-center gap-1">
+          <span key={i} className="flex shrink-0 items-center gap-1">
             {i > 0 && <span>/</span>}
             <span className={i === breadcrumbs.length - 1 ? "text-foreground" : ""}>
               {crumb}
@@ -42,15 +45,17 @@ export function AdminHeader({
       <Button
         variant="ghost"
         size="icon"
-        className="size-7"
+        className="size-7 shrink-0"
         onClick={() => router.refresh()}
         aria-label="Reload page"
         title="Reload page"
       >
         <RotateCw className="size-3.5" />
       </Button>
-      <div className="ml-auto flex items-center gap-3">
-        <span className="text-sm">{username}</span>
+      <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-3">
+        {/* Username text is noise on narrow screens — the role badge +
+            logout button are enough identity to keep visible. */}
+        <span className="hidden text-sm sm:inline">{username}</span>
         <Badge variant="outline" className={ROLE_COLORS[role]}>
           {role}
         </Badge>

@@ -16,7 +16,7 @@ export default async function AdminLayout({
       <AppSidebar role={session.role} allowedPages={allowedPages} />
       <div className="flex flex-1 flex-col">
         <AdminHeader username={session.username} role={session.role} />
-        <main className="flex-1 overflow-auto p-6">{children}</main>
+        <main className="flex-1 overflow-auto p-4 md:p-6">{children}</main>
       </div>
     </SidebarProvider>
   );

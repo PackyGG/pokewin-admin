@@ -109,6 +109,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Analytics", href: "/analytics", icon: "BarChart3" },
       { label: "Map", href: "/map", icon: "Globe" },
       { label: "Users", href: "/users", icon: "Users" },
+      { label: "Deposits", href: "/transactions/deposits", icon: "ArrowDownToLine" },
       { label: "Withdrawals", href: "/withdrawals", icon: "ArrowDownToLine" },
     ],
   },
@@ -119,7 +120,6 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Packs", href: "/transactions/packs", icon: "Package" },
       { label: "Battles", href: "/transactions/battles", icon: "Swords" },
       { label: "Rewards", href: "/transactions/rewards", icon: "Award" },
-      { label: "Deposits", href: "/transactions/deposits", icon: "ArrowDownToLine" },
     ],
   },
   {
@@ -136,7 +136,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Rewards", href: "/rewards", icon: "Award" },
       { label: "Rakeback", href: "/rewards/rakeback", icon: "Percent" },
       { label: "Raffles", href: "/rewards/raffles", icon: "Ticket" },
-      { label: "Races", href: "/rewards/races", icon: "Trophy" },
+      { label: "Rain", href: "/rain", icon: "CloudRain" },
       { label: "Leaderboards", href: "/rewards/leaderboards", icon: "Trophy" },
       { label: "Level Up", href: "/rewards/level-up", icon: "TrendingUp" },
       { label: "Settings", href: "/rewards/settings", icon: "Settings" },
@@ -148,7 +148,6 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Promo Codes", href: "/promo-codes", icon: "Tag" },
       { label: "Gift Cards", href: "/gift-cards", icon: "Gift" },
       { label: "Vouchers", href: "/vouchers", icon: "Ticket" },
-      { label: "Rain", href: "/rain", icon: "CloudRain" },
     ],
   },
   {
@@ -281,12 +280,16 @@ export function AppSidebar({ role, allowedPages }: { role: string; allowedPages:
 
   return (
     <Sidebar collapsible="icon">
-      <SidebarHeader className="border-b border-border px-4 h-14 flex items-center justify-center">
+      <SidebarHeader className="border-b border-border px-4 h-14 flex items-center justify-center group-data-[collapsible=icon]:px-0">
         <Link href={getDefaultRoute(role, allowedPages)} className="flex justify-center">
+          {/* Expanded mode: full wordmark (two variants for light/dark theme) */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo-dark.png" alt="Pokewin" className="h-6 dark:hidden group-data-[collapsible=icon]:hidden" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo.png" alt="Pokewin" className="h-6 hidden dark:block group-data-[collapsible=icon]:hidden" />
+          {/* Collapsed (icon) mode: show the compact favicon-sized mark */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/icon.png" alt="Pokewin" className="h-7 w-7 hidden group-data-[collapsible=icon]:block" />
         </Link>
       </SidebarHeader>
       <SidebarContent>
