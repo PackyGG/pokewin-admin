@@ -22,6 +22,7 @@ export type UserRow = {
   totalDeposited: number;
   totalWithdrawn: number;
   totalWagered: number;
+  depositCount: number;
   pnl: number;
   createdAt: string;
 };
@@ -140,6 +141,15 @@ export const columns: ColumnDef<UserRow>[] = [
     cell: ({ row }) => (
       <span className="tabular-nums">
         {formatCurrency(row.original.totalDeposited)}
+      </span>
+    ),
+  },
+  {
+    accessorKey: "depositCount",
+    header: "# Deposits",
+    cell: ({ row }) => (
+      <span className="tabular-nums text-muted-foreground">
+        {row.original.depositCount}
       </span>
     ),
   },

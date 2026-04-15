@@ -17,6 +17,7 @@ type UserListItem = {
   totalDeposited: number;
   totalWithdrawn: number;
   totalWagered: number;
+  depositCount: number;
   pnl: number;
   createdAt: string;
 };
@@ -260,6 +261,23 @@ export async function getUsers(params: {
     voucherValues.map((v) => [v.user_id, toNumber(v._sum.value)])
   );
 
+  // Count of completed deposit ledger transactions per user. One
+  // batch groupBy per page instead of N+1 per-user counts.
+  const depositCountRows = userIds.length > 0
+    ? await db.ledger_transactions.groupBy({
+        by: ["user_id"],
+        where: {
+          user_id: { in: userIds },
+          type: "deposit",
+          status: "completed",
+        },
+        _count: { _all: true },
+      })
+    : [];
+  const depositCountMap = new Map(
+    depositCountRows.map((d) => [d.user_id, d._count._all]),
+  );
+
   return {
     data: users.map((u) => {
       const availableBalance = toNumber(u.balances?.available_balance);
@@ -286,6 +304,7 @@ export async function getUsers(params: {
         totalDeposited,
         totalWithdrawn,
         totalWagered,
+        depositCount: depositCountMap.get(u.id) ?? 0,
         pnl,
         createdAt: u.created_at.toISOString(),
       };
@@ -328,57 +347,89 @@ export async function getUserDetail(id: string) {
     vouchersResult = { _sum: { value: null } };
   }
 
-  const [user, balances, statistics, featureLocks, inventoryCount, affiliateAccount, shippingAddress, vault, mutes, cardWithdrawals, activeSeed, depositAddresses, cardWithdrawalTotal] =
-    await Promise.all([
-      db.user.findUnique({
-        where: { id },
-        include: {
-          account: {
-            select: { providerId: true, accountId: true, created_at: true },
-          },
+  const [
+    user,
+    balances,
+    statistics,
+    featureLocks,
+    inventoryCount,
+    affiliateAccount,
+    shippingAddress,
+    vault,
+    mutes,
+    cardWithdrawals,
+    activeSeed,
+    depositAddresses,
+    cardWithdrawalTotal,
+    depositCount,
+    withdrawalCount,
+  ] = await Promise.all([
+    db.user.findUnique({
+      where: { id },
+      include: {
+        account: {
+          select: { providerId: true, accountId: true, created_at: true },
         },
-      }),
-      db.balances.findUnique({ where: { user_id: id } }),
-      db.user_statistics.findUnique({ where: { user_id: id } }),
-      db.user_feature_locks.findUnique({ where: { user_id: id } }),
-      db.user_inventory.count({ where: { user_id: id, sold_at: null, exchanged_at: null } }),
-      db.affiliate_accounts.findUnique({
-        where: { user_id: id },
-        select: {
-          total_referred: true,
-          total_wager_volume_usd: true,
-          total_earned_usd: true,
-          available_usd: true,
-          total_paid_out_usd: true,
-          total_bonus_distributed_usd: true,
-          last_payout_at: true,
-        },
-      }),
-      db.shipping_addresses.findUnique({ where: { user_id: id } }),
-      db.vaults.findUnique({ where: { user_id: id } }),
-      db.user_mutes.findMany({
-        where: { user_id: id },
-        orderBy: { created_at: "desc" },
-        take: 10,
-      }),
-      db.card_withdrawal_requests.findMany({
-        where: { user_id: id },
-        orderBy: { requested_at: "desc" },
-        take: 10,
-      }),
-      db.active_seeds.findUnique({ where: { user_id: id } }),
-      db.deposit_addresses.findMany({
-        where: { user_id: id },
-        orderBy: { created_at: "desc" },
-      }),
-      db.card_withdrawal_requests.aggregate({
-        where: {
-          user_id: id,
-          status: { in: ["completed", "shipped"] },
-        },
-        _sum: { total_value_usd: true },
-      }),
-    ]);
+      },
+    }),
+    db.balances.findUnique({ where: { user_id: id } }),
+    db.user_statistics.findUnique({ where: { user_id: id } }),
+    db.user_feature_locks.findUnique({ where: { user_id: id } }),
+    db.user_inventory.count({ where: { user_id: id, sold_at: null, exchanged_at: null } }),
+    db.affiliate_accounts.findUnique({
+      where: { user_id: id },
+      select: {
+        total_referred: true,
+        total_wager_volume_usd: true,
+        total_earned_usd: true,
+        available_usd: true,
+        total_paid_out_usd: true,
+        total_bonus_distributed_usd: true,
+        last_payout_at: true,
+      },
+    }),
+    db.shipping_addresses.findUnique({ where: { user_id: id } }),
+    db.vaults.findUnique({ where: { user_id: id } }),
+    db.user_mutes.findMany({
+      where: { user_id: id },
+      orderBy: { created_at: "desc" },
+      take: 10,
+    }),
+    db.card_withdrawal_requests.findMany({
+      where: { user_id: id },
+      orderBy: { requested_at: "desc" },
+      take: 10,
+    }),
+    db.active_seeds.findUnique({ where: { user_id: id } }),
+    db.deposit_addresses.findMany({
+      where: { user_id: id },
+      orderBy: { created_at: "desc" },
+    }),
+    db.card_withdrawal_requests.aggregate({
+      where: {
+        user_id: id,
+        status: { in: ["completed", "shipped"] },
+      },
+      _sum: { total_value_usd: true },
+    }),
+    // Event counts surfaced at the top of the detail page header. Counts
+    // are defined to mirror the existing "total withdrawn" aggregate in
+    // balances so the header and the Balances card agree on what counts
+    // as a completed deposit / withdrawal.
+    db.ledger_transactions.count({
+      where: {
+        user_id: id,
+        type: "deposit",
+        status: "completed",
+      },
+    }),
+    db.card_withdrawal_requests.count({
+      where: {
+        user_id: id,
+        status: { in: ["completed", "shipped"] },
+      },
+    }),
+  ]);
 
   if (!user) return null;
 
@@ -558,6 +609,10 @@ export async function getUserDetail(id: string) {
       legacyAddress: da.legacy_address,
       createdAt: da.created_at.toISOString(),
     })),
+    counts: {
+      deposits: depositCount,
+      withdrawals: withdrawalCount,
+    },
   };
 }
 
