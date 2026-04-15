@@ -1,11 +1,30 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { db } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { reloadPacks } from "@/app/(admin)/rewards/actions";
 import { toNumber } from "@/lib/utils/decimal";
+
+const prizeSchema = z.object({
+  type: z.enum(["pack", "card"]),
+  id: z.string().min(1, "Prize id is required"),
+  quantity: z.number().int().positive("Prize quantity must be at least 1"),
+});
+
+const createRaffleSchema = z.object({
+  name: z.string().trim().min(1, "Name is required").max(100, "Name is too long"),
+  description: z.string().trim().max(500, "Description is too long").optional(),
+  startsAt: z.string().min(1, "Start date is required"),
+  endsAt: z.string().min(1, "End date is required"),
+  minPointsPerEntry: z.number().int().nonnegative().optional(),
+  maxPointsPerEntry: z.number().int().nonnegative().optional(),
+  prizes: z.array(prizeSchema).min(1, "At least one prize is required"),
+});
+
+const updateRaffleSchema = createRaffleSchema;
 
 export type SearchItem = {
   id: string;
@@ -88,45 +107,106 @@ export async function createRaffle(data: {
   minPointsPerEntry?: number;
   maxPointsPerEntry?: number;
   prizes: { type: "pack" | "card"; id: string; quantity: number }[];
-}) {
+}): Promise<string> {
   const session = await requirePageAccess("/rewards/raffles");
 
-  const res = await fetch(
-    `${process.env.BACKEND_API_URL}/admin/raffles`,
-    {
+  // 1. Validate input shape
+  const parseResult = createRaffleSchema.safeParse(data);
+  if (!parseResult.success) {
+    throw new Error(parseResult.error.issues[0]?.message ?? "Invalid input");
+  }
+  const parsed = parseResult.data;
+
+  // 2. Validate dates — new Date(...) returns "Invalid Date" on garbage
+  // input, and a later .toISOString() call would panic with RangeError,
+  // which bubbles up as a masked server error in production.
+  const startsAtDate = new Date(parsed.startsAt);
+  const endsAtDate = new Date(parsed.endsAt);
+  if (Number.isNaN(startsAtDate.getTime())) {
+    throw new Error("Invalid start date");
+  }
+  if (Number.isNaN(endsAtDate.getTime())) {
+    throw new Error("Invalid end date");
+  }
+  if (endsAtDate <= startsAtDate) {
+    throw new Error("End date must be after start date");
+  }
+  if (
+    parsed.minPointsPerEntry != null &&
+    parsed.maxPointsPerEntry != null &&
+    parsed.maxPointsPerEntry < parsed.minPointsPerEntry
+  ) {
+    throw new Error("Max points per entry must be greater than or equal to min");
+  }
+
+  // 3. Env var check — without this, fetch() receives "undefined/admin/raffles"
+  // and throws an opaque TypeError that becomes a "Server Components render"
+  // error in production.
+  const backendUrl = process.env.BACKEND_API_URL;
+  const backendKey = process.env.BACKEND_API_KEY;
+  if (!backendUrl) {
+    throw new Error("BACKEND_API_URL is not configured on the server");
+  }
+  if (!backendKey) {
+    throw new Error("BACKEND_API_KEY is not configured on the server");
+  }
+
+  // 4. Call backend — wrap in try/catch so network errors surface cleanly
+  // instead of masking as a generic RSC render error.
+  let res: Response;
+  try {
+    res = await fetch(`${backendUrl}/admin/raffles`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": process.env.BACKEND_API_KEY!,
+        "x-api-key": backendKey,
       },
       body: JSON.stringify({
-        name: data.name,
-        description: data.description,
-        prizes: data.prizes,
-        min_points_per_entry: data.minPointsPerEntry,
-        max_points_per_entry: data.maxPointsPerEntry,
-        starts_at: new Date(data.startsAt).toISOString(),
-        ends_at: new Date(data.endsAt).toISOString(),
+        name: parsed.name,
+        description: parsed.description,
+        prizes: parsed.prizes,
+        min_points_per_entry: parsed.minPointsPerEntry,
+        max_points_per_entry: parsed.maxPointsPerEntry,
+        starts_at: startsAtDate.toISOString(),
+        ends_at: endsAtDate.toISOString(),
       }),
-    },
-  );
+    });
+  } catch (err) {
+    console.error("[createRaffle] Failed to reach backend:", err);
+    const message = err instanceof Error ? err.message : "Unknown network error";
+    throw new Error(`Failed to reach backend: ${message}`);
+  }
 
-  const body = await res.json().catch(() => null);
+  const body = (await res.json().catch(() => null)) as {
+    message?: string;
+    data?: { raffle?: { id?: string } };
+    raffle?: { id?: string };
+    id?: string;
+  } | null;
 
   if (!res.ok) {
-    throw new Error(body?.message ?? "Failed to create raffle");
+    const backendMessage = body?.message ?? `Backend returned HTTP ${res.status}`;
+    console.error(
+      "[createRaffle] Backend error:",
+      res.status,
+      JSON.stringify(body),
+    );
+    throw new Error(backendMessage);
   }
 
   const raffleId = body?.data?.raffle?.id ?? body?.raffle?.id ?? body?.id;
-  if (!raffleId) {
-    console.error("Unexpected raffle API response:", JSON.stringify(body));
-    throw new Error("Unexpected API response");
+  if (!raffleId || typeof raffleId !== "string") {
+    console.error(
+      "[createRaffle] Unexpected backend response shape:",
+      JSON.stringify(body),
+    );
+    throw new Error("Backend returned an unexpected response shape");
   }
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "raffle_created",
-    metadata: { raffle_id: raffleId, name: data.name },
+    metadata: { raffle_id: raffleId, name: parsed.name },
   });
 
   await reloadPacks();
@@ -146,8 +226,33 @@ export async function updateRaffle(
     maxPointsPerEntry?: number;
     prizes: { type: "pack" | "card"; id: string; quantity: number }[];
   },
-) {
+): Promise<void> {
   const session = await requirePageAccess("/rewards/raffles");
+
+  const parseResult = updateRaffleSchema.safeParse(data);
+  if (!parseResult.success) {
+    throw new Error(parseResult.error.issues[0]?.message ?? "Invalid input");
+  }
+  const parsed = parseResult.data;
+
+  const startsAtDate = new Date(parsed.startsAt);
+  const endsAtDate = new Date(parsed.endsAt);
+  if (Number.isNaN(startsAtDate.getTime())) {
+    throw new Error("Invalid start date");
+  }
+  if (Number.isNaN(endsAtDate.getTime())) {
+    throw new Error("Invalid end date");
+  }
+  if (endsAtDate <= startsAtDate) {
+    throw new Error("End date must be after start date");
+  }
+  if (
+    parsed.minPointsPerEntry != null &&
+    parsed.maxPointsPerEntry != null &&
+    parsed.maxPointsPerEntry < parsed.minPointsPerEntry
+  ) {
+    throw new Error("Max points per entry must be greater than or equal to min");
+  }
 
   const raffle = await db.raffles.findUnique({ where: { id } });
   if (!raffle) throw new Error("Raffle not found");
@@ -156,20 +261,20 @@ export async function updateRaffle(
   await db.raffles.update({
     where: { id },
     data: {
-      name: data.name,
-      description: data.description ?? null,
-      starts_at: new Date(data.startsAt),
-      ends_at: new Date(data.endsAt),
-      min_points_per_entry: data.minPointsPerEntry ?? null,
-      max_points_per_entry: data.maxPointsPerEntry ?? null,
-      prizes: data.prizes,
+      name: parsed.name,
+      description: parsed.description ?? null,
+      starts_at: startsAtDate,
+      ends_at: endsAtDate,
+      min_points_per_entry: parsed.minPointsPerEntry ?? null,
+      max_points_per_entry: parsed.maxPointsPerEntry ?? null,
+      prizes: parsed.prizes,
     },
   });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "raffle_updated",
-    metadata: { raffle_id: id, name: data.name },
+    metadata: { raffle_id: id, name: parsed.name },
   });
 
   revalidatePath("/rewards/raffles");
