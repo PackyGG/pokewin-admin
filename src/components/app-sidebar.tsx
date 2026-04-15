@@ -281,12 +281,16 @@ export function AppSidebar({ role, allowedPages }: { role: string; allowedPages:
 
   return (
     <Sidebar collapsible="icon">
-      <SidebarHeader className="border-b border-border px-4 h-14 flex items-center justify-center">
+      <SidebarHeader className="border-b border-border px-4 h-14 flex items-center justify-center group-data-[collapsible=icon]:px-0">
         <Link href={getDefaultRoute(role, allowedPages)} className="flex justify-center">
+          {/* Expanded mode: full wordmark (two variants for light/dark theme) */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo-dark.png" alt="Pokewin" className="h-6 dark:hidden group-data-[collapsible=icon]:hidden" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo.png" alt="Pokewin" className="h-6 hidden dark:block group-data-[collapsible=icon]:hidden" />
+          {/* Collapsed (icon) mode: show the compact favicon-sized mark */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/icon.png" alt="Pokewin" className="h-7 w-7 hidden group-data-[collapsible=icon]:block" />
         </Link>
       </SidebarHeader>
       <SidebarContent>
