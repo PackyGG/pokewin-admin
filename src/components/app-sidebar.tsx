@@ -109,6 +109,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Analytics", href: "/analytics", icon: "BarChart3" },
       { label: "Map", href: "/map", icon: "Globe" },
       { label: "Users", href: "/users", icon: "Users" },
+      { label: "Deposits", href: "/transactions/deposits", icon: "ArrowDownToLine" },
       { label: "Withdrawals", href: "/withdrawals", icon: "ArrowDownToLine" },
     ],
   },
@@ -119,7 +120,6 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Packs", href: "/transactions/packs", icon: "Package" },
       { label: "Battles", href: "/transactions/battles", icon: "Swords" },
       { label: "Rewards", href: "/transactions/rewards", icon: "Award" },
-      { label: "Deposits", href: "/transactions/deposits", icon: "ArrowDownToLine" },
     ],
   },
   {
