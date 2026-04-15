@@ -246,6 +246,10 @@ type UserDetail = {
     legacyAddress: string | null;
     createdAt: string;
   }[];
+  counts: {
+    deposits: number;
+    withdrawals: number;
+  };
   sessionRole: string;
 };
 
@@ -465,6 +469,7 @@ export function UserTabs({
     cardWithdrawals,
     activeSeed,
     depositAddresses,
+    counts,
   } = data;
   const searchParams = useSearchParams();
   const initialTab = searchParams.has("txPage")
@@ -616,7 +621,7 @@ export function UserTabs({
 
       <TabsContent value="overview" className="space-y-6">
         {/* Zone 1 — Header Strip */}
-        <UserHeaderStrip user={user} isAdmin={isAdmin} />
+        <UserHeaderStrip user={user} isAdmin={isAdmin} counts={counts} />
 
         {/* Zone 2 — Key Metrics: Balances on the left, Statistics on the right.
             Statistics is the merged view (P&L hero + Costs + Engagement + Wager Windows + Rewards). */}
@@ -910,9 +915,11 @@ const CollapsibleSection = React.memo(function CollapsibleSection({
 const UserHeaderStrip = React.memo(function UserHeaderStrip({
   user,
   isAdmin,
+  counts,
 }: {
   user: UserDetail["user"];
   isAdmin: boolean;
+  counts: UserDetail["counts"];
 }) {
   const [reason, setReason] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -960,6 +967,23 @@ const UserHeaderStrip = React.memo(function UserHeaderStrip({
                 verified
               </Badge>
             )}
+          </div>
+          {/* Deposit / withdrawal activity counts — surfaced here so a
+              reviewer sees how often this user has actually moved money
+              without opening the transactions tab. */}
+          <div className="mt-1 flex items-center gap-4 text-xs text-muted-foreground">
+            <span>
+              Deposits:{" "}
+              <span className="font-semibold tabular-nums text-foreground">
+                {counts.deposits}
+              </span>
+            </span>
+            <span>
+              Withdrawals:{" "}
+              <span className="font-semibold tabular-nums text-foreground">
+                {counts.withdrawals}
+              </span>
+            </span>
           </div>
         </div>
 
