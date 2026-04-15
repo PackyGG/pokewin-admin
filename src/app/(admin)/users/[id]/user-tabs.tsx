@@ -623,35 +623,29 @@ export function UserTabs({
         {/* Zone 1 — Header Strip */}
         <UserHeaderStrip user={user} isAdmin={isAdmin} counts={counts} />
 
-        {/* Zone 2 — Key Metrics: Balances on the left, Statistics on the right.
-            Statistics is the merged view (P&L hero + Costs + Engagement + Wager Windows + Rewards). */}
+        {/* Zone 2 — Key Metrics */}
         <CollapsibleSection
           title="Key Metrics"
           sectionKey="metrics"
           open={openSections.metrics}
           onToggle={handleToggleSection}
         >
-          {/* Layout: Balances takes 1/3 on lg+ screens (8 short rows fit
-              comfortably), Statistics takes the remaining 2/3 so its inner
-              4-section grid has room to lay out side-by-side instead of
-              stacking. On md screens the original 50/50 split is kept. */}
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 items-start">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             <BalanceSummaryCard
               balances={balances}
               userId={user.id}
               isAdmin={isAdmin}
             />
-            <div className="lg:col-span-2">
-              <StatisticsCard
-                pnlBreakdown={pnlBreakdown}
-                balances={balances}
-                statistics={statistics}
-                inventoryCount={data.inventoryCount}
-                rewards={rewards}
-                userId={user.id}
-                isAdmin={isAdmin}
-              />
-            </div>
+            <PnlCard pnlBreakdown={pnlBreakdown} balances={balances} />
+            <ActivityStatsCard
+              statistics={statistics}
+              balances={balances}
+              inventoryCount={data.inventoryCount}
+              bonusPoints={balances?.bonusPoints ?? 0}
+              userId={user.id}
+              isAdmin={isAdmin}
+            />
+            <RewardsCard rewards={rewards} />
           </div>
         </CollapsibleSection>
 
@@ -1614,6 +1608,31 @@ const BalanceSummaryCard = React.memo(function BalanceSummaryCard({
           label="Withdrawn"
           value={formatCurrency(balances.totalWithdrawn)}
         />
+        {(() => {
+          // Platform perspective: positive = we earn, negative = we lose
+          const platformPnl =
+            balances.totalDeposited -
+            balances.totalWithdrawn -
+            balances.availableBalance -
+            balances.lockedBalance -
+            balances.inventoryValue -
+            balances.vouchersValue;
+          const cls =
+            platformPnl > 0
+              ? "text-emerald-400"
+              : platformPnl < 0
+                ? "text-rose-400"
+                : "text-foreground";
+          return (
+            <div className="flex items-center justify-between border-t pt-2">
+              <span className="text-sm text-muted-foreground">P&L</span>
+              <span className={`font-semibold tabular-nums ${cls}`}>
+                {platformPnl >= 0 ? "+" : ""}
+                {formatCurrency(platformPnl)}
+              </span>
+            </div>
+          );
+        })()}
         <InfoRow
           label="Wagered"
           value={formatCurrency(balances.totalWagered)}
@@ -2226,30 +2245,17 @@ function CardWithdrawalsSubTable({
  * Everything else lives in dense subsections underneath so support can
  * still answer deep questions without jumping between cards.
  */
-const StatisticsCard = React.memo(function StatisticsCard({
+const PnlCard = React.memo(function PnlCard({
   pnlBreakdown: p,
   balances,
-  statistics,
-  inventoryCount,
-  rewards,
-  userId,
-  isAdmin,
 }: {
   pnlBreakdown: PnlBreakdown;
   balances: UserDetail["balances"];
-  statistics: UserDetail["statistics"];
-  inventoryCount: number;
-  rewards: UserRewards;
-  userId: string;
-  isAdmin: boolean;
 }) {
-  const [xpAdjustOpen, setXpAdjustOpen] = useState(false);
-  const bonusPoints = balances?.bonusPoints ?? 0;
-
-  // Platform P&L = deposited − withdrawn − balance − locked − inventory − vouchers.
-  // This is the same house-side formula used elsewhere in the admin panel
-  // (see _realized-pnl.ts) — just negated because the per-user P&L
-  // in queries/users.ts expresses user-profit.
+  // Platform P&L = deposited − withdrawn − balance − locked − inventory
+  // This already includes ALL effects (bonuses, rakeback etc. flow through
+  // balance — when given they increase it, when wagered away they decrease it).
+  // Costs below are informational only, NOT subtracted again.
   const platformPnl = balances
     ? balances.totalDeposited -
       balances.totalWithdrawn -
@@ -2259,25 +2265,122 @@ const StatisticsCard = React.memo(function StatisticsCard({
       balances.vouchersValue
     : 0;
 
-  const wagerLoss = balances ? balances.totalWagered - balances.totalWon : 0;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm font-medium">Platform P&L</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {/* P&L header */}
+        <div className="pb-2 border-b">
+          <div className="flex items-baseline gap-3">
+            <span className="text-sm text-muted-foreground">P&L</span>
+            <span
+              className={`text-2xl font-bold tabular-nums ${platformPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}
+            >
+              {platformPnl >= 0 ? "+" : ""}
+              {formatCurrency(platformPnl)}
+            </span>
+          </div>
+          {balances && (
+            <div className="mt-1 text-[10px] text-muted-foreground">
+              Deposited {formatCurrency(balances.totalDeposited)} − Withdrawn{" "}
+              {formatCurrency(balances.totalWithdrawn)} − Balance{" "}
+              {formatCurrency(
+                balances.availableBalance + balances.lockedBalance,
+              )}{" "}
+              − Inventory {formatCurrency(balances.inventoryValue)} − Vouchers{" "}
+              {formatCurrency(balances.vouchersValue)}
+            </div>
+          )}
+        </div>
 
-  const pnlBorder =
-    platformPnl > 0
-      ? "border-emerald-500/40 bg-emerald-500/10"
-      : platformPnl < 0
-        ? "border-rose-500/40 bg-rose-500/10"
-        : "border-border bg-muted/10";
-  const pnlText =
-    platformPnl > 0
-      ? "text-emerald-400"
-      : platformPnl < 0
-        ? "text-rose-400"
-        : "text-foreground";
+        {/* Cost breakdown — supplementary detail */}
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground pt-1">
+          Costs Given (included in P&L)
+        </p>
+        <InfoRow
+          label="↳ Bonuses & Promos"
+          value={<PnlValue value={-p.bonusesCost} />}
+        />
+        <InfoRow
+          label="↳ Rakeback"
+          value={<PnlValue value={-p.rakebackCost} />}
+        />
+        <InfoRow
+          label="↳ Affiliate"
+          value={<PnlValue value={-p.affiliateCost} />}
+        />
+        <div className="group relative">
+          <InfoRow label="↳ Other" value={<PnlValue value={-p.otherCosts} />} />
+          {p.otherCosts !== 0 && (
+            <div className="invisible group-hover:visible absolute left-0 bottom-full mb-1 z-50 w-64 rounded-md border bg-popover p-3 text-popover-foreground shadow-md">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                Other Costs Breakdown
+              </p>
+              <div className="space-y-1.5">
+                {(
+                  [
+                    ["Rain Win", p.otherCostsDetail.rainWin],
+                    ["Race Prize", p.otherCostsDetail.racePrize],
+                    ["Balance Reward", p.otherCostsDetail.balanceRewardClaim],
+                    ["Creator Tip", p.otherCostsDetail.creatorTip],
+                    ["Voucher Redeemed", p.otherCostsDetail.voucherRedeemed],
+                    ["Voucher Exchange", p.otherCostsDetail.voucherExchange],
+                    [
+                      "Exchange Excess Credit",
+                      p.otherCostsDetail.exchangeExcessCredit,
+                    ],
+                    [
+                      "Exchange → Voucher",
+                      p.otherCostsDetail.exchangeExcessToVoucher,
+                    ],
+                    [
+                      "Battle → Voucher",
+                      p.otherCostsDetail.battleExcessToVoucher,
+                    ],
+                  ] as [string, number][]
+                )
+                  .filter(([, v]) => v !== 0)
+                  .map(([label, value]) => (
+                    <div
+                      key={label}
+                      className="flex items-center justify-between text-xs"
+                    >
+                      <span className="text-muted-foreground">{label}</span>
+                      <PnlValue value={-value} />
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+});
+
+const ActivityStatsCard = React.memo(function ActivityStatsCard({
+  statistics,
+  balances,
+  inventoryCount,
+  bonusPoints,
+  userId,
+  isAdmin,
+}: {
+  statistics: UserDetail["statistics"];
+  balances: UserDetail["balances"];
+  inventoryCount: number;
+  bonusPoints: number;
+  userId: string;
+  isAdmin: boolean;
+}) {
+  const [xpAdjustOpen, setXpAdjustOpen] = useState(false);
 
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="text-sm font-medium">Statistics</CardTitle>
+        <CardTitle className="text-sm font-medium">Activity</CardTitle>
         {isAdmin && (
           <Button
             variant="outline"
@@ -2289,199 +2392,127 @@ const StatisticsCard = React.memo(function StatisticsCard({
           </Button>
         )}
       </CardHeader>
-      <CardContent className="space-y-4">
-        {/* Hero: Platform P&L — highly visible, bordered, colored. Stays
-            full-width above the section grid as the visual anchor. */}
-        <div className={`rounded-md border-2 p-3 ${pnlBorder}`}>
-          <div className="flex items-baseline justify-between gap-3">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Platform P&L
-            </span>
-            <span className={`text-3xl font-bold tabular-nums ${pnlText}`}>
-              {platformPnl >= 0 ? "+" : ""}
-              {formatCurrency(platformPnl)}
+      <CardContent className="space-y-3">
+        <div className="space-y-1 pb-2 border-b">
+          <div className="flex items-baseline gap-3">
+            <span className="text-sm text-muted-foreground">Level</span>
+            <span className="text-2xl font-bold tabular-nums">
+              {statistics?.level ?? 0}
             </span>
           </div>
-          {balances && (
-            <div className="mt-1 text-[10px] text-muted-foreground">
-              Dep {formatCurrency(balances.totalDeposited)} − WD{" "}
-              {formatCurrency(balances.totalWithdrawn)} − Bal{" "}
-              {formatCurrency(
-                balances.availableBalance + balances.lockedBalance,
-              )}{" "}
-              − Inv {formatCurrency(balances.inventoryValue)} − Vouchers{" "}
-              {formatCurrency(balances.vouchersValue)}
-            </div>
-          )}
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-muted-foreground">XP</span>
+            <span className="text-sm tabular-nums">{statistics?.xp ?? 0}</span>
+          </div>
+          {balances &&
+            (() => {
+              const wagerLoss = balances.totalWagered - balances.totalWon;
+              return (
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-muted-foreground">
+                    Wager Loss
+                  </span>
+                  <span
+                    className={`text-sm tabular-nums ${wagerLoss > 0 ? "text-red-400" : wagerLoss < 0 ? "text-green-400" : "text-muted-foreground"}`}
+                  >
+                    {wagerLoss > 0 ? "-" : wagerLoss < 0 ? "+" : ""}
+                    {formatCurrency(Math.abs(wagerLoss))}
+                  </span>
+                </div>
+              );
+            })()}
         </div>
-
-        {/* Sections grid — on lg+ the 4 sections lay out 2x2 instead of
-            stacking, cutting the card's vertical height roughly in half.
-            On md and below they fall back to a single column to keep
-            content readable in narrow widths. */}
-        <div className="grid gap-x-6 gap-y-4 lg:grid-cols-2">
-          {/* Costs Given — supplementary breakdown of what's already baked into P&L */}
-          <div className="space-y-1.5">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Costs Given (included in P&L)
-            </p>
+        <InfoRow
+          label="Packs Opened"
+          value={String(statistics?.openedPacks ?? 0)}
+        />
+        <InfoRow
+          label="Battles Played"
+          value={String(statistics?.battlesPlayed ?? 0)}
+        />
+        <InfoRow label="Inventory Items" value={String(inventoryCount)} />
+        <InfoRow label="Bonus Points" value={String(bonusPoints)} />
+        {statistics && (
+          <>
+            <div className="border-t pt-2 mt-2" />
             <InfoRow
-              label="↳ Bonuses & Promos"
-              value={<PnlValue value={-p.bonusesCost} />}
+              label="Wagered Today"
+              value={formatCurrency(statistics.currentDayWageredUsd)}
             />
             <InfoRow
-              label="↳ Rakeback"
-              value={<PnlValue value={-p.rakebackCost} />}
+              label="Wagered This Week"
+              value={formatCurrency(statistics.currentWeekWageredUsd)}
             />
             <InfoRow
-              label="↳ Affiliate"
-              value={<PnlValue value={-p.affiliateCost} />}
-            />
-            <div className="group relative">
-              <InfoRow
-                label="↳ Other"
-                value={<PnlValue value={-p.otherCosts} />}
-              />
-              {p.otherCosts !== 0 && (
-                <div className="invisible group-hover:visible absolute left-0 bottom-full mb-1 z-50 w-64 rounded-md border bg-popover p-3 text-popover-foreground shadow-md">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                    Other Costs Breakdown
-                  </p>
-                  <div className="space-y-1.5">
-                    {(
-                      [
-                        ["Rain Win", p.otherCostsDetail.rainWin],
-                        ["Race Prize", p.otherCostsDetail.racePrize],
-                        ["Balance Reward", p.otherCostsDetail.balanceRewardClaim],
-                        ["Creator Tip", p.otherCostsDetail.creatorTip],
-                        ["Voucher Redeemed", p.otherCostsDetail.voucherRedeemed],
-                        ["Voucher Exchange", p.otherCostsDetail.voucherExchange],
-                        [
-                          "Exchange Excess Credit",
-                          p.otherCostsDetail.exchangeExcessCredit,
-                        ],
-                        [
-                          "Exchange → Voucher",
-                          p.otherCostsDetail.exchangeExcessToVoucher,
-                        ],
-                        [
-                          "Battle → Voucher",
-                          p.otherCostsDetail.battleExcessToVoucher,
-                        ],
-                      ] as [string, number][]
-                    )
-                      .filter(([, v]) => v !== 0)
-                      .map(([label, value]) => (
-                        <div
-                          key={label}
-                          className="flex items-center justify-between text-xs"
-                        >
-                          <span className="text-muted-foreground">{label}</span>
-                          <PnlValue value={-value} />
-                        </div>
-                      ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Engagement — identity/activity signals */}
-          <div className="space-y-1.5">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Engagement
-            </p>
-            <InfoRow label="Level" value={String(statistics?.level ?? 0)} />
-            <InfoRow label="XP" value={String(statistics?.xp ?? 0)} />
-            <InfoRow label="Wager Loss" value={<PnlValue value={-wagerLoss} />} />
-            <InfoRow
-              label="Packs Opened"
-              value={String(statistics?.openedPacks ?? 0)}
+              label="Wagered This Month"
+              value={formatCurrency(statistics.currentMonthWageredUsd)}
             />
             <InfoRow
-              label="Battles Played"
-              value={String(statistics?.battlesPlayed ?? 0)}
+              label="Weekly Wager Count"
+              value={String(statistics.weeklyWagerCount)}
             />
-            <InfoRow label="Inventory Items" value={String(inventoryCount)} />
-            <InfoRow label="Bonus Points" value={String(bonusPoints)} />
-          </div>
-
-          {/* Wager Windows — recency/velocity signals */}
-          {statistics && (
-            <div className="space-y-1.5">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Wager Windows
-              </p>
-              <InfoRow
-                label="Today"
-                value={formatCurrency(statistics.currentDayWageredUsd)}
-              />
-              <InfoRow
-                label="This Week"
-                value={formatCurrency(statistics.currentWeekWageredUsd)}
-              />
-              <InfoRow
-                label="This Month"
-                value={formatCurrency(statistics.currentMonthWageredUsd)}
-              />
-              <InfoRow
-                label="Weekly Count"
-                value={String(statistics.weeklyWagerCount)}
-              />
-              <InfoRow
-                label="Last Wagered"
-                value={
-                  statistics.lastWageredAt
-                    ? formatRelative(statistics.lastWageredAt)
-                    : "Never"
-                }
-              />
-              <InfoRow
-                label="Profile Private"
-                value={statistics.isProfilePrivate ? "Yes" : "No"}
-              />
-            </div>
-          )}
-
-          {/* Rewards — unclaimed liability on the user side */}
-          <div className="space-y-1.5">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Rewards
-            </p>
-            <div className="rounded-md border bg-muted/30 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                Open one-time rewards
-              </div>
-              <div className="text-xl font-bold tabular-nums">
-                {rewards.openOneTimeCount}
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div className="rounded-md border bg-muted/30 px-2.5 py-1.5">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                  Rakeback claimable
-                </div>
-                <div className="text-sm font-semibold tabular-nums text-emerald-400">
-                  {formatCurrency(rewards.rakebackClaimableUsd)}
-                </div>
-              </div>
-              <div className="rounded-md border bg-muted/30 px-2.5 py-1.5">
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                  Rakeback claimed
-                </div>
-                <div className="text-sm font-semibold tabular-nums text-muted-foreground">
-                  {formatCurrency(rewards.rakebackClaimedUsd)}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+            <InfoRow
+              label="Last Wagered"
+              value={
+                statistics.lastWageredAt
+                  ? formatRelative(statistics.lastWageredAt)
+                  : "Never"
+              }
+            />
+            <InfoRow
+              label="Profile Private"
+              value={statistics.isProfilePrivate ? "Yes" : "No"}
+            />
+          </>
+        )}
       </CardContent>
       <XpAdjustDialog
         userId={userId}
         open={xpAdjustOpen}
         onOpenChange={setXpAdjustOpen}
       />
+    </Card>
+  );
+});
+
+const RewardsCard = React.memo(function RewardsCard({
+  rewards,
+}: {
+  rewards: UserRewards;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm font-medium">Rewards</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="rounded-md border bg-muted/30 px-3 py-2">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            Open one-time rewards
+          </div>
+          <div className="text-2xl font-bold tabular-nums">
+            {rewards.openOneTimeCount}
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="rounded-md border bg-muted/30 px-2.5 py-1.5">
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              Rakeback claimable
+            </div>
+            <div className="text-lg font-semibold tabular-nums text-emerald-400">
+              {formatCurrency(rewards.rakebackClaimableUsd)}
+            </div>
+          </div>
+          <div className="rounded-md border bg-muted/30 px-2.5 py-1.5">
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              Rakeback claimed
+            </div>
+            <div className="text-lg font-semibold tabular-nums text-muted-foreground">
+              {formatCurrency(rewards.rakebackClaimedUsd)}
+            </div>
+          </div>
+        </div>
+      </CardContent>
     </Card>
   );
 });
