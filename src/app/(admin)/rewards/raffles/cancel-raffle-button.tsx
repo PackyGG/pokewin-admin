@@ -24,7 +24,11 @@ export function CancelRaffleButton({ raffleId }: { raffleId: string }) {
   function handleCancel() {
     startTransition(async () => {
       try {
-        await cancelRaffle(raffleId);
+        const result = await cancelRaffle(raffleId);
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
         toast.success("Raffle cancelled");
         router.refresh();
       } catch (e) {

@@ -111,7 +111,7 @@ export function CreateRaffleButton() {
 
     startTransition(async () => {
       try {
-        await createRaffle({
+        const result = await createRaffle({
           name: name.trim(),
           description: description.trim() || undefined,
           startsAt,
@@ -120,11 +120,18 @@ export function CreateRaffleButton() {
           maxPointsPerEntry: maxPoints ? parseInt(maxPoints, 10) : undefined,
           prizes: validPrizes.map((p) => ({ type: p.type, id: p.id, quantity: p.quantity })),
         });
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
         toast.success("Raffle created");
         setOpen(false);
         resetForm();
         router.refresh();
       } catch (e) {
+        // Only unexpected (non-raffle) errors land here — e.g. network failure
+        // before the action reached the server. The action itself returns
+        // { success: false, error } for all expected failure modes.
         toast.error(e instanceof Error ? e.message : "Failed to create raffle");
       }
     });

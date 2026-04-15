@@ -140,7 +140,7 @@ export function EditRaffleButton({ raffleId, ...initial }: Props) {
 
     startTransition(async () => {
       try {
-        await updateRaffle(raffleId, {
+        const result = await updateRaffle(raffleId, {
           name: name.trim(),
           description: description.trim() || undefined,
           startsAt,
@@ -149,6 +149,10 @@ export function EditRaffleButton({ raffleId, ...initial }: Props) {
           maxPointsPerEntry: maxPoints ? parseInt(maxPoints, 10) : undefined,
           prizes: validPrizes.map((p) => ({ type: p.type, id: p.id, quantity: p.quantity })),
         });
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
         toast.success("Raffle updated");
         setOpen(false);
         router.refresh();

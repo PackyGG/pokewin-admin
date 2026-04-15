@@ -26,6 +26,13 @@ const createRaffleSchema = z.object({
 
 const updateRaffleSchema = createRaffleSchema;
 
+// Raffle mutations return their error as a value instead of throwing.
+// Next.js masks all thrown Server Action errors in production — the client
+// receives a digest-only "An error occurred in the Server Components render"
+// message with the real message stripped. Returning { success: false, error }
+// lets the real message survive the RSC payload and surface in a toast.
+// Matches the pattern used by createAffiliateCode in users/[id]/actions.ts.
+
 export type SearchItem = {
   id: string;
   type: "pack" | "card";
@@ -107,52 +114,64 @@ export async function createRaffle(data: {
   minPointsPerEntry?: number;
   maxPointsPerEntry?: number;
   prizes: { type: "pack" | "card"; id: string; quantity: number }[];
-}): Promise<string> {
+}): Promise<
+  | { success: true; raffleId: string }
+  | { success: false; error: string }
+> {
   const session = await requirePageAccess("/rewards/raffles");
 
   // 1. Validate input shape
   const parseResult = createRaffleSchema.safeParse(data);
   if (!parseResult.success) {
-    throw new Error(parseResult.error.issues[0]?.message ?? "Invalid input");
+    return {
+      success: false,
+      error: parseResult.error.issues[0]?.message ?? "Invalid input",
+    };
   }
   const parsed = parseResult.data;
 
   // 2. Validate dates — new Date(...) returns "Invalid Date" on garbage
-  // input, and a later .toISOString() call would panic with RangeError,
-  // which bubbles up as a masked server error in production.
+  // input, and a later .toISOString() call would panic with RangeError.
   const startsAtDate = new Date(parsed.startsAt);
   const endsAtDate = new Date(parsed.endsAt);
   if (Number.isNaN(startsAtDate.getTime())) {
-    throw new Error("Invalid start date");
+    return { success: false, error: "Invalid start date" };
   }
   if (Number.isNaN(endsAtDate.getTime())) {
-    throw new Error("Invalid end date");
+    return { success: false, error: "Invalid end date" };
   }
   if (endsAtDate <= startsAtDate) {
-    throw new Error("End date must be after start date");
+    return { success: false, error: "End date must be after start date" };
   }
   if (
     parsed.minPointsPerEntry != null &&
     parsed.maxPointsPerEntry != null &&
     parsed.maxPointsPerEntry < parsed.minPointsPerEntry
   ) {
-    throw new Error("Max points per entry must be greater than or equal to min");
+    return {
+      success: false,
+      error: "Max points per entry must be greater than or equal to min",
+    };
   }
 
   // 3. Env var check — without this, fetch() receives "undefined/admin/raffles"
-  // and throws an opaque TypeError that becomes a "Server Components render"
-  // error in production.
+  // and throws an opaque TypeError.
   const backendUrl = process.env.BACKEND_API_URL;
   const backendKey = process.env.BACKEND_API_KEY;
   if (!backendUrl) {
-    throw new Error("BACKEND_API_URL is not configured on the server");
+    return {
+      success: false,
+      error: "BACKEND_API_URL is not configured on the server",
+    };
   }
   if (!backendKey) {
-    throw new Error("BACKEND_API_KEY is not configured on the server");
+    return {
+      success: false,
+      error: "BACKEND_API_KEY is not configured on the server",
+    };
   }
 
-  // 4. Call backend — wrap in try/catch so network errors surface cleanly
-  // instead of masking as a generic RSC render error.
+  // 4. Call backend
   let res: Response;
   try {
     res = await fetch(`${backendUrl}/admin/raffles`, {
@@ -174,7 +193,7 @@ export async function createRaffle(data: {
   } catch (err) {
     console.error("[createRaffle] Failed to reach backend:", err);
     const message = err instanceof Error ? err.message : "Unknown network error";
-    throw new Error(`Failed to reach backend: ${message}`);
+    return { success: false, error: `Failed to reach backend: ${message}` };
   }
 
   const body = (await res.json().catch(() => null)) as {
@@ -191,7 +210,7 @@ export async function createRaffle(data: {
       res.status,
       JSON.stringify(body),
     );
-    throw new Error(backendMessage);
+    return { success: false, error: backendMessage };
   }
 
   const raffleId = body?.data?.raffle?.id ?? body?.raffle?.id ?? body?.id;
@@ -200,19 +219,28 @@ export async function createRaffle(data: {
       "[createRaffle] Unexpected backend response shape:",
       JSON.stringify(body),
     );
-    throw new Error("Backend returned an unexpected response shape");
+    return {
+      success: false,
+      error: "Backend returned an unexpected response shape",
+    };
   }
 
-  await createAdminAuditEvent({
-    adminUserId: session.userId,
-    eventType: "raffle_created",
-    metadata: { raffle_id: raffleId, name: parsed.name },
-  });
+  try {
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "raffle_created",
+      metadata: { raffle_id: raffleId, name: parsed.name },
+    });
+  } catch (err) {
+    // Raffle was created successfully on the backend — don't fail the whole
+    // operation just because audit logging is broken. Log it loudly instead.
+    console.error("[createRaffle] Audit logging failed:", err);
+  }
 
   await reloadPacks();
 
   revalidatePath("/rewards/raffles");
-  return raffleId;
+  return { success: true, raffleId };
 }
 
 export async function updateRaffle(
@@ -226,79 +254,113 @@ export async function updateRaffle(
     maxPointsPerEntry?: number;
     prizes: { type: "pack" | "card"; id: string; quantity: number }[];
   },
-): Promise<void> {
+): Promise<{ success: true } | { success: false; error: string }> {
   const session = await requirePageAccess("/rewards/raffles");
 
   const parseResult = updateRaffleSchema.safeParse(data);
   if (!parseResult.success) {
-    throw new Error(parseResult.error.issues[0]?.message ?? "Invalid input");
+    return {
+      success: false,
+      error: parseResult.error.issues[0]?.message ?? "Invalid input",
+    };
   }
   const parsed = parseResult.data;
 
   const startsAtDate = new Date(parsed.startsAt);
   const endsAtDate = new Date(parsed.endsAt);
   if (Number.isNaN(startsAtDate.getTime())) {
-    throw new Error("Invalid start date");
+    return { success: false, error: "Invalid start date" };
   }
   if (Number.isNaN(endsAtDate.getTime())) {
-    throw new Error("Invalid end date");
+    return { success: false, error: "Invalid end date" };
   }
   if (endsAtDate <= startsAtDate) {
-    throw new Error("End date must be after start date");
+    return { success: false, error: "End date must be after start date" };
   }
   if (
     parsed.minPointsPerEntry != null &&
     parsed.maxPointsPerEntry != null &&
     parsed.maxPointsPerEntry < parsed.minPointsPerEntry
   ) {
-    throw new Error("Max points per entry must be greater than or equal to min");
+    return {
+      success: false,
+      error: "Max points per entry must be greater than or equal to min",
+    };
   }
 
   const raffle = await db.raffles.findUnique({ where: { id } });
-  if (!raffle) throw new Error("Raffle not found");
-  if (raffle.status !== "active") throw new Error("Only active raffles can be edited");
+  if (!raffle) return { success: false, error: "Raffle not found" };
+  if (raffle.status !== "active") {
+    return { success: false, error: "Only active raffles can be edited" };
+  }
 
-  await db.raffles.update({
-    where: { id },
-    data: {
-      name: parsed.name,
-      description: parsed.description ?? null,
-      starts_at: startsAtDate,
-      ends_at: endsAtDate,
-      min_points_per_entry: parsed.minPointsPerEntry ?? null,
-      max_points_per_entry: parsed.maxPointsPerEntry ?? null,
-      prizes: parsed.prizes,
-    },
-  });
+  try {
+    await db.raffles.update({
+      where: { id },
+      data: {
+        name: parsed.name,
+        description: parsed.description ?? null,
+        starts_at: startsAtDate,
+        ends_at: endsAtDate,
+        min_points_per_entry: parsed.minPointsPerEntry ?? null,
+        max_points_per_entry: parsed.maxPointsPerEntry ?? null,
+        prizes: parsed.prizes,
+      },
+    });
+  } catch (err) {
+    console.error("[updateRaffle] DB update failed:", err);
+    const message = err instanceof Error ? err.message : "Unknown DB error";
+    return { success: false, error: `Failed to update raffle: ${message}` };
+  }
 
-  await createAdminAuditEvent({
-    adminUserId: session.userId,
-    eventType: "raffle_updated",
-    metadata: { raffle_id: id, name: parsed.name },
-  });
+  try {
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "raffle_updated",
+      metadata: { raffle_id: id, name: parsed.name },
+    });
+  } catch (err) {
+    console.error("[updateRaffle] Audit logging failed:", err);
+  }
 
   revalidatePath("/rewards/raffles");
   revalidatePath(`/rewards/raffles/${id}`);
+  return { success: true };
 }
 
-export async function cancelRaffle(id: string) {
+export async function cancelRaffle(
+  id: string,
+): Promise<{ success: true } | { success: false; error: string }> {
   const session = await requirePageAccess("/rewards/raffles");
 
   const raffle = await db.raffles.findUnique({ where: { id } });
-  if (!raffle) throw new Error("Raffle not found");
-  if (raffle.status !== "active") throw new Error("Only active raffles can be cancelled");
+  if (!raffle) return { success: false, error: "Raffle not found" };
+  if (raffle.status !== "active") {
+    return { success: false, error: "Only active raffles can be cancelled" };
+  }
 
-  await db.raffles.update({
-    where: { id },
-    data: { status: "cancelled" },
-  });
+  try {
+    await db.raffles.update({
+      where: { id },
+      data: { status: "cancelled" },
+    });
+  } catch (err) {
+    console.error("[cancelRaffle] DB update failed:", err);
+    const message = err instanceof Error ? err.message : "Unknown DB error";
+    return { success: false, error: `Failed to cancel raffle: ${message}` };
+  }
 
-  await createAdminAuditEvent({
-    adminUserId: session.userId,
-    eventType: "raffle_cancelled",
-    metadata: { raffle_id: id },
-  });
+  try {
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "raffle_cancelled",
+      metadata: { raffle_id: id },
+    });
+  } catch (err) {
+    console.error("[cancelRaffle] Audit logging failed:", err);
+  }
 
   revalidatePath("/rewards/raffles");
   revalidatePath(`/rewards/raffles/${id}`);
+  return { success: true };
 }
