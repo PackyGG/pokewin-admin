@@ -486,6 +486,7 @@ export function UserTabs({
     creator: true,
     gaming: true,
     financial: true,
+    rewards: true,
     cardSales: true,
     exchanges: true,
     balanceHistory: false,
@@ -645,7 +646,6 @@ export function UserTabs({
               userId={user.id}
               isAdmin={isAdmin}
             />
-            <RewardsCard rewards={rewards} />
           </div>
         </CollapsibleSection>
 
@@ -682,6 +682,15 @@ export function UserTabs({
             initialTx={financialTx}
             cardWithdrawals={cardWithdrawals}
           />
+        </CollapsibleSection>
+
+        <CollapsibleSection
+          title="Rewards"
+          sectionKey="rewards"
+          open={openSections.rewards}
+          onToggle={handleToggleSection}
+        >
+          <RewardsCard rewards={rewards} />
         </CollapsibleSection>
 
         <CollapsibleSection
