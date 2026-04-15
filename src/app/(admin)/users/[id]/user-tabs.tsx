@@ -650,29 +650,11 @@ export function UserTabs({
           </div>
         </CollapsibleSection>
 
-        {/* Zone 2a — Affiliate & Referral Details */}
-        {user.affiliateCode && (
-          <CollapsibleSection
-            title="Creator / Affiliate"
-            sectionKey="creator"
-            open={openSections.creator}
-            onToggle={handleToggleSection}
-          >
-            {loadingSections.creator ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="size-5 animate-spin text-muted-foreground" />
-              </div>
-            ) : lazyData.creatorData ? (
-              <CreatorSection
-                user={user}
-                creatorData={lazyData.creatorData}
-                affiliate={affiliate}
-              />
-            ) : null}
-          </CollapsibleSection>
-        )}
-
-        {/* Zone 2b — Transaction Sections */}
+        {/* Zone 2b — Transaction Sections. Gaming and Deposits sit
+            directly under Key Metrics so the most-used views for fraud /
+            moderation work are one glance away. Creator/Affiliate (a user
+            identity section rather than a transaction view) is grouped
+            later with Account Details / Feature Locks / Moderation. */}
         <CollapsibleSection
           title="Gaming"
           sectionKey="gaming"
@@ -806,6 +788,30 @@ export function UserTabs({
             statusFilter="exchanged"
           />
         </CollapsibleSection>
+
+        {/* Zone 3d — Creator / Affiliate (conditional, moved here from
+            under Key Metrics so the primary transaction sections come
+            first for fraud / moderation review) */}
+        {user.affiliateCode && (
+          <CollapsibleSection
+            title="Creator / Affiliate"
+            sectionKey="creator"
+            open={openSections.creator}
+            onToggle={handleToggleSection}
+          >
+            {loadingSections.creator ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="size-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : lazyData.creatorData ? (
+              <CreatorSection
+                user={user}
+                creatorData={lazyData.creatorData}
+                affiliate={affiliate}
+              />
+            ) : null}
+          </CollapsibleSection>
+        )}
 
         {/* Zone 3e — Account Details */}
         <CollapsibleSection
@@ -1612,6 +1618,7 @@ const GAMING_TX_TYPES = [
   "battle_bet",
   "battle_sponsorship",
   "battle_refund",
+  "voucher_redeemed",
 ] as const;
 const FINANCIAL_TX_TYPES = [
   "deposit",
@@ -1624,7 +1631,6 @@ const FINANCIAL_TX_TYPES = [
   "affiliate_claim",
   "promo_code_redeemed",
   "gift_card_redeemed",
-  "voucher_redeemed",
   "rain_win",
   "race_prize",
 ] as const;
