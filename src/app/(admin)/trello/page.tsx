@@ -9,6 +9,8 @@ import {
 import { BoardView } from "./board-view";
 import { LabelFilter } from "./label-filter";
 
+export const metadata = { title: "Trello" };
+
 export default async function TrelloPage({
   searchParams,
 }: {

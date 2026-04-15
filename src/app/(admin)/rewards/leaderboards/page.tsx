@@ -22,6 +22,8 @@ import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { PeriodPicker } from "./period-picker";
 import { RaceTiersTable } from "./race-tiers-table";
 
+export const metadata = { title: "Leaderboards" };
+
 // Leaderboards is the single entry point for everything race-related now
 // that /rewards/races is gone:
 //   - Standings: current wager standings per period (daily/weekly)

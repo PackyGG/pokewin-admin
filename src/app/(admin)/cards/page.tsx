@@ -9,6 +9,8 @@ import { CreateCardButton } from "./create-card-button";
 import { PriceFilter } from "./price-filter";
 import { SetFilter } from "./set-filter";
 
+export const metadata = { title: "Cards" };
+
 export default async function CardsPage({
   searchParams,
 }: {

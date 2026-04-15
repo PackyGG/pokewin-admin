@@ -8,6 +8,8 @@ import { DataTablePagination } from "@/components/data-table/data-table-paginati
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
+export const metadata = { title: "Battle Transactions" };
+
 const STATUS_TABS = [
   { value: "all", label: "All" },
   { value: "pending", label: "Pending" },

@@ -11,6 +11,8 @@ import { TogglePackButton } from "./toggle-pack-button";
 import { EditPackButton } from "./edit-pack-button";
 import { DeletePackButton } from "./delete-pack-button";
 
+export const metadata = { title: "Pack Detail" };
+
 export default async function PackDetailPage({
   params,
 }: {

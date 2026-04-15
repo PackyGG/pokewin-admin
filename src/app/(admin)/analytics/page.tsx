@@ -15,6 +15,8 @@ import { PeriodFilter } from "./period-filter";
 import { AnalyticsCharts } from "./charts";
 import { BattleModesSection, PackPopularitySection } from "./sections";
 
+export const metadata = { title: "Analytics" };
+
 export default async function AnalyticsPage({
   searchParams,
 }: {

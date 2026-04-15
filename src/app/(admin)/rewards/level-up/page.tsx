@@ -15,6 +15,8 @@ import { CreateRewardButton } from "../create-reward-button";
 import { EditRewardButton } from "../edit-reward-button";
 import { DeleteRewardButton } from "../delete-reward-button";
 
+export const metadata = { title: "Level Up" };
+
 export default async function LevelUpPage({
   searchParams,
 }: {

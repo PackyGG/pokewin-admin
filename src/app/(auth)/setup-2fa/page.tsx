@@ -3,6 +3,8 @@ import { getPendingSession } from "@/lib/session";
 import { generateSecret, generateTOTPUri, generateQRCode } from "@/lib/totp";
 import { SetupForm } from "./setup-form";
 
+export const metadata = { title: "Setup 2FA" };
+
 export default async function Setup2FAPage() {
   const pending = await getPendingSession();
   if (!pending) redirect("/login");

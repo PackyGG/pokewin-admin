@@ -18,6 +18,8 @@ import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { ValueRangeFilter } from "./value-range-filter";
 
+export const metadata = { title: "Vouchers" };
+
 export default async function VouchersPage({
   searchParams,
 }: {

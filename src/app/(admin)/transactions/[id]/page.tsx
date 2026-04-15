@@ -8,6 +8,8 @@ import { CardImage } from "@/components/card-image";
 import { STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 
+export const metadata = { title: "Transaction Detail" };
+
 const RARITY_COLORS: Record<string, string> = {
   common: "bg-zinc-700/90 text-zinc-100",
   uncommon: "bg-green-700/90 text-green-100",

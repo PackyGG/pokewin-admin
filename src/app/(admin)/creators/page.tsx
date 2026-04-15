@@ -7,6 +7,8 @@ import { DataTablePagination } from "@/components/data-table/data-table-paginati
 import { Skeleton } from "@/components/ui/skeleton";
 import { UserSearchResults } from "./user-search-results";
 
+export const metadata = { title: "Creators" };
+
 export default async function CreatorsPage({
   searchParams,
 }: {

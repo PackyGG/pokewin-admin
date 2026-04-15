@@ -6,6 +6,8 @@ import { formatDateTime } from "@/lib/utils/format";
 import { AdminUserActions } from "./admin-user-actions";
 import { CreateAdminDialog } from "./create-dialog";
 
+export const metadata = { title: "Admin Users" };
+
 export default async function AdminUsersPage() {
   await requirePageAccess("/admin-users");
 

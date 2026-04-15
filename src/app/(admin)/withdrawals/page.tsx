@@ -15,6 +15,8 @@ import { ValueRangeFilter } from "./value-range-filter";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
+export const metadata = { title: "Withdrawals" };
+
 const TABS = [
   {
     value: "all",

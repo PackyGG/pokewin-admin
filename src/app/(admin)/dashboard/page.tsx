@@ -16,6 +16,8 @@ import { RevenueChart, SignupsChart } from "./charts";
 import { RecentActivity } from "./recent-activity";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 
+export const metadata = { title: "Dashboard" };
+
 export default async function DashboardPage({
   searchParams,
 }: {

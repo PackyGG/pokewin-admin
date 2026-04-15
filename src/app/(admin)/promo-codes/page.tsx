@@ -7,6 +7,8 @@ import { DataTablePagination } from "@/components/data-table/data-table-paginati
 import { Skeleton } from "@/components/ui/skeleton";
 import { CreatePromoCodeButton } from "./create-button";
 
+export const metadata = { title: "Promo Codes" };
+
 export default async function PromoCodesPage({
   searchParams,
 }: {

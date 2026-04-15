@@ -9,6 +9,8 @@ import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { EditCardButton } from "./edit-card-button";
 import { DeleteCardButton } from "./delete-card-button";
 
+export const metadata = { title: "Card Detail" };
+
 const RARITY_COLORS: Record<string, string> = {
   common: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
   uncommon: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",

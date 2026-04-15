@@ -4,6 +4,8 @@ import { SummaryCards } from "./summary-cards";
 import { SpendingTabs } from "./tab-content";
 import { DateRangeFilter } from "./date-range-filter";
 
+export const metadata = { title: "Spending" };
+
 function getDefaultRange() {
   const now = new Date();
   const from = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;

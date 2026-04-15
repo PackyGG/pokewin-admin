@@ -8,6 +8,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { ChatContent } from "./chat-content";
 
+export const metadata = { title: "Chat Moderation" };
+
 export default async function ChatPage({
   searchParams,
 }: {

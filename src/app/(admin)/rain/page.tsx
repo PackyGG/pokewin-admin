@@ -22,6 +22,8 @@ import { InlineBaseCell } from "./inline-base-cell";
 import { RAIN_CONFIG_KEYS } from "./config-keys";
 import { RainConfigCard } from "./rain-config-card";
 
+export const metadata = { title: "Rain" };
+
 const RAIN_STATUS_COLORS: Record<string, string> = {
   active: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
   drawing: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",

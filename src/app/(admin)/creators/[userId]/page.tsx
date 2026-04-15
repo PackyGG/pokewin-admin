@@ -28,6 +28,8 @@ import { DealsCard } from "./deals-card";
 import { SocialsDisplay } from "./socials-display";
 import { OverviewCard } from "./overview-card";
 
+export const metadata = { title: "Creator Detail" };
+
 export default async function CreatorDetailPage({
   params,
   searchParams,

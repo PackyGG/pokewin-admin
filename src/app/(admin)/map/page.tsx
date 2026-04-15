@@ -6,6 +6,8 @@ import { StatCard } from "../dashboard/stat-card";
 import { PeriodFilter } from "./period-filter";
 import { WorldMap } from "./world-map";
 
+export const metadata = { title: "Map" };
+
 const VALID_PERIODS: readonly Period[] = ["today", "7d", "30d", "90d", "all"];
 
 function parsePeriod(value: string | undefined): Period {

@@ -12,6 +12,8 @@ import { WithdrawalActionButtons } from "./action-buttons";
 import { CardImage } from "@/components/card-image";
 import { CopyableAddress } from "./copyable-address";
 
+export const metadata = { title: "Withdrawal Detail" };
+
 const RARITY_COLORS: Record<string, string> = {
   common: "bg-zinc-700/90 text-zinc-100",
   uncommon: "bg-green-700/90 text-green-100",

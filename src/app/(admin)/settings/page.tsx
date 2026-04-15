@@ -2,6 +2,8 @@ import { getSettings } from "@/lib/queries/settings";
 import { requirePageAccess } from "@/lib/dal";
 import { SettingsContent } from "./settings-content";
 
+export const metadata = { title: "Settings" };
+
 export default async function SettingsPage() {
   await requirePageAccess("/settings");
   const data = await getSettings();

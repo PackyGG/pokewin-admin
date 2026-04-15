@@ -7,6 +7,8 @@ import { DataTablePagination } from "@/components/data-table/data-table-paginati
 import { Skeleton } from "@/components/ui/skeleton";
 import { CreatePackButton } from "./create-pack-button";
 
+export const metadata = { title: "Packs" };
+
 export default async function PacksPage({
   searchParams,
 }: {

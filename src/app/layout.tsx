@@ -16,8 +16,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Packy.gg Admin",
-  description: "Admin panel for Packy.gg",
+  title: {
+    default: "PackyGG Admin",
+    template: "%s · PackyGG Admin",
+  },
+  description: "Admin panel for PackyGG",
   icons: {
     icon: "/icon.png",
   },

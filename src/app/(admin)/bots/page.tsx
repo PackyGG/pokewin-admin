@@ -6,6 +6,8 @@ import { DataTablePagination } from "@/components/data-table/data-table-paginati
 import { Skeleton } from "@/components/ui/skeleton";
 import { BotsContent } from "./bots-content";
 
+export const metadata = { title: "Bots" };
+
 export default async function BotsPage({
   searchParams,
 }: {

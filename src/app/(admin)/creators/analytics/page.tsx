@@ -13,6 +13,8 @@ import { StatCard } from "../../dashboard/stat-card";
 import { PeriodFilter } from "./period-filter";
 import { CreatorAnalyticsCharts } from "./charts";
 
+export const metadata = { title: "Creator Analytics" };
+
 export default async function CreatorAnalyticsPage({
   searchParams,
 }: {

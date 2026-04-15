@@ -7,6 +7,8 @@ import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { Skeleton } from "@/components/ui/skeleton";
 
+export const metadata = { title: "Deposits" };
+
 export default async function DepositsTransactionsPage({
   searchParams,
 }: {

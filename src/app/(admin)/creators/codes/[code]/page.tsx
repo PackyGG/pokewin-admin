@@ -16,6 +16,8 @@ import {
 import { formatCurrency, formatDateTime, formatNumber } from "@/lib/utils/format";
 import { CodeAnalyticsCharts } from "./charts";
 
+export const metadata = { title: "Creator Code Detail" };
+
 export default async function CodeAnalyticsPage({
   params,
 }: {

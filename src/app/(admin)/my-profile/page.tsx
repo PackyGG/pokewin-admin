@@ -19,6 +19,8 @@ import { SocialsCard } from "./socials-card";
 import { CreatorWebhooksCard } from "./webhooks-card";
 import { DealsTable } from "./deal-detail-dialog";
 
+export const metadata = { title: "My Profile" };
+
 export default async function MyProfilePage() {
   const session = await requireRole(["creator"]);
   const data = await getMyProfileData(session.userId);

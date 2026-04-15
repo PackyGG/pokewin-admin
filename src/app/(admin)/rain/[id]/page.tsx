@@ -17,6 +17,8 @@ import { DataTablePagination } from "@/components/data-table/data-table-paginati
 import { formatCurrency, formatDateTime, formatNumber } from "@/lib/utils/format";
 import { RainDetailsCard } from "./rain-detail-cards";
 
+export const metadata = { title: "Rain Detail" };
+
 const STATUS_COLORS: Record<string, string> = {
   active: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
   drawing: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",

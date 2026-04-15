@@ -15,6 +15,8 @@ import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { RakebackConfigTable } from "./rakeback-config-table";
 
+export const metadata = { title: "Rakeback" };
+
 const TABS = [
   { value: "claims", label: "Claims" },
   { value: "config", label: "Config" },

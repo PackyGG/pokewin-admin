@@ -6,6 +6,8 @@ import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { Skeleton } from "@/components/ui/skeleton";
 
+export const metadata = { title: "Creator Codes" };
+
 export default async function CodesPage({
   searchParams,
 }: {

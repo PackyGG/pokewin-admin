@@ -16,6 +16,8 @@ import {
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils/format";
 import { DeletePromoCodeButton } from "./delete-button";
 
+export const metadata = { title: "Promo Code Detail" };
+
 export default async function PromoCodeDetailPage({
   params,
 }: {

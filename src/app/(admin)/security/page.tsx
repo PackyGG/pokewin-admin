@@ -2,6 +2,8 @@ import { requirePageAccess } from "@/lib/dal";
 import { getSiteConfig } from "@/lib/queries/security";
 import { SecurityContent } from "./security-content";
 
+export const metadata = { title: "Security" };
+
 export default async function SecurityPage() {
   await requirePageAccess("/security");
   const config = await getSiteConfig();

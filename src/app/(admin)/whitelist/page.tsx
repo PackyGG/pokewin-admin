@@ -6,6 +6,8 @@ import { DataTablePagination } from "@/components/data-table/data-table-paginati
 import { Skeleton } from "@/components/ui/skeleton";
 import { WhitelistContent } from "./whitelist-content";
 
+export const metadata = { title: "Whitelist" };
+
 export default async function WhitelistPage({
   searchParams,
 }: {

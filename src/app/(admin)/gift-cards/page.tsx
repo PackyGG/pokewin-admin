@@ -7,6 +7,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { GiftCardsContent } from "./gift-cards-content";
 import { CreateGiftCardDialog } from "./create-dialog";
 
+export const metadata = { title: "Gift Cards" };
+
 export default async function GiftCardsPage({
   searchParams,
 }: {

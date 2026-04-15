@@ -5,6 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
+export const metadata = { title: "Rewards Settings" };
+
 export default async function RewardsSettingsPage() {
   await requirePageAccess("/rewards/settings");
   const configs = await getRakebackConfigs();

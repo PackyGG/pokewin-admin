@@ -6,6 +6,8 @@ import { getNotesForUser } from "@/lib/queries/admin-notes";
 import { requirePageAccess } from "@/lib/dal";
 import { UserTabs } from "./user-tabs";
 
+export const metadata = { title: "User Detail" };
+
 export default async function UserDetailPage({
   params,
   searchParams,

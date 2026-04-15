@@ -9,6 +9,8 @@ import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { CardImage } from "@/components/card-image";
 import { CancelBattleButton } from "./cancel-button";
 
+export const metadata = { title: "Battle Detail" };
+
 const BATTLE_STATUS_COLORS: Record<string, string> = {
   waiting: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
   in_progress: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",

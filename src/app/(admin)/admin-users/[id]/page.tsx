@@ -10,6 +10,8 @@ import {
 import { getLimitsForAdmin } from "@/lib/balance-limits";
 import { AdminUserTabs } from "./admin-user-tabs";
 
+export const metadata = { title: "Admin User Detail" };
+
 const AUDIT_PER_PAGE_OPTIONS = [10, 20, 50, 100] as const;
 
 export default async function AdminUserDetailPage({

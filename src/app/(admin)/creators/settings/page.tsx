@@ -2,6 +2,8 @@ import { requirePageAccess } from "@/lib/dal";
 import { getAffiliateLevelConfigs } from "@/lib/queries/creators";
 import { LevelConfigCard } from "./level-config-card";
 
+export const metadata = { title: "Creator Settings" };
+
 export default async function CreatorSettingsPage() {
   await requirePageAccess("/creators/settings");
 

@@ -16,6 +16,8 @@ import { cn } from "@/lib/utils";
 import { CreateRaffleButton } from "./create-raffle-button";
 import { CancelRaffleButton } from "./cancel-raffle-button";
 
+export const metadata = { title: "Raffles" };
+
 const STATUS_COLORS: Record<string, string> = {
   active: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
   completed: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",

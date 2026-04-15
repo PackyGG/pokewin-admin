@@ -6,6 +6,8 @@ import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { Skeleton } from "@/components/ui/skeleton";
 
+export const metadata = { title: "Users" };
+
 export default async function UsersPage({
   searchParams,
 }: {

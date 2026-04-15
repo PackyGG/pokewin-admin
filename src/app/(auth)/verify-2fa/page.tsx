@@ -2,6 +2,8 @@ import { redirect } from "next/navigation";
 import { getPendingSession } from "@/lib/session";
 import { VerifyForm } from "./verify-form";
 
+export const metadata = { title: "Verify 2FA" };
+
 export default async function Verify2FAPage() {
   const pending = await getPendingSession();
   if (!pending) redirect("/login");
