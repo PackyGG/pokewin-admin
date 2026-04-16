@@ -6,9 +6,12 @@ import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { updateRolePermissions } from "./actions";
+import { updateRolePermissions, type RoleConfig } from "./actions";
 
 const ROLES = ["support", "marketing", "creator"] as const;
 
@@ -23,83 +26,79 @@ type GroupedPages = {
   pages: { key: string; label: string }[];
 }[];
 
-type Permissions = Record<string, string[]>;
-
 export function RolePermissionsEditor({
   groupedPages,
   initialPermissions,
 }: {
   groupedPages: GroupedPages;
-  initialPermissions: Permissions;
+  initialPermissions: Record<string, RoleConfig>;
 }) {
   const [activeRole, setActiveRole] = useState<string>(ROLES[0]);
-  const [permissions, setPermissions] = useState<Permissions>(initialPermissions);
+  const [configs, setConfigs] = useState<Record<string, RoleConfig>>(
+    initialPermissions,
+  );
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
-  // Track which roles have unsaved changes
-  const [savedPermissions] = useState<Permissions>(() =>
+  const [savedConfigs] = useState<Record<string, RoleConfig>>(() =>
     JSON.parse(JSON.stringify(initialPermissions)),
   );
 
-  const currentPages = new Set(permissions[activeRole] ?? []);
+  const config = configs[activeRole] ?? {
+    pages: [],
+    canAdjustBalance: false,
+    balanceLimitDaily: null,
+  };
+  const currentPages = new Set(config.pages);
   const allPageKeys = groupedPages.flatMap((g) => g.pages.map((p) => p.key));
 
   function hasChanges(role: string) {
-    const current = [...(permissions[role] ?? [])].sort();
-    const saved = [...(savedPermissions[role] ?? [])].sort();
-    return JSON.stringify(current) !== JSON.stringify(saved);
+    return JSON.stringify(configs[role]) !== JSON.stringify(savedConfigs[role]);
+  }
+
+  function updateConfig(partial: Partial<RoleConfig>) {
+    setConfigs((prev) => ({
+      ...prev,
+      [activeRole]: { ...prev[activeRole], ...partial },
+    }));
   }
 
   function togglePage(pageKey: string) {
-    setPermissions((prev) => {
-      const current = new Set(prev[activeRole] ?? []);
-      if (current.has(pageKey)) {
-        current.delete(pageKey);
-      } else {
-        current.add(pageKey);
-      }
-      return { ...prev, [activeRole]: [...current] };
-    });
+    const current = new Set(config.pages);
+    if (current.has(pageKey)) {
+      current.delete(pageKey);
+    } else {
+      current.add(pageKey);
+    }
+    updateConfig({ pages: [...current] });
   }
 
   function toggleGroup(group: GroupedPages[number]) {
-    setPermissions((prev) => {
-      const current = new Set(prev[activeRole] ?? []);
-      const groupKeys = group.pages.map((p) => p.key);
-      const allChecked = groupKeys.every((k) => current.has(k));
-      for (const k of groupKeys) {
-        if (allChecked) {
-          current.delete(k);
-        } else {
-          current.add(k);
-        }
+    const current = new Set(config.pages);
+    const groupKeys = group.pages.map((p) => p.key);
+    const allChecked = groupKeys.every((k) => current.has(k));
+    for (const k of groupKeys) {
+      if (allChecked) {
+        current.delete(k);
+      } else {
+        current.add(k);
       }
-      return { ...prev, [activeRole]: [...current] };
-    });
+    }
+    updateConfig({ pages: [...current] });
   }
 
   function selectAll() {
-    setPermissions((prev) => ({
-      ...prev,
-      [activeRole]: [...allPageKeys],
-    }));
+    updateConfig({ pages: [...allPageKeys] });
   }
 
   function selectNone() {
-    setPermissions((prev) => ({
-      ...prev,
-      [activeRole]: [],
-    }));
+    updateConfig({ pages: [] });
   }
 
   function handleSave() {
     startTransition(async () => {
       try {
-        const result = await updateRolePermissions(
-          activeRole,
-          permissions[activeRole] ?? [],
-        );
+        const result = await updateRolePermissions(activeRole, config);
         if (!result.success) {
           toast.error(result.error);
           return;
@@ -169,6 +168,58 @@ export function RolePermissionsEditor({
           </Button>
         </div>
       </div>
+
+      {/* Capabilities */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-medium">Capabilities</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label className="text-sm">Balance Adjustment</Label>
+              <p className="text-xs text-muted-foreground">
+                Allow this role to adjust user balances
+              </p>
+            </div>
+            <Switch
+              checked={config.canAdjustBalance}
+              onCheckedChange={(checked) =>
+                updateConfig({
+                  canAdjustBalance: !!checked,
+                  ...(checked ? {} : { balanceLimitDaily: null }),
+                })
+              }
+            />
+          </div>
+          {config.canAdjustBalance && (
+            <div className="ml-0 rounded-md border p-3 space-y-2">
+              <Label className="text-xs">24h Limit (USD)</Label>
+              <div className="flex items-center gap-3">
+                <Input
+                  type="number"
+                  step="1"
+                  min="0"
+                  placeholder="No limit"
+                  value={config.balanceLimitDaily ?? ""}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    updateConfig({
+                      balanceLimitDaily: val ? Number(val) : null,
+                    });
+                  }}
+                  className="h-8 w-40"
+                />
+                <span className="text-xs text-muted-foreground">
+                  {config.balanceLimitDaily
+                    ? `Max $${config.balanceLimitDaily.toLocaleString()} per 24h`
+                    : "Unlimited — set a value to cap daily adjustments"}
+                </span>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Page groups */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -243,9 +294,9 @@ export function RolePermissionsEditor({
               variant="outline"
               size="sm"
               onClick={() =>
-                setPermissions((prev) => ({
+                setConfigs((prev) => ({
                   ...prev,
-                  [activeRole]: [...(savedPermissions[activeRole] ?? [])],
+                  [activeRole]: { ...(savedConfigs[activeRole] ?? { pages: [], canAdjustBalance: false, balanceLimitDaily: null }) },
                 }))
               }
               disabled={isPending}

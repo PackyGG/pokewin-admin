@@ -3,7 +3,8 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { getUserDetail, getUserTransactions, getUserAuditLog, getUserInventory, getUserPnlBreakdown, getUserRewards } from "@/lib/queries/users";
 import { getNotesForUser } from "@/lib/queries/admin-notes";
-import { requirePageAccess } from "@/lib/dal";
+import { requirePageAccess, getUserPermissions } from "@/lib/dal";
+import { canUserAdjustBalance } from "@/app/(admin)/settings/roles/actions";
 import { UserTabs } from "./user-tabs";
 
 export const metadata = { title: "User Detail" };
@@ -68,7 +69,7 @@ export default async function UserDetailPage({
           <p className="text-sm text-muted-foreground">{data.user.email}</p>
         </div>
       </div>
-      <UserTabs data={{ ...data, sessionRole: session.role }} transactions={transactions} auditLog={auditLog} inventory={inventory} soldInventory={soldInventory} exchangedInventory={exchangedInventory} pnlBreakdown={pnlBreakdown} notes={notes} gamingTx={gamingTx} financialTx={financialTx} rewards={rewards} />
+      <UserTabs data={{ ...data, sessionRole: session.role, canAdjustBalance: session.role === "admin" || canUserAdjustBalance(await getUserPermissions(session.userId)) }} transactions={transactions} auditLog={auditLog} inventory={inventory} soldInventory={soldInventory} exchangedInventory={exchangedInventory} pnlBreakdown={pnlBreakdown} notes={notes} gamingTx={gamingTx} financialTx={financialTx} rewards={rewards} />
     </div>
   );
 }

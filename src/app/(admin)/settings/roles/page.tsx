@@ -30,8 +30,8 @@ export default async function RolePermissionsPage() {
       <div>
         <h1 className="text-2xl font-bold">Role Permissions</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Configure which pages each role can access. Changes apply to all
-          existing and new users of that role.
+          Configure page access and capabilities for each role. Changes
+          apply to all existing and new users of that role.
         </p>
       </div>
       <RolePermissionsEditor

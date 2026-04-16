@@ -255,6 +255,7 @@ type UserDetail = {
     avgDeposit: number;
   };
   sessionRole: string;
+  canAdjustBalance: boolean;
 };
 
 type Transaction = {
@@ -640,6 +641,7 @@ export function UserTabs({
               balances={balances}
               userId={user.id}
               isAdmin={isAdmin}
+              canAdjustBalance={data.canAdjustBalance}
             />
             <PnlCard pnlBreakdown={pnlBreakdown} balances={balances} />
             <ActivityStatsCard
@@ -1561,10 +1563,12 @@ const BalanceSummaryCard = React.memo(function BalanceSummaryCard({
   balances,
   userId,
   isAdmin,
+  canAdjustBalance,
 }: {
   balances: UserDetail["balances"];
   userId: string;
   isAdmin: boolean;
+  canAdjustBalance: boolean;
 }) {
   const [adjustOpen, setAdjustOpen] = useState(false);
 
@@ -1574,7 +1578,7 @@ const BalanceSummaryCard = React.memo(function BalanceSummaryCard({
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="text-sm font-medium">Balances</CardTitle>
-        {isAdmin && (
+        {canAdjustBalance && (
           <Button
             variant="outline"
             size="sm"

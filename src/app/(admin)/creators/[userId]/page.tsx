@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { getCreatorDetail, refreshStaleSocials } from "@/lib/queries/creators";
+import { getCreatorDetail, getCreatorTips, refreshStaleSocials } from "@/lib/queries/creators";
 import { requirePageAccess } from "@/lib/dal";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -40,9 +40,12 @@ export default async function CreatorDetailPage({
   await requirePageAccess("/creators");
   const { userId } = await params;
   const sp = await searchParams;
-  const refPage = Number(sp.page) || 1;
-  const refPerPage = Number(sp.perPage) || 20;
-  const data = await getCreatorDetail(userId, refPage, refPerPage);
+  const page = Number(sp.page) || 1;
+  const perPage = Number(sp.perPage) || 20;
+  const [data, tips] = await Promise.all([
+    getCreatorDetail(userId, page, perPage),
+    getCreatorTips(userId, page, perPage),
+  ]);
 
   if (!data) notFound();
 
@@ -142,6 +145,7 @@ export default async function CreatorDetailPage({
         <TabsList>
           <TabsTrigger value="settings">Settings</TabsTrigger>
           <TabsTrigger value="referrals">Referrals ({data.referrals.total})</TabsTrigger>
+          <TabsTrigger value="tips">Tips ({tips.total})</TabsTrigger>
           <TabsTrigger value="payouts">Payouts ({data.payouts.length})</TabsTrigger>
           <TabsTrigger value="deals">Deals ({data.deals.length})</TabsTrigger>
           <TabsTrigger value="webhooks">Webhooks ({data.webhooks.length})</TabsTrigger>
@@ -227,6 +231,66 @@ export default async function CreatorDetailPage({
                 totalPages={data.referrals.totalPages}
                 total={data.referrals.total}
                 perPage={data.referrals.perPage}
+              />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="tips" className="space-y-4">
+          <Card>
+            <CardContent className="pt-6">
+              <div className="mb-4 flex items-baseline justify-between">
+                <p className="text-sm font-semibold">Rain Tips</p>
+                <p className="text-lg font-bold tabular-nums">{formatCurrency(tips.totalTipped)} total</p>
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Amount</TableHead>
+                    <TableHead>Rain Pool</TableHead>
+                    <TableHead>Rain Status</TableHead>
+                    <TableHead>Winner</TableHead>
+                    <TableHead>Date</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {tips.data.map((t) => (
+                    <TableRow key={t.id}>
+                      <TableCell className="font-medium tabular-nums">{formatCurrency(t.amountUsd)}</TableCell>
+                      <TableCell className="tabular-nums text-muted-foreground">{formatCurrency(t.rainTotalPool)}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className={
+                          t.rainStatus === "completed" ? "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30" :
+                          t.rainStatus === "active" ? "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30" :
+                          "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"
+                        }>
+                          {t.rainStatus}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {t.rainWinnerUsername ? (
+                          <span className="text-sm">{t.rainWinnerUsername}</span>
+                        ) : (
+                          <span className="text-sm text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{formatDateTime(t.createdAt)}</TableCell>
+                    </TableRow>
+                  ))}
+                  {tips.data.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                        No tips sent yet.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+              <DataTablePagination
+                page={tips.page}
+                totalPages={tips.totalPages}
+                total={tips.total}
+                perPage={tips.perPage}
               />
             </CardContent>
           </Card>

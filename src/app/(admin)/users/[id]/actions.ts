@@ -11,6 +11,7 @@ import { getUserInventory, getUserTransactions, getCreatorReferralClicks, getCre
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { require2FA } from "@/lib/require-2fa";
 import { checkBalanceAdjustmentLimit } from "@/lib/balance-limits";
+import { canUserAdjustBalance } from "@/app/(admin)/settings/roles/actions";
 
 const adjustBalanceSchema = z.object({
   userId: z.string(),
@@ -24,8 +25,19 @@ export async function adjustBalance(data: {
   reason: string;
   totpCode: string;
 }) {
-  const session = await requireAdmin();
+  const session = await requirePageAccess("/users");
   const parsed = adjustBalanceSchema.parse(data);
+
+  // Admins can always adjust; non-admins need the __can_adjust_balance capability
+  if (session.role !== "admin") {
+    const perms = await adminDb.admin_users.findUnique({
+      where: { id: session.userId },
+      select: { allowed_pages: true },
+    });
+    if (!perms || !canUserAdjustBalance(perms.allowed_pages)) {
+      throw new Error("You do not have permission to adjust balances");
+    }
+  }
 
   await require2FA(session.userId, data.totpCode);
   await checkBalanceAdjustmentLimit(session.userId, parsed.amount);
