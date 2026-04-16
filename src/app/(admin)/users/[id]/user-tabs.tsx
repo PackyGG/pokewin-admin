@@ -751,6 +751,30 @@ export function UserTabs({
           ) : null}
         </CollapsibleSection>
 
+        {/* Zone 2c — Creator / Affiliate (conditional) — sits directly
+            below the transaction sections per admin request so the creator
+            context is right next to the money flows it produced */}
+        {user.affiliateCode && (
+          <CollapsibleSection
+            title="Creator / Affiliate"
+            sectionKey="creator"
+            open={openSections.creator}
+            onToggle={handleToggleSection}
+          >
+            {loadingSections.creator ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="size-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : lazyData.creatorData ? (
+              <CreatorSection
+                user={user}
+                creatorData={lazyData.creatorData}
+                affiliate={affiliate}
+              />
+            ) : null}
+          </CollapsibleSection>
+        )}
+
         {/* Zone 3 — Balance History */}
         <CollapsibleSection
           title="Balance History"
@@ -814,30 +838,6 @@ export function UserTabs({
             statusFilter="exchanged"
           />
         </CollapsibleSection>
-
-        {/* Zone 3d — Creator / Affiliate (conditional, moved here from
-            under Key Metrics so the primary transaction sections come
-            first for fraud / moderation review) */}
-        {user.affiliateCode && (
-          <CollapsibleSection
-            title="Creator / Affiliate"
-            sectionKey="creator"
-            open={openSections.creator}
-            onToggle={handleToggleSection}
-          >
-            {loadingSections.creator ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="size-5 animate-spin text-muted-foreground" />
-              </div>
-            ) : lazyData.creatorData ? (
-              <CreatorSection
-                user={user}
-                creatorData={lazyData.creatorData}
-                affiliate={affiliate}
-              />
-            ) : null}
-          </CollapsibleSection>
-        )}
 
         {/* Zone 3e — Account Details */}
         <CollapsibleSection
