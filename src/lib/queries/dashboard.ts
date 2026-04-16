@@ -99,6 +99,7 @@ export async function getDashboardStats() {
     totalAuditEvents,
     totalTransactions,
     dailyRevenue,
+    dailyWagers,
     dailySignups,
     revenue24h,
     revenue3d,
@@ -163,6 +164,19 @@ export async function getDashboardStats() {
       SELECT DATE(created_at) as date, COALESCE(SUM(amount::numeric), 0)::text as revenue
       FROM ledger_transactions
       WHERE type = 'pack_opening' AND status = 'completed'
+        AND created_at >= NOW() - INTERVAL '60 days'
+        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))
+      GROUP BY DATE(created_at)
+      ORDER BY date
+    `,
+    // Wagers last 60 days — split by packs vs battles for stacked bar chart
+    db.$queryRaw<{ date: Date; packs: string; battles: string }[]>`
+      SELECT
+        DATE(created_at) as date,
+        COALESCE(SUM(CASE WHEN type = 'pack_opening' THEN ABS(amount::numeric) ELSE 0 END), 0)::text as packs,
+        COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') THEN ABS(amount::numeric) ELSE 0 END), 0)::text as battles
+      FROM ledger_transactions
+      WHERE type IN ('pack_opening','battle_bet','battle_sponsorship') AND status = 'completed'
         AND created_at >= NOW() - INTERVAL '60 days'
         AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))
       GROUP BY DATE(created_at)
@@ -336,6 +350,11 @@ export async function getDashboardStats() {
     dailyRevenue: dailyRevenue.map((d) => ({
       date: new Date(d.date).toISOString().split("T")[0],
       revenue: Math.abs(Number(d.revenue)),
+    })),
+    dailyWagers: dailyWagers.map((d) => ({
+      date: new Date(d.date).toISOString().split("T")[0],
+      packs: Number(d.packs),
+      battles: Number(d.battles),
     })),
     dailySignups: dailySignups.map((d) => ({
       date: new Date(d.date).toISOString().split("T")[0],
