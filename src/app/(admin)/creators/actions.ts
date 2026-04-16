@@ -328,6 +328,57 @@ export async function updateLevelConfig(
   revalidatePath("/creators/settings");
 }
 
+/**
+ * Update the global affiliate-cut expiration — how many days after a user
+ * is referred should their affiliate keep earning commission. Stored as
+ * site_config.affiliate_cut_expiration_days (string, integer). Empty /
+ * null / 0 means "never expire" — the backend applies commission for
+ * the user's lifetime.
+ *
+ * Returns errors as values so the client toast shows real messages
+ * instead of the RSC production mask.
+ */
+export async function updateAffiliateCutExpiration(
+  days: number | null,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requirePageAccess("/creators");
+
+  if (days !== null && (!Number.isFinite(days) || days < 0)) {
+    return { success: false, error: "Days must be a non-negative number" };
+  }
+  if (days !== null && days > 3650) {
+    return { success: false, error: "Days must be 3650 or fewer (~10 years)" };
+  }
+
+  const value = days === null || days === 0 ? "" : String(Math.floor(days));
+
+  try {
+    await db.site_config.upsert({
+      where: { key: "affiliate_cut_expiration_days" },
+      update: { value },
+      create: {
+        key: "affiliate_cut_expiration_days",
+        value,
+        description:
+          "How many days after a user signs up via an affiliate code the affiliate keeps earning commission on that user. Empty / 0 = no expiration (lifetime).",
+      },
+    });
+  } catch (err) {
+    console.error("[updateAffiliateCutExpiration] DB write failed:", err);
+    const message = err instanceof Error ? err.message : "Unknown DB error";
+    return { success: false, error: `Failed to update: ${message}` };
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "affiliate_cut_expiration_updated",
+    metadata: { days },
+  });
+
+  revalidatePath("/creators/settings");
+  return { success: true };
+}
+
 export async function toggleCodeActive(userId: string, isActive: boolean) {
   const session = await requirePageAccess("/creators");
 

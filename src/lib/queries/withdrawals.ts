@@ -7,6 +7,7 @@ export type WithdrawalListItem = {
   id: string;
   userId: string;
   username: string | null;
+  image: string | null;
   method: string;
   status: string;
   totalValueUsd: number;
@@ -66,7 +67,7 @@ export async function getWithdrawals(params: {
       take: perPage,
       include: {
         user_card_withdrawal_requests_user_idTouser: {
-          select: { username: true, email: true },
+          select: { username: true, email: true, image: true },
         },
         user_card_withdrawal_requests_processed_byTouser: {
           select: { username: true },
@@ -86,6 +87,7 @@ export async function getWithdrawals(params: {
       username:
         w.user_card_withdrawal_requests_user_idTouser.username ??
         w.user_card_withdrawal_requests_user_idTouser.email,
+      image: w.user_card_withdrawal_requests_user_idTouser.image,
       method: w.method,
       status: w.status,
       totalValueUsd: toNumber(w.total_value_usd),

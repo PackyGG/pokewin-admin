@@ -252,3 +252,43 @@ export function ActiveShipmentActions({
     </>
   );
 }
+
+/**
+ * Dispatcher — picks the right action set based on the withdrawal's
+ * current status. Used by the unified single-page withdrawals table so
+ * each row gets the actions that actually apply to its state, and no
+ * buttons render for terminal states (completed/cancelled/failed).
+ */
+export function WithdrawalRowActions({
+  withdrawalId,
+  status,
+  method,
+}: {
+  withdrawalId: string;
+  status: string;
+  method: string;
+}) {
+  // Terminal states — no actions available.
+  if (
+    status === "completed" ||
+    status === "cancelled" ||
+    status === "failed"
+  ) {
+    return <span className="text-muted-foreground text-xs">—</span>;
+  }
+
+  // processing / shipped and method is physical → active shipment actions
+  // (mark shipped, complete, cancel, fail).
+  if (
+    (status === "processing" || status === "shipped") &&
+    method === "physical"
+  ) {
+    return (
+      <ActiveShipmentActions withdrawalId={withdrawalId} status={status} />
+    );
+  }
+
+  // Everything else pending / processing non-physical → request actions
+  // (approve, decline).
+  return <WithdrawalRequestActions withdrawalId={withdrawalId} />;
+}

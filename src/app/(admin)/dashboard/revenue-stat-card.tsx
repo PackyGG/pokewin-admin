@@ -6,7 +6,7 @@ import { TrendingUp, TrendingDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
 
-const ranges = ["24h", "3d", "7d", "30d"] as const;
+const ranges = ["24h", "3d", "7d", "30d", "all"] as const;
 
 // Lifetime realized P&L — a single snapshot number, not period-based. The
 // number comes straight from getRealizedPnlSnapshot() in the dashboard query and
@@ -129,6 +129,47 @@ export function WagerStatCard({
       <CardContent>
         <div className="text-stat-value">
           {formatCurrency(wagers[selected] ?? 0)}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export function DepositsStatCard({
+  deposits,
+}: {
+  deposits: Record<string, number>;
+}) {
+  const [selected, setSelected] = useState<string>("24h");
+
+  return (
+    <Card className="bg-orange-500/10">
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <div className="flex items-center gap-2">
+          <CardTitle className="text-card-title text-muted-foreground">
+            Deposits
+          </CardTitle>
+          <div className="flex gap-0.5">
+            {ranges.map((r) => (
+              <button
+                key={r}
+                onClick={() => setSelected(r)}
+                className={cn(
+                  "rounded px-1.5 py-0.5 text-tiny font-medium transition-colors",
+                  selected === r
+                    ? "bg-orange-500/15 text-orange-600 dark:text-orange-400"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="text-stat-value">
+          {formatCurrency(deposits[selected] ?? 0)}
         </div>
       </CardContent>
     </Card>

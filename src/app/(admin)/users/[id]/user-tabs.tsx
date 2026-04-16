@@ -108,10 +108,15 @@ import {
   updateUserIdentity,
 } from "./actions";
 import { createNote, deleteNote } from "./note-actions";
+import {
+  UserViewModern,
+  UserViewSwitcher,
+  useViewPreference,
+} from "./user-view-modern";
 import { Switch } from "@/components/ui/switch";
 import { CardImage } from "@/components/card-image";
 
-type UserDetail = {
+export type UserDetail = {
   user: {
     id: string;
     username: string | null;
@@ -303,7 +308,7 @@ type Transaction = {
   updatedAt: string;
 };
 
-type PaginatedTransactions = {
+export type PaginatedTransactions = {
   data: Transaction[];
   total: number;
   page: number;
@@ -350,7 +355,7 @@ type PaginatedInventory = {
 
 type BalanceHistoryPoint = { date: string; balance: number };
 
-type PnlBreakdown = {
+export type PnlBreakdown = {
   packRevenue: number;
   battleRevenue: number;
   cardSalesPayouts: number;
@@ -391,7 +396,7 @@ function PnlValue({ value }: { value: number }) {
   );
 }
 
-type AdminNote = {
+export type AdminNote = {
   id: string;
   adminUserId: string;
   adminUsername: string;
@@ -614,6 +619,29 @@ export function UserTabs({
     setTimeout(() => setReloading(false), 1000);
   };
 
+  // View mode (classic / modern). Persists across sessions via
+  // localStorage so admins don't have to re-toggle every visit.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const [view, setView] = useViewPreference();
+
+  if (view === "modern") {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-end">
+          <UserViewSwitcher view={view} onChange={setView} />
+        </div>
+        <UserViewModern
+          data={data}
+          gamingTx={gamingTx}
+          financialTx={financialTx}
+          rewards={rewards}
+          notes={notes}
+          pnlBreakdown={pnlBreakdown}
+        />
+      </div>
+    );
+  }
+
   return (
     <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
       <div className="flex items-center gap-2">
@@ -622,6 +650,9 @@ export function UserTabs({
           <TabsTrigger value="transactions">Transactions</TabsTrigger>
           <TabsTrigger value="audit">Audit Log</TabsTrigger>
         </TabsList>
+        <div className="ml-auto">
+          <UserViewSwitcher view={view} onChange={setView} />
+        </div>
         <Button
           variant="outline"
           size="icon"
@@ -1385,6 +1416,18 @@ function DeleteUserDialog({
   );
 }
 
+// Balance-adjust reason presets. Each option has a value stored in the
+// ledger description and a label shown in the dropdown. "other" is the
+// only option that surfaces a free-text field below the select.
+const BALANCE_ADJUST_REASONS = [
+  { value: "deposit_problem", label: "Deposit problem" },
+  { value: "giveaway", label: "Giveaway" },
+  { value: "bonus", label: "Bonus" },
+  { value: "lossback", label: "Lossback" },
+  { value: "streamer", label: "Streamer" },
+  { value: "other", label: "Other" },
+] as const;
+
 function BalanceAdjustDialog({
   userId,
   open,
@@ -1395,15 +1438,37 @@ function BalanceAdjustDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const [amount, setAmount] = useState("");
-  const [reason, setReason] = useState("");
+  const [reasonCategory, setReasonCategory] = useState<string>("");
+  const [customReason, setCustomReason] = useState("");
   const [totpCode, setTotpCode] = useState("");
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
+  // Resolve the final reason string sent to the server:
+  //   - "Other" → user-typed custom text
+  //   - any other preset → the preset's label (e.g. "Giveaway")
+  function resolveReason(): string {
+    if (!reasonCategory) return "";
+    if (reasonCategory === "other") return customReason.trim();
+    const preset = BALANCE_ADJUST_REASONS.find(
+      (r) => r.value === reasonCategory,
+    );
+    return preset?.label ?? reasonCategory;
+  }
+
   function handleAdjust() {
     const numAmount = parseFloat(amount);
-    if (isNaN(numAmount) || !reason.trim()) {
-      toast.error("Please enter a valid amount and reason");
+    const resolvedReason = resolveReason();
+    if (isNaN(numAmount)) {
+      toast.error("Please enter a valid amount");
+      return;
+    }
+    if (!resolvedReason) {
+      toast.error(
+        reasonCategory === "other"
+          ? "Please enter a custom reason"
+          : "Please pick a reason",
+      );
       return;
     }
     if (!totpCode.trim()) {
@@ -1415,7 +1480,7 @@ function BalanceAdjustDialog({
         const result = await adjustBalance({
           userId,
           amount: numAmount,
-          reason,
+          reason: resolvedReason,
           totpCode: totpCode.trim(),
         });
         if (!result.success) {
@@ -1424,7 +1489,8 @@ function BalanceAdjustDialog({
         }
         toast.success("Balance adjusted");
         setAmount("");
-        setReason("");
+        setReasonCategory("");
+        setCustomReason("");
         setTotpCode("");
         onOpenChange(false);
         router.refresh();
@@ -1454,12 +1520,33 @@ function BalanceAdjustDialog({
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Reason</Label>
-            <Textarea
-              placeholder="Reason..."
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              rows={2}
-            />
+            <Select
+              value={reasonCategory}
+              onValueChange={(v) => {
+                if (!v) return;
+                setReasonCategory(v);
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Pick a reason..." />
+              </SelectTrigger>
+              <SelectContent>
+                {BALANCE_ADJUST_REASONS.map((r) => (
+                  <SelectItem key={r.value} value={r.value}>
+                    {r.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {reasonCategory === "other" && (
+              <Textarea
+                placeholder="Enter custom reason..."
+                value={customReason}
+                onChange={(e) => setCustomReason(e.target.value)}
+                rows={2}
+                className="mt-2"
+              />
+            )}
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">2FA Code</Label>
@@ -1564,7 +1651,7 @@ function XpAdjustDialog({
   );
 }
 
-const BalanceSummaryCard = React.memo(function BalanceSummaryCard({
+export const BalanceSummaryCard = React.memo(function BalanceSummaryCard({
   balances,
   userId,
   isAdmin,
@@ -1694,14 +1781,14 @@ const BalanceSummaryCard = React.memo(function BalanceSummaryCard({
   );
 });
 
-const GAMING_TX_TYPES = [
+export const GAMING_TX_TYPES = [
   "pack_opening",
   "battle_bet",
   "battle_sponsorship",
   "battle_refund",
   "voucher_redeemed",
 ] as const;
-const FINANCIAL_TX_TYPES = [
+export const FINANCIAL_TX_TYPES = [
   "deposit",
   "deposit_bonus",
   "admin_balance_adjustment",
@@ -1715,8 +1802,8 @@ const FINANCIAL_TX_TYPES = [
   "rain_win",
   "race_prize",
 ] as const;
-const CARD_SALE_TX_TYPES = ["card_sale", "reward_card_sale"] as const;
-const EXCHANGE_TX_TYPES = [
+export const CARD_SALE_TX_TYPES = ["card_sale", "reward_card_sale"] as const;
+export const EXCHANGE_TX_TYPES = [
   "card_exchange",
   "exchange_excess_to_voucher",
   "exchange_excess_credit",
@@ -1724,7 +1811,7 @@ const EXCHANGE_TX_TYPES = [
   "voucher_exchange",
 ] as const;
 
-const CategoryTransactionsTable = React.memo(
+export const CategoryTransactionsTable = React.memo(
   function CategoryTransactionsTable({
     title,
     userId,
@@ -2289,7 +2376,7 @@ function CardWithdrawalsSubTable({
  * Everything else lives in dense subsections underneath so support can
  * still answer deep questions without jumping between cards.
  */
-const PnlCard = React.memo(function PnlCard({
+export const PnlCard = React.memo(function PnlCard({
   pnlBreakdown: p,
   balances,
 }: {
@@ -2404,7 +2491,7 @@ const PnlCard = React.memo(function PnlCard({
   );
 });
 
-const ActivityStatsCard = React.memo(function ActivityStatsCard({
+export const ActivityStatsCard = React.memo(function ActivityStatsCard({
   statistics,
   balances,
   inventoryCount,
@@ -2539,7 +2626,7 @@ const ActivityStatsCard = React.memo(function ActivityStatsCard({
   );
 });
 
-const RewardsCard = React.memo(function RewardsCard({
+export const RewardsCard = React.memo(function RewardsCard({
   rewards,
 }: {
   rewards: UserRewards;
@@ -2581,7 +2668,7 @@ const RewardsCard = React.memo(function RewardsCard({
   );
 });
 
-const FeatureLocksCard = React.memo(function FeatureLocksCard({
+export const FeatureLocksCard = React.memo(function FeatureLocksCard({
   userId,
   featureLocks,
   canToggle,
@@ -2669,7 +2756,7 @@ const FeatureLocksCard = React.memo(function FeatureLocksCard({
   );
 });
 
-const AccountDetailsSection = React.memo(function AccountDetailsSection({
+export const AccountDetailsSection = React.memo(function AccountDetailsSection({
   user,
   shippingAddress,
   vault,
@@ -2817,7 +2904,7 @@ const AccountDetailsSection = React.memo(function AccountDetailsSection({
   );
 });
 
-const ModerationSection = React.memo(function ModerationSection({
+export const ModerationSection = React.memo(function ModerationSection({
   user,
   mutes,
 }: {
@@ -4007,7 +4094,7 @@ const BALANCE_RANGES = [
   { label: "All", days: 0 },
 ] as const;
 
-const BalanceHistoryChart = React.memo(function BalanceHistoryChart({
+export const BalanceHistoryChart = React.memo(function BalanceHistoryChart({
   data,
 }: {
   data: BalanceHistoryPoint[];
@@ -4133,7 +4220,7 @@ const INVENTORY_RARITY_COLORS: Record<string, string> = {
   secret: "bg-pink-700/90 text-pink-100",
 };
 
-const InventoryGrid = React.memo(function InventoryGrid({
+export const InventoryGrid = React.memo(function InventoryGrid({
   userId,
   initialInventory,
   inventoryValue,
@@ -4425,7 +4512,7 @@ const InventoryGrid = React.memo(function InventoryGrid({
 
 /* ── Disposed Cards Table (Sold + Exchanged, merged) ── */
 
-const DisposedCardsTable = React.memo(function DisposedCardsTable({
+export const DisposedCardsTable = React.memo(function DisposedCardsTable({
   userId,
   initialInventory,
 }: {
@@ -4713,7 +4800,7 @@ const DisposedCardsTable = React.memo(function DisposedCardsTable({
 
 /* ── Creator Section ── */
 
-const CreatorSection = React.memo(function CreatorSection({
+export const CreatorSection = React.memo(function CreatorSection({
   user,
   creatorData,
   affiliate,
@@ -5457,7 +5544,7 @@ function InfoRow({
 }
 
 /* ── Notes Section ── */
-const NotesSection = React.memo(function NotesSection({
+export const NotesSection = React.memo(function NotesSection({
   userId,
   notes,
 }: {

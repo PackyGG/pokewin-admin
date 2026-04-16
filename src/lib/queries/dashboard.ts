@@ -18,12 +18,12 @@ export type ActivityItem = {
   userId?: string;
 };
 
-function revenueAgg(gte: Date) {
+function revenueAgg(gte: Date | null) {
   return db.ledger_transactions.aggregate({
     where: {
       type: "deposit",
       status: "completed",
-      created_at: { gte },
+      ...(gte ? { created_at: { gte } } : {}),
       user: EXCLUDE_STAFF_USER_RELATION,
     },
     _sum: { amount: true },
@@ -35,7 +35,33 @@ function revenueAgg(gte: Date) {
 // inventory — that's a balance-sheet adjustment that belongs on the lifetime
 // realized P&L (see getRealizedPnlSnapshot in ./_realized-pnl), not on a period-based gaming
 // revenue number.
-function ggrAgg(gte: Date) {
+function ggrAgg(gte: Date | null) {
+  if (gte === null) {
+    // All-time: same query, no date filter. Kept as a separate branch so
+    // the parameterised template tag stays simple and type-safe — Prisma's
+    // $queryRaw doesn't love optional interpolations.
+    return db.$queryRaw<{ ggr: string }[]>`
+      SELECT (
+        COALESCE(SUM(CASE
+          WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship', 'withdrawal_shipping_fee')
+          THEN ABS(amount::numeric) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE
+          WHEN type IN (
+            'battle_refund', 'card_sale', 'reward_card_sale',
+            'card_exchange', 'exchange_excess_credit',
+            'deposit_bonus', 'race_prize', 'gift_card_redeemed',
+            'promo_code_redeemed', 'rakeback_claim', 'balance_reward_claim',
+            'affiliate_claim', 'rain_win', 'waitlist_prize',
+            'creator_tip', 'voucher_redeemed', 'voucher_exchange',
+            'exchange_excess_to_voucher', 'battle_excess_to_voucher'
+          )
+          THEN ABS(amount::numeric) ELSE 0 END), 0)
+      )::text AS ggr
+      FROM ledger_transactions
+      WHERE status = 'completed'
+        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))
+    `;
+  }
   return db.$queryRaw<{ ggr: string }[]>`
     SELECT (
       COALESCE(SUM(CASE
@@ -62,12 +88,12 @@ function ggrAgg(gte: Date) {
 // Lifetime realized P&L lives in src/lib/queries/_realized-pnl.ts so the
 // Analytics page can use the exact same definition. Do not inline it here.
 
-function wagerAgg(gte: Date) {
+function wagerAgg(gte: Date | null) {
   return db.ledger_transactions.aggregate({
     where: {
       type: { in: ["pack_opening", "battle_bet", "battle_sponsorship"] },
       status: "completed",
-      created_at: { gte },
+      ...(gte ? { created_at: { gte } } : {}),
       user: EXCLUDE_STAFF_USER_RELATION,
     },
     _sum: { amount: true },
@@ -105,16 +131,19 @@ export async function getDashboardStats() {
     revenue3d,
     revenue7d,
     revenue30d,
+    revenueAll,
     activityTotals,
     depositCount,
     wager24h,
     wager3d,
     wager7d,
     wager30d,
+    wagerAll,
     ggr24h,
     ggr3d,
     ggr7d,
     ggr30d,
+    ggrAll,
     realizedPnlResult,
     avgSessionValueResult,
     totalInventoryValue,
@@ -195,6 +224,7 @@ export async function getDashboardStats() {
     revenueAgg(threeDaysAgo),
     revenueAgg(sevenDaysAgo),
     revenueAgg(thirtyDaysAgo),
+    revenueAgg(null),
     db.user_statistics.aggregate({
       where: { user: EXCLUDE_STAFF_USER_RELATION },
       _sum: { opened_packs_count: true, battles_played: true },
@@ -210,10 +240,12 @@ export async function getDashboardStats() {
     wagerAgg(threeDaysAgo),
     wagerAgg(sevenDaysAgo),
     wagerAgg(thirtyDaysAgo),
+    wagerAgg(null),
     ggrAgg(startOfDay),
     ggrAgg(threeDaysAgo),
     ggrAgg(sevenDaysAgo),
     ggrAgg(thirtyDaysAgo),
+    ggrAgg(null),
     getRealizedPnlSnapshot(),
     db.$queryRaw<{ avg_session_value: string }[]>`
       WITH real_users AS (
@@ -301,6 +333,7 @@ export async function getDashboardStats() {
       "3d": Number(ggr3d[0]?.ggr ?? 0),
       "7d": Number(ggr7d[0]?.ggr ?? 0),
       "30d": Number(ggr30d[0]?.ggr ?? 0),
+      all: Number(ggrAll[0]?.ggr ?? 0),
     },
     // Lifetime realized P&L from the house perspective — see getRealizedPnlSnapshot.
     // This is a single snapshot value, not a period series.
@@ -310,12 +343,14 @@ export async function getDashboardStats() {
       "3d": toNumber(revenue3d._sum?.amount),
       "7d": toNumber(revenue7d._sum?.amount),
       "30d": toNumber(revenue30d._sum?.amount),
+      all: toNumber(revenueAll._sum?.amount),
     },
     wagers: {
       "24h": Math.abs(toNumber(wager24h._sum?.amount)),
       "3d": Math.abs(toNumber(wager3d._sum?.amount)),
       "7d": Math.abs(toNumber(wager7d._sum?.amount)),
       "30d": Math.abs(toNumber(wager30d._sum?.amount)),
+      all: Math.abs(toNumber(wagerAll._sum?.amount)),
     },
     financials: {
       totalDeposited: toNumber(balanceAggregates._sum?.total_deposited),
@@ -325,6 +360,10 @@ export async function getDashboardStats() {
       totalSiteBalance: toNumber(totalSiteBalance._sum?.available_balance),
       totalInventoryValue: toNumber(totalInventoryValue._sum?.value_at_obtained),
       avgWagerPerDeposit: depositCount > 0 ? totalWagered / depositCount : 0,
+      avgDeposit:
+        depositCount > 0
+          ? toNumber(balanceAggregates._sum?.total_deposited) / depositCount
+          : 0,
       avgSessionValue: Number(avgSessionValueResult[0]?.avg_session_value ?? 0),
       pendingWithdrawalsCount: pendingWithdrawals._count,
       pendingWithdrawalsValue: toNumber(pendingWithdrawals._sum?.total_value_usd),

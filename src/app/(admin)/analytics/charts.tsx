@@ -130,9 +130,37 @@ const currencyFormatter = (v: number) => {
   return `$${v}`;
 };
 
+/**
+ * Tooltip row that shows the color indicator, the label from config,
+ * and the formatted $ value — used when a chart has multiple series
+ * and the admin needs to know which segment they're hovering.
+ */
+function labeledCurrencyRow(
+  value: number | string | (string | number)[],
+  name: string | number,
+  config: Record<string, { label: string; color: string }>,
+) {
+  const cfg = config[String(name)];
+  const numeric = Array.isArray(value) ? Number(value[0] ?? 0) : Number(value);
+  return (
+    <>
+      <div
+        className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
+        style={{ backgroundColor: cfg?.color ?? "var(--muted)" }}
+      />
+      <div className="flex flex-1 items-center justify-between gap-3">
+        <span className="text-muted-foreground">{cfg?.label ?? String(name)}</span>
+        <span className="font-mono font-medium tabular-nums">
+          ${numeric.toFixed(2)}
+        </span>
+      </div>
+    </>
+  );
+}
+
 export function AnalyticsCharts({ data }: { data: DailyData[] }) {
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
       {/* Revenue Chart */}
       <Card>
         <CardHeader>
@@ -354,7 +382,7 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
       </Card>
 
       {/* Reward Payouts — stacked bars per category */}
-      <Card className="lg:col-span-2">
+      <Card>
         <CardHeader>
           <CardTitle className="text-sm font-medium">
             Reward Payouts
@@ -384,7 +412,9 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
               <ChartTooltip
                 content={
                   <ChartTooltipContent
-                    formatter={(value) => `$${Number(value).toFixed(2)}`}
+                    formatter={(value, name) =>
+                      labeledCurrencyRow(value, name, rewardPayoutsConfig)
+                    }
                   />
                 }
               />
@@ -420,7 +450,7 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
       </Card>
 
       {/* Affiliate Payouts — separate chart, affiliate claims aren't rewards */}
-      <Card className="lg:col-span-2">
+      <Card>
         <CardHeader>
           <CardTitle className="text-sm font-medium">
             Affiliate Payouts

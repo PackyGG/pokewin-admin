@@ -3,118 +3,91 @@
 import { ColumnDef } from "@tanstack/react-table";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import type { WithdrawalListItem } from "@/lib/queries/withdrawals";
-import { WithdrawalRequestActions, ActiveShipmentActions } from "./row-actions";
+import { WithdrawalRowActions } from "./row-actions";
 
-const idColumn: ColumnDef<WithdrawalListItem, unknown> = {
-  accessorKey: "id",
-  header: "ID",
-  cell: ({ row }) => (
-    <Link
-      href={`/withdrawals/${row.original.id}`}
-      className="font-mono text-xs hover:underline"
-    >
-      {row.original.id.slice(0, 8)}...
-    </Link>
-  ),
-};
+// Initials fallback for users without a profile picture — mirrors the
+// pattern used in src/app/(admin)/transactions/deposits/columns.tsx.
+function initialsFor(username: string | null, userId: string): string {
+  const src = username ?? userId;
+  return src.slice(0, 2).toUpperCase();
+}
 
-const userColumn: ColumnDef<WithdrawalListItem, unknown> = {
-  accessorKey: "username",
-  header: "User",
-  cell: ({ row }) => (
-    <Link href={`/users/${row.original.userId}`} className="hover:underline">
-      {row.original.username}
-    </Link>
-  ),
-};
-
-const methodColumn: ColumnDef<WithdrawalListItem, unknown> = {
-  accessorKey: "method",
-  header: "Method",
-  cell: ({ row }) => (
-    <Badge variant="outline">{row.original.method}</Badge>
-  ),
-};
-
-const itemsColumn: ColumnDef<WithdrawalListItem, unknown> = {
-  accessorKey: "itemCount",
-  header: "Items",
-  cell: ({ row }) => row.original.itemCount,
-};
-
-const valueColumn: ColumnDef<WithdrawalListItem, unknown> = {
-  accessorKey: "totalValueUsd",
-  header: "Value",
-  cell: ({ row }) => formatCurrency(row.original.totalValueUsd),
-};
-
-const requestedColumn: ColumnDef<WithdrawalListItem, unknown> = {
-  accessorKey: "requestedAt",
-  header: "Requested",
-  cell: ({ row }) => formatRelative(row.original.requestedAt),
-};
-
-// --- Tab-specific column arrays ---
-
-/** Withdrawal Requests — pending, all methods */
-export const requestColumns: ColumnDef<WithdrawalListItem, unknown>[] = [
-  idColumn,
-  userColumn,
-  methodColumn,
-  itemsColumn,
-  valueColumn,
-  requestedColumn,
+/**
+ * Unified column set for the single-page Withdrawals view. Replaces the
+ * old tab-specific column arrays (requestColumns, shippingRequestColumns,
+ * finishedColumns, activeShipmentColumns) — one table now shows every
+ * withdrawal regardless of status, matching the Deposits page layout.
+ *
+ * Per-row actions adapt to the withdrawal status and method via
+ * WithdrawalRowActions. The Handled By / Tracking / Reason columns only
+ * render when the row actually has that data, so they stay informational
+ * without adding visual noise to pending rows.
+ */
+export const columns: ColumnDef<WithdrawalListItem, unknown>[] = [
   {
-    id: "actions",
-    header: "Actions",
-    cell: ({ row }) => <WithdrawalRequestActions withdrawalId={row.original.id} />,
+    accessorKey: "id",
+    header: "ID",
+    cell: ({ row }) => (
+      <Link
+        href={`/withdrawals/${row.original.id}`}
+        className="font-mono text-xs hover:underline"
+      >
+        {row.original.id.slice(0, 8)}...
+      </Link>
+    ),
   },
-];
-
-/** Shipping Requests — pending, physical only */
-export const shippingRequestColumns: ColumnDef<WithdrawalListItem, unknown>[] = [
-  idColumn,
-  userColumn,
-  itemsColumn,
-  valueColumn,
   {
-    id: "address",
-    header: "Address",
+    accessorKey: "username",
+    header: "User",
     cell: ({ row }) => {
-      const snapshot = row.original.shippingAddressSnapshot as Record<string, string> | null;
-      if (!snapshot) return <span className="text-muted-foreground">—</span>;
-      const parts = [snapshot.city, snapshot.state, snapshot.country].filter(Boolean);
+      const { userId, username, image } = row.original;
+      const label = username ?? userId.slice(0, 8);
       return (
-        <span className="text-xs" title={JSON.stringify(snapshot, null, 2)}>
-          {parts.join(", ") || "Address on file"}
-        </span>
+        <Link
+          href={`/users/${userId}`}
+          className="flex items-center gap-2 hover:underline"
+        >
+          <Avatar size="sm" className="shrink-0">
+            {image && <AvatarImage src={image} alt="" />}
+            <AvatarFallback className="text-[10px]">
+              {initialsFor(username, userId)}
+            </AvatarFallback>
+          </Avatar>
+          <span className="truncate">{label}</span>
+        </Link>
       );
     },
   },
-  requestedColumn,
   {
-    id: "actions",
-    header: "Actions",
-    cell: ({ row }) => <WithdrawalRequestActions withdrawalId={row.original.id} />,
+    accessorKey: "method",
+    header: "Method",
+    cell: ({ row }) => <Badge variant="outline">{row.original.method}</Badge>,
   },
-];
-
-/** Finished — completed/cancelled/failed */
-export const finishedColumns: ColumnDef<WithdrawalListItem, unknown>[] = [
-  idColumn,
-  userColumn,
-  methodColumn,
   {
     accessorKey: "status",
     header: "Status",
     cell: ({ row }) => (
-      <Badge variant="outline" className={STATUS_COLORS[row.original.status]}>
+      <Badge
+        variant="outline"
+        className={STATUS_COLORS[row.original.status] ?? ""}
+      >
         {row.original.status}
       </Badge>
     ),
+  },
+  {
+    accessorKey: "itemCount",
+    header: "Items",
+    cell: ({ row }) => row.original.itemCount,
+  },
+  {
+    accessorKey: "totalValueUsd",
+    header: "Value",
+    cell: ({ row }) => formatCurrency(row.original.totalValueUsd),
   },
   {
     id: "handledBy",
@@ -129,69 +102,31 @@ export const finishedColumns: ColumnDef<WithdrawalListItem, unknown>[] = [
     },
   },
   {
-    id: "reason",
-    header: "Reason",
+    id: "tracking",
+    header: "Tracking",
     cell: ({ row }) =>
-      row.original.failureReason ? (
-        <span className="max-w-[200px] truncate text-xs" title={row.original.failureReason}>
-          {row.original.failureReason}
+      row.original.trackingNumber ? (
+        <span className="font-mono text-xs">
+          {row.original.trackingNumber}
+          {row.original.carrier ? ` · ${row.original.carrier}` : ""}
         </span>
       ) : (
         <span className="text-muted-foreground">—</span>
       ),
   },
-  valueColumn,
-  requestedColumn,
-];
-
-/** Active Shipments — processing/shipped, physical only */
-export const activeShipmentColumns: ColumnDef<WithdrawalListItem, unknown>[] = [
-  idColumn,
-  userColumn,
   {
-    accessorKey: "status",
-    header: "Status",
-    cell: ({ row }) => (
-      <Badge variant="outline" className={STATUS_COLORS[row.original.status]}>
-        {row.original.status}
-      </Badge>
-    ),
-  },
-  itemsColumn,
-  valueColumn,
-  {
-    id: "tracking",
-    header: "Tracking",
-    cell: ({ row }) =>
-      row.original.trackingNumber ? (
-        <span className="font-mono text-xs">{row.original.trackingNumber}</span>
-      ) : (
-        <span className="text-muted-foreground">—</span>
-      ),
-  },
-  {
-    id: "carrier",
-    header: "Carrier",
-    cell: ({ row }) =>
-      row.original.carrier ?? <span className="text-muted-foreground">—</span>,
-  },
-  {
-    id: "approvedBy",
-    header: "Approved By",
-    cell: ({ row }) =>
-      row.original.processedBy ? (
-        <span className="text-xs">{row.original.processedBy}</span>
-      ) : (
-        <span className="text-muted-foreground">—</span>
-      ),
+    accessorKey: "requestedAt",
+    header: "Requested",
+    cell: ({ row }) => formatRelative(row.original.requestedAt),
   },
   {
     id: "actions",
     header: "Actions",
     cell: ({ row }) => (
-      <ActiveShipmentActions
+      <WithdrawalRowActions
         withdrawalId={row.original.id}
         status={row.original.status}
+        method={row.original.method}
       />
     ),
   },

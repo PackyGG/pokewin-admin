@@ -8,6 +8,7 @@ import type { Topology, GeometryCollection } from "topojson-specification";
 import countriesTopo from "world-atlas/countries-110m.json";
 import countries from "i18n-iso-countries";
 import type { CountryUserCount } from "@/lib/queries/map";
+import { formatCurrency } from "@/lib/utils/format";
 
 // world-atlas ships countries-110m.json as a TopoJSON Topology.
 // Convert it to a GeoJSON FeatureCollection once at module load.
@@ -28,6 +29,9 @@ const VIEW_H = 520;
 type HoverState = {
   name: string;
   count: number;
+  totalDeposits: number;
+  depositCount: number;
+  totalWager: number;
   clientX: number;
   clientY: number;
 };
@@ -36,13 +40,28 @@ export function WorldMap({ data }: { data: CountryUserCount[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<HoverState | null>(null);
 
-  // Map: numeric ISO (string, matching world-atlas feature.id) -> user count + DB name
+  // Map: numeric ISO (string, matching world-atlas feature.id) -> country data
   const byNumericId = useMemo(() => {
-    const m = new Map<string, { count: number; dbName: string | null }>();
+    const m = new Map<
+      string,
+      {
+        count: number;
+        dbName: string | null;
+        totalDeposits: number;
+        depositCount: number;
+        totalWager: number;
+      }
+    >();
     for (const entry of data) {
       const numeric = countries.alpha2ToNumeric(entry.country_code);
       if (!numeric) continue;
-      m.set(numeric, { count: entry.user_count, dbName: entry.country });
+      m.set(numeric, {
+        count: entry.user_count,
+        dbName: entry.country,
+        totalDeposits: entry.total_deposits,
+        depositCount: entry.deposit_count,
+        totalWager: entry.total_wager,
+      });
     }
     return m;
   }, [data]);
@@ -112,8 +131,6 @@ export function WorldMap({ data }: { data: CountryUserCount[] }) {
                 hasUsers
                   ? {
                       fill: "var(--chart-1)",
-                      // Map intensity 0..1 -> opacity 0.25..1 so even the smallest
-                      // non-zero country is visibly distinct from the empty muted fill.
                       fillOpacity: 0.25 + intensity * 0.75,
                     }
                   : undefined
@@ -123,6 +140,9 @@ export function WorldMap({ data }: { data: CountryUserCount[] }) {
                 setHover({
                   name: displayName,
                   count,
+                  totalDeposits: match?.totalDeposits ?? 0,
+                  depositCount: match?.depositCount ?? 0,
+                  totalWager: match?.totalWager ?? 0,
                   clientX: e.clientX,
                   clientY: e.clientY,
                 });
@@ -163,21 +183,57 @@ function TooltipOverlay({
   const x = hover.clientX - rect.left;
   const y = hover.clientY - rect.top;
 
+  const avgDeposit =
+    hover.depositCount > 0 ? hover.totalDeposits / hover.depositCount : 0;
+  // Wager multiplier = how many $ wagered per $ deposited. Shows how
+  // "sticky" a country's users are — high multiplier means deposits
+  // get churned many times before the user leaves.
+  const multiplier =
+    hover.totalDeposits > 0 ? hover.totalWager / hover.totalDeposits : 0;
+
   return (
     <div
-      className="pointer-events-none absolute z-50 rounded-md bg-foreground px-3 py-1.5 text-xs text-background shadow-md"
+      className="pointer-events-none absolute z-50 rounded-md bg-foreground px-3 py-2 text-xs text-background shadow-md min-w-[180px]"
       style={{
         left: x,
         top: y - 12,
         transform: "translate(-50%, -100%)",
       }}
     >
-      <div className="font-medium">{hover.name}</div>
-      <div className="opacity-80">
+      <div className="font-semibold text-sm">{hover.name}</div>
+      <div className="opacity-80 mt-0.5">
         {hover.count > 0
           ? `${hover.count.toLocaleString()} users`
           : "No users"}
       </div>
+      {hover.totalDeposits > 0 || hover.totalWager > 0 ? (
+        <div className="mt-1.5 pt-1.5 border-t border-background/20 space-y-0.5">
+          <div className="flex justify-between gap-3">
+            <span className="opacity-70">Deposits</span>
+            <span className="tabular-nums font-medium">
+              {formatCurrency(hover.totalDeposits)}
+            </span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="opacity-70">Avg deposit</span>
+            <span className="tabular-nums font-medium">
+              {formatCurrency(avgDeposit)}
+            </span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="opacity-70">Total wager</span>
+            <span className="tabular-nums font-medium">
+              {formatCurrency(hover.totalWager)}
+            </span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="opacity-70">Wager / deposit</span>
+            <span className="tabular-nums font-medium">
+              {multiplier > 0 ? `${multiplier.toFixed(2)}×` : "—"}
+            </span>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

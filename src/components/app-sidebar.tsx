@@ -112,15 +112,6 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: "Transactions",
-    items: [
-      { label: "All", href: "/transactions", icon: "Receipt" },
-      { label: "Packs", href: "/transactions/packs", icon: "Package" },
-      { label: "Battles", href: "/transactions/battles", icon: "Swords" },
-      { label: "Rewards", href: "/transactions/rewards", icon: "Award" },
-    ],
-  },
-  {
     label: "Creators",
     items: [
       { label: "Creators", href: "/creators", icon: "Users" },
@@ -130,11 +121,28 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    label: "Marketing",
+    items: [
+      { label: "Promo Codes", href: "/promo-codes", icon: "Tag" },
+      { label: "Gift Cards", href: "/gift-cards", icon: "Gift" },
+      { label: "Vouchers", href: "/vouchers", icon: "Ticket" },
+    ],
+  },
+  {
     label: "Content",
     items: [
       { label: "Packs", href: "/packs", icon: "Package" },
       { label: "Cards", href: "/cards", icon: "Layers" },
       { label: "Battles", href: "/battles", icon: "Swords" },
+    ],
+  },
+  {
+    label: "Transactions",
+    items: [
+      { label: "All", href: "/transactions", icon: "Receipt" },
+      { label: "Packs", href: "/transactions/packs", icon: "Package" },
+      { label: "Battles", href: "/transactions/battles", icon: "Swords" },
+      { label: "Rewards", href: "/transactions/rewards", icon: "Award" },
     ],
   },
   {
@@ -147,14 +155,6 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Leaderboards", href: "/rewards/leaderboards", icon: "Trophy" },
       { label: "Level Up", href: "/rewards/level-up", icon: "TrendingUp" },
       { label: "Settings", href: "/rewards/settings", icon: "Settings" },
-    ],
-  },
-  {
-    label: "Marketing",
-    items: [
-      { label: "Promo Codes", href: "/promo-codes", icon: "Tag" },
-      { label: "Gift Cards", href: "/gift-cards", icon: "Gift" },
-      { label: "Vouchers", href: "/vouchers", icon: "Ticket" },
     ],
   },
   {

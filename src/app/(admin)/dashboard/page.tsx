@@ -1,16 +1,20 @@
 import {
   Users,
-  ArrowDownToLine,
-  Package,
+  ArrowUpFromLine,
   Percent,
   Wallet,
-  Clock,
+  Coins,
 } from "lucide-react";
 import { getDashboardStats, getRecentActivity } from "@/lib/queries/dashboard";
 import { requirePageAccess } from "@/lib/dal";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { StatCard } from "./stat-card";
-import { PnlStatCard, GgrStatCard, WagerStatCard } from "./revenue-stat-card";
+import {
+  PnlStatCard,
+  GgrStatCard,
+  WagerStatCard,
+  DepositsStatCard,
+} from "./revenue-stat-card";
 import { AutoRefresh } from "./auto-refresh";
 import { WagerChart, DepositsChart, SignupsChart } from "./charts";
 import { RecentActivity } from "./recent-activity";
@@ -38,18 +42,16 @@ export default async function DashboardPage({
       <AutoRefresh />
       <h1 className="text-page-title">Dashboard</h1>
 
-      {/* Stat cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      {/* Primary stats — period-aware cards */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <PnlStatCard pnl={stats.realizedPnl} />
         <GgrStatCard ggr={stats.ggr} />
         <WagerStatCard wagers={stats.wagers} />
-        <StatCard
-          title="Deposits & Withdrawals"
-          value={formatCurrency(stats.financials.totalDeposited)}
-          subtitle={`${formatCurrency(stats.financials.totalWithdrawn)} withdrawn · ${stats.financials.pendingWithdrawalsCount} in progress (${formatCurrency(stats.financials.pendingWithdrawalsValue)})`}
-          icon={ArrowDownToLine}
-          color="orange"
-        />
+        <DepositsStatCard deposits={stats.deposits} />
+      </div>
+
+      {/* Secondary stats — all-time / snapshot */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
         <StatCard
           title="Total Users"
           value={formatNumber(stats.users.total)}
@@ -57,10 +59,6 @@ export default async function DashboardPage({
           icon={Users}
           color="blue"
         />
-      </div>
-
-      {/* Secondary stat cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Users Total Balance"
           value={formatCurrency(stats.financials.totalSiteBalance + stats.financials.totalInventoryValue)}
@@ -69,18 +67,18 @@ export default async function DashboardPage({
           color="green"
         />
         <StatCard
-          title="Pending Confirmations"
-          value={formatNumber(stats.financials.pendingConfirmationCount)}
-          subtitle={`${formatCurrency(stats.financials.pendingConfirmationValue)} awaiting admin action`}
-          icon={Clock}
-          color="orange"
+          title="Total Withdrawn"
+          value={formatCurrency(stats.financials.totalWithdrawn)}
+          subtitle={`${stats.financials.pendingWithdrawalsCount} in progress (${formatCurrency(stats.financials.pendingWithdrawalsValue)})`}
+          icon={ArrowUpFromLine}
+          color="cyan"
         />
         <StatCard
-          title="Pack Openings"
-          value={formatNumber(stats.activity.totalPacksOpened)}
-          subtitle={`${formatNumber(stats.activity.totalBattlesPlayed)} battles`}
-          icon={Package}
-          color="purple"
+          title="Avg Deposit"
+          value={formatCurrency(stats.financials.avgDeposit)}
+          subtitle="Across all users (lifetime)"
+          icon={Coins}
+          color="orange"
         />
         <StatCard
           title="Avg RTP"
