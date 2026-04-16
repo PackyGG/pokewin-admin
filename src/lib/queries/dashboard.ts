@@ -98,8 +98,8 @@ export async function getDashboardStats() {
     packStats,
     totalAuditEvents,
     totalTransactions,
-    dailyRevenue,
     dailyWagers,
+    dailyDeposits,
     dailySignups,
     revenue24h,
     revenue3d,
@@ -159,16 +159,6 @@ export async function getDashboardStats() {
     db.ledger_transactions.count({
       where: { user: EXCLUDE_STAFF_USER_RELATION },
     }),
-    // Revenue last 60 days (pack openings = main revenue source)
-    db.$queryRaw<{ date: Date; revenue: string }[]>`
-      SELECT DATE(created_at) as date, COALESCE(SUM(amount::numeric), 0)::text as revenue
-      FROM ledger_transactions
-      WHERE type = 'pack_opening' AND status = 'completed'
-        AND created_at >= NOW() - INTERVAL '60 days'
-        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))
-      GROUP BY DATE(created_at)
-      ORDER BY date
-    `,
     // Wagers last 60 days — split by packs vs battles for stacked bar chart
     db.$queryRaw<{ date: Date; packs: string; battles: string }[]>`
       SELECT
@@ -177,6 +167,16 @@ export async function getDashboardStats() {
         COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') THEN ABS(amount::numeric) ELSE 0 END), 0)::text as battles
       FROM ledger_transactions
       WHERE type IN ('pack_opening','battle_bet','battle_sponsorship') AND status = 'completed'
+        AND created_at >= NOW() - INTERVAL '60 days'
+        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))
+      GROUP BY DATE(created_at)
+      ORDER BY date
+    `,
+    // Deposits last 60 days — pure deposits (excludes deposit_bonus)
+    db.$queryRaw<{ date: Date; amount: string }[]>`
+      SELECT DATE(created_at) as date, COALESCE(SUM(amount::numeric), 0)::text as amount
+      FROM ledger_transactions
+      WHERE type = 'deposit' AND status = 'completed'
         AND created_at >= NOW() - INTERVAL '60 days'
         AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))
       GROUP BY DATE(created_at)
@@ -347,14 +347,14 @@ export async function getDashboardStats() {
       totalBattlesPlayed: Number(activityTotals._sum?.battles_played ?? 0),
     },
     totalActivityCount,
-    dailyRevenue: dailyRevenue.map((d) => ({
-      date: new Date(d.date).toISOString().split("T")[0],
-      revenue: Math.abs(Number(d.revenue)),
-    })),
     dailyWagers: dailyWagers.map((d) => ({
       date: new Date(d.date).toISOString().split("T")[0],
       packs: Number(d.packs),
       battles: Number(d.battles),
+    })),
+    dailyDeposits: dailyDeposits.map((d) => ({
+      date: new Date(d.date).toISOString().split("T")[0],
+      amount: Math.abs(Number(d.amount)),
     })),
     dailySignups: dailySignups.map((d) => ({
       date: new Date(d.date).toISOString().split("T")[0],

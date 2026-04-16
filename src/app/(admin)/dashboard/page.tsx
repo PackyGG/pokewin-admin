@@ -12,7 +12,7 @@ import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { StatCard } from "./stat-card";
 import { PnlStatCard, GgrStatCard, WagerStatCard } from "./revenue-stat-card";
 import { AutoRefresh } from "./auto-refresh";
-import { RevenueChart, WagerChart, SignupsChart } from "./charts";
+import { WagerChart, DepositsChart, SignupsChart } from "./charts";
 import { RecentActivity } from "./recent-activity";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 
@@ -92,8 +92,8 @@ export default async function DashboardPage({
 
       {/* Charts */}
       <div className="grid gap-4 lg:grid-cols-3">
-        <RevenueChart data={stats.dailyRevenue} />
         <WagerChart data={stats.dailyWagers} />
+        <DepositsChart data={stats.dailyDeposits} />
         <SignupsChart data={stats.dailySignups} />
       </div>
 

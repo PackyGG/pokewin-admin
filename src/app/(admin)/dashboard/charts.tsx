@@ -1,6 +1,6 @@
 "use client";
 
-import { Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   type ChartConfig,
@@ -8,13 +8,6 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from "@/components/ui/chart";
-
-const revenueConfig = {
-  revenue: {
-    label: "Revenue",
-    color: "var(--color-chart-1)",
-  },
-} satisfies ChartConfig;
 
 const wagerConfig = {
   packs: {
@@ -27,65 +20,19 @@ const wagerConfig = {
   },
 } satisfies ChartConfig;
 
+const depositsConfig = {
+  amount: {
+    label: "Deposits",
+    color: "var(--color-chart-3)",
+  },
+} satisfies ChartConfig;
+
 const signupsConfig = {
   count: {
     label: "Signups",
     color: "var(--color-chart-1)",
   },
 } satisfies ChartConfig;
-
-export function RevenueChart({
-  data,
-}: {
-  data: { date: string; revenue: number }[];
-}) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-sm font-medium">Revenue (60 days)</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <ChartContainer config={revenueConfig} className="h-[300px] w-full">
-          <LineChart data={data} accessibilityLayer>
-            <CartesianGrid vertical={false} />
-            <XAxis
-              dataKey="date"
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
-              tickFormatter={(v) => v.slice(5)}
-            />
-            <YAxis
-              tickLine={false}
-              axisLine={false}
-              tickMargin={8}
-              width={70}
-              tickFormatter={(v) => {
-                if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
-                if (v >= 1_000) return `$${(v / 1_000).toFixed(0)}K`;
-                return `$${v}`;
-              }}
-            />
-            <ChartTooltip
-              content={
-                <ChartTooltipContent
-                  formatter={(value) => `$${Number(value).toFixed(2)}`}
-                />
-              }
-            />
-            <Line
-              type="monotone"
-              dataKey="revenue"
-              stroke="var(--color-revenue)"
-              strokeWidth={2}
-              dot={false}
-            />
-          </LineChart>
-        </ChartContainer>
-      </CardContent>
-    </Card>
-  );
-}
 
 export function WagerChart({
   data,
@@ -140,6 +87,59 @@ export function WagerChart({
               dataKey="battles"
               stackId="wager"
               fill="var(--color-battles)"
+              radius={[4, 4, 0, 0]}
+            />
+          </BarChart>
+        </ChartContainer>
+      </CardContent>
+    </Card>
+  );
+}
+
+export function DepositsChart({
+  data,
+}: {
+  data: { date: string; amount: number }[];
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm font-medium">
+          Deposits (60 days)
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <ChartContainer config={depositsConfig} className="h-[300px] w-full">
+          <BarChart data={data} accessibilityLayer>
+            <CartesianGrid vertical={false} />
+            <XAxis
+              dataKey="date"
+              tickLine={false}
+              axisLine={false}
+              tickMargin={8}
+              tickFormatter={(v) => v.slice(5)}
+            />
+            <YAxis
+              tickLine={false}
+              axisLine={false}
+              tickMargin={8}
+              width={70}
+              tickFormatter={(v) => {
+                if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
+                if (v >= 1_000) return `$${(v / 1_000).toFixed(0)}K`;
+                return `$${v}`;
+              }}
+            />
+            <ChartTooltip
+              content={
+                <ChartTooltipContent
+                  formatter={(value) => `$${Number(value).toFixed(2)}`}
+                />
+              }
+            />
+            <Bar
+              dataKey="amount"
+              fill="var(--color-amount)"
               radius={[4, 4, 0, 0]}
             />
           </BarChart>
