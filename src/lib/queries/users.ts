@@ -669,6 +669,10 @@ export async function getUserInventory(
     where.sold_at = { not: null };
   } else if (filters?.status === "exchanged") {
     where.exchanged_at = { not: null };
+  } else if (filters?.status === "disposed") {
+    // Items that have left the user's owned inventory either via sale or
+    // exchange. Used for the combined "Sold & Exchanged" admin section.
+    where.OR = [{ sold_at: { not: null } }, { exchanged_at: { not: null } }];
   }
 
   if (filters?.priceMin != null) {
@@ -785,6 +789,7 @@ export async function getUserTransactions(
           select: {
             game_id: true,
             game_type: true,
+            result: true,
             provably_fair_results: {
               select: {
                 user_inventory: { select: { value_at_obtained: true } },
@@ -869,16 +874,35 @@ export async function getUserTransactions(
     inventoryValueByTx.set(t.id, total);
   }
 
-  // Compute cards value for gaming transactions from included provably_fair_results
+  // Compute cards value for gaming transactions from included provably_fair_results.
+  // For battles we only trust the sum once game_sessions.result is non-null
+  // (i.e. the battle has resolved for this participant). Inventory rows are
+  // inserted round-by-round during the battle, so reading them mid-battle
+  // gives a moving target — the admin sees a fake "losing" display that
+  // drifts toward the real P&L as rounds roll in.
+  // Pack openings don't have this problem (they're atomic), so they stay
+  // on the old path.
   const cardsValueByTx = new Map<string, number>();
   for (const t of transactions) {
-    if ((t.type === "pack_opening" || t.type === "battle_bet" || t.type === "battle_sponsorship") && t.game_sessions_ledger_transactions_game_session_idTogame_sessions) {
-      const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
+    const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
+    if (!gs) continue;
+
+    if (t.type === "pack_opening") {
       const value = gs.provably_fair_results.reduce(
         (sum, pf) => sum + (pf.user_inventory ? toNumber(pf.user_inventory.value_at_obtained) : 0),
         0
       );
       cardsValueByTx.set(t.id, value);
+    } else if (t.type === "battle_bet" || t.type === "battle_sponsorship") {
+      // Only compute for resolved battles — otherwise leave null so the UI
+      // shows "—" / "Pending" rather than a changing number.
+      if (gs.result !== null) {
+        const value = gs.provably_fair_results.reduce(
+          (sum, pf) => sum + (pf.user_inventory ? toNumber(pf.user_inventory.value_at_obtained) : 0),
+          0
+        );
+        cardsValueByTx.set(t.id, value);
+      }
     }
   }
 
@@ -901,6 +925,7 @@ export async function getUserTransactions(
         packId: pack?.id ?? null,
         packName: pack?.name ?? null,
         cardsValue: cardsValueByTx.has(t.id) ? cardsValueByTx.get(t.id)! : null,
+        gameResult: gs?.result ?? null, // "win" | "lose" | null (null = still resolving)
         inventoryValue: inventoryValueByTx.get(t.id) ?? 0,
         soldCard: soldItem?.card ? {
           name: soldItem.card.name,

@@ -85,6 +85,12 @@ export type AnalyticsData = {
     maxDeposit: number;
     minBet: number;
     maxBet: number;
+    rewardRakeback: number;
+    rewardSignupPacks: number;
+    rewardLeaderboard: number;
+    rewardRain: number;
+    rewardPromo: number;
+    rewardAffiliate: number;
   }[];
 };
 
@@ -185,6 +191,12 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
           max_deposit: string;
           min_bet: string;
           max_bet: string;
+          reward_rakeback: string;
+          reward_signup_packs: string;
+          reward_leaderboard: string;
+          reward_rain: string;
+          reward_promo: string;
+          reward_affiliate: string;
         }[]
       >(`
         SELECT
@@ -233,7 +245,25 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
             THEN ABS(amount::numeric) END), 0)::text AS min_bet,
           COALESCE(MAX(CASE
             WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
-            THEN ABS(amount::numeric) END), 0)::text AS max_bet
+            THEN ABS(amount::numeric) END), 0)::text AS max_bet,
+          COALESCE(SUM(CASE
+            WHEN type = 'rakeback_claim'
+            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS reward_rakeback,
+          COALESCE(SUM(CASE
+            WHEN type = 'balance_reward_claim'
+            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS reward_signup_packs,
+          COALESCE(SUM(CASE
+            WHEN type = 'race_prize'
+            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS reward_leaderboard,
+          COALESCE(SUM(CASE
+            WHEN type = 'rain_win'
+            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS reward_rain,
+          COALESCE(SUM(CASE
+            WHEN type = 'promo_code_redeemed'
+            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS reward_promo,
+          COALESCE(SUM(CASE
+            WHEN type = 'affiliate_claim'
+            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS reward_affiliate
         FROM ledger_transactions
         WHERE status = 'completed' ${dateFilter} ${EXCL_STAFF_FRAG}
         GROUP BY DATE(created_at)
@@ -356,6 +386,12 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
       maxDeposit: toNumber(d.max_deposit),
       minBet: toNumber(d.min_bet),
       maxBet: toNumber(d.max_bet),
+      rewardRakeback: toNumber(d.reward_rakeback),
+      rewardSignupPacks: toNumber(d.reward_signup_packs),
+      rewardLeaderboard: toNumber(d.reward_leaderboard),
+      rewardRain: toNumber(d.reward_rain),
+      rewardPromo: toNumber(d.reward_promo),
+      rewardAffiliate: toNumber(d.reward_affiliate),
     };
   });
 
@@ -378,6 +414,12 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
         maxDeposit: 0,
         minBet: 0,
         maxBet: 0,
+        rewardRakeback: 0,
+        rewardSignupPacks: 0,
+        rewardLeaderboard: 0,
+        rewardRain: 0,
+        rewardPromo: 0,
+        rewardAffiliate: 0,
       });
     }
   }

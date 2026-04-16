@@ -80,6 +80,7 @@ import {
   formatDateTime,
   formatRelative,
 } from "@/lib/utils/format";
+import { cn } from "@/lib/utils";
 import {
   banUser,
   unbanUser,
@@ -280,6 +281,7 @@ type Transaction = {
   packId: string | null;
   packName: string | null;
   cardsValue: number | null;
+  gameResult: "win" | "lose" | "draw" | null;
   inventoryValue: number;
   soldCard: {
     name: string;
@@ -451,8 +453,7 @@ export function UserTabs({
   transactions,
   auditLog,
   inventory,
-  soldInventory,
-  exchangedInventory,
+  disposedInventory,
   pnlBreakdown,
   notes,
   gamingTx,
@@ -463,8 +464,7 @@ export function UserTabs({
   transactions: PaginatedTransactions;
   auditLog: PaginatedAuditLog;
   inventory: PaginatedInventory;
-  soldInventory: PaginatedInventory;
-  exchangedInventory: PaginatedInventory;
+  disposedInventory: PaginatedInventory;
   pnlBreakdown: PnlBreakdown;
   notes: AdminNote[];
   gamingTx: PaginatedTransactions;
@@ -507,8 +507,7 @@ export function UserTabs({
     exchanges: true,
     balanceHistory: false,
     inventory: true,
-    soldCards: false,
-    exchangedCards: false,
+    disposedCards: false,
     accountDetails: false,
     featureLocks: false,
     moderation: false,
@@ -785,33 +784,18 @@ export function UserTabs({
           />
         </CollapsibleSection>
 
-        {/* Zone 3c2 — Sold Cards */}
+        {/* Zone 3c2 — Sold & Exchanged combined. Same user story (cards
+            that left the owned inventory) so it's one compact table with
+            a status filter instead of two separate card grids. */}
         <CollapsibleSection
-          title="Sold Cards"
-          sectionKey="soldCards"
-          open={openSections.soldCards}
+          title="Sold & Exchanged Cards"
+          sectionKey="disposedCards"
+          open={openSections.disposedCards}
           onToggle={handleToggleSection}
         >
-          <InventoryGrid
+          <DisposedCardsTable
             userId={user.id}
-            initialInventory={soldInventory}
-            inventoryValue={0}
-            statusFilter="sold"
-          />
-        </CollapsibleSection>
-
-        {/* Zone 3c3 — Exchanged Cards */}
-        <CollapsibleSection
-          title="Exchanged Cards"
-          sectionKey="exchangedCards"
-          open={openSections.exchangedCards}
-          onToggle={handleToggleSection}
-        >
-          <InventoryGrid
-            userId={user.id}
-            initialInventory={exchangedInventory}
-            inventoryValue={0}
-            statusFilter="exchanged"
+            initialInventory={disposedInventory}
           />
         </CollapsibleSection>
 
@@ -1922,7 +1906,6 @@ const CategoryTransactionsTable = React.memo(
                 <TableHead>Amount</TableHead>
                 {showCardsValue && <TableHead>Cards Value</TableHead>}
                 {showCardsValue && <TableHead>House Profit</TableHead>}
-                {showCardsValue && <TableHead>House Edge</TableHead>}
                 <TableHead>Before</TableHead>
                 <TableHead>After</TableHead>
                 <TableHead>Inventory</TableHead>
@@ -1962,7 +1945,23 @@ const CategoryTransactionsTable = React.memo(
                       const isBattle =
                         t.type === "battle_bet" ||
                         t.type === "battle_sponsorship";
-                      const cv = t.cardsValue ?? (isBattle ? 0 : null);
+                      // For battles, only trust the result once the session
+                      // has a win/lose outcome. Until then, provably_fair_results
+                      // are still being inserted one-round-at-a-time and any
+                      // cardsValue we compute is a moving target. Show
+                      // "Pending" so admins don't see a fake P&L.
+                      const isBattlePending = isBattle && t.gameResult === null;
+                      if (isBattlePending) {
+                        return (
+                          <TableCell
+                            colSpan={2}
+                            className="text-xs italic text-muted-foreground"
+                          >
+                            Pending — battle still resolving
+                          </TableCell>
+                        );
+                      }
+                      const cv = t.cardsValue;
                       return (
                         <>
                           <TableCell className="tabular-nums">
@@ -1986,15 +1985,6 @@ const CategoryTransactionsTable = React.memo(
                                       {formatCurrency(profit)}
                                     </span>
                                   );
-                                })()
-                              : "—"}
-                          </TableCell>
-                          <TableCell className="tabular-nums text-muted-foreground">
-                            {cv != null && t.amount > 0
-                              ? (() => {
-                                  const edge =
-                                    ((t.amount - cv) / t.amount) * 100;
-                                  return `${edge.toFixed(1)}%`;
                                 })()
                               : "—"}
                           </TableCell>
@@ -2489,6 +2479,23 @@ const ActivityStatsCard = React.memo(function ActivityStatsCard({
         <InfoRow label="Inventory Items" value={String(inventoryCount)} />
         <InfoRow label="Bonus Points" value={String(bonusPoints)} />
         <InfoRow label="Avg. Deposit" value={formatCurrency(avgDeposit)} />
+        {(() => {
+          // Avg house edge = (wagered - won) / wagered × 100. Aggregate
+          // across the user's entire wagering history so it's stable and
+          // meaningful unlike the per-row edge we used to show.
+          const wagered = balances?.totalWagered ?? 0;
+          const won = balances?.totalWon ?? 0;
+          if (wagered <= 0) {
+            return <InfoRow label="Avg. House Edge" value="—" />;
+          }
+          const edge = ((wagered - won) / wagered) * 100;
+          return (
+            <InfoRow
+              label="Avg. House Edge"
+              value={`${edge.toFixed(2)}%`}
+            />
+          );
+        })()}
         {statistics && (
           <>
             <div className="border-t pt-2 mt-2" />
@@ -4411,6 +4418,294 @@ const InventoryGrid = React.memo(function InventoryGrid({
             </>
           );
         })()}
+      </CardContent>
+    </Card>
+  );
+});
+
+/* ── Disposed Cards Table (Sold + Exchanged, merged) ── */
+
+const DisposedCardsTable = React.memo(function DisposedCardsTable({
+  userId,
+  initialInventory,
+}: {
+  userId: string;
+  initialInventory: PaginatedInventory;
+}) {
+  const [inventory, setInventory] = useState(initialInventory);
+  const [loading, setLoading] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<"disposed" | "sold" | "exchanged">("disposed");
+  const [rarity, setRarity] = useState("all");
+  const [sort, setSort] = useState("newest");
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+
+  const { data, totalPages, total } = inventory;
+
+  const hasFilters =
+    rarity !== "all" ||
+    sort !== "newest" ||
+    search !== "" ||
+    statusFilter !== "disposed";
+
+  const load = async (overrides: Record<string, unknown> = {}) => {
+    const p = (overrides.page as number) ?? page;
+    const filters = {
+      status: (overrides.status as string) ?? statusFilter,
+      rarity:
+        ((overrides.rarity as string) ?? rarity) !== "all"
+          ? ((overrides.rarity as string) ?? rarity)
+          : undefined,
+      search: ((overrides.search as string) ?? search) || undefined,
+      sort:
+        ((overrides.sort as string) ?? sort) !== "newest"
+          ? ((overrides.sort as string) ?? sort)
+          : undefined,
+    };
+    setLoading(true);
+    try {
+      const result = await fetchInventory(userId, p, 24, filters);
+      setInventory(result);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const updateStatus = (v: "disposed" | "sold" | "exchanged") => {
+    setStatusFilter(v);
+    setPage(1);
+    load({ status: v, page: 1 });
+  };
+
+  const clearFilters = () => {
+    setRarity("all");
+    setSort("newest");
+    setSearch("");
+    setSearchInput("");
+    setStatusFilter("disposed");
+    setPage(1);
+    load({ status: "disposed", rarity: "all", sort: "newest", search: "", page: 1 });
+  };
+
+  const navigate = (newPage: number) => {
+    setPage(newPage);
+    load({ page: newPage });
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Status tabs */}
+          <div className="flex gap-1 rounded-lg bg-muted p-1">
+            {(["disposed", "sold", "exchanged"] as const).map((s) => (
+              <button
+                key={s}
+                onClick={() => updateStatus(s)}
+                className={cn(
+                  "rounded-md px-3 py-1 text-xs font-medium capitalize transition-colors",
+                  statusFilter === s
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {s === "disposed" ? "All" : s}
+              </button>
+            ))}
+          </div>
+
+          <span className="text-xs text-muted-foreground">{total} items</span>
+
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <div className="relative w-[180px]">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+              <Input
+                placeholder="Search cards..."
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    setSearch(searchInput);
+                    setPage(1);
+                    load({ search: searchInput, page: 1 });
+                  }
+                }}
+                className="h-8 pl-7 text-xs"
+              />
+            </div>
+            <Select
+              value={rarity}
+              onValueChange={(v) => {
+                if (!v) return;
+                setRarity(v);
+                setPage(1);
+                load({ rarity: v, page: 1 });
+              }}
+            >
+              <SelectTrigger className="h-8 w-[110px] text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All rarities</SelectItem>
+                <SelectItem value="common">Common</SelectItem>
+                <SelectItem value="uncommon">Uncommon</SelectItem>
+                <SelectItem value="rare">Rare</SelectItem>
+                <SelectItem value="ultra rare">Ultra Rare</SelectItem>
+                <SelectItem value="legendary">Legendary</SelectItem>
+                <SelectItem value="secret">Secret</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select
+              value={sort}
+              onValueChange={(v) => {
+                if (!v) return;
+                setSort(v);
+                setPage(1);
+                load({ sort: v, page: 1 });
+              }}
+            >
+              <SelectTrigger className="h-8 w-[110px] text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="newest">Newest</SelectItem>
+                <SelectItem value="oldest">Oldest</SelectItem>
+                <SelectItem value="price_desc">Value high</SelectItem>
+                <SelectItem value="price_asc">Value low</SelectItem>
+              </SelectContent>
+            </Select>
+            {hasFilters && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 text-xs px-2"
+                onClick={clearFilters}
+              >
+                <X className="size-3 mr-1" />
+                Clear
+              </Button>
+            )}
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="relative p-0">
+        {loading && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60">
+            <Loader2 className="size-5 animate-spin text-muted-foreground" />
+          </div>
+        )}
+        {data.length > 0 ? (
+          <div className="divide-y">
+            {data.map((item) => {
+              const status: "sold" | "exchanged" = item.soldAt ? "sold" : "exchanged";
+              const disposedAt = item.soldAt ?? item.exchangedAt;
+              return (
+                <div
+                  key={item.id}
+                  className="flex items-center gap-3 px-4 py-2 hover:bg-muted/40 transition-colors"
+                >
+                  <div className="size-10 shrink-0 overflow-hidden rounded bg-muted">
+                    <CardImage
+                      src={item.imageUrl}
+                      alt={item.cardName}
+                      className="size-full"
+                    />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{item.cardName}</p>
+                    <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                      {item.rarity && (
+                        <span
+                          className={cn(
+                            "rounded px-1 py-0 text-[10px] font-semibold uppercase",
+                            INVENTORY_RARITY_COLORS[item.rarity.toLowerCase()] ??
+                              "bg-muted text-foreground",
+                          )}
+                        >
+                          {item.rarity}
+                        </span>
+                      )}
+                      <span>from {item.sourceType}</span>
+                      <span>·</span>
+                      <span>obtained {formatRelative(item.obtainedAt)}</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end gap-0.5 shrink-0">
+                    <span className="text-sm font-medium tabular-nums">
+                      {formatCurrency(item.value)}
+                    </span>
+                    <span
+                      className={cn(
+                        "text-[10px] font-semibold uppercase rounded px-1.5 py-0",
+                        status === "sold"
+                          ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                          : "bg-blue-500/15 text-blue-600 dark:text-blue-400",
+                      )}
+                    >
+                      {status}
+                    </span>
+                  </div>
+                  <div className="ml-2 w-[120px] shrink-0 text-right text-xs text-muted-foreground">
+                    {disposedAt ? formatRelative(disposedAt) : "—"}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="text-center text-sm text-muted-foreground py-8">
+            {hasFilters
+              ? "No items match your filters"
+              : "No sold or exchanged cards"}
+          </p>
+        )}
+
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between border-t px-4 py-2">
+            <span className="text-xs text-muted-foreground">
+              Page {page} of {totalPages}
+            </span>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-7"
+                onClick={() => navigate(1)}
+                disabled={page === 1}
+              >
+                <ChevronsLeft className="size-3.5" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-7"
+                onClick={() => navigate(page - 1)}
+                disabled={page === 1}
+              >
+                <ChevronLeft className="size-3.5" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-7"
+                onClick={() => navigate(page + 1)}
+                disabled={page === totalPages}
+              >
+                <ChevronRight className="size-3.5" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-7"
+                onClick={() => navigate(totalPages)}
+                disabled={page === totalPages}
+              >
+                <ChevronsRight className="size-3.5" />
+              </Button>
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

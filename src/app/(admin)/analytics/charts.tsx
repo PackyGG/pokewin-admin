@@ -33,6 +33,12 @@ type DailyData = {
   maxDeposit: number;
   minBet: number;
   maxBet: number;
+  rewardRakeback: number;
+  rewardSignupPacks: number;
+  rewardLeaderboard: number;
+  rewardRain: number;
+  rewardPromo: number;
+  rewardAffiliate: number;
 };
 
 type AvgTooltipPayload = {
@@ -104,6 +110,18 @@ const avgDepositConfig = {
 
 const avgBetConfig = {
   avgBet: { label: "Avg Bet", color: "var(--color-chart-4)" },
+} satisfies ChartConfig;
+
+const rewardPayoutsConfig = {
+  rewardRakeback: { label: "Rakeback", color: "var(--color-chart-1)" },
+  rewardSignupPacks: { label: "Signup Packs", color: "var(--color-chart-2)" },
+  rewardLeaderboard: { label: "Leaderboard", color: "var(--color-chart-3)" },
+  rewardRain: { label: "Rain", color: "var(--color-chart-4)" },
+  rewardPromo: { label: "Promo Codes", color: "var(--color-chart-5)" },
+} satisfies ChartConfig;
+
+const affiliateConfig = {
+  rewardAffiliate: { label: "Affiliate Payouts", color: "var(--color-chart-3)" },
 } satisfies ChartConfig;
 
 const currencyFormatter = (v: number) => {
@@ -331,6 +349,117 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
                 dot={false}
               />
             </LineChart>
+          </ChartContainer>
+        </CardContent>
+      </Card>
+
+      {/* Reward Payouts — stacked bars per category */}
+      <Card className="lg:col-span-2">
+        <CardHeader>
+          <CardTitle className="text-sm font-medium">
+            Reward Payouts
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ChartContainer
+            config={rewardPayoutsConfig}
+            className="h-[300px] w-full"
+          >
+            <BarChart data={data} accessibilityLayer>
+              <CartesianGrid vertical={false} />
+              <XAxis
+                dataKey="date"
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                tickFormatter={(v) => v.slice(5)}
+              />
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                width={70}
+                tickFormatter={currencyFormatter}
+              />
+              <ChartTooltip
+                content={
+                  <ChartTooltipContent
+                    formatter={(value) => `$${Number(value).toFixed(2)}`}
+                  />
+                }
+              />
+              <Bar
+                dataKey="rewardRakeback"
+                stackId="rewards"
+                fill="var(--color-rewardRakeback)"
+              />
+              <Bar
+                dataKey="rewardSignupPacks"
+                stackId="rewards"
+                fill="var(--color-rewardSignupPacks)"
+              />
+              <Bar
+                dataKey="rewardLeaderboard"
+                stackId="rewards"
+                fill="var(--color-rewardLeaderboard)"
+              />
+              <Bar
+                dataKey="rewardRain"
+                stackId="rewards"
+                fill="var(--color-rewardRain)"
+              />
+              <Bar
+                dataKey="rewardPromo"
+                stackId="rewards"
+                fill="var(--color-rewardPromo)"
+                radius={[4, 4, 0, 0]}
+              />
+            </BarChart>
+          </ChartContainer>
+        </CardContent>
+      </Card>
+
+      {/* Affiliate Payouts — separate chart, affiliate claims aren't rewards */}
+      <Card className="lg:col-span-2">
+        <CardHeader>
+          <CardTitle className="text-sm font-medium">
+            Affiliate Payouts
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ChartContainer
+            config={affiliateConfig}
+            className="h-[300px] w-full"
+          >
+            <BarChart data={data} accessibilityLayer>
+              <CartesianGrid vertical={false} />
+              <XAxis
+                dataKey="date"
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                tickFormatter={(v) => v.slice(5)}
+              />
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                width={70}
+                tickFormatter={currencyFormatter}
+              />
+              <ChartTooltip
+                content={
+                  <ChartTooltipContent
+                    formatter={(value) => `$${Number(value).toFixed(2)}`}
+                  />
+                }
+              />
+              <Bar
+                dataKey="rewardAffiliate"
+                fill="var(--color-rewardAffiliate)"
+                radius={[4, 4, 0, 0]}
+              />
+            </BarChart>
           </ChartContainer>
         </CardContent>
       </Card>
