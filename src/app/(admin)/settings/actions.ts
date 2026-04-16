@@ -79,6 +79,68 @@ export async function updateCountryRestrictionArray(
   revalidatePath("/settings");
 }
 
+/**
+ * Turn maintenance mode on packy.gg on/off. Writes to site_config keys:
+ *   - maintenance_mode    ("true" | "false")
+ *   - maintenance_message (free-text shown to users during maintenance)
+ *
+ * The game backend reads these keys on every public request and returns
+ * a maintenance response when enabled. refreshSiteConfig() pings the
+ * backend so its in-memory cache picks up the new values immediately
+ * instead of waiting for the next periodic refresh.
+ *
+ * Returns errors as values so the client toast shows a real message
+ * instead of the RSC-masked "Server Components render" error.
+ */
+export async function setMaintenanceMode(
+  enabled: boolean,
+  message: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requireAdmin();
+
+  const trimmedMessage = message.trim();
+
+  try {
+    await db.$transaction([
+      db.site_config.upsert({
+        where: { key: "maintenance_mode" },
+        update: { value: enabled ? "true" : "false" },
+        create: {
+          key: "maintenance_mode",
+          value: enabled ? "true" : "false",
+          description: "When 'true', packy.gg blocks non-admin users and shows the maintenance screen.",
+        },
+      }),
+      db.site_config.upsert({
+        where: { key: "maintenance_message" },
+        update: { value: trimmedMessage },
+        create: {
+          key: "maintenance_message",
+          value: trimmedMessage,
+          description: "Message shown to users on the maintenance screen.",
+        },
+      }),
+    ]);
+  } catch (err) {
+    console.error("[setMaintenanceMode] DB write failed:", err);
+    const errMsg = err instanceof Error ? err.message : "Unknown DB error";
+    return { success: false, error: `Failed to update maintenance mode: ${errMsg}` };
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "maintenance_mode_updated",
+    metadata: { enabled, message: trimmedMessage },
+  });
+
+  // Non-blocking: tell the backend to reload its config cache. If it fails
+  // the DB value still wins on the next periodic refresh — we log it.
+  await refreshSiteConfig();
+
+  revalidatePath("/settings");
+  return { success: true };
+}
+
 export async function toggleCountryRestriction(
   countryCode: string,
   field: string,
