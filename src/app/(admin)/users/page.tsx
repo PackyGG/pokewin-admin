@@ -33,7 +33,7 @@ export default async function UsersPage({
       <h1 className="text-page-title">Users</h1>
       <Suspense fallback={<Skeleton className="h-10 w-full" />}>
         <DataTableToolbar
-          searchPlaceholder="Search by username, email, or ID..."
+          searchPlaceholder="Search by username, email, user ID, or Discord ID..."
           filters={[
             {
               name: "Role",

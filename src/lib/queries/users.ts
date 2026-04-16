@@ -43,12 +43,26 @@ export async function getUsers(params: {
 
   const where: Prisma.UserWhereInput = {};
 
+  // Discord snowflake IDs are 17-20 digit numeric strings. We match the
+  // linked Discord account (account.providerId = 'discord', account.accountId
+  // = snowflake) only when the search looks like one — otherwise a generic
+  // numeric username would trigger an unnecessary join.
+  const isDiscordId = /^\d{17,20}$/.test(search ?? "");
+
   if (search) {
-    where.OR = [
+    const or: Prisma.UserWhereInput[] = [
       { username: { contains: search, mode: "insensitive" } },
       { email: { contains: search, mode: "insensitive" } },
       { id: search },
     ];
+    if (isDiscordId) {
+      or.push({
+        account: {
+          some: { providerId: "discord", accountId: search },
+        },
+      });
+    }
+    where.OR = or;
   }
 
   if (role && role !== "all") {
@@ -96,8 +110,11 @@ export async function getUsers(params: {
     const whereSql: string[] = [];
     if (search) {
       const safe = search.replace(/'/g, "''");
+      const discordClause = isDiscordId
+        ? ` OR EXISTS (SELECT 1 FROM account a WHERE a."userId" = u.id AND a."providerId" = 'discord' AND a."accountId" = '${safe}')`
+        : "";
       whereSql.push(
-        `(u.username ILIKE '%${safe}%' OR u.email ILIKE '%${safe}%' OR u.id = '${safe}')`,
+        `(u.username ILIKE '%${safe}%' OR u.email ILIKE '%${safe}%' OR u.id = '${safe}'${discordClause})`,
       );
     }
     if (role && role !== "all") {
