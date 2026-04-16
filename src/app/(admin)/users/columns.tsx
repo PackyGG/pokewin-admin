@@ -77,7 +77,7 @@ export const columns: ColumnDef<UserRow>[] = [
   },
   {
     accessorKey: "country",
-    header: "Country",
+    header: () => <UsersSortHeader title="Country" sortKey="country" />,
     cell: ({ row }) => (
       <span className="text-sm text-muted-foreground">
         {row.original.country ??

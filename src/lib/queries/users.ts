@@ -68,7 +68,7 @@ export async function getUsers(params: {
     "totalDeposited",
     "totalWagered",
   ]);
-  const userSortFields = new Set(["created_at", "email", "username", "role"]);
+  const userSortFields = new Set(["created_at", "email", "username", "role", "country"]);
 
   let users: Array<
     Prisma.UserGetPayload<{
@@ -362,6 +362,7 @@ export async function getUserDetail(id: string) {
     depositAddresses,
     cardWithdrawalTotal,
     depositCount,
+    depositTotalAgg,
     withdrawalCount,
   ] = await Promise.all([
     db.user.findUnique({
@@ -422,6 +423,15 @@ export async function getUserDetail(id: string) {
         type: "deposit",
         status: "completed",
       },
+    }),
+    // Sum of completed deposits (excluding deposit_bonus) for avg calculation
+    db.ledger_transactions.aggregate({
+      where: {
+        user_id: id,
+        type: "deposit",
+        status: "completed",
+      },
+      _sum: { amount: true },
     }),
     db.card_withdrawal_requests.count({
       where: {
@@ -612,6 +622,10 @@ export async function getUserDetail(id: string) {
     counts: {
       deposits: depositCount,
       withdrawals: withdrawalCount,
+      avgDeposit:
+        depositCount > 0
+          ? toNumber(depositTotalAgg._sum.amount ?? 0) / depositCount
+          : 0,
     },
   };
 }

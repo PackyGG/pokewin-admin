@@ -147,6 +147,87 @@ export async function changeRole(userId: string, newRole: string, totpCode: stri
   revalidatePath(`/users/${userId}`);
 }
 
+export async function updateUserIdentity(
+  userId: string,
+  data: {
+    email?: string;
+    username?: string;
+    displayUsername?: string;
+  },
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requireAdmin();
+
+  const updateData: Record<string, unknown> = {};
+  const metadata: Record<string, unknown> = {};
+
+  if (data.email !== undefined) {
+    const email = data.email.trim().toLowerCase();
+    if (!email) return { success: false, error: "Email cannot be empty" };
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return { success: false, error: "Invalid email format" };
+    }
+    // Check uniqueness
+    const existing = await db.user.findFirst({
+      where: { email, id: { not: userId } },
+      select: { id: true },
+    });
+    if (existing) return { success: false, error: "Email is already in use" };
+    updateData.email = email;
+    updateData.email_verified = true;
+    metadata.email = email;
+  }
+
+  if (data.username !== undefined) {
+    const username = data.username.trim();
+    if (!username) return { success: false, error: "Username cannot be empty" };
+    if (username.length < 3 || username.length > 20) {
+      return { success: false, error: "Username must be 3–20 characters" };
+    }
+    // Check uniqueness
+    const existing = await db.user.findFirst({
+      where: { username, id: { not: userId } },
+      select: { id: true },
+    });
+    if (existing) return { success: false, error: "Username is already taken" };
+    updateData.username = username;
+    metadata.username = username;
+  }
+
+  if (data.displayUsername !== undefined) {
+    const displayUsername = data.displayUsername.trim() || null;
+    updateData.display_username = displayUsername;
+    metadata.display_username = displayUsername;
+  }
+
+  if (Object.keys(updateData).length === 0) {
+    return { success: false, error: "Nothing to update" };
+  }
+
+  updateData.updated_at = new Date();
+
+  try {
+    await db.user.update({
+      where: { id: userId },
+      data: updateData,
+    });
+  } catch (err) {
+    console.error("[updateUserIdentity] DB update failed:", err);
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return { success: false, error: `Update failed: ${message}` };
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "user_identity_updated",
+    targetUserId: userId,
+    metadata,
+  });
+
+  revalidatePath(`/users/${userId}`);
+  revalidatePath("/users");
+  return { success: true };
+}
+
 export async function toggleFeatureLock(
   userId: string,
   feature: string,
@@ -753,7 +834,22 @@ export async function wipeUserAccount(
       await tx.user_rewards.deleteMany({ where: { user_id: userId } });
       await tx.wager_period_snapshots.deleteMany({ where: { user_id: userId } });
       await tx.race_leaderboard_snapshots.deleteMany({ where: { user_id: userId } });
-      await tx.user_statistics.deleteMany({ where: { user_id: userId } });
+      // user_statistics — KEPT (zeroed) to avoid "stats not found" errors
+      await tx.user_statistics.updateMany({
+        where: { user_id: userId },
+        data: {
+          opened_packs_count: 0,
+          battles_played: 0,
+          xp: 0,
+          level: 0,
+          current_day_wagered_usd: 0,
+          current_week_wagered_usd: 0,
+          current_month_wagered_usd: 0,
+          last_wagered_at: null,
+          weekly_wager_count: 0,
+          updated_at: new Date(),
+        },
+      });
       await tx.pack_favorites.deleteMany({ where: { user_id: userId } });
       await tx.seed_rotation_history.deleteMany({ where: { user_id: userId } });
       await tx.user_packs.deleteMany({ where: { user_id: userId } });

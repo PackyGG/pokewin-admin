@@ -25,6 +25,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Loader2,
+  Pencil,
   RefreshCw,
   Search,
   Trash2,
@@ -103,6 +104,7 @@ import {
   fetchBalanceHistory,
   fetchCreatorWithdrawalLimits,
   wipeUserAccount,
+  updateUserIdentity,
 } from "./actions";
 import { createNote, deleteNote } from "./note-actions";
 import { Switch } from "@/components/ui/switch";
@@ -250,6 +252,7 @@ type UserDetail = {
   counts: {
     deposits: number;
     withdrawals: number;
+    avgDeposit: number;
   };
   sessionRole: string;
 };
@@ -644,6 +647,7 @@ export function UserTabs({
               balances={balances}
               inventoryCount={data.inventoryCount}
               bonusPoints={balances?.bonusPoints ?? 0}
+              avgDeposit={counts.avgDeposit}
               userId={user.id}
               isAdmin={isAdmin}
             />
@@ -959,9 +963,17 @@ const UserHeaderStrip = React.memo(function UserHeaderStrip({
         </div>
 
         <div className="min-w-0">
-          <p className="text-lg font-semibold truncate leading-tight">
-            {user.displayUsername ?? user.username ?? user.name ?? "—"}
-          </p>
+          <div className="flex items-center gap-1.5">
+            <p className="text-lg font-semibold truncate leading-tight">
+              {user.displayUsername ?? user.username ?? user.name ?? "—"}
+            </p>
+            {user.username && user.displayUsername && user.displayUsername !== user.username && (
+              <span className="text-xs text-muted-foreground">@{user.username}</span>
+            )}
+            {isAdmin && (
+              <EditIdentityButton user={user} />
+            )}
+          </div>
           <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
             <span className="truncate">{user.email}</span>
             {user.emailVerified && (
@@ -2382,6 +2394,7 @@ const ActivityStatsCard = React.memo(function ActivityStatsCard({
   balances,
   inventoryCount,
   bonusPoints,
+  avgDeposit,
   userId,
   isAdmin,
 }: {
@@ -2389,6 +2402,7 @@ const ActivityStatsCard = React.memo(function ActivityStatsCard({
   balances: UserDetail["balances"];
   inventoryCount: number;
   bonusPoints: number;
+  avgDeposit: number;
   userId: string;
   isAdmin: boolean;
 }) {
@@ -2449,6 +2463,7 @@ const ActivityStatsCard = React.memo(function ActivityStatsCard({
         />
         <InfoRow label="Inventory Items" value={String(inventoryCount)} />
         <InfoRow label="Bonus Points" value={String(bonusPoints)} />
+        <InfoRow label="Avg. Deposit" value={formatCurrency(avgDeposit)} />
         {statistics && (
           <>
             <div className="border-t pt-2 mt-2" />
@@ -5304,5 +5319,133 @@ function WipeAccountButton({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Edit Identity Dialog (Admin Only) — Email / Username / Display Name
+// ---------------------------------------------------------------------------
+function EditIdentityButton({ user }: { user: UserDetail["user"] }) {
+  const [open, setOpen] = useState(false);
+  const [email, setEmail] = useState(user.email ?? "");
+  const [username, setUsername] = useState(user.username ?? "");
+  const [displayUsername, setDisplayUsername] = useState(
+    user.displayUsername ?? "",
+  );
+  const [isPending, startTransition] = useTransition();
+  const router = useRouter();
+
+  // Reset form values when dialog opens (in case user data changed)
+  function handleOpenChange(v: boolean) {
+    if (v) {
+      setEmail(user.email ?? "");
+      setUsername(user.username ?? "");
+      setDisplayUsername(user.displayUsername ?? "");
+    }
+    setOpen(v);
+  }
+
+  function handleSave() {
+    const changes: {
+      email?: string;
+      username?: string;
+      displayUsername?: string;
+    } = {};
+
+    const trimmedEmail = email.trim().toLowerCase();
+    const trimmedUsername = username.trim();
+    const trimmedDisplay = displayUsername.trim();
+
+    if (trimmedEmail !== (user.email ?? "").toLowerCase()) {
+      changes.email = trimmedEmail;
+    }
+    if (trimmedUsername !== (user.username ?? "")) {
+      changes.username = trimmedUsername;
+    }
+    if (trimmedDisplay !== (user.displayUsername ?? "")) {
+      changes.displayUsername = trimmedDisplay;
+    }
+
+    if (Object.keys(changes).length === 0) {
+      toast.error("No changes to save");
+      return;
+    }
+
+    startTransition(async () => {
+      try {
+        const result = await updateUserIdentity(user.id, changes);
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
+        toast.success("User identity updated");
+        setOpen(false);
+        router.refresh();
+      } catch (e) {
+        toast.error(
+          e instanceof Error ? e.message : "Failed to update identity",
+        );
+      }
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogTrigger
+        render={
+          <Button variant="ghost" size="icon" className="size-6" />
+        }
+      >
+        <Pencil className="size-3" />
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Edit User Identity</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label>Email</Label>
+            <Input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="user@example.com"
+              type="email"
+            />
+            <p className="text-xs text-muted-foreground">
+              Will be automatically verified on save.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label>Username</Label>
+            <Input
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="username"
+            />
+            <p className="text-xs text-muted-foreground">
+              Must be unique. 3–20 characters.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label>Display Name</Label>
+            <Input
+              value={displayUsername}
+              onChange={(e) => setDisplayUsername(e.target.value)}
+              placeholder="Display name (optional)"
+            />
+            <p className="text-xs text-muted-foreground">
+              Shown instead of username. Leave empty to use username.
+            </p>
+          </div>
+          <Button
+            onClick={handleSave}
+            disabled={isPending}
+            className="w-full"
+          >
+            {isPending ? "Saving..." : "Save Changes"}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
