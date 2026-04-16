@@ -1,6 +1,5 @@
 import {
-  Users,
-  ArrowUpFromLine,
+  ArrowDownToLine,
   Percent,
   Wallet,
   Coins,
@@ -51,12 +50,12 @@ export default async function DashboardPage({
       </div>
 
       {/* Secondary stats — all-time / snapshot */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard
-          title="Total Users"
-          value={formatNumber(stats.users.total)}
-          subtitle={`+${stats.users.today} today, +${stats.users.week} this week`}
-          icon={Users}
+          title="Total Deposits"
+          value={formatNumber(stats.financials.depositCount)}
+          subtitle={`${formatCurrency(stats.financials.totalDeposited)} lifetime deposited`}
+          icon={ArrowDownToLine}
           color="blue"
         />
         <StatCard
@@ -65,13 +64,6 @@ export default async function DashboardPage({
           subtitle={`${formatCurrency(stats.financials.totalSiteBalance)} cash · ${formatCurrency(stats.financials.totalInventoryValue)} unsold inventory`}
           icon={Wallet}
           color="green"
-        />
-        <StatCard
-          title="Total Withdrawn"
-          value={formatCurrency(stats.financials.totalWithdrawn)}
-          subtitle={`${stats.financials.pendingWithdrawalsCount} in progress (${formatCurrency(stats.financials.pendingWithdrawalsValue)})`}
-          icon={ArrowUpFromLine}
-          color="cyan"
         />
         <StatCard
           title="Avg Deposit"

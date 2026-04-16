@@ -364,6 +364,7 @@ export async function getDashboardStats() {
         depositCount > 0
           ? toNumber(balanceAggregates._sum?.total_deposited) / depositCount
           : 0,
+      depositCount,
       avgSessionValue: Number(avgSessionValueResult[0]?.avg_session_value ?? 0),
       pendingWithdrawalsCount: pendingWithdrawals._count,
       pendingWithdrawalsValue: toNumber(pendingWithdrawals._sum?.total_value_usd),
