@@ -18,7 +18,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MoreHorizontal } from "lucide-react";
-import { toggleAdminActive, resetAdmin2FA, changeAdminRole } from "./actions";
+import { toggleAdminActive, resetAdmin2FA, changeAdminRole, deleteAdminUser } from "./actions";
 import { toast } from "sonner";
 
 export function AdminUserActions({
@@ -57,6 +57,20 @@ export function AdminUserActions({
     }
   }
 
+  async function handleDelete() {
+    if (!confirm("Permanently delete this admin user? Their audit logs will be preserved but they will lose all access.")) return;
+    try {
+      const result = await deleteAdminUser(userId);
+      if (!result.success) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success("Admin user deleted");
+    } catch {
+      toast.error("Failed to delete admin user");
+    }
+  }
+
   async function handleConfirmRoleChange() {
     if (!totpCode.trim()) return;
     setIsPending(true);
@@ -90,6 +104,9 @@ export function AdminUserActions({
               Reset 2FA
             </DropdownMenuItem>
           )}
+          <DropdownMenuItem onClick={handleDelete} className="text-destructive">
+            Delete
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       <Dialog open={roleDialogOpen} onOpenChange={setRoleDialogOpen}>

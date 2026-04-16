@@ -18,13 +18,25 @@ export async function createAdminUser(data: {
 
   const passwordHash = await bcrypt.hash(data.password, 12);
 
+  // Inherit allowed_pages from existing users of the same role (the "role preset").
+  // If no users exist yet for this role, defaults to empty (admin can configure
+  // via /settings/roles after creation).
+  let allowedPages: string[] = [];
+  if (data.role !== "admin") {
+    const existingUser = await adminDb.admin_users.findFirst({
+      where: { role: data.role as admin_role },
+      select: { allowed_pages: true },
+    });
+    allowedPages = existingUser?.allowed_pages ?? [];
+  }
+
   await adminDb.admin_users.create({
     data: {
       email: data.email,
       username: data.username,
       password_hash: passwordHash,
       role: data.role as admin_role,
-      ...(data.role === "creator" && { allowed_pages: ["/my-profile"] }),
+      allowed_pages: allowedPages,
     },
   });
 
@@ -96,4 +108,56 @@ export async function changeAdminRole(adminUserId: string, newRole: string, totp
   });
 
   revalidatePath("/admin-users");
+}
+
+export async function deleteAdminUser(
+  adminUserId: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requireAdmin();
+
+  // Can't delete yourself
+  if (adminUserId === session.userId) {
+    return { success: false, error: "You cannot delete your own account" };
+  }
+
+  const target = await adminDb.admin_users.findUnique({
+    where: { id: adminUserId },
+    select: { id: true, email: true, username: true },
+  });
+  if (!target) return { success: false, error: "Admin user not found" };
+
+  // Audit BEFORE the delete so the event is always on record
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "admin_user_deleted",
+    metadata: { target_admin_id: adminUserId, email: target.email, username: target.username },
+  });
+
+  try {
+    await adminDb.$transaction(async (tx) => {
+      // Null out admin_user_id on audit events (keep the logs)
+      await tx.admin_audit_events.updateMany({
+        where: { admin_user_id: adminUserId },
+        data: { admin_user_id: null },
+      });
+
+      // Delete all related records with required FKs
+      await tx.admin_sessions.deleteMany({ where: { admin_user_id: adminUserId } });
+      await tx.admin_notes.deleteMany({ where: { admin_user_id: adminUserId } });
+      await tx.admin_gift_card_actions.deleteMany({ where: { admin_user_id: adminUserId } });
+      await tx.admin_voucher_actions.deleteMany({ where: { admin_user_id: adminUserId } });
+      await tx.expenses.deleteMany({ where: { created_by_id: adminUserId } });
+      await tx.recurring_expenses.deleteMany({ where: { created_by_id: adminUserId } });
+
+      // Delete the admin user
+      await tx.admin_users.delete({ where: { id: adminUserId } });
+    });
+  } catch (err) {
+    console.error("[deleteAdminUser] Transaction failed:", err);
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return { success: false, error: `Delete failed: ${message}` };
+  }
+
+  revalidatePath("/admin-users");
+  return { success: true };
 }

@@ -27,8 +27,8 @@ export default async function UserDetailPage({
     ? Number(sp.auditPerPage)
     : 20;
 
-  const GAMING_TYPES = ["pack_opening", "battle_bet", "battle_sponsorship", "battle_refund"];
-  const FINANCIAL_TYPES = ["deposit", "deposit_bonus", "admin_balance_adjustment", "card_withdrawal", "withdrawal_shipping_fee", "rakeback_claim", "balance_reward_claim", "affiliate_claim", "promo_code_redeemed", "gift_card_redeemed", "voucher_redeemed", "rain_win", "race_prize"];
+  const GAMING_TYPES = ["pack_opening", "battle_bet", "battle_sponsorship", "battle_refund", "voucher_redeemed"];
+  const FINANCIAL_TYPES = ["deposit", "deposit_bonus", "admin_balance_adjustment", "card_withdrawal", "withdrawal_shipping_fee", "rakeback_claim", "balance_reward_claim", "affiliate_claim", "promo_code_redeemed", "gift_card_redeemed", "rain_win", "race_prize"];
   const CARD_SALE_TYPES = ["card_sale", "reward_card_sale"];
   const EXCHANGE_TYPES = ["card_exchange", "exchange_excess_to_voucher", "exchange_excess_credit", "battle_excess_to_voucher", "voucher_exchange"];
 
