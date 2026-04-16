@@ -121,6 +121,15 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    label: "Creators",
+    items: [
+      { label: "Creators", href: "/creators", icon: "Users" },
+      { label: "Codes", href: "/creators/codes", icon: "Share2" },
+      { label: "Analytics", href: "/creators/analytics", icon: "BarChart3" },
+      { label: "Settings", href: "/creators/settings", icon: "Settings" },
+    ],
+  },
+  {
     label: "Content",
     items: [
       { label: "Packs", href: "/packs", icon: "Package" },
@@ -159,15 +168,6 @@ const NAV_GROUPS: NavGroup[] = [
     creatorOnly: true,
     items: [
       { label: "My Profile", href: "/my-profile", icon: "UserCircle" },
-    ],
-  },
-  {
-    label: "Creators",
-    items: [
-      { label: "Creators", href: "/creators", icon: "Users" },
-      { label: "Codes", href: "/creators/codes", icon: "Share2" },
-      { label: "Analytics", href: "/creators/analytics", icon: "BarChart3" },
-      { label: "Settings", href: "/creators/settings", icon: "Settings" },
     ],
   },
   {
