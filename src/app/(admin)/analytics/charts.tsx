@@ -337,50 +337,6 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
         </CardContent>
       </Card>
 
-      {/* Users Chart */}
-      <Card className="lg:col-span-2">
-        <CardHeader>
-          <CardTitle className="text-sm font-medium">
-            Users (Visitors & Signups)
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ChartContainer config={usersConfig} className="h-[300px] w-full">
-            <LineChart data={data} accessibilityLayer>
-              <CartesianGrid vertical={false} />
-              <XAxis
-                dataKey="date"
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                tickFormatter={(v) => v.slice(5)}
-              />
-              <YAxis
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                width={50}
-              />
-              <ChartTooltip content={<ChartTooltipContent />} />
-              <Line
-                type="monotone"
-                dataKey="uniqueVisitors"
-                stroke="var(--color-uniqueVisitors)"
-                strokeWidth={2}
-                dot={false}
-              />
-              <Line
-                type="monotone"
-                dataKey="newSignups"
-                stroke="var(--color-newSignups)"
-                strokeWidth={2}
-                dot={false}
-              />
-            </LineChart>
-          </ChartContainer>
-        </CardContent>
-      </Card>
-
       {/* Reward Payouts — stacked bars per category */}
       <Card>
         <CardHeader>
@@ -490,6 +446,52 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
                 radius={[4, 4, 0, 0]}
               />
             </BarChart>
+          </ChartContainer>
+        </CardContent>
+      </Card>
+
+      {/* Users — moved to last position so the Avg Bet / Reward Payouts /
+          Affiliate Payouts row is complete above it (all three chart cells
+          on the same grid row per admin request). */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm font-medium">
+            Users (Visitors & Signups)
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ChartContainer config={usersConfig} className="h-[300px] w-full">
+            <LineChart data={data} accessibilityLayer>
+              <CartesianGrid vertical={false} />
+              <XAxis
+                dataKey="date"
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                tickFormatter={(v) => v.slice(5)}
+              />
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                width={50}
+              />
+              <ChartTooltip content={<ChartTooltipContent />} />
+              <Line
+                type="monotone"
+                dataKey="uniqueVisitors"
+                stroke="var(--color-uniqueVisitors)"
+                strokeWidth={2}
+                dot={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="newSignups"
+                stroke="var(--color-newSignups)"
+                strokeWidth={2}
+                dot={false}
+              />
+            </LineChart>
           </ChartContainer>
         </CardContent>
       </Card>

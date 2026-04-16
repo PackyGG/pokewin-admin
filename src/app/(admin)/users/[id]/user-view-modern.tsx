@@ -125,10 +125,14 @@ export function UserViewModern({
       ? "Locked"
       : "Active";
 
-  // KPIs surfaced in the hero strip
+  // KPIs surfaced in the hero strip.
+  // P&L is expressed from the HOUSE perspective:
+  //   pnl = deposits - withdrawals
+  //   > 0  we made money (user deposited more than they withdrew)  → GREEN
+  //   < 0  we lost money (user cashed out more than they deposited) → RED
   const totalValue =
     (balances?.availableBalance ?? 0) + (balances?.inventoryValue ?? 0);
-  const pnl = balances ? balances.totalWithdrawn - balances.totalDeposited : 0;
+  const pnl = balances ? balances.totalDeposited - balances.totalWithdrawn : 0;
   const wagerMultiplier =
     balances && balances.totalDeposited > 0
       ? balances.totalWagered / balances.totalDeposited
@@ -156,14 +160,14 @@ export function UserViewModern({
           className="pointer-events-none absolute -left-24 -bottom-24 size-72 rounded-full bg-purple-500/[0.06] blur-3xl"
         />
 
-        <div className="relative p-6 md:p-8">
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+        <div className="relative p-5 md:p-6">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
             {/* Identity */}
-            <div className="flex items-start gap-5">
+            <div className="flex items-start gap-4 min-w-0">
               <div className="relative shrink-0">
-                <Avatar className="size-20 ring-4 ring-background shadow-xl">
+                <Avatar className="size-14 ring-2 ring-background shadow-lg">
                   {user.image && <AvatarImage src={user.image} alt="" />}
-                  <AvatarFallback className="text-lg font-semibold">
+                  <AvatarFallback className="text-sm font-semibold">
                     {(user.username ?? user.email ?? "?")
                       .slice(0, 2)
                       .toUpperCase()}
@@ -171,7 +175,7 @@ export function UserViewModern({
                 </Avatar>
                 <span
                   className={cn(
-                    "absolute -bottom-1 -right-1 size-5 rounded-full border-2 border-background",
+                    "absolute -bottom-0.5 -right-0.5 size-3.5 rounded-full border-2 border-background",
                     statusKey === "active" && "bg-emerald-500",
                     statusKey === "locked" && "bg-amber-500",
                     statusKey === "banned" && "bg-rose-500",
@@ -182,7 +186,7 @@ export function UserViewModern({
 
               <div className="min-w-0 space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="text-2xl font-bold leading-tight truncate">
+                  <h2 className="text-xl font-bold leading-tight truncate">
                     {displayName}
                   </h2>
                   {user.username && user.displayUsername &&
@@ -192,104 +196,105 @@ export function UserViewModern({
                       </span>
                     )}
                 </div>
-                <p className="text-sm text-muted-foreground truncate">
+                <p className="text-xs text-muted-foreground truncate">
                   {user.email}
                   {user.emailVerified && (
                     <span className="ml-1.5 text-[10px] font-semibold text-emerald-500">
-                      ✓ verified
+                      ✓
                     </span>
                   )}
                 </p>
-                <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                <div className="flex flex-wrap items-center gap-1 pt-0.5">
                   <Badge
                     variant="outline"
-                    className={ROLE_COLORS[user.role] ?? ""}
+                    className={cn("text-[10px] py-0 h-5", ROLE_COLORS[user.role] ?? "")}
                   >
                     {user.role}
                   </Badge>
                   <Badge
                     variant="outline"
-                    className={USER_STATUS_COLORS[statusKey] ?? ""}
+                    className={cn("text-[10px] py-0 h-5", USER_STATUS_COLORS[statusKey] ?? "")}
                   >
                     {statusLabel}
                   </Badge>
                   <Badge
                     variant="outline"
-                    className={
+                    className={cn(
+                      "text-[10px] py-0 h-5",
                       user.twoFactorEnabled
                         ? "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30"
-                        : "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"
-                    }
+                        : "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
+                    )}
                   >
                     2FA {user.twoFactorEnabled ? "On" : "Off"}
                   </Badge>
                   {user.affiliateCode && (
                     <Badge
                       variant="outline"
-                      className="bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30"
+                      className="text-[10px] py-0 h-5 bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30"
                     >
-                      <Sparkles className="mr-1 size-3" />
+                      <Sparkles className="mr-0.5 size-2.5" />
                       {user.affiliateCode}
                     </Badge>
                   )}
                 </div>
-                <div className="flex flex-wrap items-center gap-3 pt-2 text-xs text-muted-foreground">
-                  <span className="inline-flex items-center gap-1">
-                    <MapPin className="size-3" />
+                <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-muted-foreground">
+                  <span className="inline-flex items-center gap-0.5">
+                    <MapPin className="size-2.5" />
                     {user.country ?? user.countryCode ?? "Unknown"}
                   </span>
-                  <span className="inline-flex items-center gap-1">
-                    <Calendar className="size-3" />
-                    Joined {formatRelative(user.createdAt)}
+                  <span className="inline-flex items-center gap-0.5">
+                    <Calendar className="size-2.5" />
+                    {formatRelative(user.createdAt)}
                   </span>
                   <span className="font-mono">{user.id.slice(0, 8)}</span>
                 </div>
               </div>
             </div>
-          </div>
 
-          {/* KPI Strip */}
-          <div className="mt-8 grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
-            <KpiTile
-              label="Total Value"
-              value={formatCurrency(totalValue)}
-              icon={Wallet}
-              accent="blue"
-            />
-            <KpiTile
-              label="P&L"
-              value={`${pnl >= 0 ? "+" : ""}${formatCurrency(pnl)}`}
-              icon={pnl >= 0 ? TrendingUp : TrendingDown}
-              accent={pnl >= 0 ? "emerald" : "rose"}
-            />
-            <KpiTile
-              label="Deposits"
-              value={String(counts.deposits)}
-              sub={formatCurrency(counts.avgDeposit) + " avg"}
-              icon={ArrowDownToLine}
-              accent="emerald"
-            />
-            <KpiTile
-              label="Withdrawals"
-              value={String(counts.withdrawals)}
-              icon={ArrowUpFromLine}
-              accent="cyan"
-            />
-            <KpiTile
-              label="Multiplier"
-              value={
-                wagerMultiplier > 0 ? `${wagerMultiplier.toFixed(2)}×` : "—"
-              }
-              sub="wager / deposit"
-              icon={Coins}
-              accent="amber"
-            />
-            <KpiTile
-              label="House Edge"
-              value={balances && balances.totalWagered > 0 ? `${houseEdge.toFixed(2)}%` : "—"}
-              icon={Percent}
-              accent="purple"
-            />
+            {/* KPI strip — sits to the right of the identity on wide screens,
+                wraps below on narrow. Tighter tiles than before so the hero
+                stays compact. */}
+            <div className="grid grid-cols-3 gap-2 shrink-0 lg:grid-cols-6">
+              <KpiTile
+                label="Total Value"
+                value={formatCurrency(totalValue)}
+                icon={Wallet}
+                accent="blue"
+              />
+              <KpiTile
+                label="P&L"
+                value={`${pnl >= 0 ? "+" : ""}${formatCurrency(pnl)}`}
+                icon={pnl >= 0 ? TrendingUp : TrendingDown}
+                accent={pnl >= 0 ? "emerald" : "rose"}
+              />
+              <KpiTile
+                label="Deposits"
+                value={String(counts.deposits)}
+                sub={formatCurrency(counts.avgDeposit) + " avg"}
+                icon={ArrowDownToLine}
+                accent="emerald"
+              />
+              <KpiTile
+                label="Withdrawals"
+                value={String(counts.withdrawals)}
+                icon={ArrowUpFromLine}
+                accent="cyan"
+              />
+              <KpiTile
+                label="Multiplier"
+                value={wagerMultiplier > 0 ? `${wagerMultiplier.toFixed(2)}×` : "—"}
+                sub="wager / deposit"
+                icon={Coins}
+                accent="amber"
+              />
+              <KpiTile
+                label="House Edge"
+                value={balances && balances.totalWagered > 0 ? `${houseEdge.toFixed(2)}%` : "—"}
+                icon={Percent}
+                accent="purple"
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -411,28 +416,26 @@ function KpiTile({
   return (
     <div
       className={cn(
-        "group relative overflow-hidden rounded-xl border p-4 transition-all hover:shadow-md",
+        "group relative overflow-hidden rounded-lg border px-2.5 py-2 transition-all hover:shadow-md min-w-[110px]",
         colors.bg,
       )}
     >
-      <div className="flex items-start justify-between">
-        <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+      <div className="flex items-center gap-1.5">
+        <Icon className={cn("size-3", colors.icon)} />
+        <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
           {label}
         </span>
-        <Icon className={cn("size-4", colors.icon)} />
       </div>
       <p
         className={cn(
-          "mt-2 text-xl font-bold tabular-nums leading-tight",
+          "mt-0.5 text-sm font-bold tabular-nums leading-tight",
           colors.text,
         )}
       >
         {value}
       </p>
       {sub && (
-        <p className="mt-0.5 text-[11px] text-muted-foreground truncate">
-          {sub}
-        </p>
+        <p className="text-[9px] text-muted-foreground truncate">{sub}</p>
       )}
     </div>
   );
