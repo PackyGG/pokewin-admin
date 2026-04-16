@@ -9,9 +9,20 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { updateRolePermissions, type RoleConfig } from "./actions";
+import {
+  type CapabilityState,
+  getCapabilityGroups,
+} from "./permissions-utils";
 
 const ROLES = ["support", "marketing", "creator"] as const;
 
@@ -46,11 +57,11 @@ export function RolePermissionsEditor({
 
   const config = configs[activeRole] ?? {
     pages: [],
-    canAdjustBalance: false,
-    balanceLimitDaily: null,
+    capabilities: {},
   };
   const currentPages = new Set(config.pages);
   const allPageKeys = groupedPages.flatMap((g) => g.pages.map((p) => p.key));
+  const capabilityGroups = getCapabilityGroups();
 
   function hasChanges(role: string) {
     return JSON.stringify(configs[role]) !== JSON.stringify(savedConfigs[role]);
@@ -61,6 +72,22 @@ export function RolePermissionsEditor({
       ...prev,
       [activeRole]: { ...prev[activeRole], ...partial },
     }));
+  }
+
+  function updateCapability(capKey: string, partial: Partial<CapabilityState>) {
+    setConfigs((prev) => {
+      const current = prev[activeRole];
+      return {
+        ...prev,
+        [activeRole]: {
+          ...current,
+          capabilities: {
+            ...current.capabilities,
+            [capKey]: { ...current.capabilities[capKey], ...partial },
+          },
+        },
+      };
+    });
   }
 
   function togglePage(pageKey: string) {
@@ -119,7 +146,7 @@ export function RolePermissionsEditor({
   const totalCount = allPageKeys.length;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {/* Role tabs */}
       <div className="flex gap-1 rounded-lg bg-muted p-1">
         {ROLES.map((role) => (
@@ -141,145 +168,190 @@ export function RolePermissionsEditor({
         ))}
       </div>
 
-      {/* Role description + quick actions */}
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          {ROLE_DESCRIPTIONS[activeRole]}
-        </p>
-        <div className="flex items-center gap-2">
-          <Badge variant="outline" className="text-xs">
-            {selectedCount}/{totalCount} pages
-          </Badge>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-xs"
-            onClick={selectAll}
-          >
-            All
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-xs"
-            onClick={selectNone}
-          >
-            None
-          </Button>
-        </div>
-      </div>
+      <p className="text-sm text-muted-foreground">
+        {ROLE_DESCRIPTIONS[activeRole]}
+      </p>
 
-      {/* Capabilities */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-medium">Capabilities</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <Label className="text-sm">Balance Adjustment</Label>
-              <p className="text-xs text-muted-foreground">
-                Allow this role to adjust user balances
-              </p>
-            </div>
-            <Switch
-              checked={config.canAdjustBalance}
-              onCheckedChange={(checked) =>
-                updateConfig({
-                  canAdjustBalance: !!checked,
-                  ...(checked ? {} : { balanceLimitDaily: null }),
-                })
-              }
-            />
-          </div>
-          {config.canAdjustBalance && (
-            <div className="ml-0 rounded-md border p-3 space-y-2">
-              <Label className="text-xs">24h Limit (USD)</Label>
-              <div className="flex items-center gap-3">
-                <Input
-                  type="number"
-                  step="1"
-                  min="0"
-                  placeholder="No limit"
-                  value={config.balanceLimitDaily ?? ""}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    updateConfig({
-                      balanceLimitDaily: val ? Number(val) : null,
-                    });
-                  }}
-                  className="h-8 w-40"
-                />
-                <span className="text-xs text-muted-foreground">
-                  {config.balanceLimitDaily
-                    ? `Max $${config.balanceLimitDaily.toLocaleString()} per 24h`
-                    : "Unlimited — set a value to cap daily adjustments"}
-                </span>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Page groups */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {groupedPages.map((group) => {
-          const groupKeys = group.pages.map((p) => p.key);
-          const checkedCount = groupKeys.filter((k) =>
-            currentPages.has(k),
-          ).length;
-          const allGroupChecked = checkedCount === groupKeys.length;
-          const someGroupChecked = checkedCount > 0 && !allGroupChecked;
-
-          return (
+      {/* ── Capabilities ─────────────────────────────────────────────── */}
+      <div>
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+          Capabilities
+        </h2>
+        <div className="grid gap-4 md:grid-cols-2">
+          {capabilityGroups.map((group) => (
             <Card key={group.group}>
               <CardHeader className="pb-3">
-                <div className="flex items-center gap-3">
-                  <Checkbox
-                    checked={allGroupChecked}
-                    indeterminate={someGroupChecked}
-                    onCheckedChange={() => toggleGroup(group)}
-                  />
-                  <CardTitle className="text-sm font-medium">
-                    {group.group}
-                  </CardTitle>
-                  <span className="ml-auto text-xs text-muted-foreground">
-                    {checkedCount}/{groupKeys.length}
-                  </span>
-                </div>
+                <CardTitle className="text-sm font-medium">
+                  {group.group}
+                </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-2.5">
-                {group.pages.map((page) => {
-                  const isChecked = currentPages.has(page.key);
+              <CardContent className="space-y-4">
+                {group.capabilities.map((cap) => {
+                  const state = config.capabilities[cap.key] ?? {
+                    enabled: false,
+                  };
                   return (
-                    <label
-                      key={page.key}
-                      className="flex items-center gap-3 cursor-pointer group"
-                    >
-                      <Checkbox
-                        checked={isChecked}
-                        onCheckedChange={() => togglePage(page.key)}
-                      />
-                      <span
-                        className={cn(
-                          "text-sm transition-colors",
-                          isChecked
-                            ? "text-foreground"
-                            : "text-muted-foreground group-hover:text-foreground",
-                        )}
-                      >
-                        {page.label}
-                      </span>
-                      <span className="ml-auto text-[10px] text-muted-foreground font-mono truncate max-w-[120px]">
-                        {page.key}
-                      </span>
-                    </label>
+                    <div key={cap.key} className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium">{cap.label}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {cap.description}
+                          </p>
+                        </div>
+                        <Switch
+                          checked={state.enabled}
+                          onCheckedChange={(checked) =>
+                            updateCapability(cap.key, {
+                              enabled: !!checked,
+                              ...(!checked && {
+                                limitAmount: null,
+                                limitPeriod: undefined,
+                              }),
+                            })
+                          }
+                        />
+                      </div>
+                      {cap.hasLimit && state.enabled && (
+                        <div className="ml-0 rounded-md border p-3 space-y-2">
+                          <Label className="text-xs">{cap.limitLabel}</Label>
+                          <div className="flex items-center gap-2">
+                            {cap.hasPeriod && (
+                              <Select
+                                value={state.limitPeriod ?? "daily"}
+                                onValueChange={(v) =>
+                                  updateCapability(cap.key, {
+                                    limitPeriod: v as "daily" | "weekly",
+                                  })
+                                }
+                              >
+                                <SelectTrigger className="h-8 w-24">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="daily">24h</SelectItem>
+                                  <SelectItem value="weekly">7 days</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            )}
+                            <Input
+                              type="number"
+                              step="1"
+                              min="0"
+                              placeholder="No limit"
+                              value={state.limitAmount ?? ""}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                updateCapability(cap.key, {
+                                  limitAmount: val ? Number(val) : null,
+                                });
+                              }}
+                              className="h-8 w-32"
+                            />
+                            <span className="text-xs text-muted-foreground shrink-0">
+                              {state.limitAmount
+                                ? `Max $${state.limitAmount.toLocaleString()} per ${state.limitPeriod === "weekly" ? "7 days" : "24h"}`
+                                : "Unlimited"}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   );
                 })}
               </CardContent>
             </Card>
-          );
-        })}
+          ))}
+        </div>
+      </div>
+
+      {/* ── Page Access ──────────────────────────────────────────────── */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+            Page Access
+          </h2>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="text-xs">
+              {selectedCount}/{totalCount} pages
+            </Badge>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={selectAll}
+            >
+              All
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={selectNone}
+            >
+              None
+            </Button>
+          </div>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {groupedPages.map((group) => {
+            const groupKeys = group.pages.map((p) => p.key);
+            const checkedCount = groupKeys.filter((k) =>
+              currentPages.has(k),
+            ).length;
+            const allGroupChecked = checkedCount === groupKeys.length;
+            const someGroupChecked = checkedCount > 0 && !allGroupChecked;
+
+            return (
+              <Card key={group.group}>
+                <CardHeader className="pb-3">
+                  <div className="flex items-center gap-3">
+                    <Checkbox
+                      checked={allGroupChecked}
+                      indeterminate={someGroupChecked}
+                      onCheckedChange={() => toggleGroup(group)}
+                    />
+                    <CardTitle className="text-sm font-medium">
+                      {group.group}
+                    </CardTitle>
+                    <span className="ml-auto text-xs text-muted-foreground">
+                      {checkedCount}/{groupKeys.length}
+                    </span>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-2.5">
+                  {group.pages.map((page) => {
+                    const isChecked = currentPages.has(page.key);
+                    return (
+                      <label
+                        key={page.key}
+                        className="flex items-center gap-3 cursor-pointer group"
+                      >
+                        <Checkbox
+                          checked={isChecked}
+                          onCheckedChange={() => togglePage(page.key)}
+                        />
+                        <span
+                          className={cn(
+                            "text-sm transition-colors",
+                            isChecked
+                              ? "text-foreground"
+                              : "text-muted-foreground group-hover:text-foreground",
+                          )}
+                        >
+                          {page.label}
+                        </span>
+                        <span className="ml-auto text-[10px] text-muted-foreground font-mono truncate max-w-[120px]">
+                          {page.key}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
       </div>
 
       {/* Save bar */}
@@ -296,7 +368,9 @@ export function RolePermissionsEditor({
               onClick={() =>
                 setConfigs((prev) => ({
                   ...prev,
-                  [activeRole]: { ...(savedConfigs[activeRole] ?? { pages: [], canAdjustBalance: false, balanceLimitDaily: null }) },
+                  [activeRole]: JSON.parse(
+                    JSON.stringify(savedConfigs[activeRole] ?? { pages: [], capabilities: {} }),
+                  ),
                 }))
               }
               disabled={isPending}

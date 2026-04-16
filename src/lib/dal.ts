@@ -13,16 +13,22 @@ export const verifySession = cache(async (): Promise<SessionPayload> => {
   if (!session) redirect("/login");
   if (new Date(session.expiresAt) < new Date()) redirect("/login");
 
-  // Check admin user is still active
+  // Always read current role + active status from DB. The JWT may contain
+  // a stale role if the user was demoted/promoted after login — relying on
+  // the JWT role alone would let a demoted admin keep full access until
+  // their session expires (up to 8h).
   const adminUser = await adminDb.admin_users.findUnique({
     where: { id: session.userId },
-    select: { is_active: true },
+    select: { is_active: true, role: true },
   });
   if (!adminUser?.is_active) {
     redirect("/login");
   }
 
-  return session;
+  // Override the JWT role with the DB role so all downstream checks
+  // (requireAdmin, requirePageAccess, sidebar filtering) use the
+  // current truth, not the login-time snapshot.
+  return { ...session, role: adminUser.role };
 });
 
 export const getUserPermissions = cache(async (userId: string): Promise<string[]> => {

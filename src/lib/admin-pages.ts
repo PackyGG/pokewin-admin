@@ -8,6 +8,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   // Navigation
   { group: "Navigation", label: "Dashboard", key: "/dashboard" },
   { group: "Navigation", label: "Analytics", key: "/analytics" },
+  { group: "Navigation", label: "Map", key: "/map" },
   { group: "Navigation", label: "Users", key: "/users" },
   { group: "Navigation", label: "Withdrawals", key: "/withdrawals" },
   // Transactions

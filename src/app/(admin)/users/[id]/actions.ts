@@ -24,9 +24,14 @@ export async function adjustBalance(data: {
   amount: number;
   reason: string;
   totpCode: string;
-}) {
+}): Promise<{ success: true } | { success: false; error: string }> {
   const session = await requirePageAccess("/users");
-  const parsed = adjustBalanceSchema.parse(data);
+
+  const parseResult = adjustBalanceSchema.safeParse(data);
+  if (!parseResult.success) {
+    return { success: false, error: parseResult.error.issues[0]?.message ?? "Invalid input" };
+  }
+  const parsed = parseResult.data;
 
   // Admins can always adjust; non-admins need the __can_adjust_balance capability
   if (session.role !== "admin") {
@@ -35,40 +40,56 @@ export async function adjustBalance(data: {
       select: { allowed_pages: true },
     });
     if (!perms || !canUserAdjustBalance(perms.allowed_pages)) {
-      throw new Error("You do not have permission to adjust balances");
+      return { success: false, error: "You do not have permission to adjust balances" };
     }
   }
 
-  await require2FA(session.userId, data.totpCode);
-  await checkBalanceAdjustmentLimit(session.userId, parsed.amount);
+  try {
+    await require2FA(session.userId, data.totpCode);
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : "2FA verification failed" };
+  }
+
+  try {
+    await checkBalanceAdjustmentLimit(session.userId, parsed.amount);
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : "Balance limit exceeded" };
+  }
 
   const balances = await db.balances.findUnique({
     where: { user_id: parsed.userId },
   });
-  if (!balances) throw new Error("User balances not found");
+  if (!balances) return { success: false, error: "User balances not found" };
 
   const currentBalance = Number(balances.available_balance);
   const newBalance = currentBalance + parsed.amount;
-  if (newBalance < 0) throw new Error("Resulting balance would be negative");
+  if (newBalance < 0) {
+    return { success: false, error: "Resulting balance would be negative" };
+  }
 
-  await db.$transaction([
-    db.balances.update({
-      where: { user_id: parsed.userId },
-      data: { available_balance: newBalance },
-    }),
-    db.ledger_transactions.create({
-      data: {
-        id: crypto.randomUUID(),
-        user_id: parsed.userId,
-        type: "admin_balance_adjustment",
-        amount: parsed.amount,
-        balance_before: currentBalance,
-        balance_after: newBalance,
-        description: `Admin adjustment: ${parsed.reason}`,
-        status: "completed",
-      },
-    }),
-  ]);
+  try {
+    await db.$transaction([
+      db.balances.update({
+        where: { user_id: parsed.userId },
+        data: { available_balance: newBalance },
+      }),
+      db.ledger_transactions.create({
+        data: {
+          id: crypto.randomUUID(),
+          user_id: parsed.userId,
+          type: "admin_balance_adjustment",
+          amount: parsed.amount,
+          balance_before: currentBalance,
+          balance_after: newBalance,
+          description: `Admin adjustment: ${parsed.reason}`,
+          status: "completed",
+        },
+      }),
+    ]);
+  } catch (err) {
+    console.error("[adjustBalance] Transaction failed:", err);
+    return { success: false, error: "Balance adjustment failed — please try again" };
+  }
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -77,12 +98,7 @@ export async function adjustBalance(data: {
     metadata: { amount: parsed.amount, reason: parsed.reason },
   });
 
-  // Fire balance_fill webhooks (non-blocking — we intentionally don't
-  // await the admin UI on webhook delivery). We still LOG failures
-  // instead of silently swallowing them so delivery issues are visible.
-  // Note: in serverless, fire-and-forget promises may not complete before
-  // the function terminates; if reliability becomes a concern, switch
-  // this to Next.js `after()` or a proper job queue.
+  // Fire balance_fill webhooks (non-blocking)
   adminDb.creator_webhooks
     .findMany({
       where: { target_user_id: parsed.userId, type: "balance_fill", enabled: true },
@@ -133,6 +149,7 @@ export async function adjustBalance(data: {
     });
 
   revalidatePath(`/users/${parsed.userId}`);
+  return { success: true };
 }
 
 export async function changeRole(userId: string, newRole: string, totpCode: string) {

@@ -4,7 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { getUserDetail, getUserTransactions, getUserAuditLog, getUserInventory, getUserPnlBreakdown, getUserRewards } from "@/lib/queries/users";
 import { getNotesForUser } from "@/lib/queries/admin-notes";
 import { requirePageAccess, getUserPermissions } from "@/lib/dal";
-import { canUserAdjustBalance } from "@/app/(admin)/settings/roles/permissions-utils";
+import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { UserTabs } from "./user-tabs";
 
 export const metadata = { title: "User Detail" };
@@ -69,7 +69,34 @@ export default async function UserDetailPage({
           <p className="text-sm text-muted-foreground">{data.user.email}</p>
         </div>
       </div>
-      <UserTabs data={{ ...data, sessionRole: session.role, canAdjustBalance: session.role === "admin" || canUserAdjustBalance(await getUserPermissions(session.userId)) }} transactions={transactions} auditLog={auditLog} inventory={inventory} soldInventory={soldInventory} exchangedInventory={exchangedInventory} pnlBreakdown={pnlBreakdown} notes={notes} gamingTx={gamingTx} financialTx={financialTx} rewards={rewards} />
+      <UserTabs data={{ ...data, sessionRole: session.role, capabilities: await (async () => {
+        if (session.role === "admin") {
+          // Admins have all capabilities
+          return {
+            canAdjustBalance: true,
+            canAdjustXp: true,
+            canEditIdentity: true,
+            canBanUsers: true,
+            canLockUsers: true,
+            canToggleFeatureLocks: true,
+            canAssignAffiliate: true,
+            canWipeAccounts: true,
+            canChangeUserRoles: true,
+          };
+        }
+        const perms = await getUserPermissions(session.userId);
+        return {
+          canAdjustBalance: hasCapability(perms, "__can_adjust_balance"),
+          canAdjustXp: hasCapability(perms, "__can_adjust_xp"),
+          canEditIdentity: hasCapability(perms, "__can_edit_identity"),
+          canBanUsers: hasCapability(perms, "__can_ban_users"),
+          canLockUsers: hasCapability(perms, "__can_lock_users"),
+          canToggleFeatureLocks: hasCapability(perms, "__can_toggle_feature_locks"),
+          canAssignAffiliate: hasCapability(perms, "__can_assign_affiliate"),
+          canWipeAccounts: hasCapability(perms, "__can_wipe_accounts"),
+          canChangeUserRoles: hasCapability(perms, "__can_change_user_roles"),
+        };
+      })() }} transactions={transactions} auditLog={auditLog} inventory={inventory} soldInventory={soldInventory} exchangedInventory={exchangedInventory} pnlBreakdown={pnlBreakdown} notes={notes} gamingTx={gamingTx} financialTx={financialTx} rewards={rewards} />
     </div>
   );
 }

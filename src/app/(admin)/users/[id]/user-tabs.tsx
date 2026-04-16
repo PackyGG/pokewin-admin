@@ -255,7 +255,17 @@ type UserDetail = {
     avgDeposit: number;
   };
   sessionRole: string;
-  canAdjustBalance: boolean;
+  capabilities: {
+    canAdjustBalance: boolean;
+    canAdjustXp: boolean;
+    canEditIdentity: boolean;
+    canBanUsers: boolean;
+    canLockUsers: boolean;
+    canToggleFeatureLocks: boolean;
+    canAssignAffiliate: boolean;
+    canWipeAccounts: boolean;
+    canChangeUserRoles: boolean;
+  };
 };
 
 type Transaction = {
@@ -475,6 +485,7 @@ export function UserTabs({
     activeSeed,
     depositAddresses,
     counts,
+    capabilities,
   } = data;
   const searchParams = useSearchParams();
   const initialTab = searchParams.has("txPage")
@@ -627,7 +638,7 @@ export function UserTabs({
 
       <TabsContent value="overview" className="space-y-6">
         {/* Zone 1 — Header Strip */}
-        <UserHeaderStrip user={user} isAdmin={isAdmin} counts={counts} />
+        <UserHeaderStrip user={user} isAdmin={isAdmin} counts={counts} capabilities={capabilities} />
 
         {/* Zone 2 — Key Metrics */}
         <CollapsibleSection
@@ -641,7 +652,7 @@ export function UserTabs({
               balances={balances}
               userId={user.id}
               isAdmin={isAdmin}
-              canAdjustBalance={data.canAdjustBalance}
+              canAdjustBalance={capabilities.canAdjustBalance}
             />
             <PnlCard pnlBreakdown={pnlBreakdown} balances={balances} />
             <ActivityStatsCard
@@ -651,7 +662,7 @@ export function UserTabs({
               bonusPoints={balances?.bonusPoints ?? 0}
               avgDeposit={counts.avgDeposit}
               userId={user.id}
-              isAdmin={isAdmin}
+              canAdjustXp={capabilities.canAdjustXp}
             />
           </div>
         </CollapsibleSection>
@@ -858,7 +869,7 @@ export function UserTabs({
           <FeatureLocksCard
             userId={user.id}
             featureLocks={featureLocks}
-            isAdmin={isAdmin}
+            canToggle={capabilities.canToggleFeatureLocks}
           />
         </CollapsibleSection>
 
@@ -927,10 +938,12 @@ const UserHeaderStrip = React.memo(function UserHeaderStrip({
   user,
   isAdmin,
   counts,
+  capabilities,
 }: {
   user: UserDetail["user"];
   isAdmin: boolean;
   counts: UserDetail["counts"];
+  capabilities: UserDetail["capabilities"];
 }) {
   const [reason, setReason] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -972,7 +985,7 @@ const UserHeaderStrip = React.memo(function UserHeaderStrip({
             {user.username && user.displayUsername && user.displayUsername !== user.username && (
               <span className="text-xs text-muted-foreground">@{user.username}</span>
             )}
-            {isAdmin && (
+            {capabilities.canEditIdentity && (
               <EditIdentityButton user={user} />
             )}
           </div>
@@ -1007,7 +1020,7 @@ const UserHeaderStrip = React.memo(function UserHeaderStrip({
         </div>
 
         <div className="flex items-center gap-2 ml-auto shrink-0">
-          {isAdmin ? (
+          {capabilities.canChangeUserRoles ? (
             <>
               <Select
                 value={user.role}
@@ -1112,121 +1125,125 @@ const UserHeaderStrip = React.memo(function UserHeaderStrip({
 
           <div className="w-px h-6 bg-border mx-1" />
 
-          {!user.isBanned ? (
-            <AlertDialog>
-              <AlertDialogTrigger
-                className={buttonVariants({
-                  variant: "destructive",
-                  size: "sm",
-                })}
+          {capabilities.canBanUsers && (
+            !user.isBanned ? (
+              <AlertDialog>
+                <AlertDialogTrigger
+                  className={buttonVariants({
+                    variant: "destructive",
+                    size: "sm",
+                  })}
+                >
+                  Ban
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>
+                      Ban {user.username ?? user.email}?
+                    </AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will ban the user and terminate all their sessions.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <Textarea
+                    placeholder="Ban reason..."
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                  />
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      disabled={isPending || !reason.trim()}
+                      onClick={() => {
+                        startTransition(async () => {
+                          await banUser(user.id, reason);
+                          toast.success("User banned");
+                          setReason("");
+                          router.refresh();
+                        });
+                      }}
+                    >
+                      Ban
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isPending}
+                onClick={() => {
+                  startTransition(async () => {
+                    await unbanUser(user.id);
+                    toast.success("User unbanned");
+                    router.refresh();
+                  });
+                }}
               >
-                Ban
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>
-                    Ban {user.username ?? user.email}?
-                  </AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This will ban the user and terminate all their sessions.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <Textarea
-                  placeholder="Ban reason..."
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                />
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    disabled={isPending || !reason.trim()}
-                    onClick={() => {
-                      startTransition(async () => {
-                        await banUser(user.id, reason);
-                        toast.success("User banned");
-                        setReason("");
-                        router.refresh();
-                      });
-                    }}
-                  >
-                    Ban
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={isPending}
-              onClick={() => {
-                startTransition(async () => {
-                  await unbanUser(user.id);
-                  toast.success("User unbanned");
-                  router.refresh();
-                });
-              }}
-            >
-              Unban
-            </Button>
+                Unban
+              </Button>
+            )
           )}
-          {!user.isLocked ? (
-            <AlertDialog>
-              <AlertDialogTrigger
-                className={buttonVariants({ variant: "outline", size: "sm" })}
+          {capabilities.canLockUsers && (
+            !user.isLocked ? (
+              <AlertDialog>
+                <AlertDialogTrigger
+                  className={buttonVariants({ variant: "outline", size: "sm" })}
+                >
+                  Lock
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>
+                      Lock {user.username ?? user.email}?
+                    </AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will lock the user&apos;s account.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <Textarea
+                    placeholder="Lock reason..."
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                  />
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      disabled={isPending || !reason.trim()}
+                      onClick={() => {
+                        startTransition(async () => {
+                          await lockUser(user.id, reason);
+                          toast.success("User locked");
+                          setReason("");
+                          router.refresh();
+                        });
+                      }}
+                    >
+                      Lock
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isPending}
+                onClick={() => {
+                  startTransition(async () => {
+                    await unlockUser(user.id);
+                    toast.success("User unlocked");
+                    router.refresh();
+                  });
+                }}
               >
-                Lock
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>
-                    Lock {user.username ?? user.email}?
-                  </AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This will lock the user&apos;s account.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <Textarea
-                  placeholder="Lock reason..."
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                />
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    disabled={isPending || !reason.trim()}
-                    onClick={() => {
-                      startTransition(async () => {
-                        await lockUser(user.id, reason);
-                        toast.success("User locked");
-                        setReason("");
-                        router.refresh();
-                      });
-                    }}
-                  >
-                    Lock
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={isPending}
-              onClick={() => {
-                startTransition(async () => {
-                  await unlockUser(user.id);
-                  toast.success("User unlocked");
-                  router.refresh();
-                });
-              }}
-            >
-              Unlock
-            </Button>
+                Unlock
+              </Button>
+            )
           )}
 
-          {isAdmin && (
+          {capabilities.canWipeAccounts && (
             <WipeAccountButton
               userId={user.id}
               displayName={user.username ?? user.email ?? user.id}
@@ -1411,12 +1428,16 @@ function BalanceAdjustDialog({
     }
     startTransition(async () => {
       try {
-        await adjustBalance({
+        const result = await adjustBalance({
           userId,
           amount: numAmount,
           reason,
           totpCode: totpCode.trim(),
         });
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
         toast.success("Balance adjusted");
         setAmount("");
         setReason("");
@@ -2400,7 +2421,7 @@ const ActivityStatsCard = React.memo(function ActivityStatsCard({
   bonusPoints,
   avgDeposit,
   userId,
-  isAdmin,
+  canAdjustXp,
 }: {
   statistics: UserDetail["statistics"];
   balances: UserDetail["balances"];
@@ -2408,7 +2429,7 @@ const ActivityStatsCard = React.memo(function ActivityStatsCard({
   bonusPoints: number;
   avgDeposit: number;
   userId: string;
-  isAdmin: boolean;
+  canAdjustXp: boolean;
 }) {
   const [xpAdjustOpen, setXpAdjustOpen] = useState(false);
 
@@ -2416,7 +2437,7 @@ const ActivityStatsCard = React.memo(function ActivityStatsCard({
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="text-sm font-medium">Activity</CardTitle>
-        {isAdmin && (
+        {canAdjustXp && (
           <Button
             variant="outline"
             size="sm"
@@ -2556,11 +2577,11 @@ const RewardsCard = React.memo(function RewardsCard({
 const FeatureLocksCard = React.memo(function FeatureLocksCard({
   userId,
   featureLocks,
-  isAdmin,
+  canToggle,
 }: {
   userId: string;
   featureLocks: UserDetail["featureLocks"];
-  isAdmin: boolean;
+  canToggle: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
@@ -2618,7 +2639,7 @@ const FeatureLocksCard = React.memo(function FeatureLocksCard({
               >
                 {f.locked ? "Locked" : "Open"}
               </Badge>
-              {isAdmin && (
+              {canToggle && (
                 <Switch
                   checked={f.locked}
                   disabled={isPending}
