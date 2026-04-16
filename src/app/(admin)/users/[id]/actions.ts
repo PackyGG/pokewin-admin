@@ -569,3 +569,224 @@ export async function fetchCreatorWithdrawalLimits(userId: string) {
   await requirePageAccess("/users");
   return getCreatorWithdrawalLimits(userId);
 }
+
+// ---------------------------------------------------------------------------
+// Wipe Account Data — Alt Account Cleanup
+// ---------------------------------------------------------------------------
+// Permanently deletes ALL user activity data while keeping the User row and
+// account (OAuth) rows intact. Designed for alt account cleanup where the
+// admin wants to nuke everything so the alt cannot benefit from existing
+// data. Ledger transactions are included in the wipe.
+//
+// Deletion order is dictated by FK constraints — see the plan file for the
+// full dependency graph. Everything runs inside a single interactive
+// $transaction so it's all-or-nothing.
+// ---------------------------------------------------------------------------
+
+export async function wipeUserAccount(
+  userId: string,
+  confirmUsername: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requireAdmin();
+
+  // Verify the user exists and the confirmation username matches
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    select: { id: true, username: true, email: true },
+  });
+  if (!user) return { success: false, error: "User not found" };
+
+  const displayName = user.username ?? user.email ?? user.id;
+  if (confirmUsername !== displayName) {
+    return { success: false, error: "Username confirmation does not match" };
+  }
+
+  // Audit BEFORE the wipe — if the transaction fails, the attempt is still logged
+  try {
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "user_account_wiped",
+      targetUserId: userId,
+      metadata: { username: user.username, email: user.email },
+    });
+  } catch (err) {
+    console.error("[wipeUserAccount] Failed to create audit event:", err);
+    return { success: false, error: "Failed to create audit event" };
+  }
+
+  try {
+    await db.$transaction(async (tx) => {
+      // ── Phase 1: Null out references in shared/other-user tables ──────
+      await tx.raffles.updateMany({
+        where: { winner_user_id: userId },
+        data: { winner_user_id: null },
+      });
+      await tx.rains.updateMany({
+        where: { winner_user_id: userId },
+        data: { winner_user_id: null },
+      });
+      await tx.gift_cards.updateMany({
+        where: { redeemed_by_user_id: userId },
+        data: { redeemed_by_user_id: null, ledger_tx_id: null },
+      });
+      await tx.audit_events.updateMany({
+        where: { user_id: userId },
+        data: { user_id: null },
+      });
+      await tx.fingerprints.updateMany({
+        where: { user_id: userId },
+        data: { user_id: null },
+      });
+      await tx.chat_messages.updateMany({
+        where: { deleted_by: userId },
+        data: { deleted_by: null },
+      });
+      // card_withdrawal_requests — null out admin actor refs
+      await tx.card_withdrawal_requests.updateMany({
+        where: { confirmed_by: userId },
+        data: { confirmed_by: null },
+      });
+      await tx.card_withdrawal_requests.updateMany({
+        where: { processed_by: userId },
+        data: { processed_by: null },
+      });
+      await tx.card_withdrawal_requests.updateMany({
+        where: { shipped_by: userId },
+        data: { shipped_by: null },
+      });
+      // user_feature_locks — null out admin actor refs on OTHER users' locks
+      await tx.user_feature_locks.updateMany({
+        where: { locked_deposits_by: userId },
+        data: { locked_deposits_by: null },
+      });
+      await tx.user_feature_locks.updateMany({
+        where: { locked_exchanges_by: userId },
+        data: { locked_exchanges_by: null },
+      });
+      await tx.user_feature_locks.updateMany({
+        where: { locked_inventory_sales_by: userId },
+        data: { locked_inventory_sales_by: null },
+      });
+      await tx.user_feature_locks.updateMany({
+        where: { locked_openings_by: userId },
+        data: { locked_openings_by: null },
+      });
+      await tx.user_feature_locks.updateMany({
+        where: { locked_vault_by: userId },
+        data: { locked_vault_by: null },
+      });
+      await tx.user_feature_locks.updateMany({
+        where: { locked_withdrawals_by: userId },
+        data: { locked_withdrawals_by: null },
+      });
+      await tx.user_mutes.updateMany({
+        where: { unmuted_by: userId },
+        data: { unmuted_by: null },
+      });
+
+      // ── Phase 2: Delete leaf tables (reference other user tables) ─────
+      await tx.provably_fair_results.deleteMany({
+        where: {
+          OR: [
+            { game_sessions: { user_id: userId } },
+            { battles: { user_id: userId } },
+            { user_inventory: { user_id: userId } },
+          ],
+        },
+      });
+      await tx.battle_participants.deleteMany({
+        where: {
+          OR: [
+            { user_id: userId },
+            { battles: { user_id: userId } },
+          ],
+        },
+      });
+      await tx.affiliate_code_usages.deleteMany({
+        where: {
+          OR: [
+            { affiliate_user_id: userId },
+            { referred_user_id: userId },
+          ],
+        },
+      });
+      await tx.race_claims.deleteMany({ where: { user_id: userId } });
+      await tx.rakeback_claims.deleteMany({ where: { user_id: userId } });
+      await tx.promo_code_redemptions.deleteMany({ where: { user_id: userId } });
+      await tx.pinned_chat_messages.deleteMany({ where: { pinned_by: userId } });
+
+      // ── Phase 3: Delete tables that reference ledger_transactions ─────
+      await tx.balances.deleteMany({ where: { user_id: userId } });
+      await tx.game_sessions.deleteMany({ where: { user_id: userId } });
+
+      // ── Phase 4: Delete ledger_transactions ───────────────────────────
+      await tx.ledger_transactions.deleteMany({ where: { user_id: userId } });
+
+      // ── Phase 5: Delete remaining parent tables ───────────────────────
+      await tx.battles.deleteMany({ where: { user_id: userId } });
+      await tx.user_inventory.deleteMany({ where: { user_id: userId } });
+      await tx.vaults.deleteMany({ where: { user_id: userId } });
+      await tx.chat_messages.deleteMany({ where: { user_id: userId } });
+
+      // ── Phase 6: Delete all standalone tables ─────────────────────────
+      await tx.raffle_entries.deleteMany({ where: { user_id: userId } });
+      await tx.rain_entries.deleteMany({ where: { user_id: userId } });
+      await tx.rain_tips.deleteMany({ where: { user_id: userId } });
+      await tx.user_rewards.deleteMany({ where: { user_id: userId } });
+      await tx.wager_period_snapshots.deleteMany({ where: { user_id: userId } });
+      await tx.race_leaderboard_snapshots.deleteMany({ where: { user_id: userId } });
+      await tx.user_statistics.deleteMany({ where: { user_id: userId } });
+      await tx.pack_favorites.deleteMany({ where: { user_id: userId } });
+      await tx.seed_rotation_history.deleteMany({ where: { user_id: userId } });
+      await tx.user_packs.deleteMany({ where: { user_id: userId } });
+      await tx.user_mutes.deleteMany({
+        where: { OR: [{ user_id: userId }, { muted_by: userId }] },
+      });
+      await tx.user_feature_locks.deleteMany({ where: { user_id: userId } });
+      await tx.card_withdrawal_requests.deleteMany({ where: { user_id: userId } });
+      await tx.shipping_addresses.deleteMany({ where: { user_id: userId } });
+      await tx.deposit_addresses.deleteMany({ where: { user_id: userId } });
+      await tx.vouchers.deleteMany({ where: { user_id: userId } });
+      await tx.affiliate_accounts.deleteMany({ where: { user_id: userId } });
+      await tx.affiliate_codes.deleteMany({ where: { user_id: userId } });
+      await tx.affiliate_code_queue.deleteMany({ where: { user_id: userId } });
+      await tx.affiliate_payouts.deleteMany({ where: { affiliate_user_id: userId } });
+      await tx.session.deleteMany({ where: { userId } });
+      await tx.two_factor.deleteMany({ where: { user_id: userId } });
+      await tx.active_seeds.deleteMany({ where: { user_id: userId } });
+      await tx.creator_withdrawal_limits.deleteMany({ where: { user_id: userId } });
+
+      // ── Phase 7: Reset User row ──────────────────────────────────────
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          affiliate_code: null,
+          affiliate_code_expires_at: null,
+          affiliate_code_active: false,
+          affiliate_bonus_opted_in: false,
+          referred_by: null,
+          is_locked: false,
+          locked_reason: null,
+          locked_at: null,
+          locked_until: null,
+          locked_by: null,
+          is_banned: false,
+          banned_reason: null,
+          banned_at: null,
+          banned_by: null,
+          is_suspected_alt: false,
+          suspected_alt_at: null,
+          updated_at: new Date(),
+        },
+      });
+    }, { timeout: 60_000 });
+  } catch (err) {
+    console.error("[wipeUserAccount] Transaction failed:", err);
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return { success: false, error: `Wipe failed: ${message}` };
+  }
+
+  revalidatePath(`/users/${userId}`);
+  revalidatePath("/users");
+  return { success: true };
+}

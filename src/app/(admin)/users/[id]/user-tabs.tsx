@@ -102,6 +102,7 @@ import {
   createAffiliateCode,
   fetchBalanceHistory,
   fetchCreatorWithdrawalLimits,
+  wipeUserAccount,
 } from "./actions";
 import { createNote, deleteNote } from "./note-actions";
 import { Switch } from "@/components/ui/switch";
@@ -838,6 +839,13 @@ export function UserTabs({
               />
             </CardContent>
           </Card>
+
+          {isAdmin && (
+            <WipeAccountButton
+              userId={user.id}
+              displayName={user.username ?? user.email ?? user.id}
+            />
+          )}
         </CollapsibleSection>
 
         {/* Zone 4 — Feature Locks */}
@@ -5211,3 +5219,91 @@ const NotesSection = React.memo(function NotesSection({
     </Card>
   );
 });
+
+// ---------------------------------------------------------------------------
+// Wipe Account Button + Confirmation Dialog (Admin Only)
+// ---------------------------------------------------------------------------
+function WipeAccountButton({
+  userId,
+  displayName,
+}: {
+  userId: string;
+  displayName: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [confirmValue, setConfirmValue] = useState("");
+  const [isPending, startTransition] = useTransition();
+  const router = useRouter();
+
+  const isConfirmed = confirmValue === displayName;
+
+  function handleWipe() {
+    if (!isConfirmed) return;
+    startTransition(async () => {
+      try {
+        const result = await wipeUserAccount(userId, confirmValue);
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
+        toast.success("Account data wiped successfully");
+        setOpen(false);
+        setConfirmValue("");
+        router.refresh();
+      } catch (e) {
+        toast.error(
+          e instanceof Error ? e.message : "Failed to wipe account data",
+        );
+      }
+    });
+  }
+
+  return (
+    <AlertDialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) setConfirmValue(""); }}>
+      <AlertDialogTrigger
+        render={
+          <Button variant="destructive" size="sm" className="mt-4" />
+        }
+      >
+        <Trash2 className="mr-2 size-4" />
+        Wipe Account Data
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Wipe All Account Data?</AlertDialogTitle>
+          <AlertDialogDescription className="space-y-2">
+            <span className="block">
+              This will <strong>permanently delete</strong> all data for this
+              account: balances, transactions, inventory, battles, rewards,
+              affiliate data, chat messages, and all ledger history.
+            </span>
+            <span className="block">
+              The user record and login credentials will be preserved, but
+              everything else will be gone. <strong>This cannot be undone.</strong>
+            </span>
+            <span className="mt-3 block text-sm">
+              Type <strong className="font-mono text-foreground">{displayName}</strong> to confirm:
+            </span>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <Input
+          value={confirmValue}
+          onChange={(e) => setConfirmValue(e.target.value)}
+          placeholder={displayName}
+          className="font-mono"
+          autoComplete="off"
+        />
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <Button
+            variant="destructive"
+            onClick={handleWipe}
+            disabled={!isConfirmed || isPending}
+          >
+            {isPending ? "Wiping..." : "Wipe Account Data"}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
