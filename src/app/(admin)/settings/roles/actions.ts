@@ -6,25 +6,10 @@ import { requireAdmin } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { setLimit, deleteLimit } from "@/lib/balance-limits";
 import { ALL_PAGE_KEYS } from "@/lib/admin-pages";
+import { BALANCE_ADJUST_KEY, parseBalanceLimit } from "./permissions-utils";
 
 const CONFIGURABLE_ROLES = ["support", "marketing", "creator"] as const;
 type ConfigurableRole = (typeof CONFIGURABLE_ROLES)[number];
-
-// Special keys stored inside allowed_pages that aren't actual page routes.
-// This avoids DB migrations — the allowed_pages column is a String[] that
-// already exists and is the single source of truth for per-user capabilities.
-const BALANCE_ADJUST_KEY = "__can_adjust_balance";
-
-/** Parse the daily balance limit from allowed_pages, e.g. "__balance_limit_daily:500" → 500 */
-function parseBalanceLimit(pages: string[]): number | null {
-  for (const p of pages) {
-    if (p.startsWith("__balance_limit_daily:")) {
-      const val = Number(p.split(":")[1]);
-      return Number.isFinite(val) && val > 0 ? val : null;
-    }
-  }
-  return null;
-}
 
 function isConfigurableRole(role: string): role is ConfigurableRole {
   return (CONFIGURABLE_ROLES as readonly string[]).includes(role);
@@ -69,11 +54,6 @@ export async function getRolePermissions(): Promise<
   }
 
   return result;
-}
-
-/** Check if a given admin user has the balance adjust capability. */
-export function canUserAdjustBalance(allowedPages: string[]): boolean {
-  return allowedPages.includes(BALANCE_ADJUST_KEY);
 }
 
 /**

@@ -4,7 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { getUserDetail, getUserTransactions, getUserAuditLog, getUserInventory, getUserPnlBreakdown, getUserRewards } from "@/lib/queries/users";
 import { getNotesForUser } from "@/lib/queries/admin-notes";
 import { requirePageAccess, getUserPermissions } from "@/lib/dal";
-import { canUserAdjustBalance } from "@/app/(admin)/settings/roles/actions";
+import { canUserAdjustBalance } from "@/app/(admin)/settings/roles/permissions-utils";
 import { UserTabs } from "./user-tabs";
 
 export const metadata = { title: "User Detail" };

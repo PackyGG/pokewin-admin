@@ -11,7 +11,7 @@ import { getUserInventory, getUserTransactions, getCreatorReferralClicks, getCre
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { require2FA } from "@/lib/require-2fa";
 import { checkBalanceAdjustmentLimit } from "@/lib/balance-limits";
-import { canUserAdjustBalance } from "@/app/(admin)/settings/roles/actions";
+import { canUserAdjustBalance } from "@/app/(admin)/settings/roles/permissions-utils";
 
 const adjustBalanceSchema = z.object({
   userId: z.string(),
