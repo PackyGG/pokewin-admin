@@ -840,12 +840,6 @@ export function UserTabs({
             </CardContent>
           </Card>
 
-          {isAdmin && (
-            <WipeAccountButton
-              userId={user.id}
-              displayName={user.username ?? user.email ?? user.id}
-            />
-          )}
         </CollapsibleSection>
 
         {/* Zone 4 — Feature Locks */}
@@ -1218,6 +1212,12 @@ const UserHeaderStrip = React.memo(function UserHeaderStrip({
             </Button>
           )}
 
+          {isAdmin && (
+            <WipeAccountButton
+              userId={user.id}
+              displayName={user.username ?? user.email ?? user.id}
+            />
+          )}
           {isAdmin && <DeleteUserDialog user={user} isPending={isPending} />}
         </div>
       </div>
@@ -5262,11 +5262,10 @@ function WipeAccountButton({
     <AlertDialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) setConfirmValue(""); }}>
       <AlertDialogTrigger
         render={
-          <Button variant="destructive" size="sm" className="mt-4" />
+          <Button variant="destructive" size="sm" />
         }
       >
-        <Trash2 className="mr-2 size-4" />
-        Wipe Account Data
+        Wipe
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>

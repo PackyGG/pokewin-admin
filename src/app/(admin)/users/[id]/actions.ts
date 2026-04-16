@@ -715,17 +715,35 @@ export async function wipeUserAccount(
       await tx.promo_code_redemptions.deleteMany({ where: { user_id: userId } });
       await tx.pinned_chat_messages.deleteMany({ where: { pinned_by: userId } });
 
-      // ── Phase 3: Delete tables that reference ledger_transactions ─────
-      await tx.balances.deleteMany({ where: { user_id: userId } });
+      // ── Phase 3: Zero balances + clear ledger FK, then delete game_sessions
+      // Balances row is KEPT (zeroed) — deleting it would break the backend
+      // ("Balance not found" errors). We null out last_transaction_id first
+      // so the ledger_transactions delete in Phase 4 doesn't hit FK constraints.
+      await tx.balances.updateMany({
+        where: { user_id: userId },
+        data: {
+          available_balance: 0,
+          locked_balance: 0,
+          total_deposited: 0,
+          total_withdrawn: 0,
+          total_wagered: 0,
+          total_won: 0,
+          bonus_points: 0,
+          last_transaction_id: null,
+          unlock_at: null,
+          version: 1,
+          updated_at: new Date(),
+        },
+      });
       await tx.game_sessions.deleteMany({ where: { user_id: userId } });
 
       // ── Phase 4: Delete ledger_transactions ───────────────────────────
       await tx.ledger_transactions.deleteMany({ where: { user_id: userId } });
 
       // ── Phase 5: Delete remaining parent tables ───────────────────────
+      // Vaults + deposit_addresses are KEPT (crypto infra must survive).
       await tx.battles.deleteMany({ where: { user_id: userId } });
       await tx.user_inventory.deleteMany({ where: { user_id: userId } });
-      await tx.vaults.deleteMany({ where: { user_id: userId } });
       await tx.chat_messages.deleteMany({ where: { user_id: userId } });
 
       // ── Phase 6: Delete all standalone tables ─────────────────────────
@@ -742,18 +760,17 @@ export async function wipeUserAccount(
       await tx.user_mutes.deleteMany({
         where: { OR: [{ user_id: userId }, { muted_by: userId }] },
       });
-      await tx.user_feature_locks.deleteMany({ where: { user_id: userId } });
+      // user_feature_locks (user's own) — KEPT per admin request
       await tx.card_withdrawal_requests.deleteMany({ where: { user_id: userId } });
       await tx.shipping_addresses.deleteMany({ where: { user_id: userId } });
-      await tx.deposit_addresses.deleteMany({ where: { user_id: userId } });
+      // deposit_addresses — KEPT (crypto infra)
       await tx.vouchers.deleteMany({ where: { user_id: userId } });
       await tx.affiliate_accounts.deleteMany({ where: { user_id: userId } });
       await tx.affiliate_codes.deleteMany({ where: { user_id: userId } });
       await tx.affiliate_code_queue.deleteMany({ where: { user_id: userId } });
       await tx.affiliate_payouts.deleteMany({ where: { affiliate_user_id: userId } });
       await tx.session.deleteMany({ where: { userId } });
-      await tx.two_factor.deleteMany({ where: { user_id: userId } });
-      await tx.active_seeds.deleteMany({ where: { user_id: userId } });
+      // two_factor + active_seeds — KEPT (auth/provably-fair infra)
       await tx.creator_withdrawal_limits.deleteMany({ where: { user_id: userId } });
 
       // ── Phase 7: Reset User row ──────────────────────────────────────
