@@ -1,0 +1,36 @@
+name: Auto-merge to main
+
+# Fast-forwards `main` to match every push on `claude/hungry-gould` so
+# Vercel auto-deploys production immediately without a manual Promote step.
+# Uses --ff-only — if the branches ever diverge this fails loudly instead
+# of making a silent merge commit, which is what we want.
+
+on:
+  push:
+    branches:
+      - claude/hungry-gould
+
+concurrency:
+  group: auto-merge-main
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fast-forward main to ${{ github.ref_name }} @ ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout main
+          git merge --ff-only "${{ github.sha }}"
+          git push origin main
