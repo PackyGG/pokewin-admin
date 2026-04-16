@@ -1,16 +1,10 @@
 import { db } from "@/lib/db";
 
 export async function getSettings() {
-  const [vaultLockTimes, countryRestrictions, maintenanceConfig] = await Promise.all([
+  const [vaultLockTimes, countryRestrictions] = await Promise.all([
     db.vault_lock_times.findMany({ orderBy: { hours: "asc" } }),
     db.country_restrictions.findMany({ orderBy: { country_code: "asc" } }),
-    db.site_config.findMany({
-      where: { key: { in: ["maintenance_mode", "maintenance_message"] } },
-      select: { key: true, value: true },
-    }),
   ]);
-
-  const maintenanceMap = new Map(maintenanceConfig.map((r) => [r.key, r.value]));
 
   return {
     vaultLockTimes: vaultLockTimes.map((v) => ({
@@ -29,9 +23,5 @@ export async function getSettings() {
       lockedDepositsFiat: c.locked_deposits_fiat,
       lockedWithdrawalsCrypto: c.locked_withdrawals_crypto,
     })),
-    maintenance: {
-      enabled: maintenanceMap.get("maintenance_mode") === "true",
-      message: maintenanceMap.get("maintenance_message") ?? "",
-    },
   };
 }
