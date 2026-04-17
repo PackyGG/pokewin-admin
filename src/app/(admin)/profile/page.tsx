@@ -2,6 +2,8 @@ import { verifySession } from "@/lib/dal";
 import { adminDb } from "@/lib/admin-db";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { ProfileForm } from "./profile-form";
+import { PreferencesForm } from "./preferences-form";
+import { getAdminPreferences } from "@/lib/admin-preferences";
 
 export const metadata = { title: "My Profile" };
 
@@ -69,6 +71,7 @@ async function loadProfile(userId: string): Promise<AdminProfileData> {
 export default async function ProfilePage() {
   const session = await verifySession();
   const profile = await loadProfile(session.userId);
+  const preferences = await getAdminPreferences(session.userId);
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-4">
@@ -107,6 +110,21 @@ export default async function ProfilePage() {
             role={profile.role}
             displayUsername={profile.display_username}
             hasAvatar={profile.hasAvatar}
+            profileFieldsAvailable={profile.profileFieldsAvailable}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Preferences</CardTitle>
+          <CardDescription>
+            Theme, timezone and date format. Only affects your own view.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <PreferencesForm
+            initial={preferences}
             profileFieldsAvailable={profile.profileFieldsAvailable}
           />
         </CardContent>
