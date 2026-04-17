@@ -1,8 +1,16 @@
+import { Wallet } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
-import { getExpenses, getRecurringExpenses, getSpendingSummary, getMonthlyTrend } from "@/lib/queries/spending";
+import {
+  getExpenses,
+  getRecurringExpenses,
+  getSpendingSummary,
+  getMonthlyTrend,
+} from "@/lib/queries/spending";
 import { SummaryCards } from "./summary-cards";
 import { SpendingTabs } from "./tab-content";
 import { DateRangeFilter } from "./date-range-filter";
+import { PageHero } from "@/components/modern-panels";
+import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Spending" };
 
@@ -35,18 +43,34 @@ export default async function SpendingPage({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <h1 className="text-2xl font-bold">Spending Sheet</h1>
-        <DateRangeFilter from={from} to={to} />
-      </div>
+      <PageHero>
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
+              <Wallet className="size-5 text-primary" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold leading-tight">
+                Spending Sheet
+              </h1>
+              <p className="text-sm text-muted-foreground">
+                Track operational expenses, recurring costs, and month-over-month trends.
+              </p>
+            </div>
+          </div>
+          <DateRangeFilter from={from} to={to} />
+        </div>
+      </PageHero>
 
       <SummaryCards summary={summary} from={from} to={to} trend={trend} />
 
-      <SpendingTabs
-        defaultTab={params.tab === "recurring" ? "recurring" : "expenses"}
-        expensesData={expenses.data}
-        recurringData={recurring}
-      />
+      <FadeIn>
+        <SpendingTabs
+          defaultTab={params.tab === "recurring" ? "recurring" : "expenses"}
+          expensesData={expenses.data}
+          recurringData={recurring}
+        />
+      </FadeIn>
     </div>
   );
 }
