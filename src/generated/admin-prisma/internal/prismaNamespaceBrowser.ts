@@ -52,6 +52,7 @@ export const AnyNull = runtime.AnyNull
 
 export const ModelName = {
   admin_users: 'admin_users',
+  admin_roles: 'admin_roles',
   admin_sessions: 'admin_sessions',
   admin_notes: 'admin_notes',
   admin_audit_events: 'admin_audit_events',
@@ -89,6 +90,7 @@ export const Admin_usersScalarFieldEnum = {
   username: 'username',
   password_hash: 'password_hash',
   role: 'role',
+  role_id: 'role_id',
   totp_secret: 'totp_secret',
   totp_enabled: 'totp_enabled',
   recovery_codes: 'recovery_codes',
@@ -102,6 +104,19 @@ export const Admin_usersScalarFieldEnum = {
 } as const
 
 export type Admin_usersScalarFieldEnum = (typeof Admin_usersScalarFieldEnum)[keyof typeof Admin_usersScalarFieldEnum]
+
+
+export const Admin_rolesScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  description: 'description',
+  is_system: 'is_system',
+  capabilities: 'capabilities',
+  created_at: 'created_at',
+  updated_at: 'updated_at'
+} as const
+
+export type Admin_rolesScalarFieldEnum = (typeof Admin_rolesScalarFieldEnum)[keyof typeof Admin_rolesScalarFieldEnum]
 
 
 export const Admin_sessionsScalarFieldEnum = {

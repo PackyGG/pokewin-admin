@@ -30,6 +30,7 @@ export type Admin_usersMinAggregateOutputType = {
   username: string | null
   password_hash: string | null
   role: $Enums.admin_role | null
+  role_id: string | null
   totp_secret: string | null
   totp_enabled: boolean | null
   is_active: boolean | null
@@ -46,6 +47,7 @@ export type Admin_usersMaxAggregateOutputType = {
   username: string | null
   password_hash: string | null
   role: $Enums.admin_role | null
+  role_id: string | null
   totp_secret: string | null
   totp_enabled: boolean | null
   is_active: boolean | null
@@ -62,6 +64,7 @@ export type Admin_usersCountAggregateOutputType = {
   username: number
   password_hash: number
   role: number
+  role_id: number
   totp_secret: number
   totp_enabled: number
   recovery_codes: number
@@ -82,6 +85,7 @@ export type Admin_usersMinAggregateInputType = {
   username?: true
   password_hash?: true
   role?: true
+  role_id?: true
   totp_secret?: true
   totp_enabled?: true
   is_active?: true
@@ -98,6 +102,7 @@ export type Admin_usersMaxAggregateInputType = {
   username?: true
   password_hash?: true
   role?: true
+  role_id?: true
   totp_secret?: true
   totp_enabled?: true
   is_active?: true
@@ -114,6 +119,7 @@ export type Admin_usersCountAggregateInputType = {
   username?: true
   password_hash?: true
   role?: true
+  role_id?: true
   totp_secret?: true
   totp_enabled?: true
   recovery_codes?: true
@@ -205,6 +211,7 @@ export type Admin_usersGroupByOutputType = {
   username: string
   password_hash: string
   role: $Enums.admin_role
+  role_id: string | null
   totp_secret: string | null
   totp_enabled: boolean
   recovery_codes: string[]
@@ -244,6 +251,7 @@ export type admin_usersWhereInput = {
   username?: Prisma.StringFilter<"admin_users"> | string
   password_hash?: Prisma.StringFilter<"admin_users"> | string
   role?: Prisma.Enumadmin_roleFilter<"admin_users"> | $Enums.admin_role
+  role_id?: Prisma.UuidNullableFilter<"admin_users"> | string | null
   totp_secret?: Prisma.StringNullableFilter<"admin_users"> | string | null
   totp_enabled?: Prisma.BoolFilter<"admin_users"> | boolean
   recovery_codes?: Prisma.StringNullableListFilter<"admin_users">
@@ -254,6 +262,7 @@ export type admin_usersWhereInput = {
   created_at?: Prisma.DateTimeFilter<"admin_users"> | Date | string
   updated_at?: Prisma.DateTimeFilter<"admin_users"> | Date | string
   allowed_pages?: Prisma.StringNullableListFilter<"admin_users">
+  custom_role?: Prisma.XOR<Prisma.Admin_rolesNullableScalarRelationFilter, Prisma.admin_rolesWhereInput> | null
   audit_events?: Prisma.Admin_audit_eventsListRelationFilter
   sessions?: Prisma.Admin_sessionsListRelationFilter
   notes?: Prisma.Admin_notesListRelationFilter
@@ -269,6 +278,7 @@ export type admin_usersOrderByWithRelationInput = {
   username?: Prisma.SortOrder
   password_hash?: Prisma.SortOrder
   role?: Prisma.SortOrder
+  role_id?: Prisma.SortOrderInput | Prisma.SortOrder
   totp_secret?: Prisma.SortOrderInput | Prisma.SortOrder
   totp_enabled?: Prisma.SortOrder
   recovery_codes?: Prisma.SortOrder
@@ -279,6 +289,7 @@ export type admin_usersOrderByWithRelationInput = {
   created_at?: Prisma.SortOrder
   updated_at?: Prisma.SortOrder
   allowed_pages?: Prisma.SortOrder
+  custom_role?: Prisma.admin_rolesOrderByWithRelationInput
   audit_events?: Prisma.admin_audit_eventsOrderByRelationAggregateInput
   sessions?: Prisma.admin_sessionsOrderByRelationAggregateInput
   notes?: Prisma.admin_notesOrderByRelationAggregateInput
@@ -297,6 +308,7 @@ export type admin_usersWhereUniqueInput = Prisma.AtLeast<{
   NOT?: Prisma.admin_usersWhereInput | Prisma.admin_usersWhereInput[]
   password_hash?: Prisma.StringFilter<"admin_users"> | string
   role?: Prisma.Enumadmin_roleFilter<"admin_users"> | $Enums.admin_role
+  role_id?: Prisma.UuidNullableFilter<"admin_users"> | string | null
   totp_secret?: Prisma.StringNullableFilter<"admin_users"> | string | null
   totp_enabled?: Prisma.BoolFilter<"admin_users"> | boolean
   recovery_codes?: Prisma.StringNullableListFilter<"admin_users">
@@ -307,6 +319,7 @@ export type admin_usersWhereUniqueInput = Prisma.AtLeast<{
   created_at?: Prisma.DateTimeFilter<"admin_users"> | Date | string
   updated_at?: Prisma.DateTimeFilter<"admin_users"> | Date | string
   allowed_pages?: Prisma.StringNullableListFilter<"admin_users">
+  custom_role?: Prisma.XOR<Prisma.Admin_rolesNullableScalarRelationFilter, Prisma.admin_rolesWhereInput> | null
   audit_events?: Prisma.Admin_audit_eventsListRelationFilter
   sessions?: Prisma.Admin_sessionsListRelationFilter
   notes?: Prisma.Admin_notesListRelationFilter
@@ -322,6 +335,7 @@ export type admin_usersOrderByWithAggregationInput = {
   username?: Prisma.SortOrder
   password_hash?: Prisma.SortOrder
   role?: Prisma.SortOrder
+  role_id?: Prisma.SortOrderInput | Prisma.SortOrder
   totp_secret?: Prisma.SortOrderInput | Prisma.SortOrder
   totp_enabled?: Prisma.SortOrder
   recovery_codes?: Prisma.SortOrder
@@ -346,6 +360,7 @@ export type admin_usersScalarWhereWithAggregatesInput = {
   username?: Prisma.StringWithAggregatesFilter<"admin_users"> | string
   password_hash?: Prisma.StringWithAggregatesFilter<"admin_users"> | string
   role?: Prisma.Enumadmin_roleWithAggregatesFilter<"admin_users"> | $Enums.admin_role
+  role_id?: Prisma.UuidNullableWithAggregatesFilter<"admin_users"> | string | null
   totp_secret?: Prisma.StringNullableWithAggregatesFilter<"admin_users"> | string | null
   totp_enabled?: Prisma.BoolWithAggregatesFilter<"admin_users"> | boolean
   recovery_codes?: Prisma.StringNullableListFilter<"admin_users">
@@ -374,6 +389,7 @@ export type admin_usersCreateInput = {
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
+  custom_role?: Prisma.admin_rolesCreateNestedOneWithoutAdmin_usersInput
   audit_events?: Prisma.admin_audit_eventsCreateNestedManyWithoutAdmin_userInput
   sessions?: Prisma.admin_sessionsCreateNestedManyWithoutAdmin_userInput
   notes?: Prisma.admin_notesCreateNestedManyWithoutAdmin_userInput
@@ -389,6 +405,7 @@ export type admin_usersUncheckedCreateInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -424,6 +441,7 @@ export type admin_usersUpdateInput = {
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
+  custom_role?: Prisma.admin_rolesUpdateOneWithoutAdmin_usersNestedInput
   audit_events?: Prisma.admin_audit_eventsUpdateManyWithoutAdmin_userNestedInput
   sessions?: Prisma.admin_sessionsUpdateManyWithoutAdmin_userNestedInput
   notes?: Prisma.admin_notesUpdateManyWithoutAdmin_userNestedInput
@@ -439,6 +457,7 @@ export type admin_usersUncheckedUpdateInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -464,6 +483,7 @@ export type admin_usersCreateManyInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -500,6 +520,7 @@ export type admin_usersUncheckedUpdateManyInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -526,6 +547,7 @@ export type admin_usersCountOrderByAggregateInput = {
   username?: Prisma.SortOrder
   password_hash?: Prisma.SortOrder
   role?: Prisma.SortOrder
+  role_id?: Prisma.SortOrder
   totp_secret?: Prisma.SortOrder
   totp_enabled?: Prisma.SortOrder
   recovery_codes?: Prisma.SortOrder
@@ -544,6 +566,7 @@ export type admin_usersMaxOrderByAggregateInput = {
   username?: Prisma.SortOrder
   password_hash?: Prisma.SortOrder
   role?: Prisma.SortOrder
+  role_id?: Prisma.SortOrder
   totp_secret?: Prisma.SortOrder
   totp_enabled?: Prisma.SortOrder
   is_active?: Prisma.SortOrder
@@ -560,6 +583,7 @@ export type admin_usersMinOrderByAggregateInput = {
   username?: Prisma.SortOrder
   password_hash?: Prisma.SortOrder
   role?: Prisma.SortOrder
+  role_id?: Prisma.SortOrder
   totp_secret?: Prisma.SortOrder
   totp_enabled?: Prisma.SortOrder
   is_active?: Prisma.SortOrder
@@ -568,6 +592,16 @@ export type admin_usersMinOrderByAggregateInput = {
   profile_image_mime?: Prisma.SortOrder
   created_at?: Prisma.SortOrder
   updated_at?: Prisma.SortOrder
+}
+
+export type Admin_usersListRelationFilter = {
+  every?: Prisma.admin_usersWhereInput
+  some?: Prisma.admin_usersWhereInput
+  none?: Prisma.admin_usersWhereInput
+}
+
+export type admin_usersOrderByRelationAggregateInput = {
+  _count?: Prisma.SortOrder
 }
 
 export type Admin_usersScalarRelationFilter = {
@@ -620,6 +654,48 @@ export type DateTimeFieldUpdateOperationsInput = {
 export type admin_usersUpdateallowed_pagesInput = {
   set?: string[]
   push?: string | string[]
+}
+
+export type admin_usersCreateNestedManyWithoutCustom_roleInput = {
+  create?: Prisma.XOR<Prisma.admin_usersCreateWithoutCustom_roleInput, Prisma.admin_usersUncheckedCreateWithoutCustom_roleInput> | Prisma.admin_usersCreateWithoutCustom_roleInput[] | Prisma.admin_usersUncheckedCreateWithoutCustom_roleInput[]
+  connectOrCreate?: Prisma.admin_usersCreateOrConnectWithoutCustom_roleInput | Prisma.admin_usersCreateOrConnectWithoutCustom_roleInput[]
+  createMany?: Prisma.admin_usersCreateManyCustom_roleInputEnvelope
+  connect?: Prisma.admin_usersWhereUniqueInput | Prisma.admin_usersWhereUniqueInput[]
+}
+
+export type admin_usersUncheckedCreateNestedManyWithoutCustom_roleInput = {
+  create?: Prisma.XOR<Prisma.admin_usersCreateWithoutCustom_roleInput, Prisma.admin_usersUncheckedCreateWithoutCustom_roleInput> | Prisma.admin_usersCreateWithoutCustom_roleInput[] | Prisma.admin_usersUncheckedCreateWithoutCustom_roleInput[]
+  connectOrCreate?: Prisma.admin_usersCreateOrConnectWithoutCustom_roleInput | Prisma.admin_usersCreateOrConnectWithoutCustom_roleInput[]
+  createMany?: Prisma.admin_usersCreateManyCustom_roleInputEnvelope
+  connect?: Prisma.admin_usersWhereUniqueInput | Prisma.admin_usersWhereUniqueInput[]
+}
+
+export type admin_usersUpdateManyWithoutCustom_roleNestedInput = {
+  create?: Prisma.XOR<Prisma.admin_usersCreateWithoutCustom_roleInput, Prisma.admin_usersUncheckedCreateWithoutCustom_roleInput> | Prisma.admin_usersCreateWithoutCustom_roleInput[] | Prisma.admin_usersUncheckedCreateWithoutCustom_roleInput[]
+  connectOrCreate?: Prisma.admin_usersCreateOrConnectWithoutCustom_roleInput | Prisma.admin_usersCreateOrConnectWithoutCustom_roleInput[]
+  upsert?: Prisma.admin_usersUpsertWithWhereUniqueWithoutCustom_roleInput | Prisma.admin_usersUpsertWithWhereUniqueWithoutCustom_roleInput[]
+  createMany?: Prisma.admin_usersCreateManyCustom_roleInputEnvelope
+  set?: Prisma.admin_usersWhereUniqueInput | Prisma.admin_usersWhereUniqueInput[]
+  disconnect?: Prisma.admin_usersWhereUniqueInput | Prisma.admin_usersWhereUniqueInput[]
+  delete?: Prisma.admin_usersWhereUniqueInput | Prisma.admin_usersWhereUniqueInput[]
+  connect?: Prisma.admin_usersWhereUniqueInput | Prisma.admin_usersWhereUniqueInput[]
+  update?: Prisma.admin_usersUpdateWithWhereUniqueWithoutCustom_roleInput | Prisma.admin_usersUpdateWithWhereUniqueWithoutCustom_roleInput[]
+  updateMany?: Prisma.admin_usersUpdateManyWithWhereWithoutCustom_roleInput | Prisma.admin_usersUpdateManyWithWhereWithoutCustom_roleInput[]
+  deleteMany?: Prisma.admin_usersScalarWhereInput | Prisma.admin_usersScalarWhereInput[]
+}
+
+export type admin_usersUncheckedUpdateManyWithoutCustom_roleNestedInput = {
+  create?: Prisma.XOR<Prisma.admin_usersCreateWithoutCustom_roleInput, Prisma.admin_usersUncheckedCreateWithoutCustom_roleInput> | Prisma.admin_usersCreateWithoutCustom_roleInput[] | Prisma.admin_usersUncheckedCreateWithoutCustom_roleInput[]
+  connectOrCreate?: Prisma.admin_usersCreateOrConnectWithoutCustom_roleInput | Prisma.admin_usersCreateOrConnectWithoutCustom_roleInput[]
+  upsert?: Prisma.admin_usersUpsertWithWhereUniqueWithoutCustom_roleInput | Prisma.admin_usersUpsertWithWhereUniqueWithoutCustom_roleInput[]
+  createMany?: Prisma.admin_usersCreateManyCustom_roleInputEnvelope
+  set?: Prisma.admin_usersWhereUniqueInput | Prisma.admin_usersWhereUniqueInput[]
+  disconnect?: Prisma.admin_usersWhereUniqueInput | Prisma.admin_usersWhereUniqueInput[]
+  delete?: Prisma.admin_usersWhereUniqueInput | Prisma.admin_usersWhereUniqueInput[]
+  connect?: Prisma.admin_usersWhereUniqueInput | Prisma.admin_usersWhereUniqueInput[]
+  update?: Prisma.admin_usersUpdateWithWhereUniqueWithoutCustom_roleInput | Prisma.admin_usersUpdateWithWhereUniqueWithoutCustom_roleInput[]
+  updateMany?: Prisma.admin_usersUpdateManyWithWhereWithoutCustom_roleInput | Prisma.admin_usersUpdateManyWithWhereWithoutCustom_roleInput[]
+  deleteMany?: Prisma.admin_usersScalarWhereInput | Prisma.admin_usersScalarWhereInput[]
 }
 
 export type admin_usersCreateNestedOneWithoutSessionsInput = {
@@ -722,7 +798,7 @@ export type admin_usersUpdateOneRequiredWithoutRecurring_expensesNestedInput = {
   update?: Prisma.XOR<Prisma.XOR<Prisma.admin_usersUpdateToOneWithWhereWithoutRecurring_expensesInput, Prisma.admin_usersUpdateWithoutRecurring_expensesInput>, Prisma.admin_usersUncheckedUpdateWithoutRecurring_expensesInput>
 }
 
-export type admin_usersCreateWithoutSessionsInput = {
+export type admin_usersCreateWithoutCustom_roleInput = {
   id?: string
   email: string
   username: string
@@ -739,6 +815,105 @@ export type admin_usersCreateWithoutSessionsInput = {
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
   audit_events?: Prisma.admin_audit_eventsCreateNestedManyWithoutAdmin_userInput
+  sessions?: Prisma.admin_sessionsCreateNestedManyWithoutAdmin_userInput
+  notes?: Prisma.admin_notesCreateNestedManyWithoutAdmin_userInput
+  gift_card_actions?: Prisma.admin_gift_card_actionsCreateNestedManyWithoutAdmin_userInput
+  voucher_actions?: Prisma.admin_voucher_actionsCreateNestedManyWithoutAdmin_userInput
+  expenses?: Prisma.expensesCreateNestedManyWithoutCreated_byInput
+  recurring_expenses?: Prisma.recurring_expensesCreateNestedManyWithoutCreated_byInput
+}
+
+export type admin_usersUncheckedCreateWithoutCustom_roleInput = {
+  id?: string
+  email: string
+  username: string
+  password_hash: string
+  role?: $Enums.admin_role
+  totp_secret?: string | null
+  totp_enabled?: boolean
+  recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
+  is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
+  created_at?: Date | string
+  updated_at?: Date | string
+  allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
+  audit_events?: Prisma.admin_audit_eventsUncheckedCreateNestedManyWithoutAdmin_userInput
+  sessions?: Prisma.admin_sessionsUncheckedCreateNestedManyWithoutAdmin_userInput
+  notes?: Prisma.admin_notesUncheckedCreateNestedManyWithoutAdmin_userInput
+  gift_card_actions?: Prisma.admin_gift_card_actionsUncheckedCreateNestedManyWithoutAdmin_userInput
+  voucher_actions?: Prisma.admin_voucher_actionsUncheckedCreateNestedManyWithoutAdmin_userInput
+  expenses?: Prisma.expensesUncheckedCreateNestedManyWithoutCreated_byInput
+  recurring_expenses?: Prisma.recurring_expensesUncheckedCreateNestedManyWithoutCreated_byInput
+}
+
+export type admin_usersCreateOrConnectWithoutCustom_roleInput = {
+  where: Prisma.admin_usersWhereUniqueInput
+  create: Prisma.XOR<Prisma.admin_usersCreateWithoutCustom_roleInput, Prisma.admin_usersUncheckedCreateWithoutCustom_roleInput>
+}
+
+export type admin_usersCreateManyCustom_roleInputEnvelope = {
+  data: Prisma.admin_usersCreateManyCustom_roleInput | Prisma.admin_usersCreateManyCustom_roleInput[]
+  skipDuplicates?: boolean
+}
+
+export type admin_usersUpsertWithWhereUniqueWithoutCustom_roleInput = {
+  where: Prisma.admin_usersWhereUniqueInput
+  update: Prisma.XOR<Prisma.admin_usersUpdateWithoutCustom_roleInput, Prisma.admin_usersUncheckedUpdateWithoutCustom_roleInput>
+  create: Prisma.XOR<Prisma.admin_usersCreateWithoutCustom_roleInput, Prisma.admin_usersUncheckedCreateWithoutCustom_roleInput>
+}
+
+export type admin_usersUpdateWithWhereUniqueWithoutCustom_roleInput = {
+  where: Prisma.admin_usersWhereUniqueInput
+  data: Prisma.XOR<Prisma.admin_usersUpdateWithoutCustom_roleInput, Prisma.admin_usersUncheckedUpdateWithoutCustom_roleInput>
+}
+
+export type admin_usersUpdateManyWithWhereWithoutCustom_roleInput = {
+  where: Prisma.admin_usersScalarWhereInput
+  data: Prisma.XOR<Prisma.admin_usersUpdateManyMutationInput, Prisma.admin_usersUncheckedUpdateManyWithoutCustom_roleInput>
+}
+
+export type admin_usersScalarWhereInput = {
+  AND?: Prisma.admin_usersScalarWhereInput | Prisma.admin_usersScalarWhereInput[]
+  OR?: Prisma.admin_usersScalarWhereInput[]
+  NOT?: Prisma.admin_usersScalarWhereInput | Prisma.admin_usersScalarWhereInput[]
+  id?: Prisma.UuidFilter<"admin_users"> | string
+  email?: Prisma.StringFilter<"admin_users"> | string
+  username?: Prisma.StringFilter<"admin_users"> | string
+  password_hash?: Prisma.StringFilter<"admin_users"> | string
+  role?: Prisma.Enumadmin_roleFilter<"admin_users"> | $Enums.admin_role
+  role_id?: Prisma.UuidNullableFilter<"admin_users"> | string | null
+  totp_secret?: Prisma.StringNullableFilter<"admin_users"> | string | null
+  totp_enabled?: Prisma.BoolFilter<"admin_users"> | boolean
+  recovery_codes?: Prisma.StringNullableListFilter<"admin_users">
+  is_active?: Prisma.BoolFilter<"admin_users"> | boolean
+  display_username?: Prisma.StringNullableFilter<"admin_users"> | string | null
+  profile_image?: Prisma.BytesNullableFilter<"admin_users"> | runtime.Bytes | null
+  profile_image_mime?: Prisma.StringNullableFilter<"admin_users"> | string | null
+  created_at?: Prisma.DateTimeFilter<"admin_users"> | Date | string
+  updated_at?: Prisma.DateTimeFilter<"admin_users"> | Date | string
+  allowed_pages?: Prisma.StringNullableListFilter<"admin_users">
+}
+
+export type admin_usersCreateWithoutSessionsInput = {
+  id?: string
+  email: string
+  username: string
+  password_hash: string
+  role?: $Enums.admin_role
+  totp_secret?: string | null
+  totp_enabled?: boolean
+  recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
+  is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
+  created_at?: Date | string
+  updated_at?: Date | string
+  allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
+  custom_role?: Prisma.admin_rolesCreateNestedOneWithoutAdmin_usersInput
+  audit_events?: Prisma.admin_audit_eventsCreateNestedManyWithoutAdmin_userInput
   notes?: Prisma.admin_notesCreateNestedManyWithoutAdmin_userInput
   gift_card_actions?: Prisma.admin_gift_card_actionsCreateNestedManyWithoutAdmin_userInput
   voucher_actions?: Prisma.admin_voucher_actionsCreateNestedManyWithoutAdmin_userInput
@@ -752,6 +927,7 @@ export type admin_usersUncheckedCreateWithoutSessionsInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -802,6 +978,7 @@ export type admin_usersUpdateWithoutSessionsInput = {
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
+  custom_role?: Prisma.admin_rolesUpdateOneWithoutAdmin_usersNestedInput
   audit_events?: Prisma.admin_audit_eventsUpdateManyWithoutAdmin_userNestedInput
   notes?: Prisma.admin_notesUpdateManyWithoutAdmin_userNestedInput
   gift_card_actions?: Prisma.admin_gift_card_actionsUpdateManyWithoutAdmin_userNestedInput
@@ -816,6 +993,7 @@ export type admin_usersUncheckedUpdateWithoutSessionsInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -850,6 +1028,7 @@ export type admin_usersCreateWithoutNotesInput = {
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
+  custom_role?: Prisma.admin_rolesCreateNestedOneWithoutAdmin_usersInput
   audit_events?: Prisma.admin_audit_eventsCreateNestedManyWithoutAdmin_userInput
   sessions?: Prisma.admin_sessionsCreateNestedManyWithoutAdmin_userInput
   gift_card_actions?: Prisma.admin_gift_card_actionsCreateNestedManyWithoutAdmin_userInput
@@ -864,6 +1043,7 @@ export type admin_usersUncheckedCreateWithoutNotesInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -914,6 +1094,7 @@ export type admin_usersUpdateWithoutNotesInput = {
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
+  custom_role?: Prisma.admin_rolesUpdateOneWithoutAdmin_usersNestedInput
   audit_events?: Prisma.admin_audit_eventsUpdateManyWithoutAdmin_userNestedInput
   sessions?: Prisma.admin_sessionsUpdateManyWithoutAdmin_userNestedInput
   gift_card_actions?: Prisma.admin_gift_card_actionsUpdateManyWithoutAdmin_userNestedInput
@@ -928,6 +1109,7 @@ export type admin_usersUncheckedUpdateWithoutNotesInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -962,6 +1144,7 @@ export type admin_usersCreateWithoutAudit_eventsInput = {
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
+  custom_role?: Prisma.admin_rolesCreateNestedOneWithoutAdmin_usersInput
   sessions?: Prisma.admin_sessionsCreateNestedManyWithoutAdmin_userInput
   notes?: Prisma.admin_notesCreateNestedManyWithoutAdmin_userInput
   gift_card_actions?: Prisma.admin_gift_card_actionsCreateNestedManyWithoutAdmin_userInput
@@ -976,6 +1159,7 @@ export type admin_usersUncheckedCreateWithoutAudit_eventsInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -1026,6 +1210,7 @@ export type admin_usersUpdateWithoutAudit_eventsInput = {
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
+  custom_role?: Prisma.admin_rolesUpdateOneWithoutAdmin_usersNestedInput
   sessions?: Prisma.admin_sessionsUpdateManyWithoutAdmin_userNestedInput
   notes?: Prisma.admin_notesUpdateManyWithoutAdmin_userNestedInput
   gift_card_actions?: Prisma.admin_gift_card_actionsUpdateManyWithoutAdmin_userNestedInput
@@ -1040,6 +1225,7 @@ export type admin_usersUncheckedUpdateWithoutAudit_eventsInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -1074,6 +1260,7 @@ export type admin_usersCreateWithoutGift_card_actionsInput = {
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
+  custom_role?: Prisma.admin_rolesCreateNestedOneWithoutAdmin_usersInput
   audit_events?: Prisma.admin_audit_eventsCreateNestedManyWithoutAdmin_userInput
   sessions?: Prisma.admin_sessionsCreateNestedManyWithoutAdmin_userInput
   notes?: Prisma.admin_notesCreateNestedManyWithoutAdmin_userInput
@@ -1088,6 +1275,7 @@ export type admin_usersUncheckedCreateWithoutGift_card_actionsInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -1138,6 +1326,7 @@ export type admin_usersUpdateWithoutGift_card_actionsInput = {
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
+  custom_role?: Prisma.admin_rolesUpdateOneWithoutAdmin_usersNestedInput
   audit_events?: Prisma.admin_audit_eventsUpdateManyWithoutAdmin_userNestedInput
   sessions?: Prisma.admin_sessionsUpdateManyWithoutAdmin_userNestedInput
   notes?: Prisma.admin_notesUpdateManyWithoutAdmin_userNestedInput
@@ -1152,6 +1341,7 @@ export type admin_usersUncheckedUpdateWithoutGift_card_actionsInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -1186,6 +1376,7 @@ export type admin_usersCreateWithoutVoucher_actionsInput = {
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
+  custom_role?: Prisma.admin_rolesCreateNestedOneWithoutAdmin_usersInput
   audit_events?: Prisma.admin_audit_eventsCreateNestedManyWithoutAdmin_userInput
   sessions?: Prisma.admin_sessionsCreateNestedManyWithoutAdmin_userInput
   notes?: Prisma.admin_notesCreateNestedManyWithoutAdmin_userInput
@@ -1200,6 +1391,7 @@ export type admin_usersUncheckedCreateWithoutVoucher_actionsInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -1250,6 +1442,7 @@ export type admin_usersUpdateWithoutVoucher_actionsInput = {
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
+  custom_role?: Prisma.admin_rolesUpdateOneWithoutAdmin_usersNestedInput
   audit_events?: Prisma.admin_audit_eventsUpdateManyWithoutAdmin_userNestedInput
   sessions?: Prisma.admin_sessionsUpdateManyWithoutAdmin_userNestedInput
   notes?: Prisma.admin_notesUpdateManyWithoutAdmin_userNestedInput
@@ -1264,6 +1457,7 @@ export type admin_usersUncheckedUpdateWithoutVoucher_actionsInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -1298,6 +1492,7 @@ export type admin_usersCreateWithoutExpensesInput = {
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
+  custom_role?: Prisma.admin_rolesCreateNestedOneWithoutAdmin_usersInput
   audit_events?: Prisma.admin_audit_eventsCreateNestedManyWithoutAdmin_userInput
   sessions?: Prisma.admin_sessionsCreateNestedManyWithoutAdmin_userInput
   notes?: Prisma.admin_notesCreateNestedManyWithoutAdmin_userInput
@@ -1312,6 +1507,7 @@ export type admin_usersUncheckedCreateWithoutExpensesInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -1362,6 +1558,7 @@ export type admin_usersUpdateWithoutExpensesInput = {
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
+  custom_role?: Prisma.admin_rolesUpdateOneWithoutAdmin_usersNestedInput
   audit_events?: Prisma.admin_audit_eventsUpdateManyWithoutAdmin_userNestedInput
   sessions?: Prisma.admin_sessionsUpdateManyWithoutAdmin_userNestedInput
   notes?: Prisma.admin_notesUpdateManyWithoutAdmin_userNestedInput
@@ -1376,6 +1573,7 @@ export type admin_usersUncheckedUpdateWithoutExpensesInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -1410,6 +1608,7 @@ export type admin_usersCreateWithoutRecurring_expensesInput = {
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
+  custom_role?: Prisma.admin_rolesCreateNestedOneWithoutAdmin_usersInput
   audit_events?: Prisma.admin_audit_eventsCreateNestedManyWithoutAdmin_userInput
   sessions?: Prisma.admin_sessionsCreateNestedManyWithoutAdmin_userInput
   notes?: Prisma.admin_notesCreateNestedManyWithoutAdmin_userInput
@@ -1424,6 +1623,7 @@ export type admin_usersUncheckedCreateWithoutRecurring_expensesInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -1474,6 +1674,7 @@ export type admin_usersUpdateWithoutRecurring_expensesInput = {
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
+  custom_role?: Prisma.admin_rolesUpdateOneWithoutAdmin_usersNestedInput
   audit_events?: Prisma.admin_audit_eventsUpdateManyWithoutAdmin_userNestedInput
   sessions?: Prisma.admin_sessionsUpdateManyWithoutAdmin_userNestedInput
   notes?: Prisma.admin_notesUpdateManyWithoutAdmin_userNestedInput
@@ -1483,6 +1684,74 @@ export type admin_usersUpdateWithoutRecurring_expensesInput = {
 }
 
 export type admin_usersUncheckedUpdateWithoutRecurring_expensesInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  email?: Prisma.StringFieldUpdateOperationsInput | string
+  username?: Prisma.StringFieldUpdateOperationsInput | string
+  password_hash?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
+  is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
+  audit_events?: Prisma.admin_audit_eventsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  sessions?: Prisma.admin_sessionsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  notes?: Prisma.admin_notesUncheckedUpdateManyWithoutAdmin_userNestedInput
+  gift_card_actions?: Prisma.admin_gift_card_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  voucher_actions?: Prisma.admin_voucher_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  expenses?: Prisma.expensesUncheckedUpdateManyWithoutCreated_byNestedInput
+}
+
+export type admin_usersCreateManyCustom_roleInput = {
+  id?: string
+  email: string
+  username: string
+  password_hash: string
+  role?: $Enums.admin_role
+  totp_secret?: string | null
+  totp_enabled?: boolean
+  recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
+  is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
+  created_at?: Date | string
+  updated_at?: Date | string
+  allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
+}
+
+export type admin_usersUpdateWithoutCustom_roleInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  email?: Prisma.StringFieldUpdateOperationsInput | string
+  username?: Prisma.StringFieldUpdateOperationsInput | string
+  password_hash?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
+  is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
+  audit_events?: Prisma.admin_audit_eventsUpdateManyWithoutAdmin_userNestedInput
+  sessions?: Prisma.admin_sessionsUpdateManyWithoutAdmin_userNestedInput
+  notes?: Prisma.admin_notesUpdateManyWithoutAdmin_userNestedInput
+  gift_card_actions?: Prisma.admin_gift_card_actionsUpdateManyWithoutAdmin_userNestedInput
+  voucher_actions?: Prisma.admin_voucher_actionsUpdateManyWithoutAdmin_userNestedInput
+  expenses?: Prisma.expensesUpdateManyWithoutCreated_byNestedInput
+  recurring_expenses?: Prisma.recurring_expensesUpdateManyWithoutCreated_byNestedInput
+}
+
+export type admin_usersUncheckedUpdateWithoutCustom_roleInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   email?: Prisma.StringFieldUpdateOperationsInput | string
   username?: Prisma.StringFieldUpdateOperationsInput | string
@@ -1504,6 +1773,25 @@ export type admin_usersUncheckedUpdateWithoutRecurring_expensesInput = {
   gift_card_actions?: Prisma.admin_gift_card_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
   voucher_actions?: Prisma.admin_voucher_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
   expenses?: Prisma.expensesUncheckedUpdateManyWithoutCreated_byNestedInput
+  recurring_expenses?: Prisma.recurring_expensesUncheckedUpdateManyWithoutCreated_byNestedInput
+}
+
+export type admin_usersUncheckedUpdateManyWithoutCustom_roleInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  email?: Prisma.StringFieldUpdateOperationsInput | string
+  username?: Prisma.StringFieldUpdateOperationsInput | string
+  password_hash?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
+  is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
 }
 
 
@@ -1597,6 +1885,7 @@ export type admin_usersSelect<ExtArgs extends runtime.Types.Extensions.InternalA
   username?: boolean
   password_hash?: boolean
   role?: boolean
+  role_id?: boolean
   totp_secret?: boolean
   totp_enabled?: boolean
   recovery_codes?: boolean
@@ -1607,6 +1896,7 @@ export type admin_usersSelect<ExtArgs extends runtime.Types.Extensions.InternalA
   created_at?: boolean
   updated_at?: boolean
   allowed_pages?: boolean
+  custom_role?: boolean | Prisma.admin_users$custom_roleArgs<ExtArgs>
   audit_events?: boolean | Prisma.admin_users$audit_eventsArgs<ExtArgs>
   sessions?: boolean | Prisma.admin_users$sessionsArgs<ExtArgs>
   notes?: boolean | Prisma.admin_users$notesArgs<ExtArgs>
@@ -1623,6 +1913,7 @@ export type admin_usersSelectCreateManyAndReturn<ExtArgs extends runtime.Types.E
   username?: boolean
   password_hash?: boolean
   role?: boolean
+  role_id?: boolean
   totp_secret?: boolean
   totp_enabled?: boolean
   recovery_codes?: boolean
@@ -1633,6 +1924,7 @@ export type admin_usersSelectCreateManyAndReturn<ExtArgs extends runtime.Types.E
   created_at?: boolean
   updated_at?: boolean
   allowed_pages?: boolean
+  custom_role?: boolean | Prisma.admin_users$custom_roleArgs<ExtArgs>
 }, ExtArgs["result"]["admin_users"]>
 
 export type admin_usersSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
@@ -1641,6 +1933,7 @@ export type admin_usersSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.E
   username?: boolean
   password_hash?: boolean
   role?: boolean
+  role_id?: boolean
   totp_secret?: boolean
   totp_enabled?: boolean
   recovery_codes?: boolean
@@ -1651,6 +1944,7 @@ export type admin_usersSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.E
   created_at?: boolean
   updated_at?: boolean
   allowed_pages?: boolean
+  custom_role?: boolean | Prisma.admin_users$custom_roleArgs<ExtArgs>
 }, ExtArgs["result"]["admin_users"]>
 
 export type admin_usersSelectScalar = {
@@ -1659,6 +1953,7 @@ export type admin_usersSelectScalar = {
   username?: boolean
   password_hash?: boolean
   role?: boolean
+  role_id?: boolean
   totp_secret?: boolean
   totp_enabled?: boolean
   recovery_codes?: boolean
@@ -1671,8 +1966,9 @@ export type admin_usersSelectScalar = {
   allowed_pages?: boolean
 }
 
-export type admin_usersOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "email" | "username" | "password_hash" | "role" | "totp_secret" | "totp_enabled" | "recovery_codes" | "is_active" | "display_username" | "profile_image" | "profile_image_mime" | "created_at" | "updated_at" | "allowed_pages", ExtArgs["result"]["admin_users"]>
+export type admin_usersOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "email" | "username" | "password_hash" | "role" | "role_id" | "totp_secret" | "totp_enabled" | "recovery_codes" | "is_active" | "display_username" | "profile_image" | "profile_image_mime" | "created_at" | "updated_at" | "allowed_pages", ExtArgs["result"]["admin_users"]>
 export type admin_usersInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  custom_role?: boolean | Prisma.admin_users$custom_roleArgs<ExtArgs>
   audit_events?: boolean | Prisma.admin_users$audit_eventsArgs<ExtArgs>
   sessions?: boolean | Prisma.admin_users$sessionsArgs<ExtArgs>
   notes?: boolean | Prisma.admin_users$notesArgs<ExtArgs>
@@ -1682,12 +1978,17 @@ export type admin_usersInclude<ExtArgs extends runtime.Types.Extensions.Internal
   recurring_expenses?: boolean | Prisma.admin_users$recurring_expensesArgs<ExtArgs>
   _count?: boolean | Prisma.Admin_usersCountOutputTypeDefaultArgs<ExtArgs>
 }
-export type admin_usersIncludeCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {}
-export type admin_usersIncludeUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {}
+export type admin_usersIncludeCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  custom_role?: boolean | Prisma.admin_users$custom_roleArgs<ExtArgs>
+}
+export type admin_usersIncludeUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  custom_role?: boolean | Prisma.admin_users$custom_roleArgs<ExtArgs>
+}
 
 export type $admin_usersPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   name: "admin_users"
   objects: {
+    custom_role: Prisma.$admin_rolesPayload<ExtArgs> | null
     audit_events: Prisma.$admin_audit_eventsPayload<ExtArgs>[]
     sessions: Prisma.$admin_sessionsPayload<ExtArgs>[]
     notes: Prisma.$admin_notesPayload<ExtArgs>[]
@@ -1702,6 +2003,7 @@ export type $admin_usersPayload<ExtArgs extends runtime.Types.Extensions.Interna
     username: string
     password_hash: string
     role: $Enums.admin_role
+    role_id: string | null
     totp_secret: string | null
     totp_enabled: boolean
     recovery_codes: string[]
@@ -2106,6 +2408,7 @@ readonly fields: admin_usersFieldRefs;
  */
 export interface Prisma__admin_usersClient<T, Null = never, ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs, GlobalOmitOptions = {}> extends Prisma.PrismaPromise<T> {
   readonly [Symbol.toStringTag]: "PrismaPromise"
+  custom_role<T extends Prisma.admin_users$custom_roleArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.admin_users$custom_roleArgs<ExtArgs>>): Prisma.Prisma__admin_rolesClient<runtime.Types.Result.GetResult<Prisma.$admin_rolesPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | null, null, ExtArgs, GlobalOmitOptions>
   audit_events<T extends Prisma.admin_users$audit_eventsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.admin_users$audit_eventsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$admin_audit_eventsPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   sessions<T extends Prisma.admin_users$sessionsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.admin_users$sessionsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$admin_sessionsPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   notes<T extends Prisma.admin_users$notesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.admin_users$notesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$admin_notesPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
@@ -2147,6 +2450,7 @@ export interface admin_usersFieldRefs {
   readonly username: Prisma.FieldRef<"admin_users", 'String'>
   readonly password_hash: Prisma.FieldRef<"admin_users", 'String'>
   readonly role: Prisma.FieldRef<"admin_users", 'admin_role'>
+  readonly role_id: Prisma.FieldRef<"admin_users", 'String'>
   readonly totp_secret: Prisma.FieldRef<"admin_users", 'String'>
   readonly totp_enabled: Prisma.FieldRef<"admin_users", 'Boolean'>
   readonly recovery_codes: Prisma.FieldRef<"admin_users", 'String[]'>
@@ -2411,6 +2715,10 @@ export type admin_usersCreateManyAndReturnArgs<ExtArgs extends runtime.Types.Ext
    */
   data: Prisma.admin_usersCreateManyInput | Prisma.admin_usersCreateManyInput[]
   skipDuplicates?: boolean
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.admin_usersIncludeCreateManyAndReturn<ExtArgs> | null
 }
 
 /**
@@ -2481,6 +2789,10 @@ export type admin_usersUpdateManyAndReturnArgs<ExtArgs extends runtime.Types.Ext
    * Limit how many admin_users to update.
    */
   limit?: number
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.admin_usersIncludeUpdateManyAndReturn<ExtArgs> | null
 }
 
 /**
@@ -2547,6 +2859,25 @@ export type admin_usersDeleteManyArgs<ExtArgs extends runtime.Types.Extensions.I
    * Limit how many admin_users to delete.
    */
   limit?: number
+}
+
+/**
+ * admin_users.custom_role
+ */
+export type admin_users$custom_roleArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the admin_roles
+   */
+  select?: Prisma.admin_rolesSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the admin_roles
+   */
+  omit?: Prisma.admin_rolesOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.admin_rolesInclude<ExtArgs> | null
+  where?: Prisma.admin_rolesWhereInput
 }
 
 /**

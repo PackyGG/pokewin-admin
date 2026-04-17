@@ -9,6 +9,7 @@
  * 🟢 You can import this file directly.
  */
 export type * from './models/admin_users'
+export type * from './models/admin_roles'
 export type * from './models/admin_sessions'
 export type * from './models/admin_notes'
 export type * from './models/admin_audit_events'
