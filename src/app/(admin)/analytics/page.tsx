@@ -52,6 +52,7 @@ export default async function AnalyticsPage({
   const tab = parseTab(params.tab);
   const cohortBy = parseCohortBy(params.cohortBy);
   const topTab = params.topTab;
+  const packsSort = params.packsSort;
 
   return (
     <div className="space-y-6">
@@ -80,7 +81,7 @@ export default async function AnalyticsPage({
           several of these tabs run heavy raw SQL. Suspense + per-tab skeleton
           keeps navigation snappy between tabs. */}
       <Suspense
-        key={`${tab}-${period}-${cohortBy}-${topTab ?? ""}`}
+        key={`${tab}-${period}-${cohortBy}-${topTab ?? ""}-${packsSort ?? ""}`}
         fallback={<TabSkeleton />}
       >
         {tab === "overview" && <OverviewTab period={period} />}
@@ -95,7 +96,9 @@ export default async function AnalyticsPage({
           <TopPerformersTab period={period} subTab={topTab} />
         )}
         {tab === "heatmap" && <HeatmapTab period={period} />}
-        {tab === "packs" && <PacksBattlesTab period={period} />}
+        {tab === "packs" && (
+          <PacksBattlesTab period={period} sortKey={packsSort} />
+        )}
       </Suspense>
     </div>
   );
