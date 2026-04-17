@@ -4,10 +4,12 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requirePageAccess, requireAdmin } from "@/lib/dal";
 import { require2FA } from "@/lib/require-2fa";
+import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 
 export async function banUser(userId: string, reason: string) {
   const session = await requirePageAccess("/users");
+  await requireCapability(session, "__can_ban_users", "ban users");
 
   await db.$transaction([
     db.user.update({
@@ -36,6 +38,7 @@ export async function banUser(userId: string, reason: string) {
 
 export async function unbanUser(userId: string) {
   const session = await requirePageAccess("/users");
+  await requireCapability(session, "__can_ban_users", "unban users");
 
   await db.$transaction([
     db.user.update({
@@ -61,6 +64,7 @@ export async function unbanUser(userId: string) {
 
 export async function lockUser(userId: string, reason: string) {
   const session = await requirePageAccess("/users");
+  await requireCapability(session, "__can_lock_users", "lock user accounts");
 
   await db.$transaction([
     db.user.update({
@@ -87,6 +91,7 @@ export async function lockUser(userId: string, reason: string) {
 
 export async function unlockUser(userId: string) {
   const session = await requirePageAccess("/users");
+  await requireCapability(session, "__can_lock_users", "unlock user accounts");
 
   await db.$transaction([
     db.user.update({

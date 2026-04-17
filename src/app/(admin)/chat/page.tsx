@@ -1,75 +1,22 @@
-import { Suspense } from "react";
-import Link from "next/link";
-import { getChatMessages, getMutes } from "@/lib/queries/chat";
-import { requirePageAccess } from "@/lib/dal";
-import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
-import { DataTablePagination } from "@/components/data-table/data-table-pagination";
-import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
-import { ChatContent } from "./chat-content";
+import { redirect } from "next/navigation";
+import { verifySession, getUserPermissions, getDefaultRoute } from "@/lib/dal";
 
-export const metadata = { title: "Chat Moderation" };
-
-export default async function ChatPage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | undefined>>;
-}) {
-  const session = await requirePageAccess("/chat");
-  const params = await searchParams;
-  const page = Number(params.page) || 1;
-  const perPage = Number(params.perPage) || 50;
-  const tab = params.tab || "messages";
-
-  const [messages, mutes] = await Promise.all([
-    tab === "messages" ? getChatMessages({ page, perPage, search: params.search }) : null,
-    tab === "mutes" ? getMutes({ page, perPage }) : null,
-  ]);
-
-  // For chat view: reverse so oldest message is at the top, newest at the bottom
-  const chatMessages = messages?.data ? [...messages.data].reverse() : [];
-  const result = tab === "messages" ? messages! : mutes!;
-
-  return (
-    <div className="flex h-[calc(100vh-80px)] flex-col gap-4">
-      <div className="flex shrink-0 items-center justify-between">
-        <h1 className="text-2xl font-bold">Chat</h1>
-        <div className="flex gap-1 rounded-lg bg-muted p-1">
-          {[
-            { value: "messages", label: "Messages" },
-            { value: "mutes", label: "Mutes" },
-          ].map((t) => (
-            <Link
-              key={t.value}
-              href={`/chat?tab=${t.value}`}
-              className={cn(
-                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                tab === t.value
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              {t.label}
-            </Link>
-          ))}
-        </div>
-      </div>
-      {tab === "messages" && (
-        <Suspense fallback={<Skeleton className="h-10 w-full" />}>
-          <DataTableToolbar searchPlaceholder="Search messages or username..." />
-        </Suspense>
-      )}
-      <div className="min-h-0 flex-1">
-        <ChatContent tab={tab} messages={chatMessages} mutes={mutes?.data ?? []} role={session.role} />
-      </div>
-      {tab === "mutes" && (
-        <DataTablePagination
-          page={result.page}
-          totalPages={result.totalPages}
-          total={result.total}
-          perPage={result.perPage}
-        />
-      )}
-    </div>
-  );
+/**
+ * The /chat route is kept as a landing redirect — chat moderation is now a
+ * slide-out panel triggered from the admin shell (see
+ * `src/components/chat-panel/`). The capability key `/chat` still gates who
+ * can open that panel, so we don't remove it from ADMIN_PAGES.
+ *
+ * Why this stub exists:
+ *   - `src/middleware.ts` redirects support/marketing to `/chat` after login.
+ *   - `src/lib/admin-roles.ts` (getDefaultRoute) falls back to `/chat` when
+ *     a non-admin/creator user has no allowed_pages entries.
+ * Both files are on the avoid-list for this task, so we cannot rewire those
+ * defaults here. This stub forwards users to the first page they're allowed
+ * to see instead of 404-ing.
+ */
+export default async function ChatLandingRedirect() {
+  const session = await verifySession();
+  const allowedPages = await getUserPermissions(session.userId);
+  redirect(getDefaultRoute(session.role, allowedPages.filter((p) => p !== "/chat")));
 }

@@ -171,12 +171,6 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: "Moderation",
-    items: [
-      { label: "Chat", href: "/chat", icon: "MessageSquare" },
-    ],
-  },
-  {
     label: "Security",
     items: [
       { label: "Security", href: "/security", icon: "Shield" },
