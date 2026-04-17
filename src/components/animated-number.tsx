@@ -26,14 +26,16 @@ export function AnimatedNumber({
   duration?: number;
   className?: string;
 }) {
-  const [display, setDisplay] = React.useState<number>(() => {
-    if (typeof window === "undefined") return value;
-    const mql = window.matchMedia("(prefers-reduced-motion: reduce)");
-    return mql.matches ? value : 0;
-  });
-  const previousRef = React.useRef<number>(0);
+  // Always initialize to the real value so SSR output and the initial
+  // client render match — prevents React #418 hydration mismatch. The
+  // mount animation is intentionally skipped; we animate only when
+  // `value` changes after the component has mounted (e.g. period swaps
+  // on the dashboard stat cards).
+  const [display, setDisplay] = React.useState<number>(value);
+  const previousRef = React.useRef<number>(value);
 
   React.useEffect(() => {
+    if (previousRef.current === value) return;
     if (typeof window === "undefined") return;
     const mql = window.matchMedia("(prefers-reduced-motion: reduce)");
     if (mql.matches) {
