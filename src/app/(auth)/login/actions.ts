@@ -54,8 +54,21 @@ export async function login(
     return { error: "Too many login attempts. Try again in a minute." };
   }
 
+  // Explicit select so missing columns (e.g. `preferences` when the
+  // migration hasn't been applied on prod yet) don't crash the login
+  // flow. Only fields actually used below.
   const adminUser = await adminDb.admin_users.findUnique({
     where: { email },
+    select: {
+      id: true,
+      email: true,
+      username: true,
+      role: true,
+      password_hash: true,
+      totp_enabled: true,
+      totp_secret: true,
+      is_active: true,
+    },
   });
 
   if (!adminUser) {
