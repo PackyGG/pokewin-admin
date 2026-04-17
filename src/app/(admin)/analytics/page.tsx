@@ -51,6 +51,7 @@ export default async function AnalyticsPage({
   const period = parsePeriod(params.period);
   const tab = parseTab(params.tab);
   const cohortBy = parseCohortBy(params.cohortBy);
+  const topTab = params.topTab;
 
   return (
     <div className="space-y-6">
@@ -78,7 +79,10 @@ export default async function AnalyticsPage({
           that matches `tab` so nothing else hits the DB — important because
           several of these tabs run heavy raw SQL. Suspense + per-tab skeleton
           keeps navigation snappy between tabs. */}
-      <Suspense key={`${tab}-${period}-${cohortBy}`} fallback={<TabSkeleton />}>
+      <Suspense
+        key={`${tab}-${period}-${cohortBy}-${topTab ?? ""}`}
+        fallback={<TabSkeleton />}
+      >
         {tab === "overview" && <OverviewTab period={period} />}
         {tab === "cohorts" && (
           <CohortsTab period={period} granularity={cohortBy} />
@@ -87,7 +91,9 @@ export default async function AnalyticsPage({
         {tab === "ltv" && <LtvTab period={period} />}
         {tab === "retention" && <RetentionTab period={period} />}
         {tab === "revenue" && <RevenueTab period={period} />}
-        {tab === "top" && <TopPerformersTab period={period} />}
+        {tab === "top" && (
+          <TopPerformersTab period={period} subTab={topTab} />
+        )}
         {tab === "heatmap" && <HeatmapTab period={period} />}
         {tab === "packs" && <PacksBattlesTab period={period} />}
       </Suspense>
