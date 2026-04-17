@@ -83,6 +83,7 @@ export const CAPABILITIES = [
       { key: "pages.bots", label: "Bots", description: "Manage chat bots." },
       { key: "pages.settings", label: "Settings", description: "Global admin settings." },
       { key: "pages.audit", label: "Audit Log", description: "View the admin audit log." },
+      { key: "pages.commands", label: "Commands", description: "View the command palette documentation." },
     ],
   },
 

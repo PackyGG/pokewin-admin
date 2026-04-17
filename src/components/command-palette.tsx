@@ -180,7 +180,6 @@ export function CommandPalette({
     }, DEBOUNCE_MS);
 
     return () => clearTimeout(handle);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
 
   // Keep a ref to the latest query for the stale-check above.

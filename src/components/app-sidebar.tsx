@@ -19,6 +19,7 @@ import {
   Gift,
   CalendarDays,
   CloudRain,
+  Command,
   Bot,
   Shield,
   ShieldCheck,
@@ -74,6 +75,7 @@ const ICONS: Record<string, LucideIcon> = {
   Gift,
   CalendarDays,
   CloudRain,
+  Command,
   Bot,
   Shield,
   ShieldCheck,
@@ -190,6 +192,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Bots", href: "/bots", icon: "Bot" },
       { label: "Settings", href: "/settings", icon: "Settings" },
       { label: "Audit Log", href: "/audit", icon: "FileText" },
+      { label: "Commands", href: "/system/commands", icon: "Command" },
     ],
   },
 ];
