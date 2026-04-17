@@ -84,6 +84,7 @@ export const CAPABILITIES = [
       { key: "pages.settings", label: "Settings", description: "Global admin settings." },
       { key: "pages.audit", label: "Audit Log", description: "View the admin audit log." },
       { key: "pages.commands", label: "Commands", description: "View the command palette documentation." },
+      { key: "pages.dashboard_stats", label: "Dashboard Stats", description: "View admin-panel health, query timings, and audit activity." },
     ],
   },
 

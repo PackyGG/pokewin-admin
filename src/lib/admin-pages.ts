@@ -55,6 +55,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "System", label: "Settings", key: "/settings" },
   { group: "System", label: "Audit Log", key: "/audit" },
   { group: "System", label: "Commands", key: "/system/commands" },
+  { group: "System", label: "Dashboard Stats", key: "/system/stats" },
 ];
 
 export const ALL_PAGE_KEYS = ADMIN_PAGES.map((p) => p.key);
