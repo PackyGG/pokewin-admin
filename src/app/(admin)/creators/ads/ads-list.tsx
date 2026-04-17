@@ -1,11 +1,12 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   ArrowRight,
+  Check,
+  Copy,
   MousePointerClick,
   Plus,
   Search,
@@ -48,7 +49,12 @@ import {
 import type { AdCodeSummary } from "@/lib/queries/ads";
 import { createAdCode, deleteAdCode } from "./actions";
 
+// Live URL where clicks are tracked — `affiliate_clicks.code` matches
+// whatever ships in the `/r/{code}` path on the main site.
+const AD_LINK_BASE = "https://packy.gg/r";
+
 export function AdsList({ codes }: { codes: AdCodeSummary[] }) {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -86,22 +92,28 @@ export function AdsList({ codes }: { codes: AdCodeSummary[] }) {
               <TableHead className="text-right">Deposits</TableHead>
               <TableHead className="text-right">Wagers</TableHead>
               <TableHead>Created</TableHead>
-              <TableHead className="w-[60px]"></TableHead>
+              <TableHead className="w-[92px] text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {filtered.map((c) => (
-              <TableRow key={c.code} className="group">
+              // Whole row is clickable — navigates to the code detail.
+              // Action buttons at the end stop propagation so their
+              // clicks don't trigger navigation too.
+              <TableRow
+                key={c.code}
+                className="group cursor-pointer transition-colors hover:bg-muted/40"
+                onClick={() =>
+                  router.push(`/creators/ads/${encodeURIComponent(c.code)}`)
+                }
+              >
                 <TableCell>
-                  <Link
-                    href={`/creators/ads/${encodeURIComponent(c.code)}`}
-                    className="inline-flex items-center gap-2 font-mono text-sm hover:underline"
-                  >
+                  <div className="inline-flex items-center gap-2 font-mono text-sm">
                     <Badge variant="outline" className="font-mono">
                       {c.code}
                     </Badge>
                     <ArrowRight className="size-3 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-                  </Link>
+                  </div>
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {formatNumber(c.clicks)}
@@ -127,7 +139,10 @@ export function AdsList({ codes }: { codes: AdCodeSummary[] }) {
                   {formatRelative(c.createdAt)}
                 </TableCell>
                 <TableCell className="text-right">
-                  <DeleteCodeButton code={c.code} />
+                  <div className="flex items-center justify-end gap-1">
+                    <CopyLinkButton code={c.code} />
+                    <DeleteCodeButton code={c.code} />
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
@@ -233,6 +248,47 @@ export function CreateAdCodeButton() {
 }
 
 // ---------------------------------------------------------------------------
+// Copy ad link
+// ---------------------------------------------------------------------------
+
+function CopyLinkButton({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false);
+
+  function handleCopy(e: React.MouseEvent) {
+    // Prevent the row-level click from navigating to the detail page.
+    e.stopPropagation();
+    const link = `${AD_LINK_BASE}/${code}`;
+    navigator.clipboard
+      .writeText(link)
+      .then(() => {
+        setCopied(true);
+        toast.success("Link copied", { description: link });
+        setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => {
+        toast.error("Couldn't copy link");
+      });
+  }
+
+  return (
+    <Button
+      size="icon"
+      variant="ghost"
+      className="size-8 text-muted-foreground hover:text-foreground"
+      onClick={handleCopy}
+      aria-label={`Copy link for ${code}`}
+      title={`Copy link for ${code}`}
+    >
+      {copied ? (
+        <Check className="size-4 text-emerald-500" />
+      ) : (
+        <Copy className="size-4" />
+      )}
+    </Button>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Delete (with confirm)
 // ---------------------------------------------------------------------------
 
@@ -260,7 +316,10 @@ function DeleteCodeButton({ code }: { code: string }) {
         size="icon"
         variant="ghost"
         className="size-8 text-muted-foreground hover:text-rose-500"
-        onClick={() => setOpen(true)}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen(true);
+        }}
         aria-label={`Delete ${code}`}
       >
         <Trash2 className="size-4" />
