@@ -47,3 +47,4 @@ admin-frontend/
 admin-frontend.zip
 bun.lock
 .codex
+.env*.local

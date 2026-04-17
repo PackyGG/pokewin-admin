@@ -47,6 +47,11 @@ export { Prisma }
  */
 export type admin_users = Prisma.admin_usersModel
 /**
+ * Model admin_roles
+ * 
+ */
+export type admin_roles = Prisma.admin_rolesModel
+/**
  * Model admin_sessions
  * 
  */

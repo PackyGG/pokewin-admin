@@ -385,6 +385,7 @@ type FieldRefInputType<Model, FieldType> = Model extends never ? never : FieldRe
 
 export const ModelName = {
   admin_users: 'admin_users',
+  admin_roles: 'admin_roles',
   admin_sessions: 'admin_sessions',
   admin_notes: 'admin_notes',
   admin_audit_events: 'admin_audit_events',
@@ -413,7 +414,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "admin_users" | "admin_sessions" | "admin_notes" | "admin_audit_events" | "admin_gift_card_actions" | "admin_voucher_actions" | "creator_webhooks" | "creator_deals" | "creator_socials" | "webhook_deliveries" | "creator_balance_fills" | "admin_balance_limits" | "expenses" | "recurring_expenses"
+    modelProps: "admin_users" | "admin_roles" | "admin_sessions" | "admin_notes" | "admin_audit_events" | "admin_gift_card_actions" | "admin_voucher_actions" | "creator_webhooks" | "creator_deals" | "creator_socials" | "webhook_deliveries" | "creator_balance_fills" | "admin_balance_limits" | "expenses" | "recurring_expenses"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -488,6 +489,80 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         count: {
           args: Prisma.admin_usersCountArgs<ExtArgs>
           result: runtime.Types.Utils.Optional<Prisma.Admin_usersCountAggregateOutputType> | number
+        }
+      }
+    }
+    admin_roles: {
+      payload: Prisma.$admin_rolesPayload<ExtArgs>
+      fields: Prisma.admin_rolesFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.admin_rolesFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_rolesPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.admin_rolesFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_rolesPayload>
+        }
+        findFirst: {
+          args: Prisma.admin_rolesFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_rolesPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.admin_rolesFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_rolesPayload>
+        }
+        findMany: {
+          args: Prisma.admin_rolesFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_rolesPayload>[]
+        }
+        create: {
+          args: Prisma.admin_rolesCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_rolesPayload>
+        }
+        createMany: {
+          args: Prisma.admin_rolesCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.admin_rolesCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_rolesPayload>[]
+        }
+        delete: {
+          args: Prisma.admin_rolesDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_rolesPayload>
+        }
+        update: {
+          args: Prisma.admin_rolesUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_rolesPayload>
+        }
+        deleteMany: {
+          args: Prisma.admin_rolesDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.admin_rolesUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.admin_rolesUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_rolesPayload>[]
+        }
+        upsert: {
+          args: Prisma.admin_rolesUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_rolesPayload>
+        }
+        aggregate: {
+          args: Prisma.Admin_rolesAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateAdmin_roles>
+        }
+        groupBy: {
+          args: Prisma.admin_rolesGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Admin_rolesGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.admin_rolesCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Admin_rolesCountAggregateOutputType> | number
         }
       }
     }
@@ -1498,6 +1573,7 @@ export const Admin_usersScalarFieldEnum = {
   username: 'username',
   password_hash: 'password_hash',
   role: 'role',
+  role_id: 'role_id',
   totp_secret: 'totp_secret',
   totp_enabled: 'totp_enabled',
   recovery_codes: 'recovery_codes',
@@ -1511,6 +1587,19 @@ export const Admin_usersScalarFieldEnum = {
 } as const
 
 export type Admin_usersScalarFieldEnum = (typeof Admin_usersScalarFieldEnum)[keyof typeof Admin_usersScalarFieldEnum]
+
+
+export const Admin_rolesScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  description: 'description',
+  is_system: 'is_system',
+  capabilities: 'capabilities',
+  created_at: 'created_at',
+  updated_at: 'updated_at'
+} as const
+
+export type Admin_rolesScalarFieldEnum = (typeof Admin_rolesScalarFieldEnum)[keyof typeof Admin_rolesScalarFieldEnum]
 
 
 export const Admin_sessionsScalarFieldEnum = {
@@ -2075,6 +2164,7 @@ export type PrismaClientOptions = ({
 }
 export type GlobalOmitConfig = {
   admin_users?: Prisma.admin_usersOmit
+  admin_roles?: Prisma.admin_rolesOmit
   admin_sessions?: Prisma.admin_sessionsOmit
   admin_notes?: Prisma.admin_notesOmit
   admin_audit_events?: Prisma.admin_audit_eventsOmit
