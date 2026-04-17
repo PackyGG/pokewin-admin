@@ -2,6 +2,10 @@ import { db } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
+import {
+  computeRiskScoresForList,
+  type RiskTier,
+} from "@/lib/fraud/score";
 
 type UserListItem = {
   id: string;
@@ -20,6 +24,10 @@ type UserListItem = {
   depositCount: number;
   pnl: number;
   createdAt: string;
+  riskScore: number;
+  riskTier: RiskTier;
+  sharedIpCount: number;
+  sharedFingerprintCount: number;
 };
 
 export async function getUsers(params: {
@@ -295,6 +303,14 @@ export async function getUsers(params: {
     depositCountRows.map((d) => [d.user_id, d._count._all]),
   );
 
+  // Risk score — batched so one query covers the whole page.
+  // Expected runtime is ~40-80ms for 50 rows; kept out of the main
+  // Promise.all so it doesn't block the other aggregates.
+  const riskScoresMap =
+    userIds.length > 0
+      ? await computeRiskScoresForList(userIds)
+      : new Map<string, { score: number; tier: RiskTier; sharedIpCount: number; sharedFingerprintCount: number }>();
+
   return {
     data: users.map((u) => {
       const availableBalance = toNumber(u.balances?.available_balance);
@@ -307,6 +323,7 @@ export async function getUsers(params: {
       // P&L: withdrawn + balance + locked + inventory + vouchers − deposited
       const pnl =
         totalWithdrawn + availableBalance + lockedBalance + inventoryValue + vouchersValue - totalDeposited;
+      const risk = riskScoresMap.get(u.id);
       return {
         id: u.id,
         username: u.username,
@@ -324,6 +341,10 @@ export async function getUsers(params: {
         depositCount: depositCountMap.get(u.id) ?? 0,
         pnl,
         createdAt: u.created_at.toISOString(),
+        riskScore: risk?.score ?? 0,
+        riskTier: risk?.tier ?? ("low" as RiskTier),
+        sharedIpCount: risk?.sharedIpCount ?? 0,
+        sharedFingerprintCount: risk?.sharedFingerprintCount ?? 0,
       };
     }),
     total,

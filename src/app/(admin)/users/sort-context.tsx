@@ -27,6 +27,11 @@ const COMPARATORS: Record<string, (a: UserRow, b: UserRow) => number> = {
   totalWagered: (a, b) => a.totalWagered - b.totalWagered,
   inventoryValue: (a, b) => a.inventoryValue - b.inventoryValue,
   pnl: (a, b) => a.pnl - b.pnl,
+  // Risk is client-sortable only — the server query ignores the sortBy
+  // value for riskScore and returns the pre-paginated list of users
+  // with their scores attached. For normal page sizes (≤100) this is
+  // fine; cross-page ordering would need a computed column.
+  riskScore: (a, b) => a.riskScore - b.riskScore,
   country: (a, b) =>
     (a.country ?? a.countryCode ?? "").localeCompare(
       b.country ?? b.countryCode ?? "",

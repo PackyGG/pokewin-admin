@@ -1,12 +1,21 @@
 "use client";
 
 import { ColumnDef } from "@tanstack/react-table";
+import { ShieldAlert, Link2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+  TooltipProvider,
+} from "@/components/ui/tooltip";
 import { UsersSortHeader } from "./sort-header";
 import { ROLE_COLORS, USER_STATUS_COLORS } from "@/lib/constants";
-import { formatCurrency, formatDateTime } from "@/lib/utils/format";
+import { formatCurrency } from "@/lib/utils/format";
+import { useFormatDateTime } from "@/components/timezone-provider";
 import { cn } from "@/lib/utils";
+import { RISK_TIER_COLORS, tierLabel, type RiskTier } from "@/lib/fraud/score";
 
 export type UserRow = {
   id: string;
@@ -25,6 +34,10 @@ export type UserRow = {
   depositCount: number;
   pnl: number;
   createdAt: string;
+  riskScore: number;
+  riskTier: RiskTier;
+  sharedIpCount: number;
+  sharedFingerprintCount: number;
 };
 
 function PnlCell({ value }: { value: number }) {
@@ -50,6 +63,82 @@ function PnlCell({ value }: { value: number }) {
 function initialsFor(name: string | null, email: string | null): string {
   const src = name ?? email ?? "?";
   return src.slice(0, 2).toUpperCase();
+}
+
+/**
+ * Timestamp cell — wrapped as a component so we can call the
+ * `useFormatDateTime` hook and get the admin's preferred zone/format.
+ * TanStack column definitions themselves can't use hooks directly.
+ */
+function RegisteredCell({ value }: { value: string }) {
+  const fmt = useFormatDateTime();
+  return (
+    <span className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">
+      {fmt(value)}
+    </span>
+  );
+}
+
+/**
+ * Risk tier badge with a tooltip exposing the raw score. Hovers over
+ * the badge to read the numeric 0-100 value + tier name. Rendered
+ * alongside a small "shared IP" chip when the user has 2+ links —
+ * double-signal in one cell without crowding the table.
+ */
+function RiskCell({ row }: { row: UserRow }) {
+  // @base-ui/react Tooltip uses a `render` prop (not `asChild`) to
+  // let a custom element take the role of the trigger surface. The
+  // Badge is rendered via `render`, then children become the visible
+  // content inside the badge.
+  return (
+    <TooltipProvider>
+      <div className="flex items-center gap-1.5">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Badge
+                variant="outline"
+                className={cn(
+                  "text-[10px] tabular-nums gap-1 h-5 px-1.5 cursor-help",
+                  RISK_TIER_COLORS[row.riskTier],
+                )}
+              />
+            }
+          >
+            <ShieldAlert className="size-2.5" />
+            {row.riskScore}
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            {tierLabel(row.riskTier)} risk — score {row.riskScore} / 100
+          </TooltipContent>
+        </Tooltip>
+        {row.sharedIpCount >= 2 && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "text-[10px] tabular-nums gap-1 h-5 px-1.5 cursor-help",
+                    row.sharedIpCount >= 5
+                      ? "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30"
+                      : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
+                  )}
+                />
+              }
+            >
+              <Link2 className="size-2.5" />
+              {row.sharedIpCount}
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              Shares IP with {row.sharedIpCount} other account
+              {row.sharedIpCount === 1 ? "" : "s"}
+            </TooltipContent>
+          </Tooltip>
+        )}
+      </div>
+    </TooltipProvider>
+  );
 }
 
 export const columns: ColumnDef<UserRow>[] = [
@@ -105,6 +194,11 @@ export const columns: ColumnDef<UserRow>[] = [
         {row.original.status}
       </Badge>
     ),
+  },
+  {
+    accessorKey: "riskScore",
+    header: () => <UsersSortHeader title="Risk" sortKey="riskScore" />,
+    cell: ({ row }) => <RiskCell row={row.original} />,
   },
   {
     accessorKey: "availableBalance",
@@ -174,10 +268,6 @@ export const columns: ColumnDef<UserRow>[] = [
     header: () => (
       <UsersSortHeader title="Registered" sortKey="created_at" />
     ),
-    cell: ({ row }) => (
-      <span className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">
-        {formatDateTime(row.original.createdAt)}
-      </span>
-    ),
+    cell: ({ row }) => <RegisteredCell value={row.original.createdAt} />,
   },
 ];
