@@ -349,7 +349,11 @@ export default async function CreatorDetailPage({
                 <TableBody>
                   {data.payouts.map((p) => (
                     <TableRow key={p.id}>
-                      <TableCell>{formatCurrency(p.amountUsd)}</TableCell>
+                      {/* Payout amount = money we sent to the creator.
+                          Always a house loss → rose per CLAUDE.md. */}
+                      <TableCell className="text-rose-600 dark:text-rose-400 tabular-nums">
+                        {formatCurrency(p.amountUsd)}
+                      </TableCell>
                       <TableCell>
                         <Badge variant="outline" className={
                           p.status === "paid" ? "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30" :

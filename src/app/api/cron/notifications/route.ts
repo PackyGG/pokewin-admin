@@ -21,17 +21,20 @@ import { formatCurrency } from "@/lib/utils/format";
  *     deploy doesn't silently run without auth.
  *   - Each event type has its own cursor — a broken Telegram token for
  *     deposits never stops withdrawals / signups from flowing.
- *   - Batches of <=10 events send one message each (richer formatting);
- *     larger batches send a single digest message to dodge Telegram
- *     rate limits (30 msgs/sec/bot and 20 msgs/minute per chat).
+ *   - ONE message per event — no batching or digests. If Telegram rate
+ *     limits (429), we stop and retry the remaining events on the next
+ *     tick (the cursor only advances through the successful prefix).
  *   - Failures never advance the cursor — the next tick retries.
  */
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const BATCH_LIMIT = 100;
-const PER_EVENT_THRESHOLD = 10;
+// How many events we process in one tick. If there's a genuine backlog
+// we'll drain it across multiple ticks at this cap; keeps per-tick
+// runtime bounded and stays well under Telegram's 20 msgs/minute
+// per-chat ceiling.
+const BATCH_LIMIT = 20;
 
 type PerTypeSummary = {
   sent: number;
@@ -89,44 +92,29 @@ async function processEventType(
   const token = config.botToken;
   const chatId = config.chatId;
 
-  if (events.length <= PER_EVENT_THRESHOLD) {
-    // Fire one message per event so operators get the full detail and
-    // can react immediately. Any single failure is reported but doesn't
-    // stop us from advancing past the successful ones — we advance the
-    // cursor to the last event we confirmed sent.
-    let lastSuccessCursor: string | null = null;
-    let sent = 0;
-    let firstError: string | undefined;
+  // One message per event — always. If any send fails we break,
+  // preserve the cursor at the last successful one, and retry the rest
+  // on the next tick. Telegram 429 backoff happens naturally this way.
+  let lastSuccessCursor: string | null = null;
+  let sent = 0;
+  let firstError: string | undefined;
 
-    for (const ev of events) {
-      const text = formatPerEventMessage(eventType, ev);
-      const result = await sendTelegram(token, chatId, text);
-      if (!result.ok) {
-        firstError = firstError ?? result.error;
-        break;
-      }
-      sent += 1;
-      lastSuccessCursor = cursorFor(eventType, ev);
+  for (const ev of events) {
+    const text = formatPerEventMessage(eventType, ev);
+    const result = await sendTelegram(token, chatId, text);
+    if (!result.ok) {
+      firstError = firstError ?? result.error;
+      break;
     }
-
-    if (lastSuccessCursor) {
-      await advanceCursor(eventType, lastSuccessCursor);
-    }
-
-    return { sent, error: firstError };
+    sent += 1;
+    lastSuccessCursor = cursorFor(eventType, ev);
   }
 
-  // Digest path — a single summary message for big batches.
-  const digest = formatDigestMessage(eventType, events);
-  const result = await sendTelegram(token, chatId, digest);
-  if (!result.ok) {
-    return { sent: 0, error: result.error };
+  if (lastSuccessCursor) {
+    await advanceCursor(eventType, lastSuccessCursor);
   }
 
-  // Advance to the cursor of the latest event we included in the digest.
-  const last = events[events.length - 1];
-  await advanceCursor(eventType, cursorFor(eventType, last));
-  return { sent: events.length };
+  return { sent, error: firstError };
 }
 
 /**
@@ -194,47 +182,6 @@ function formatPerEventMessage(
     lines.push(`Country: ${flag ? `${flag} ` : ""}${codeSafe}`);
   }
   return lines.join("\n");
-}
-
-function formatDigestMessage(
-  eventType: NotificationEvent,
-  events: PendingEvent[],
-): string {
-  const count = events.length;
-
-  if (eventType === "signup") {
-    const topLines = events
-      .slice(0, 5)
-      .map((ev) => `\\- \`${escapeMarkdownV2(ev.username ?? "unknown")}\``);
-    const moreLine = count > 5 ? `\n\\.\\.\\. and ${count - 5} more` : "";
-    return [
-      `\ud83d\udc4b *${count} new signups*`,
-      "Most recent:",
-      topLines.join("\n"),
-    ].join("\n") + moreLine;
-  }
-
-  const total = events.reduce((acc, ev) => acc + ev.amountUsd, 0);
-  const totalText = escapeMarkdownV2(formatCurrency(total));
-  const verb = eventType === "deposit" ? "deposits" : "withdrawals";
-  const icon = eventType === "deposit" ? "\ud83d\udcb0" : "\ud83d\udcb8";
-
-  const top = [...events]
-    .sort((a, b) => b.amountUsd - a.amountUsd)
-    .slice(0, 5)
-    .map((ev) => {
-      const u = escapeMarkdownV2(ev.username ?? "unknown");
-      const a = escapeMarkdownV2(formatCurrency(ev.amountUsd));
-      return `\\- \`${u}\` \u2013 ${a}`;
-    });
-
-  const moreLine = count > 5 ? `\n\\.\\.\\. and ${count - 5} more` : "";
-
-  return [
-    `${icon} *${count} new ${verb}* totalling ${totalText}`,
-    "Top 5 by amount:",
-    top.join("\n"),
-  ].join("\n") + moreLine;
 }
 
 /**
