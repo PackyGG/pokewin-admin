@@ -141,6 +141,8 @@ export function SummaryCards({
                     }
                     labelLine={false}
                     fontSize={11}
+                    animationDuration={700}
+                    animationEasing="ease-out"
                   >
                     {chartData.map((entry, index) => (
                       <Cell key={index} fill={entry.fill} />
@@ -194,6 +196,8 @@ export function SummaryCards({
                     stroke="hsl(220, 70%, 55%)"
                     fill="url(#trendGradient)"
                     strokeWidth={2}
+                    animationDuration={700}
+                    animationEasing="ease-out"
                   />
                 </AreaChart>
               </ChartContainer>

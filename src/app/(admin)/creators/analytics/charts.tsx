@@ -75,9 +75,9 @@ export function CreatorAnalyticsCharts({ data }: { data: DailyData[] }) {
                   />
                 }
               />
-              <Line type="monotone" dataKey="wagerVolume" stroke="var(--color-wagerVolume)" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="depositVolume" stroke="var(--color-depositVolume)" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="commission" stroke="var(--color-commission)" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="wagerVolume" stroke="var(--color-wagerVolume)" strokeWidth={2} dot={false} animationDuration={700} animationEasing="ease-out" />
+              <Line type="monotone" dataKey="depositVolume" stroke="var(--color-depositVolume)" strokeWidth={2} dot={false} animationDuration={700} animationEasing="ease-out" />
+              <Line type="monotone" dataKey="commission" stroke="var(--color-commission)" strokeWidth={2} dot={false} animationDuration={700} animationEasing="ease-out" />
             </LineChart>
           </ChartContainer>
         </CardContent>
@@ -105,8 +105,8 @@ export function CreatorAnalyticsCharts({ data }: { data: DailyData[] }) {
                 width={50}
               />
               <ChartTooltip content={<ChartTooltipContent />} />
-              <Bar dataKey="signups" fill="var(--color-signups)" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="clicks" fill="var(--color-clicks)" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="signups" fill="var(--color-signups)" radius={[4, 4, 0, 0]} animationDuration={700} animationEasing="ease-out" />
+              <Bar dataKey="clicks" fill="var(--color-clicks)" radius={[4, 4, 0, 0]} animationDuration={700} animationEasing="ease-out" />
             </BarChart>
           </ChartContainer>
         </CardContent>

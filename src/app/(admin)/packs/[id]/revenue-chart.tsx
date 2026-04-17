@@ -210,12 +210,16 @@ export function PackStatsSection({ stats }: { stats: PackStats }) {
                     fill="var(--color-revenue)"
                     radius={[4, 4, 0, 0]}
                     name="Revenue"
+                    animationDuration={700}
+                    animationEasing="ease-out"
                   />
                   <Bar
                     dataKey="payout"
                     fill="var(--color-payout)"
                     radius={[4, 4, 0, 0]}
                     name="Payout"
+                    animationDuration={700}
+                    animationEasing="ease-out"
                   />
                 </BarChart>
               </ChartContainer>
@@ -262,18 +266,24 @@ export function PackStatsSection({ stats }: { stats: PackStats }) {
                     stackId="opens"
                     fill="var(--color-soloOpenings)"
                     name="Solo"
+                    animationDuration={700}
+                    animationEasing="ease-out"
                   />
                   <Bar
                     dataKey="battleOpenings"
                     stackId="opens"
                     fill="var(--color-battleOpenings)"
                     name="Battles"
+                    animationDuration={700}
+                    animationEasing="ease-out"
                   />
                   <Bar
                     dataKey="borrowedOpenings"
                     stackId="flags"
                     fill="var(--color-borrowedOpenings)"
                     name="Borrowed"
+                    animationDuration={700}
+                    animationEasing="ease-out"
                   />
                   <Bar
                     dataKey="sponsoredOpenings"
@@ -281,6 +291,8 @@ export function PackStatsSection({ stats }: { stats: PackStats }) {
                     fill="var(--color-sponsoredOpenings)"
                     name="Sponsored"
                     radius={[4, 4, 0, 0]}
+                    animationDuration={700}
+                    animationEasing="ease-out"
                   />
                 </BarChart>
               </ChartContainer>
@@ -348,6 +360,8 @@ function BreakdownPie({
                   paddingAngle={2}
                   dataKey="value"
                   stroke="none"
+                  animationDuration={700}
+                  animationEasing="ease-out"
                 >
                   {pieData.map((_, i) => (
                     <Cell
