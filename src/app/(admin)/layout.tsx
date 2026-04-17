@@ -5,8 +5,10 @@ import { AdminHeader } from "@/components/admin-header";
 import { TopProgressBar } from "@/components/top-progress-bar";
 import { ChatPanel } from "@/components/chat-panel/chat-panel";
 import { CommandPalette } from "@/components/command-palette";
+import { TimezoneProvider } from "@/components/timezone-provider";
 import { verifySession, getUserPermissions } from "@/lib/dal";
 import { adminDb } from "@/lib/admin-db";
+import { getAdminPreferences } from "@/lib/admin-preferences";
 
 /**
  * Read the optional profile fields. Safe against the migration not having
@@ -43,6 +45,7 @@ export default async function AdminLayout({
   const session = await verifySession();
   const allowedPages = await getUserPermissions(session.userId);
   const profile = await loadHeaderProfile(session.userId);
+  const preferences = await getAdminPreferences(session.userId);
 
   // Chat/mutes panel is only surfaced to users who could reach the old
   // /chat page — keeps the same permission boundary as the removed route.
@@ -50,25 +53,30 @@ export default async function AdminLayout({
     session.role === "admin" || allowedPages.includes("/chat");
 
   return (
-    <SidebarProvider>
-      {/* Suspense wrapper is required — TopProgressBar uses useSearchParams
-          which suspends during SSR. Nothing to render while it suspends. */}
-      <Suspense fallback={null}>
-        <TopProgressBar />
-      </Suspense>
-      <AppSidebar role={session.role} allowedPages={allowedPages} />
-      <div className="flex flex-1 flex-col">
-        <AdminHeader
-          adminId={session.userId}
-          username={session.username}
-          displayUsername={profile.displayUsername}
-          hasAvatar={profile.hasAvatar}
-          role={session.role}
-        />
-        <main className="flex-1 overflow-auto p-4 md:p-6">{children}</main>
-      </div>
-      <CommandPalette role={session.role} allowedPages={allowedPages} />
-      {canOpenChatPanel && <ChatPanel role={session.role} />}
-    </SidebarProvider>
+    <TimezoneProvider
+      initialTimezone={preferences.timezone}
+      initialDateFormat={preferences.dateFormat}
+    >
+      <SidebarProvider>
+        {/* Suspense wrapper is required — TopProgressBar uses useSearchParams
+            which suspends during SSR. Nothing to render while it suspends. */}
+        <Suspense fallback={null}>
+          <TopProgressBar />
+        </Suspense>
+        <AppSidebar role={session.role} allowedPages={allowedPages} />
+        <div className="flex flex-1 flex-col">
+          <AdminHeader
+            adminId={session.userId}
+            username={session.username}
+            displayUsername={profile.displayUsername}
+            hasAvatar={profile.hasAvatar}
+            role={session.role}
+          />
+          <main className="flex-1 overflow-auto p-4 md:p-6">{children}</main>
+        </div>
+        <CommandPalette role={session.role} allowedPages={allowedPages} />
+        {canOpenChatPanel && <ChatPanel role={session.role} />}
+      </SidebarProvider>
+    </TimezoneProvider>
   );
 }
