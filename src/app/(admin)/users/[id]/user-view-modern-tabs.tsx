@@ -74,7 +74,7 @@ export function OverviewTab({
   pnlBreakdown: PnlBreakdown;
   isAdmin: boolean;
 }) {
-  const { user, balances, statistics, counts } = data;
+  const { user, balances, statistics, counts, capabilities } = data;
 
   return (
     <div className="space-y-6">
@@ -82,13 +82,19 @@ export function OverviewTab({
           rounded-2xl, subtle colored corner glow, color-accented icon
           chip + hero number + breakdown rows below. */}
       <div className="grid gap-4 md:grid-cols-3">
-        <ModernBalancePanel balances={balances} />
+        <ModernBalancePanel
+          balances={balances}
+          userId={user.id}
+          canAdjustBalance={capabilities.canAdjustBalance}
+        />
         <ModernPnlPanel balances={balances} pnlBreakdown={pnlBreakdown} />
         <ModernActivityPanel
           statistics={statistics}
           balances={balances}
           inventoryCount={data.inventoryCount}
           avgDeposit={counts.avgDeposit}
+          userId={user.id}
+          canAdjustXp={capabilities.canAdjustXp}
         />
       </div>
 

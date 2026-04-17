@@ -7,6 +7,7 @@
  */
 
 import * as React from "react";
+import { useState } from "react";
 import {
   Wallet,
   TrendingUp,
@@ -15,6 +16,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
+import { Button } from "@/components/ui/button";
+import { BalanceAdjustDialog, XpAdjustDialog } from "./user-tabs-dialogs";
 import type {
   UserDetail,
   PnlBreakdown,
@@ -138,7 +141,17 @@ export function PanelRow({
   );
 }
 
-export function ModernBalancePanel({ balances }: { balances: UserDetail["balances"] }) {
+export function ModernBalancePanel({
+  balances,
+  userId,
+  canAdjustBalance = false,
+}: {
+  balances: UserDetail["balances"];
+  userId?: string;
+  canAdjustBalance?: boolean;
+}) {
+  const [adjustOpen, setAdjustOpen] = useState(false);
+
   if (!balances) {
     return (
       <StatPanel title="Balances" icon={Wallet} accent="emerald">
@@ -148,6 +161,7 @@ export function ModernBalancePanel({ balances }: { balances: UserDetail["balance
   }
   const total =
     balances.availableBalance + balances.inventoryValue + balances.vouchersValue;
+  const showAdjust = canAdjustBalance && Boolean(userId);
   return (
     <StatPanel title="Balances" icon={Wallet} accent="emerald">
       <div className="space-y-0.5">
@@ -164,6 +178,25 @@ export function ModernBalancePanel({ balances }: { balances: UserDetail["balance
         <PanelRow label="Inventory" value={formatCurrency(balances.inventoryValue)} />
         <PanelRow label="Vouchers" value={formatCurrency(balances.vouchersValue)} />
       </div>
+      {showAdjust && (
+        <div className="mt-3 pt-3 border-t">
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full"
+            onClick={() => setAdjustOpen(true)}
+          >
+            Adjust Balance
+          </Button>
+        </div>
+      )}
+      {showAdjust && userId && (
+        <BalanceAdjustDialog
+          userId={userId}
+          open={adjustOpen}
+          onOpenChange={setAdjustOpen}
+        />
+      )}
     </StatPanel>
   );
 }
@@ -236,16 +269,23 @@ export function ModernActivityPanel({
   balances,
   inventoryCount,
   avgDeposit,
+  userId,
+  canAdjustXp = false,
 }: {
   statistics: UserDetail["statistics"];
   balances: UserDetail["balances"];
   inventoryCount: number;
   avgDeposit: number;
+  userId?: string;
+  canAdjustXp?: boolean;
 }) {
+  const [xpAdjustOpen, setXpAdjustOpen] = useState(false);
+
   const houseEdge =
     balances && balances.totalWagered > 0
       ? ((balances.totalWagered - balances.totalWon) / balances.totalWagered) * 100
       : 0;
+  const showXpAdjust = canAdjustXp && Boolean(userId);
   return (
     <StatPanel title="Activity" icon={Activity} accent="blue">
       <div className="flex items-baseline gap-4">
@@ -276,6 +316,25 @@ export function ModernActivityPanel({
           value={balances && balances.totalWagered > 0 ? `${houseEdge.toFixed(2)}%` : "—"}
         />
       </div>
+      {showXpAdjust && (
+        <div className="mt-3 pt-3 border-t">
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full"
+            onClick={() => setXpAdjustOpen(true)}
+          >
+            Adjust XP
+          </Button>
+        </div>
+      )}
+      {showXpAdjust && userId && (
+        <XpAdjustDialog
+          userId={userId}
+          open={xpAdjustOpen}
+          onOpenChange={setXpAdjustOpen}
+        />
+      )}
     </StatPanel>
   );
 }
