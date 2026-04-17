@@ -100,6 +100,54 @@ export async function getChatMessages(params: {
   };
 }
 
+/**
+ * Chat messages created strictly AFTER `sinceIso`, in chronological order.
+ *
+ * Used by the SSE live-feed route in `src/app/api/live/chat/route.ts` to
+ * emit only new rows since the last tick. Ordered ascending so the stream
+ * delivers messages oldest-first — matches how the panel appends them to
+ * the bottom of the scroll view.
+ *
+ * No `activeMuteId` is included (kept null) because the mute state is UI
+ * decoration and the initial /chat fetch provides the authoritative mute
+ * list for the page.
+ */
+export async function getChatMessagesSince(
+  sinceIso: string,
+  limit = 100,
+): Promise<ChatMessageItem[]> {
+  const since = new Date(sinceIso);
+  const rows = await db.chat_messages.findMany({
+    where: { created_at: { gt: since } },
+    orderBy: { created_at: "asc" },
+    take: Math.max(1, Math.min(200, Math.floor(limit))),
+    include: {
+      user_chat_messages_user_idTouser: {
+        select: {
+          username: true,
+          image: true,
+          role: true,
+          user_statistics: { select: { level: true } },
+        },
+      },
+      pinned_chat_messages: { select: { id: true } },
+    },
+  });
+  return rows.map((m) => ({
+    id: m.id,
+    userId: m.user_id,
+    username: m.user_chat_messages_user_idTouser?.username ?? null,
+    image: m.user_chat_messages_user_idTouser?.image ?? null,
+    level: m.user_chat_messages_user_idTouser?.user_statistics?.level ?? 0,
+    role: m.user_chat_messages_user_idTouser?.role ?? "user",
+    content: m.content,
+    isDeleted: m.is_deleted,
+    isPinned: !!m.pinned_chat_messages,
+    activeMuteId: null,
+    createdAt: m.created_at.toISOString(),
+  }));
+}
+
 export async function getMutes(params: {
   page?: number;
   perPage?: number;

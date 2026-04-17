@@ -1,24 +1,45 @@
-import {
-  DollarSign,
-  TrendingUp,
-  Eye,
-  UserPlus,
-  Package,
-  Swords,
-  BarChart3,
-} from "lucide-react";
+import { BarChart3 } from "lucide-react";
+import { Suspense } from "react";
 import { requirePageAccess } from "@/lib/dal";
-import { getAnalyticsData } from "@/lib/queries/analytics";
-import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { StatCard } from "../dashboard/stat-card";
 import { AutoRefresh } from "../dashboard/auto-refresh";
 import { PeriodFilter } from "./period-filter";
-import { AnalyticsCharts } from "./charts";
-import { BattleModesSection, PackPopularitySection } from "./sections";
 import { PageHero } from "@/components/modern-panels";
-import { FadeIn } from "@/components/fade-in";
+import { AnalyticsTabNav, type AnalyticsTab } from "./tab-nav";
+import { parsePeriod } from "./types";
+import { OverviewTab } from "./tab-overview";
+import { CohortsTab } from "./tab-cohorts";
+import { FunnelTab } from "./tab-funnel";
+import { LtvTab } from "./tab-ltv";
+import { RetentionTab } from "./tab-retention";
+import { RevenueTab } from "./tab-revenue";
+import { TopPerformersTab } from "./tab-top";
+import { HeatmapTab } from "./tab-heatmap";
+import { PacksBattlesTab } from "./tab-packs";
+import { TabSkeleton } from "./tab-skeleton";
+import type { CohortGranularity } from "@/lib/queries/analytics-cohorts";
 
 export const metadata = { title: "Analytics" };
+
+function parseTab(value: string | undefined): AnalyticsTab {
+  switch (value) {
+    case "overview":
+    case "cohorts":
+    case "funnel":
+    case "ltv":
+    case "retention":
+    case "revenue":
+    case "top":
+    case "heatmap":
+    case "packs":
+      return value;
+    default:
+      return "overview";
+  }
+}
+
+function parseCohortBy(value: string | undefined): CohortGranularity {
+  return value === "month" ? "month" : "week";
+}
 
 export default async function AnalyticsPage({
   searchParams,
@@ -27,28 +48,9 @@ export default async function AnalyticsPage({
 }) {
   await requirePageAccess("/analytics");
   const params = await searchParams;
-  const period = (params.period ?? "30d") as
-    | "today"
-    | "7d"
-    | "30d"
-    | "90d"
-    | "all";
-
-  const data = await getAnalyticsData(period);
-
-  const totalWager = data.packWager + data.battleWager;
-  const packPct =
-    totalWager > 0 ? ((data.packWager / totalWager) * 100).toFixed(1) : "0";
-  const battlePct =
-    totalWager > 0 ? ((data.battleWager / totalWager) * 100).toFixed(1) : "0";
-  const packBorrowPct =
-    data.packWager > 0
-      ? ((data.packWagerBorrowed / data.packWager) * 100).toFixed(1)
-      : "0";
-  const battleBorrowPct =
-    data.battleWager > 0
-      ? ((data.battleWagerBorrowed / data.battleWager) * 100).toFixed(1)
-      : "0";
+  const period = parsePeriod(params.period);
+  const tab = parseTab(params.tab);
+  const cohortBy = parseCohortBy(params.cohortBy);
 
   return (
     <div className="space-y-6">
@@ -70,79 +72,25 @@ export default async function AnalyticsPage({
         </div>
       </PageHero>
 
-      {/* Stat Cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <StatCard
-          title="Realized Profit"
-          animatedValue={data.realizedProfit}
-          formatKind="currency"
-          subtitle={`Dep ${formatCurrency(data.realizedProfitBreakdown.totalDeposits)} − WD ${formatCurrency(data.realizedProfitBreakdown.totalWithdrawals)} − Bal ${formatCurrency(data.realizedProfitBreakdown.userBalance)} − Inv ${formatCurrency(data.realizedProfitBreakdown.inventory)} − Vouchers ${formatCurrency(data.realizedProfitBreakdown.vouchers)} − Rakeback ${formatCurrency(data.realizedProfitBreakdown.unclaimedRakeback)}`}
-          icon={TrendingUp}
-          color="green"
-        />
-        {/* GGR is wagers minus payouts — when positive (the normal case)
-            it's net house revenue on gameplay → emerald per CLAUDE.md
-            house-POV rule. */}
-        <StatCard
-          title="GGR (Gross Gaming Revenue)"
-          animatedValue={data.ggr}
-          formatKind="currency"
-          subtitle={`${formatCurrency(totalWager)} wagered total`}
-          icon={DollarSign}
-          color="emerald"
-        />
-        <StatCard
-          title="Unique Visitors"
-          animatedValue={data.uniqueVisitors}
-          formatKind="number"
-          subtitle="Distinct users with transactions"
-          icon={Eye}
-          color="cyan"
-        />
-        <StatCard
-          title="New Signups"
-          animatedValue={data.newSignups}
-          formatKind="number"
-          subtitle={`${data.uniqueVisitors > 0 ? ((data.newSignups / data.uniqueVisitors) * 100).toFixed(1) : "0"}% of active users`}
-          icon={UserPlus}
-          color="purple"
-        />
-        <StatCard
-          title="Pack Wagers"
-          animatedValue={data.packWager}
-          formatKind="currency"
-          subtitle={`${packPct}% of total wagers`}
-          icon={Package}
-          color="orange"
-        >
-          <p className="text-stat-label mt-1">
-            {formatCurrency(data.packWagerBorrowed)} borrowed ({packBorrowPct}%)
-          </p>
-        </StatCard>
-        <StatCard
-          title="Battle Wagers"
-          animatedValue={data.battleWager}
-          formatKind="currency"
-          subtitle={`${battlePct}% of total wagers`}
-          icon={Swords}
-          color="pink"
-        >
-          <p className="text-stat-label mt-1">
-            {formatCurrency(data.battleWagerBorrowed)} borrowed ({battleBorrowPct}%)
-          </p>
-        </StatCard>
-      </div>
+      <AnalyticsTabNav />
 
-      {/* Battle / Pack Breakdown */}
-      <div className="space-y-4">
-        <BattleModesSection stats={data.battleStats} />
-        <PackPopularitySection stats={data.packStats} />
-      </div>
-
-      {/* Charts */}
-      <FadeIn>
-        <AnalyticsCharts data={data.daily} />
-      </FadeIn>
+      {/* Each tab is an independent async segment. We render only the one
+          that matches `tab` so nothing else hits the DB — important because
+          several of these tabs run heavy raw SQL. Suspense + per-tab skeleton
+          keeps navigation snappy between tabs. */}
+      <Suspense key={`${tab}-${period}-${cohortBy}`} fallback={<TabSkeleton />}>
+        {tab === "overview" && <OverviewTab period={period} />}
+        {tab === "cohorts" && (
+          <CohortsTab period={period} granularity={cohortBy} />
+        )}
+        {tab === "funnel" && <FunnelTab period={period} />}
+        {tab === "ltv" && <LtvTab period={period} />}
+        {tab === "retention" && <RetentionTab period={period} />}
+        {tab === "revenue" && <RevenueTab period={period} />}
+        {tab === "top" && <TopPerformersTab period={period} />}
+        {tab === "heatmap" && <HeatmapTab period={period} />}
+        {tab === "packs" && <PacksBattlesTab period={period} />}
+      </Suspense>
     </div>
   );
 }
