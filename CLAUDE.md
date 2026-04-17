@@ -273,7 +273,31 @@ Jede neue Admin-Seite muss dem modernen Stil von `/users/[id]` folgen. Das ist d
 - **Tabellen** bleiben `@tanstack/react-table` + `src/components/data-table/`, aber eingebettet in einen modernen Container mit `SectionHeading` darüber.
 - **Charts** nutzen `recharts` mit `animationDuration={700}` + `animationEasing="ease-out"`.
 - **Reduce-Motion** muss respektiert sein (tailwind `motion-safe:` / `motion-reduce:` oder Mediaquery).
-- **House-Perspektive bei P&L Zahlen** wo relevant: Gewinn für die Plattform = grün, Gewinn für den User = rot (User hat uns Geld abgenommen).
+- **Finanz-Farben IMMER aus House-Perspektive** (gilt für die gesamte Site — jeder Geldbetrag, jeder Badge, jede Kennzahl, jedes Chart). Grün = gut für die Plattform, Rot = schlecht für die Plattform. **Niemals User-Perspektive.** Ein User, der Geld gewinnt, kostet uns Geld → **rot**. Ein User, der verliert, bringt uns Geld → **grün**. Konkretes Mapping:
+
+  | Event / Situation | Haus-POV | Farbe |
+  |---|---|---|
+  | Deposit (User zahlt ein) | Kapitaleingang | 🟢 emerald |
+  | Wager / Bet platziert (pack_opening, battle_bet) | Haus nimmt Einsatz | 🟢 emerald |
+  | Withdrawal (crypto oder card) | Auszahlung raus | 🔴 rose |
+  | Card Sale (User verkauft Karten zurück) | Haus zahlt für Rückkauf | 🔴 rose |
+  | Rain win / Race prize / Creator tip / Rakeback claim / Affiliate claim / Battle refund / Deposit bonus / Promo code / Gift card redeem | Haus zahlt an User | 🔴 rose |
+  | User gewinnt Battle / User sahnt hohen Card-Drop ab | User gewinnt Geld | 🔴 rose |
+  | User verliert Battle / User zieht schwachen Pack | Haus behält Einsatz | 🟢 emerald |
+  | P&L / GGR / Platform Revenue (positiv) | Gewinn für uns | 🟢 emerald |
+  | P&L / GGR / Platform Revenue (negativ) | Verlust für uns | 🔴 rose |
+  | Signup / Neutraler Event | Informativ | 🔵 blue |
+
+  Wenn du dir unsicher bist: "Bewegt sich Geld in Richtung Haus-Kasse oder raus?". Richtung Haus → grün. Raus → rot.
+
+  Gilt nicht nur für Badges sondern auch für:
+  - Amount-Labels (Vorzeichen +/− aus Haus-POV)
+  - Recent-Activity Feeds
+  - Stat-Panels mit P&L
+  - Chart-Farben bei gewinn/verlust-Differenzierung
+  - Creator-Detail "Platform PnL" Panels
+  - Transaction-Detail Seiten
+  - Battle-Detail "House Profit" Zahlen
 - **Keine Funktions-Props von Server → Client Component.** Serialisierbare Primitives / String-Enums nutzen. Next.js 15 crasht sonst.
 
 **Verbindlich für jede neue Page unter `src/app/(admin)/...`:**

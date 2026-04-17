@@ -21,7 +21,7 @@ import {
 } from "./revenue-stat-card";
 import { AutoRefresh } from "./auto-refresh";
 import { WagerChart, DepositsChart, SignupsChart } from "./charts";
-import { RecentActivity } from "./recent-activity";
+import { RecentActivity, RecentActivityLivePulse } from "./recent-activity";
 import { PageHero, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
@@ -117,7 +117,11 @@ export default async function DashboardPage() {
 
       {/* Recent activity — polled every 3s, pauses when tab is hidden */}
       <div className="space-y-3">
-        <SectionHeading icon={Activity} title="Recent Activity" />
+        <SectionHeading
+          icon={Activity}
+          title="Recent Activity"
+          action={<RecentActivityLivePulse />}
+        />
         <FadeIn>
           <RecentActivity initial={liveActivity} />
         </FadeIn>
