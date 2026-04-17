@@ -55,19 +55,29 @@ export const columns: ColumnDef<BattleListItem>[] = [
   {
     accessorKey: "totalPayout",
     header: "Payout",
+    // Payout = what the house paid out to the winner(s). House loss → rose.
     cell: ({ row }) => {
       const p = row.original.totalPayout;
       if (p == null) return <span className="text-muted-foreground">—</span>;
-      return <span className="text-green-400">{formatCurrency(p)}</span>;
+      return (
+        <span className="text-rose-600 dark:text-rose-400">
+          {formatCurrency(p)}
+        </span>
+      );
     },
   },
   {
     accessorKey: "houseEdge",
     header: "House Edge",
+    // House edge negative = house lost money on this battle → rose.
     cell: ({ row }) => {
       const he = row.original.houseEdge;
       if (he == null) return <span className="text-muted-foreground">—</span>;
-      return <span className={he < 0 ? "text-red-400" : ""}>{he.toFixed(2)}%</span>;
+      return (
+        <span className={he < 0 ? "text-rose-600 dark:text-rose-400" : ""}>
+          {he.toFixed(2)}%
+        </span>
+      );
     },
   },
   {

@@ -92,6 +92,9 @@ export default async function CodeAnalyticsPage({
           icon={Users}
           accent="blue"
         />
+        {/* Deposits = cash into house → emerald. Wagers = money into
+            house treasury → emerald. Commission = paid out to creator
+            → rose. All per CLAUDE.md house-POV rule. */}
         <KpiTile
           label="Deposits"
           value={formatCurrency(data.totalDeposits)}
@@ -102,13 +105,13 @@ export default async function CodeAnalyticsPage({
           label="Wagers"
           value={formatCurrency(data.totalWagers)}
           icon={Coins}
-          accent="amber"
+          accent="emerald"
         />
         <KpiTile
           label="Commission"
           value={formatCurrency(data.totalCommission)}
           icon={TrendingUp}
-          accent="purple"
+          accent="rose"
         />
         <KpiTile
           label="Clicks"
@@ -154,7 +157,9 @@ export default async function CodeAnalyticsPage({
                   </TableCell>
                   <TableCell>{formatCurrency(r.depositAmountUsd)}</TableCell>
                   <TableCell>{formatCurrency(r.wagerAmountUsd)}</TableCell>
-                  <TableCell className="text-green-500">
+                  {/* Commission we paid the creator on this referral →
+                      house loss → rose per CLAUDE.md. */}
+                  <TableCell className="text-rose-600 dark:text-rose-400">
                     {formatCurrency(r.referrerCutUsd)}
                   </TableCell>
                   <TableCell>{formatDateTime(r.createdAt)}</TableCell>

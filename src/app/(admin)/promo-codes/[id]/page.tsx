@@ -86,11 +86,13 @@ export default async function PromoCodeDetailPage({
       </PageHero>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        {/* Promo codes give users credit → house pays out → rose per
+            CLAUDE.md house-POV rule. */}
         <KpiTile
           label="Value"
           value={formatCurrency(data.value)}
           icon={DollarSign}
-          accent="emerald"
+          accent="rose"
         />
         <KpiTile
           label="Redemptions"

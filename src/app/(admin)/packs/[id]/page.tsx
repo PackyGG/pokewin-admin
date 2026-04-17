@@ -97,6 +97,9 @@ export default async function PackDetailPage({
           icon={Package}
           accent="cyan"
         />
+        {/* Revenue = what users paid to open this pack (house gain,
+            emerald). Payout = card value we handed back (house loss,
+            rose). Per CLAUDE.md house-POV coloring. */}
         <KpiTile
           label="Revenue"
           value={formatCurrency(packStats.revenue.all)}
@@ -107,7 +110,7 @@ export default async function PackDetailPage({
           label="Payout"
           value={formatCurrency(packStats.payout.all)}
           icon={Coins}
-          accent="amber"
+          accent="rose"
         />
         <KpiTile
           label="RTP"

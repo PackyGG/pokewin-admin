@@ -84,11 +84,14 @@ export default async function VouchersPage({
           icon={Ticket}
           accent="blue"
         />
+        {/* Vouchers are unspent credits the house owes users — page value
+            is a liability line, so it's colored rose (house loss) per
+            CLAUDE.md. */}
         <KpiTile
           label="Page Value"
           value={formatCurrency(pageValue)}
           icon={Coins}
-          accent="emerald"
+          accent="rose"
         />
         <KpiTile
           label="On Page"

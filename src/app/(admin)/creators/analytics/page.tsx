@@ -63,13 +63,15 @@ export default async function CreatorAnalyticsPage({
           icon={UserPlus}
           color="purple"
         />
+        {/* Commission Paid = money we sent OUT to affiliates → house
+            loss → rose per CLAUDE.md house-POV rule. */}
         <StatCard
           title="Commission Paid"
           animatedValue={data.totalCommissionPaid}
           formatKind="currency"
           subtitle="Total paid to affiliates"
           icon={DollarSign}
-          color="green"
+          color="rose"
         />
         <StatCard
           title="Wager Volume"

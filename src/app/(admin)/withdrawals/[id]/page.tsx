@@ -89,20 +89,23 @@ export default async function WithdrawalDetailPage({
         </div>
       </PageHero>
 
-      {/* KPI strip */}
+      {/* KPI strip — withdrawals are money leaving the house, so the
+          Total Value KPI is accented rose (house loss) per CLAUDE.md.
+          Shipping Fee is paid BY the user to cover shipping → house
+          gain → emerald. */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <KpiTile
           label="Total Value"
           value={formatCurrency(data.totalValueUsd)}
           icon={ArrowUpFromLine}
-          accent="emerald"
+          accent="rose"
         />
         {data.shippingFeeUsd > 0 && (
           <KpiTile
             label="Shipping Fee"
             value={formatCurrency(data.shippingFeeUsd)}
             icon={Package}
-            accent="orange"
+            accent="emerald"
           />
         )}
         <KpiTile

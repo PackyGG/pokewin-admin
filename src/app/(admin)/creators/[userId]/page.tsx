@@ -108,12 +108,21 @@ export default async function CreatorDetailPage({
         <StatCard label="Bonus Distributed" value={formatCurrency(data.totalBonusDistributedUsd)} />
       </div>
 
-      {/* Platform PnL */}
+      {/* Platform PnL — already a house-POV figure (positive = house won
+          on this creator's cohort). Palette switches to emerald/rose so
+          it matches the dashboard and the rest of the site. */}
       <Card>
         <CardContent className="pt-6">
           <div className="mb-4 flex items-baseline justify-between">
             <p className="text-card-title font-semibold">Platform PnL</p>
-            <p className={cn("text-2xl font-bold", data.pnl.truePlatformPnl >= 0 ? "text-green-500" : "text-red-500")}>
+            <p
+              className={cn(
+                "text-2xl font-bold",
+                data.pnl.truePlatformPnl >= 0
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-rose-600 dark:text-rose-400",
+              )}
+            >
               {formatCurrency(data.pnl.truePlatformPnl)}
             </p>
           </div>
@@ -147,7 +156,15 @@ export default async function CreatorDetailPage({
               <TableRow>
                 <TableCell className="font-medium">Net PnL</TableCell>
                 {data.pnl.byPeriod.map((p) => (
-                  <TableCell key={p.period} className={cn("text-right font-semibold", p.netPnl >= 0 ? "text-green-500" : "text-red-500")}>
+                  <TableCell
+                    key={p.period}
+                    className={cn(
+                      "text-right font-semibold",
+                      p.netPnl >= 0
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : "text-rose-600 dark:text-rose-400",
+                    )}
+                  >
                     {formatCurrency(p.netPnl)}
                   </TableCell>
                 ))}
@@ -230,7 +247,11 @@ export default async function CreatorDetailPage({
                       </TableCell>
                       <TableCell>{formatCurrency(r.depositAmountUsd)}</TableCell>
                       <TableCell>{formatCurrency(r.wagerAmountUsd)}</TableCell>
-                      <TableCell className="text-green-400">{formatCurrency(r.referrerCutUsd)}</TableCell>
+                      {/* Referrer cut = commission paid by the house to
+                          this creator → house loss → rose per CLAUDE.md. */}
+                      <TableCell className="text-rose-600 dark:text-rose-400">
+                        {formatCurrency(r.referrerCutUsd)}
+                      </TableCell>
                       <TableCell>{formatCurrency(r.userBonusUsd)}</TableCell>
                       <TableCell>{formatDateTime(r.createdAt)}</TableCell>
                     </TableRow>

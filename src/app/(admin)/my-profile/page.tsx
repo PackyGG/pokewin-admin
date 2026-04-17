@@ -97,7 +97,13 @@ export default async function MyProfilePage() {
                       </TableCell>
                       <TableCell>{formatCurrency(r.depositAmountUsd)}</TableCell>
                       <TableCell>{formatCurrency(r.wagerAmountUsd)}</TableCell>
-                      <TableCell className="text-green-400">{formatCurrency(r.referrerCutUsd)}</TableCell>
+                      {/* Creator's own cut is still HOUSE-POV throughout
+                          the admin panel (CLAUDE.md: "STRIKT, keine
+                          Ausnahmen") — every dollar the creator earned
+                          is a dollar we paid out, so rose. */}
+                      <TableCell className="text-rose-600 dark:text-rose-400">
+                        {formatCurrency(r.referrerCutUsd)}
+                      </TableCell>
                       <TableCell>{formatCurrency(r.userBonusUsd)}</TableCell>
                       <TableCell>{formatDateTime(r.createdAt)}</TableCell>
                     </TableRow>
