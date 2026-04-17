@@ -6,8 +6,13 @@ import {
   LayoutDashboard,
   Activity,
   LineChart,
+  Radio,
 } from "lucide-react";
 import { getDashboardStats, getRecentActivity } from "@/lib/queries/dashboard";
+import {
+  getLiveActivity,
+  getLiveDeposits,
+} from "@/lib/queries/dashboard-live";
 import { requirePageAccess } from "@/lib/dal";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { StatCard } from "./stat-card";
@@ -20,6 +25,8 @@ import {
 import { AutoRefresh } from "./auto-refresh";
 import { WagerChart, DepositsChart, SignupsChart } from "./charts";
 import { RecentActivity } from "./recent-activity";
+import { LiveDeposits } from "./live-deposits";
+import { LiveActivity } from "./live-activity";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { PageHero, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
@@ -36,9 +43,11 @@ export default async function DashboardPage({
   const activityPage = Number(params.page) || 1;
   const activityPerPage = Number(params.perPage) || 20;
 
-  const [stats, activity] = await Promise.all([
+  const [stats, activity, liveDeposits, liveActivity] = await Promise.all([
     getDashboardStats(),
     getRecentActivity({ page: activityPage, perPage: activityPerPage }),
+    getLiveDeposits({ sinceCreatedAt: null, limit: 20 }),
+    getLiveActivity({ sinceCreatedAt: null, limit: 25 }),
   ]);
 
   return (
@@ -117,6 +126,18 @@ export default async function DashboardPage({
           <WagerChart data={stats.dailyWagers} />
           <DepositsChart data={stats.dailyDeposits} />
           <SignupsChart data={stats.dailySignups} />
+        </FadeIn>
+      </div>
+
+      {/* Live feed — polled every 3s, pauses when tab is hidden */}
+      <div className="space-y-3">
+        <SectionHeading icon={Radio} title="Live Feed" />
+        <FadeIn className="grid gap-4 md:grid-cols-2">
+          <LiveDeposits
+            initial={liveDeposits.items}
+            initialTotal24h={liveDeposits.total24h}
+          />
+          <LiveActivity initial={liveActivity} />
         </FadeIn>
       </div>
 
