@@ -25,6 +25,7 @@ import { createRaffle, type SearchItem } from "./actions";
 import { PrizePicker } from "./prize-picker";
 
 type PrizeEntry = {
+  _key: string;
   type: "pack" | "card";
   id: string;
   quantity: number;
@@ -44,10 +45,10 @@ export function CreateRaffleButton() {
   const [endsAt, setEndsAt] = useState("");
   const [minPoints, setMinPoints] = useState("");
   const [maxPoints, setMaxPoints] = useState("");
-  const [prizes, setPrizes] = useState<PrizeEntry[]>([{ type: "pack", id: "", quantity: 1 }]);
+  const [prizes, setPrizes] = useState<PrizeEntry[]>([{ _key: crypto.randomUUID(), type: "pack", id: "", quantity: 1 }]);
 
   function addPrize() {
-    setPrizes((prev) => [...prev, { type: "pack", id: "", quantity: 1 }]);
+    setPrizes((prev) => [...prev, { _key: crypto.randomUUID(), type: "pack", id: "", quantity: 1 }]);
   }
 
   function removePrize(index: number) {
@@ -57,7 +58,7 @@ export function CreateRaffleButton() {
   function updatePrizeType(index: number, type: "pack" | "card") {
     setPrizes((prev) =>
       prev.map((p, i) =>
-        i === index ? { type, id: "", quantity: p.quantity } : p,
+        i === index ? { _key: p._key, type, id: "", quantity: p.quantity } : p,
       ),
     );
   }
@@ -85,7 +86,7 @@ export function CreateRaffleButton() {
     setEndsAt("");
     setMinPoints("");
     setMaxPoints("");
-    setPrizes([{ type: "pack", id: "", quantity: 1 }]);
+    setPrizes([{ _key: crypto.randomUUID(), type: "pack", id: "", quantity: 1 }]);
   }
 
   function handleSubmit() {
@@ -184,7 +185,7 @@ export function CreateRaffleButton() {
               </Button>
             </div>
             {prizes.map((prize, i) => (
-              <div key={i} className="space-y-2 rounded-lg border p-3">
+              <div key={prize._key} className="space-y-2 rounded-lg border p-3">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-medium text-muted-foreground">Prize #{i + 1}</span>
                   <div className="flex-1" />

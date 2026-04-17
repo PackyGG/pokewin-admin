@@ -27,6 +27,7 @@ import type { SearchItem } from "./raffles/actions";
 import type { RewardItem } from "@/lib/queries/rewards";
 
 type PackEntry = {
+  _key: string;
   id: string;
   name?: string;
   imageUrl?: string | null;
@@ -48,11 +49,11 @@ export function EditRewardButton({ reward }: { reward: RewardItem }) {
     reward.cashAmount != null ? String(reward.cashAmount) : ""
   );
   const [packs, setPacks] = useState<PackEntry[]>(
-    reward.packs.map((p) => ({ id: p.id, name: p.name, imageUrl: p.imageUrl, priceUsd: p.priceUsd }))
+    reward.packs.map((p) => ({ _key: p.id, id: p.id, name: p.name, imageUrl: p.imageUrl, priceUsd: p.priceUsd }))
   );
 
   function addPack() {
-    setPacks((prev) => [...prev, { id: "" }]);
+    setPacks((prev) => [...prev, { _key: crypto.randomUUID(), id: "" }]);
   }
 
   function removePack(index: number) {
@@ -63,7 +64,7 @@ export function EditRewardButton({ reward }: { reward: RewardItem }) {
     setPacks((prev) =>
       prev.map((p, i) =>
         i === index
-          ? { id: item.id, name: item.name, imageUrl: item.imageUrl, priceUsd: item.priceUsd }
+          ? { _key: p._key, id: item.id, name: item.name, imageUrl: item.imageUrl, priceUsd: item.priceUsd }
           : p,
       ),
     );
@@ -75,7 +76,7 @@ export function EditRewardButton({ reward }: { reward: RewardItem }) {
     setType(reward.type as "one_time" | "daily" | "balance");
     setLevelRequired(String(reward.levelRequired));
     setCashAmount(reward.cashAmount != null ? String(reward.cashAmount) : "");
-    setPacks(reward.packs.map((p) => ({ id: p.id, name: p.name, imageUrl: p.imageUrl, priceUsd: p.priceUsd })));
+    setPacks(reward.packs.map((p) => ({ _key: p.id, id: p.id, name: p.name, imageUrl: p.imageUrl, priceUsd: p.priceUsd })));
   }
 
   function handleSubmit() {
@@ -165,7 +166,7 @@ export function EditRewardButton({ reward }: { reward: RewardItem }) {
               </Button>
             </div>
             {packs.map((pack, i) => (
-              <div key={i} className="flex items-end gap-2">
+              <div key={pack._key} className="flex items-end gap-2">
                 <div className="flex-1 space-y-1">
                   <Label className="text-xs">Pack #{i + 1}</Label>
                   <PrizePicker

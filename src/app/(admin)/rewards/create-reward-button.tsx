@@ -26,6 +26,7 @@ import { PrizePicker } from "./raffles/prize-picker";
 import type { SearchItem } from "./raffles/actions";
 
 type PackEntry = {
+  _key: string;
   id: string;
   name?: string;
   imageUrl?: string | null;
@@ -45,7 +46,7 @@ export function CreateRewardButton({ defaultType }: { defaultType?: "one_time" |
   const [packs, setPacks] = useState<PackEntry[]>([]);
 
   function addPack() {
-    setPacks((prev) => [...prev, { id: "" }]);
+    setPacks((prev) => [...prev, { _key: crypto.randomUUID(), id: "" }]);
   }
 
   function removePack(index: number) {
@@ -56,7 +57,7 @@ export function CreateRewardButton({ defaultType }: { defaultType?: "one_time" |
     setPacks((prev) =>
       prev.map((p, i) =>
         i === index
-          ? { id: item.id, name: item.name, imageUrl: item.imageUrl, priceUsd: item.priceUsd }
+          ? { _key: p._key, id: item.id, name: item.name, imageUrl: item.imageUrl, priceUsd: item.priceUsd }
           : p,
       ),
     );
@@ -153,7 +154,7 @@ export function CreateRewardButton({ defaultType }: { defaultType?: "one_time" |
               </Button>
             </div>
             {packs.map((pack, i) => (
-              <div key={i} className="flex items-end gap-2">
+              <div key={pack._key} className="flex items-end gap-2">
                 <div className="flex-1 space-y-1">
                   <Label className="text-xs">Pack #{i + 1}</Label>
                   <PrizePicker
