@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { ArrowUpFromLine } from "lucide-react";
 import { getWithdrawals } from "@/lib/queries/withdrawals";
 import { requirePageAccess } from "@/lib/dal";
 import { WithdrawalsDataTable } from "./data-table";
@@ -7,6 +8,8 @@ import { DataTablePagination } from "@/components/data-table/data-table-paginati
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { ValueRangeFilter } from "./value-range-filter";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PageHero } from "@/components/modern-panels";
+import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Withdrawals" };
 
@@ -38,44 +41,61 @@ export default async function WithdrawalsPage({
   });
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-bold">Withdrawals</h1>
-      <Suspense fallback={<Skeleton className="h-10 w-full" />}>
-        <DataTableToolbar
-          searchPlaceholder="Search by ID or username..."
-          filters={[
-            {
-              name: "Status",
-              paramKey: "status",
-              options: [
-                { label: "Pending", value: "pending" },
-                { label: "Processing", value: "processing" },
-                { label: "Shipped", value: "shipped" },
-                { label: "Completed", value: "completed" },
-                { label: "Cancelled", value: "cancelled" },
-                { label: "Failed", value: "failed" },
-              ],
-            },
-            {
-              name: "Method",
-              paramKey: "method",
-              options: [
-                { label: "Physical", value: "physical" },
-                { label: "Crypto", value: "crypto" },
-              ],
-            },
-          ]}
-        >
-          <ValueRangeFilter />
-        </DataTableToolbar>
-      </Suspense>
-      <WithdrawalsDataTable columns={columns} data={result.data} />
-      <DataTablePagination
-        page={result.page}
-        totalPages={result.totalPages}
-        total={result.total}
-        perPage={result.perPage}
-      />
+    <div className="space-y-6">
+      <PageHero>
+        <div className="flex items-center gap-3">
+          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
+            <ArrowUpFromLine className="size-5 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold leading-tight">Withdrawals</h1>
+            <p className="text-sm text-muted-foreground">
+              Physical and crypto withdrawal requests — filter by status and method.
+            </p>
+          </div>
+        </div>
+      </PageHero>
+
+      <div className="space-y-4">
+        <Suspense fallback={<Skeleton className="h-10 w-full" />}>
+          <DataTableToolbar
+            searchPlaceholder="Search by ID or username..."
+            filters={[
+              {
+                name: "Status",
+                paramKey: "status",
+                options: [
+                  { label: "Pending", value: "pending" },
+                  { label: "Processing", value: "processing" },
+                  { label: "Shipped", value: "shipped" },
+                  { label: "Completed", value: "completed" },
+                  { label: "Cancelled", value: "cancelled" },
+                  { label: "Failed", value: "failed" },
+                ],
+              },
+              {
+                name: "Method",
+                paramKey: "method",
+                options: [
+                  { label: "Physical", value: "physical" },
+                  { label: "Crypto", value: "crypto" },
+                ],
+              },
+            ]}
+          >
+            <ValueRangeFilter />
+          </DataTableToolbar>
+        </Suspense>
+        <FadeIn>
+          <WithdrawalsDataTable columns={columns} data={result.data} />
+        </FadeIn>
+        <DataTablePagination
+          page={result.page}
+          totalPages={result.totalPages}
+          total={result.total}
+          perPage={result.perPage}
+        />
+      </div>
     </div>
   );
 }

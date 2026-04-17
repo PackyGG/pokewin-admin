@@ -1,9 +1,8 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ArrowUpFromLine, Package, Ticket, Layers } from "lucide-react";
 import { getWithdrawalDetail } from "@/lib/queries/withdrawals";
 import { requirePageAccess } from "@/lib/dal";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
@@ -11,6 +10,12 @@ import { StatusTimeline } from "./status-timeline";
 import { WithdrawalActionButtons } from "./action-buttons";
 import { CardImage } from "@/components/card-image";
 import { CopyableAddress } from "./copyable-address";
+import {
+  PageHero,
+  SectionHeading,
+  KpiTile,
+} from "@/components/modern-panels";
+import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Withdrawal Detail" };
 
@@ -54,37 +59,76 @@ export default async function WithdrawalDetailPage({
 
   return (
     <div className="space-y-6">
-      {/* Header + Timeline + Actions + Details — single card */}
-      <Card>
-        <CardContent className="pt-6 space-y-6">
-          {/* Header: back + title | timeline | actions — single row */}
-          <div className="flex items-center gap-6">
-            <Link href="/withdrawals" className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground shrink-0">
-              <ArrowLeft className="size-4" />
-            </Link>
-            <div className="shrink-0">
-              <div className="flex items-center gap-2">
-                <h1 className="text-xl font-bold">Withdrawal</h1>
-                <Badge variant="outline" className={STATUS_COLORS[data.status]}>{data.status}</Badge>
-                <Badge variant="outline">{data.method}</Badge>
-              </div>
-              <p className="font-mono text-xs text-muted-foreground mt-0.5">{data.id}</p>
-            </div>
-            <div className="flex-1 flex justify-center">
-              <StatusTimeline steps={timelineSteps} />
-            </div>
-            <WithdrawalActionButtons
-              withdrawalId={data.id}
-              status={data.status}
-              method={data.method}
-            />
+      <PageHero>
+        <div className="flex items-center gap-4">
+          <Link
+            href="/withdrawals"
+            className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground shrink-0"
+          >
+            <ArrowLeft className="size-4" />
+          </Link>
+          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 shrink-0">
+            <ArrowUpFromLine className="size-5 text-primary" />
           </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-2xl font-bold leading-tight">Withdrawal</h1>
+              <Badge variant="outline" className={STATUS_COLORS[data.status]}>{data.status}</Badge>
+              <Badge variant="outline">{data.method}</Badge>
+            </div>
+            <p className="font-mono text-xs text-muted-foreground mt-0.5">{data.id}</p>
+          </div>
+          <WithdrawalActionButtons
+            withdrawalId={data.id}
+            status={data.status}
+            method={data.method}
+          />
+        </div>
+        <div className="mt-6 flex justify-center">
+          <StatusTimeline steps={timelineSteps} />
+        </div>
+      </PageHero>
 
-          {/* Details */}
-          <div className="grid gap-6 md:grid-cols-2 border-t pt-4">
-            {/* Left: core details */}
+      {/* KPI strip */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <KpiTile
+          label="Total Value"
+          value={formatCurrency(data.totalValueUsd)}
+          icon={ArrowUpFromLine}
+          accent="emerald"
+        />
+        {data.shippingFeeUsd > 0 && (
+          <KpiTile
+            label="Shipping Fee"
+            value={formatCurrency(data.shippingFeeUsd)}
+            icon={Package}
+            accent="orange"
+          />
+        )}
+        <KpiTile
+          label="Items"
+          value={String(data.items.length)}
+          icon={Layers}
+          accent="blue"
+        />
+        {data.vouchers.length > 0 && (
+          <KpiTile
+            label="Vouchers"
+            value={String(data.vouchers.length)}
+            icon={Ticket}
+            accent="purple"
+          />
+        )}
+      </div>
+
+      {/* Details panel */}
+      <FadeIn>
+        <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
+          <div className="relative p-5 md:p-6 grid gap-6 md:grid-cols-2">
             <div className="space-y-3">
-              <p className="text-xs font-medium text-muted-foreground mb-2">Details</p>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Details
+              </p>
               <InfoRow label="User">
                 <Link href={`/users/${data.userId}`} className="text-blue-400 hover:underline">
                   {data.username}
@@ -110,17 +154,20 @@ export default async function WithdrawalDetailPage({
               )}
             </div>
 
-            {/* Right: shipping or crypto */}
             <div className="space-y-3">
               {data.method === "physical" && shippingSnapshot && (
                 <>
-                  <p className="text-xs font-medium text-muted-foreground mb-2">Shipping Address</p>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Shipping Address
+                  </p>
                   <CopyableAddress address={shippingSnapshot} />
                 </>
               )}
               {data.method === "crypto" && (
                 <>
-                  <p className="text-xs font-medium text-muted-foreground mb-2">Crypto Details</p>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Crypto Details
+                  </p>
                   {data.cryptoAsset && <InfoRow label="Asset">{data.cryptoAsset}</InfoRow>}
                   {data.cryptoAmount > 0 && <InfoRow label="Amount">{data.cryptoAmount}</InfoRow>}
                   {data.destinationAddress && (
@@ -137,80 +184,82 @@ export default async function WithdrawalDetailPage({
               )}
             </div>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </FadeIn>
 
       {/* Vouchers */}
       {data.vouchers.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">
-              Vouchers ({data.vouchers.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="divide-y">
-              {data.vouchers.map((voucher) => (
-                <div key={voucher.id} className="flex items-center justify-between py-2">
-                  <div>
-                    <p className="text-sm font-medium">{formatCurrency(voucher.value)}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {voucher.origin}{voucher.description ? ` — ${voucher.description}` : ""}
-                    </p>
+        <div className="space-y-3">
+          <SectionHeading
+            icon={Ticket}
+            title={`Vouchers (${data.vouchers.length})`}
+          />
+          <FadeIn>
+            <div className="rounded-2xl border bg-card/60 p-4">
+              <div className="divide-y">
+                {data.vouchers.map((voucher) => (
+                  <div key={voucher.id} className="flex items-center justify-between py-2">
+                    <div>
+                      <p className="text-sm font-medium">{formatCurrency(voucher.value)}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {voucher.origin}{voucher.description ? ` — ${voucher.description}` : ""}
+                      </p>
+                    </div>
+                    <span className="font-mono text-xs text-muted-foreground">{voucher.id.slice(0, 8)}...</span>
                   </div>
-                  <span className="font-mono text-xs text-muted-foreground">{voucher.id.slice(0, 8)}...</span>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </CardContent>
-        </Card>
+          </FadeIn>
+        </div>
       )}
 
       {/* Items grid */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium">
-            Items ({data.items.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {data.items.length === 0 ? (
-            <p className="text-center text-sm text-muted-foreground py-8">No items</p>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-              {data.items.map((item) => (
-                <div
-                  key={item.id}
-                  className="rounded-lg border bg-card overflow-hidden"
-                >
-                  <div className="aspect-[2/3] relative bg-muted">
-                    <CardImage
-                      src={item.imageUrl}
-                      alt={item.cardName}
-                      className="size-full rounded-t-lg"
-                    />
-                    {item.rarity && (
-                      <span
-                        className={`absolute bottom-1.5 left-1.5 rounded px-1.5 py-0.5 text-[11px] font-semibold leading-none shadow backdrop-blur-sm ${RARITY_COLORS[item.rarity.toLowerCase()] ?? "bg-black/80 text-white"}`}
-                      >
-                        {item.rarity}
-                      </span>
-                    )}
+      <div className="space-y-3">
+        <SectionHeading
+          icon={Layers}
+          title={`Items (${data.items.length})`}
+        />
+        <FadeIn>
+          <div className="rounded-2xl border bg-card/60 p-4">
+            {data.items.length === 0 ? (
+              <p className="text-center text-sm text-muted-foreground py-8">No items</p>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                {data.items.map((item) => (
+                  <div
+                    key={item.id}
+                    className="rounded-lg border bg-card overflow-hidden"
+                  >
+                    <div className="aspect-[2/3] relative bg-muted">
+                      <CardImage
+                        src={item.imageUrl}
+                        alt={item.cardName}
+                        className="size-full rounded-t-lg"
+                      />
+                      {item.rarity && (
+                        <span
+                          className={`absolute bottom-1.5 left-1.5 rounded px-1.5 py-0.5 text-[11px] font-semibold leading-none shadow backdrop-blur-sm ${RARITY_COLORS[item.rarity.toLowerCase()] ?? "bg-black/80 text-white"}`}
+                        >
+                          {item.rarity}
+                        </span>
+                      )}
+                    </div>
+                    <div className="p-2 space-y-0.5">
+                      <p className="text-xs font-medium truncate" title={item.cardName}>
+                        {item.cardName}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">
+                        {formatCurrency(item.value)}
+                      </p>
+                    </div>
                   </div>
-                  <div className="p-2 space-y-0.5">
-                    <p className="text-xs font-medium truncate" title={item.cardName}>
-                      {item.cardName}
-                    </p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {formatCurrency(item.value)}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                ))}
+              </div>
+            )}
+          </div>
+        </FadeIn>
+      </div>
     </div>
   );
 }

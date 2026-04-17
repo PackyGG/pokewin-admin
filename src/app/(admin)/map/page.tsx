@@ -1,10 +1,11 @@
-import { Globe, Users, MapPinOff } from "lucide-react";
+import { Globe, Users, MapPinOff, Map as MapIcon } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { getUsersByCountry, type Period } from "@/lib/queries/map";
 import { formatNumber } from "@/lib/utils/format";
-import { StatCard } from "../dashboard/stat-card";
 import { PeriodFilter } from "./period-filter";
 import { WorldMap } from "./world-map";
+import { PageHero, KpiTile } from "@/components/modern-panels";
+import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Map" };
 
@@ -31,40 +32,54 @@ export default async function MapPage({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-page-title">Map</h1>
-        <PeriodFilter />
-      </div>
+      <PageHero>
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
+              <MapIcon className="size-5 text-primary" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold leading-tight">Map</h1>
+              <p className="text-sm text-muted-foreground">
+                Geographic distribution of users across countries.
+              </p>
+            </div>
+          </div>
+          <PeriodFilter />
+        </div>
+      </PageHero>
 
       <div className="grid gap-4 md:grid-cols-3">
-        <StatCard
-          title="Total Users"
+        <KpiTile
+          label="Total Users"
           value={formatNumber(data.totalUsers)}
-          subtitle={`${data.byCountry.length} countries`}
+          sub={`${data.byCountry.length} countries`}
           icon={Users}
-          color="blue"
+          accent="blue"
         />
-        <StatCard
-          title="Top Country"
+        <KpiTile
+          label="Top Country"
           value={topCountry?.country ?? topCountry?.country_code ?? "—"}
-          subtitle={
+          sub={
             topCountry
               ? `${formatNumber(topCountry.user_count)} users`
               : "No data"
           }
           icon={Globe}
-          color="green"
+          accent="emerald"
         />
-        <StatCard
-          title="Without Location"
+        <KpiTile
+          label="Without Location"
           value={formatNumber(data.withoutLocation)}
-          subtitle="Users with no country data"
+          sub="Users with no country data"
           icon={MapPinOff}
-          color="orange"
+          accent="orange"
         />
       </div>
 
-      <WorldMap data={data.byCountry} />
+      <FadeIn>
+        <WorldMap data={data.byCountry} />
+      </FadeIn>
     </div>
   );
 }
