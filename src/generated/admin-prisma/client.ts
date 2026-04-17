@@ -116,3 +116,8 @@ export type expenses = Prisma.expensesModel
  * 
  */
 export type recurring_expenses = Prisma.recurring_expensesModel
+/**
+ * Model admin_settings
+ * 
+ */
+export type admin_settings = Prisma.admin_settingsModel

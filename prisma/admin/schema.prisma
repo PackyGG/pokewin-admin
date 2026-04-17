@@ -305,3 +305,14 @@ model recurring_expenses {
 
   created_by      admin_users      @relation(fields: [created_by_id], references: [id])
 }
+
+// Generic key/value store for admin-panel configuration. Used by the Ads
+// tracking feature to remember which real user account owns the house
+// affiliate codes, and extensible to other one-off global settings
+// without spawning a dedicated model per entry.
+model admin_settings {
+  key        String   @id
+  value      String
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+  updated_by String?  @db.Uuid
+}

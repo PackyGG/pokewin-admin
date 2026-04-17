@@ -74,6 +74,7 @@ export const CAPABILITIES = [
       { key: "pages.creators_codes", label: "Creator Codes", description: "Browse affiliate / creator codes." },
       { key: "pages.creators_analytics", label: "Creator Analytics", description: "View creator performance." },
       { key: "pages.creators_settings", label: "Creator Settings", description: "Global creator settings." },
+      { key: "pages.ads", label: "Ads", description: "Access the ads / generic codes page." },
       { key: "pages.chat", label: "Chat Moderation", description: "View and moderate chat." },
       { key: "pages.security", label: "Security", description: "Site security config." },
       { key: "pages.admin_users", label: "Admin Users", description: "Manage admin panel users." },
@@ -310,6 +311,18 @@ export const CAPABILITIES = [
       { key: "creators.delete_deal", label: "Delete deal", description: "Remove a creator deal." },
       { key: "creators.manual_fill", label: "Manual balance fill", description: "Trigger a manual balance fill for a creator." },
       { key: "creators.link_main_user", label: "Link to main user", description: "Link a creator admin user to a main-site user." },
+    ],
+  },
+
+  // ── Ads (generic / house-account campaign codes) ───────────────────────
+  {
+    domain: "ads",
+    label: "Ads",
+    description: "Campaign tracking codes.",
+    capabilities: [
+      { key: "ads.set_house_account", label: "Set house account", description: "Configure the account used for ad codes." },
+      { key: "ads.create_code", label: "Create ad code", description: "Create a new ad tracking code." },
+      { key: "ads.delete_code", label: "Delete ad code", description: "Delete an ad tracking code." },
     ],
   },
 

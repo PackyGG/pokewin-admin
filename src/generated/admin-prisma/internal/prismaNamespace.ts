@@ -398,7 +398,8 @@ export const ModelName = {
   creator_balance_fills: 'creator_balance_fills',
   admin_balance_limits: 'admin_balance_limits',
   expenses: 'expenses',
-  recurring_expenses: 'recurring_expenses'
+  recurring_expenses: 'recurring_expenses',
+  admin_settings: 'admin_settings'
 } as const
 
 export type ModelName = (typeof ModelName)[keyof typeof ModelName]
@@ -414,7 +415,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "admin_users" | "admin_roles" | "admin_sessions" | "admin_notes" | "admin_audit_events" | "admin_gift_card_actions" | "admin_voucher_actions" | "creator_webhooks" | "creator_deals" | "creator_socials" | "webhook_deliveries" | "creator_balance_fills" | "admin_balance_limits" | "expenses" | "recurring_expenses"
+    modelProps: "admin_users" | "admin_roles" | "admin_sessions" | "admin_notes" | "admin_audit_events" | "admin_gift_card_actions" | "admin_voucher_actions" | "creator_webhooks" | "creator_deals" | "creator_socials" | "webhook_deliveries" | "creator_balance_fills" | "admin_balance_limits" | "expenses" | "recurring_expenses" | "admin_settings"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -1528,6 +1529,80 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         }
       }
     }
+    admin_settings: {
+      payload: Prisma.$admin_settingsPayload<ExtArgs>
+      fields: Prisma.admin_settingsFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.admin_settingsFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_settingsPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.admin_settingsFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_settingsPayload>
+        }
+        findFirst: {
+          args: Prisma.admin_settingsFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_settingsPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.admin_settingsFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_settingsPayload>
+        }
+        findMany: {
+          args: Prisma.admin_settingsFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_settingsPayload>[]
+        }
+        create: {
+          args: Prisma.admin_settingsCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_settingsPayload>
+        }
+        createMany: {
+          args: Prisma.admin_settingsCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.admin_settingsCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_settingsPayload>[]
+        }
+        delete: {
+          args: Prisma.admin_settingsDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_settingsPayload>
+        }
+        update: {
+          args: Prisma.admin_settingsUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_settingsPayload>
+        }
+        deleteMany: {
+          args: Prisma.admin_settingsDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.admin_settingsUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.admin_settingsUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_settingsPayload>[]
+        }
+        upsert: {
+          args: Prisma.admin_settingsUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_settingsPayload>
+        }
+        aggregate: {
+          args: Prisma.Admin_settingsAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateAdmin_settings>
+        }
+        groupBy: {
+          args: Prisma.admin_settingsGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Admin_settingsGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.admin_settingsCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Admin_settingsCountAggregateOutputType> | number
+        }
+      }
+    }
   }
 } & {
   other: {
@@ -1810,6 +1885,16 @@ export const Recurring_expensesScalarFieldEnum = {
 } as const
 
 export type Recurring_expensesScalarFieldEnum = (typeof Recurring_expensesScalarFieldEnum)[keyof typeof Recurring_expensesScalarFieldEnum]
+
+
+export const Admin_settingsScalarFieldEnum = {
+  key: 'key',
+  value: 'value',
+  updated_at: 'updated_at',
+  updated_by: 'updated_by'
+} as const
+
+export type Admin_settingsScalarFieldEnum = (typeof Admin_settingsScalarFieldEnum)[keyof typeof Admin_settingsScalarFieldEnum]
 
 
 export const SortOrder = {
@@ -2178,6 +2263,7 @@ export type GlobalOmitConfig = {
   admin_balance_limits?: Prisma.admin_balance_limitsOmit
   expenses?: Prisma.expensesOmit
   recurring_expenses?: Prisma.recurring_expensesOmit
+  admin_settings?: Prisma.admin_settingsOmit
 }
 
 /* Types for Logging */

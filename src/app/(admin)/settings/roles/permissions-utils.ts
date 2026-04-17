@@ -106,6 +106,26 @@ export const CAPABILITIES: CapabilityDef[] = [
     group: "Moderation",
   },
 
+  // ── Ads ─────────────────────────────────────────────────────────────
+  {
+    key: "__can_set_house_account",
+    label: "Set Ads House Account",
+    description: "Configure the real user account used for /creators/ads codes",
+    group: "Ads",
+  },
+  {
+    key: "__can_create_ad_code",
+    label: "Create Ad Code",
+    description: "Create a new ad tracking code on the house account",
+    group: "Ads",
+  },
+  {
+    key: "__can_delete_ad_code",
+    label: "Delete Ad Code",
+    description: "Delete an ad tracking code from the house account",
+    group: "Ads",
+  },
+
   // ── Withdrawals ─────────────────────────────────────────────────────
   {
     key: "__can_process_withdrawals",

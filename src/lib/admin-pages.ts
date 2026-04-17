@@ -40,6 +40,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   // Creators
   { group: "Creators", label: "Creators", key: "/creators" },
   { group: "Creators", label: "Codes", key: "/creators/codes" },
+  { group: "Creators", label: "Ads", key: "/creators/ads" },
   { group: "Creators", label: "Analytics", key: "/creators/analytics" },
   { group: "Creators", label: "Settings", key: "/creators/settings" },
   // Moderation
