@@ -62,6 +62,9 @@ export async function makeCreator(userId: string) {
     const passwordHash = await bcrypt.hash(tempPassword, 12);
     const username = user.username ?? user.email.split("@")[0];
 
+    // Same RETURNING * defense — without an explicit select, a new column
+    // missing on prod would crash "Make Creator" even though the insert
+    // columns themselves are all present.
     await adminDb.admin_users.create({
       data: {
         email: user.email,
@@ -70,6 +73,7 @@ export async function makeCreator(userId: string) {
         role: "creator",
         allowed_pages: ["/my-profile"],
       },
+      select: { id: true },
     });
   }
 

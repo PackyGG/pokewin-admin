@@ -55,43 +55,73 @@ function serialize(row: RawRoleRow): RoleRow {
   };
 }
 
+/**
+ * Detect pre-migration errors so roles pages degrade gracefully.
+ * Postgres codes:
+ *   42P01 — undefined_table (admin_roles doesn't exist yet)
+ *   42703 — undefined_column (role_id not added to admin_users yet)
+ * Prisma maps both to its own P-codes or exposes the pg code on .meta.
+ */
+function isMissingRolesSchema(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const code = (err as { code?: string }).code;
+  if (code === "P2021" || code === "P2022") return true;
+  const pgCode = (err as { meta?: { code?: string } })?.meta?.code;
+  if (pgCode === "42P01" || pgCode === "42703") return true;
+  return /(relation .* does not exist|column .* does not exist)/i.test(err.message);
+}
+
 export async function listRoles(): Promise<RoleRow[]> {
   await requireAdmin();
-  const rows = await adminDb.$queryRawUnsafe<RawRoleRow[]>(
-    `SELECT r.id::text AS id,
-            r.name,
-            r.description,
-            r.is_system,
-            r.capabilities,
-            r.created_at,
-            r.updated_at,
-            COUNT(u.id) AS user_count
-       FROM admin_roles r
-       LEFT JOIN admin_users u ON u.role_id = r.id
-       GROUP BY r.id
-       ORDER BY r.is_system DESC, r.name ASC`,
-  );
-  return rows.map(serialize);
+  try {
+    const rows = await adminDb.$queryRawUnsafe<RawRoleRow[]>(
+      `SELECT r.id::text AS id,
+              r.name,
+              r.description,
+              r.is_system,
+              r.capabilities,
+              r.created_at,
+              r.updated_at,
+              COUNT(u.id) AS user_count
+         FROM admin_roles r
+         LEFT JOIN admin_users u ON u.role_id = r.id
+         GROUP BY r.id
+         ORDER BY r.is_system DESC, r.name ASC`,
+    );
+    return rows.map(serialize);
+  } catch (err) {
+    // Pre-migration: admin_roles table or role_id column not yet applied.
+    // Return empty list so the page renders a "run the migration" state
+    // instead of a 500.
+    if (isMissingRolesSchema(err)) return [];
+    throw err;
+  }
 }
 
 export async function getRole(id: string): Promise<RoleRow | null> {
   await requireAdmin();
-  const rows = await adminDb.$queryRawUnsafe<RawRoleRow[]>(
-    `SELECT r.id::text AS id,
-            r.name,
-            r.description,
-            r.is_system,
-            r.capabilities,
-            r.created_at,
-            r.updated_at,
-            COUNT(u.id) AS user_count
-       FROM admin_roles r
-       LEFT JOIN admin_users u ON u.role_id = r.id
-       WHERE r.id = $1::uuid
-       GROUP BY r.id`,
-    id,
-  );
-  return rows.length > 0 ? serialize(rows[0]) : null;
+  try {
+    const rows = await adminDb.$queryRawUnsafe<RawRoleRow[]>(
+      `SELECT r.id::text AS id,
+              r.name,
+              r.description,
+              r.is_system,
+              r.capabilities,
+              r.created_at,
+              r.updated_at,
+              COUNT(u.id) AS user_count
+         FROM admin_roles r
+         LEFT JOIN admin_users u ON u.role_id = r.id
+         WHERE r.id = $1::uuid
+         GROUP BY r.id`,
+      id,
+    );
+    return rows.length > 0 ? serialize(rows[0]) : null;
+  } catch (err) {
+    // Same pre-migration fallback as listRoles.
+    if (isMissingRolesSchema(err)) return null;
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------

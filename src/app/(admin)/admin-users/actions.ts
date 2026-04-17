@@ -30,6 +30,10 @@ export async function createAdminUser(data: {
     allowedPages = existingUser?.allowed_pages ?? [];
   }
 
+  // Explicit select — Prisma's default create() RETURNS * which references
+  // every column the generated client knows about. If a new column is
+  // missing from prod (preferences / role_id / profile_*), the insert
+  // crashes with P2022 even though the write itself would succeed.
   await adminDb.admin_users.create({
     data: {
       email: data.email,
@@ -38,6 +42,7 @@ export async function createAdminUser(data: {
       role: data.role as admin_role,
       allowed_pages: allowedPages,
     },
+    select: { id: true },
   });
 
   await createAdminAuditEvent({
