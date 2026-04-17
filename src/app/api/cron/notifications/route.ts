@@ -86,6 +86,16 @@ async function processEventType(
     return { sent: 0, skipped: "not_configured" };
   }
 
+  // First-time enable fix: when the channel has no cursor yet the
+  // underlying query has no lower-bound and would flood Telegram with
+  // every historical deposit / withdrawal / signup in chronological
+  // order. Seed the cursor at "now" and skip this tick — only events
+  // that happen AFTER the operator flipped the toggle will fire.
+  if (!config.cursor) {
+    await advanceCursor(eventType, new Date().toISOString());
+    return { sent: 0, skipped: "cursor_initialised" };
+  }
+
   const events = await fetchPendingEvents(eventType, config.cursor, BATCH_LIMIT);
   if (events.length === 0) return { sent: 0 };
 
