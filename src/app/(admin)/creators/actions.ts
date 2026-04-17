@@ -51,8 +51,11 @@ export async function makeCreator(userId: string) {
 
   // Create admin_user with role=creator so they can access the admin dashboard
   // Skip if one already exists with the same email
+  // Only used for existence check — tiny select avoids P2022 crashes
+  // when a later-migration column is missing in prod.
   const existingAdminUser = await adminDb.admin_users.findFirst({
     where: { email: user.email },
+    select: { id: true },
   });
   if (!existingAdminUser) {
     const tempPassword = crypto.randomBytes(16).toString("hex");

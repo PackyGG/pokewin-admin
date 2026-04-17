@@ -18,8 +18,20 @@ export const metadata = { title: "Admin Users" };
 export default async function AdminUsersPage() {
   await requirePageAccess("/admin-users");
 
+  // Explicit select — same defensive rationale as login/actions.ts. A
+  // missing column from an unrun migration would otherwise crash this page
+  // with P2022 before anything renders.
   const users = await adminDb.admin_users.findMany({
     orderBy: { created_at: "desc" },
+    select: {
+      id: true,
+      email: true,
+      username: true,
+      role: true,
+      totp_enabled: true,
+      is_active: true,
+      created_at: true,
+    },
   });
 
   const activeCount = users.filter((u) => u.is_active).length;
