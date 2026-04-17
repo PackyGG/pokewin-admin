@@ -28,11 +28,6 @@ import * as React from "react";
  *     server-side proxy tears down its upstream WS when the SSE response
  *     aborts, so hidden tabs don't keep an upstream connection alive.
  *   - Malformed messages are logged to `console.error` and skipped.
- *
- * URL override:
- *   `NEXT_PUBLIC_PACKY_SSE_URL` — path of the SSE proxy. Defaults to
- *   `/api/packy-live`. Allows a custom proxy if ever needed without a
- *   code change.
  */
 
 // ─── Types ────────────────────────────────────────────────────────
@@ -98,7 +93,7 @@ export type ConnectionStatus = "connecting" | "open" | "reconnecting" | "closed"
 
 // ─── Singleton state ──────────────────────────────────────────────
 
-const DEFAULT_SSE_PATH = "/api/packy-live";
+const SSE_PATH = "/api/packy-live";
 
 // Handlers are stored by event `type`. Unknown event types can still be
 // subscribed to (the emit path never rejects); malformed JSON is logged
@@ -114,14 +109,6 @@ const statusHandlers = new Set<StatusHandler>();
 let source: EventSource | null = null;
 let visibilityBound = false;
 let currentStatus: ConnectionStatus = "closed";
-
-function getSseUrl(): string {
-  const fromEnv =
-    typeof process !== "undefined"
-      ? process.env.NEXT_PUBLIC_PACKY_SSE_URL
-      : undefined;
-  return fromEnv && fromEnv.trim() ? fromEnv : DEFAULT_SSE_PATH;
-}
 
 function setStatus(next: ConnectionStatus) {
   if (next === currentStatus) return;
@@ -213,7 +200,7 @@ function openSource() {
 
   let es: EventSource;
   try {
-    es = new EventSource(getSseUrl(), { withCredentials: true });
+    es = new EventSource(SSE_PATH, { withCredentials: true });
   } catch (err) {
     console.error("[packy-ws] failed to construct EventSource", err);
     setStatus("closed");

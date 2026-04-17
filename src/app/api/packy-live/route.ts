@@ -37,9 +37,26 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const PACKY_WS_URL = "wss://api.packy.gg/v1/ws";
-const PACKY_ORIGIN = "https://beta.packy.gg";
 const ROTATION_MS = 240_000; // 4 min
 const HEARTBEAT_MS = 15_000;
+
+/**
+ * Exact handshake headers copied 1:1 from a known-working browser WS to
+ * the packy.gg gateway. Protocol-level fields (Upgrade, Connection,
+ * Sec-WebSocket-Key, Sec-WebSocket-Version, Sec-WebSocket-Extensions)
+ * are driven by the `ws` library itself — the library would override
+ * any override we tried anyway, and Sec-WebSocket-Key must be random
+ * per handshake for the WS protocol to work. permessage-deflate is
+ * wired via the `perMessageDeflate` option below.
+ */
+const PACKY_WS_HEADERS: Record<string, string> = {
+  Origin: "https://beta.packy.gg",
+  "Cache-Control": "no-cache",
+  "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
+  Pragma: "no-cache",
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+};
 
 export async function GET(request: Request): Promise<Response> {
   // Only authenticated admin sessions may open the proxy — otherwise
@@ -105,12 +122,19 @@ export async function GET(request: Request): Promise<Response> {
       }
       request.signal.addEventListener("abort", cleanup, { once: true });
 
-      // Open the upstream WebSocket with the Origin the gateway expects.
-      // Any error here falls through to the `error` / `close` handlers
-      // below — we never throw synchronously out of start().
+      // Open the upstream WebSocket with the full handshake header set
+      // the gateway expects (see PACKY_WS_HEADERS). Any error here
+      // falls through to the `error` / `close` handlers below — we
+      // never throw synchronously out of start().
       try {
         upstream = new WebSocket(PACKY_WS_URL, {
-          headers: { Origin: PACKY_ORIGIN },
+          headers: PACKY_WS_HEADERS,
+          // Matches `Sec-WebSocket-Extensions: permessage-deflate;
+          // client_max_window_bits` from the known-good browser
+          // handshake. 15 = default max window size (what Chrome
+          // negotiates by default; accepts a boolean-ish form in the
+          // `ws` runtime but @types/ws only types the numeric variant).
+          perMessageDeflate: { clientMaxWindowBits: 15 },
           // Extra-long handshake timeout — we've observed up to ~8s on
           // cold paths. The default (none) means it could hang forever.
           handshakeTimeout: 15_000,
