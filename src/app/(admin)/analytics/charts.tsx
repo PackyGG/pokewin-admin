@@ -199,6 +199,8 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
                 stroke="var(--color-ggr)"
                 strokeWidth={2}
                 dot={false}
+                animationDuration={700}
+                animationEasing="ease-out"
               />
               <Line
                 type="monotone"
@@ -206,6 +208,8 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
                 stroke="var(--color-ngr)"
                 strokeWidth={2}
                 dot={false}
+                animationDuration={700}
+                animationEasing="ease-out"
               />
             </LineChart>
           </ChartContainer>
@@ -249,12 +253,16 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
                 fill="var(--color-packWager)"
                 stackId="wagers"
                 radius={[0, 0, 0, 0]}
+                animationDuration={700}
+                animationEasing="ease-out"
               />
               <Bar
                 dataKey="battleWager"
                 fill="var(--color-battleWager)"
                 stackId="wagers"
                 radius={[4, 4, 0, 0]}
+                animationDuration={700}
+                animationEasing="ease-out"
               />
             </BarChart>
           </ChartContainer>
@@ -293,6 +301,8 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
                 stroke="var(--color-avgDeposit)"
                 strokeWidth={2}
                 dot={false}
+                animationDuration={700}
+                animationEasing="ease-out"
               />
             </LineChart>
           </ChartContainer>
@@ -331,6 +341,8 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
                 stroke="var(--color-avgBet)"
                 strokeWidth={2}
                 dot={false}
+                animationDuration={700}
+                animationEasing="ease-out"
               />
             </LineChart>
           </ChartContainer>
@@ -378,27 +390,37 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
                 dataKey="rewardRakeback"
                 stackId="rewards"
                 fill="var(--color-rewardRakeback)"
+                animationDuration={700}
+                animationEasing="ease-out"
               />
               <Bar
                 dataKey="rewardSignupPacks"
                 stackId="rewards"
                 fill="var(--color-rewardSignupPacks)"
+                animationDuration={700}
+                animationEasing="ease-out"
               />
               <Bar
                 dataKey="rewardLeaderboard"
                 stackId="rewards"
                 fill="var(--color-rewardLeaderboard)"
+                animationDuration={700}
+                animationEasing="ease-out"
               />
               <Bar
                 dataKey="rewardRain"
                 stackId="rewards"
                 fill="var(--color-rewardRain)"
+                animationDuration={700}
+                animationEasing="ease-out"
               />
               <Bar
                 dataKey="rewardPromo"
                 stackId="rewards"
                 fill="var(--color-rewardPromo)"
                 radius={[4, 4, 0, 0]}
+                animationDuration={700}
+                animationEasing="ease-out"
               />
             </BarChart>
           </ChartContainer>
@@ -444,6 +466,8 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
                 dataKey="rewardAffiliate"
                 fill="var(--color-rewardAffiliate)"
                 radius={[4, 4, 0, 0]}
+                animationDuration={700}
+                animationEasing="ease-out"
               />
             </BarChart>
           </ChartContainer>
@@ -483,6 +507,8 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
                 stroke="var(--color-uniqueVisitors)"
                 strokeWidth={2}
                 dot={false}
+                animationDuration={700}
+                animationEasing="ease-out"
               />
               <Line
                 type="monotone"
@@ -490,6 +516,8 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
                 stroke="var(--color-newSignups)"
                 strokeWidth={2}
                 dot={false}
+                animationDuration={700}
+                animationEasing="ease-out"
               />
             </LineChart>
           </ChartContainer>

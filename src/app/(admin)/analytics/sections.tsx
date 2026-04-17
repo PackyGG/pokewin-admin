@@ -135,6 +135,8 @@ export function BattleModesSection({ stats }: { stats: BattleModeStats }) {
                     paddingAngle={2}
                     dataKey="value"
                     stroke="none"
+                    animationDuration={700}
+                    animationEasing="ease-out"
                   >
                     {modeChartData.map((entry, i) => (
                       <Cell key={i} fill={entry.fill} />
@@ -181,6 +183,8 @@ export function BattleModesSection({ stats }: { stats: BattleModeStats }) {
                     paddingAngle={2}
                     dataKey="value"
                     stroke="none"
+                    animationDuration={700}
+                    animationEasing="ease-out"
                   >
                     {formatChartData.map((entry, i) => (
                       <Cell key={i} fill={entry.fill} />
