@@ -344,17 +344,21 @@ export async function computeRiskScoresForList(
     userIds as string[],
   );
 
-  // Also fetch the three network counts. Single query each, grouped by
-  // the user_id subject, so we stay at O(1) round-trips regardless of the
+  // Also fetch the network counts. Single query each, grouped by the
+  // user_id subject, so we stay at O(1) round-trips regardless of the
   // page size.
-  const [ipCountMap, fpCountMap] = await Promise.all([
+  const [ipCountMap, fpCountMap, bannedMap, lockedMap] = await Promise.all([
     batchSharedIpCounts(userIds),
     batchSharedFingerprintCounts(userIds),
+    batchSharedBannedCounts(userIds),
+    batchSharedLockedCounts(userIds),
   ]);
 
   for (const row of rows) {
     const sharedIpCount = ipCountMap.get(row.user_id) ?? 0;
     const sharedFingerprintCount = fpCountMap.get(row.user_id) ?? 0;
+    const sharedBannedCount = bannedMap.get(row.user_id) ?? 0;
+    const sharedLockedCount = lockedMap.get(row.user_id) ?? 0;
 
     // adminNotesCount is skipped in the list view — it's rarely the
     // difference-maker between tiers and needs a second DB. For the
@@ -363,6 +367,8 @@ export async function computeRiskScoresForList(
     const signals = buildSignals(row, {
       sharedIpCount,
       sharedFingerprintCount,
+      sharedBannedCount,
+      sharedLockedCount,
       adminNotesCount: 0,
     });
     const total = signals.reduce(
@@ -410,20 +416,16 @@ export async function computeRiskScoresForList(
 // Weights are tagged with a category for UI grouping + (future) per-
 // category cap. Current implementation caps only at the global 100.
 
-function buildSignals(
-  row: DetailRow,
-  ctx: {
-    sharedIpCount: number;
-    sharedFingerprintCount: number;
-    adminNotesCount: number;
-  },
-): RiskSignal[] {
+type SignalCtx = NetworkCounts & { adminNotesCount: number };
+
+function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
   const signals: RiskSignal[] = [];
 
   // Derived primitives ────────────────────────────────────────────────
   const now = Date.now();
   const accountAgeMs = now - new Date(row.created_at).getTime();
   const accountAgeDays = accountAgeMs / (1000 * 60 * 60 * 24);
+  const accountAgeHours = accountAgeMs / (1000 * 60 * 60);
 
   const totalDeposited = toNumber(row.total_deposited);
   const totalWithdrawn =
@@ -434,7 +436,12 @@ function buildSignals(
   const deposits24h = toNumber(row.deposits_24h_usd);
   const deposits7d = toNumber(row.deposits_7d_usd);
   const depositCountAll = toNumber(row.deposit_count_all);
+  const depositCount1h = toNumber(row.deposit_count_1h);
+  const depositCount24h = toNumber(row.deposit_count_24h);
+  const depositIps24h = toNumber(row.deposit_ips_24h);
+  const withdrawIpsAll = toNumber(row.withdraw_attempt_ips_all);
   const maxSingleDeposit = toNumber(row.max_single_deposit);
+  const maxSingleWager = toNumber(row.max_single_wager);
 
   const firstDepositAt = row.first_deposit_at
     ? new Date(row.first_deposit_at)
@@ -442,9 +449,37 @@ function buildSignals(
   const firstWagerAt = row.first_wager_at
     ? new Date(row.first_wager_at)
     : null;
+  const firstWithdrawalAttemptAt = row.first_withdrawal_attempt_at
+    ? new Date(row.first_withdrawal_attempt_at)
+    : null;
   const lastDepositAt = row.last_deposit_at
     ? new Date(row.last_deposit_at)
     : null;
+
+  // Velocity-side primitives added in v2.
+  const withdraw24h = toNumber(row.withdraw_usd_24h);
+  const withdrawAttemptsTotal = toNumber(row.withdraw_attempts_total);
+  const withdrawCancelledOrFailed = toNumber(
+    row.withdraw_cancelled_or_failed,
+  );
+  const depwithWagerBurst5m = toNumber(row.depwith_wager_burst_5m);
+
+  // Rewards-side primitives added in v2.
+  const giftCardCount = toNumber(row.gift_card_count);
+  const promoCount = toNumber(row.promo_code_count);
+  const balanceRewardValue = toNumber(row.balance_reward_claim_value);
+  const signupRewardClaim = toNumber(row.signup_reward_claim_count);
+  const bonusCreditTotal = toNumber(row.bonus_credit_total);
+  const withdrawalAttemptPreWager = toNumber(
+    row.withdrawal_attempt_pre_wager_count,
+  );
+  const voucherRedeem = toNumber(row.voucher_redeem_count);
+  const packOpens = toNumber(row.pack_opens);
+  const battlesPlayed = toNumber(row.battles_played);
+
+  // Gameplay-side primitives added in v2.
+  const totalCardSale = toNumber(row.total_card_sale_usd);
+  const chatCount = toNumber(row.chat_message_count);
 
   // ═══════════════════════════════════════════════════════════════════
   // CATEGORY A — Money velocity & patterns (max ~30)
