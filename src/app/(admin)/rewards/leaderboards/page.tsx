@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
+import { Trophy } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import {
   getRaceLeaderboard,
@@ -21,6 +22,8 @@ import { cn } from "@/lib/utils";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { PeriodPicker } from "./period-picker";
 import { RaceTiersTable } from "./race-tiers-table";
+import { PageHero } from "@/components/modern-panels";
+import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Leaderboards" };
 
@@ -59,28 +62,43 @@ export default async function LeaderboardsPage({
   ).value;
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-bold">Leaderboards</h1>
-      <div className="flex flex-wrap gap-1 rounded-lg bg-muted p-1 w-fit">
-        {TABS.map((t) => (
-          <Link
-            key={t.value}
-            href={`/rewards/leaderboards?tab=${t.value}`}
-            className={cn(
-              "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-              tab === t.value
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            {t.label}
-          </Link>
-        ))}
-      </div>
+    <div className="space-y-6">
+      <PageHero>
+        <div className="flex items-center gap-3">
+          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
+            <Trophy className="size-5 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold leading-tight">Leaderboards</h1>
+            <p className="text-sm text-muted-foreground">
+              Wager standings, prize tiers, and historical race claims.
+            </p>
+          </div>
+        </div>
+      </PageHero>
 
-      {tab === "standings" && <StandingsTab params={params} />}
-      {tab === "tiers" && <TiersTab />}
-      {tab === "history" && <HistoryTab params={params} />}
+      <div className="space-y-4">
+        <div className="flex flex-wrap gap-1 rounded-lg bg-muted p-1 w-fit">
+          {TABS.map((t) => (
+            <Link
+              key={t.value}
+              href={`/rewards/leaderboards?tab=${t.value}`}
+              className={cn(
+                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                tab === t.value
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {t.label}
+            </Link>
+          ))}
+        </div>
+
+        {tab === "standings" && <StandingsTab params={params} />}
+        {tab === "tiers" && <TiersTab />}
+        {tab === "history" && <HistoryTab params={params} />}
+      </div>
     </div>
   );
 }
@@ -137,45 +155,47 @@ async function StandingsTab({
       <Suspense>
         <DataTableToolbar searchPlaceholder="Search by username, email, or ID..." />
       </Suspense>
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Position</TableHead>
-              <TableHead>User</TableHead>
-              <TableHead>Wagered</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {result.data.map((e) => (
-              <TableRow key={e.id}>
-                <TableCell>
-                  <Badge variant="outline">#{e.position}</Badge>
-                </TableCell>
-                <TableCell>
-                  <Link
-                    href={`/users/${e.userId}`}
-                    className="hover:underline"
-                  >
-                    {e.username ?? e.userId.slice(0, 8)}
-                  </Link>
-                </TableCell>
-                <TableCell>{formatCurrency(e.wageredUsd)}</TableCell>
-              </TableRow>
-            ))}
-            {result.data.length === 0 && (
+      <FadeIn>
+        <div className="rounded-md border">
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell
-                  colSpan={3}
-                  className="h-24 text-center text-muted-foreground"
-                >
-                  No leaderboard data.
-                </TableCell>
+                <TableHead>Position</TableHead>
+                <TableHead>User</TableHead>
+                <TableHead>Wagered</TableHead>
               </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
+            </TableHeader>
+            <TableBody>
+              {result.data.map((e) => (
+                <TableRow key={e.id}>
+                  <TableCell>
+                    <Badge variant="outline">#{e.position}</Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Link
+                      href={`/users/${e.userId}`}
+                      className="hover:underline"
+                    >
+                      {e.username ?? e.userId.slice(0, 8)}
+                    </Link>
+                  </TableCell>
+                  <TableCell>{formatCurrency(e.wageredUsd)}</TableCell>
+                </TableRow>
+              ))}
+              {result.data.length === 0 && (
+                <TableRow>
+                  <TableCell
+                    colSpan={3}
+                    className="h-24 text-center text-muted-foreground"
+                  >
+                    No leaderboard data.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </FadeIn>
       <DataTablePagination
         page={result.page}
         totalPages={result.totalPages}
@@ -188,7 +208,11 @@ async function StandingsTab({
 
 async function TiersTab() {
   const tiers = await getRacePrizeTiers();
-  return <RaceTiersTable tiers={tiers} />;
+  return (
+    <FadeIn>
+      <RaceTiersTable tiers={tiers} />
+    </FadeIn>
+  );
 }
 
 async function HistoryTab({
@@ -219,53 +243,55 @@ async function HistoryTab({
           </Link>
         ))}
       </div>
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>User</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Position</TableHead>
-              <TableHead>Prize</TableHead>
-              <TableHead>Period</TableHead>
-              <TableHead>Claimed</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {claims.data.map((c) => (
-              <TableRow key={c.id}>
-                <TableCell>
-                  <Link
-                    href={`/users/${c.userId}`}
-                    className="hover:underline"
-                  >
-                    {c.username ?? c.userId.slice(0, 8)}
-                  </Link>
-                </TableCell>
-                <TableCell>
-                  <Badge variant="outline" className="capitalize">
-                    {c.raceType}
-                  </Badge>
-                </TableCell>
-                <TableCell>#{c.position}</TableCell>
-                <TableCell>{formatCurrency(c.prizeAmountUsd)}</TableCell>
-                <TableCell>{formatDateTime(c.racePeriodStart)}</TableCell>
-                <TableCell>{formatDateTime(c.claimedAt)}</TableCell>
-              </TableRow>
-            ))}
-            {claims.data.length === 0 && (
+      <FadeIn>
+        <div className="rounded-md border">
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell
-                  colSpan={6}
-                  className="h-24 text-center text-muted-foreground"
-                >
-                  No claims found.
-                </TableCell>
+                <TableHead>User</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Position</TableHead>
+                <TableHead>Prize</TableHead>
+                <TableHead>Period</TableHead>
+                <TableHead>Claimed</TableHead>
               </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
+            </TableHeader>
+            <TableBody>
+              {claims.data.map((c) => (
+                <TableRow key={c.id}>
+                  <TableCell>
+                    <Link
+                      href={`/users/${c.userId}`}
+                      className="hover:underline"
+                    >
+                      {c.username ?? c.userId.slice(0, 8)}
+                    </Link>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className="capitalize">
+                      {c.raceType}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>#{c.position}</TableCell>
+                  <TableCell>{formatCurrency(c.prizeAmountUsd)}</TableCell>
+                  <TableCell>{formatDateTime(c.racePeriodStart)}</TableCell>
+                  <TableCell>{formatDateTime(c.claimedAt)}</TableCell>
+                </TableRow>
+              ))}
+              {claims.data.length === 0 && (
+                <TableRow>
+                  <TableCell
+                    colSpan={6}
+                    className="h-24 text-center text-muted-foreground"
+                  >
+                    No claims found.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </FadeIn>
       <DataTablePagination
         page={claims.page}
         totalPages={claims.totalPages}

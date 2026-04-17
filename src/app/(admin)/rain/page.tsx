@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
+import { CloudRain } from "lucide-react";
 import { getRains } from "@/lib/queries/rain";
 import { getSiteConfigValues } from "@/lib/queries/site-config";
 import { requirePageAccess } from "@/lib/dal";
@@ -21,6 +22,8 @@ import { RainRangeFilters } from "./range-filters";
 import { InlineBaseCell } from "./inline-base-cell";
 import { RAIN_CONFIG_KEYS } from "./config-keys";
 import { RainConfigCard } from "./rain-config-card";
+import { PageHero } from "@/components/modern-panels";
+import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Rain" };
 
@@ -50,28 +53,42 @@ export default async function RainPage({
   ).value;
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-bold">Rain</h1>
+    <div className="space-y-6">
+      <PageHero>
+        <div className="flex items-center gap-3">
+          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
+            <CloudRain className="size-5 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold leading-tight">Rain</h1>
+            <p className="text-sm text-muted-foreground">
+              Community rain instances — pools, tips, and winners.
+            </p>
+          </div>
+        </div>
+      </PageHero>
 
-      <div className="flex flex-wrap gap-1 rounded-lg bg-muted p-1 w-fit">
-        {TABS.map((t) => (
-          <Link
-            key={t.value}
-            href={`/rain?tab=${t.value}`}
-            className={cn(
-              "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-              tab === t.value
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            {t.label}
-          </Link>
-        ))}
+      <div className="space-y-4">
+        <div className="flex flex-wrap gap-1 rounded-lg bg-muted p-1 w-fit">
+          {TABS.map((t) => (
+            <Link
+              key={t.value}
+              href={`/rain?tab=${t.value}`}
+              className={cn(
+                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                tab === t.value
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {t.label}
+            </Link>
+          ))}
+        </div>
+
+        {tab === "instances" && <InstancesTab params={params} />}
+        {tab === "config" && <ConfigTab />}
       </div>
-
-      {tab === "instances" && <InstancesTab params={params} />}
-      {tab === "config" && <ConfigTab />}
     </div>
   );
 }
@@ -119,53 +136,55 @@ async function InstancesTab({
         </DataTableToolbar>
       </Suspense>
 
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>ID</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Base</TableHead>
-              <TableHead>Tips</TableHead>
-              <TableHead>Total Pool</TableHead>
-              <TableHead>Participants</TableHead>
-              <TableHead>Winner</TableHead>
-              <TableHead>Starts</TableHead>
-              <TableHead>Ends</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rains.data.map((r) => (
-              <TableRow key={r.id} className="cursor-pointer hover:bg-muted/50">
-                <TableCell className="font-mono text-xs">
-                  <Link href={`/rain/${r.id}`} className="hover:underline">
-                    {r.id.slice(0, 8)}...
-                  </Link>
-                </TableCell>
-                <TableCell>
-                  <Badge variant="outline" className={RAIN_STATUS_COLORS[r.status] ?? ""}>
-                    {r.status}
-                  </Badge>
-                </TableCell>
-                <TableCell>
-                  <InlineBaseCell rainId={r.id} value={r.baseAmountUsd} isActive={r.status === "active"} />
-                </TableCell>
-                <TableCell>{formatCurrency(r.tipAmountUsd)}</TableCell>
-                <TableCell>{formatCurrency(r.totalPoolUsd)}</TableCell>
-                <TableCell>{r.participantCount}</TableCell>
-                <TableCell>{r.winnerUsername ?? "-"}</TableCell>
-                <TableCell>{formatDateTime(r.startsAt)}</TableCell>
-                <TableCell>{formatDateTime(r.endsAt)}</TableCell>
-              </TableRow>
-            ))}
-            {rains.data.length === 0 && (
+      <FadeIn>
+        <div className="rounded-md border">
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell colSpan={9} className="h-24 text-center">No rains found.</TableCell>
+                <TableHead>ID</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Base</TableHead>
+                <TableHead>Tips</TableHead>
+                <TableHead>Total Pool</TableHead>
+                <TableHead>Participants</TableHead>
+                <TableHead>Winner</TableHead>
+                <TableHead>Starts</TableHead>
+                <TableHead>Ends</TableHead>
               </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
+            </TableHeader>
+            <TableBody>
+              {rains.data.map((r) => (
+                <TableRow key={r.id} className="cursor-pointer hover:bg-muted/50">
+                  <TableCell className="font-mono text-xs">
+                    <Link href={`/rain/${r.id}`} className="hover:underline">
+                      {r.id.slice(0, 8)}...
+                    </Link>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className={RAIN_STATUS_COLORS[r.status] ?? ""}>
+                      {r.status}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <InlineBaseCell rainId={r.id} value={r.baseAmountUsd} isActive={r.status === "active"} />
+                  </TableCell>
+                  <TableCell>{formatCurrency(r.tipAmountUsd)}</TableCell>
+                  <TableCell>{formatCurrency(r.totalPoolUsd)}</TableCell>
+                  <TableCell>{r.participantCount}</TableCell>
+                  <TableCell>{r.winnerUsername ?? "-"}</TableCell>
+                  <TableCell>{formatDateTime(r.startsAt)}</TableCell>
+                  <TableCell>{formatDateTime(r.endsAt)}</TableCell>
+                </TableRow>
+              ))}
+              {rains.data.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={9} className="h-24 text-center">No rains found.</TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </FadeIn>
 
       <DataTablePagination
         page={rains.page}
@@ -199,8 +218,10 @@ async function ConfigTab() {
       : null;
 
   return (
-    <RainConfigCard
-      initial={{ defaultBaseAmountUsd, durationMinutes }}
-    />
+    <FadeIn>
+      <RainConfigCard
+        initial={{ defaultBaseAmountUsd, durationMinutes }}
+      />
+    </FadeIn>
   );
 }
