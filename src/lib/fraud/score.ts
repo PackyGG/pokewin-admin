@@ -243,19 +243,26 @@ export async function computeRiskScore(
     if (cached) return cached;
   }
 
+  const started = Date.now();
+
   // ── Round-trip 1: heavy aggregate SQL ────────────────────────────────
   const rows = await db.$queryRawUnsafe<DetailRow[]>(DETAIL_SQL, userId);
   if (rows.length === 0) {
-    // No such user — produce a trivial "no data" breakdown. Keeps callers
-    // simple (they don't need to handle null).
-    const emptySignals: RiskSignal[] = [];
+    // No such user — produce a trivial "no data" breakdown. Keeps
+    // callers simple (they don't need to handle null).
     const empty: RiskScoreBreakdown = {
       score: 0,
       tier: "low",
-      signals: emptySignals,
+      signals: [],
+      topReasons: [],
+      suggestions: [],
+      timeline: [],
       sharedIpCount: 0,
       sharedFingerprintCount: 0,
+      sharedBannedCount: 0,
+      sharedLockedCount: 0,
       computedAt: Date.now(),
+      computeDurationMs: Date.now() - started,
     };
     setCached(userId, empty);
     return empty;
@@ -263,21 +270,21 @@ export async function computeRiskScore(
 
   const row = rows[0];
 
-  // ── Round-trip 2-4: network signals + admin notes ────────────────────
+  // ── Parallel round-trips 2-N: network counts, admin notes, timeline ──
   // These live in separate queries because:
   //   - Shared IP / fingerprint counts need a DISTINCT on other_user_id
   //     which doesn't compose cleanly with the main aggregate.
   //   - admin_notes lives in the Admin DB (see CLAUDE.md dual-DB rule).
-  const [sharedIpCount, sharedFingerprintCount, adminNotesCount] =
-    await Promise.all([
-      countSharedIpUsers(userId),
-      countSharedFingerprintUsers(userId),
-      countAdminNotes(userId),
-    ]);
+  //   - Timeline is a union of several tables — easier to read as its
+  //     own query than jammed into the aggregate.
+  const [network, adminNotesCount, timeline] = await Promise.all([
+    fetchNetworkCounts(userId),
+    countAdminNotes(userId),
+    fetchTimeline(userId),
+  ]);
 
   const signals = buildSignals(row, {
-    sharedIpCount,
-    sharedFingerprintCount,
+    ...network,
     adminNotesCount,
   });
 
@@ -288,13 +295,26 @@ export async function computeRiskScore(
   const score = Math.max(0, Math.min(100, Math.round(total)));
   const tier = tierForScore(score);
 
+  const topReasons = [...signals]
+    .filter((s) => s.triggered)
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, 5);
+
+  const suggestions = buildSuggestions(signals, tier);
+
   const result: RiskScoreBreakdown = {
     score,
     tier,
     signals,
-    sharedIpCount,
-    sharedFingerprintCount,
+    topReasons,
+    suggestions,
+    timeline,
+    sharedIpCount: network.sharedIpCount,
+    sharedFingerprintCount: network.sharedFingerprintCount,
+    sharedBannedCount: network.sharedBannedCount,
+    sharedLockedCount: network.sharedLockedCount,
     computedAt: Date.now(),
+    computeDurationMs: Date.now() - started,
   };
   setCached(userId, result);
   return result;
