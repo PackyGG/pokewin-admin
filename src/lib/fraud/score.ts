@@ -692,9 +692,9 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
     totalDeposited > 0 ? totalWagered / totalDeposited : 0;
   const b1Weight =
     totalDeposited >= 250 && wagerMultiplier < 0.3
-      ? 12
+      ? 10
       : totalDeposited >= 250 && wagerMultiplier < 0.6
-        ? 6
+        ? 5
         : 0;
   signals.push({
     id: "gameplay.low_wager_multiplier",
@@ -718,9 +718,9 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
     totalWagered > 0 ? (totalWagered - totalWon) / totalWagered : 0;
   const b2Weight =
     totalWagered >= 1000 && userHouseEdge < 0.0
-      ? 10
+      ? 8
       : totalWagered >= 1000 && userHouseEdge < 0.05
-        ? 5
+        ? 4
         : 0;
   signals.push({
     id: "gameplay.abnormal_house_edge",
@@ -742,9 +742,9 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
   const biggestSingle = toNumber(row.biggest_single_wager);
   const b3Weight =
     accountAgeDays < 3 && biggestSingle >= 250
-      ? 6
+      ? 5
       : accountAgeDays < 7 && biggestSingle >= 500
-        ? 4
+        ? 3
         : 0;
   signals.push({
     id: "gameplay.big_single_wager_new_account",
@@ -756,11 +756,76 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
     explanation:
       b3Weight > 0
         ? `Single wager of $${biggestSingle.toFixed(0)} on an account only ${accountAgeDays.toFixed(1)} days old.`
-        : "No unusual single-wager spikes on a young account.",
+        : biggestSingle > 0
+          ? "No unusual single-wager spikes on a young account."
+          : "No wagers on file.",
+  });
+
+  // B4 — Bankroll dump: ≤1 deposit and a huge single wager relative to
+  //      deposit volume. Someone who deposited $100 and immediately bet
+  //      $80 on a single battle is burning their bankroll — often a
+  //      laundering/chip-dumping pattern when paired with a withdrawal.
+  const b4Weight = (() => {
+    if (depositCountAll > 1 || totalDeposited < 50) return 0;
+    if (maxSingleWager < totalDeposited * 0.5) return 0;
+    if (maxSingleWager < 50) return 0;
+    return 8;
+  })();
+  signals.push({
+    id: "gameplay.bankroll_dump",
+    category: "gameplay",
+    label: "Single wager consumed most of bankroll on a new account",
+    weight: b4Weight,
+    triggered: b4Weight > 0,
+    value: `$${maxSingleWager.toFixed(0)} / $${totalDeposited.toFixed(0)}`,
+    explanation:
+      b4Weight > 0
+        ? `User has ${depositCountAll} deposit${depositCountAll === 1 ? "" : "s"} totalling $${totalDeposited.toFixed(0)} and a single wager of $${maxSingleWager.toFixed(0)} — ${((maxSingleWager / totalDeposited) * 100).toFixed(0)}% of bankroll on one bet.`
+        : "No bankroll-dump pattern detected.",
+  });
+
+  // B5 — First wager happened BEFORE first completed deposit (edge case
+  //      usually caused by a race / cashback / freebie exploit).
+  const b5Weight =
+    firstWagerAt && firstDepositAt && firstWagerAt < firstDepositAt ? 6 : 0;
+  signals.push({
+    id: "gameplay.wager_before_first_deposit",
+    category: "gameplay",
+    label: "First wager preceded first completed deposit",
+    weight: b5Weight,
+    triggered: b5Weight > 0,
+    value:
+      firstWagerAt && firstDepositAt
+        ? `wager ${firstWagerAt.toISOString()} / deposit ${firstDepositAt.toISOString()}`
+        : "—",
+    explanation:
+      b5Weight > 0
+        ? "User placed a wager before their first deposit was recorded as completed. Usually indicates freebie credit or a timing anomaly worth investigating."
+        : "Wagering and depositing happened in the expected order.",
+  });
+
+  // B6 — Heavy pack activity + zero card sales + low wager multiplier.
+  //      Collector behaviour flagged as a mild signal when stacked with
+  //      velocity concerns. Alone it's not fraud, but combined with
+  //      other signals it helps distinguish silent laundering from a
+  //      pure collector.
+  const b6Weight =
+    packOpens >= 20 && totalCardSale === 0 && wagerMultiplier < 0.5 ? 3 : 0;
+  signals.push({
+    id: "gameplay.never_sold_collector",
+    category: "gameplay",
+    label: "Heavy pack activity with zero card sales",
+    weight: b6Weight,
+    triggered: b6Weight > 0,
+    value: `${packOpens} opens / $0 sold`,
+    explanation:
+      b6Weight > 0
+        ? `User has opened ${packOpens} packs and never sold a card, while wagering only ${wagerMultiplier.toFixed(1)}× their deposits. Likely collector behavior, but worth flagging when paired with velocity signals.`
+        : "Sale vs open ratio is normal.",
   });
 
   // ═══════════════════════════════════════════════════════════════════
-  // CATEGORY C — Rewards / bonus abuse (max ~20)
+  // CATEGORY C — Rewards / bonus abuse
   // ═══════════════════════════════════════════════════════════════════
 
   // C1 — Rakeback claims timed within minutes of a deposit-bonus. This
