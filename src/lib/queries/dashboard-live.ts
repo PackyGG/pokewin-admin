@@ -134,7 +134,6 @@ export type LiveActivityEventKind =
   | "deposit"
   | "withdrawal"
   | "wager"
-  | "card_sale"
   | "payout"
   | "signup";
 
@@ -183,8 +182,6 @@ export async function getLiveActivity(params: {
             "creator_tip",
             "rain_win",
             "race_prize",
-            "card_sale",
-            "reward_card_sale",
             "pack_opening",
             "battle_bet",
             "battle_sponsorship",
@@ -203,6 +200,11 @@ export async function getLiveActivity(params: {
             "gift_card_redeemed",
             "promo_code_redeemed",
             "voucher_redeemed",
+            // card_sale / reward_card_sale intentionally excluded — the
+            // user already "paid" for the card via a pack or battle, so
+            // selling it back is a balance-neutral round-trip in the
+            // feed (the pack/battle rows already capture the gambling
+            // P&L; surfacing the sale adds noise without new info).
           ],
         },
       },
@@ -275,9 +277,6 @@ function classifyLedgerKind(type: string): LiveActivityEventKind {
     case "battle_bet":
     case "battle_sponsorship":
       return "wager";
-    case "card_sale":
-    case "reward_card_sale":
-      return "card_sale";
     // Anything that credits the user's balance — battle wins, rakeback,
     // affiliate claims, admin top-ups, reward claims, bonuses, etc.
     case "battle_refund":

@@ -5,7 +5,6 @@ import Link from "next/link";
 import {
   ArrowDownCircle,
   ArrowUpCircle,
-  Banknote,
   Circle,
   Gift,
   Swords,
@@ -66,15 +65,6 @@ const KIND_STYLES: Record<LiveActivityEventKind, KindStyle> = {
     amountClass: "text-emerald-600 dark:text-emerald-400",
     amountSign: "+",
   },
-  // We bought a card back from the user — bad for us (cash outflow).
-  card_sale: {
-    icon: Banknote,
-    label: "Card sale",
-    iconClass: "text-rose-500",
-    chipBg: "bg-rose-500/10 ring-1 ring-rose-500/20",
-    amountClass: "text-rose-600 dark:text-rose-400",
-    amountSign: "-",
-  },
   // Rain wins, race prizes, creator tips — all money leaving the platform.
   payout: {
     icon: Gift,
@@ -104,8 +94,6 @@ const TYPE_LABELS: Record<string, string> = {
   battle_bet: "Battle wager",
   battle_sponsorship: "Battle sponsorship",
   battle_refund: "Battle win",
-  card_sale: "Card sold",
-  reward_card_sale: "Reward card sold",
   rain_win: "Rain win",
   race_prize: "Race prize",
   creator_tip: "Creator tip",

@@ -273,31 +273,48 @@ Jede neue Admin-Seite muss dem modernen Stil von `/users/[id]` folgen. Das ist d
 - **Tabellen** bleiben `@tanstack/react-table` + `src/components/data-table/`, aber eingebettet in einen modernen Container mit `SectionHeading` darüber.
 - **Charts** nutzen `recharts` mit `animationDuration={700}` + `animationEasing="ease-out"`.
 - **Reduce-Motion** muss respektiert sein (tailwind `motion-safe:` / `motion-reduce:` oder Mediaquery).
-- **Finanz-Farben IMMER aus House-Perspektive** (gilt für die gesamte Site — jeder Geldbetrag, jeder Badge, jede Kennzahl, jedes Chart). Grün = gut für die Plattform, Rot = schlecht für die Plattform. **Niemals User-Perspektive.** Ein User, der Geld gewinnt, kostet uns Geld → **rot**. Ein User, der verliert, bringt uns Geld → **grün**. Konkretes Mapping:
+- **Finanz-Farben IMMER aus House-Perspektive — STRIKT, KEINE AUSNAHMEN.** Gilt für die gesamte Site. Jeder Geldbetrag, jeder Badge, jede Kennzahl, jedes Chart, jede Zelle, jede Zahl. Niemals User-Perspektive.
 
-  | Event / Situation | Haus-POV | Farbe |
+  **Die EINE Regel:**
+  > **User gewinnt / macht Profit → 🔴 ROT**
+  > **User verliert Geld → 🟢 GRÜN**
+  > **Neutraler Event (Signup etc.) → 🔵 BLUE**
+
+  Warum: jeder Dollar den der User hat, ist ein Dollar den wir schulden. User-Gewinn = unser Verlust = rot. User-Verlust = unser Gewinn = grün. Das ist das einzige Prinzip — alles andere ist davon abgeleitet.
+
+  **Konkretes Mapping aller ledger-Events:**
+
+  | Event | Was bedeutet es für den User | Farbe |
   |---|---|---|
-  | Deposit (User zahlt ein) | Kapitaleingang | 🟢 emerald |
-  | Wager / Bet platziert (pack_opening, battle_bet) | Haus nimmt Einsatz | 🟢 emerald |
-  | Withdrawal (crypto oder card) | Auszahlung raus | 🔴 rose |
-  | Card Sale (User verkauft Karten zurück) | Haus zahlt für Rückkauf | 🔴 rose |
-  | Rain win / Race prize / Creator tip / Rakeback claim / Affiliate claim / Battle refund / Deposit bonus / Promo code / Gift card redeem | Haus zahlt an User | 🔴 rose |
-  | User gewinnt Battle / User sahnt hohen Card-Drop ab | User gewinnt Geld | 🔴 rose |
-  | User verliert Battle / User zieht schwachen Pack | Haus behält Einsatz | 🟢 emerald |
-  | P&L / GGR / Platform Revenue (positiv) | Gewinn für uns | 🟢 emerald |
-  | P&L / GGR / Platform Revenue (negativ) | Verlust für uns | 🔴 rose |
-  | Signup / Neutraler Event | Informativ | 🔵 blue |
+  | Deposit (User zahlt ein) | Kapital zu uns, User hat noch keinen Gewinn | 🟢 emerald |
+  | Wager / Bet (pack_opening, battle_bet, battle_sponsorship) | User riskiert sein Geld, wir nehmen's | 🟢 emerald |
+  | Withdrawal (card_withdrawal) | User holt Geld raus | 🔴 rose |
+  | Battle win (battle_refund) | User gewinnt | 🔴 rose |
+  | Rain win / Race prize / Creator tip | User bekommt Geld geschenkt | 🔴 rose |
+  | Deposit bonus / Gift card / Promo / Voucher redeem | House schenkt User etwas | 🔴 rose |
+  | Rakeback claim / Affiliate claim / Balance reward / Waitlist prize | User zieht eine Vergütung | 🔴 rose |
+  | Admin balance adjustment (User bekommt Geld gutgeschrieben) | User gewinnt Geld | 🔴 rose |
+  | P&L / GGR / Platform Revenue POSITIV | Wir im Plus | 🟢 emerald |
+  | P&L / GGR / Platform Revenue NEGATIV | Wir im Minus | 🔴 rose |
+  | Signup / Status-Event / Info-Event | neutral | 🔵 blue |
 
-  Wenn du dir unsicher bist: "Bewegt sich Geld in Richtung Haus-Kasse oder raus?". Richtung Haus → grün. Raus → rot.
+  **P&L-Formel (pro User UND global):**
+  ```
+  pnl = deposits − withdrawals − onSiteBalance − inventoryValue − unclaimedVouchers
+  ```
+  Wenn der User mehr on-site + Inventar hat als er deposited hat → `pnl < 0` → 🔴 ROT.
 
-  Gilt nicht nur für Badges sondern auch für:
-  - Amount-Labels (Vorzeichen +/− aus Haus-POV)
+  **Quick test vor jedem Commit:** "Wenn der User diesen Event feiert — ist die Farbe rot?" Ja → korrekt. Nein → Farbe flippen.
+
+  Gilt für (checklist beim Neu-Bau oder Refactor):
   - Recent-Activity Feeds
-  - Stat-Panels mit P&L
-  - Chart-Farben bei gewinn/verlust-Differenzierung
-  - Creator-Detail "Platform PnL" Panels
+  - Stat-Panels mit P&L (Dashboard, User-Detail, Creator-Detail, Battle-Detail, Pack-Detail)
+  - Amount-Labels + Vorzeichen (+ / −) — aus Haus-POV
+  - Charts mit Gewinn/Verlust-Differenzierung
   - Transaction-Detail Seiten
   - Battle-Detail "House Profit" Zahlen
+  - Jede Tabelle mit einer Spalte "Amount" / "PnL" / "Profit"
+  - Wager-Leaderboards (falls welche existieren)
 - **Keine Funktions-Props von Server → Client Component.** Serialisierbare Primitives / String-Enums nutzen. Next.js 15 crasht sonst.
 
 **Verbindlich für jede neue Page unter `src/app/(admin)/...`:**
