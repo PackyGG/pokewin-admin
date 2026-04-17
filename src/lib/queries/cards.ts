@@ -159,3 +159,47 @@ export async function getRarities() {
   });
   return result.map((r) => r.rarity);
 }
+
+export type CardsStats = {
+  total: number;
+  totalSets: number;
+  avgPriceUsd: number;
+  maxPriceUsd: number;
+  byRarity: { rarity: string; count: number }[];
+};
+
+/**
+ * Catalog-wide aggregates for the Cards list page hero strip. Runs the
+ * counts/aggregates in parallel and keeps the return shape tiny so the
+ * Server Component can pass it to the Client grid without bloating the
+ * RSC payload.
+ */
+export async function getCardsStats(): Promise<CardsStats> {
+  const [total, totalSets, priceAgg, rarityGroups] = await Promise.all([
+    db.cards.count(),
+    db.sets.count(),
+    db.cards.aggregate({
+      _avg: { price: true },
+      _max: { price: true },
+    }),
+    db.cards.groupBy({
+      by: ["rarity"],
+      _count: { _all: true },
+    }),
+  ]);
+
+  const byRarity = rarityGroups
+    .map((g) => ({
+      rarity: g.rarity ?? "Unknown",
+      count: g._count._all,
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  return {
+    total,
+    totalSets,
+    avgPriceUsd: toNumber(priceAgg._avg.price),
+    maxPriceUsd: toNumber(priceAgg._max.price),
+    byRarity,
+  };
+}
