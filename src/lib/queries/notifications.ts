@@ -73,14 +73,25 @@ export class NotificationConfigsTableMissingError extends Error {
 }
 
 function isMissingTableError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  // Prisma surfaces `code` at the top level for known errors — P2021 is
+  // "Table does not exist" and P2022 is "Column does not exist".
+  const code = (err as { code?: string }).code;
+  if (code === "P2021" || code === "P2022") return true;
   if (!(err instanceof Error)) return false;
-  const msg = err.message;
+  const msg = err.message.toLowerCase();
+  // Table-missing errors surface the table name in either the top-level
+  // message or inside a nested Prisma error frame. Check for common
+  // markers rather than requiring the exact table-name substring so the
+  // fallback catches every shape Prisma + node-postgres can throw.
   return (
-    msg.includes("notification_configs") &&
-    (msg.includes("does not exist") ||
-      msg.includes("UndefinedTable") ||
-      msg.includes("P2021") ||
-      msg.includes("ColumnNotFound"))
+    msg.includes("notification_configs") ||
+    msg.includes("does not exist") ||
+    msg.includes("undefinedtable") ||
+    msg.includes("p2021") ||
+    msg.includes("p2022") ||
+    msg.includes("columnnotfound") ||
+    msg.includes("relation \"public.notification_configs\"")
   );
 }
 
