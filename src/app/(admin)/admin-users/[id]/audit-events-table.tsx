@@ -22,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { formatDateTime } from "@/lib/utils/format";
+import { useFormatDateTime } from "@/components/timezone-provider";
 import type { PaginatedResult } from "@/lib/types";
 
 export type AdminAuditEventItem = {
@@ -332,6 +332,7 @@ export function AuditEventsTable({
 }) {
   const [searchInput, setSearchInput] = useState(activeSearch);
   const hasFilters = activeEventType !== "all" || activeSearch !== "";
+  const formatDateTime = useFormatDateTime();
 
   function handleSearchSubmit(e: React.FormEvent) {
     e.preventDefault();
