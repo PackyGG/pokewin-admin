@@ -205,53 +205,60 @@ function ActivityRow({
   const style = KIND_STYLES[item.kind];
   const Icon = style.icon;
   const typeLabel = TYPE_LABELS[item.type] ?? style.label;
+  const hasAmount = item.amount != null && item.amount > 0;
 
   return (
     <li
       className={cn(
-        "flex items-center gap-4 px-5 py-4 transition-colors hover:bg-muted/30",
+        "flex items-center gap-3 px-5 py-3 transition-colors hover:bg-muted/30",
         isNew &&
           "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-2 motion-safe:duration-300 motion-reduce:animate-in motion-reduce:fade-in motion-reduce:duration-200",
       )}
     >
-      {/* Big event-type chip — makes the "what happened" scannable in
-          one glance instead of reading a tiny pill. */}
+      {/* Event-type chip. */}
       <div
         className={cn(
-          "flex size-11 shrink-0 items-center justify-center rounded-xl",
+          "flex size-9 shrink-0 items-center justify-center rounded-lg",
           style.chipBg,
         )}
       >
-        <Icon className={cn("size-5", style.iconClass)} />
+        <Icon className={cn("size-4", style.iconClass)} />
       </div>
+
+      {/* Username + caption stack on the left — username is the dominant
+          line, type + time live as muted metadata underneath. */}
       <div className="min-w-0 flex-1">
-        <div className="flex items-baseline gap-2">
-          <span className="truncate text-sm font-semibold text-foreground">
-            {typeLabel}
-          </span>
-          <span className="text-xs text-muted-foreground">·</span>
-          <Link
-            href={`/users/${item.userId}`}
-            className="truncate text-sm text-muted-foreground hover:text-foreground hover:underline"
-          >
-            {item.username}
-          </Link>
-        </div>
-        <p className="mt-0.5 text-xs text-muted-foreground">
+        <Link
+          href={`/users/${item.userId}`}
+          className="block truncate text-sm font-semibold text-foreground hover:underline"
+        >
+          {item.username}
+        </Link>
+        <p className="truncate text-xs text-muted-foreground">
+          <span className={style.amountClass}>{typeLabel}</span>
+          <span className="mx-1.5 text-muted-foreground/60">·</span>
           {formatRelative(item.createdAt)}
         </p>
       </div>
-      {item.amount != null && item.amount > 0 ? (
-        <div
-          className={cn(
-            "shrink-0 text-right text-base font-bold tabular-nums",
-            style.amountClass,
-          )}
-        >
-          {style.amountSign}
-          {formatCurrency(item.amount)}
-        </div>
-      ) : null}
+
+      {/* Amount on the right, bold and colored by house-POV. Absent rows
+          (e.g. signups) get an em-dash placeholder so the column still
+          aligns. */}
+      <div
+        className={cn(
+          "shrink-0 text-right text-sm font-bold tabular-nums",
+          hasAmount ? style.amountClass : "text-muted-foreground/60",
+        )}
+      >
+        {hasAmount ? (
+          <>
+            {style.amountSign}
+            {formatCurrency(item.amount!)}
+          </>
+        ) : (
+          "—"
+        )}
+      </div>
     </li>
   );
 }
