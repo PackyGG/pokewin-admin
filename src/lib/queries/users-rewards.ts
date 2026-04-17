@@ -8,39 +8,31 @@ export type UserRewards = {
 };
 
 export async function getUserRewards(userId: string): Promise<UserRewards> {
-  const [userRewards, rakebackRows] = await Promise.all([
-    db.user_rewards.findMany({
-      where: { user_id: userId },
-      include: {
-        rewards: { select: { type: true } },
+  // Each number was previously computed by fetching every row and
+  // aggregating in JS. Push all three down to SQL so the payload stays
+  // at O(1) regardless of the user's reward history size.
+  const [openOneTimeCount, rakebackRows] = await Promise.all([
+    db.user_rewards.count({
+      where: {
+        user_id: userId,
+        opened_at: null,
+        rewards: { type: "one_time" },
       },
     }),
-    db.rakeback_claims.findMany({
-      where: { user_id: userId },
-      select: { rakeback_amount_usd: true, claimed_at: true },
-    }),
+    db.$queryRaw<{ claimable: string; claimed: string }[]>`
+      SELECT
+        COALESCE(SUM(CASE WHEN claimed_at IS NULL     THEN rakeback_amount_usd::numeric ELSE 0 END), 0)::text AS claimable,
+        COALESCE(SUM(CASE WHEN claimed_at IS NOT NULL THEN rakeback_amount_usd::numeric ELSE 0 END), 0)::text AS claimed
+      FROM rakeback_claims
+      WHERE user_id = ${userId}
+    `,
   ]);
 
-  // Open one-time rewards = those that haven't been opened yet
-  let openOneTimeCount = 0;
-  for (const ur of userRewards) {
-    if (ur.rewards.type === "one_time" && ur.opened_at == null) {
-      openOneTimeCount++;
-    }
-  }
-
-  // Rakeback split (claimed vs claimable)
-  let rakebackClaimableUsd = 0;
-  let rakebackClaimedUsd = 0;
-  for (const r of rakebackRows) {
-    const amt = toNumber(r.rakeback_amount_usd);
-    if (r.claimed_at) rakebackClaimedUsd += amt;
-    else rakebackClaimableUsd += amt;
-  }
+  const rr = rakebackRows[0];
 
   return {
     openOneTimeCount,
-    rakebackClaimableUsd,
-    rakebackClaimedUsd,
+    rakebackClaimableUsd: toNumber(rr?.claimable ?? 0),
+    rakebackClaimedUsd: toNumber(rr?.claimed ?? 0),
   };
 }

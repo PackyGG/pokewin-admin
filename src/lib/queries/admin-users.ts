@@ -93,6 +93,10 @@ export async function getAdminUserSessions(
 }
 
 export async function getAdminUserAuditStats(adminUserId: string) {
+  // Previously the daily series was a `groupBy(created_at)` — which buckets
+  // per unique timestamp, not per day. For an active admin that pulled
+  // back one row per event (thousands) and collapsed them in JS. Pushed
+  // down into the DB via DATE() so we get exactly one row per day.
   const [totalActions, eventsByType, lastEvent, dailyCounts] = await Promise.all([
     adminDb.admin_audit_events.count({
       where: { admin_user_id: adminUserId },
@@ -108,21 +112,20 @@ export async function getAdminUserAuditStats(adminUserId: string) {
       orderBy: { created_at: "desc" },
       select: { created_at: true },
     }),
-    adminDb.admin_audit_events.groupBy({
-      by: ["created_at"],
-      where: {
-        admin_user_id: adminUserId,
-        created_at: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
-      },
-      _count: true,
-    }),
+    adminDb.$queryRaw<{ date: Date; count: bigint }[]>`
+      SELECT DATE(created_at AT TIME ZONE 'UTC') AS date,
+             COUNT(*)::bigint AS count
+      FROM admin_audit_events
+      WHERE admin_user_id = ${adminUserId}::uuid
+        AND created_at >= NOW() - INTERVAL '30 days'
+      GROUP BY DATE(created_at AT TIME ZONE 'UTC')
+    `,
   ]);
 
-  // Aggregate daily counts by date string
   const dailyMap = new Map<string, number>();
   for (const row of dailyCounts) {
-    const date = row.created_at.toISOString().slice(0, 10);
-    dailyMap.set(date, (dailyMap.get(date) ?? 0) + row._count);
+    const date = new Date(row.date).toISOString().slice(0, 10);
+    dailyMap.set(date, Number(row.count));
   }
 
   // Fill in all 30 days
