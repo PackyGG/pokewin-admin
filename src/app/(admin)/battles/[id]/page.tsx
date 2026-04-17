@@ -1,13 +1,25 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Trophy } from "lucide-react";
+import {
+  ArrowLeft,
+  Trophy,
+  Swords,
+  Package,
+  DollarSign,
+  Coins,
+  TrendingUp,
+  Percent,
+  ShieldCheck,
+  Users as UsersIcon,
+} from "lucide-react";
 import { getBattleDetail } from "@/lib/queries/battles";
 import { requirePageAccess } from "@/lib/dal";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { CardImage } from "@/components/card-image";
 import { CancelBattleButton } from "./cancel-button";
+import { PageHero, SectionHeading, KpiTile } from "@/components/modern-panels";
+import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Battle Detail" };
 
@@ -57,191 +69,228 @@ export default async function BattleDetailPage({
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <Link href="/battles" className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground">
-          <ArrowLeft className="size-4" />
-        </Link>
-        <div className="flex-1">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">Battle</h1>
-            <Badge variant="outline" className={BATTLE_STATUS_COLORS[data.status] ?? ""}>
-              {data.status.replace(/_/g, " ")}
-            </Badge>
-            <Badge variant="outline">{data.mode}</Badge>
+      <PageHero>
+        <div className="flex items-center gap-4 flex-wrap">
+          <Link
+            href="/battles"
+            className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground shrink-0"
+          >
+            <ArrowLeft className="size-4" />
+          </Link>
+          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 shrink-0">
+            <Swords className="size-5 text-primary" />
           </div>
-          <p className="font-mono text-xs text-muted-foreground">{data.id}</p>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-2xl font-bold leading-tight">Battle</h1>
+              <Badge variant="outline" className={BATTLE_STATUS_COLORS[data.status] ?? ""}>
+                {data.status.replace(/_/g, " ")}
+              </Badge>
+              <Badge variant="outline">{data.mode}</Badge>
+            </div>
+            <p className="font-mono text-xs text-muted-foreground">{data.id}</p>
+          </div>
+          {data.status === "waiting" && <CancelBattleButton battleId={data.id} />}
         </div>
-        {data.status === "waiting" && <CancelBattleButton battleId={data.id} />}
-      </div>
+      </PageHero>
+
+      {/* KPI strip - completed battles only */}
+      {data.status === "completed" && (
+        <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+          <KpiTile
+            label="Packs Opened"
+            value={String(totalPacksOpened)}
+            icon={Package}
+            accent="cyan"
+          />
+          <KpiTile
+            label="Total Wagered"
+            value={formatCurrency(totalWagered)}
+            icon={DollarSign}
+            accent="blue"
+          />
+          <KpiTile
+            label="Total Card Value"
+            value={formatCurrency(totalCardValue)}
+            icon={Coins}
+            accent="amber"
+          />
+          <KpiTile
+            label="House Profit"
+            value={formatCurrency(houseProfit)}
+            icon={TrendingUp}
+            accent={houseProfit >= 0 ? "emerald" : "rose"}
+          />
+          <KpiTile
+            label="House Edge"
+            value={`${houseEdgePct.toFixed(2)}%`}
+            icon={Percent}
+            accent={houseEdgePct >= 0 ? "emerald" : "rose"}
+          />
+        </div>
+      )}
 
       {/* Details */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium">Details</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex gap-6">
-            {data.packs.length > 0 && (
-              <div className="flex gap-4 shrink-0">
-                {data.packs.map((pack) => (
-                  <Link
-                    key={pack.id}
-                    href={`/packs/${pack.id}`}
-                    className="hover:opacity-80 transition-opacity text-center"
-                  >
-                    <CardImage
-                      src={pack.imageUrl}
-                      alt={pack.name}
-                      className="h-48 w-auto rounded"
-                    />
-                    <p className="text-sm font-medium mt-1.5">{pack.name}</p>
-                    <p className="text-xs text-muted-foreground">{formatCurrency(pack.priceUsd)}</p>
+      <div className="space-y-3">
+        <SectionHeading icon={Swords} title="Details" />
+        <FadeIn>
+          <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
+            <div className="relative p-5 md:p-6 flex gap-6 flex-wrap">
+              {data.packs.length > 0 && (
+                <div className="flex gap-4 shrink-0">
+                  {data.packs.map((pack) => (
+                    <Link
+                      key={pack.id}
+                      href={`/packs/${pack.id}`}
+                      className="hover:opacity-80 transition-opacity text-center"
+                    >
+                      <CardImage
+                        src={pack.imageUrl}
+                        alt={pack.name}
+                        className="h-48 w-auto rounded"
+                      />
+                      <p className="text-sm font-medium mt-1.5">{pack.name}</p>
+                      <p className="text-xs text-muted-foreground">{formatCurrency(pack.priceUsd)}</p>
+                    </Link>
+                  ))}
+                </div>
+              )}
+              <div className="space-y-3 flex-1 min-w-[240px]">
+                <InfoRow label="Creator">
+                  <Link href={`/users/${data.userId}`} className="hover:underline">
+                    {data.username ?? data.userId}
                   </Link>
-                ))}
+                </InfoRow>
+                <InfoRow label="Mode"><Badge variant="outline">{data.mode}</Badge></InfoRow>
+                <InfoRow label="Teams">{data.teams} x {data.playersPerTeam}</InfoRow>
+                <InfoRow label="Bet">{formatCurrency(data.betAmount)}</InfoRow>
+                <InfoRow label="Region"><Badge variant="outline">{data.regionCode}</Badge></InfoRow>
+                {data.winnerTeam && <InfoRow label="Winner Team">Team {data.winnerTeam}</InfoRow>}
+                {data.sponsorshipPercentage > 0 && (
+                  <InfoRow label="Sponsorship">{data.sponsorshipPercentage}%</InfoRow>
+                )}
+                {data.borrowPercentage > 0 && (
+                  <InfoRow label="Borrow">{data.borrowPercentage}%</InfoRow>
+                )}
+                <InfoRow label="Created">{formatDateTime(data.createdAt)}</InfoRow>
               </div>
-            )}
-            <div className="space-y-3">
-              <InfoRow label="Creator">
-                <Link href={`/users/${data.userId}`} className="hover:underline">
-                  {data.username ?? data.userId}
-                </Link>
-              </InfoRow>
-              <InfoRow label="Mode"><Badge variant="outline">{data.mode}</Badge></InfoRow>
-              <InfoRow label="Teams">{data.teams} x {data.playersPerTeam}</InfoRow>
-              <InfoRow label="Bet">{formatCurrency(data.betAmount)}</InfoRow>
-              <InfoRow label="Region"><Badge variant="outline">{data.regionCode}</Badge></InfoRow>
-              {data.winnerTeam && <InfoRow label="Winner Team">Team {data.winnerTeam}</InfoRow>}
-              {data.sponsorshipPercentage > 0 && (
-                <InfoRow label="Sponsorship">{data.sponsorshipPercentage}%</InfoRow>
-              )}
-              {data.borrowPercentage > 0 && (
-                <InfoRow label="Borrow">{data.borrowPercentage}%</InfoRow>
-              )}
-              <InfoRow label="Created">{formatDateTime(data.createdAt)}</InfoRow>
             </div>
           </div>
-          {data.status === "completed" && (
-            <div className="border-t mt-4 pt-4 grid grid-cols-2 sm:grid-cols-5 gap-4">
-              {[
-                { label: "Packs Opened", value: String(totalPacksOpened) },
-                { label: "Total Wagered", value: formatCurrency(totalWagered) },
-                { label: "Total Card Value", value: formatCurrency(totalCardValue) },
-                { label: "House Profit", value: formatCurrency(houseProfit), color: houseProfit >= 0 ? "text-green-400" : "text-red-400" },
-                { label: "House Edge", value: `${houseEdgePct.toFixed(2)}%`, color: houseEdgePct >= 0 ? "text-green-400" : "text-red-400" },
-              ].map((stat) => (
-                <div key={stat.label}>
-                  <p className="text-xs text-muted-foreground">{stat.label}</p>
-                  <p className={`text-sm font-semibold ${stat.color ?? ""}`}>{stat.value}</p>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+        </FadeIn>
+      </div>
 
       {/* Teams */}
       {data.teamsData.length > 0 && (
-        <div className="grid gap-4 lg:grid-cols-2">
-          {data.teamsData.map((team) => (
-            <Card key={team.teamNumber} className={team.isWinner ? "border-green-500/30" : ""}>
-              <CardHeader>
-                <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  Team {team.teamNumber}
-                  {team.isWinner && (
-                    <Badge variant="outline" className="bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30">
-                      <Trophy className="size-3 mr-1" />
-                      Winner
-                    </Badge>
-                  )}
-                  <span className="ml-auto text-muted-foreground font-normal">
-                    {formatCurrency(team.teamTotalValue)}
-                  </span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {team.players.map((player) => (
-                  <div key={player.id} className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      {player.userId ? (
-                        <Link href={`/users/${player.userId}`} className="text-sm font-medium hover:underline">
-                          {player.username ?? player.userId.slice(0, 8)}
-                        </Link>
-                      ) : (
-                        <span className="text-sm text-muted-foreground">
-                          {player.botUsername ?? "Bot"}
-                        </span>
-                      )}
-                      {player.result && (
-                        <Badge variant="outline" className={RESULT_COLORS[player.result] ?? ""}>
-                          {player.result}
+        <div className="space-y-3">
+          <SectionHeading icon={UsersIcon} title="Teams" />
+          <FadeIn>
+            <div className="grid gap-4 lg:grid-cols-2">
+              {data.teamsData.map((team) => (
+                <div
+                  key={team.teamNumber}
+                  className={`relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80 ${
+                    team.isWinner ? "border-green-500/30" : ""
+                  }`}
+                >
+                  <div className="relative p-5">
+                    <div className="mb-4 flex items-center gap-2">
+                      <h3 className="text-sm font-medium">Team {team.teamNumber}</h3>
+                      {team.isWinner && (
+                        <Badge variant="outline" className="bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30">
+                          <Trophy className="size-3 mr-1" />
+                          Winner
                         </Badge>
                       )}
-                      <span className="text-sm font-medium">
-                        {formatCurrency(player.totalValue)}
+                      <span className="ml-auto text-muted-foreground font-normal text-sm">
+                        {formatCurrency(team.teamTotalValue)}
                       </span>
                     </div>
-                    {player.cards.length > 0 && (
-                      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                        {player.cards.map((card) => (
-                          <div
-                            key={card.id}
-                            className="rounded-lg border bg-card overflow-hidden"
-                          >
-                            <div className="aspect-[2/3] relative bg-muted">
-                              <CardImage
-                                src={card.imageUrl}
-                                alt={card.cardName}
-                                className="size-full rounded-t-lg"
-                              />
-                              {card.rarity && (
-                                <span
-                                  className={`absolute bottom-1 left-1 rounded px-1 py-0.5 text-[10px] font-semibold leading-none shadow backdrop-blur-sm ${RARITY_COLORS[card.rarity.toLowerCase()] ?? "bg-black/80 text-white"}`}
-                                >
-                                  {card.rarity}
-                                </span>
-                              )}
-                            </div>
-                            <div className="p-1.5 space-y-0.5">
-                              <p className="text-[11px] font-medium truncate" title={card.cardName}>
-                                {card.cardName}
-                              </p>
-                              <p className="text-[10px] text-muted-foreground">
-                                {formatCurrency(card.valueAtObtained)}
-                              </p>
-                            </div>
+                    <div className="space-y-4">
+                      {team.players.map((player) => (
+                        <div key={player.id} className="space-y-2">
+                          <div className="flex items-center gap-2">
+                            {player.userId ? (
+                              <Link href={`/users/${player.userId}`} className="text-sm font-medium hover:underline">
+                                {player.username ?? player.userId.slice(0, 8)}
+                              </Link>
+                            ) : (
+                              <span className="text-sm text-muted-foreground">
+                                {player.botUsername ?? "Bot"}
+                              </span>
+                            )}
+                            {player.result && (
+                              <Badge variant="outline" className={RESULT_COLORS[player.result] ?? ""}>
+                                {player.result}
+                              </Badge>
+                            )}
+                            <span className="text-sm font-medium">
+                              {formatCurrency(player.totalValue)}
+                            </span>
                           </div>
-                        ))}
-                      </div>
-                    )}
+                          {player.cards.length > 0 && (
+                            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                              {player.cards.map((card) => (
+                                <div
+                                  key={card.id}
+                                  className="rounded-lg border bg-card overflow-hidden"
+                                >
+                                  <div className="aspect-[2/3] relative bg-muted">
+                                    <CardImage
+                                      src={card.imageUrl}
+                                      alt={card.cardName}
+                                      className="size-full rounded-t-lg"
+                                    />
+                                    {card.rarity && (
+                                      <span
+                                        className={`absolute bottom-1 left-1 rounded px-1 py-0.5 text-[10px] font-semibold leading-none shadow backdrop-blur-sm ${RARITY_COLORS[card.rarity.toLowerCase()] ?? "bg-black/80 text-white"}`}
+                                      >
+                                        {card.rarity}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="p-1.5 space-y-0.5">
+                                    <p className="text-[11px] font-medium truncate" title={card.cardName}>
+                                      {card.cardName}
+                                    </p>
+                                    <p className="text-[10px] text-muted-foreground">
+                                      {formatCurrency(card.valueAtObtained)}
+                                    </p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                ))}
-              </CardContent>
-            </Card>
-          ))}
+                </div>
+              ))}
+            </div>
+          </FadeIn>
         </div>
       )}
 
       {/* Provably Fair */}
       {data.provablyFairResults.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Provably Fair</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <InfoRow label="Server Seed Hash">
-              <span className="font-mono text-xs break-all">{data.serverSeedHash}</span>
-            </InfoRow>
-            {data.eosBlockHash && (
-              <InfoRow label="EOS Block Hash">
-                <span className="font-mono text-xs break-all">{data.eosBlockHash}</span>
+        <div className="space-y-3">
+          <SectionHeading icon={ShieldCheck} title="Provably Fair" />
+          <FadeIn>
+            <div className="rounded-2xl border bg-card/60 p-5 space-y-3">
+              <InfoRow label="Server Seed Hash">
+                <span className="font-mono text-xs break-all">{data.serverSeedHash}</span>
               </InfoRow>
-            )}
-            <p className="text-xs text-muted-foreground pt-2">
-              {data.provablyFairResults.length} result(s)
-            </p>
-          </CardContent>
-        </Card>
+              {data.eosBlockHash && (
+                <InfoRow label="EOS Block Hash">
+                  <span className="font-mono text-xs break-all">{data.eosBlockHash}</span>
+                </InfoRow>
+              )}
+              <p className="text-xs text-muted-foreground pt-2">
+                {data.provablyFairResults.length} result(s)
+              </p>
+            </div>
+          </FadeIn>
+        </div>
       )}
     </div>
   );

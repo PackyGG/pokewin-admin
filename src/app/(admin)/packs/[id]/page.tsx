@@ -1,4 +1,13 @@
 import { notFound } from "next/navigation";
+import {
+  Package,
+  DollarSign,
+  Coins,
+  Percent,
+  TrendingUp,
+  Layers,
+  Boxes,
+} from "lucide-react";
 import { BackButton } from "@/components/back-button";
 import { getPackDetail, getPackStats, getPackGames } from "@/lib/queries/packs";
 import { requirePageAccess } from "@/lib/dal";
@@ -10,6 +19,8 @@ import { PackStatsSection } from "./revenue-chart";
 import { TogglePackButton } from "./toggle-pack-button";
 import { EditPackButton } from "./edit-pack-button";
 import { DeletePackButton } from "./delete-pack-button";
+import { PageHero, KpiTile } from "@/components/modern-panels";
+import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Pack Detail" };
 
@@ -35,54 +46,98 @@ export default async function PackDetailPage({
   const rtp = packStats.rtp;
   const houseEdge = packStats.houseEdge;
 
-  const stats = [
-    { label: "Price", value: formatCurrency(data.priceUsd) },
-    { label: "Openings", value: formatNumber(packStats.openings.all) },
-    { label: "Revenue", value: formatCurrency(packStats.revenue.all) },
-    { label: "Payout", value: formatCurrency(packStats.payout.all) },
-    { label: "RTP", value: `${(rtp * 100).toFixed(2)}%`, warn: rtp > 1 },
-    { label: "House Edge", value: `${(houseEdge * 100).toFixed(2)}%`, warn: houseEdge < 0 },
-    { label: "Cards/Open", value: String(data.cardsPerOpen) },
-    { label: "Total Cards", value: String(data.cards.length) },
-  ];
-
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <BackButton />
-        <div className="flex-1">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">{data.name}</h1>
-            <Badge variant="outline" className={data.active
-              ? "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30"
-              : "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"
-            }>
-              {data.active ? "Active" : "Inactive"}
-            </Badge>
-            <Badge variant="outline">{data.packType}</Badge>
+      <PageHero>
+        <div className="flex items-center gap-4 flex-wrap">
+          <BackButton />
+          <div className="shrink-0 hidden md:block">
+            <CardImage
+              src={data.imageUrl}
+              alt={data.name}
+              className="h-20 w-auto rounded-lg"
+            />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-2xl font-bold leading-tight">{data.name}</h1>
+              <Badge
+                variant="outline"
+                className={
+                  data.active
+                    ? "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30"
+                    : "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"
+                }
+              >
+                {data.active ? "Active" : "Inactive"}
+              </Badge>
+              <Badge variant="outline">{data.packType}</Badge>
+            </div>
+            <p className="font-mono text-xs text-muted-foreground mt-0.5">{data.slug}</p>
+          </div>
+          <div className="flex items-center gap-2">
             <TogglePackButton packId={data.id} active={data.active} />
             <EditPackButton pack={data} />
             <DeletePackButton packId={data.id} packName={data.name} />
           </div>
-          <p className="font-mono text-xs text-muted-foreground">{data.slug}</p>
         </div>
+      </PageHero>
+
+      {/* KPI strip */}
+      <div className="grid gap-4 grid-cols-2 md:grid-cols-4 lg:grid-cols-8">
+        <KpiTile
+          label="Price"
+          value={formatCurrency(data.priceUsd)}
+          icon={DollarSign}
+          accent="blue"
+        />
+        <KpiTile
+          label="Openings"
+          value={formatNumber(packStats.openings.all)}
+          icon={Package}
+          accent="cyan"
+        />
+        <KpiTile
+          label="Revenue"
+          value={formatCurrency(packStats.revenue.all)}
+          icon={TrendingUp}
+          accent="emerald"
+        />
+        <KpiTile
+          label="Payout"
+          value={formatCurrency(packStats.payout.all)}
+          icon={Coins}
+          accent="amber"
+        />
+        <KpiTile
+          label="RTP"
+          value={`${(rtp * 100).toFixed(2)}%`}
+          icon={Percent}
+          accent={rtp > 1 ? "rose" : "purple"}
+        />
+        <KpiTile
+          label="House Edge"
+          value={`${(houseEdge * 100).toFixed(2)}%`}
+          icon={TrendingUp}
+          accent={houseEdge < 0 ? "rose" : "emerald"}
+        />
+        <KpiTile
+          label="Cards/Open"
+          value={String(data.cardsPerOpen)}
+          icon={Layers}
+          accent="pink"
+        />
+        <KpiTile
+          label="Total Cards"
+          value={String(data.cards.length)}
+          icon={Boxes}
+          accent="orange"
+        />
       </div>
 
-      <div className="flex gap-8 items-start">
-        <div className="shrink-0 w-[200px]">
-          <CardImage src={data.imageUrl} alt={data.name} className="w-full rounded-lg" />
-        </div>
-        <div className="flex-1 grid grid-cols-2 lg:grid-cols-4 gap-x-8 gap-y-5">
-          {stats.map((s) => (
-            <div key={s.label}>
-              <p className="text-xs text-muted-foreground">{s.label}</p>
-              <p className={`text-lg font-bold ${s.warn ? "text-red-400" : ""}`}>{s.value}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <PackStatsSection stats={packStats} />
+      <FadeIn>
+        <PackStatsSection stats={packStats} />
+      </FadeIn>
 
       <PackTabs data={data} initialGames={initialGames} />
     </div>
