@@ -47,6 +47,7 @@ import {
 } from "@/components/ui/dialog";
 import type { ChatMessageItem } from "@/lib/queries/chat";
 import { useSseStream } from "@/lib/hooks/use-sse";
+import { subscribePackyWs, type ChatMessage } from "@/lib/packy-ws";
 import {
   deleteMessage,
   fetchChatMessagesPanel,
@@ -66,6 +67,42 @@ const ROLE_BADGE: Record<string, string> = {
 };
 
 const PAGE_SIZE = 50;
+
+/**
+ * Convert a packy.gg WebSocket `chat.pull.history` message into the
+ * `ChatMessageItem` shape the panel already renders. The WS payload
+ * uses snake_case ids + `created_at`; we translate to camelCase and
+ * default the admin-only decoration fields (`isDeleted`, `isPinned`,
+ * `activeMuteId`) to null/false — the WS doesn't carry mute / pin
+ * state, so those flags stay at their "clean" value until the admin
+ * refreshes the panel and the server query rehydrates them.
+ *
+ * Returns `null` for rows that are too malformed to render (missing id
+ * or content). Caller filters those out.
+ */
+function normalizeWsChatMessage(
+  m: ChatMessage,
+): Omit<ChatMessageItem, "activeMuteId"> | null {
+  if (!m || typeof m.id !== "string" || typeof m.content !== "string") {
+    return null;
+  }
+  const createdAt =
+    typeof m.created_at === "string" && m.created_at
+      ? m.created_at
+      : new Date().toISOString();
+  return {
+    id: m.id,
+    userId: typeof m.user_id === "string" ? m.user_id : "",
+    username: m.username ?? null,
+    image: m.image ?? null,
+    level: typeof m.level === "number" ? m.level : 0,
+    role: m.role ?? "user",
+    content: m.content,
+    isDeleted: false,
+    isPinned: false,
+    createdAt,
+  };
+}
 
 export function ChatPanelChat({ role }: { role: string }) {
   const [messages, setMessages] = useState<ChatMessageItem[]>([]);
@@ -159,6 +196,28 @@ export function ChatPanelChat({ role }: { role: string }) {
     },
     { enabled: !activeSearch && !useFallback },
   );
+
+  // packy.gg live WebSocket — subscribes to chat.pull.history and merges
+  // new messages into the same feed. Runs in parallel with the SSE
+  // stream; the append-path dedupes by message id so the same row never
+  // renders twice even if both sources deliver it. Paused while the
+  // operator is searching, since the WS payload can't be filtered
+  // server-side.
+  useEffect(() => {
+    if (activeSearch) return;
+    return subscribePackyWs<{
+      type: "chat.pull.history";
+      payload: { messages: ChatMessage[] };
+      timestamp: string;
+    }>("chat.pull.history", (evt) => {
+      const items = evt.payload?.messages;
+      if (!Array.isArray(items) || items.length === 0) return;
+      const normalized = items
+        .map(normalizeWsChatMessage)
+        .filter((m): m is Omit<ChatMessageItem, "activeMuteId"> => m != null);
+      if (normalized.length > 0) appendLive(normalized);
+    });
+  }, [activeSearch, appendLive]);
 
   // Polling fallback — only active if SSE gave up or isn't supported.
   // Verbatim preservation of the old 3s-tick loop so the degraded path
