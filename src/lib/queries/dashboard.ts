@@ -30,6 +30,23 @@ function revenueAgg(gte: Date | null) {
   });
 }
 
+// Mirrors revenueAgg but for outflows. `card_withdrawal` is the unified
+// ledger type for both crypto + physical withdrawals — amounts are stored
+// as negative (debit), so the caller applies Math.abs() when summing.
+// `withdrawal_shipping_fee` is intentionally excluded — it's a platform
+// revenue line that already rolls up into GGR.
+function withdrawalAgg(gte: Date | null) {
+  return db.ledger_transactions.aggregate({
+    where: {
+      type: "card_withdrawal",
+      status: "completed",
+      ...(gte ? { created_at: { gte } } : {}),
+      user: EXCLUDE_STAFF_USER_RELATION,
+    },
+    _sum: { amount: true },
+  });
+}
+
 // Pure gaming margin: wagers − payouts back to users, for the given period.
 // This is the industry-standard GGR definition and does NOT subtract open
 // inventory — that's a balance-sheet adjustment that belongs on the lifetime
@@ -132,6 +149,11 @@ export async function getDashboardStats() {
     revenue7d,
     revenue30d,
     revenueAll,
+    withdrawal24h,
+    withdrawal3d,
+    withdrawal7d,
+    withdrawal30d,
+    withdrawalAll,
     activityTotals,
     depositCount,
     wager24h,
@@ -225,6 +247,11 @@ export async function getDashboardStats() {
     revenueAgg(sevenDaysAgo),
     revenueAgg(thirtyDaysAgo),
     revenueAgg(null),
+    withdrawalAgg(startOfDay),
+    withdrawalAgg(threeDaysAgo),
+    withdrawalAgg(sevenDaysAgo),
+    withdrawalAgg(thirtyDaysAgo),
+    withdrawalAgg(null),
     db.user_statistics.aggregate({
       where: { user: EXCLUDE_STAFF_USER_RELATION },
       _sum: { opened_packs_count: true, battles_played: true },
@@ -344,6 +371,15 @@ export async function getDashboardStats() {
       "7d": toNumber(revenue7d._sum?.amount),
       "30d": toNumber(revenue30d._sum?.amount),
       all: toNumber(revenueAll._sum?.amount),
+    },
+    // card_withdrawal amounts are stored as negative ledger entries, so
+    // abs() to surface a positive "outflow" magnitude.
+    withdrawals: {
+      "24h": Math.abs(toNumber(withdrawal24h._sum?.amount)),
+      "3d": Math.abs(toNumber(withdrawal3d._sum?.amount)),
+      "7d": Math.abs(toNumber(withdrawal7d._sum?.amount)),
+      "30d": Math.abs(toNumber(withdrawal30d._sum?.amount)),
+      all: Math.abs(toNumber(withdrawalAll._sum?.amount)),
     },
     wagers: {
       "24h": Math.abs(toNumber(wager24h._sum?.amount)),

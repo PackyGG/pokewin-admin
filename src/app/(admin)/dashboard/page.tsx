@@ -21,6 +21,7 @@ import {
   GgrStatCard,
   WagerStatCard,
   DepositsStatCard,
+  WithdrawalsStatCard,
 } from "./revenue-stat-card";
 import { AutoRefresh } from "./auto-refresh";
 import { WagerChart, DepositsChart, SignupsChart } from "./charts";
@@ -69,11 +70,12 @@ export default async function DashboardPage({
       </PageHero>
 
       {/* Primary stats — period-aware cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <PnlStatCard pnl={stats.realizedPnl} />
         <GgrStatCard ggr={stats.ggr} />
         <WagerStatCard wagers={stats.wagers} />
         <DepositsStatCard deposits={stats.deposits} />
+        <WithdrawalsStatCard withdrawals={stats.withdrawals} />
       </div>
 
       {/* Secondary stats — all-time / snapshot */}
