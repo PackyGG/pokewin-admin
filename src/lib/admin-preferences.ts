@@ -1,48 +1,24 @@
 import { adminDb } from "@/lib/admin-db";
 
-/**
- * Per-admin preferences blob stored in `admin_users.preferences` (JSONB).
- *
- * Adding a new preference field is additive — existing rows keep working
- * because the parser below drops unknown fields and substitutes defaults
- * for missing ones. Never rename fields in place without a data migration.
- */
-export type AdminPreferences = {
-  /** UI theme. Falls back to "system" when the column is unset. */
-  theme: "light" | "dark" | "system";
-  /**
-   * IANA timezone identifier (e.g. "Europe/Berlin"). `null` means
-   * "use the browser's detected timezone" — the client provider falls
-   * back to Intl.DateTimeFormat().resolvedOptions().timeZone.
-   */
-  timezone: string | null;
-  /** Preferred date format preset. Rendered via date-fns `format`. */
-  dateFormat?: "MMM d, yyyy" | "dd/MM/yyyy" | "yyyy-MM-dd";
-  // Reserved for future slots:
-  //   compactTables?: boolean;
-  //   defaultDashboardPeriod?: "24h" | "7d" | "30d";
-};
+// Pure types + constants + validators moved to ./admin-preferences-types
+// so client components can import without pulling `adminDb` / `pg` into
+// the browser bundle. Re-exported here for backward compat with
+// server-side callers.
+export {
+  DEFAULT_PREFERENCES,
+  THEME_VALUES,
+  DATE_FORMAT_VALUES,
+  isValidTimezone,
+  type AdminPreferences,
+} from "./admin-preferences-types";
 
-export const DEFAULT_PREFERENCES: AdminPreferences = {
-  theme: "system",
-  timezone: null,
-};
-
-/**
- * Known values for `theme` and `dateFormat`. Kept here so the profile UI
- * can render radio groups without duplicating string literals.
- */
-export const THEME_VALUES: ReadonlyArray<AdminPreferences["theme"]> = [
-  "light",
-  "dark",
-  "system",
-];
-
-export const DATE_FORMAT_VALUES: ReadonlyArray<NonNullable<AdminPreferences["dateFormat"]>> = [
-  "MMM d, yyyy",
-  "dd/MM/yyyy",
-  "yyyy-MM-dd",
-];
+import {
+  DEFAULT_PREFERENCES,
+  THEME_VALUES,
+  DATE_FORMAT_VALUES,
+  isValidTimezone,
+  type AdminPreferences,
+} from "./admin-preferences-types";
 
 // ---- Parsing ------------------------------------------------------------
 
@@ -82,20 +58,8 @@ function parsePreferences(raw: unknown): AdminPreferences {
   };
 }
 
-/**
- * Server-safe IANA timezone check — uses Intl.DateTimeFormat which is
- * available in both Node and the browser. Returns true if the zone is
- * accepted by the runtime, false otherwise (incl. malformed strings).
- */
-export function isValidTimezone(tz: string): boolean {
-  if (typeof tz !== "string" || tz.length === 0 || tz.length > 64) return false;
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: tz }).format(new Date());
-    return true;
-  } catch {
-    return false;
-  }
-}
+// `isValidTimezone` now lives in ./admin-preferences-types and is
+// re-exported above.
 
 // ---- Graceful pre-migration handling ------------------------------------
 

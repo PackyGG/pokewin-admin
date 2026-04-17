@@ -21,7 +21,7 @@ import {
   DATE_FORMAT_VALUES,
   type AdminPreferences,
   isValidTimezone,
-} from "@/lib/admin-preferences";
+} from "@/lib/admin-preferences-types";
 import {
   TIMEZONE_GROUPS,
   formatClockInZone,

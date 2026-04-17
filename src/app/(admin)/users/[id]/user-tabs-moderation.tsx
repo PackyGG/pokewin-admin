@@ -1,7 +1,14 @@
 "use client";
 
-import React from "react";
+import React, { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+import { Ban, ShieldAlert, ShieldOff, Lock, Unlock, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Table,
   TableBody,
@@ -10,8 +17,27 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { formatDateTime } from "@/lib/utils/format";
 import type { UserDetail } from "./user-tabs-types";
+import { banUser, unbanUser, lockUser, unlockUser } from "../actions";
+import { DeleteUserDialog, WipeAccountButton, EditIdentityButton } from "./user-tabs-dialogs";
 
 export const ModerationSection = React.memo(function ModerationSection({
   user,
@@ -22,6 +48,26 @@ export const ModerationSection = React.memo(function ModerationSection({
 }) {
   return (
     <div className="space-y-6">
+      {/* Admin action row — ban/unban, lock/unlock, delete, wipe, edit. */}
+      <div className="flex flex-wrap items-center gap-2">
+        {user.isBanned ? (
+          <UnbanButton userId={user.id} />
+        ) : (
+          <BanButton userId={user.id} />
+        )}
+        {user.isLocked ? (
+          <UnlockButton userId={user.id} />
+        ) : (
+          <LockButton userId={user.id} />
+        )}
+        <EditIdentityButton user={user} />
+        <DeleteUserDialog user={user} isPending={false} />
+        <WipeAccountButton
+          userId={user.id}
+          displayName={user.displayUsername ?? user.username ?? user.email ?? user.id}
+        />
+      </div>
+
       {/* Ban/Lock Metadata */}
       {(user.isBanned || user.isLocked) && (
         <div className="space-y-3">
@@ -123,3 +169,233 @@ export const ModerationSection = React.memo(function ModerationSection({
     </div>
   );
 });
+
+// ───────────────────────────────────────────────────────────────────
+//  Inline action buttons — ban / unban / lock / unlock
+// ───────────────────────────────────────────────────────────────────
+//
+// These wrap the existing server actions with a confirm dialog + reason
+// field. The server actions already enforce capability checks, so the
+// client doesn't need to gate — any user without permission gets an
+// error toast when they submit.
+
+function BanButton({ userId }: { userId: string }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [isPending, startTransition] = useTransition();
+
+  function submit() {
+    if (!reason.trim()) {
+      toast.error("Reason required");
+      return;
+    }
+    startTransition(async () => {
+      try {
+        await banUser(userId, reason.trim());
+        toast.success("User banned");
+        setOpen(false);
+        setReason("");
+        router.refresh();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Ban failed");
+      }
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <Button
+        variant="outline"
+        size="sm"
+        className="gap-1.5 border-rose-500/40 text-rose-600 hover:bg-rose-500/10 dark:text-rose-400"
+        onClick={() => setOpen(true)}
+      >
+        <Ban className="size-3.5" /> Ban
+      </Button>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Ban user</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-2">
+          <Label className="text-xs text-muted-foreground">Reason</Label>
+          <Textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Why is this user being banned?"
+            rows={3}
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={isPending}
+            onClick={submit}
+          >
+            {isPending ? "Banning..." : "Confirm ban"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function UnbanButton({ userId }: { userId: string }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [isPending, startTransition] = useTransition();
+
+  function submit() {
+    startTransition(async () => {
+      try {
+        await unbanUser(userId);
+        toast.success("User unbanned");
+        setOpen(false);
+        router.refresh();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Unban failed");
+      }
+    });
+  }
+
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <Button
+        variant="outline"
+        size="sm"
+        className="gap-1.5"
+        onClick={() => setOpen(true)}
+      >
+        <ShieldOff className="size-3.5" /> Unban
+      </Button>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Unban user?</AlertDialogTitle>
+          <AlertDialogDescription>
+            They will be able to log in and play again immediately.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={submit} disabled={isPending}>
+            {isPending ? "Unbanning..." : "Unban"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+function LockButton({ userId }: { userId: string }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [isPending, startTransition] = useTransition();
+
+  function submit() {
+    if (!reason.trim()) {
+      toast.error("Reason required");
+      return;
+    }
+    startTransition(async () => {
+      try {
+        await lockUser(userId, reason.trim());
+        toast.success("User locked");
+        setOpen(false);
+        setReason("");
+        router.refresh();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Lock failed");
+      }
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <Button
+        variant="outline"
+        size="sm"
+        className="gap-1.5 border-amber-500/40 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
+        onClick={() => setOpen(true)}
+      >
+        <Lock className="size-3.5" /> Lock
+      </Button>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Lock user account</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-2">
+          <Label className="text-xs text-muted-foreground">Reason</Label>
+          <Textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Why lock this account?"
+            rows={3}
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            disabled={isPending}
+            onClick={submit}
+            className="gap-1.5"
+          >
+            <ShieldAlert className="size-3.5" />
+            {isPending ? "Locking..." : "Lock account"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function UnlockButton({ userId }: { userId: string }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [isPending, startTransition] = useTransition();
+
+  function submit() {
+    startTransition(async () => {
+      try {
+        await unlockUser(userId);
+        toast.success("User unlocked");
+        setOpen(false);
+        router.refresh();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Unlock failed");
+      }
+    });
+  }
+
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <Button
+        variant="outline"
+        size="sm"
+        className="gap-1.5"
+        onClick={() => setOpen(true)}
+      >
+        <Unlock className="size-3.5" /> Unlock
+      </Button>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Unlock user?</AlertDialogTitle>
+          <AlertDialogDescription>
+            The account will be accessible again immediately.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={submit} disabled={isPending}>
+            {isPending ? "Unlocking..." : "Unlock"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
