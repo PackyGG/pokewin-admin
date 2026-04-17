@@ -400,8 +400,14 @@ function ConfirmAction({
   tooltip: string;
   children: React.ReactNode;
 }) {
+  // Controlled so we can explicitly close the dialog the moment the
+  // operator confirms. Base-ui's default AlertDialogAction click
+  // dispatches onClick but does not guarantee closing when the handler
+  // kicks off an async transition — the user was seeing the dialog
+  // stay open after "Confirm" even though the action ran successfully.
+  const [open, setOpen] = React.useState(false);
   return (
-    <AlertDialog>
+    <AlertDialog open={open} onOpenChange={setOpen}>
       <AlertDialogTrigger
         render={
           <Button
@@ -426,7 +432,14 @@ function ConfirmAction({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm}>Confirm</AlertDialogAction>
+          <AlertDialogAction
+            onClick={() => {
+              onConfirm();
+              setOpen(false);
+            }}
+          >
+            Confirm
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
