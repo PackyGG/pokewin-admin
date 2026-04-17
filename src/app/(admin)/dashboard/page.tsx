@@ -6,15 +6,11 @@ import {
   LayoutDashboard,
   Activity,
   LineChart,
-  Radio,
 } from "lucide-react";
-import { getDashboardStats, getRecentActivity } from "@/lib/queries/dashboard";
-import {
-  getLiveActivity,
-  getLiveDeposits,
-} from "@/lib/queries/dashboard-live";
+import { getDashboardStats } from "@/lib/queries/dashboard";
+import { getLiveActivity } from "@/lib/queries/dashboard-live";
 import { requirePageAccess } from "@/lib/dal";
-import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { formatCurrency } from "@/lib/utils/format";
 import { StatCard } from "./stat-card";
 import {
   PnlStatCard,
@@ -26,29 +22,17 @@ import {
 import { AutoRefresh } from "./auto-refresh";
 import { WagerChart, DepositsChart, SignupsChart } from "./charts";
 import { RecentActivity } from "./recent-activity";
-import { LiveDeposits } from "./live-deposits";
-import { LiveActivity } from "./live-activity";
-import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { PageHero, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Dashboard" };
 
-export default async function DashboardPage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | undefined>>;
-}) {
+export default async function DashboardPage() {
   await requirePageAccess("/dashboard");
-  const params = await searchParams;
-  const activityPage = Number(params.page) || 1;
-  const activityPerPage = Number(params.perPage) || 20;
 
-  const [stats, activity, liveDeposits, liveActivity] = await Promise.all([
+  const [stats, liveActivity] = await Promise.all([
     getDashboardStats(),
-    getRecentActivity({ page: activityPage, perPage: activityPerPage }),
-    getLiveDeposits({ sinceCreatedAt: null, limit: 20 }),
-    getLiveActivity({ sinceCreatedAt: null, limit: 25 }),
+    getLiveActivity({ sinceCreatedAt: null, limit: 50 }),
   ]);
 
   return (
@@ -131,28 +115,12 @@ export default async function DashboardPage({
         </FadeIn>
       </div>
 
-      {/* Live feed — polled every 3s, pauses when tab is hidden */}
-      <div className="space-y-3">
-        <SectionHeading icon={Radio} title="Live Feed" />
-        <FadeIn className="grid gap-4 md:grid-cols-2">
-          <LiveDeposits
-            initial={liveDeposits.items}
-            initialTotal24h={liveDeposits.total24h}
-          />
-          <LiveActivity initial={liveActivity} />
-        </FadeIn>
-      </div>
-
-      {/* Recent activity */}
+      {/* Recent activity — polled every 3s, pauses when tab is hidden */}
       <div className="space-y-3">
         <SectionHeading icon={Activity} title="Recent Activity" />
-        <RecentActivity items={activity.data} />
-        <DataTablePagination
-          page={activity.page}
-          totalPages={activity.totalPages}
-          total={activity.total}
-          perPage={activity.perPage}
-        />
+        <FadeIn>
+          <RecentActivity initial={liveActivity} />
+        </FadeIn>
       </div>
     </div>
   );
