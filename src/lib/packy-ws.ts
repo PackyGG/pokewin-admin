@@ -472,9 +472,16 @@ export function usePackyWsChat(max: number = 50): ChatMessage[] {
 /**
  * Live connection status. Useful for rendering a "Connected /
  * Reconnecting / Offline" indicator next to a live-feed card.
+ *
+ * Initial state is hardcoded to "closed" rather than reading from the
+ * mutable module singleton. On a soft navigation the singleton may
+ * already carry a live value ("open" / "reconnecting") from a previous
+ * mount, which would seed React with a value that doesn't match the
+ * SSR output and trigger a hydration mismatch under React 19 — the
+ * subscribe effect below immediately refreshes the real current value.
  */
 export function usePackyWsStatus(): ConnectionStatus {
-  const [status, setStatus] = React.useState<ConnectionStatus>(currentStatus);
+  const [status, setStatus] = React.useState<ConnectionStatus>("closed");
 
   React.useEffect(() => {
     return subscribePackyWsStatus(setStatus);

@@ -11,8 +11,12 @@ import { adminDb } from "@/lib/admin-db";
 import { getAdminPreferences } from "@/lib/admin-preferences";
 
 /**
- * Read the optional profile fields. Safe against the migration not having
- * run yet — returns nulls in that case so the header falls back gracefully.
+ * Read the optional profile fields. This runs on every admin page load,
+ * so failures here crash the entire admin shell (including /settings,
+ * /dashboard, everything). Any error — missing column/table, DB
+ * unreachable, timeout, unexpected shape — falls back to null values so
+ * the header just shows the username + initials instead of tearing
+ * down the whole layout. The error is still logged so ops can see it.
  */
 async function loadHeaderProfile(userId: string): Promise<{
   displayUsername: string | null;
@@ -28,12 +32,8 @@ async function loadHeaderProfile(userId: string): Promise<{
       hasAvatar: Boolean(row?.profile_image_mime),
     };
   } catch (err) {
-    const code = (err as { code?: string })?.code;
-    const missingColumn =
-      code === "P2022" ||
-      (err instanceof Error && /column .* does not exist/i.test(err.message));
-    if (missingColumn) return { displayUsername: null, hasAvatar: false };
-    throw err;
+    console.error("[admin-layout] loadHeaderProfile failed:", err);
+    return { displayUsername: null, hasAvatar: false };
   }
 }
 
