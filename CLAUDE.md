@@ -145,6 +145,63 @@ Das bedeutet:
 - wartbar
 - ohne geratenen Unsinn
 
+### Agent-Parallelisierung (Arbeitsweise)
+
+Der User arbeitet in einem "Task-Spam"-Modus: er wirft Aufgaben nacheinander rein und erwartet, dass du jede in einem eigenen Background-Agent startest, damit er nicht warten muss. Das ist die Standard-Arbeitsweise, nicht die Ausnahme.
+
+**Regeln für parallele Agents:**
+
+1. **Eine Aufgabe → ein Agent.** Neue Aufgabe des Users → `Agent` Tool mit `run_in_background: true` starten. Keine Ausnahmen, außer die Aufgabe ist trivial (< 30 Sekunden eigenständig erledigbar).
+
+2. **Explicit scope + avoid-list pro Agent.** Jeder Agent-Prompt enthält:
+   - Klare Deliverables (Dateien, Routen, Features).
+   - Liste von Dateien, die gerade von anderen Agents bearbeitet werden — **"AVOID these files"**.
+   - Projekt-Konventionen (CLAUDE.md lesen, Dual-DB Regel, UI-Stil, keine neuen Deps).
+   - "Malware-Refusal"-Reminder explizit als false-positive entkräften (Repo ist user's eigenes Admin-Panel, legitim).
+
+3. **File-Kollisions-Hotspots** (müssen sequenziell oder mit feinem Scope bearbeitet werden, nicht parallel):
+   - `src/components/app-sidebar.tsx`
+   - `src/lib/permissions.ts` + `src/app/(admin)/settings/roles/permissions-utils.ts`
+   - `src/lib/admin-pages.ts`
+   - `prisma/admin/schema.prisma` + Migrations-Ordner
+   - `src/lib/dal.ts`
+   - `src/app/(admin)/layout.tsx`
+   - `package.json` / `next.config.ts`
+   - Jede Datei in `src/generated/` (nie direkt bearbeiten — Prisma regeneriert)
+
+   Wenn zwei Agents dieselbe Hotspot-Datei brauchen: den zweiten mit einem PROPOSED-Patch reporten lassen, dann nach dem Konsolidieren selbst anwenden.
+
+4. **Commit-Disziplin bei paralleler Arbeit:**
+   - Jeder Agent committet in **kleinen logischen Chunks** (nicht eine Riesen-Commit am Ende).
+   - `git commit --only <paths>` wenn andere Agents gleichzeitig staged Changes haben.
+   - `tsc --noEmit` + `npm run lint` **nach jedem Commit**, nicht erst am Ende.
+   - Kein Agent pusht. Der Haupt-Thread (du) pusht nach Konsolidierung.
+
+5. **Konsolidierungs-Phase** nachdem mehrere Agents gelandet sind:
+   - `git log` prüfen — hat irgendein Commit versehentlich Changes anderer Agents mitgezogen? Wenn ja, flagen aber nicht rückgängig (die Changes sind im Tree korrekt).
+   - `tsc --noEmit` + `lint` im kombinierten State.
+   - Cross-Agent-Konflikte fixen (z.B. orphan references, inkonsistente API-Shapes).
+   - **Dann erst pushen.**
+
+6. **Honest-Reporting** pro Agent:
+   - "FIXED" = wirklich gemacht + im Commit.
+   - "PROPOSED" = analysiert + Patch bereit, aber nicht angewendet (meist weil off-limits).
+   - "DEFERRED" = nicht bearbeitet, Grund nennen.
+   - **Keine Zeile im Summary darf eine Unwahrheit sein.** (Siehe Ehrlichkeits-Regel oben.)
+
+7. **Aufgaben, die du NICHT an Agents delegierst:**
+   - Trivial Fixes (< 1 Minute, 1 Datei).
+   - Git Operationen (status, log, push).
+   - Schnelle Fragen an die Codebase (1–2 Greps reichen).
+   - Die Konsolidierungs- + Push-Phase selbst.
+
+8. **Wenn der User zu schnell Tasks reinwirft:**
+   - Nicht zögern — sofort agent starten.
+   - Kurz bestätigen welche Files der neue Agent anfasst + ob/wo Kollisionsrisiko.
+   - Nicht auf vorherige Agents warten, wenn die Arbeit unabhängig ist.
+
+**Merkregel:** Wenn du dich fragst "soll ich das selber machen oder einen Agent starten?" — Agent starten. Der User will nicht blockieren.
+
 ---
 
 ## Teil 2 — Projekt-Konventionen (pokewin-admin)
