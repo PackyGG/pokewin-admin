@@ -17,6 +17,12 @@ model admin_users {
   totp_enabled   Boolean              @default(false)
   recovery_codes String[]
   is_active      Boolean              @default(true)
+  // Profile fields (editable by the admin themselves on /profile).
+  // display_username: label shown in the header/UI; falls back to `username` when null.
+  // profile_image / profile_image_mime: raw avatar bytes + MIME stored directly in DB.
+  display_username   String?
+  profile_image      Bytes?
+  profile_image_mime String?
   created_at     DateTime             @default(now()) @db.Timestamptz(6)
   updated_at     DateTime             @updatedAt @db.Timestamptz(6)
   audit_events          admin_audit_events[]

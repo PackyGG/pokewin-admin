@@ -33,6 +33,9 @@ export type Admin_usersMinAggregateOutputType = {
   totp_secret: string | null
   totp_enabled: boolean | null
   is_active: boolean | null
+  display_username: string | null
+  profile_image: runtime.Bytes | null
+  profile_image_mime: string | null
   created_at: Date | null
   updated_at: Date | null
 }
@@ -46,6 +49,9 @@ export type Admin_usersMaxAggregateOutputType = {
   totp_secret: string | null
   totp_enabled: boolean | null
   is_active: boolean | null
+  display_username: string | null
+  profile_image: runtime.Bytes | null
+  profile_image_mime: string | null
   created_at: Date | null
   updated_at: Date | null
 }
@@ -60,6 +66,9 @@ export type Admin_usersCountAggregateOutputType = {
   totp_enabled: number
   recovery_codes: number
   is_active: number
+  display_username: number
+  profile_image: number
+  profile_image_mime: number
   created_at: number
   updated_at: number
   allowed_pages: number
@@ -76,6 +85,9 @@ export type Admin_usersMinAggregateInputType = {
   totp_secret?: true
   totp_enabled?: true
   is_active?: true
+  display_username?: true
+  profile_image?: true
+  profile_image_mime?: true
   created_at?: true
   updated_at?: true
 }
@@ -89,6 +101,9 @@ export type Admin_usersMaxAggregateInputType = {
   totp_secret?: true
   totp_enabled?: true
   is_active?: true
+  display_username?: true
+  profile_image?: true
+  profile_image_mime?: true
   created_at?: true
   updated_at?: true
 }
@@ -103,6 +118,9 @@ export type Admin_usersCountAggregateInputType = {
   totp_enabled?: true
   recovery_codes?: true
   is_active?: true
+  display_username?: true
+  profile_image?: true
+  profile_image_mime?: true
   created_at?: true
   updated_at?: true
   allowed_pages?: true
@@ -191,6 +209,9 @@ export type Admin_usersGroupByOutputType = {
   totp_enabled: boolean
   recovery_codes: string[]
   is_active: boolean
+  display_username: string | null
+  profile_image: runtime.Bytes | null
+  profile_image_mime: string | null
   created_at: Date
   updated_at: Date
   allowed_pages: string[]
@@ -227,6 +248,9 @@ export type admin_usersWhereInput = {
   totp_enabled?: Prisma.BoolFilter<"admin_users"> | boolean
   recovery_codes?: Prisma.StringNullableListFilter<"admin_users">
   is_active?: Prisma.BoolFilter<"admin_users"> | boolean
+  display_username?: Prisma.StringNullableFilter<"admin_users"> | string | null
+  profile_image?: Prisma.BytesNullableFilter<"admin_users"> | runtime.Bytes | null
+  profile_image_mime?: Prisma.StringNullableFilter<"admin_users"> | string | null
   created_at?: Prisma.DateTimeFilter<"admin_users"> | Date | string
   updated_at?: Prisma.DateTimeFilter<"admin_users"> | Date | string
   allowed_pages?: Prisma.StringNullableListFilter<"admin_users">
@@ -249,6 +273,9 @@ export type admin_usersOrderByWithRelationInput = {
   totp_enabled?: Prisma.SortOrder
   recovery_codes?: Prisma.SortOrder
   is_active?: Prisma.SortOrder
+  display_username?: Prisma.SortOrderInput | Prisma.SortOrder
+  profile_image?: Prisma.SortOrderInput | Prisma.SortOrder
+  profile_image_mime?: Prisma.SortOrderInput | Prisma.SortOrder
   created_at?: Prisma.SortOrder
   updated_at?: Prisma.SortOrder
   allowed_pages?: Prisma.SortOrder
@@ -274,6 +301,9 @@ export type admin_usersWhereUniqueInput = Prisma.AtLeast<{
   totp_enabled?: Prisma.BoolFilter<"admin_users"> | boolean
   recovery_codes?: Prisma.StringNullableListFilter<"admin_users">
   is_active?: Prisma.BoolFilter<"admin_users"> | boolean
+  display_username?: Prisma.StringNullableFilter<"admin_users"> | string | null
+  profile_image?: Prisma.BytesNullableFilter<"admin_users"> | runtime.Bytes | null
+  profile_image_mime?: Prisma.StringNullableFilter<"admin_users"> | string | null
   created_at?: Prisma.DateTimeFilter<"admin_users"> | Date | string
   updated_at?: Prisma.DateTimeFilter<"admin_users"> | Date | string
   allowed_pages?: Prisma.StringNullableListFilter<"admin_users">
@@ -296,6 +326,9 @@ export type admin_usersOrderByWithAggregationInput = {
   totp_enabled?: Prisma.SortOrder
   recovery_codes?: Prisma.SortOrder
   is_active?: Prisma.SortOrder
+  display_username?: Prisma.SortOrderInput | Prisma.SortOrder
+  profile_image?: Prisma.SortOrderInput | Prisma.SortOrder
+  profile_image_mime?: Prisma.SortOrderInput | Prisma.SortOrder
   created_at?: Prisma.SortOrder
   updated_at?: Prisma.SortOrder
   allowed_pages?: Prisma.SortOrder
@@ -317,6 +350,9 @@ export type admin_usersScalarWhereWithAggregatesInput = {
   totp_enabled?: Prisma.BoolWithAggregatesFilter<"admin_users"> | boolean
   recovery_codes?: Prisma.StringNullableListFilter<"admin_users">
   is_active?: Prisma.BoolWithAggregatesFilter<"admin_users"> | boolean
+  display_username?: Prisma.StringNullableWithAggregatesFilter<"admin_users"> | string | null
+  profile_image?: Prisma.BytesNullableWithAggregatesFilter<"admin_users"> | runtime.Bytes | null
+  profile_image_mime?: Prisma.StringNullableWithAggregatesFilter<"admin_users"> | string | null
   created_at?: Prisma.DateTimeWithAggregatesFilter<"admin_users"> | Date | string
   updated_at?: Prisma.DateTimeWithAggregatesFilter<"admin_users"> | Date | string
   allowed_pages?: Prisma.StringNullableListFilter<"admin_users">
@@ -332,6 +368,9 @@ export type admin_usersCreateInput = {
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
   is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -354,6 +393,9 @@ export type admin_usersUncheckedCreateInput = {
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
   is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -376,6 +418,9 @@ export type admin_usersUpdateInput = {
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
   is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -398,6 +443,9 @@ export type admin_usersUncheckedUpdateInput = {
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
   is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -420,6 +468,9 @@ export type admin_usersCreateManyInput = {
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
   is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -435,6 +486,9 @@ export type admin_usersUpdateManyMutationInput = {
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
   is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -450,6 +504,9 @@ export type admin_usersUncheckedUpdateManyInput = {
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
   is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -473,6 +530,9 @@ export type admin_usersCountOrderByAggregateInput = {
   totp_enabled?: Prisma.SortOrder
   recovery_codes?: Prisma.SortOrder
   is_active?: Prisma.SortOrder
+  display_username?: Prisma.SortOrder
+  profile_image?: Prisma.SortOrder
+  profile_image_mime?: Prisma.SortOrder
   created_at?: Prisma.SortOrder
   updated_at?: Prisma.SortOrder
   allowed_pages?: Prisma.SortOrder
@@ -487,6 +547,9 @@ export type admin_usersMaxOrderByAggregateInput = {
   totp_secret?: Prisma.SortOrder
   totp_enabled?: Prisma.SortOrder
   is_active?: Prisma.SortOrder
+  display_username?: Prisma.SortOrder
+  profile_image?: Prisma.SortOrder
+  profile_image_mime?: Prisma.SortOrder
   created_at?: Prisma.SortOrder
   updated_at?: Prisma.SortOrder
 }
@@ -500,6 +563,9 @@ export type admin_usersMinOrderByAggregateInput = {
   totp_secret?: Prisma.SortOrder
   totp_enabled?: Prisma.SortOrder
   is_active?: Prisma.SortOrder
+  display_username?: Prisma.SortOrder
+  profile_image?: Prisma.SortOrder
+  profile_image_mime?: Prisma.SortOrder
   created_at?: Prisma.SortOrder
   updated_at?: Prisma.SortOrder
 }
@@ -541,6 +607,10 @@ export type BoolFieldUpdateOperationsInput = {
 export type admin_usersUpdaterecovery_codesInput = {
   set?: string[]
   push?: string | string[]
+}
+
+export type NullableBytesFieldUpdateOperationsInput = {
+  set?: runtime.Bytes | null
 }
 
 export type DateTimeFieldUpdateOperationsInput = {
@@ -662,6 +732,9 @@ export type admin_usersCreateWithoutSessionsInput = {
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
   is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -683,6 +756,9 @@ export type admin_usersUncheckedCreateWithoutSessionsInput = {
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
   is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -720,6 +796,9 @@ export type admin_usersUpdateWithoutSessionsInput = {
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
   is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -741,6 +820,9 @@ export type admin_usersUncheckedUpdateWithoutSessionsInput = {
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
   is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -762,6 +844,9 @@ export type admin_usersCreateWithoutNotesInput = {
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
   is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -783,6 +868,9 @@ export type admin_usersUncheckedCreateWithoutNotesInput = {
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
   is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -820,6 +908,9 @@ export type admin_usersUpdateWithoutNotesInput = {
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
   is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -841,6 +932,9 @@ export type admin_usersUncheckedUpdateWithoutNotesInput = {
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
   is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -862,6 +956,9 @@ export type admin_usersCreateWithoutAudit_eventsInput = {
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
   is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -883,6 +980,9 @@ export type admin_usersUncheckedCreateWithoutAudit_eventsInput = {
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
   is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -920,6 +1020,9 @@ export type admin_usersUpdateWithoutAudit_eventsInput = {
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
   is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -941,6 +1044,9 @@ export type admin_usersUncheckedUpdateWithoutAudit_eventsInput = {
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
   is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -962,6 +1068,9 @@ export type admin_usersCreateWithoutGift_card_actionsInput = {
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
   is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -983,6 +1092,9 @@ export type admin_usersUncheckedCreateWithoutGift_card_actionsInput = {
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
   is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -1020,6 +1132,9 @@ export type admin_usersUpdateWithoutGift_card_actionsInput = {
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
   is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1041,6 +1156,9 @@ export type admin_usersUncheckedUpdateWithoutGift_card_actionsInput = {
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
   is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1062,6 +1180,9 @@ export type admin_usersCreateWithoutVoucher_actionsInput = {
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
   is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -1083,6 +1204,9 @@ export type admin_usersUncheckedCreateWithoutVoucher_actionsInput = {
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
   is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -1120,6 +1244,9 @@ export type admin_usersUpdateWithoutVoucher_actionsInput = {
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
   is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1141,6 +1268,9 @@ export type admin_usersUncheckedUpdateWithoutVoucher_actionsInput = {
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
   is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1162,6 +1292,9 @@ export type admin_usersCreateWithoutExpensesInput = {
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
   is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -1183,6 +1316,9 @@ export type admin_usersUncheckedCreateWithoutExpensesInput = {
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
   is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -1220,6 +1356,9 @@ export type admin_usersUpdateWithoutExpensesInput = {
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
   is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1241,6 +1380,9 @@ export type admin_usersUncheckedUpdateWithoutExpensesInput = {
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
   is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1262,6 +1404,9 @@ export type admin_usersCreateWithoutRecurring_expensesInput = {
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
   is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -1283,6 +1428,9 @@ export type admin_usersUncheckedCreateWithoutRecurring_expensesInput = {
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
   is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -1320,6 +1468,9 @@ export type admin_usersUpdateWithoutRecurring_expensesInput = {
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
   is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1341,6 +1492,9 @@ export type admin_usersUncheckedUpdateWithoutRecurring_expensesInput = {
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
   is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1447,6 +1601,9 @@ export type admin_usersSelect<ExtArgs extends runtime.Types.Extensions.InternalA
   totp_enabled?: boolean
   recovery_codes?: boolean
   is_active?: boolean
+  display_username?: boolean
+  profile_image?: boolean
+  profile_image_mime?: boolean
   created_at?: boolean
   updated_at?: boolean
   allowed_pages?: boolean
@@ -1470,6 +1627,9 @@ export type admin_usersSelectCreateManyAndReturn<ExtArgs extends runtime.Types.E
   totp_enabled?: boolean
   recovery_codes?: boolean
   is_active?: boolean
+  display_username?: boolean
+  profile_image?: boolean
+  profile_image_mime?: boolean
   created_at?: boolean
   updated_at?: boolean
   allowed_pages?: boolean
@@ -1485,6 +1645,9 @@ export type admin_usersSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.E
   totp_enabled?: boolean
   recovery_codes?: boolean
   is_active?: boolean
+  display_username?: boolean
+  profile_image?: boolean
+  profile_image_mime?: boolean
   created_at?: boolean
   updated_at?: boolean
   allowed_pages?: boolean
@@ -1500,12 +1663,15 @@ export type admin_usersSelectScalar = {
   totp_enabled?: boolean
   recovery_codes?: boolean
   is_active?: boolean
+  display_username?: boolean
+  profile_image?: boolean
+  profile_image_mime?: boolean
   created_at?: boolean
   updated_at?: boolean
   allowed_pages?: boolean
 }
 
-export type admin_usersOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "email" | "username" | "password_hash" | "role" | "totp_secret" | "totp_enabled" | "recovery_codes" | "is_active" | "created_at" | "updated_at" | "allowed_pages", ExtArgs["result"]["admin_users"]>
+export type admin_usersOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "email" | "username" | "password_hash" | "role" | "totp_secret" | "totp_enabled" | "recovery_codes" | "is_active" | "display_username" | "profile_image" | "profile_image_mime" | "created_at" | "updated_at" | "allowed_pages", ExtArgs["result"]["admin_users"]>
 export type admin_usersInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   audit_events?: boolean | Prisma.admin_users$audit_eventsArgs<ExtArgs>
   sessions?: boolean | Prisma.admin_users$sessionsArgs<ExtArgs>
@@ -1540,6 +1706,9 @@ export type $admin_usersPayload<ExtArgs extends runtime.Types.Extensions.Interna
     totp_enabled: boolean
     recovery_codes: string[]
     is_active: boolean
+    display_username: string | null
+    profile_image: runtime.Bytes | null
+    profile_image_mime: string | null
     created_at: Date
     updated_at: Date
     allowed_pages: string[]
@@ -1982,6 +2151,9 @@ export interface admin_usersFieldRefs {
   readonly totp_enabled: Prisma.FieldRef<"admin_users", 'Boolean'>
   readonly recovery_codes: Prisma.FieldRef<"admin_users", 'String[]'>
   readonly is_active: Prisma.FieldRef<"admin_users", 'Boolean'>
+  readonly display_username: Prisma.FieldRef<"admin_users", 'String'>
+  readonly profile_image: Prisma.FieldRef<"admin_users", 'Bytes'>
+  readonly profile_image_mime: Prisma.FieldRef<"admin_users", 'String'>
   readonly created_at: Prisma.FieldRef<"admin_users", 'DateTime'>
   readonly updated_at: Prisma.FieldRef<"admin_users", 'DateTime'>
   readonly allowed_pages: Prisma.FieldRef<"admin_users", 'String[]'>

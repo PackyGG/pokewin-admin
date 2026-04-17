@@ -1502,6 +1502,9 @@ export const Admin_usersScalarFieldEnum = {
   totp_enabled: 'totp_enabled',
   recovery_codes: 'recovery_codes',
   is_active: 'is_active',
+  display_username: 'display_username',
+  profile_image: 'profile_image',
+  profile_image_mime: 'profile_image_mime',
   created_at: 'created_at',
   updated_at: 'updated_at',
   allowed_pages: 'allowed_pages'
@@ -1806,6 +1809,20 @@ export type ListEnumadmin_roleFieldRefInput<$PrismaModel> = FieldRefInputType<$P
  * Reference to a field of type 'Boolean'
  */
 export type BooleanFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'Boolean'>
+    
+
+
+/**
+ * Reference to a field of type 'Bytes'
+ */
+export type BytesFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'Bytes'>
+    
+
+
+/**
+ * Reference to a field of type 'Bytes[]'
+ */
+export type ListBytesFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'Bytes[]'>
     
 
 
