@@ -72,6 +72,9 @@ export default async function DashboardPage() {
           icon={Users}
           color="blue"
         />
+        {/* Users Total Balance is a HOUSE LIABILITY — every dollar here is a
+            dollar we owe users. Growing that number is bad for us, so we
+            accent the card with the rose "house loss" color per CLAUDE.md. */}
         <StatCard
           title="Users Total Balance"
           animatedValue={
@@ -81,15 +84,16 @@ export default async function DashboardPage() {
           formatKind="currency"
           subtitle={`${formatCurrency(stats.financials.totalSiteBalance)} cash · ${formatCurrency(stats.financials.totalInventoryValue)} unsold inventory`}
           icon={Wallet}
-          color="green"
+          color="rose"
         />
+        {/* Average deposit — a deposit is cash INTO the house → emerald. */}
         <StatCard
           title="Avg Deposit"
           animatedValue={stats.financials.avgDeposit}
           formatKind="currency"
           subtitle="Across all users (lifetime)"
           icon={Coins}
-          color="orange"
+          color="emerald"
         />
         <StatCard
           title="Avg RTP"

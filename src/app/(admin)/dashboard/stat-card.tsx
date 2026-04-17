@@ -5,7 +5,14 @@ import { AnimatedNumber, type AnimatedNumberFormat } from "@/components/animated
 
 const colorMap = {
   blue: { bg: "bg-blue-500/10", icon: "text-blue-400" },
+  // `emerald` is the house-POV "house gain" accent used for deposits, wagers,
+  // positive P&L/GGR. `green` is kept as an alias so existing call sites
+  // don't have to be touched at once.
+  emerald: { bg: "bg-emerald-500/10", icon: "text-emerald-400" },
   green: { bg: "bg-emerald-500/10", icon: "text-emerald-400" },
+  // `rose` is the "house loss" accent — withdrawals, payouts to users,
+  // creator commission, negative P&L.
+  rose: { bg: "bg-rose-500/10", icon: "text-rose-400" },
   purple: { bg: "bg-purple-500/10", icon: "text-purple-400" },
   orange: { bg: "bg-orange-500/10", icon: "text-orange-400" },
   pink: { bg: "bg-pink-500/10", icon: "text-pink-400" },
