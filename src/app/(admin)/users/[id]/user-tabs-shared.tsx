@@ -3,12 +3,19 @@
 import * as React from "react";
 import { formatCurrency } from "@/lib/utils/format";
 
+/**
+ * Renders a signed P&L amount already expressed in HOUSE perspective.
+ * Callers must pre-flip the sign if they're holding a user-perspective
+ * number (see user-tabs-cards PnlCard where costs are passed as -cost).
+ *
+ * Positive → house gain → emerald. Negative → house loss → rose.
+ */
 export function PnlValue({ value }: { value: number }) {
   const color =
     value > 0
-      ? "text-green-400"
+      ? "text-emerald-600 dark:text-emerald-400"
       : value < 0
-        ? "text-red-400"
+        ? "text-rose-600 dark:text-rose-400"
         : "text-muted-foreground";
   return (
     <span className={`${color} font-medium tabular-nums`}>

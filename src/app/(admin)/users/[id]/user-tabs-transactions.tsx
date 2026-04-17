@@ -43,6 +43,11 @@ import {
   formatDateTime,
   formatRelative,
 } from "@/lib/utils/format";
+import {
+  amountColorFor,
+  amountSignFor,
+  ledgerDirection,
+} from "@/lib/utils/ledger-direction";
 import { fetchUserTransactions, getGameSessionDetails } from "./actions";
 import type {
   Transaction,
@@ -278,16 +283,20 @@ export const CategoryTransactionsTable = React.memo(
                       {t.type}
                     </Badge>
                   </TableCell>
-                  <TableCell
-                    className={
-                      t.balanceAfter >= t.balanceBefore
-                        ? "text-green-400"
-                        : "text-red-400"
-                    }
-                  >
-                    {t.balanceAfter >= t.balanceBefore ? "+" : "-"}
-                    {formatCurrency(t.amount)}
-                  </TableCell>
+                  {(() => {
+                    // HOUSE-POV amount. The signed balance delta alone is
+                    // a user-perspective signal (wager and withdrawal
+                    // both make the balance go down), so we classify by
+                    // ledger type instead — matches Recent Activity and
+                    // every other transaction surface.
+                    const dir = ledgerDirection(t.type);
+                    return (
+                      <TableCell className={amountColorFor(dir)}>
+                        {amountSignFor(dir)}
+                        {formatCurrency(t.amount)}
+                      </TableCell>
+                    );
+                  })()}
                   {showCardsValue &&
                     (() => {
                       const isBattle =
@@ -318,14 +327,20 @@ export const CategoryTransactionsTable = React.memo(
                           <TableCell className="tabular-nums">
                             {cv != null
                               ? (() => {
+                                  // House profit on the session: bet we
+                                  // took in minus value of cards we
+                                  // handed back. Positive = house win
+                                  // (emerald), negative = user pulled
+                                  // above bet (rose) — already in
+                                  // house-POV, no sign flip needed.
                                   const profit = t.amount - cv;
                                   return (
                                     <span
                                       className={
                                         profit > 0
-                                          ? "text-green-400"
+                                          ? "text-emerald-600 dark:text-emerald-400"
                                           : profit < 0
-                                            ? "text-red-400"
+                                            ? "text-rose-600 dark:text-rose-400"
                                             : "text-muted-foreground"
                                       }
                                     >
@@ -663,18 +678,17 @@ function TransactionDetailModal({
     },
     {
       label: "Amount",
-      value: (
-        <span
-          className={
-            t.balanceAfter >= t.balanceBefore
-              ? "text-green-400"
-              : "text-red-400"
-          }
-        >
-          {t.balanceAfter >= t.balanceBefore ? "+" : "-"}
-          {formatCurrency(t.amount)}
-        </span>
-      ),
+      value: (() => {
+        // Same house-POV treatment as the list row above — classify by
+        // ledger type, not balance delta.
+        const dir = ledgerDirection(t.type);
+        return (
+          <span className={amountColorFor(dir)}>
+            {amountSignFor(dir)}
+            {formatCurrency(t.amount)}
+          </span>
+        );
+      })(),
     },
     { label: "Balance Before", value: formatCurrency(t.balanceBefore) },
     { label: "Balance After", value: formatCurrency(t.balanceAfter) },

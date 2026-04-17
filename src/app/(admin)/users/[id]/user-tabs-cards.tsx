@@ -333,6 +333,9 @@ export const ActivityStatsCard = React.memo(function ActivityStatsCard({
           </div>
           {balances &&
             (() => {
+              // wagerLoss = wagered − won, positive means the user net-LOST
+              // at the tables → house GAIN → emerald (per CLAUDE.md).
+              // Negative means user net-WON → house loss → rose.
               const wagerLoss = balances.totalWagered - balances.totalWon;
               return (
                 <div className="flex items-center gap-3">
@@ -340,9 +343,15 @@ export const ActivityStatsCard = React.memo(function ActivityStatsCard({
                     Wager Loss
                   </span>
                   <span
-                    className={`text-sm tabular-nums ${wagerLoss > 0 ? "text-red-400" : wagerLoss < 0 ? "text-green-400" : "text-muted-foreground"}`}
+                    className={`text-sm tabular-nums ${
+                      wagerLoss > 0
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : wagerLoss < 0
+                          ? "text-rose-600 dark:text-rose-400"
+                          : "text-muted-foreground"
+                    }`}
                   >
-                    {wagerLoss > 0 ? "-" : wagerLoss < 0 ? "+" : ""}
+                    {wagerLoss > 0 ? "+" : wagerLoss < 0 ? "-" : ""}
                     {formatCurrency(Math.abs(wagerLoss))}
                   </span>
                 </div>
@@ -444,7 +453,10 @@ export const RewardsCard = React.memo(function RewardsCard({
             <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
               Rakeback claimable
             </div>
-            <div className="text-lg font-semibold tabular-nums text-emerald-400">
+            {/* Claimable rakeback is a house liability — every dollar
+                listed here is a dollar we'll pay the user as soon as
+                they hit claim, so color it rose (house-POV). */}
+            <div className="text-lg font-semibold tabular-nums text-rose-600 dark:text-rose-400">
               {formatCurrency(rewards.rakebackClaimableUsd)}
             </div>
           </div>

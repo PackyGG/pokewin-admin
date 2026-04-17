@@ -29,6 +29,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import {
+  amountColorFor,
+  amountSignFor,
+  ledgerDirection,
+} from "@/lib/utils/ledger-direction";
+import {
   type UserDetail,
   type PaginatedTransactions,
   type PnlBreakdown,
@@ -371,17 +376,24 @@ function RecentActivityTimeline({
       <CardContent className="pt-6">
         <ol className="relative ml-3 border-l border-border">
           {merged.map((tx) => {
-            const delta = tx.balanceAfter - tx.balanceBefore;
-            // HOUSE perspective: user gained money (delta > 0) → we LOST →
-            // red. User lost money (delta < 0) → we WON → green.
-            const userGained = delta > 0;
+            // Classify by ledger TYPE rather than balance delta — for
+            // deposits and withdrawals the delta sign is the user's
+            // direction, not the house's (deposit lowers external cash
+            // but raises balance, withdrawal does the opposite).
+            const dir = ledgerDirection(tx.type);
             const Icon = iconFor(tx.type);
+            const dotBg =
+              dir === "house-loss"
+                ? "bg-rose-500"
+                : dir === "house-gain"
+                  ? "bg-emerald-500"
+                  : "bg-blue-500";
             return (
               <li key={tx.id} className="relative mb-4 pl-6 last:mb-0">
                 <span
                   className={cn(
                     "absolute -left-[9px] top-0 flex size-4 items-center justify-center rounded-full border-2 border-background",
-                    userGained ? "bg-rose-500" : "bg-emerald-500",
+                    dotBg,
                   )}
                 >
                   <span className="size-1.5 rounded-full bg-background" />
@@ -399,10 +411,10 @@ function RecentActivityTimeline({
                   <span
                     className={cn(
                       "text-sm font-semibold tabular-nums",
-                      userGained ? "text-rose-500" : "text-emerald-500",
+                      amountColorFor(dir),
                     )}
                   >
-                    {userGained ? "+" : ""}
+                    {amountSignFor(dir)}
                     {formatCurrency(tx.amount)}
                   </span>
                 </div>

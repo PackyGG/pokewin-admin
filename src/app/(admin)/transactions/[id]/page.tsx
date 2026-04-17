@@ -15,6 +15,11 @@ import { Badge } from "@/components/ui/badge";
 import { CardImage } from "@/components/card-image";
 import { STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
+import {
+  amountColorFor,
+  amountSignFor,
+  ledgerDirection,
+} from "@/lib/utils/ledger-direction";
 import { PageHero, SectionHeading, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
@@ -45,6 +50,14 @@ export default async function TransactionDetailPage({
 
   if (!data) notFound();
 
+  // House-POV direction for this ledger row — drives the Amount KPI and
+  // inline amount colors so a deposit reads green, a withdrawal reads
+  // red, a wager reads green, etc. (never mixed per-row).
+  const direction = ledgerDirection(data.type);
+  const amountColor = amountColorFor(direction);
+  const amountSign = amountSignFor(direction);
+  const absAmount = Math.abs(data.amount);
+
   return (
     <div className="space-y-6">
       <PageHero>
@@ -71,13 +84,17 @@ export default async function TransactionDetailPage({
         </div>
       </PageHero>
 
-      {/* KPI strip */}
+      {/* KPI strip — Amount KPI is colored from the HOUSE's perspective,
+          not the signed balance delta. A withdrawal decreases the user's
+          balance (negative delta) but is a HOUSE loss, so it has to read
+          as rose; a wager also decreases the balance but is a HOUSE gain,
+          so emerald — the sign of the delta alone is the wrong signal. */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <KpiTile
           label="Amount"
-          value={`${data.amount >= 0 ? "+" : ""}${formatCurrency(data.amount)}`}
+          value={`${amountSign}${formatCurrency(absAmount)}`}
           icon={Coins}
-          accent={data.amount >= 0 ? "emerald" : "rose"}
+          accent={direction === "house-gain" ? "emerald" : direction === "house-loss" ? "rose" : "blue"}
         />
         <KpiTile
           label="Balance Before"
@@ -108,8 +125,9 @@ export default async function TransactionDetailPage({
                   <Badge variant="outline">{data.type.replace(/_/g, " ")}</Badge>
                 </InfoRow>
                 <InfoRow label="Amount">
-                  <span className={data.amount >= 0 ? "text-green-400" : "text-red-400"}>
-                    {data.amount >= 0 ? "+" : ""}{formatCurrency(data.amount)}
+                  <span className={amountColor}>
+                    {amountSign}
+                    {formatCurrency(absAmount)}
                   </span>
                 </InfoRow>
                 <InfoRow label="Balance Before">{formatCurrency(data.balanceBefore)}</InfoRow>
@@ -138,66 +156,99 @@ export default async function TransactionDetailPage({
                   </InfoRow>
                 )}
 
-                {/* Breakdown — inside details card */}
+                {/* Breakdown — inside details card.
+                    Colors and signs are from the HOUSE's perspective:
+                    the user paying us for packs = GREEN (+), the cards we
+                    hand back = RED (−), so the "Net result" row shows the
+                    HOUSE profit/loss on this opening — positive = we kept
+                    money, negative = the user pulled above bet value. */}
                 {data.gameSession && (
                   <div className="border-t pt-3 mt-3">
                     <p className="text-xs text-muted-foreground font-medium mb-2">Breakdown</p>
                     <div className="space-y-1 text-sm font-mono">
                       {data.gameSession.packs.map((pack, i) => (
-                        <div key={i} className="flex items-center justify-between text-red-400">
+                        <div key={i} className="flex items-center justify-between text-emerald-600 dark:text-emerald-400">
                           <span className="truncate mr-4">
                             {pack.quantity > 1 ? `${pack.quantity}× ` : ""}{pack.name} @ {formatCurrency(pack.priceUsd)}
                           </span>
-                          <span className="shrink-0">-{formatCurrency(pack.priceUsd * pack.quantity)}</span>
+                          <span className="shrink-0">+{formatCurrency(pack.priceUsd * pack.quantity)}</span>
                         </div>
                       ))}
                       {(() => {
                         const packsCost = data.gameSession!.packs.reduce((s, p) => s + p.priceUsd * p.quantity, 0);
                         const diff = packsCost - data.gameSession!.betAmount;
+                        // Discount / borrow: the user paid less than the
+                        // sticker cost — house gave up that delta, so
+                        // rose.
                         if (Math.abs(diff) > 0.01) {
                           return (
-                            <div className="flex items-center justify-between text-yellow-400">
+                            <div className="flex items-center justify-between text-rose-600 dark:text-rose-400">
                               <span>Discount / Borrow</span>
-                              <span className="shrink-0">+{formatCurrency(diff)}</span>
+                              <span className="shrink-0">-{formatCurrency(diff)}</span>
                             </div>
                           );
                         }
                         return null;
                       })()}
-                      <div className="flex items-center justify-between text-red-400 font-semibold border-b pb-1 mb-1">
-                        <span>Total cost</span>
-                        <span>-{formatCurrency(data.gameSession.betAmount)}</span>
+                      <div className="flex items-center justify-between text-emerald-600 dark:text-emerald-400 font-semibold border-b pb-1 mb-1">
+                        <span>Total received</span>
+                        <span>+{formatCurrency(data.gameSession.betAmount)}</span>
                       </div>
                       {data.gameSession.cardsObtained.map((card, i) => (
-                        <div key={i} className="flex items-center justify-between text-green-400">
+                        <div key={i} className="flex items-center justify-between text-rose-600 dark:text-rose-400">
                           <span className="truncate mr-4">
-                            + {card.name}
+                            − {card.name}
                             {card.rarity && <span className="text-muted-foreground text-xs ml-1">({card.rarity})</span>}
                           </span>
-                          <span className="shrink-0">+{formatCurrency(card.valueAtObtained)}</span>
+                          <span className="shrink-0">-{formatCurrency(card.valueAtObtained)}</span>
                         </div>
                       ))}
                       {data.gameSession.relatedTransactions
                         .filter((rt) => rt.id !== data.id && rt.type !== "pack_opening")
-                        .map((rt) => (
-                          <div key={rt.id} className="flex items-center justify-between text-yellow-400">
-                            <span className="truncate mr-4">{rt.type.replace(/_/g, " ")}</span>
-                            <span className="shrink-0">
-                              {rt.amount >= 0 ? "+" : ""}{formatCurrency(rt.amount)}
-                            </span>
-                          </div>
-                        ))}
+                        .map((rt) => {
+                          // Related ledger rows (battle refunds, voucher
+                          // exchanges, etc.) — classify each individually.
+                          const relDir = ledgerDirection(rt.type);
+                          return (
+                            <div
+                              key={rt.id}
+                              className={`flex items-center justify-between ${amountColorFor(relDir)}`}
+                            >
+                              <span className="truncate mr-4">{rt.type.replace(/_/g, " ")}</span>
+                              <span className="shrink-0">
+                                {amountSignFor(relDir)}
+                                {formatCurrency(Math.abs(rt.amount))}
+                              </span>
+                            </div>
+                          );
+                        })}
                       <div className="border-t pt-1 mt-2 flex items-center justify-between font-semibold">
-                        <span className="text-foreground">Net result</span>
+                        <span className="text-foreground">House net</span>
                         {(() => {
                           const totalPayout = data.gameSession!.cardsObtained.reduce((s, c) => s + c.valueAtObtained, 0);
-                          const otherTxs = data.gameSession!.relatedTransactions
+                          // `relatedTransactions.amount` is the user-side
+                          // signed delta already. Flip its sign to get
+                          // the house contribution for this session.
+                          const otherHouseImpact = data.gameSession!.relatedTransactions
                             .filter((rt) => rt.id !== data.id && rt.type !== "pack_opening")
-                            .reduce((s, rt) => s + rt.amount, 0);
-                          const net = totalPayout - data.gameSession!.betAmount + otherTxs;
+                            .reduce((s, rt) => s - rt.amount, 0);
+                          // House net = what we received − what we paid
+                          // out (cards + related user-side credits).
+                          const houseNet =
+                            data.gameSession!.betAmount -
+                            totalPayout +
+                            otherHouseImpact;
+                          const positive = houseNet >= 0;
                           return (
-                            <span className={net >= 0 ? "text-green-400" : "text-red-400"}>
-                              {net >= 0 ? "+" : ""}{formatCurrency(net)}
+                            <span
+                              className={
+                                positive
+                                  ? "text-emerald-600 dark:text-emerald-400"
+                                  : "text-rose-600 dark:text-rose-400"
+                              }
+                            >
+                              {positive ? "+" : ""}
+                              {formatCurrency(houseNet)}
                             </span>
                           );
                         })()}

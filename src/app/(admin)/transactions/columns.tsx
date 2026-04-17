@@ -5,14 +5,24 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
+import {
+  amountColorFor,
+  amountSignFor,
+  ledgerDirection,
+} from "@/lib/utils/ledger-direction";
 import type { TransactionListItem } from "@/lib/queries/transactions";
 
+// Type badge palette — purely semantic (identifies the ledger type at a
+// glance). Not a P&L indicator. Types that already have an obvious
+// directional mapping use the matching house-POV tone (emerald for
+// deposits, rose for admin adjustments) so the table doesn't contradict
+// the Amount column next to it.
 const TYPE_COLORS: Record<string, string> = {
-  deposit: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
+  deposit: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
   pack_opening: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
   battle_bet: "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
   card_sale: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
-  admin_balance_adjustment: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",
+  admin_balance_adjustment: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
 };
 
 export const columns: ColumnDef<TransactionListItem>[] = [
@@ -52,11 +62,20 @@ export const columns: ColumnDef<TransactionListItem>[] = [
   {
     accessorKey: "amount",
     header: "Amount",
-    cell: ({ row }) => (
-      <span className={row.original.amount >= 0 ? "text-green-400" : "text-red-400"}>
-        {row.original.amount >= 0 ? "+" : ""}{formatCurrency(row.original.amount)}
-      </span>
-    ),
+    // Colors come from the ledger TYPE, not the signed user-facing delta.
+    // A wager and a withdrawal both decrease the user's balance, but only
+    // one is a house loss — coloring by delta alone would paint them the
+    // same. `ledgerDirection` is the single source of truth the rest of
+    // the site uses (Recent Activity, user timelines, etc.).
+    cell: ({ row }) => {
+      const dir = ledgerDirection(row.original.type);
+      return (
+        <span className={amountColorFor(dir)}>
+          {amountSignFor(dir)}
+          {formatCurrency(Math.abs(row.original.amount))}
+        </span>
+      );
+    },
   },
   {
     accessorKey: "balanceBefore",
@@ -71,10 +90,16 @@ export const columns: ColumnDef<TransactionListItem>[] = [
   {
     accessorKey: "payout",
     header: "Payout",
+    // Payout = value we returned to the user on a game session. House
+    // loss → rose.
     cell: ({ row }) => {
       const p = row.original.payout;
       if (p == null) return <span className="text-muted-foreground">—</span>;
-      return <span className="text-green-400">{formatCurrency(p)}</span>;
+      return (
+        <span className="text-rose-600 dark:text-rose-400">
+          {formatCurrency(p)}
+        </span>
+      );
     },
   },
   {

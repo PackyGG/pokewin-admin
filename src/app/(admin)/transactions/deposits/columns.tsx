@@ -28,13 +28,16 @@ import type { TransactionListItem } from "@/lib/queries/transactions";
 // Hidden because they are game-session metrics only.
 const HIDDEN_KEYS = new Set(["payout", "houseEdge"]);
 
+// House-POV tones: deposit itself is cash IN (house gain, emerald).
+// Bonus credits are house-paid perks (house loss, rose). Shipping fee is
+// money the user pays US to cover shipping → house gain (emerald).
 const TYPE_COLORS: Record<string, string> = {
   deposit:
-    "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
-  deposit_bonus:
     "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
+  deposit_bonus:
+    "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
   withdrawal_shipping_fee:
-    "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",
+    "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
 };
 
 function getColumnKey(

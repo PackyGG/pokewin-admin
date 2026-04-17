@@ -497,7 +497,9 @@ function CodeUsagesTable({
               </TableCell>
               <TableCell>{formatCurrency(u.depositAmountUsd)}</TableCell>
               <TableCell>{formatCurrency(u.wagerAmountUsd)}</TableCell>
-              <TableCell className="text-green-400">
+              {/* Referrer cut is commission PAID OUT by the house →
+                  house loss → rose per CLAUDE.md (not green). */}
+              <TableCell className="text-rose-600 dark:text-rose-400">
                 {formatCurrency(u.referrerCutUsd)}
               </TableCell>
               <TableCell>{formatCurrency(u.userBonusUsd)}</TableCell>
