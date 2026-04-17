@@ -126,12 +126,18 @@ export function ProfileForm({
   const [savingName, setSavingName] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [removing, setRemoving] = useState(false);
-  const [avatarCacheKey, setAvatarCacheKey] = useState(() => cacheKey());
+  // Initial cache key MUST be empty string — Date.now() differs between
+  // SSR and client hydration, which would bake different values into
+  // the Avatar src URL and trigger a React 19 hydration error ("Application
+  // error: a client-side exception"). The key is only needed after a
+  // successful upload/remove so the browser refetches the image, so
+  // starting blank is correct.
+  const [avatarCacheKey, setAvatarCacheKey] = useState<string>("");
   const [hasAvatarLocal, setHasAvatarLocal] = useState(hasAvatar);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const avatarSrc = hasAvatarLocal
-    ? `/api/admin/avatar/${adminId}?v=${avatarCacheKey}`
+    ? `/api/admin/avatar/${adminId}${avatarCacheKey ? `?v=${avatarCacheKey}` : ""}`
     : undefined;
 
   const fallbackLabel = initials(displayName || username);

@@ -114,8 +114,18 @@ export function PreferencesForm({
 
   // Ticking clock so the "current time in X" preview updates live. 30s
   // is plenty — the preview shows HH:mm, so sub-minute updates are noise.
-  const [now, setNow] = React.useState(() => new Date());
+  //
+  // CRITICAL: initial state is `null` instead of `new Date()`. Seeding
+  // with Date.now() at render time would run on the server during SSR
+  // and again on the client during hydration with a slightly different
+  // time; if the two instants straddle a minute boundary, the HH:mm
+  // preview differs between SSR and hydration output and React 19
+  // throws a hydration error ("client-side exception"). We instead
+  // render a placeholder until the post-mount effect lands the first
+  // Date, then tick every 30s.
+  const [now, setNow] = React.useState<Date | null>(null);
   React.useEffect(() => {
+    setNow(new Date());
     const id = setInterval(() => setNow(new Date()), 30_000);
     return () => clearInterval(id);
   }, []);
@@ -123,12 +133,13 @@ export function PreferencesForm({
   // The effective zone is the explicit pick OR, when null, the browser
   // zone from the provider (which resolved it on mount).
   const effectiveZone = timezone ?? tzCtx.timezone;
-  const clock = formatClockInZone(now, effectiveZone);
+  const clock = now ? formatClockInZone(now, effectiveZone) : "—";
 
-  const previewDate = now;
-  const preview = dateFormat
-    ? formatWithPattern(previewDate, `${dateFormat} HH:mm`, effectiveZone)
-    : formatWithPattern(previewDate, "MMM d, yyyy HH:mm", effectiveZone);
+  const preview = now
+    ? dateFormat
+      ? formatWithPattern(now, `${dateFormat} HH:mm`, effectiveZone)
+      : formatWithPattern(now, "MMM d, yyyy HH:mm", effectiveZone)
+    : "—";
 
   // The Select needs a concrete string — use a sentinel for "detect from
   // browser" because null isn't a valid <option value>.
@@ -352,7 +363,7 @@ export function PreferencesForm({
                 </span>
               </div>
               <span className="font-mono text-xs text-muted-foreground">
-                {formatWithPattern(now, v, effectiveZone)}
+                {now ? formatWithPattern(now, v, effectiveZone) : "—"}
               </span>
             </button>
           ))}
