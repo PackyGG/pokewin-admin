@@ -835,7 +835,7 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
   //      credit.
   const rakebackNearBonus = toNumber(row.rakeback_near_bonus_count);
   const c1Weight =
-    rakebackNearBonus >= 3 ? 12 : rakebackNearBonus >= 1 ? 6 : 0;
+    rakebackNearBonus >= 3 ? 10 : rakebackNearBonus >= 1 ? 5 : 0;
   signals.push({
     id: "rewards.rakeback_stacked_on_bonus",
     category: "rewards",
@@ -852,10 +852,8 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
   // C2 — Gift-card + promo redemption stacking. A normal user might
   //      redeem 1-2 promo codes across their lifetime. Someone rotating
   //      codes across accounts redeems a lot.
-  const giftCardCount = toNumber(row.gift_card_count);
-  const promoCount = toNumber(row.promo_code_count);
   const bonusRedeemCount = giftCardCount + promoCount;
-  const c2Weight = bonusRedeemCount >= 5 ? 10 : bonusRedeemCount >= 3 ? 5 : 0;
+  const c2Weight = bonusRedeemCount >= 5 ? 8 : bonusRedeemCount >= 3 ? 4 : 0;
   signals.push({
     id: "rewards.bonus_stacking",
     category: "rewards",
@@ -873,7 +871,7 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
   //      bonus, rakeback, promo, or gift card followed by a withdrawal
   //      in the same hour is the bread-and-butter of bonus abuse.
   const wAfterBonus = toNumber(row.withdrawals_after_bonus_1h);
-  const c3Weight = wAfterBonus >= 2 ? 10 : wAfterBonus >= 1 ? 5 : 0;
+  const c3Weight = wAfterBonus >= 2 ? 10 : wAfterBonus >= 1 ? 6 : 0;
   signals.push({
     id: "rewards.withdraw_after_bonus",
     category: "rewards",
@@ -891,10 +889,8 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
   //      excess / battle excess — legitimate. A large voucher-redeem
   //      count relative to wagering is nothing; a user who has ONLY
   //      voucher-redemption activity is suspicious.
-  const voucherRedeem = toNumber(row.voucher_redeem_count);
-  const packOpens = toNumber(row.pack_opens);
   const c4Weight =
-    voucherRedeem >= 5 && packOpens < voucherRedeem ? 6 : 0;
+    voucherRedeem >= 5 && packOpens < voucherRedeem ? 4 : 0;
   signals.push({
     id: "rewards.voucher_heavy",
     category: "rewards",
@@ -908,8 +904,124 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
         : "Voucher activity is balanced with actual wagering.",
   });
 
+  // C5 — Classic signup-reward → instant withdraw. This is the flagship
+  //      "bonus abuse" pattern the product explicitly flagged. Account
+  //      is <48h old, has claimed a signup / balance reward, has NOT
+  //      met the standard wager multiplier, and has attempted a
+  //      withdrawal.
+  const c5Weight = (() => {
+    const hasSignupReward = signupRewardClaim > 0 || balanceRewardValue > 0;
+    const hasWithdrawAttempt = withdrawAttemptsTotal > 0;
+    if (!hasSignupReward || !hasWithdrawAttempt) return 0;
+    if (accountAgeHours > 48) return 0;
+    // Wagered at least once the total bonus credit → probably OK.
+    if (totalWagered >= bonusCreditTotal && totalWagered > 10) return 0;
+    return 18;
+  })();
+  signals.push({
+    id: "rewards.signup_reward_instant_withdraw",
+    category: "rewards",
+    label: "Signup reward claimed then immediate withdrawal attempt",
+    weight: c5Weight,
+    triggered: c5Weight > 0,
+    value: `age ${accountAgeHours.toFixed(1)}h`,
+    explanation:
+      c5Weight > 0
+        ? `Account is ${accountAgeHours.toFixed(1)}h old, claimed a signup/balance reward worth $${balanceRewardValue.toFixed(2)}, wagered $${totalWagered.toFixed(2)} against $${bonusCreditTotal.toFixed(2)} in bonus credits, and attempted ${withdrawAttemptsTotal} withdrawal${withdrawAttemptsTotal === 1 ? "" : "s"}. Textbook bonus-abuse signature — flag for review before processing.`
+        : "No signup-reward + instant-withdraw signature detected.",
+  });
+
+  // C6 — Bonus credit volume relative to real wagering. If a user has
+  //      received $200 in bonuses and wagered $50, they're extracting
+  //      bonuses without playing them through.
+  const c6Weight = (() => {
+    if (bonusCreditTotal < 50) return 0;
+    if (totalWagered === 0) return 10;
+    const ratio = bonusCreditTotal / totalWagered;
+    if (ratio < 1.5) return 0;
+    // 1.5x=4, 3x=7, 5x=10, cap 10.
+    return Math.round(Math.min(10, 2 + ratio * 1.5));
+  })();
+  signals.push({
+    id: "rewards.bonus_to_wager_ratio",
+    category: "rewards",
+    label: "Bonus credits far exceed real wagering",
+    weight: c6Weight,
+    triggered: c6Weight > 0,
+    value:
+      totalWagered > 0
+        ? `${(bonusCreditTotal / totalWagered).toFixed(2)}×`
+        : `$${bonusCreditTotal.toFixed(0)} / $0 wagered`,
+    explanation:
+      c6Weight > 0
+        ? `User received $${bonusCreditTotal.toFixed(0)} in bonus-type credits (deposit bonus + rakeback + promo + gift card + signup rewards + rain/race/tips) vs only $${totalWagered.toFixed(0)} wagered.`
+        : "Bonus-to-wager ratio is within normal range.",
+  });
+
+  // C7 — Bonus volume exceeds real deposit volume (got more free money
+  //      than they spent).
+  const c7Weight = (() => {
+    if (totalDeposited < 20 && bonusCreditTotal < 50) return 0;
+    if (bonusCreditTotal < totalDeposited) return 0;
+    const delta = bonusCreditTotal - totalDeposited;
+    if (delta < 20) return 0;
+    // $20=3, $100=7, $500=12, cap 12.
+    return Math.round(Math.min(12, 3 + delta / 40));
+  })();
+  signals.push({
+    id: "rewards.bonus_heavy_over_deposit",
+    category: "rewards",
+    label: "Received more in bonuses than user has ever deposited",
+    weight: c7Weight,
+    triggered: c7Weight > 0,
+    value: `bonus $${bonusCreditTotal.toFixed(0)} / dep $${totalDeposited.toFixed(0)}`,
+    explanation:
+      c7Weight > 0
+        ? `Received $${bonusCreditTotal.toFixed(0)} in bonus-type credits against $${totalDeposited.toFixed(0)} in real deposits — net promo consumer.`
+        : "Bonus intake does not exceed real deposit volume.",
+  });
+
+  // C8 — Withdrawal attempt submitted before ANY wagering happened.
+  //      Strong fraud signal — legit users always play before asking to
+  //      cash out.
+  const c8Weight = withdrawalAttemptPreWager > 0 ? 14 : 0;
+  signals.push({
+    id: "rewards.withdrawal_attempt_pre_wager",
+    category: "rewards",
+    label: "Withdrawal attempted before any wagering",
+    weight: c8Weight,
+    triggered: c8Weight > 0,
+    value: withdrawalAttemptPreWager,
+    explanation:
+      c8Weight > 0
+        ? `${withdrawalAttemptPreWager} withdrawal attempt${withdrawalAttemptPreWager === 1 ? "" : "s"} were submitted before the user ever placed a wager. Strongly suggests bonus or deposit-credit exploitation.`
+        : "Withdrawal attempts (if any) happened after wagering.",
+  });
+
+  // C9 — Multiple cancelled/failed withdrawal attempts. History of
+  //      tries — often someone probing what the limits are, or a
+  //      user who knows a withdrawal would be blocked but keeps trying.
+  const c9Weight =
+    withdrawCancelledOrFailed >= 3
+      ? 8
+      : withdrawCancelledOrFailed >= 1
+        ? 3
+        : 0;
+  signals.push({
+    id: "rewards.cancelled_withdrawal_attempts",
+    category: "rewards",
+    label: "Cancelled or failed withdrawal history",
+    weight: c9Weight,
+    triggered: c9Weight > 0,
+    value: withdrawCancelledOrFailed,
+    explanation:
+      c9Weight > 0
+        ? `${withdrawCancelledOrFailed} withdrawal request${withdrawCancelledOrFailed === 1 ? "" : "s"} ${withdrawCancelledOrFailed === 1 ? "was" : "have been"} cancelled or failed. Probing / retry behaviour.`
+        : "No cancelled or failed withdrawal requests.",
+  });
+
   // ═══════════════════════════════════════════════════════════════════
-  // CATEGORY D — Identity & network (max ~25)
+  // CATEGORY D — Identity & network
   // ═══════════════════════════════════════════════════════════════════
 
   // D1 — Shared IP with other users. Residential IP sharing (friends /
