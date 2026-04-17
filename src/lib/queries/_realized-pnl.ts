@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { withTiming } from "@/lib/observability/query-timings";
 
 /**
  * Lifetime realized P&L from the house perspective — a balance-sheet snapshot.
@@ -32,6 +33,10 @@ export type RealizedPnlSnapshot = {
 };
 
 export async function getRealizedPnlSnapshot(): Promise<RealizedPnlSnapshot> {
+  return withTiming("realizedPnl.snapshot", () => realizedPnlSnapshotInner());
+}
+
+async function realizedPnlSnapshotInner(): Promise<RealizedPnlSnapshot> {
   const rows = await db.$queryRaw<
     {
       deposited: string;

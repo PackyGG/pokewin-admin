@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
+import { withTiming } from "@/lib/observability/query-timings";
 import { EXCLUDE_STAFF_USER_RELATION, EXCLUDE_STAFF_SQL } from "./_exclude-staff";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
 
@@ -118,6 +119,10 @@ function wagerAgg(gte: Date | null) {
 }
 
 export async function getDashboardStats() {
+  return withTiming("dashboard.getDashboardStats", () => dashboardStatsInner());
+}
+
+async function dashboardStatsInner() {
   const now = new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const startOfWeek = new Date(startOfDay);
