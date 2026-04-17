@@ -30,6 +30,7 @@ import {
   Gift,
   Coins,
   ShieldCheck,
+  ShieldAlert,
   Activity,
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -37,6 +38,7 @@ import {
   Percent,
   Calendar,
   MapPin,
+  Link2,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -62,6 +64,13 @@ import {
 } from "./user-view-modern-tabs";
 import { ChangeRoleDialog } from "./user-tabs-dialogs";
 import type { PaginatedInventory } from "./user-tabs-types";
+import { TrustTab } from "./user-tabs-trust";
+import {
+  type RiskScoreBreakdown,
+  RISK_TIER_COLORS,
+  tierLabel,
+} from "@/lib/fraud/score";
+import type { SharedIdentityUser } from "@/lib/fraud/shared-identity";
 
 // ---------------------------------------------------------------------------
 // Re-exports — preserve the public surface so call sites that previously
@@ -93,6 +102,7 @@ type TabKey =
   | "rewards"
   | "gaming"
   | "inventory"
+  | "trust"
   | "creator"
   | "account";
 
@@ -110,6 +120,7 @@ const TABS: TabDef[] = [
   { key: "rewards", label: "Rewards", icon: Gift },
   { key: "gaming", label: "Gaming", icon: Swords },
   { key: "inventory", label: "Inventory", icon: Gem },
+  { key: "trust", label: "Trust", icon: ShieldAlert },
   {
     key: "creator",
     label: "Creator",
@@ -128,6 +139,9 @@ export function UserViewModern({
   pnlBreakdown,
   inventory,
   disposedInventory,
+  riskBreakdown,
+  sharedIps,
+  sharedFingerprints,
 }: {
   data: UserDetail;
   gamingTx: PaginatedTransactions;
@@ -137,6 +151,9 @@ export function UserViewModern({
   pnlBreakdown: PnlBreakdown;
   inventory: PaginatedInventory;
   disposedInventory: PaginatedInventory;
+  riskBreakdown: RiskScoreBreakdown;
+  sharedIps: SharedIdentityUser[];
+  sharedFingerprints: SharedIdentityUser[];
 }) {
   const { user, balances, counts, capabilities } = data;
   const isAdmin = data.sessionRole === "admin";
@@ -201,14 +218,6 @@ export function UserViewModern({
         />
 
         <div className="relative p-5 md:p-6">
-          {/* Action row — admin-only controls that live in the hero. On
-              wide screens it sits above the identity+KPI flex; on narrow
-              it stacks naturally. Empty when the user has no permissions. */}
-          {canChangeUserRoles && (
-            <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
-              <ChangeRoleDialog userId={user.id} currentRole={user.role} />
-            </div>
-          )}
           <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
             {/* Identity */}
             <div className="flex items-start gap-4 min-w-0">
@@ -243,6 +252,11 @@ export function UserViewModern({
                         @{user.username}
                       </span>
                     )}
+                  {/* Admin action lives inline next to the username so it
+                      doesn't add a full row on top of the hero. */}
+                  {canChangeUserRoles && (
+                    <ChangeRoleDialog userId={user.id} currentRole={user.role} />
+                  )}
                 </div>
                 <p className="text-xs text-muted-foreground truncate">
                   {user.email}
@@ -284,6 +298,44 @@ export function UserViewModern({
                       <Sparkles className="mr-0.5 size-2.5" />
                       {user.affiliateCode}
                     </Badge>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("trust")}
+                    className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-full"
+                    aria-label={`Risk score ${riskBreakdown.score} of 100 — ${tierLabel(riskBreakdown.tier)}. Open Trust tab.`}
+                  >
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        "text-[10px] py-0 h-5 cursor-pointer",
+                        RISK_TIER_COLORS[riskBreakdown.tier],
+                      )}
+                    >
+                      <ShieldAlert className="mr-0.5 size-2.5" />
+                      Risk {riskBreakdown.score}
+                    </Badge>
+                  </button>
+                  {riskBreakdown.sharedIpCount >= 2 && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("trust")}
+                      className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-full"
+                      aria-label={`Shared IP with ${riskBreakdown.sharedIpCount} other accounts. Open Trust tab.`}
+                    >
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          "text-[10px] py-0 h-5 cursor-pointer",
+                          riskBreakdown.sharedIpCount >= 5
+                            ? "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30"
+                            : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
+                        )}
+                      >
+                        <Link2 className="mr-0.5 size-2.5" />
+                        {riskBreakdown.sharedIpCount} shared IP
+                      </Badge>
+                    </button>
                   )}
                 </div>
                 <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-muted-foreground">
@@ -402,6 +454,15 @@ export function UserViewModern({
           data={data}
           inventory={inventory}
           disposedInventory={disposedInventory}
+        />
+      )}
+
+      {activeTab === "trust" && (
+        <TrustTab
+          userId={user.id}
+          breakdown={riskBreakdown}
+          sharedIps={sharedIps}
+          sharedFingerprints={sharedFingerprints}
         />
       )}
 
