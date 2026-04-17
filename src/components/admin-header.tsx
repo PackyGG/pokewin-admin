@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Separator } from "@/components/ui/separator";
+import { LiveIndicator } from "@/components/live-indicator";
 import { logout } from "@/lib/actions/auth";
 import { ROLE_COLORS } from "@/lib/constants";
 
@@ -71,6 +72,12 @@ export function AdminHeader({
         <RotateCw className="size-3.5" />
       </Button>
       <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-3">
+        {/* Global live-users indicator. Polls on its own 15s cadence and
+            pauses when the tab is hidden. Sits LEFT of the avatar with a
+            thin vertical divider so it reads as a sibling status chip,
+            not part of the profile cluster. */}
+        <LiveIndicator />
+        <Separator orientation="vertical" className="!self-auto h-5" />
         {/* Avatar + label link through to the admin's own profile page.
             The label is noise on narrow screens — the avatar + role badge
             are enough identity to keep visible. */}
