@@ -244,41 +244,35 @@ export async function getLevelUpRewards(params: {
 }
 
 export async function getRakebackStats(): Promise<RakebackStats> {
-  const claims = await db.rakeback_claims.findMany({
-    select: {
-      rakeback_type: true,
-      rakeback_amount_usd: true,
-      claimed_at: true,
-    },
-  });
-
-  let totalClaimed = 0;
-  let totalPending = 0;
-  let claimCount = 0;
-  const byTypeMap = new Map<string, { totalAmount: number; claimCount: number }>();
-
-  for (const c of claims) {
-    const amount = toNumber(c.rakeback_amount_usd);
-    if (c.claimed_at) {
-      totalClaimed += amount;
-    } else {
-      totalPending += amount;
-    }
-    claimCount++;
-
-    const existing = byTypeMap.get(c.rakeback_type) ?? { totalAmount: 0, claimCount: 0 };
-    existing.totalAmount += amount;
-    existing.claimCount++;
-    byTypeMap.set(c.rakeback_type, existing);
-  }
+  // Previously this pulled every rakeback_claims row and aggregated in JS —
+  // that scales linearly with claim count. Push the aggregation to Postgres
+  // and fetch only the two summaries we actually need.
+  const [claimedSum, pendingSum, byTypeRows] = await Promise.all([
+    db.rakeback_claims.aggregate({
+      where: { claimed_at: { not: null } },
+      _sum: { rakeback_amount_usd: true },
+      _count: { _all: true },
+    }),
+    db.rakeback_claims.aggregate({
+      where: { claimed_at: null },
+      _sum: { rakeback_amount_usd: true },
+      _count: { _all: true },
+    }),
+    db.rakeback_claims.groupBy({
+      by: ["rakeback_type"],
+      _sum: { rakeback_amount_usd: true },
+      _count: { _all: true },
+    }),
+  ]);
 
   return {
-    totalClaimed,
-    totalPending,
-    claimCount,
-    byType: Array.from(byTypeMap.entries()).map(([type, stats]) => ({
-      type,
-      ...stats,
+    totalClaimed: toNumber(claimedSum._sum.rakeback_amount_usd),
+    totalPending: toNumber(pendingSum._sum.rakeback_amount_usd),
+    claimCount: claimedSum._count._all + pendingSum._count._all,
+    byType: byTypeRows.map((r) => ({
+      type: r.rakeback_type,
+      totalAmount: toNumber(r._sum.rakeback_amount_usd),
+      claimCount: r._count._all,
     })),
   };
 }
