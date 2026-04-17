@@ -43,9 +43,14 @@ export default async function AdminLayout({
   children: React.ReactNode;
 }) {
   const session = await verifySession();
-  const allowedPages = await getUserPermissions(session.userId);
-  const profile = await loadHeaderProfile(session.userId);
-  const preferences = await getAdminPreferences(session.userId);
+  // Permissions, header profile, and preferences are independent lookups
+  // keyed on the same userId. Serializing them cost ~3 round-trips on
+  // every admin page load — Promise.all collapses them into one.
+  const [allowedPages, profile, preferences] = await Promise.all([
+    getUserPermissions(session.userId),
+    loadHeaderProfile(session.userId),
+    getAdminPreferences(session.userId),
+  ]);
 
   // Chat/mutes panel is only surfaced to users who could reach the old
   // /chat page — keeps the same permission boundary as the removed route.

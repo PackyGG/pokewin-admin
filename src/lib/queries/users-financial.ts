@@ -104,21 +104,26 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
 }
 
 export async function getUserBalanceHistory(userId: string) {
-  const transactions = await db.ledger_transactions.findMany({
-    where: { user_id: userId, status: "completed" },
-    orderBy: { created_at: "asc" },
-    select: {
-      balance_after: true,
-      created_at: true,
-    },
-  });
+  // Pull the last `balance_after` per calendar day in a single aggregated
+  // query instead of streaming every completed transaction back to Node.
+  // Uses DISTINCT ON (day) + ORDER BY created_at DESC so PG returns one
+  // row per day carrying the latest balance snapshot for that day.
+  //
+  // For a high-activity user this previously fetched thousands of rows
+  // only to collapse them client-side — this keeps the payload to at most
+  // one row per day the user was active.
+  const rows = await db.$queryRaw<{ date: Date; balance: string }[]>`
+    SELECT DISTINCT ON (DATE(created_at))
+      DATE(created_at) AS date,
+      balance_after::text AS balance
+    FROM ledger_transactions
+    WHERE user_id = ${userId}
+      AND status = 'completed'
+    ORDER BY DATE(created_at) ASC, created_at DESC
+  `;
 
-  // Aggregate by date — keep last balance_after per day
-  const byDate = new Map<string, number>();
-  for (const t of transactions) {
-    const date = t.created_at.toISOString().slice(0, 10);
-    byDate.set(date, toNumber(t.balance_after));
-  }
-
-  return Array.from(byDate, ([date, balance]) => ({ date, balance }));
+  return rows.map((r) => ({
+    date: new Date(r.date).toISOString().slice(0, 10),
+    balance: toNumber(r.balance),
+  }));
 }
