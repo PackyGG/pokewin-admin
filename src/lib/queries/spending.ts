@@ -207,34 +207,43 @@ export async function getMonthlyTrend(months: number = 6): Promise<MonthlyTrendI
     monthSpans.push({ d, startDate, endDate });
   }
 
-  // Recurring total is time-independent (where is_active=true), so it's the
-  // same for every month — fetch it once, not per-iteration.
-  // Expense aggregates for each month are independent, so fan them out in
-  // one Promise.all instead of the previous sequential for-loop.
-  const [recurringAgg, expenseAggs] = await Promise.all([
+  // Recurring total is time-independent, expense totals are N independent
+  // month aggregates. Previously this was 1 + N round-trips; now it's 2:
+  // one for the recurring sum, one for all monthly totals in a single
+  // date_trunc'd groupBy.
+  const oldestStart = monthSpans[0].startDate;
+  const newestEnd = monthSpans[monthSpans.length - 1].endDate;
+
+  const [recurringAgg, monthlyRows] = await Promise.all([
     adminDb.recurring_expenses.aggregate({
       _sum: { amount: true },
       where: { is_active: true },
     }),
-    Promise.all(
-      monthSpans.map((m) =>
-        adminDb.expenses.aggregate({
-          _sum: { amount: true },
-          where: { date: { gte: m.startDate, lt: m.endDate } },
-        })
-      )
-    ),
+    adminDb.$queryRaw<{ month: Date; total: string }[]>`
+      SELECT date_trunc('month', date) AS month,
+             COALESCE(SUM(amount::numeric), 0)::text AS total
+      FROM expenses
+      WHERE date >= ${oldestStart} AND date < ${newestEnd}
+      GROUP BY date_trunc('month', date)
+    `,
   ]);
 
   const recurringTotal = toNumber(recurringAgg._sum.amount);
+  const monthlyMap = new Map<string, number>();
+  for (const row of monthlyRows) {
+    const d = new Date(row.month);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    monthlyMap.set(key, parseFloat(row.total) || 0);
+  }
 
-  return monthSpans.map((m, i) => {
+  return monthSpans.map((m) => {
     const label = formatMonthYear(m.d);
     const monthStr = `${m.d.getFullYear()}-${String(m.d.getMonth() + 1).padStart(2, "0")}`;
+    const expenseTotal = monthlyMap.get(monthStr) ?? 0;
     return {
       month: monthStr,
       label,
-      total: toNumber(expenseAggs[i]._sum.amount) + recurringTotal,
+      total: expenseTotal + recurringTotal,
     };
   });
 }
