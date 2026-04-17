@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useTransition, useCallback } from "react";
+import { useState, useEffect, useRef, useTransition, useCallback, memo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -141,7 +141,11 @@ function ChatView({
   );
 }
 
-function ChatBubble({
+// Memoized: ChatBubble props are only `message` (object ref, stable for
+// existing rows since the poll only appends new items) and `role` (string
+// prop from parent, stable for the session). Without memo every 3s poll
+// re-renders every bubble in the list.
+const ChatBubble = memo(function ChatBubble({
   message: m,
   role,
 }: {
@@ -300,7 +304,7 @@ function ChatBubble({
       </div>
     </div>
   );
-}
+});
 
 // ── Shared action helpers ─────────────────────────────────────────────
 
