@@ -23,7 +23,10 @@ export type PackListItem = {
   actualRtp: number;
   actualHouseEdge: number;
   active: boolean;
+  /** First ~10 cards only — enough to render the preview strip. */
   cards: PackListCard[];
+  /** Total number of cards associated with this pack. */
+  totalCardCount: number;
 };
 
 export async function getPacks(params: {
@@ -61,6 +64,11 @@ export async function getPacks(params: {
   const order = sortOrder === "asc" ? "asc" : "desc";
   (orderBy as Record<string, string>)[field] = order;
 
+  // On the list view we only render a 10-card preview strip + total count.
+  // Eagerly including every pack_card for every pack was pulling back 100s
+  // of cards per pack × 20 packs per page. `take: 10` keeps the preview
+  // working without the overfetch; total card counts come from a scoped
+  // groupBy on just the visible pack IDs below.
   const [packs, total] = await Promise.all([
     db.packs.findMany({
       where,
@@ -71,11 +79,26 @@ export async function getPacks(params: {
         pack_cards: {
           include: { cards: { select: { id: true, name: true, image_url: true, rarity: true } } },
           orderBy: { order: "asc" },
+          take: 10,
         },
       },
     }),
     db.packs.count({ where }),
   ]);
+
+  const visiblePackIds = packs.map((p) => p.id);
+  const cardCounts =
+    visiblePackIds.length > 0
+      ? await db.pack_cards.groupBy({
+          by: ["pack_id"],
+          where: { pack_id: { in: visiblePackIds } },
+          _count: { _all: true },
+        })
+      : [];
+
+  const totalCardsByPack = new Map(
+    cardCounts.map((c) => [c.pack_id, c._count._all]),
+  );
 
   return {
     data: packs.map((p) => ({
@@ -97,6 +120,7 @@ export async function getPacks(params: {
         imageUrl: pc.cards.image_url,
         rarity: pc.cards.rarity,
       })),
+      totalCardCount: totalCardsByPack.get(p.id) ?? p.pack_cards.length,
     })),
     total,
     page,

@@ -131,7 +131,7 @@ function PackTile({ pack }: { pack: PackListItem }) {
               </span>
             </div>
             <p className="mt-1 text-[11px] text-muted-foreground">
-              {formatNumber(pack.totalOpenings)} opens · {pack.cards.length} cards
+              {formatNumber(pack.totalOpenings)} opens · {pack.totalCardCount} cards
             </p>
           </div>
         </div>
@@ -151,7 +151,7 @@ function PackTile({ pack }: { pack: PackListItem }) {
         {/* Mini card preview strip — skipped when no cards. */}
         {pack.cards.length > 0 && (
           <div className="flex items-center gap-1 px-3 pb-3 pt-2">
-            {pack.cards.slice(0, 10).map((card) => (
+            {pack.cards.map((card) => (
               <CardImage
                 key={card.id}
                 src={card.imageUrl}
@@ -159,9 +159,9 @@ function PackTile({ pack }: { pack: PackListItem }) {
                 className="size-6 shrink-0 rounded-sm ring-1 ring-border"
               />
             ))}
-            {pack.cards.length > 10 && (
+            {pack.totalCardCount > pack.cards.length && (
               <div className="flex size-6 shrink-0 items-center justify-center rounded-sm bg-muted text-[9px] font-medium tabular-nums">
-                +{pack.cards.length - 10}
+                +{pack.totalCardCount - pack.cards.length}
               </div>
             )}
           </div>
