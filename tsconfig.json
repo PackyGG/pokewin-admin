@@ -37,6 +37,7 @@
   ],
   "exclude": [
     "node_modules",
-    "admin-frontend"
+    "admin-frontend",
+    "e2e"
   ]
 }
