@@ -145,6 +145,9 @@ type DetailRow = {
   is_banned: boolean;
   is_locked: boolean;
   is_suspected_alt: boolean;
+  email_verified: boolean;
+  two_factor_enabled: boolean | null;
+  referred_by: string | null;
 
   // balances
   total_deposited: string;
@@ -161,35 +164,70 @@ type DetailRow = {
   deposits_7d_usd: string;
   deposits_all_usd: string;
   deposit_count_all: string;
+  deposit_count_1h: string;
+  deposit_count_24h: string;
+  deposit_ips_24h: string;
+  withdraw_attempt_ips_all: string;
   first_deposit_at: Date | null;
   last_deposit_at: Date | null;
   first_wager_at: Date | null;
+  first_withdrawal_attempt_at: Date | null;
   max_single_deposit: string;
+  max_single_wager: string;
   withdrawals_after_deposit_1h: string;
   withdrawals_after_bonus_1h: string;
+  depwith_wager_burst_5m: string;
+  withdraw_usd_24h: string;
+  withdraw_attempts_total: string;
+  withdraw_cancelled_or_failed: string;
 
   // bonus / rewards
   deposit_bonus_count: string;
   deposit_bonus_value: string;
   gift_card_count: string;
+  gift_card_value: string;
   promo_code_count: string;
+  promo_code_value: string;
   rakeback_near_bonus_count: string;
   rakeback_claim_count: string;
+  rakeback_value: string;
   voucher_redeem_count: string;
+  balance_reward_claim_count: string;
+  balance_reward_claim_value: string;
+  signup_reward_claim_count: string;
+  affiliate_claim_value: string;
+  rain_win_value: string;
+  race_prize_value: string;
+  creator_tip_value: string;
+  bonus_credit_total: string;
+  withdrawal_attempt_pre_wager_count: string;
 
   // gameplay
   pack_opens: string;
   battles_played: string;
   biggest_single_wager: string;
+  total_card_sale_usd: string;
 
   // account
   feature_lock_count: string;
   mute_count: string;
+  chat_message_count: string;
 
   // network — counted via separate queries (see below) so the detail
   // query stays reasonably sized.
   session_country_count: string;
   deposit_address_shared_accounts: string;
+  affiliate_referrer_also_shares_ip: string;
+};
+
+/**
+ * Shared-identity counts resolved in parallel with the main aggregate.
+ */
+type NetworkCounts = {
+  sharedIpCount: number;
+  sharedFingerprintCount: number;
+  sharedBannedCount: number;
+  sharedLockedCount: number;
 };
 
 // ---------------------------------------------------------------------------
