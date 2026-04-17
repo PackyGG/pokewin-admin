@@ -1201,7 +1201,7 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
 
   // E1 — Already banned or locked by an admin. If another human already
   //      flagged this, future sessions are by definition suspicious.
-  const e1Weight = row.is_banned ? 20 : row.is_locked ? 10 : 0;
+  const e1Weight = row.is_banned ? 18 : row.is_locked ? 10 : 0;
   signals.push({
     id: "account.prior_moderation",
     category: "account",
@@ -1217,7 +1217,7 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
   });
 
   // E2 — Suspected-alt flag already tripped by fingerprint heuristics.
-  const e2Weight = row.is_suspected_alt ? 8 : 0;
+  const e2Weight = row.is_suspected_alt ? 7 : 0;
   signals.push({
     id: "account.suspected_alt_flag",
     category: "account",
@@ -1233,7 +1233,7 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
   // E3 — Active feature locks. Deposits / withdrawals / openings locked
   //      means a previous admin already put this user in a penalty box.
   const featureLockCount = toNumber(row.feature_lock_count);
-  const e3Weight = featureLockCount >= 2 ? 8 : featureLockCount >= 1 ? 4 : 0;
+  const e3Weight = featureLockCount >= 2 ? 7 : featureLockCount >= 1 ? 3 : 0;
   signals.push({
     id: "account.active_feature_locks",
     category: "account",
@@ -1273,7 +1273,7 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
   // E5 — Chat mutes on record. Not directly fraud, but correlates with
   //      abusive behaviour broadly.
   const muteCount = toNumber(row.mute_count);
-  const e5Weight = muteCount >= 3 ? 5 : muteCount >= 1 ? 2 : 0;
+  const e5Weight = muteCount >= 3 ? 4 : muteCount >= 1 ? 2 : 0;
   signals.push({
     id: "account.chat_mutes",
     category: "account",
@@ -1291,9 +1291,9 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
   //      abuse but a velocity/trust amplifier. Acts as a multiplier-lite.
   const e6Weight =
     accountAgeDays < 3 && totalDeposited >= 1000
-      ? 6
+      ? 5
       : accountAgeDays < 7 && totalDeposited >= 3000
-        ? 4
+        ? 3
         : 0;
   signals.push({
     id: "account.young_with_high_deposits",
@@ -1308,8 +1308,66 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
         : "Deposit pace vs account age within normal range.",
   });
 
-  // Keep a side-channel to last-deposit — referenced in the network
-  // explanation strings above in some variants. Nothing to do with score.
+  // E7 — Silent account — zero chat messages ever, but meaningful
+  //      wager/deposit volume. Combined with other signals this is
+  //      often a bot signature. Weight kept small because it's noisy
+  //      on its own.
+  const e7Weight =
+    chatCount === 0 && packOpens + battlesPlayed >= 30 ? 3 : 0;
+  signals.push({
+    id: "account.chat_silent_with_volume",
+    category: "account",
+    label: "No chat activity despite heavy gameplay",
+    weight: e7Weight,
+    triggered: e7Weight > 0,
+    value: `${chatCount} msgs / ${packOpens + battlesPlayed} plays`,
+    explanation:
+      e7Weight > 0
+        ? `User has played heavily (${packOpens} packs + ${battlesPlayed} battles) but has never sent a chat message. Silent accounts with volume are a weak bot signature.`
+        : "Chat activity is consistent with gameplay volume.",
+  });
+
+  // E8 — Deposits made but email not verified.
+  const e8Weight =
+    !row.email_verified && totalDeposited >= 100 ? 4 : 0;
+  signals.push({
+    id: "account.email_unverified_with_deposits",
+    category: "account",
+    label: "Deposits made without verified email",
+    weight: e8Weight,
+    triggered: e8Weight > 0,
+    value: row.email_verified ? "verified" : "unverified",
+    explanation:
+      e8Weight > 0
+        ? `User has deposited $${totalDeposited.toFixed(0)} without verifying email. Increases chargeback + account-recovery risk.`
+        : row.email_verified
+          ? "Email is verified."
+          : "Email not verified (no significant deposits to date).",
+  });
+
+  // E9 — 2FA not enabled on a high-volume account.
+  const e9Weight =
+    row.two_factor_enabled !== true &&
+    totalDeposited + totalWithdrawn >= 2000
+      ? 3
+      : 0;
+  signals.push({
+    id: "account.no_2fa_with_volume",
+    category: "account",
+    label: "No 2FA despite meaningful money movement",
+    weight: e9Weight,
+    triggered: e9Weight > 0,
+    value: row.two_factor_enabled ? "on" : "off",
+    explanation:
+      e9Weight > 0
+        ? `User has moved $${(totalDeposited + totalWithdrawn).toFixed(0)} through the platform without 2FA. Increases compromise/chargeback risk.`
+        : row.two_factor_enabled
+          ? "2FA enabled."
+          : "2FA not enabled (money movement is low so far).",
+  });
+
+  // Side-channel silencing — values referenced in explanation strings
+  // but not directly in weights.
   void lastDepositAt;
   void maxSingleDeposit;
 
