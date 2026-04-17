@@ -80,7 +80,7 @@ export async function getMyProfileData(adminUserId: string) {
   // Full data with main site user
   const userId = mainUser.id;
 
-  const [account, referrals, payouts] = await Promise.all([
+  const [account, referrals, payouts, clickCount] = await Promise.all([
     db.affiliate_accounts.findUnique({ where: { user_id: userId } }),
     db.affiliate_code_usages.findMany({
       where: { affiliate_user_id: userId },
@@ -97,11 +97,10 @@ export async function getMyProfileData(adminUserId: string) {
       orderBy: { created_at: "desc" },
       take: 50,
     }),
+    mainUser.affiliate_code
+      ? db.affiliate_clicks.count({ where: { code: mainUser.affiliate_code } })
+      : Promise.resolve(0),
   ]);
-
-  const clickCount = mainUser.affiliate_code
-    ? await db.affiliate_clicks.count({ where: { code: mainUser.affiliate_code } })
-    : 0;
 
   return {
     userId,

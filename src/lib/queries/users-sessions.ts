@@ -19,28 +19,28 @@ export type UserSession = {
 };
 
 export async function getUserSessions(userId: string): Promise<UserSession[]> {
-  // Fetch all completed transactions ordered by time
-  const transactions = await db.ledger_transactions.findMany({
-    where: { user_id: userId, status: "completed" },
-    orderBy: { created_at: "asc" },
-    select: {
-      type: true,
-      amount: true,
-      balance_after: true,
-      created_at: true,
-    },
-  });
-
-  // Fetch all crypto withdrawal requests
-  const cryptoWithdrawals = await db.card_withdrawal_requests.findMany({
-    where: { user_id: userId, method: "crypto" },
-    orderBy: { requested_at: "asc" },
-    select: {
-      total_value_usd: true,
-      status: true,
-      requested_at: true,
-    },
-  });
+  // Transactions and crypto-withdrawal requests are independent — fetch in parallel.
+  const [transactions, cryptoWithdrawals] = await Promise.all([
+    db.ledger_transactions.findMany({
+      where: { user_id: userId, status: "completed" },
+      orderBy: { created_at: "asc" },
+      select: {
+        type: true,
+        amount: true,
+        balance_after: true,
+        created_at: true,
+      },
+    }),
+    db.card_withdrawal_requests.findMany({
+      where: { user_id: userId, method: "crypto" },
+      orderBy: { requested_at: "asc" },
+      select: {
+        total_value_usd: true,
+        status: true,
+        requested_at: true,
+      },
+    }),
+  ]);
 
   // Build a merged timeline of events
   type TimelineEvent =

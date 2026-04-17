@@ -199,33 +199,42 @@ export async function getSpendingSummary(
 
 export async function getMonthlyTrend(months: number = 6): Promise<MonthlyTrendItem[]> {
   const now = new Date();
-  const results: MonthlyTrendItem[] = [];
-
+  const monthSpans = [] as Array<{ d: Date; startDate: Date; endDate: Date }>;
   for (let i = months - 1; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     const startDate = new Date(d.getFullYear(), d.getMonth(), 1);
     const endDate = new Date(d.getFullYear(), d.getMonth() + 1, 1);
-
-    const [expenseAgg, recurringAgg] = await Promise.all([
-      adminDb.expenses.aggregate({
-        _sum: { amount: true },
-        where: { date: { gte: startDate, lt: endDate } },
-      }),
-      adminDb.recurring_expenses.aggregate({
-        _sum: { amount: true },
-        where: { is_active: true },
-      }),
-    ]);
-
-    const label = formatMonthYear(d);
-    const monthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-
-    results.push({
-      month: monthStr,
-      label,
-      total: toNumber(expenseAgg._sum.amount) + toNumber(recurringAgg._sum.amount),
-    });
+    monthSpans.push({ d, startDate, endDate });
   }
 
-  return results;
+  // Recurring total is time-independent (where is_active=true), so it's the
+  // same for every month — fetch it once, not per-iteration.
+  // Expense aggregates for each month are independent, so fan them out in
+  // one Promise.all instead of the previous sequential for-loop.
+  const [recurringAgg, expenseAggs] = await Promise.all([
+    adminDb.recurring_expenses.aggregate({
+      _sum: { amount: true },
+      where: { is_active: true },
+    }),
+    Promise.all(
+      monthSpans.map((m) =>
+        adminDb.expenses.aggregate({
+          _sum: { amount: true },
+          where: { date: { gte: m.startDate, lt: m.endDate } },
+        })
+      )
+    ),
+  ]);
+
+  const recurringTotal = toNumber(recurringAgg._sum.amount);
+
+  return monthSpans.map((m, i) => {
+    const label = formatMonthYear(m.d);
+    const monthStr = `${m.d.getFullYear()}-${String(m.d.getMonth() + 1).padStart(2, "0")}`;
+    return {
+      month: monthStr,
+      label,
+      total: toNumber(expenseAggs[i]._sum.amount) + recurringTotal,
+    };
+  });
 }
