@@ -121,8 +121,3 @@ export type recurring_expenses = Prisma.recurring_expensesModel
  * 
  */
 export type admin_settings = Prisma.admin_settingsModel
-/**
- * Model notification_configs
- * 
- */
-export type notification_configs = Prisma.notification_configsModel

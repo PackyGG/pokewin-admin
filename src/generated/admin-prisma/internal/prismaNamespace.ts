@@ -399,8 +399,7 @@ export const ModelName = {
   admin_balance_limits: 'admin_balance_limits',
   expenses: 'expenses',
   recurring_expenses: 'recurring_expenses',
-  admin_settings: 'admin_settings',
-  notification_configs: 'notification_configs'
+  admin_settings: 'admin_settings'
 } as const
 
 export type ModelName = (typeof ModelName)[keyof typeof ModelName]
@@ -416,7 +415,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "admin_users" | "admin_roles" | "admin_sessions" | "admin_notes" | "admin_audit_events" | "admin_gift_card_actions" | "admin_voucher_actions" | "creator_webhooks" | "creator_deals" | "creator_socials" | "webhook_deliveries" | "creator_balance_fills" | "admin_balance_limits" | "expenses" | "recurring_expenses" | "admin_settings" | "notification_configs"
+    modelProps: "admin_users" | "admin_roles" | "admin_sessions" | "admin_notes" | "admin_audit_events" | "admin_gift_card_actions" | "admin_voucher_actions" | "creator_webhooks" | "creator_deals" | "creator_socials" | "webhook_deliveries" | "creator_balance_fills" | "admin_balance_limits" | "expenses" | "recurring_expenses" | "admin_settings"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -1604,80 +1603,6 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         }
       }
     }
-    notification_configs: {
-      payload: Prisma.$notification_configsPayload<ExtArgs>
-      fields: Prisma.notification_configsFieldRefs
-      operations: {
-        findUnique: {
-          args: Prisma.notification_configsFindUniqueArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$notification_configsPayload> | null
-        }
-        findUniqueOrThrow: {
-          args: Prisma.notification_configsFindUniqueOrThrowArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$notification_configsPayload>
-        }
-        findFirst: {
-          args: Prisma.notification_configsFindFirstArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$notification_configsPayload> | null
-        }
-        findFirstOrThrow: {
-          args: Prisma.notification_configsFindFirstOrThrowArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$notification_configsPayload>
-        }
-        findMany: {
-          args: Prisma.notification_configsFindManyArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$notification_configsPayload>[]
-        }
-        create: {
-          args: Prisma.notification_configsCreateArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$notification_configsPayload>
-        }
-        createMany: {
-          args: Prisma.notification_configsCreateManyArgs<ExtArgs>
-          result: BatchPayload
-        }
-        createManyAndReturn: {
-          args: Prisma.notification_configsCreateManyAndReturnArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$notification_configsPayload>[]
-        }
-        delete: {
-          args: Prisma.notification_configsDeleteArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$notification_configsPayload>
-        }
-        update: {
-          args: Prisma.notification_configsUpdateArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$notification_configsPayload>
-        }
-        deleteMany: {
-          args: Prisma.notification_configsDeleteManyArgs<ExtArgs>
-          result: BatchPayload
-        }
-        updateMany: {
-          args: Prisma.notification_configsUpdateManyArgs<ExtArgs>
-          result: BatchPayload
-        }
-        updateManyAndReturn: {
-          args: Prisma.notification_configsUpdateManyAndReturnArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$notification_configsPayload>[]
-        }
-        upsert: {
-          args: Prisma.notification_configsUpsertArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$notification_configsPayload>
-        }
-        aggregate: {
-          args: Prisma.Notification_configsAggregateArgs<ExtArgs>
-          result: runtime.Types.Utils.Optional<Prisma.AggregateNotification_configs>
-        }
-        groupBy: {
-          args: Prisma.notification_configsGroupByArgs<ExtArgs>
-          result: runtime.Types.Utils.Optional<Prisma.Notification_configsGroupByOutputType>[]
-        }
-        count: {
-          args: Prisma.notification_configsCountArgs<ExtArgs>
-          result: runtime.Types.Utils.Optional<Prisma.Notification_configsCountAggregateOutputType> | number
-        }
-      }
-    }
   }
 } & {
   other: {
@@ -1970,19 +1895,6 @@ export const Admin_settingsScalarFieldEnum = {
 } as const
 
 export type Admin_settingsScalarFieldEnum = (typeof Admin_settingsScalarFieldEnum)[keyof typeof Admin_settingsScalarFieldEnum]
-
-
-export const Notification_configsScalarFieldEnum = {
-  event_type: 'event_type',
-  enabled: 'enabled',
-  bot_token: 'bot_token',
-  chat_id: 'chat_id',
-  cursor: 'cursor',
-  updated_at: 'updated_at',
-  updated_by: 'updated_by'
-} as const
-
-export type Notification_configsScalarFieldEnum = (typeof Notification_configsScalarFieldEnum)[keyof typeof Notification_configsScalarFieldEnum]
 
 
 export const SortOrder = {
@@ -2352,7 +2264,6 @@ export type GlobalOmitConfig = {
   expenses?: Prisma.expensesOmit
   recurring_expenses?: Prisma.recurring_expensesOmit
   admin_settings?: Prisma.admin_settingsOmit
-  notification_configs?: Prisma.notification_configsOmit
 }
 
 /* Types for Logging */

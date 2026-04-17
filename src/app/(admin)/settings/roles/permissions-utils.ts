@@ -126,15 +126,6 @@ export const CAPABILITIES: CapabilityDef[] = [
     group: "Ads",
   },
 
-  // ── Notifications ───────────────────────────────────────────────────
-  {
-    key: "__can_manage_notifications",
-    label: "Manage Notifications",
-    description:
-      "Configure Telegram bot credentials, toggle channels on/off, and send test messages",
-    group: "Notifications",
-  },
-
   // ── Withdrawals ─────────────────────────────────────────────────────
   {
     key: "__can_process_withdrawals",
