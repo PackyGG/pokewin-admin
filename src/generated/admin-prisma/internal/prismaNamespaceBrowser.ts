@@ -66,7 +66,8 @@ export const ModelName = {
   admin_balance_limits: 'admin_balance_limits',
   expenses: 'expenses',
   recurring_expenses: 'recurring_expenses',
-  admin_settings: 'admin_settings'
+  admin_settings: 'admin_settings',
+  notification_configs: 'notification_configs'
 } as const
 
 export type ModelName = (typeof ModelName)[keyof typeof ModelName]
@@ -338,6 +339,19 @@ export const Admin_settingsScalarFieldEnum = {
 } as const
 
 export type Admin_settingsScalarFieldEnum = (typeof Admin_settingsScalarFieldEnum)[keyof typeof Admin_settingsScalarFieldEnum]
+
+
+export const Notification_configsScalarFieldEnum = {
+  event_type: 'event_type',
+  enabled: 'enabled',
+  bot_token: 'bot_token',
+  chat_id: 'chat_id',
+  cursor: 'cursor',
+  updated_at: 'updated_at',
+  updated_by: 'updated_by'
+} as const
+
+export type Notification_configsScalarFieldEnum = (typeof Notification_configsScalarFieldEnum)[keyof typeof Notification_configsScalarFieldEnum]
 
 
 export const SortOrder = {

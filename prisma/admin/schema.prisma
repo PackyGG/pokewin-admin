@@ -316,3 +316,18 @@ model admin_settings {
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
   updated_by String?  @db.Uuid
 }
+
+// Per-event Telegram notification configuration. The Vercel cron endpoint
+// at /api/cron/notifications reads these rows every minute and forwards
+// new main-DB events (deposits, withdrawals, signups) to Telegram. One
+// row per event_type, seeded at migration time so the settings UI always
+// has something to render.
+model notification_configs {
+  event_type String   @id
+  enabled    Boolean  @default(false)
+  bot_token  String?
+  chat_id    String?
+  cursor     String?
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+  updated_by String?  @db.Uuid
+}
