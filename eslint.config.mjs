@@ -20,6 +20,16 @@ const eslintConfig = [
       "next-env.d.ts",
     ],
   },
+  // Playwright E2E tests use `use()` to yield fixtures. The Next/React
+  // eslint preset mistakes that for React's `use()` hook and fires
+  // react-hooks/rules-of-hooks. Scope both rules off inside e2e/.
+  {
+    files: ["e2e/**/*.ts"],
+    rules: {
+      "react-hooks/rules-of-hooks": "off",
+      "react-hooks/exhaustive-deps": "off",
+    },
+  },
 ];
 
 export default eslintConfig;

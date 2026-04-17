@@ -1,4 +1,3 @@
-import type { FullConfig } from "@playwright/test";
 import { loadEnvFiles } from "./helpers/env";
 import { closePools, sweepStaleScratchUsers } from "./helpers/db";
 
@@ -10,7 +9,7 @@ import { closePools, sweepStaleScratchUsers } from "./helpers/db";
  *   2. Sweep any stale `_e2e_*` users from a previous crashed run so
  *      unique-constraint collisions don't cascade across suites.
  */
-export default async function globalSetup(_config: FullConfig) {
+export default async function globalSetup() {
   loadEnvFiles();
 
   if (!process.env.DATABASE_URL || !process.env.ADMIN_DATABASE_URL) {
