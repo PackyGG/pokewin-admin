@@ -38,79 +38,27 @@ import { toNumber } from "@/lib/utils/decimal";
 // Public types
 // ---------------------------------------------------------------------------
 
-export type RiskTier = "low" | "medium" | "high" | "critical";
-export type RiskCategory =
-  | "velocity"
-  | "gameplay"
-  | "rewards"
-  | "network"
-  | "account";
-
-export type RiskSignal = {
-  id: string;
-  category: RiskCategory;
-  label: string;
-  /** Final contribution to the score if triggered. */
-  weight: number;
-  triggered: boolean;
-  /** Human-readable value or metric that supports the explanation. */
-  value?: string | number;
-  /** Full sentence the moderator sees. */
-  explanation: string;
-};
-
-export type RiskScoreBreakdown = {
-  score: number;
-  tier: RiskTier;
-  signals: RiskSignal[];
-  sharedIpCount: number;
-  sharedFingerprintCount: number;
-  /** Epoch ms of the aggregation. Useful for cache introspection. */
-  computedAt: number;
-};
-
-export type RiskScoreLite = {
-  score: number;
-  tier: RiskTier;
-  sharedIpCount: number;
-  sharedFingerprintCount: number;
-};
-
-// ---------------------------------------------------------------------------
-// Tier / coloring helpers
-// ---------------------------------------------------------------------------
-
-export function tierForScore(score: number): RiskTier {
-  if (score >= 80) return "critical";
-  if (score >= 60) return "high";
-  if (score >= 30) return "medium";
-  return "low";
-}
-
-export function tierLabel(tier: RiskTier): string {
-  return tier === "low"
-    ? "Low"
-    : tier === "medium"
-      ? "Medium"
-      : tier === "high"
-        ? "High"
-        : "Critical";
-}
-
-/**
- * Tailwind classes for a tier badge. Uses the same color pattern as
- * src/lib/constants.ts (bg/15, text/600 dark:400, border/30) so badges
- * look identical in form to the other status chips on the site.
- *
- * CLAUDE.md house-perspective: a user flagged as high-risk is bad for the
- * HOUSE (rose/red). Low risk = house safe = emerald. Between are graded.
- */
-export const RISK_TIER_COLORS: Record<RiskTier, string> = {
-  low: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
-  medium: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
-  high: "bg-orange-500/15 text-orange-600 dark:text-orange-400 border-orange-500/30",
-  critical: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
-};
+// Pure types + client-safe helpers moved to ./score-types so client
+// components can import them without dragging `db` / `adminDb` into the
+// browser bundle. Re-exported here for backward compatibility with
+// existing server-side callers.
+export {
+  RISK_TIER_COLORS,
+  tierForScore,
+  tierLabel,
+  type RiskTier,
+  type RiskCategory,
+  type RiskSignal,
+  type RiskScoreBreakdown,
+  type RiskScoreLite,
+} from "./score-types";
+import type {
+  RiskTier,
+  RiskScoreBreakdown,
+  RiskScoreLite,
+  RiskSignal,
+} from "./score-types";
+import { tierForScore } from "./score-types";
 
 // ---------------------------------------------------------------------------
 // In-memory cache (per-process)

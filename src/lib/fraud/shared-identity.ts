@@ -18,23 +18,11 @@
 
 import { db } from "@/lib/db";
 
-export type SharedIdentityUser = {
-  userId: string;
-  username: string | null;
-  email: string | null;
-  image: string | null;
-  role: string;
-  isBanned: boolean;
-  isLocked: boolean;
-  /** Number of distinct IPs (or visitor_ids for fingerprint variant) in common. */
-  sharedCount: number;
-  /** Number of fingerprint events recorded for the OTHER user with a shared identity. */
-  totalEvents: number;
-  /** Most recent time the OTHER user had a matching event. */
-  lastSeenAt: string | null;
-  /** Examples of the shared identity value (IP / visitor_id) — max 5, for display. */
-  sampleValues: string[];
-};
+// The type moved to ./shared-identity-types so client components can
+// import it without pulling Prisma into the browser bundle. Re-exported
+// here for backward compat.
+export type { SharedIdentityUser } from "./shared-identity-types";
+import type { SharedIdentityUser } from "./shared-identity-types";
 
 type Row = {
   user_id: string;

@@ -15,7 +15,7 @@ import { ROLE_COLORS, USER_STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency } from "@/lib/utils/format";
 import { useFormatDateTime } from "@/components/timezone-provider";
 import { cn } from "@/lib/utils";
-import { RISK_TIER_COLORS, tierLabel, type RiskTier } from "@/lib/fraud/score";
+import { RISK_TIER_COLORS, tierLabel, type RiskTier } from "@/lib/fraud/score-types";
 
 export type UserRow = {
   id: string;

@@ -34,7 +34,10 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`} suppressHydrationWarning>
       <body className="antialiased">
-        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
+        {/* Dark mode stays the project default (CLAUDE.md). `enableSystem`
+            is on so the admin preferences dropdown can offer a "System"
+            option that follows the OS setting. */}
+        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
           <TooltipProvider>
             {children}
           </TooltipProvider>

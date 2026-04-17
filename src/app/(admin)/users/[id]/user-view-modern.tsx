@@ -69,8 +69,8 @@ import {
   type RiskScoreBreakdown,
   RISK_TIER_COLORS,
   tierLabel,
-} from "@/lib/fraud/score";
-import type { SharedIdentityUser } from "@/lib/fraud/shared-identity";
+} from "@/lib/fraud/score-types";
+import type { SharedIdentityUser } from "@/lib/fraud/shared-identity-types";
 
 // ---------------------------------------------------------------------------
 // Re-exports — preserve the public surface so call sites that previously

@@ -48,8 +48,8 @@ import {
   type RiskScoreBreakdown,
   type RiskSignal,
   type RiskTier,
-} from "@/lib/fraud/score";
-import type { SharedIdentityUser } from "@/lib/fraud/shared-identity";
+} from "@/lib/fraud/score-types";
+import type { SharedIdentityUser } from "@/lib/fraud/shared-identity-types";
 import { ROLE_COLORS, USER_STATUS_COLORS } from "@/lib/constants";
 import { SectionHeading } from "./user-view-modern-panels";
 import { refreshRiskScoreAction } from "./trust-actions";

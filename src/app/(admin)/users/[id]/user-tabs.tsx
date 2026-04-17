@@ -10,8 +10,8 @@ import type {
   AdminNote,
 } from "./user-tabs-types";
 import type { UserRewards } from "@/lib/queries/users";
-import type { RiskScoreBreakdown } from "@/lib/fraud/score";
-import type { SharedIdentityUser } from "@/lib/fraud/shared-identity";
+import type { RiskScoreBreakdown } from "@/lib/fraud/score-types";
+import type { SharedIdentityUser } from "@/lib/fraud/shared-identity-types";
 
 // ---------------------------------------------------------------------------
 // Re-exports — preserve the public surface so existing imports keep working.
