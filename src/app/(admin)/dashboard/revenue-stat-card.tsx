@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TrendingUp, TrendingDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
+import { AnimatedNumber } from "@/components/animated-number";
 
 const ranges = ["24h", "3d", "7d", "30d", "all"] as const;
 
@@ -35,7 +36,8 @@ export function PnlStatCard({ pnl }: { pnl: number }) {
       <CardContent>
         <div className="text-stat-value">
           <span className={isProfit ? "text-emerald-400" : "text-red-400"}>
-            {isProfit ? "+" : ""}{formatCurrency(pnl)}
+            {isProfit ? "+" : ""}
+            <AnimatedNumber value={pnl} format={formatCurrency} />
           </span>
         </div>
       </CardContent>
@@ -86,7 +88,8 @@ export function GgrStatCard({ ggr }: { ggr: Record<string, number> }) {
       <CardContent>
         <div className="text-stat-value">
           <span className={isProfit ? "text-sky-400" : "text-red-400"}>
-            {isProfit ? "+" : ""}{formatCurrency(value)}
+            {isProfit ? "+" : ""}
+            <AnimatedNumber value={value} format={formatCurrency} />
           </span>
         </div>
       </CardContent>
@@ -128,7 +131,10 @@ export function WagerStatCard({
       </CardHeader>
       <CardContent>
         <div className="text-stat-value">
-          {formatCurrency(wagers[selected] ?? 0)}
+          <AnimatedNumber
+            value={wagers[selected] ?? 0}
+            format={formatCurrency}
+          />
         </div>
       </CardContent>
     </Card>
@@ -169,7 +175,10 @@ export function DepositsStatCard({
       </CardHeader>
       <CardContent>
         <div className="text-stat-value">
-          {formatCurrency(deposits[selected] ?? 0)}
+          <AnimatedNumber
+            value={deposits[selected] ?? 0}
+            format={formatCurrency}
+          />
         </div>
       </CardContent>
     </Card>

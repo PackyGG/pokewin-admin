@@ -281,3 +281,62 @@
 [data-slot="collapsible-content"][data-closed] {
   height: 0;
 }
+
+/* ──────────────────────────────────────────────────────────────
+   Shared motion polish
+   ──────────────────────────────────────────────────────────────
+   - Respect prefers-reduced-motion across custom animations.
+   - Soft shimmer overlay on <Skeleton> so long waits feel less
+     static without being distracting. Reduced-motion users get
+     the plain static box (no pulse, no shimmer).
+   - `data-hover-lift` opt-in gives tile-style cards a gentle 1px
+     lift on hover — applied only where we want it, no global
+     Card change.
+*/
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="skeleton"] {
+    animation: none !important;
+  }
+  [data-slot="collapsible-content"] {
+    transition: none !important;
+  }
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-slot="skeleton"] {
+    position: relative;
+    overflow: hidden;
+  }
+  [data-slot="skeleton"]::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in oklch, var(--foreground) 6%, transparent),
+      transparent
+    );
+    animation: skeleton-shimmer 1.8s ease-in-out infinite;
+    pointer-events: none;
+  }
+
+  [data-hover-lift] {
+    transition:
+      transform 200ms ease-out,
+      box-shadow 200ms ease-out,
+      border-color 200ms ease-out;
+  }
+  [data-hover-lift]:hover {
+    transform: translateY(-1px);
+  }
+}

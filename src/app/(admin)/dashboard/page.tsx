@@ -22,6 +22,7 @@ import { WagerChart, DepositsChart, SignupsChart } from "./charts";
 import { RecentActivity } from "./recent-activity";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { PageHero, SectionHeading } from "@/components/modern-panels";
+import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Dashboard" };
 
@@ -70,28 +71,40 @@ export default async function DashboardPage({
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Total Users"
-          value={formatNumber(stats.users.total)}
+          animatedValue={stats.users.total}
+          formatValue={(n) => formatNumber(Math.round(n))}
           subtitle={`+${stats.users.today} today, +${stats.users.week} this week`}
           icon={Users}
           color="blue"
         />
         <StatCard
           title="Users Total Balance"
-          value={formatCurrency(stats.financials.totalSiteBalance + stats.financials.totalInventoryValue)}
+          animatedValue={
+            stats.financials.totalSiteBalance +
+            stats.financials.totalInventoryValue
+          }
+          formatValue={formatCurrency}
           subtitle={`${formatCurrency(stats.financials.totalSiteBalance)} cash · ${formatCurrency(stats.financials.totalInventoryValue)} unsold inventory`}
           icon={Wallet}
           color="green"
         />
         <StatCard
           title="Avg Deposit"
-          value={formatCurrency(stats.financials.avgDeposit)}
+          animatedValue={stats.financials.avgDeposit}
+          formatValue={formatCurrency}
           subtitle="Across all users (lifetime)"
           icon={Coins}
           color="orange"
         />
         <StatCard
           title="Avg RTP"
-          value={`${(stats.financials.totalWagered > 0 ? (stats.financials.totalWon / stats.financials.totalWagered) * 100 : 0).toFixed(2)}%`}
+          animatedValue={
+            stats.financials.totalWagered > 0
+              ? (stats.financials.totalWon / stats.financials.totalWagered) *
+                100
+              : 0
+          }
+          formatValue={(n) => `${n.toFixed(2)}%`}
           icon={Percent}
           color="pink"
         />
@@ -100,11 +113,11 @@ export default async function DashboardPage({
       {/* Charts */}
       <div className="space-y-3">
         <SectionHeading icon={LineChart} title="Trends" />
-        <div className="grid gap-4 lg:grid-cols-3">
+        <FadeIn className="grid gap-4 lg:grid-cols-3">
           <WagerChart data={stats.dailyWagers} />
           <DepositsChart data={stats.dailyDeposits} />
           <SignupsChart data={stats.dailySignups} />
-        </div>
+        </FadeIn>
       </div>
 
       {/* Recent activity */}

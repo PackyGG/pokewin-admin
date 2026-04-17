@@ -16,6 +16,7 @@ import { PeriodFilter } from "./period-filter";
 import { AnalyticsCharts } from "./charts";
 import { BattleModesSection, PackPopularitySection } from "./sections";
 import { PageHero } from "@/components/modern-panels";
+import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Analytics" };
 
@@ -73,35 +74,40 @@ export default async function AnalyticsPage({
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <StatCard
           title="Realized Profit"
-          value={formatCurrency(data.realizedProfit)}
+          animatedValue={data.realizedProfit}
+          formatValue={formatCurrency}
           subtitle={`Dep ${formatCurrency(data.realizedProfitBreakdown.totalDeposits)} − WD ${formatCurrency(data.realizedProfitBreakdown.totalWithdrawals)} − Bal ${formatCurrency(data.realizedProfitBreakdown.userBalance)} − Inv ${formatCurrency(data.realizedProfitBreakdown.inventory)} − Vouchers ${formatCurrency(data.realizedProfitBreakdown.vouchers)} − Rakeback ${formatCurrency(data.realizedProfitBreakdown.unclaimedRakeback)}`}
           icon={TrendingUp}
           color="green"
         />
         <StatCard
           title="GGR (Gross Gaming Revenue)"
-          value={formatCurrency(data.ggr)}
+          animatedValue={data.ggr}
+          formatValue={formatCurrency}
           subtitle={`${formatCurrency(totalWager)} wagered total`}
           icon={DollarSign}
           color="blue"
         />
         <StatCard
           title="Unique Visitors"
-          value={formatNumber(data.uniqueVisitors)}
+          animatedValue={data.uniqueVisitors}
+          formatValue={(n) => formatNumber(Math.round(n))}
           subtitle="Distinct users with transactions"
           icon={Eye}
           color="cyan"
         />
         <StatCard
           title="New Signups"
-          value={formatNumber(data.newSignups)}
+          animatedValue={data.newSignups}
+          formatValue={(n) => formatNumber(Math.round(n))}
           subtitle={`${data.uniqueVisitors > 0 ? ((data.newSignups / data.uniqueVisitors) * 100).toFixed(1) : "0"}% of active users`}
           icon={UserPlus}
           color="purple"
         />
         <StatCard
           title="Pack Wagers"
-          value={formatCurrency(data.packWager)}
+          animatedValue={data.packWager}
+          formatValue={formatCurrency}
           subtitle={`${packPct}% of total wagers`}
           icon={Package}
           color="orange"
@@ -112,7 +118,8 @@ export default async function AnalyticsPage({
         </StatCard>
         <StatCard
           title="Battle Wagers"
-          value={formatCurrency(data.battleWager)}
+          animatedValue={data.battleWager}
+          formatValue={formatCurrency}
           subtitle={`${battlePct}% of total wagers`}
           icon={Swords}
           color="pink"
@@ -130,7 +137,9 @@ export default async function AnalyticsPage({
       </div>
 
       {/* Charts */}
-      <AnalyticsCharts data={data.daily} />
+      <FadeIn>
+        <AnalyticsCharts data={data.daily} />
+      </FadeIn>
     </div>
   );
 }
