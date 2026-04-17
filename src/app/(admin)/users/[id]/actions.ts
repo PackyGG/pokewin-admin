@@ -6,6 +6,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { requireAdmin, requirePageAccess } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import { user_role } from "@/generated/prisma/client";
 import { getUserInventory, getUserTransactions, getCreatorReferralClicks, getCreatorCodeUsages, getCreatorWithdrawalLimits, getProvablyFairResults, getSeedRotationHistory, getUserBalanceHistory } from "@/lib/queries/users";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -153,7 +154,11 @@ export async function adjustBalance(data: {
 }
 
 export async function changeRole(userId: string, newRole: string, totpCode: string) {
+  // Role changes remain admin-only (+ 2FA). The capability check is kept as
+  // defence-in-depth so `__can_change_user_roles` is catalogued; admins pass
+  // automatically.
   const session = await requireAdmin();
+  await requireCapability(session, "__can_change_user_roles", "change user roles");
 
   await require2FA(session.userId, totpCode);
 
@@ -184,7 +189,8 @@ export async function updateUserIdentity(
     displayUsername?: string;
   },
 ): Promise<{ success: true } | { success: false; error: string }> {
-  const session = await requireAdmin();
+  const session = await requirePageAccess("/users");
+  await requireCapability(session, "__can_edit_identity", "edit user identity");
 
   const updateData: Record<string, unknown> = {};
   const metadata: Record<string, unknown> = {};
@@ -262,7 +268,8 @@ export async function toggleFeatureLock(
   feature: string,
   locked: boolean
 ) {
-  const session = await requireAdmin();
+  const session = await requirePageAccess("/users");
+  await requireCapability(session, "__can_toggle_feature_locks", "toggle feature locks");
 
   const validFeatures = [
     "locked_withdrawals_crypto",
@@ -487,7 +494,8 @@ export async function fetchCreatorCodeUsages(
 }
 
 export async function assignAffiliateCode(userId: string, affiliateCode: string | null) {
-  const session = await requireAdmin();
+  const session = await requirePageAccess("/users");
+  await requireCapability(session, "__can_assign_affiliate", "assign affiliate codes");
 
   if (!affiliateCode || affiliateCode.trim() === "") {
     // Find current referrer to decrement their total_referred
@@ -564,7 +572,8 @@ export async function assignAffiliateCode(userId: string, affiliateCode: string 
 }
 
 export async function createAffiliateCode(userId: string, code: string) {
-  const session = await requireAdmin();
+  const session = await requirePageAccess("/users");
+  await requireCapability(session, "__can_assign_affiliate", "create affiliate codes");
   const trimmed = code.trim();
   if (!trimmed) return { success: false, error: "Code cannot be empty" };
 
@@ -615,7 +624,8 @@ export async function adjustXp(data: {
   amount: number;
   reason: string;
 }) {
-  const session = await requireAdmin();
+  const session = await requirePageAccess("/users");
+  await requireCapability(session, "__can_adjust_xp", "adjust user XP");
   const parsed = adjustXpSchema.parse(data);
 
   const stats = await db.user_statistics.findUnique({
