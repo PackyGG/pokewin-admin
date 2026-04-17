@@ -17,9 +17,12 @@ import type {
   LiveActivityEventKind,
   LiveActivityItem,
 } from "@/lib/queries/dashboard-live";
+import { useSseStream } from "@/lib/hooks/use-sse";
 import { fetchRecentActivityLive } from "./live-actions";
 
 const MAX_ITEMS = 50;
+// Fallback polling cadence — only used if SSE can't connect (very old
+// browsers, or repeated connection failures).
 const POLL_INTERVAL_MS = 3000;
 
 // ---------------------------------------------------------------------------
@@ -117,6 +120,11 @@ export function RecentActivity({ initial }: { initial: LiveActivityItem[] }) {
   const cursorRef = React.useRef<string | null>(
     initial.length > 0 ? initial[0].createdAt : null,
   );
+  // When SSE proves unavailable we flip to the old polling path. Default
+  // stays on SSE for every modern browser.
+  const [useFallback, setUseFallback] = React.useState<boolean>(
+    () => typeof window !== "undefined" && typeof EventSource === "undefined",
+  );
   const [, setNow] = React.useState(0);
 
   React.useEffect(() => {
@@ -124,7 +132,66 @@ export function RecentActivity({ initial }: { initial: LiveActivityItem[] }) {
     return () => clearInterval(tick);
   }, []);
 
+  // Shared merge helper — mutates the items list with a set of fresh rows,
+  // deduping by id, capping at MAX_ITEMS, and triggering the "new" flash
+  // animation for 600ms.
+  const merge = React.useCallback((incoming: LiveActivityItem[]) => {
+    if (incoming.length === 0) return;
+    setItems((prev) => {
+      const existing = new Set(prev.map((i) => i.id));
+      const toAdd = incoming.filter((i) => !existing.has(i.id));
+      if (toAdd.length === 0) return prev;
+      setNewIds((old) => {
+        const next = new Set(old);
+        for (const f of toAdd) next.add(f.id);
+        return next;
+      });
+      window.setTimeout(() => {
+        setNewIds((old) => {
+          if (old.size === 0) return old;
+          const next = new Set(old);
+          for (const f of toAdd) next.delete(f.id);
+          return next;
+        });
+      }, 600);
+      // Newest-first order: reverse the `toAdd` batch so a single SSE
+      // tick that delivers several rows keeps the freshest one on top.
+      const withNew = [...[...toAdd].reverse(), ...prev];
+      return withNew.slice(0, MAX_ITEMS);
+    });
+  }, []);
+
+  // SSE path — default for every modern browser.
+  useSseStream<LiveActivityItem>(
+    "/api/live/activity",
+    {
+      onInit: (rows) => {
+        // The server emits an initial snapshot of up to 30 rows (newest-
+        // first). The parent already rendered `initial` SSR, so we just
+        // dedupe and advance the cursor to the freshest row we know about.
+        if (rows.length === 0) return;
+        const newest = rows[0].createdAt;
+        if (
+          cursorRef.current == null ||
+          new Date(newest).getTime() > new Date(cursorRef.current).getTime()
+        ) {
+          cursorRef.current = newest;
+        }
+        merge(rows);
+      },
+      onRow: (row) => {
+        cursorRef.current = row.createdAt;
+        merge([row]);
+      },
+      onGiveUp: () => setUseFallback(true),
+    },
+    { enabled: !useFallback },
+  );
+
+  // Polling fallback — only active when SSE is unavailable / gave up. Kept
+  // verbatim from the original implementation so the UX degrades cleanly.
   React.useEffect(() => {
+    if (!useFallback) return;
     let alive = true;
     const poll = async () => {
       if (!alive) return;
@@ -138,25 +205,7 @@ export function RecentActivity({ initial }: { initial: LiveActivityItem[] }) {
         const fresh = await fetchRecentActivityLive(cursorRef.current);
         if (!alive || fresh.length === 0) return;
         cursorRef.current = fresh[0].createdAt;
-        setItems((prev) => {
-          const existing = new Set(prev.map((i) => i.id));
-          const toAdd = fresh.filter((i) => !existing.has(i.id));
-          if (toAdd.length === 0) return prev;
-          setNewIds((old) => {
-            const next = new Set(old);
-            for (const f of toAdd) next.add(f.id);
-            return next;
-          });
-          window.setTimeout(() => {
-            setNewIds((old) => {
-              if (old.size === 0) return old;
-              const next = new Set(old);
-              for (const f of toAdd) next.delete(f.id);
-              return next;
-            });
-          }, 600);
-          return [...toAdd, ...prev].slice(0, MAX_ITEMS);
-        });
+        merge(fresh);
       } catch {
         // Silent — polling will recover on the next tick.
       }
@@ -166,7 +215,7 @@ export function RecentActivity({ initial }: { initial: LiveActivityItem[] }) {
       alive = false;
       clearInterval(id);
     };
-  }, []);
+  }, [useFallback, merge]);
 
   return (
     <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
