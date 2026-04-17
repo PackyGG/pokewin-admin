@@ -55,7 +55,6 @@ const MAPPING = {
   "src/app/(admin)/creators/settings/page.tsx": "Creator Settings",
   "src/app/(admin)/chat/page.tsx": "Chat Moderation",
   "src/app/(admin)/security/page.tsx": "Security",
-  "src/app/(admin)/trello/page.tsx": "Trello",
   "src/app/(admin)/admin-users/page.tsx": "Admin Users",
   "src/app/(admin)/admin-users/[id]/page.tsx": "Admin User Detail",
   "src/app/(admin)/whitelist/page.tsx": "Whitelist",

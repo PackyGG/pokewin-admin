@@ -177,12 +177,6 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: "Trello",
-    items: [
-      { label: "Board", href: "/trello", icon: "SquareKanban" },
-    ],
-  },
-  {
     label: "System",
     items: [
       { label: "Admin Users", href: "/admin-users", icon: "ShieldCheck" },

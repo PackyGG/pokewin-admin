@@ -46,8 +46,6 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Moderation", label: "Chat", key: "/chat" },
   // Security
   { group: "Security", label: "Security", key: "/security" },
-  // Trello
-  { group: "Trello", label: "Boards", key: "/trello" },
   // System
   { group: "System", label: "Admin Users", key: "/admin-users" },
   { group: "System", label: "Admin Roles", key: "/admin-users/roles" },
