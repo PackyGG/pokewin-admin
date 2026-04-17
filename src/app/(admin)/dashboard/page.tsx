@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   Activity,
   LineChart,
+  Sparkles,
 } from "lucide-react";
 import { getDashboardStats } from "@/lib/queries/dashboard";
 import { getLiveActivity } from "@/lib/queries/dashboard-live";
@@ -22,6 +23,7 @@ import {
 import { AutoRefresh } from "./auto-refresh";
 import { WagerChart, DepositsChart, SignupsChart } from "./charts";
 import { RecentActivity, RecentActivityLivePulse } from "./recent-activity";
+import { LivePulls } from "./live-pulls";
 import { PageHero, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
@@ -121,16 +123,28 @@ export default async function DashboardPage() {
         </FadeIn>
       </div>
 
-      {/* Recent activity — polled every 3s, pauses when tab is hidden */}
-      <div className="space-y-3">
-        <SectionHeading
-          icon={Activity}
-          title="Recent Activity"
-          action={<RecentActivityLivePulse />}
-        />
-        <FadeIn>
-          <RecentActivity initial={liveActivity} />
-        </FadeIn>
+      {/* Live feeds — Recent Activity (SSE, dashboard-side ledger events) on
+          the left, Live Pulls (packy.gg WS) on the right. Stacks to a
+          single column on smaller screens so the pulls card keeps a
+          usable width. Both cards manage their own height cap via
+          internal scroll so the grid stays symmetric. */}
+      <div className="grid gap-4 xl:grid-cols-2">
+        <div className="space-y-3">
+          <SectionHeading
+            icon={Activity}
+            title="Recent Activity"
+            action={<RecentActivityLivePulse />}
+          />
+          <FadeIn>
+            <RecentActivity initial={liveActivity} />
+          </FadeIn>
+        </div>
+        <div className="space-y-3">
+          <SectionHeading icon={Sparkles} title="Live Pulls" />
+          <FadeIn>
+            <LivePulls />
+          </FadeIn>
+        </div>
       </div>
     </div>
   );
