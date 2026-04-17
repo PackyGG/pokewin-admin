@@ -15,6 +15,7 @@ import { LiveIndicator } from "@/components/live-indicator";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -123,7 +124,10 @@ function TimezoneSubmenu() {
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         {TIMEZONE_GROUPS.map((group) => (
-          <React.Fragment key={group.region}>
+          // DropdownMenuLabel = base-ui Menu.GroupLabel, which requires a
+          // Menu.Group parent. Each region gets its own Group so the label
+          // and its items are a valid a11y group.
+          <DropdownMenuGroup key={group.region}>
             <DropdownMenuLabel>{group.region}</DropdownMenuLabel>
             {group.zones.map((z) => (
               <DropdownMenuItem key={z.value} onClick={() => pick(z.value)}>
@@ -133,7 +137,7 @@ function TimezoneSubmenu() {
                 )}
               </DropdownMenuItem>
             ))}
-          </React.Fragment>
+          </DropdownMenuGroup>
         ))}
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => router.push("/profile")}>
@@ -221,14 +225,16 @@ export function AdminHeader({
             <span className="hidden text-sm font-medium sm:inline">{label}</span>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-[220px]">
-            <DropdownMenuLabel className="font-normal">
-              <div className="flex flex-col">
-                <span className="text-sm font-medium">{label}</span>
-                <span className="truncate text-xs text-muted-foreground">
-                  @{username}
-                </span>
-              </div>
-            </DropdownMenuLabel>
+            <DropdownMenuGroup>
+              <DropdownMenuLabel className="font-normal">
+                <div className="flex flex-col">
+                  <span className="text-sm font-medium">{label}</span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    @{username}
+                  </span>
+                </div>
+              </DropdownMenuLabel>
+            </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <Link href="/profile" tabIndex={-1}>
               <DropdownMenuItem>
