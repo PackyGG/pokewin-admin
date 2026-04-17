@@ -486,20 +486,17 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
   // ═══════════════════════════════════════════════════════════════════
 
   // A1 — Large burst deposits in first 24h on a new account.
-  //      Weighted proportionally to the $ amount, bounded at 20.
-  //      Only fires when the account is <14 days old to avoid false
-  //      positives on established whales.
-  const deposit7dBaseline =
-    deposits7d - deposits24h; // 6 previous days only
+  //      Only fires on <14-day-old accounts to avoid false positives on
+  //      established whales.
+  const deposit7dBaseline = deposits7d - deposits24h; // 6 previous days only
   const baselinePerDay = deposit7dBaseline / 6;
   const depositBurstRatio =
     baselinePerDay > 0 ? deposits24h / baselinePerDay : 0;
   const a1Weight = (() => {
     if (accountAgeDays > 14) return 0;
     if (deposits24h < 500) return 0;
-    // Scale: $500=3, $2000=10, $5000=18, cap at 20.
-    const w = Math.min(20, 3 + (deposits24h - 500) / 350);
-    return Math.round(w);
+    // Scale: $500=3, $2000=9, $5000=15, cap at 15.
+    return Math.round(Math.min(15, 3 + (deposits24h - 500) / 400));
   })();
   signals.push({
     id: "velocity.deposit_burst_24h",
@@ -518,7 +515,7 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
   //      and run" pattern. Weight scales with the count of such close
   //      pairings observed in the ledger.
   const wAfterD = toNumber(row.withdrawals_after_deposit_1h);
-  const a2Weight = wAfterD === 0 ? 0 : Math.min(15, 5 + wAfterD * 2);
+  const a2Weight = wAfterD === 0 ? 0 : Math.min(12, 4 + wAfterD * 2);
   signals.push({
     id: "velocity.withdraw_after_deposit",
     category: "velocity",
@@ -541,9 +538,8 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
     if (totalWithdrawn < 100) return 0; // ignore dust
     if (withdrawRatio < 1.1) return 0;
     if (accountAgeDays > 60 && withdrawRatio < 1.5) return 0; // veterans ok-ish
-    // Scale: 1.1x=3, 1.5x=8, 2.0x=13, 3.0x=18, cap 18.
-    const w = Math.min(18, 3 + (withdrawRatio - 1.1) * 7);
-    return Math.round(w);
+    // Scale: 1.1x=3, 1.5x=7, 2.0x=11, 3.0x=15, cap 15.
+    return Math.round(Math.min(15, 3 + (withdrawRatio - 1.1) * 6));
   })();
   signals.push({
     id: "velocity.net_winner",
@@ -568,9 +564,9 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
   const depositToWagerHours = depositToWagerMs / (1000 * 60 * 60);
   const a4Weight =
     depositCountAll > 0 && !firstWagerAt && totalDeposited >= 100
-      ? 10
+      ? 8
       : depositToWagerHours > 48 && totalDeposited >= 100
-        ? 6
+        ? 5
         : 0;
   signals.push({
     id: "velocity.delayed_first_wager",
@@ -584,15 +580,110 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
         : depositToWagerHours > 0
           ? `${depositToWagerHours.toFixed(1)}h`
           : "—",
-    explanation: !firstWagerAt
-      ? "User has made deposits but never wagered. Money-parking indicator."
-      : depositToWagerHours > 48
-        ? `First wager came ${depositToWagerHours.toFixed(1)}h after the first deposit — far outside the typical minutes-to-hours window.`
-        : "First wager followed deposit within a normal window.",
+    explanation:
+      !firstWagerAt && depositCountAll > 0
+        ? "User has made deposits but never wagered. Money-parking indicator."
+        : depositToWagerHours > 48
+          ? `First wager came ${depositToWagerHours.toFixed(1)}h after the first deposit — far outside the typical minutes-to-hours window.`
+          : depositCountAll === 0
+            ? "No deposits on file yet."
+            : "First wager followed deposit within a normal window.",
+  });
+
+  // A5 — Deposit → wager → withdrawal all within 5 minutes.
+  //      Textbook money-laundering / cycling signature. Computed in SQL
+  //      as a self-joined EXISTS triple against the ledger +
+  //      card_withdrawal_requests.
+  const a5Weight =
+    depwithWagerBurst5m >= 3 ? 16 : depwithWagerBurst5m >= 1 ? 10 : 0;
+  signals.push({
+    id: "velocity.deposit_withdraw_wager_5m",
+    category: "velocity",
+    label: "Deposit → wager → withdrawal within 5 minutes",
+    weight: a5Weight,
+    triggered: a5Weight > 0,
+    value: depwithWagerBurst5m,
+    explanation:
+      a5Weight > 0
+        ? `${depwithWagerBurst5m} burst${depwithWagerBurst5m === 1 ? "" : "s"} observed where a deposit, wager, and withdrawal all happened within 5 minutes. Textbook money-cycling pattern — extremely rare for legitimate gameplay.`
+        : "No rapid deposit→wager→withdrawal bursts observed.",
+  });
+
+  // A6 — 3+ deposits inside a single 60-minute cluster. Typical
+  //      card-testing / compromised-instrument signature.
+  const a6Weight = depositCount1h >= 5 ? 12 : depositCount1h >= 3 ? 7 : 0;
+  signals.push({
+    id: "velocity.multi_deposit_1h",
+    category: "velocity",
+    label: "Multiple deposits within 1 hour",
+    weight: a6Weight,
+    triggered: a6Weight > 0,
+    value: depositCount1h,
+    explanation:
+      a6Weight > 0
+        ? `${depositCount1h} deposits completed within a single 60-minute window. Typical legitimate pattern is 1 deposit per session — this rate is consistent with card testing or compromised-account activity.`
+        : depositCount24h > 0
+          ? `${depositCount24h} deposits in past 24h, none clustered inside a single hour — normal.`
+          : "No recent deposits.",
+  });
+
+  // A7 — Withdrawal value is a high fraction of deposit value inside the
+  //      same 24h window. Doesn't reach the full "withdraw > deposit"
+  //      net-winner threshold but still elevated cash-out pressure.
+  const a7Weight = (() => {
+    if (withdraw24h < 50 || deposits24h < 50) return 0;
+    const ratio = withdraw24h / deposits24h;
+    if (ratio < 0.5) return 0;
+    return Math.round(Math.min(10, 3 + ratio * 5));
+  })();
+  signals.push({
+    id: "velocity.withdraw_exceeds_deposit_24h",
+    category: "velocity",
+    label: "High withdrawal/deposit ratio in last 24h",
+    weight: a7Weight,
+    triggered: a7Weight > 0,
+    value: `$${withdraw24h.toFixed(0)} / $${deposits24h.toFixed(0)}`,
+    explanation:
+      a7Weight > 0
+        ? `Withdrew $${withdraw24h.toFixed(0)} while depositing only $${deposits24h.toFixed(0)} in the same 24-hour window — elevated cash-out pressure.`
+        : "Withdrawal vs deposit ratio in past 24h is within normal range.",
+  });
+
+  // A8 — First-ever withdrawal attempt happened unusually soon after
+  //      signup. Legit first-time withdrawals usually come days or
+  //      weeks in. Within the first hour is a giant red flag.
+  const signupToFirstWithdrawMs = firstWithdrawalAttemptAt
+    ? firstWithdrawalAttemptAt.getTime() - new Date(row.created_at).getTime()
+    : 0;
+  const signupToFirstWithdrawHours =
+    signupToFirstWithdrawMs / (1000 * 60 * 60);
+  const a8Weight = (() => {
+    if (!firstWithdrawalAttemptAt) return 0;
+    if (signupToFirstWithdrawHours < 1) return 14;
+    if (signupToFirstWithdrawHours < 6) return 9;
+    if (signupToFirstWithdrawHours < 24) return 4;
+    return 0;
+  })();
+  signals.push({
+    id: "velocity.first_withdrawal_latency",
+    category: "velocity",
+    label: "First withdrawal attempted shortly after signup",
+    weight: a8Weight,
+    triggered: a8Weight > 0,
+    value: firstWithdrawalAttemptAt
+      ? signupToFirstWithdrawHours < 1
+        ? `${(signupToFirstWithdrawMs / 60000).toFixed(0)} min`
+        : `${signupToFirstWithdrawHours.toFixed(1)}h`
+      : "no attempt",
+    explanation: firstWithdrawalAttemptAt
+      ? a8Weight > 0
+        ? `First-ever withdrawal request came only ${signupToFirstWithdrawHours < 1 ? (signupToFirstWithdrawMs / 60000).toFixed(0) + " minutes" : signupToFirstWithdrawHours.toFixed(1) + " hours"} after signup. Normal users play for days or weeks before cashing out.`
+        : `First withdrawal request came ${signupToFirstWithdrawHours.toFixed(0)}h after signup — within normal bounds.`
+      : "User has not attempted a withdrawal.",
   });
 
   // ═══════════════════════════════════════════════════════════════════
-  // CATEGORY B — Gameplay behaviour (max ~25)
+  // CATEGORY B — Gameplay behaviour
   // ═══════════════════════════════════════════════════════════════════
 
   // B1 — Very low wager multiplier. Deposited X but wagered < 0.3X. The
