@@ -28,12 +28,14 @@ export async function middleware(request: NextRequest) {
   // Fully authenticated users: redirect away from login and 2FA routes
   if (isAuthenticated) {
     if (isPublicRoute || isPending2FARoute) {
+      // Chat is now a slide-out panel available from every page, so
+      // support/marketing land on a real page instead of the old /chat route.
       const defaultRoutes: Record<string, string> = {
         admin: "/dashboard",
-        support: "/chat",
-        marketing: "/chat",
+        support: "/users",
+        marketing: "/analytics",
       };
-      const defaultRoute = defaultRoutes[session.role] ?? "/chat";
+      const defaultRoute = defaultRoutes[session.role] ?? "/dashboard";
       return NextResponse.redirect(new URL(defaultRoute, request.url));
     }
     return NextResponse.next();

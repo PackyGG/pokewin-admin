@@ -76,7 +76,6 @@ export const CAPABILITIES = [
       { key: "pages.creators_settings", label: "Creator Settings", description: "Global creator settings." },
       { key: "pages.chat", label: "Chat Moderation", description: "View and moderate chat." },
       { key: "pages.security", label: "Security", description: "Site security config." },
-      { key: "pages.trello", label: "Trello", description: "Internal Trello boards." },
       { key: "pages.admin_users", label: "Admin Users", description: "Manage admin panel users." },
       { key: "pages.admin_roles", label: "Admin Roles", description: "Manage custom roles + permissions." },
       { key: "pages.settings_roles", label: "Legacy Role Permissions", description: "Legacy role-permissions page at /settings/roles." },
@@ -326,27 +325,6 @@ export const CAPABILITIES = [
       { key: "my_profile.test_webhook", label: "Test own webhook", description: "Creator tests their own webhook." },
       { key: "my_profile.link_social", label: "Link own social", description: "Creator links their own social account." },
       { key: "my_profile.unlink_social", label: "Unlink own social", description: "Creator unlinks their own social account." },
-    ],
-  },
-
-  // ── Trello ─────────────────────────────────────────────────────────────
-  {
-    domain: "trello",
-    label: "Trello",
-    description: "Internal Trello board operations.",
-    capabilities: [
-      { key: "trello.create_board", label: "Create board", description: "Create a Trello board." },
-      { key: "trello.update_board", label: "Update board", description: "Edit a Trello board." },
-      { key: "trello.delete_board", label: "Delete board", description: "Delete a Trello board." },
-      { key: "trello.create_list", label: "Create list", description: "Add a list to a board." },
-      { key: "trello.update_list", label: "Update list", description: "Edit a list." },
-      { key: "trello.archive_list", label: "Archive list", description: "Archive a list." },
-      { key: "trello.create_card", label: "Create card", description: "Add a Trello card." },
-      { key: "trello.update_card", label: "Update card", description: "Edit a Trello card." },
-      { key: "trello.delete_card", label: "Delete card", description: "Delete a Trello card." },
-      { key: "trello.move_card", label: "Move card", description: "Move a card between lists." },
-      { key: "trello.add_attachment", label: "Add attachment", description: "Attach a file to a card." },
-      { key: "trello.add_comment", label: "Add comment", description: "Comment on a Trello card." },
     ],
   },
 
