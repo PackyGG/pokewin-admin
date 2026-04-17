@@ -1,0 +1,46 @@
+name: Claude Code
+
+# Responds to @claude mentions on issues and PR comments.
+# Setup:
+#   1. Install the Claude GitHub app: https://github.com/apps/claude
+#   2. Add the ANTHROPIC_API_KEY repo secret
+#      (https://console.anthropic.com/settings/keys)
+#   3. Comment "@claude <request>" on any PR or issue — Claude runs here.
+#
+# Notes:
+# - The action reads CLAUDE.md at repo root, so every rule we've committed
+#   (parallel-agent workflow, modern UI pattern, dual-DB, honesty) is
+#   enforced inside GitHub Actions runs too.
+# - --max-turns caps runaway loops. Bump if Claude needs more room on
+#   bigger tasks.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  issues:
+    types: [opened, assigned]
+  pull_request:
+    types: [opened]
+
+jobs:
+  claude:
+    # Only run when someone actually @mentions claude. Saves Actions
+    # minutes + API spend on unrelated chatter.
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude'))) ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.body, '@claude'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: "--max-turns 10"
