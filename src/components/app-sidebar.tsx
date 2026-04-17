@@ -22,6 +22,7 @@ import {
   Bot,
   Shield,
   ShieldCheck,
+  KeyRound,
   SquareKanban,
   Trophy,
   Ticket,
@@ -75,6 +76,7 @@ const ICONS: Record<string, LucideIcon> = {
   Bot,
   Shield,
   ShieldCheck,
+  KeyRound,
   SquareKanban,
   Trophy,
   Ticket,
@@ -180,6 +182,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "System",
     items: [
       { label: "Admin Users", href: "/admin-users", icon: "ShieldCheck" },
+      { label: "Roles", href: "/admin-users/roles", icon: "KeyRound" },
       { label: "Role Permissions", href: "/settings/roles", icon: "Shield" },
       { label: "Bots", href: "/bots", icon: "Bot" },
       { label: "Settings", href: "/settings", icon: "Settings" },
