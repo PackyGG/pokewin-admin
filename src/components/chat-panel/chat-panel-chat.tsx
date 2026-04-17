@@ -46,6 +46,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import type { ChatMessageItem } from "@/lib/queries/chat";
+import { useSseStream } from "@/lib/hooks/use-sse";
 import {
   deleteMessage,
   fetchChatMessagesPanel,
@@ -74,6 +75,30 @@ export function ChatPanelChat({ role }: { role: string }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastPollRef = useRef<string>(new Date().toISOString());
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // When SSE fails repeatedly, flip back to the old polling path so the
+  // panel still updates on stubborn networks. `EventSource` missing at
+  // module load (very old browser) also trips the fallback immediately.
+  const [useFallback, setUseFallback] = useState<boolean>(
+    () => typeof window !== "undefined" && typeof EventSource === "undefined",
+  );
+
+  // Accepts either full `ChatMessageItem`s (SSE stream) or the slimmer
+  // rows returned by `pollMessages` (no `activeMuteId`). Both shapes
+  // have the same base fields; mute state is loaded separately via the
+  // initial panel fetch and defaults to null for live rows.
+  const appendLive = useCallback(
+    (incoming: Omit<ChatMessageItem, "activeMuteId">[]) => {
+      if (incoming.length === 0) return;
+      setMessages((prev) => {
+        const ids = new Set(prev.map((m) => m.id));
+        const fresh = incoming.filter((m) => !ids.has(m.id));
+        if (!fresh.length) return prev;
+        lastPollRef.current = fresh[fresh.length - 1].createdAt;
+        return [...prev, ...fresh.map((m) => ({ ...m, activeMuteId: null }))];
+      });
+    },
+    [],
+  );
 
   // Initial + search-triggered load. Keeps the newest batch and reverses
   // so oldest-at-top matches the look of the original /chat page.
@@ -119,24 +144,35 @@ export function ChatPanelChat({ role }: { role: string }) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length]);
 
-  // Poll every 3s for new messages, just like the original chat page.
-  // Paused while searching so search results don't get polluted by live
-  // activity that wouldn't match the active filter.
+  // SSE live feed — default path. Paused while searching so the stream
+  // doesn't inject rows that wouldn't match the active filter. Disabled
+  // when we've fallen back to polling.
+  useSseStream<ChatMessageItem>(
+    "/api/live/chat",
+    {
+      // `init` from this route is always empty (cursor seeded at connect
+      // time); we don't need the snapshot because the initial
+      // `fetchChatMessagesPanel()` load above paints the current state.
+      onInit: () => {},
+      onRow: (row) => appendLive([row]),
+      onGiveUp: () => setUseFallback(true),
+    },
+    { enabled: !activeSearch && !useFallback },
+  );
+
+  // Polling fallback — only active if SSE gave up or isn't supported.
+  // Verbatim preservation of the old 3s-tick loop so the degraded path
+  // behaves identically to the pre-SSE implementation.
   useEffect(() => {
     if (activeSearch) return;
+    if (!useFallback) return;
     let alive = true;
     const tick = async () => {
       if (!alive) return;
       try {
         const newer = await pollMessages(lastPollRef.current);
         if (newer.length && alive) {
-          setMessages((prev) => {
-            const ids = new Set(prev.map((m) => m.id));
-            const fresh = newer.filter((m) => !ids.has(m.id));
-            if (!fresh.length) return prev;
-            lastPollRef.current = fresh[fresh.length - 1].createdAt;
-            return [...prev, ...fresh.map((m) => ({ ...m, activeMuteId: null }))];
-          });
+          appendLive(newer);
         }
       } catch {
         // Silently ignore — the user will see stale data but no noise.
@@ -147,7 +183,7 @@ export function ChatPanelChat({ role }: { role: string }) {
       alive = false;
       clearInterval(id);
     };
-  }, [activeSearch]);
+  }, [activeSearch, useFallback, appendLive]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
