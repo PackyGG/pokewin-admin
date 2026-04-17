@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { Gift, CheckCircle2, XCircle, Coins } from "lucide-react";
 import { getGiftCards } from "@/lib/queries/gift-cards";
 import { requirePageAccess } from "@/lib/dal";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
@@ -6,6 +7,13 @@ import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { GiftCardsContent } from "./gift-cards-content";
 import { CreateGiftCardDialog } from "./create-dialog";
+import {
+  PageHero,
+  SectionHeading,
+  KpiTile,
+} from "@/components/modern-panels";
+import { FadeIn } from "@/components/fade-in";
+import { formatCurrency } from "@/lib/utils/format";
 
 export const metadata = { title: "Gift Cards" };
 
@@ -27,38 +35,87 @@ export default async function GiftCardsPage({
     search: params.search,
   });
 
+  const availableCount = result.data.filter((c) => c.status === "available").length;
+  const redeemedCount = result.data.filter((c) => c.status === "redeemed").length;
+  const pageValue = result.data.reduce((sum, c) => sum + c.value, 0);
+
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-bold">Gift Cards</h1>
-
-      <Suspense fallback={<Skeleton className="h-10 w-full" />}>
-        <DataTableToolbar
-          searchPlaceholder="Search by code..."
-          filters={[
-            {
-              name: "Status",
-              paramKey: "status",
-              options: [
-                { label: "Available", value: "available" },
-                { label: "Redeemed", value: "redeemed" },
-                { label: "Cancelled", value: "cancelled" },
-                { label: "Expired", value: "expired" },
-              ],
-            },
-          ]}
-        >
+    <div className="space-y-6">
+      <PageHero>
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
+              <Gift className="size-5 text-primary" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold leading-tight">Gift Cards</h1>
+              <p className="text-sm text-muted-foreground">
+                Manage and issue gift card codes with regional and value controls.
+              </p>
+            </div>
+          </div>
           <CreateGiftCardDialog />
-        </DataTableToolbar>
-      </Suspense>
+        </div>
+      </PageHero>
 
-      <GiftCardsContent data={result.data} />
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <KpiTile
+          label="Total"
+          value={String(result.total)}
+          icon={Gift}
+          accent="blue"
+        />
+        <KpiTile
+          label="Available (page)"
+          value={String(availableCount)}
+          icon={CheckCircle2}
+          accent="emerald"
+        />
+        <KpiTile
+          label="Redeemed (page)"
+          value={String(redeemedCount)}
+          icon={XCircle}
+          accent="purple"
+        />
+        <KpiTile
+          label="Page Value"
+          value={formatCurrency(pageValue)}
+          icon={Coins}
+          accent="amber"
+        />
+      </div>
 
-      <DataTablePagination
-        page={result.page}
-        totalPages={result.totalPages}
-        total={result.total}
-        perPage={result.perPage}
-      />
+      <div className="space-y-3">
+        <SectionHeading icon={Gift} title="All Gift Cards" />
+        <FadeIn className="space-y-4">
+          <Suspense fallback={<Skeleton className="h-10 w-full" />}>
+            <DataTableToolbar
+              searchPlaceholder="Search by code..."
+              filters={[
+                {
+                  name: "Status",
+                  paramKey: "status",
+                  options: [
+                    { label: "Available", value: "available" },
+                    { label: "Redeemed", value: "redeemed" },
+                    { label: "Cancelled", value: "cancelled" },
+                    { label: "Expired", value: "expired" },
+                  ],
+                },
+              ]}
+            />
+          </Suspense>
+
+          <GiftCardsContent data={result.data} />
+
+          <DataTablePagination
+            page={result.page}
+            totalPages={result.totalPages}
+            total={result.total}
+            perPage={result.perPage}
+          />
+        </FadeIn>
+      </div>
     </div>
   );
 }

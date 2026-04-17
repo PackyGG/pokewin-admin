@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Suspense } from "react";
+import { Ticket, Coins, CheckCircle2, Clock } from "lucide-react";
 import { getVouchers, getVoucherCreators } from "@/lib/queries/vouchers";
 import { requirePageAccess } from "@/lib/dal";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
@@ -17,6 +18,12 @@ import {
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { ValueRangeFilter } from "./value-range-filter";
+import {
+  PageHero,
+  SectionHeading,
+  KpiTile,
+} from "@/components/modern-panels";
+import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Vouchers" };
 
@@ -51,116 +58,181 @@ export default async function VouchersPage({
     ...creators.map((c) => ({ label: c.username, value: c.id })),
   ];
 
+  const pageValue = result.data.reduce((sum, v) => sum + v.value, 0);
+  const ftdCount = result.data.filter((v) => v.isFtd).length;
+
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-bold">Vouchers</h1>
+    <div className="space-y-6">
+      <PageHero>
+        <div className="flex items-center gap-3">
+          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
+            <Ticket className="size-5 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold leading-tight">Vouchers</h1>
+            <p className="text-sm text-muted-foreground">
+              Track issued vouchers and claim history across the platform.
+            </p>
+          </div>
+        </div>
+      </PageHero>
 
-      <div className="flex gap-1 rounded-lg bg-muted p-1 w-fit">
-        {[
-          { value: "unclaimed", label: "Unclaimed" },
-          { value: "claimed", label: "Claimed" },
-        ].map((t) => (
-          <Link
-            key={t.value}
-            href={`/vouchers?tab=${t.value}`}
-            className={cn(
-              "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-              tab === t.value
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            {t.label}
-          </Link>
-        ))}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <KpiTile
+          label={claimed ? "Claimed Total" : "Unclaimed Total"}
+          value={String(result.total)}
+          icon={Ticket}
+          accent="blue"
+        />
+        <KpiTile
+          label="Page Value"
+          value={formatCurrency(pageValue)}
+          icon={Coins}
+          accent="emerald"
+        />
+        <KpiTile
+          label="On Page"
+          value={String(result.data.length)}
+          icon={claimed ? CheckCircle2 : Clock}
+          accent={claimed ? "purple" : "amber"}
+        />
+        {claimed && (
+          <KpiTile
+            label="First-Time (page)"
+            value={String(ftdCount)}
+            icon={CheckCircle2}
+            accent="pink"
+          />
+        )}
       </div>
 
-      <Suspense fallback={<Skeleton className="h-10 w-full" />}>
-        <DataTableToolbar
-          searchPlaceholder="Search by username or email..."
-          filters={[
-            {
-              name: "Created By",
-              paramKey: "createdBy",
-              options: createdByOptions,
-            },
-          ]}
-        >
-          <ValueRangeFilter />
-        </DataTableToolbar>
-      </Suspense>
+      <div className="space-y-3">
+        <SectionHeading icon={Ticket} title="Voucher List" />
 
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>User</TableHead>
-              <TableHead>Value</TableHead>
-              <TableHead>Origin</TableHead>
-              <TableHead>Created By</TableHead>
-              <TableHead>Description</TableHead>
-              {claimed && <TableHead>FTD</TableHead>}
-              {claimed && <TableHead>Claimed At</TableHead>}
-              <TableHead>Created At</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {result.data.map((v) => (
-              <TableRow key={v.id}>
-                <TableCell>
-                  <Link href={`/users/${v.userId}`} className="hover:underline">
-                    {v.username ?? v.userId.slice(0, 8)}
-                  </Link>
-                </TableCell>
-                <TableCell>{formatCurrency(v.value)}</TableCell>
-                <TableCell>
-                  <Badge variant="outline">{v.originLabel}</Badge>
-                </TableCell>
-                <TableCell>
-                  {v.createdByAdminId ? (
-                    <Link href={`/admin-users/${v.createdByAdminId}`} className="hover:underline">
-                      {v.createdByUsername}
-                    </Link>
-                  ) : "System"}
-                </TableCell>
-                <TableCell className="max-w-xs truncate">{v.description ?? "-"}</TableCell>
-                {claimed && (
-                  <TableCell>
-                    <Badge
-                      variant="outline"
-                      className={
-                        v.isFtd
-                          ? "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30"
-                          : "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"
-                      }
+        <div className="flex gap-1 rounded-lg bg-muted p-1 w-fit">
+          {[
+            { value: "unclaimed", label: "Unclaimed" },
+            { value: "claimed", label: "Claimed" },
+          ].map((t) => (
+            <Link
+              key={t.value}
+              href={`/vouchers?tab=${t.value}`}
+              className={cn(
+                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                tab === t.value
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {t.label}
+            </Link>
+          ))}
+        </div>
+
+        <FadeIn className="space-y-4">
+          <Suspense fallback={<Skeleton className="h-10 w-full" />}>
+            <DataTableToolbar
+              searchPlaceholder="Search by username or email..."
+              filters={[
+                {
+                  name: "Created By",
+                  paramKey: "createdBy",
+                  options: createdByOptions,
+                },
+              ]}
+            >
+              <ValueRangeFilter />
+            </DataTableToolbar>
+          </Suspense>
+
+          <div className="rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>User</TableHead>
+                  <TableHead>Value</TableHead>
+                  <TableHead>Origin</TableHead>
+                  <TableHead>Created By</TableHead>
+                  <TableHead>Description</TableHead>
+                  {claimed && <TableHead>FTD</TableHead>}
+                  {claimed && <TableHead>Claimed At</TableHead>}
+                  <TableHead>Created At</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {result.data.map((v) => (
+                  <TableRow key={v.id}>
+                    <TableCell>
+                      <Link
+                        href={`/users/${v.userId}`}
+                        className="hover:underline"
+                      >
+                        {v.username ?? v.userId.slice(0, 8)}
+                      </Link>
+                    </TableCell>
+                    <TableCell>{formatCurrency(v.value)}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{v.originLabel}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      {v.createdByAdminId ? (
+                        <Link
+                          href={`/admin-users/${v.createdByAdminId}`}
+                          className="hover:underline"
+                        >
+                          {v.createdByUsername}
+                        </Link>
+                      ) : (
+                        "System"
+                      )}
+                    </TableCell>
+                    <TableCell className="max-w-xs truncate">
+                      {v.description ?? "-"}
+                    </TableCell>
+                    {claimed && (
+                      <TableCell>
+                        <Badge
+                          variant="outline"
+                          className={
+                            v.isFtd
+                              ? "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30"
+                              : "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"
+                          }
+                        >
+                          {v.isFtd ? "Yes" : "No"}
+                        </Badge>
+                      </TableCell>
+                    )}
+                    {claimed && (
+                      <TableCell>
+                        {v.claimedAt ? formatDateTime(v.claimedAt) : "-"}
+                      </TableCell>
+                    )}
+                    <TableCell>{formatDate(v.createdAt)}</TableCell>
+                  </TableRow>
+                ))}
+                {result.data.length === 0 && (
+                  <TableRow>
+                    <TableCell
+                      colSpan={claimed ? 8 : 6}
+                      className="h-24 text-center"
                     >
-                      {v.isFtd ? "Yes" : "No"}
-                    </Badge>
-                  </TableCell>
+                      No vouchers found.
+                    </TableCell>
+                  </TableRow>
                 )}
-                {claimed && (
-                  <TableCell>{v.claimedAt ? formatDateTime(v.claimedAt) : "-"}</TableCell>
-                )}
-                <TableCell>{formatDate(v.createdAt)}</TableCell>
-              </TableRow>
-            ))}
-            {result.data.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={claimed ? 8 : 6} className="h-24 text-center">
-                  No vouchers found.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
+              </TableBody>
+            </Table>
+          </div>
 
-      <DataTablePagination
-        page={result.page}
-        totalPages={result.totalPages}
-        total={result.total}
-        perPage={result.perPage}
-      />
+          <DataTablePagination
+            page={result.page}
+            totalPages={result.totalPages}
+            total={result.total}
+            perPage={result.perPage}
+          />
+        </FadeIn>
+      </div>
     </div>
   );
 }
