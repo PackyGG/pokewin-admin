@@ -13,6 +13,11 @@ model admin_users {
   username       String               @unique
   password_hash  String
   role           admin_role           @default(admin)
+  // Optional FK to admin_roles. Nullable so existing users keep working on
+  // the hardcoded `role` enum during transition. Once a role_id is set it
+  // takes precedence over the enum-based system-role defaults.
+  role_id        String?              @db.Uuid
+  custom_role    admin_roles?         @relation(fields: [role_id], references: [id], onDelete: SetNull)
   totp_secret    String?
   totp_enabled   Boolean              @default(false)
   recovery_codes String[]
@@ -33,6 +38,26 @@ model admin_users {
   voucher_actions       admin_voucher_actions[]
   expenses              expenses[]
   recurring_expenses    recurring_expenses[]
+}
+
+// Custom role definitions for the granular-permissions system. Four
+// `is_system = true` rows (admin, support, marketing, creator) are seeded
+// by prisma/admin/seed.ts and map to the hardcoded admin_role enum values.
+// Additional rows created through the admin UI carry `is_system = false`
+// and can be freely edited / deleted.
+//
+// `capabilities` is a string[] of keys from src/lib/permissions.ts
+// (CapabilityKey). Both page access (`pages.*`) and action capabilities
+// (`domain.action`) live in this single array.
+model admin_roles {
+  id           String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String        @unique
+  description  String?
+  is_system    Boolean       @default(false)
+  capabilities String[]      @default([])
+  created_at   DateTime      @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime      @updatedAt        @db.Timestamptz(6)
+  admin_users  admin_users[]
 }
 
 model admin_sessions {
