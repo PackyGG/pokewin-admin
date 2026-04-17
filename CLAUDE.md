@@ -197,6 +197,43 @@ Das Projekt hat ein **cleanes, konsistentes UI** — dieser Stil ist verbindlich
 
 **Merkregel:** Wenn du etwas gestaltest, das aussieht wie aus einem anderen Projekt → falsch. Es muss aussehen wie der Rest von pokewin-admin.
 
+### Modern Page Pattern (verbindlich für neue Seiten)
+
+Jede neue Admin-Seite muss dem modernen Stil von `/users/[id]` folgen. Das ist die Referenz, keine Ausnahmen.
+
+**Pflicht-Bausteine (alle bereits in der Codebase, niemals neu bauen):**
+
+| Baustein | Pfad | Einsatz |
+|---|---|---|
+| `PageHero` | `src/components/modern-panels.tsx` oder `src/app/(admin)/users/[id]/user-view-modern-panels.tsx` | Jede Seite startet mit einem Hero: Gradient-Container mit Corner-Glows (`blur-3xl` absolut positionierte divs), Titel + Icon + Untertitel, optional Action-Slot rechts |
+| `SectionHeading` | gleich | Icon-Chip + Title + optional Action — trennt Abschnitte innerhalb der Seite |
+| `StatPanel` | gleich | Große Panels mit Corner-Glow, Icon-Chip, Hero-Zahl, Breakdown-Rows |
+| `KpiTile` / `MetricTile` | gleich | Kompakte bzw. mittlere KPI-Kacheln mit Accent-Farbe aus `TILE_COLORS` |
+| `PanelRow` | gleich | Breakdown-Zeilen innerhalb von `StatPanel` |
+| `AnimatedNumber` | `src/components/animated-number.tsx` | Zahlen-Transitions bei Werteänderungen, nutzt `formatKind` Enum (currency / number / percent), **niemals Function-Props** über die RSC-Grenze |
+| `FadeIn` | `src/components/fade-in.tsx` | Weiches Reinfaden für große Content-Blöcke |
+
+**Regeln:**
+
+- **Kein reiner `<h1>` als Seitenkopf** mehr — immer `PageHero` mit Icon + Gradient.
+- **Keine blanken `<Card>` Stat-Kacheln** — die modernen `KpiTile` / `StatPanel` aus dem oben genannten Set nutzen. Accent-Farbe bewusst aus `TILE_COLORS` wählen (blue / emerald / rose / cyan / amber / purple / orange / pink).
+- **Tabellen** bleiben `@tanstack/react-table` + `src/components/data-table/`, aber eingebettet in einen modernen Container mit `SectionHeading` darüber.
+- **Charts** nutzen `recharts` mit `animationDuration={700}` + `animationEasing="ease-out"`.
+- **Reduce-Motion** muss respektiert sein (tailwind `motion-safe:` / `motion-reduce:` oder Mediaquery).
+- **House-Perspektive bei P&L Zahlen** wo relevant: Gewinn für die Plattform = grün, Gewinn für den User = rot (User hat uns Geld abgenommen).
+- **Keine Funktions-Props von Server → Client Component.** Serialisierbare Primitives / String-Enums nutzen. Next.js 15 crasht sonst.
+
+**Verbindlich für jede neue Page unter `src/app/(admin)/...`:**
+
+1. Server Component als `page.tsx` mit `requirePageAccess(key)` zuerst.
+2. `PageHero` als erstes rendertes Element.
+3. KPI-Strip (3–6 Tiles) direkt darunter.
+4. Abschnitte mit `SectionHeading` + Content.
+5. Dark Mode respektiert, `motion-safe` Animationen.
+6. Lint + tsc clean.
+
+**Merkregel:** Wenn eine neue Seite nicht aussieht wie `/users/[id]`, stimmt etwas nicht. Vergleich mit der Referenz vor dem Commit.
+
 ### Dual-Database-Architektur (CRITICAL)
 
 Das Projekt nutzt **zwei vollständig getrennte PostgreSQL-Datenbanken** mit jeweils eigenem Prisma-Client. Diese Trennung ist strikt, nicht optional, und darf unter keinen Umständen aufgeweicht werden.
