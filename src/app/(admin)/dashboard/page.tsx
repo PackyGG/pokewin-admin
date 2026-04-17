@@ -1,5 +1,5 @@
 import {
-  ArrowDownToLine,
+  Users,
   Percent,
   Wallet,
   Coins,
@@ -52,10 +52,10 @@ export default async function DashboardPage({
       {/* Secondary stats — all-time / snapshot */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard
-          title="Total Deposits"
-          value={formatNumber(stats.financials.depositCount)}
-          subtitle={`${formatCurrency(stats.financials.totalDeposited)} lifetime deposited`}
-          icon={ArrowDownToLine}
+          title="Total Users"
+          value={formatNumber(stats.users.total)}
+          subtitle={`+${stats.users.today} today, +${stats.users.week} this week`}
+          icon={Users}
           color="blue"
         />
         <StatCard

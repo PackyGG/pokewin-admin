@@ -417,26 +417,28 @@ function KpiTile({
   return (
     <div
       className={cn(
-        "group relative overflow-hidden rounded-lg border px-2.5 py-2 transition-all hover:shadow-md min-w-[110px]",
+        "group relative overflow-hidden rounded-xl border px-4 py-3 transition-all hover:shadow-md min-w-[160px]",
         colors.bg,
       )}
     >
-      <div className="flex items-center gap-1.5">
-        <Icon className={cn("size-3", colors.icon)} />
-        <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <div className="flex items-center gap-2">
+        <Icon className={cn("size-4", colors.icon)} />
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
           {label}
         </span>
       </div>
       <p
         className={cn(
-          "mt-0.5 text-sm font-bold tabular-nums leading-tight",
+          "mt-1 text-xl font-bold tabular-nums leading-tight",
           colors.text,
         )}
       >
         {value}
       </p>
       {sub && (
-        <p className="text-[9px] text-muted-foreground truncate">{sub}</p>
+        <p className="mt-0.5 text-[11px] text-muted-foreground truncate">
+          {sub}
+        </p>
       )}
     </div>
   );
@@ -602,15 +604,19 @@ function ModernPnlPanel({
   balances: UserDetail["balances"];
   pnlBreakdown: PnlBreakdown;
 }) {
-  // House perspective: positive = we made money (green), negative = we lost (red)
-  const truePnl = pnlBreakdown.gamblingPnlTrue;
-  const isProfit = truePnl >= 0;
+  // Same calc as the hero KPI strip (house perspective: deposits minus
+  // withdrawals) so the two P&L numbers on this page always agree.
+  // Previously this panel showed gambling PnL (wagers - won) which is a
+  // different metric and didn't match the header — that mismatch was
+  // confusing.
+  const pnl = balances ? balances.totalDeposited - balances.totalWithdrawn : 0;
+  const isProfit = pnl >= 0;
   const Icon = isProfit ? TrendingUp : TrendingDown;
   return (
     <StatPanel title="Platform P&L" icon={Icon} accent={isProfit ? "emerald" : "rose"}>
       <div className="space-y-0.5">
         <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
-          True P&L
+          Deposits − Withdrawals
         </p>
         <p
           className={cn(
@@ -619,19 +625,12 @@ function ModernPnlPanel({
           )}
         >
           {isProfit ? "+" : ""}
-          {formatCurrency(truePnl)}
+          {formatCurrency(pnl)}
         </p>
       </div>
       <div className="mt-4 space-y-0.5 border-t pt-3">
-        <PanelRow
-          label="Realized"
-          value={
-            <span className={pnlBreakdown.gamblingPnlRealized >= 0 ? "text-emerald-500" : "text-rose-500"}>
-              {pnlBreakdown.gamblingPnlRealized >= 0 ? "+" : ""}
-              {formatCurrency(pnlBreakdown.gamblingPnlRealized)}
-            </span>
-          }
-        />
+        <PanelRow label="Deposited" value={formatCurrency(balances?.totalDeposited ?? 0)} />
+        <PanelRow label="Withdrawn" value={formatCurrency(balances?.totalWithdrawn ?? 0)} />
         <PanelRow label="Wagered" value={formatCurrency(balances?.totalWagered ?? 0)} />
         <PanelRow label="Won" value={formatCurrency(balances?.totalWon ?? 0)} />
         <PanelRow

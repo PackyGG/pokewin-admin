@@ -36,8 +36,13 @@ export const columns: ColumnDef<CreatorListItem>[] = [
     ),
   },
   {
+    accessorKey: "totalSignups",
+    header: "Signups",
+    cell: ({ row }) => row.original.totalSignups,
+  },
+  {
     accessorKey: "totalReferred",
-    header: "Referred",
+    header: "Depositors",
   },
   {
     accessorKey: "totalEarnedUsd",

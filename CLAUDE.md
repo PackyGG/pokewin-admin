@@ -109,6 +109,14 @@ Das gilt insbesondere für:
 
 **Nimm bei DB-Themen niemals Annahmen als Grundlage.**
 
+### Ehrlichkeit über erledigte Arbeit (CRITICAL)
+
+- **Niemals lügen** über den Stand der Arbeit. Nicht "fertig" sagen, wenn es nicht wirklich fertig ist.
+- **Niemals in Zusammenfassungen / Changelogs behaupten**, etwas sei erledigt, das nicht angefasst wurde. Jede Zeile im Summary muss einer tatsächlich gemachten Änderung entsprechen.
+- Wenn der User mehrere Dinge verlangt und du push willst: **erst ALLE durcharbeiten**, dann pushen. Kein "push now, finish later" ohne das klar zu benennen.
+- Wenn etwas ausgelassen oder vergessen wurde: **direkt und ungefragt flaggen**, bevor der User danach fragen muss.
+- Wenn etwas nicht gemacht werden konnte (blocked, unklare Anforderung, fehlende Info): sag es **bevor du pushst**, nicht hinterher.
+
 ### Kommunikation
 
 Wenn du etwas nicht sicher verifizieren kannst:

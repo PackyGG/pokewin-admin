@@ -79,15 +79,30 @@ export default async function CreatorDetailPage({
         totalPaidOutUsd={data.totalPaidOutUsd}
       />
 
+      {/* Acquisition funnel: clicks → signups → depositors (Referred).
+          totalReferred only counts users who hit a usage event
+          (deposit/wager); signups includes every attributed registration. */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Total Referred" value={formatNumber(data.totalReferred)} />
+        <StatCard label="Total Clicks" value={formatNumber(data.totalClicks)} />
+        <StatCard
+          label="Signups"
+          value={formatNumber(data.signups.total)}
+          subtitle={`+${data.signups.last24h} 24h · +${data.signups.last7d} 7d · +${data.signups.last30d} 30d${data.signups.pending > 0 ? ` · ${data.signups.pending} pending` : ""}`}
+        />
+        <StatCard
+          label="Depositors"
+          value={formatNumber(data.totalReferred)}
+          subtitle={
+            data.signups.total > 0
+              ? `${((data.totalReferred / data.signups.total) * 100).toFixed(1)}% conversion`
+              : undefined
+          }
+        />
         <StatCard label="Wager Volume" value={formatCurrency(data.totalWagerVolumeUsd)} />
         <StatCard label="Total Earned" value={formatCurrency(data.totalEarnedUsd)} />
         <StatCard label="Available" value={formatCurrency(data.availableUsd)} />
         <StatCard label="Paid Out" value={formatCurrency(data.totalPaidOutUsd)} />
         <StatCard label="Bonus Distributed" value={formatCurrency(data.totalBonusDistributedUsd)} />
-        <StatCard label="Total Clicks" value={formatNumber(data.totalClicks)} />
-        <StatCard label="Last Payout" value={data.lastPayoutAt ? formatDateTime(data.lastPayoutAt) : "Never"} />
       </div>
 
       {/* Platform PnL */}
@@ -348,12 +363,23 @@ export default async function CreatorDetailPage({
   );
 }
 
-function StatCard({ label, value }: { label: string; value: string }) {
+function StatCard({
+  label,
+  value,
+  subtitle,
+}: {
+  label: string;
+  value: string;
+  subtitle?: string;
+}) {
   return (
     <Card>
       <CardContent>
         <p className="text-stat-label">{label}</p>
         <p className="text-stat-value">{value}</p>
+        {subtitle && (
+          <p className="mt-0.5 text-[11px] text-muted-foreground">{subtitle}</p>
+        )}
       </CardContent>
     </Card>
   );

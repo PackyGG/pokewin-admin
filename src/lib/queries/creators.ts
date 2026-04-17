@@ -120,6 +120,7 @@ export type CreatorListItem = {
   code: string;
   level: number;
   totalReferred: number;
+  totalSignups: number;
   totalEarnedUsd: number;
   availableUsd: number;
   totalPaidOutUsd: number;
@@ -203,6 +204,7 @@ export async function getCreators(params: {
       {
         user_id: string;
         total_referred: number;
+        total_signups: string;
         total_earned_usd: string;
         available_usd: string;
         total_paid_out_usd: string;
@@ -217,6 +219,7 @@ export async function getCreators(params: {
       `SELECT
         aa.user_id,
         aa.total_referred,
+        (SELECT COUNT(*)::text FROM "user" ru WHERE ru.referred_by = aa.user_id) AS total_signups,
         aa.total_earned_usd::text,
         aa.available_usd::text,
         aa.total_paid_out_usd::text,
@@ -252,6 +255,7 @@ export async function getCreators(params: {
       code: r.affiliate_code ?? r.first_code ?? "",
       level: 1,
       totalReferred: r.total_referred,
+      totalSignups: Number(r.total_signups),
       totalEarnedUsd: toNumber(r.total_earned_usd),
       availableUsd: toNumber(r.available_usd),
       totalPaidOutUsd: toNumber(r.total_paid_out_usd),
@@ -333,6 +337,41 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
   const primaryCode = account.user?.affiliate_code ?? allCodes[0]?.code ?? "";
   const clickCount = primaryCode ? await db.affiliate_clicks.count({ where: { code: primaryCode } }) : 0;
 
+  // Signup count — users who registered via this creator's link and got
+  // attributed. user.referred_by stores the creator's USER ID (not the
+  // code), so this count captures everyone who signed up through them
+  // regardless of whether they later deposited / wagered.
+  // account.total_referred only counts users who produced a usage event
+  // (deposit or wager), so signups is always >= total_referred.
+  // affiliate_code_queue rows are users mid-attribution (signed up but
+  // haven't finished attribution yet — expires after a window); we show
+  // them as a separate "pending" count for visibility.
+  const now = new Date();
+  const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const [
+    signupsTotal,
+    signups24h,
+    signups7d,
+    signups30d,
+    pendingSignups,
+  ] = await Promise.all([
+    db.user.count({ where: { referred_by: userId } }),
+    db.user.count({
+      where: { referred_by: userId, created_at: { gte: oneDayAgo } },
+    }),
+    db.user.count({
+      where: { referred_by: userId, created_at: { gte: sevenDaysAgo } },
+    }),
+    db.user.count({
+      where: { referred_by: userId, created_at: { gte: thirtyDaysAgo } },
+    }),
+    primaryCode
+      ? db.affiliate_code_queue.count({ where: { code: primaryCode } })
+      : Promise.resolve(0),
+  ]);
+
   // FTD lookup for referred users
   const referredUserIds = [...new Set(referrals.map((r) => r.referred_user_id))];
   let ftdMap = new Map<string, boolean>();
@@ -392,6 +431,13 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
     totalBonusDistributedUsd: toNumber(account.total_bonus_distributed_usd),
     lastPayoutAt: account.last_payout_at?.toISOString() ?? null,
     totalClicks: clickCount,
+    signups: {
+      total: signupsTotal,
+      last24h: signups24h,
+      last7d: signups7d,
+      last30d: signups30d,
+      pending: pendingSignups,
+    },
     ftdByPeriod,
     pnl,
     createdAt: account.created_at.toISOString(),
