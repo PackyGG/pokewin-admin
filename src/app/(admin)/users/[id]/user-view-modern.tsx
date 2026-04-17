@@ -67,6 +67,7 @@ import type { UserRewards } from "@/lib/queries/users";
 type TabKey =
   | "overview"
   | "finances"
+  | "rewards"
   | "gaming"
   | "inventory"
   | "creator"
@@ -83,6 +84,7 @@ type TabDef = {
 const TABS: TabDef[] = [
   { key: "overview", label: "Overview", icon: Activity },
   { key: "finances", label: "Finances", icon: Wallet },
+  { key: "rewards", label: "Rewards", icon: Gift },
   { key: "gaming", label: "Gaming", icon: Swords },
   { key: "inventory", label: "Inventory", icon: Gem },
   {
@@ -330,7 +332,6 @@ export function UserViewModern({
           data={data}
           gamingTx={gamingTx}
           financialTx={financialTx}
-          rewards={rewards}
           pnlBreakdown={pnlBreakdown}
           isAdmin={isAdmin}
         />
@@ -340,11 +341,11 @@ export function UserViewModern({
         <FinancesTab
           data={data}
           financialTx={financialTx}
-          rewards={rewards}
-          pnlBreakdown={pnlBreakdown}
           isAdmin={isAdmin}
         />
       )}
+
+      {activeTab === "rewards" && <RewardsTab rewards={rewards} />}
 
       {activeTab === "gaming" && (
         <GamingTab data={data} gamingTx={gamingTx} />
@@ -449,47 +450,46 @@ function OverviewTab({
   data,
   gamingTx,
   financialTx,
-  rewards,
   pnlBreakdown,
-  isAdmin,
 }: {
   data: UserDetail;
   gamingTx: PaginatedTransactions;
   financialTx: PaginatedTransactions;
-  rewards: UserRewards;
   pnlBreakdown: PnlBreakdown;
   isAdmin: boolean;
 }) {
-  const { user, balances, statistics, capabilities, counts } = data;
+  const { user, balances, statistics, counts } = data;
 
   return (
     <div className="space-y-6">
-      {/* Top: 3 key metric cards (keep the proven classic cards here —
-          they're already well-designed, just in a cleaner container) */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <BalanceSummaryCard
-          balances={balances}
-          userId={user.id}
-          isAdmin={isAdmin}
-          canAdjustBalance={capabilities.canAdjustBalance}
-        />
-        <PnlCard pnlBreakdown={pnlBreakdown} balances={balances} />
-        <ActivityStatsCard
+      {/* Modern stat panels — purpose-built to match the hero aesthetic:
+          rounded-2xl, subtle colored corner glow, color-accented icon
+          chip + hero number + breakdown rows below. */}
+      <div className="grid gap-4 md:grid-cols-3">
+        <ModernBalancePanel balances={balances} />
+        <ModernPnlPanel balances={balances} pnlBreakdown={pnlBreakdown} />
+        <ModernActivityPanel
           statistics={statistics}
           balances={balances}
           inventoryCount={data.inventoryCount}
-          bonusPoints={balances?.bonusPoints ?? 0}
           avgDeposit={counts.avgDeposit}
-          userId={user.id}
-          canAdjustXp={capabilities.canAdjustXp}
         />
       </div>
 
-      {/* Rewards snapshot */}
-      <SectionHeading icon={Gift} title="Rewards" />
-      <RewardsCard rewards={rewards} />
+      {/* Deposits & Withdrawals — recent financial activity on overview
+          per admin request. Full history still lives on Finances tab. */}
+      <SectionHeading icon={ArrowDownToLine} title="Deposits & Withdrawals" />
+      <CategoryTransactionsTable
+        title="Deposits & Withdrawals"
+        userId={user.id}
+        types={FINANCIAL_TX_TYPES}
+        initialTx={financialTx}
+        cardWithdrawals={data.cardWithdrawals}
+      />
 
-      {/* Recent activity — unified timeline */}
+      {/* Recent activity — unified timeline (gaming + financial). Colors
+          are flipped to HOUSE perspective: if the user made money the
+          dot/amount shows RED (we lost), user losses show GREEN. */}
       <SectionHeading icon={Activity} title="Recent Activity" />
       <RecentActivityTimeline
         gamingTx={gamingTx.data.slice(0, 5)}
@@ -499,31 +499,218 @@ function OverviewTab({
   );
 }
 
+function RewardsTab({ rewards }: { rewards: UserRewards }) {
+  return (
+    <div className="space-y-6">
+      <SectionHeading icon={Gift} title="Rewards" />
+      <RewardsCard rewards={rewards} />
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  MODERN STAT PANELS — used in the Overview tab
+// ───────────────────────────────────────────────────────────────────
+
+function StatPanel({
+  title,
+  icon: Icon,
+  accent,
+  children,
+}: {
+  title: string;
+  icon: React.ElementType;
+  accent: keyof typeof TILE_COLORS;
+  children: React.ReactNode;
+}) {
+  const colors = TILE_COLORS[accent] ?? TILE_COLORS.blue;
+  return (
+    <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
+      <div
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute -right-12 -top-12 size-32 rounded-full blur-2xl opacity-40",
+          colors.bg,
+        )}
+      />
+      <div className="relative p-5">
+        <div className="mb-3 flex items-center gap-2">
+          <div className={cn("flex size-7 items-center justify-center rounded-lg", colors.bg)}>
+            <Icon className={cn("size-3.5", colors.icon)} />
+          </div>
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            {title}
+          </h3>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function PanelRow({
+  label,
+  value,
+  valueClassName,
+}: {
+  label: string;
+  value: React.ReactNode;
+  valueClassName?: string;
+}) {
+  return (
+    <div className="flex items-center justify-between py-1 text-sm">
+      <span className="text-muted-foreground">{label}</span>
+      <span className={cn("font-medium tabular-nums", valueClassName)}>{value}</span>
+    </div>
+  );
+}
+
+function ModernBalancePanel({ balances }: { balances: UserDetail["balances"] }) {
+  if (!balances) {
+    return (
+      <StatPanel title="Balances" icon={Wallet} accent="emerald">
+        <p className="text-sm text-muted-foreground">No balance data</p>
+      </StatPanel>
+    );
+  }
+  const total =
+    balances.availableBalance + balances.inventoryValue + balances.vouchersValue;
+  return (
+    <StatPanel title="Balances" icon={Wallet} accent="emerald">
+      <div className="space-y-0.5">
+        <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
+          Total Value
+        </p>
+        <p className="text-3xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+          {formatCurrency(total)}
+        </p>
+      </div>
+      <div className="mt-4 space-y-0.5 border-t pt-3">
+        <PanelRow label="Cash" value={formatCurrency(balances.availableBalance)} />
+        <PanelRow label="Locked" value={formatCurrency(balances.lockedBalance)} />
+        <PanelRow label="Inventory" value={formatCurrency(balances.inventoryValue)} />
+        <PanelRow label="Vouchers" value={formatCurrency(balances.vouchersValue)} />
+      </div>
+    </StatPanel>
+  );
+}
+
+function ModernPnlPanel({
+  balances,
+  pnlBreakdown,
+}: {
+  balances: UserDetail["balances"];
+  pnlBreakdown: PnlBreakdown;
+}) {
+  // House perspective: positive = we made money (green), negative = we lost (red)
+  const truePnl = pnlBreakdown.gamblingPnlTrue;
+  const isProfit = truePnl >= 0;
+  const Icon = isProfit ? TrendingUp : TrendingDown;
+  return (
+    <StatPanel title="Platform P&L" icon={Icon} accent={isProfit ? "emerald" : "rose"}>
+      <div className="space-y-0.5">
+        <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
+          True P&L
+        </p>
+        <p
+          className={cn(
+            "text-3xl font-bold tabular-nums",
+            isProfit ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400",
+          )}
+        >
+          {isProfit ? "+" : ""}
+          {formatCurrency(truePnl)}
+        </p>
+      </div>
+      <div className="mt-4 space-y-0.5 border-t pt-3">
+        <PanelRow
+          label="Realized"
+          value={
+            <span className={pnlBreakdown.gamblingPnlRealized >= 0 ? "text-emerald-500" : "text-rose-500"}>
+              {pnlBreakdown.gamblingPnlRealized >= 0 ? "+" : ""}
+              {formatCurrency(pnlBreakdown.gamblingPnlRealized)}
+            </span>
+          }
+        />
+        <PanelRow label="Wagered" value={formatCurrency(balances?.totalWagered ?? 0)} />
+        <PanelRow label="Won" value={formatCurrency(balances?.totalWon ?? 0)} />
+        <PanelRow
+          label="Bonuses Cost"
+          value={
+            <span className="text-rose-500">
+              -{formatCurrency(pnlBreakdown.bonusesCost)}
+            </span>
+          }
+        />
+      </div>
+    </StatPanel>
+  );
+}
+
+function ModernActivityPanel({
+  statistics,
+  balances,
+  inventoryCount,
+  avgDeposit,
+}: {
+  statistics: UserDetail["statistics"];
+  balances: UserDetail["balances"];
+  inventoryCount: number;
+  avgDeposit: number;
+}) {
+  const houseEdge =
+    balances && balances.totalWagered > 0
+      ? ((balances.totalWagered - balances.totalWon) / balances.totalWagered) * 100
+      : 0;
+  return (
+    <StatPanel title="Activity" icon={Activity} accent="blue">
+      <div className="flex items-baseline gap-4">
+        <div>
+          <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
+            Level
+          </p>
+          <p className="text-3xl font-bold tabular-nums text-blue-600 dark:text-blue-400">
+            {statistics?.level ?? 0}
+          </p>
+        </div>
+        <div>
+          <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
+            XP
+          </p>
+          <p className="text-lg font-semibold tabular-nums text-muted-foreground">
+            {(statistics?.xp ?? 0).toLocaleString()}
+          </p>
+        </div>
+      </div>
+      <div className="mt-4 space-y-0.5 border-t pt-3">
+        <PanelRow label="Packs Opened" value={String(statistics?.openedPacks ?? 0)} />
+        <PanelRow label="Battles Played" value={String(statistics?.battlesPlayed ?? 0)} />
+        <PanelRow label="Inventory Items" value={String(inventoryCount)} />
+        <PanelRow label="Avg Deposit" value={formatCurrency(avgDeposit)} />
+        <PanelRow
+          label="Avg House Edge"
+          value={balances && balances.totalWagered > 0 ? `${houseEdge.toFixed(2)}%` : "—"}
+        />
+      </div>
+    </StatPanel>
+  );
+}
+
 function FinancesTab({
   data,
   financialTx,
-  rewards,
-  pnlBreakdown,
   isAdmin,
 }: {
   data: UserDetail;
   financialTx: PaginatedTransactions;
-  rewards: UserRewards;
-  pnlBreakdown: PnlBreakdown;
   isAdmin: boolean;
 }) {
   const { user, balances, capabilities } = data;
+  void isAdmin; // reserved for future action-gating in this tab
+  void balances;
+  void capabilities;
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-2">
-        <BalanceSummaryCard
-          balances={balances}
-          userId={user.id}
-          isAdmin={isAdmin}
-          canAdjustBalance={capabilities.canAdjustBalance}
-        />
-        <PnlCard pnlBreakdown={pnlBreakdown} balances={balances} />
-      </div>
       <SectionHeading icon={ArrowDownToLine} title="Deposits & Withdrawals" />
       <CategoryTransactionsTable
         title="Deposits & Withdrawals"
@@ -532,8 +719,6 @@ function FinancesTab({
         initialTx={financialTx}
         cardWithdrawals={data.cardWithdrawals}
       />
-      <SectionHeading icon={Gift} title="Rewards" />
-      <RewardsCard rewards={rewards} />
     </div>
   );
 }
@@ -697,14 +882,16 @@ function RecentActivityTimeline({
         <ol className="relative ml-3 border-l border-border">
           {merged.map((tx) => {
             const delta = tx.balanceAfter - tx.balanceBefore;
-            const positive = delta > 0;
+            // HOUSE perspective: user gained money (delta > 0) → we LOST →
+            // red. User lost money (delta < 0) → we WON → green.
+            const userGained = delta > 0;
             const Icon = iconFor(tx.type);
             return (
               <li key={tx.id} className="relative mb-4 pl-6 last:mb-0">
                 <span
                   className={cn(
                     "absolute -left-[9px] top-0 flex size-4 items-center justify-center rounded-full border-2 border-background",
-                    positive ? "bg-emerald-500" : "bg-rose-500",
+                    userGained ? "bg-rose-500" : "bg-emerald-500",
                   )}
                 >
                   <span className="size-1.5 rounded-full bg-background" />
@@ -722,10 +909,10 @@ function RecentActivityTimeline({
                   <span
                     className={cn(
                       "text-sm font-semibold tabular-nums",
-                      positive ? "text-emerald-500" : "text-rose-500",
+                      userGained ? "text-rose-500" : "text-emerald-500",
                     )}
                   >
-                    {positive ? "+" : ""}
+                    {userGained ? "+" : ""}
                     {formatCurrency(tx.amount)}
                   </span>
                 </div>
