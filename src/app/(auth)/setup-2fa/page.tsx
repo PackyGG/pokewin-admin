@@ -1,5 +1,9 @@
 import { redirect } from "next/navigation";
-import { getPendingSession } from "@/lib/session";
+import {
+  getPendingSession,
+  getTOTPSetupCookie,
+  createTOTPSetupCookie,
+} from "@/lib/session";
 import { generateSecret, generateTOTPUri, generateQRCode } from "@/lib/totp";
 import { SetupForm } from "./setup-form";
 
@@ -9,7 +13,25 @@ export default async function Setup2FAPage() {
   const pending = await getPendingSession();
   if (!pending) redirect("/login");
 
-  const secret = generateSecret();
+  // The TOTP secret must be bound to the server-side pending session and
+  // must NOT be trusted from the client form post. Previously the secret
+  // was embedded as a hidden <input> and passed back to confirmSetup —
+  // an attacker could submit a secret they already knew and bypass 2FA.
+  // We now generate (or reuse) the secret in a signed, httpOnly cookie
+  // tied to this pending admin user; confirmSetup reads it from the
+  // cookie instead of the form body.
+  const existingSetup = await getTOTPSetupCookie();
+  let secret: string;
+  if (existingSetup && existingSetup.adminUserId === pending.adminUserId) {
+    secret = existingSetup.secret;
+  } else {
+    secret = generateSecret();
+    await createTOTPSetupCookie({
+      secret,
+      adminUserId: pending.adminUserId,
+    });
+  }
+
   const uri = generateTOTPUri(secret, pending.email);
   const qrCodeDataUrl = await generateQRCode(uri);
 
@@ -21,7 +43,7 @@ export default async function Setup2FAPage() {
           Scan the QR code with your authenticator app (Google Authenticator, Authy, etc.)
         </p>
       </div>
-      <SetupForm qrCodeDataUrl={qrCodeDataUrl} secret={secret} />
+      <SetupForm qrCodeDataUrl={qrCodeDataUrl} />
     </div>
   );
 }

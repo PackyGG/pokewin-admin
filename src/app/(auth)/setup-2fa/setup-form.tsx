@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,13 +9,10 @@ import Image from "next/image";
 
 export function SetupForm({
   qrCodeDataUrl,
-  secret,
 }: {
   qrCodeDataUrl: string;
-  secret: string;
 }) {
   const [state, formAction, pending] = useActionState(confirmSetup, {} as SetupState);
-  const [showManual, setShowManual] = useState(false);
 
   const hasRecoveryCodes = state?.recoveryCodes && state.recoveryCodes.length > 0;
 
@@ -30,26 +27,9 @@ export function SetupForm({
             </div>
           </div>
 
-          {/* Manual entry */}
-          <div className="text-center">
-            <button
-              type="button"
-              onClick={() => setShowManual(!showManual)}
-              className="text-xs text-muted-foreground hover:text-foreground underline"
-            >
-              {showManual ? "Hide" : "Can't scan? Enter manually"}
-            </button>
-            {showManual && (
-              <div className="mt-2 rounded-lg bg-white/5 p-3">
-                <p className="break-all font-mono text-xs text-foreground">{secret}</p>
-              </div>
-            )}
-          </div>
-
           {/* Verification form */}
           <form action={formAction} className="space-y-4">
             <input type="hidden" name="step" value="verify" />
-            <input type="hidden" name="secret" value={secret} />
             {state?.error && (
               <div className="rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">
                 {state.error}
