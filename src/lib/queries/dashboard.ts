@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
-import { EXCLUDE_STAFF_USER_RELATION, EXCLUDE_STAFF_SQL } from "./_exclude-staff";
+import { EXCLUDE_STAFF_USER_RELATION } from "./_exclude-staff";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
 
 export type ActivityItem = {
@@ -19,104 +19,109 @@ export type ActivityItem = {
   userId?: string;
 };
 
-function revenueAgg(gte: Date | null) {
-  return db.ledger_transactions.aggregate({
-    where: {
-      type: "deposit",
-      status: "completed",
-      ...(gte ? { created_at: { gte } } : {}),
-      user: EXCLUDE_STAFF_USER_RELATION,
-    },
-    _sum: { amount: true },
-  });
-}
-
-// Mirrors revenueAgg but for outflows. `card_withdrawal` is the unified
-// ledger type for both crypto + physical withdrawals — amounts are stored
-// as negative (debit), so the caller applies Math.abs() when summing.
-// `withdrawal_shipping_fee` is intentionally excluded — it's a platform
-// revenue line that already rolls up into GGR.
-function withdrawalAgg(gte: Date | null) {
-  return db.ledger_transactions.aggregate({
-    where: {
-      type: "card_withdrawal",
-      status: "completed",
-      ...(gte ? { created_at: { gte } } : {}),
-      user: EXCLUDE_STAFF_USER_RELATION,
-    },
-    _sum: { amount: true },
-  });
-}
-
-// Pure gaming margin: wagers − payouts back to users, for the given period.
-// This is the industry-standard GGR definition and does NOT subtract open
-// inventory — that's a balance-sheet adjustment that belongs on the lifetime
-// realized P&L (see getRealizedPnlSnapshot in ./_realized-pnl), not on a period-based gaming
-// revenue number.
-function ggrAgg(gte: Date | null) {
-  if (gte === null) {
-    // All-time: same query, no date filter. Kept as a separate branch so
-    // the parameterised template tag stays simple and type-safe — Prisma's
-    // $queryRaw doesn't love optional interpolations.
-    return db.$queryRaw<{ ggr: string }[]>`
-      SELECT (
-        COALESCE(SUM(CASE
-          WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship', 'withdrawal_shipping_fee')
-          THEN ABS(amount::numeric) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE
-          WHEN type IN (
-            'battle_refund', 'card_sale', 'reward_card_sale',
-            'card_exchange', 'exchange_excess_credit',
-            'deposit_bonus', 'race_prize', 'gift_card_redeemed',
-            'promo_code_redeemed', 'rakeback_claim', 'balance_reward_claim',
-            'affiliate_claim', 'rain_win', 'waitlist_prize',
-            'creator_tip', 'voucher_redeemed', 'voucher_exchange',
-            'exchange_excess_to_voucher', 'battle_excess_to_voucher'
-          )
-          THEN ABS(amount::numeric) ELSE 0 END), 0)
-      )::text AS ggr
+/**
+ * Single raw query that returns revenue (deposits), withdrawal, wager and GGR
+ * totals bucketed by period in ONE round-trip. Previously this was 20
+ * separate aggregate calls (4 metrics × 5 periods) — each requires its own
+ * plan + execution, and the underlying index scan is the same. Collapsing
+ * into one query shaves ~15 round-trips off the hot dashboard path.
+ *
+ * Stores the 24h cutoff as `startOfDay` (calendar day) to match the
+ * pre-existing behaviour — that's what the Dashboard UI calls "24h".
+ *
+ * Row shape: one text column per (metric × period). Caller converts to
+ * number via toNumber / parseFloat.
+ */
+function getPeriodAggregates(startOfDay: Date, threeDaysAgo: Date, sevenDaysAgo: Date, thirtyDaysAgo: Date) {
+  return db.$queryRaw<
+    {
+      revenue_24h: string; revenue_3d: string; revenue_7d: string; revenue_30d: string; revenue_all: string;
+      withdrawal_24h: string; withdrawal_3d: string; withdrawal_7d: string; withdrawal_30d: string; withdrawal_all: string;
+      wager_24h: string; wager_3d: string; wager_7d: string; wager_30d: string; wager_all: string;
+      ggr_24h: string; ggr_3d: string; ggr_7d: string; ggr_30d: string; ggr_all: string;
+    }[]
+  >`
+    WITH real_users AS (
+      SELECT id FROM "user" WHERE role NOT IN ('admin','creator')
+    ),
+    base AS (
+      SELECT type, amount::numeric AS amount, created_at
       FROM ledger_transactions
       WHERE status = 'completed'
-        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))
-    `;
-  }
-  return db.$queryRaw<{ ggr: string }[]>`
-    SELECT (
-      COALESCE(SUM(CASE
-        WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship', 'withdrawal_shipping_fee')
-        THEN ABS(amount::numeric) ELSE 0 END), 0)
-      - COALESCE(SUM(CASE
-        WHEN type IN (
-          'battle_refund', 'card_sale', 'reward_card_sale',
-          'card_exchange', 'exchange_excess_credit',
-          'deposit_bonus', 'race_prize', 'gift_card_redeemed',
-          'promo_code_redeemed', 'rakeback_claim', 'balance_reward_claim',
-          'affiliate_claim', 'rain_win', 'waitlist_prize',
-          'creator_tip', 'voucher_redeemed', 'voucher_exchange',
-          'exchange_excess_to_voucher', 'battle_excess_to_voucher'
-        )
-        THEN ABS(amount::numeric) ELSE 0 END), 0)
-    )::text AS ggr
-    FROM ledger_transactions
-    WHERE status = 'completed' AND created_at >= ${gte}
-      AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))
+        AND user_id IN (SELECT id FROM real_users)
+    )
+    SELECT
+      COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${startOfDay}    THEN amount ELSE 0 END), 0)::text AS revenue_24h,
+      COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${threeDaysAgo}  THEN amount ELSE 0 END), 0)::text AS revenue_3d,
+      COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${sevenDaysAgo}  THEN amount ELSE 0 END), 0)::text AS revenue_7d,
+      COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${thirtyDaysAgo} THEN amount ELSE 0 END), 0)::text AS revenue_30d,
+      COALESCE(SUM(CASE WHEN type = 'deposit'                                    THEN amount ELSE 0 END), 0)::text AS revenue_all,
+
+      COALESCE(SUM(CASE WHEN type = 'card_withdrawal' AND created_at >= ${startOfDay}    THEN amount ELSE 0 END), 0)::text AS withdrawal_24h,
+      COALESCE(SUM(CASE WHEN type = 'card_withdrawal' AND created_at >= ${threeDaysAgo}  THEN amount ELSE 0 END), 0)::text AS withdrawal_3d,
+      COALESCE(SUM(CASE WHEN type = 'card_withdrawal' AND created_at >= ${sevenDaysAgo}  THEN amount ELSE 0 END), 0)::text AS withdrawal_7d,
+      COALESCE(SUM(CASE WHEN type = 'card_withdrawal' AND created_at >= ${thirtyDaysAgo} THEN amount ELSE 0 END), 0)::text AS withdrawal_30d,
+      COALESCE(SUM(CASE WHEN type = 'card_withdrawal'                                    THEN amount ELSE 0 END), 0)::text AS withdrawal_all,
+
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND created_at >= ${startOfDay}    THEN amount ELSE 0 END), 0)::text AS wager_24h,
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND created_at >= ${threeDaysAgo}  THEN amount ELSE 0 END), 0)::text AS wager_3d,
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND created_at >= ${sevenDaysAgo}  THEN amount ELSE 0 END), 0)::text AS wager_7d,
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND created_at >= ${thirtyDaysAgo} THEN amount ELSE 0 END), 0)::text AS wager_30d,
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship')                                    THEN amount ELSE 0 END), 0)::text AS wager_all,
+
+      -- GGR = wagers − payouts (industry-standard pure gaming margin).
+      -- Same type lists as the old ggrAgg function.
+      (
+        COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','withdrawal_shipping_fee') AND created_at >= ${startOfDay} THEN ABS(amount) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN type IN (
+            'battle_refund','card_sale','reward_card_sale','card_exchange','exchange_excess_credit',
+            'deposit_bonus','race_prize','gift_card_redeemed','promo_code_redeemed','rakeback_claim',
+            'balance_reward_claim','affiliate_claim','rain_win','waitlist_prize','creator_tip',
+            'voucher_redeemed','voucher_exchange','exchange_excess_to_voucher','battle_excess_to_voucher'
+          ) AND created_at >= ${startOfDay} THEN ABS(amount) ELSE 0 END), 0)
+      )::text AS ggr_24h,
+      (
+        COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','withdrawal_shipping_fee') AND created_at >= ${threeDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN type IN (
+            'battle_refund','card_sale','reward_card_sale','card_exchange','exchange_excess_credit',
+            'deposit_bonus','race_prize','gift_card_redeemed','promo_code_redeemed','rakeback_claim',
+            'balance_reward_claim','affiliate_claim','rain_win','waitlist_prize','creator_tip',
+            'voucher_redeemed','voucher_exchange','exchange_excess_to_voucher','battle_excess_to_voucher'
+          ) AND created_at >= ${threeDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
+      )::text AS ggr_3d,
+      (
+        COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','withdrawal_shipping_fee') AND created_at >= ${sevenDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN type IN (
+            'battle_refund','card_sale','reward_card_sale','card_exchange','exchange_excess_credit',
+            'deposit_bonus','race_prize','gift_card_redeemed','promo_code_redeemed','rakeback_claim',
+            'balance_reward_claim','affiliate_claim','rain_win','waitlist_prize','creator_tip',
+            'voucher_redeemed','voucher_exchange','exchange_excess_to_voucher','battle_excess_to_voucher'
+          ) AND created_at >= ${sevenDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
+      )::text AS ggr_7d,
+      (
+        COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','withdrawal_shipping_fee') AND created_at >= ${thirtyDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN type IN (
+            'battle_refund','card_sale','reward_card_sale','card_exchange','exchange_excess_credit',
+            'deposit_bonus','race_prize','gift_card_redeemed','promo_code_redeemed','rakeback_claim',
+            'balance_reward_claim','affiliate_claim','rain_win','waitlist_prize','creator_tip',
+            'voucher_redeemed','voucher_exchange','exchange_excess_to_voucher','battle_excess_to_voucher'
+          ) AND created_at >= ${thirtyDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
+      )::text AS ggr_30d,
+      (
+        COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','withdrawal_shipping_fee') THEN ABS(amount) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN type IN (
+            'battle_refund','card_sale','reward_card_sale','card_exchange','exchange_excess_credit',
+            'deposit_bonus','race_prize','gift_card_redeemed','promo_code_redeemed','rakeback_claim',
+            'balance_reward_claim','affiliate_claim','rain_win','waitlist_prize','creator_tip',
+            'voucher_redeemed','voucher_exchange','exchange_excess_to_voucher','battle_excess_to_voucher'
+          ) THEN ABS(amount) ELSE 0 END), 0)
+      )::text AS ggr_all
+    FROM base
   `;
 }
 
 // Lifetime realized P&L lives in src/lib/queries/_realized-pnl.ts so the
 // Analytics page can use the exact same definition. Do not inline it here.
-
-function wagerAgg(gte: Date | null) {
-  return db.ledger_transactions.aggregate({
-    where: {
-      type: { in: ["pack_opening", "battle_bet", "battle_sponsorship"] },
-      status: "completed",
-      ...(gte ? { created_at: { gte } } : {}),
-      user: EXCLUDE_STAFF_USER_RELATION,
-    },
-    _sum: { amount: true },
-  });
-}
 
 export async function getDashboardStats() {
   return withTiming("dashboard.getDashboardStats", () => dashboardStatsInner());
@@ -149,28 +154,9 @@ async function dashboardStatsInner() {
     dailyWagers,
     dailyDeposits,
     dailySignups,
-    revenue24h,
-    revenue3d,
-    revenue7d,
-    revenue30d,
-    revenueAll,
-    withdrawal24h,
-    withdrawal3d,
-    withdrawal7d,
-    withdrawal30d,
-    withdrawalAll,
+    periodAggregates,
     activityTotals,
     depositCount,
-    wager24h,
-    wager3d,
-    wager7d,
-    wager30d,
-    wagerAll,
-    ggr24h,
-    ggr3d,
-    ggr7d,
-    ggr30d,
-    ggrAll,
     realizedPnlResult,
     avgSessionValueResult,
     totalInventoryValue,
@@ -247,16 +233,9 @@ async function dashboardStatsInner() {
       GROUP BY DATE(created_at)
       ORDER BY date
     `,
-    revenueAgg(startOfDay),
-    revenueAgg(threeDaysAgo),
-    revenueAgg(sevenDaysAgo),
-    revenueAgg(thirtyDaysAgo),
-    revenueAgg(null),
-    withdrawalAgg(startOfDay),
-    withdrawalAgg(threeDaysAgo),
-    withdrawalAgg(sevenDaysAgo),
-    withdrawalAgg(thirtyDaysAgo),
-    withdrawalAgg(null),
+    // Single batched query replaces 20 independent aggregates (revenue, withdrawal,
+    // wager, ggr × 5 periods each). Same plan + same index scan — but one round-trip.
+    getPeriodAggregates(startOfDay, threeDaysAgo, sevenDaysAgo, thirtyDaysAgo),
     db.user_statistics.aggregate({
       where: { user: EXCLUDE_STAFF_USER_RELATION },
       _sum: { opened_packs_count: true, battles_played: true },
@@ -268,16 +247,6 @@ async function dashboardStatsInner() {
         user: EXCLUDE_STAFF_USER_RELATION,
       },
     }),
-    wagerAgg(startOfDay),
-    wagerAgg(threeDaysAgo),
-    wagerAgg(sevenDaysAgo),
-    wagerAgg(thirtyDaysAgo),
-    wagerAgg(null),
-    ggrAgg(startOfDay),
-    ggrAgg(threeDaysAgo),
-    ggrAgg(sevenDaysAgo),
-    ggrAgg(thirtyDaysAgo),
-    ggrAgg(null),
     getRealizedPnlSnapshot(),
     db.$queryRaw<{ avg_session_value: string }[]>`
       WITH real_users AS (
@@ -349,6 +318,17 @@ async function dashboardStatsInner() {
   const totalWon = toNumber(balanceAggregates._sum?.total_won);
   const totalActivityCount = totalAuditEvents + totalTransactions;
 
+  // Unpack the batched period aggregates. Each field is a text-encoded
+  // numeric; parseFloat() is sufficient because we're always going
+  // through Number coercion anyway downstream.
+  const pa = periodAggregates[0] ?? {
+    revenue_24h: "0", revenue_3d: "0", revenue_7d: "0", revenue_30d: "0", revenue_all: "0",
+    withdrawal_24h: "0", withdrawal_3d: "0", withdrawal_7d: "0", withdrawal_30d: "0", withdrawal_all: "0",
+    wager_24h: "0", wager_3d: "0", wager_7d: "0", wager_30d: "0", wager_all: "0",
+    ggr_24h: "0", ggr_3d: "0", ggr_7d: "0", ggr_30d: "0", ggr_all: "0",
+  };
+  const num = (s: string) => parseFloat(s) || 0;
+
   return {
     users: {
       total: totalUsers,
@@ -361,37 +341,37 @@ async function dashboardStatsInner() {
     // Gaming margin (wagers − payouts) per period. Pure GGR, no liability
     // adjustment. Use realizedPnl for the balance-sheet-true number.
     ggr: {
-      "24h": Number(ggr24h[0]?.ggr ?? 0),
-      "3d": Number(ggr3d[0]?.ggr ?? 0),
-      "7d": Number(ggr7d[0]?.ggr ?? 0),
-      "30d": Number(ggr30d[0]?.ggr ?? 0),
-      all: Number(ggrAll[0]?.ggr ?? 0),
+      "24h": num(pa.ggr_24h),
+      "3d": num(pa.ggr_3d),
+      "7d": num(pa.ggr_7d),
+      "30d": num(pa.ggr_30d),
+      all: num(pa.ggr_all),
     },
     // Lifetime realized P&L from the house perspective — see getRealizedPnlSnapshot.
     // This is a single snapshot value, not a period series.
     realizedPnl: realizedPnlResult.pnl,
     deposits: {
-      "24h": toNumber(revenue24h._sum?.amount),
-      "3d": toNumber(revenue3d._sum?.amount),
-      "7d": toNumber(revenue7d._sum?.amount),
-      "30d": toNumber(revenue30d._sum?.amount),
-      all: toNumber(revenueAll._sum?.amount),
+      "24h": num(pa.revenue_24h),
+      "3d": num(pa.revenue_3d),
+      "7d": num(pa.revenue_7d),
+      "30d": num(pa.revenue_30d),
+      all: num(pa.revenue_all),
     },
     // card_withdrawal amounts are stored as negative ledger entries, so
     // abs() to surface a positive "outflow" magnitude.
     withdrawals: {
-      "24h": Math.abs(toNumber(withdrawal24h._sum?.amount)),
-      "3d": Math.abs(toNumber(withdrawal3d._sum?.amount)),
-      "7d": Math.abs(toNumber(withdrawal7d._sum?.amount)),
-      "30d": Math.abs(toNumber(withdrawal30d._sum?.amount)),
-      all: Math.abs(toNumber(withdrawalAll._sum?.amount)),
+      "24h": Math.abs(num(pa.withdrawal_24h)),
+      "3d": Math.abs(num(pa.withdrawal_3d)),
+      "7d": Math.abs(num(pa.withdrawal_7d)),
+      "30d": Math.abs(num(pa.withdrawal_30d)),
+      all: Math.abs(num(pa.withdrawal_all)),
     },
     wagers: {
-      "24h": Math.abs(toNumber(wager24h._sum?.amount)),
-      "3d": Math.abs(toNumber(wager3d._sum?.amount)),
-      "7d": Math.abs(toNumber(wager7d._sum?.amount)),
-      "30d": Math.abs(toNumber(wager30d._sum?.amount)),
-      all: Math.abs(toNumber(wagerAll._sum?.amount)),
+      "24h": Math.abs(num(pa.wager_24h)),
+      "3d": Math.abs(num(pa.wager_3d)),
+      "7d": Math.abs(num(pa.wager_7d)),
+      "30d": Math.abs(num(pa.wager_30d)),
+      all: Math.abs(num(pa.wager_all)),
     },
     financials: {
       totalDeposited: toNumber(balanceAggregates._sum?.total_deposited),

@@ -29,7 +29,28 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
   // those who haven't deposited/wagered yet. The previous implementation
   // pulled from affiliate_code_usages, which only records deposit/wager
   // events, so freshly-signed-up users were invisible in the list.
-  const [referrals, referralsTotal, payouts, allCodes, limits, webhooks, deals, socials, pnl] = await Promise.all([
+  //
+  // signupsTotal / referralsTotal were previously duplicated as two separate
+  // queries (same WHERE). Consolidated into one batch here, then reused.
+  const primaryCodeFromUser = account.user?.affiliate_code ?? "";
+  const now = new Date();
+  const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const [
+    referrals,
+    signupsTotal,
+    signups24h,
+    signups7d,
+    signups30d,
+    payouts,
+    allCodes,
+    limits,
+    webhooks,
+    deals,
+    socials,
+    pnl,
+  ] = await Promise.all([
     db.user.findMany({
       where: { referred_by: userId },
       select: {
@@ -44,6 +65,15 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
     }),
     db.user.count({
       where: { referred_by: userId },
+    }),
+    db.user.count({
+      where: { referred_by: userId, created_at: { gte: oneDayAgo } },
+    }),
+    db.user.count({
+      where: { referred_by: userId, created_at: { gte: sevenDaysAgo } },
+    }),
+    db.user.count({
+      where: { referred_by: userId, created_at: { gte: thirtyDaysAgo } },
     }),
     db.affiliate_payouts.findMany({
       where: { affiliate_user_id: userId },
@@ -72,39 +102,15 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
     getCreatorPnl(userId),
   ]);
 
-  const primaryCode = account.user?.affiliate_code ?? allCodes[0]?.code ?? "";
-  const clickCount = primaryCode ? await db.affiliate_clicks.count({ where: { code: primaryCode } }) : 0;
+  const referralsTotal = signupsTotal;
+  const primaryCode = primaryCodeFromUser || allCodes[0]?.code || "";
 
-  // Signup count — users who registered via this creator's link and got
-  // attributed. user.referred_by stores the creator's USER ID (not the
-  // code), so this count captures everyone who signed up through them
-  // regardless of whether they later deposited / wagered.
-  // account.total_referred only counts users who produced a usage event
-  // (deposit or wager), so signups is always >= total_referred.
-  // affiliate_code_queue rows are users mid-attribution (signed up but
-  // haven't finished attribution yet — expires after a window); we show
-  // them as a separate "pending" count for visibility.
-  const now = new Date();
-  const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-  const [
-    signupsTotal,
-    signups24h,
-    signups7d,
-    signups30d,
-    pendingSignups,
-  ] = await Promise.all([
-    db.user.count({ where: { referred_by: userId } }),
-    db.user.count({
-      where: { referred_by: userId, created_at: { gte: oneDayAgo } },
-    }),
-    db.user.count({
-      where: { referred_by: userId, created_at: { gte: sevenDaysAgo } },
-    }),
-    db.user.count({
-      where: { referred_by: userId, created_at: { gte: thirtyDaysAgo } },
-    }),
+  // Click count + pending signups depend on the resolved primary code, so
+  // they're a second parallel batch. Tiny — one count each.
+  const [clickCount, pendingSignups] = await Promise.all([
+    primaryCode
+      ? db.affiliate_clicks.count({ where: { code: primaryCode } })
+      : Promise.resolve(0),
     primaryCode
       ? db.affiliate_code_queue.count({ where: { code: primaryCode } })
       : Promise.resolve(0),
@@ -113,7 +119,13 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
   // For each signed-up user, look up their aggregated usage data +
   // balance. If the user hasn't deposited/wagered yet we still show
   // them in the list with zeros, so the admin can see who signed up.
+  //
+  // All three data sources (usages, balances, ftdStats, webhook deliveries)
+  // are independent — parallelized so the detail page isn't serial-bound
+  // on four round-trips. Previously ftdStats and the webhook deliveries
+  // N+1 were both sequential after this block; now they all run together.
   const referredUserIds = referrals.map((r) => r.id);
+  const webhookIds = webhooks.map((w) => w.id);
   const usageMap = new Map<
     string,
     {
@@ -126,72 +138,147 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
     }
   >();
   let ftdMap = new Map<string, boolean>();
-  if (referredUserIds.length > 0) {
-    const [usages, balances] = await Promise.all([
-      db.affiliate_code_usages.findMany({
-        where: {
-          affiliate_user_id: userId,
-          referred_user_id: { in: referredUserIds },
-        },
-        orderBy: { created_at: "desc" },
-      }),
-      db.balances.findMany({
-        where: { user_id: { in: referredUserIds } },
-        select: { user_id: true, total_deposited: true },
-      }),
-    ]);
-    for (const u of usages) {
-      const prev = usageMap.get(u.referred_user_id) ?? {
-        depositAmountUsd: 0,
-        wagerAmountUsd: 0,
-        referrerCutUsd: 0,
-        userBonusUsd: 0,
-        usageCount: 0,
-        lastUsageType: null,
-      };
-      usageMap.set(u.referred_user_id, {
-        depositAmountUsd: prev.depositAmountUsd + toNumber(u.deposit_amount_usd),
-        wagerAmountUsd: prev.wagerAmountUsd + toNumber(u.wager_amount_usd),
-        referrerCutUsd: prev.referrerCutUsd + toNumber(u.referrer_cut_usd),
-        userBonusUsd: prev.userBonusUsd + toNumber(u.user_bonus_usd),
-        usageCount: prev.usageCount + 1,
-        lastUsageType: prev.lastUsageType ?? u.usage_type,
-      });
-    }
-    ftdMap = new Map(
-      balances.map((b) => [b.user_id, toNumber(b.total_deposited) > 0])
-    );
-  }
-
-  // FTD stats by period
-  const ftdStats = await db.$queryRawUnsafe<
-    { period: string; count: string }[]
-  >(`
-    SELECT period, COUNT(*)::text AS count FROM (
-      SELECT DISTINCT acu.referred_user_id, p.period
-      FROM affiliate_code_usages acu
-      JOIN balances b ON b.user_id = acu.referred_user_id AND b.total_deposited > 0
-      CROSS JOIN (VALUES ('1d'), ('3d'), ('7d'), ('14d'), ('30d'), ('all')) AS p(period)
-      WHERE acu.affiliate_user_id = $1
-        AND acu.usage_type = 'deposit'
-        AND (
-          p.period = 'all'
-          OR acu.created_at >= NOW() - CASE p.period
-            WHEN '1d' THEN INTERVAL '1 day'
-            WHEN '3d' THEN INTERVAL '3 days'
-            WHEN '7d' THEN INTERVAL '7 days'
-            WHEN '14d' THEN INTERVAL '14 days'
-            WHEN '30d' THEN INTERVAL '30 days'
-          END
+  const [usages, balances, ftdStats, webhookDeliveries] = await Promise.all([
+    referredUserIds.length > 0
+      ? db.affiliate_code_usages.findMany({
+          where: {
+            affiliate_user_id: userId,
+            referred_user_id: { in: referredUserIds },
+          },
+          orderBy: { created_at: "desc" },
+        })
+      : Promise.resolve(
+          [] as Awaited<ReturnType<typeof db.affiliate_code_usages.findMany>>,
+        ),
+    referredUserIds.length > 0
+      ? db.balances.findMany({
+          where: { user_id: { in: referredUserIds } },
+          select: { user_id: true, total_deposited: true },
+        })
+      : Promise.resolve(
+          [] as Awaited<
+            ReturnType<
+              typeof db.balances.findMany<{
+                select: { user_id: true; total_deposited: true };
+              }>
+            >
+          >,
+        ),
+    db.$queryRawUnsafe<{ period: string; count: string }[]>(
+      `
+      SELECT period, COUNT(*)::text AS count FROM (
+        SELECT DISTINCT acu.referred_user_id, p.period
+        FROM affiliate_code_usages acu
+        JOIN balances b ON b.user_id = acu.referred_user_id AND b.total_deposited > 0
+        CROSS JOIN (VALUES ('1d'), ('3d'), ('7d'), ('14d'), ('30d'), ('all')) AS p(period)
+        WHERE acu.affiliate_user_id = $1
+          AND acu.usage_type = 'deposit'
+          AND (
+            p.period = 'all'
+            OR acu.created_at >= NOW() - CASE p.period
+              WHEN '1d' THEN INTERVAL '1 day'
+              WHEN '3d' THEN INTERVAL '3 days'
+              WHEN '7d' THEN INTERVAL '7 days'
+              WHEN '14d' THEN INTERVAL '14 days'
+              WHEN '30d' THEN INTERVAL '30 days'
+            END
+          )
+      ) sub
+      GROUP BY period
+    `,
+      userId,
+    ),
+    // Webhook deliveries — one batched query with a LATERAL join to keep
+    // "5 most recent per webhook". Previously this was N separate queries
+    // (one per webhook). The `deliveries` table has webhook_id indexed so
+    // the lateral join is cheap even at a few dozen webhooks.
+    webhookIds.length > 0
+      ? adminDb.$queryRawUnsafe<
+          {
+            id: string;
+            webhook_id: string;
+            event_type: string;
+            status_code: number | null;
+            success: boolean;
+            attempt: number;
+            created_at: Date;
+          }[]
+        >(
+          `
+          SELECT d.id::text AS id, d.webhook_id::text AS webhook_id,
+                 d.event_type, d.status_code, d.success, d.attempt, d.created_at
+          FROM unnest($1::uuid[]) AS w(webhook_id)
+          CROSS JOIN LATERAL (
+            SELECT id, webhook_id, event_type, status_code, success, attempt, created_at
+            FROM webhook_deliveries
+            WHERE webhook_id = w.webhook_id
+            ORDER BY created_at DESC
+            LIMIT 5
+          ) d
+        `,
+          webhookIds,
         )
-    ) sub
-    GROUP BY period
-  `, userId);
+      : Promise.resolve([] as never[]),
+  ]);
+  for (const u of usages) {
+    const prev = usageMap.get(u.referred_user_id) ?? {
+      depositAmountUsd: 0,
+      wagerAmountUsd: 0,
+      referrerCutUsd: 0,
+      userBonusUsd: 0,
+      usageCount: 0,
+      lastUsageType: null,
+    };
+    usageMap.set(u.referred_user_id, {
+      depositAmountUsd: prev.depositAmountUsd + toNumber(u.deposit_amount_usd),
+      wagerAmountUsd: prev.wagerAmountUsd + toNumber(u.wager_amount_usd),
+      referrerCutUsd: prev.referrerCutUsd + toNumber(u.referrer_cut_usd),
+      userBonusUsd: prev.userBonusUsd + toNumber(u.user_bonus_usd),
+      usageCount: prev.usageCount + 1,
+      lastUsageType: prev.lastUsageType ?? u.usage_type,
+    });
+  }
+  ftdMap = new Map(
+    balances.map((b) => [b.user_id, toNumber(b.total_deposited) > 0]),
+  );
 
   const ftdByPeriod: Record<string, number> = { "1d": 0, "3d": 0, "7d": 0, "14d": 0, "30d": 0, all: 0 };
   for (const row of ftdStats) {
     ftdByPeriod[row.period] = Number(row.count);
   }
+
+  // Build webhook -> deliveries map once, then join in the return shape.
+  const deliveriesByWebhookId = new Map<
+    string,
+    Array<{
+      id: string;
+      eventType: string;
+      statusCode: number | null;
+      success: boolean;
+      attempt: number;
+      createdAt: string;
+    }>
+  >();
+  for (const d of webhookDeliveries) {
+    const list = deliveriesByWebhookId.get(d.webhook_id) ?? [];
+    list.push({
+      id: d.id,
+      eventType: d.event_type,
+      statusCode: d.status_code,
+      success: d.success,
+      attempt: d.attempt,
+      createdAt: d.created_at.toISOString(),
+    });
+    deliveriesByWebhookId.set(d.webhook_id, list);
+  }
+  const webhooksWithDeliveries = webhooks.map((w) => ({
+    id: w.id,
+    url: w.url,
+    type: w.type,
+    enabled: w.enabled,
+    createdAt: w.created_at.toISOString(),
+    deliveries: deliveriesByWebhookId.get(w.id) ?? [],
+  }));
 
   return {
     userId: account.user_id,
@@ -261,28 +348,7 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
       status: p.status,
       createdAt: p.created_at.toISOString(),
     })),
-    webhooks: await Promise.all(webhooks.map(async (w) => {
-      const deliveries = await adminDb.webhook_deliveries.findMany({
-        where: { webhook_id: w.id },
-        orderBy: { created_at: "desc" },
-        take: 5,
-      });
-      return {
-        id: w.id,
-        url: w.url,
-        type: w.type,
-        enabled: w.enabled,
-        createdAt: w.created_at.toISOString(),
-        deliveries: deliveries.map((d) => ({
-          id: d.id,
-          eventType: d.event_type,
-          statusCode: d.status_code,
-          success: d.success,
-          attempt: d.attempt,
-          createdAt: d.created_at.toISOString(),
-        })),
-      };
-    })),
+    webhooks: webhooksWithDeliveries,
     deals: deals.map((d) => ({
       id: d.id,
       dealName: d.deal_name,
