@@ -16,9 +16,12 @@ import {
 } from "@/components/ui/table";
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Loader2, Search, X } from "lucide-react";
 import { CardImage } from "@/components/card-image";
+import { CardTile, TileDataRow } from "@/components/card-tile";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { fetchPackGames } from "../actions";
 
+// Legacy rarity palette — still used by the games-table rows (not the
+// pack-card grid, which now delegates to <CardTile />).
 const RARITY_COLORS: Record<string, string> = {
   common: "bg-zinc-700/90 text-zinc-100",
   uncommon: "bg-green-700/90 text-green-100",
@@ -90,51 +93,56 @@ export function PackTabs({ data, initialGames }: { data: PackDetailData; initial
               </CardContent>
             </Card>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-              {data.cards.map((card) => (
-                <div
-                  key={card.id}
-                  className="rounded-lg border bg-card overflow-hidden"
-                >
-                  <div className="aspect-[2/3] relative bg-muted">
-                    <CardImage
-                      src={card.imageUrl}
-                      alt={card.name}
-                      className="size-full"
-                    />
-                    {card.rarity && (
-                      <span
-                        className={`absolute bottom-1.5 left-1.5 rounded px-1.5 py-0.5 text-[11px] font-semibold leading-none shadow backdrop-blur-sm ${RARITY_COLORS[card.rarity.toLowerCase()] ?? "bg-black/80 text-white"}`}
-                      >
-                        {card.rarity}
-                      </span>
-                    )}
-                    <span className="absolute top-1.5 right-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-mono text-white/80 shadow backdrop-blur-sm">
-                      #{card.order}
-                    </span>
-                  </div>
-                  <div className="p-2 space-y-1">
-                    <p className="text-xs font-medium truncate" title={card.name}>
-                      {card.name}
-                    </p>
-                    {card.setName && (
-                      <p className="text-[10px] text-muted-foreground truncate">
-                        {card.setName}
-                      </p>
-                    )}
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="font-medium">{formatCurrency(card.priceUsd)}</span>
-                      <span className="text-muted-foreground">{card.probability < 0.01 ? card.probability.toFixed(4) : card.probability.toFixed(2)}%</span>
-                    </div>
-                    <div className="h-1 rounded-full bg-muted overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-primary/60"
-                        style={{ width: `${Math.min(card.probability, 100)}%` }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
+            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-7 xl:grid-cols-10">
+              {data.cards.map((card) => {
+                // Probability comes through as 0-100 already. Tiny values
+                // (sub 1%) get a finer 4-decimal format so rare slots stay
+                // legible in the tile.
+                const probLabel =
+                  card.probability < 0.01
+                    ? `${card.probability.toFixed(4)}%`
+                    : `${card.probability.toFixed(2)}%`;
+                return (
+                  <CardTile
+                    key={card.id}
+                    id={card.id}
+                    href={`/cards/${card.cardId}`}
+                    name={card.name}
+                    imageUrl={card.imageUrl}
+                    rarity={card.rarity}
+                    subtitle={card.setName ?? null}
+                    topBadge={`#${card.order}`}
+                    priceUsd={card.priceUsd}
+                    extraRows={
+                      <>
+                        <TileDataRow
+                          label={
+                            card.rarity ? (
+                              <span className="capitalize">{card.rarity}</span>
+                            ) : (
+                              "—"
+                            )
+                          }
+                          value={probLabel}
+                        />
+                        {/* Probability bar — slimmer than before but still
+                            gives operators an at-a-glance weight signal. */}
+                        <div
+                          className="h-0.5 overflow-hidden rounded-full bg-muted"
+                          aria-hidden
+                        >
+                          <div
+                            className="h-full rounded-full bg-primary/60"
+                            style={{
+                              width: `${Math.min(card.probability, 100)}%`,
+                            }}
+                          />
+                        </div>
+                      </>
+                    }
+                  />
+                );
+              })}
             </div>
           )}
         </TabsContent>
