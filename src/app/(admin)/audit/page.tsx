@@ -1,10 +1,18 @@
 import { Suspense } from "react";
+import { ScrollText } from "lucide-react";
 import { getAuditEvents } from "@/lib/queries/audit";
 import { requirePageAccess } from "@/lib/dal";
 import { AuditActivityTable } from "./audit-activity-table";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  PageHero,
+  SectionHeading,
+  KpiTile,
+} from "@/components/modern-panels";
+import { FadeIn } from "@/components/fade-in";
+import { formatNumber } from "@/lib/utils/format";
 
 export const metadata = { title: "Audit Log" };
 
@@ -58,27 +66,67 @@ export default async function AuditPage({
   });
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-bold">Audit Log</h1>
-      <Suspense fallback={<Skeleton className="h-10 w-full" />}>
-        <DataTableToolbar
-          searchPlaceholder="Search by admin username, user ID, or IP..."
-          filters={[
-            {
-              name: "Event Type",
-              paramKey: "eventType",
-              options: EVENT_TYPES,
-            },
-          ]}
+    <div className="space-y-6">
+      <PageHero>
+        <div className="flex items-center gap-3">
+          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
+            <ScrollText className="size-5 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold leading-tight">Audit Log</h1>
+            <p className="text-sm text-muted-foreground">
+              Every admin action logged — searchable by admin, user, IP, or
+              event type.
+            </p>
+          </div>
+        </div>
+      </PageHero>
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <KpiTile
+          label="Total Events"
+          value={formatNumber(result.total)}
+          icon={ScrollText}
+          accent="blue"
         />
-      </Suspense>
-      <AuditActivityTable data={result.data} />
-      <DataTablePagination
-        page={result.page}
-        totalPages={result.totalPages}
-        total={result.total}
-        perPage={result.perPage}
-      />
+        <KpiTile
+          label="On Page"
+          value={formatNumber(result.data.length)}
+          icon={ScrollText}
+          accent="purple"
+        />
+        <KpiTile
+          label="Event Types"
+          value={formatNumber(EVENT_TYPES.length)}
+          icon={ScrollText}
+          accent="cyan"
+        />
+      </div>
+
+      <div className="space-y-3">
+        <SectionHeading icon={ScrollText} title="Event Stream" />
+        <FadeIn className="space-y-4">
+          <Suspense fallback={<Skeleton className="h-10 w-full" />}>
+            <DataTableToolbar
+              searchPlaceholder="Search by admin username, user ID, or IP..."
+              filters={[
+                {
+                  name: "Event Type",
+                  paramKey: "eventType",
+                  options: EVENT_TYPES,
+                },
+              ]}
+            />
+          </Suspense>
+          <AuditActivityTable data={result.data} />
+          <DataTablePagination
+            page={result.page}
+            totalPages={result.totalPages}
+            total={result.total}
+            perPage={result.perPage}
+          />
+        </FadeIn>
+      </div>
     </div>
   );
 }

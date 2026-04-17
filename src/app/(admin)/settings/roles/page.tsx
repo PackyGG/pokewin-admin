@@ -1,7 +1,10 @@
+import { ShieldCheck } from "lucide-react";
 import { requireAdmin } from "@/lib/dal";
 import { ADMIN_PAGES } from "@/lib/admin-pages";
 import { getRolePermissions } from "./actions";
 import { RolePermissionsEditor } from "./role-permissions-editor";
+import { PageHero } from "@/components/modern-panels";
+import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Role Permissions" };
 
@@ -27,17 +30,27 @@ export default async function RolePermissionsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Role Permissions</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Configure page access and capabilities for each role. Changes
-          apply to all existing and new users of that role.
-        </p>
-      </div>
-      <RolePermissionsEditor
-        groupedPages={groupedPages}
-        initialPermissions={permissions}
-      />
+      <PageHero>
+        <div className="flex items-center gap-3">
+          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
+            <ShieldCheck className="size-5 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold leading-tight">Role Permissions</h1>
+            <p className="text-sm text-muted-foreground">
+              Configure page access and capabilities for each role. Changes
+              apply to all existing and new users of that role.
+            </p>
+          </div>
+        </div>
+      </PageHero>
+
+      <FadeIn>
+        <RolePermissionsEditor
+          groupedPages={groupedPages}
+          initialPermissions={permissions}
+        />
+      </FadeIn>
     </div>
   );
 }
