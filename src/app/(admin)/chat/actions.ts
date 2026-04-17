@@ -4,10 +4,36 @@ import { randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import {
+  getChatMessages,
+  getMutes,
+  type ChatMessageItem,
+  type MuteItem,
+} from "@/lib/queries/chat";
+import type { PaginatedResult } from "@/lib/types";
+
+export async function fetchChatMessagesPanel(params: {
+  page?: number;
+  perPage?: number;
+  search?: string;
+}): Promise<PaginatedResult<ChatMessageItem>> {
+  await requirePageAccess("/chat");
+  return getChatMessages(params);
+}
+
+export async function fetchMutesPanel(params: {
+  page?: number;
+  perPage?: number;
+}): Promise<PaginatedResult<MuteItem>> {
+  await requirePageAccess("/chat");
+  return getMutes(params);
+}
 
 export async function deleteMessage(messageId: string) {
   const session = await requirePageAccess("/chat");
+  await requireCapability(session, "__can_delete_messages", "delete chat messages");
 
   const message = await db.chat_messages.findUnique({
     where: { id: messageId },
@@ -37,6 +63,7 @@ export async function deleteMessage(messageId: string) {
 
 export async function pinMessage(messageId: string) {
   const session = await requirePageAccess("/chat");
+  await requireCapability(session, "__can_pin_messages", "pin messages");
 
   const message = await db.chat_messages.findUnique({
     where: { id: messageId },
@@ -66,6 +93,7 @@ export async function pinMessage(messageId: string) {
 
 export async function unpinMessage(messageId: string) {
   const session = await requirePageAccess("/chat");
+  await requireCapability(session, "__can_pin_messages", "unpin messages");
 
   const pinned = await db.pinned_chat_messages.findUnique({
     where: { message_id: messageId },
@@ -95,6 +123,7 @@ export async function muteUser(data: {
   expiresAt: string | null;
 }) {
   const session = await requirePageAccess("/chat");
+  await requireCapability(session, "__can_mute_users", "mute users");
 
   // muted_by FK requires a valid User ID — use the target user since admin is in a separate table
   // The actual admin identity is tracked in the audit event below
@@ -164,6 +193,7 @@ export async function pollMessages(sinceIso: string): Promise<{
 
 export async function unmuteUser(muteId: string) {
   const session = await requirePageAccess("/chat");
+  await requireCapability(session, "__can_mute_users", "unmute users");
 
   const mute = await db.user_mutes.findUnique({ where: { id: muteId } });
   if (!mute) throw new Error("Mute not found");
