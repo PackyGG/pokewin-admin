@@ -72,6 +72,7 @@ export type Admin_usersCountAggregateOutputType = {
   display_username: number
   profile_image: number
   profile_image_mime: number
+  preferences: number
   created_at: number
   updated_at: number
   allowed_pages: number
@@ -127,6 +128,7 @@ export type Admin_usersCountAggregateInputType = {
   display_username?: true
   profile_image?: true
   profile_image_mime?: true
+  preferences?: true
   created_at?: true
   updated_at?: true
   allowed_pages?: true
@@ -219,6 +221,7 @@ export type Admin_usersGroupByOutputType = {
   display_username: string | null
   profile_image: runtime.Bytes | null
   profile_image_mime: string | null
+  preferences: runtime.JsonValue | null
   created_at: Date
   updated_at: Date
   allowed_pages: string[]
@@ -259,6 +262,7 @@ export type admin_usersWhereInput = {
   display_username?: Prisma.StringNullableFilter<"admin_users"> | string | null
   profile_image?: Prisma.BytesNullableFilter<"admin_users"> | runtime.Bytes | null
   profile_image_mime?: Prisma.StringNullableFilter<"admin_users"> | string | null
+  preferences?: Prisma.JsonNullableFilter<"admin_users">
   created_at?: Prisma.DateTimeFilter<"admin_users"> | Date | string
   updated_at?: Prisma.DateTimeFilter<"admin_users"> | Date | string
   allowed_pages?: Prisma.StringNullableListFilter<"admin_users">
@@ -286,6 +290,7 @@ export type admin_usersOrderByWithRelationInput = {
   display_username?: Prisma.SortOrderInput | Prisma.SortOrder
   profile_image?: Prisma.SortOrderInput | Prisma.SortOrder
   profile_image_mime?: Prisma.SortOrderInput | Prisma.SortOrder
+  preferences?: Prisma.SortOrderInput | Prisma.SortOrder
   created_at?: Prisma.SortOrder
   updated_at?: Prisma.SortOrder
   allowed_pages?: Prisma.SortOrder
@@ -316,6 +321,7 @@ export type admin_usersWhereUniqueInput = Prisma.AtLeast<{
   display_username?: Prisma.StringNullableFilter<"admin_users"> | string | null
   profile_image?: Prisma.BytesNullableFilter<"admin_users"> | runtime.Bytes | null
   profile_image_mime?: Prisma.StringNullableFilter<"admin_users"> | string | null
+  preferences?: Prisma.JsonNullableFilter<"admin_users">
   created_at?: Prisma.DateTimeFilter<"admin_users"> | Date | string
   updated_at?: Prisma.DateTimeFilter<"admin_users"> | Date | string
   allowed_pages?: Prisma.StringNullableListFilter<"admin_users">
@@ -343,6 +349,7 @@ export type admin_usersOrderByWithAggregationInput = {
   display_username?: Prisma.SortOrderInput | Prisma.SortOrder
   profile_image?: Prisma.SortOrderInput | Prisma.SortOrder
   profile_image_mime?: Prisma.SortOrderInput | Prisma.SortOrder
+  preferences?: Prisma.SortOrderInput | Prisma.SortOrder
   created_at?: Prisma.SortOrder
   updated_at?: Prisma.SortOrder
   allowed_pages?: Prisma.SortOrder
@@ -368,6 +375,7 @@ export type admin_usersScalarWhereWithAggregatesInput = {
   display_username?: Prisma.StringNullableWithAggregatesFilter<"admin_users"> | string | null
   profile_image?: Prisma.BytesNullableWithAggregatesFilter<"admin_users"> | runtime.Bytes | null
   profile_image_mime?: Prisma.StringNullableWithAggregatesFilter<"admin_users"> | string | null
+  preferences?: Prisma.JsonNullableWithAggregatesFilter<"admin_users">
   created_at?: Prisma.DateTimeWithAggregatesFilter<"admin_users"> | Date | string
   updated_at?: Prisma.DateTimeWithAggregatesFilter<"admin_users"> | Date | string
   allowed_pages?: Prisma.StringNullableListFilter<"admin_users">
@@ -386,6 +394,7 @@ export type admin_usersCreateInput = {
   display_username?: string | null
   profile_image?: runtime.Bytes | null
   profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -413,6 +422,7 @@ export type admin_usersUncheckedCreateInput = {
   display_username?: string | null
   profile_image?: runtime.Bytes | null
   profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -438,6 +448,7 @@ export type admin_usersUpdateInput = {
   display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
   profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -465,6 +476,7 @@ export type admin_usersUncheckedUpdateInput = {
   display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
   profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -491,6 +503,7 @@ export type admin_usersCreateManyInput = {
   display_username?: string | null
   profile_image?: runtime.Bytes | null
   profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -509,6 +522,7 @@ export type admin_usersUpdateManyMutationInput = {
   display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
   profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -528,6 +542,7 @@ export type admin_usersUncheckedUpdateManyInput = {
   display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
   profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -555,6 +570,7 @@ export type admin_usersCountOrderByAggregateInput = {
   display_username?: Prisma.SortOrder
   profile_image?: Prisma.SortOrder
   profile_image_mime?: Prisma.SortOrder
+  preferences?: Prisma.SortOrder
   created_at?: Prisma.SortOrder
   updated_at?: Prisma.SortOrder
   allowed_pages?: Prisma.SortOrder
@@ -811,6 +827,7 @@ export type admin_usersCreateWithoutCustom_roleInput = {
   display_username?: string | null
   profile_image?: runtime.Bytes | null
   profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -836,6 +853,7 @@ export type admin_usersUncheckedCreateWithoutCustom_roleInput = {
   display_username?: string | null
   profile_image?: runtime.Bytes | null
   profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -891,6 +909,7 @@ export type admin_usersScalarWhereInput = {
   display_username?: Prisma.StringNullableFilter<"admin_users"> | string | null
   profile_image?: Prisma.BytesNullableFilter<"admin_users"> | runtime.Bytes | null
   profile_image_mime?: Prisma.StringNullableFilter<"admin_users"> | string | null
+  preferences?: Prisma.JsonNullableFilter<"admin_users">
   created_at?: Prisma.DateTimeFilter<"admin_users"> | Date | string
   updated_at?: Prisma.DateTimeFilter<"admin_users"> | Date | string
   allowed_pages?: Prisma.StringNullableListFilter<"admin_users">
@@ -909,6 +928,7 @@ export type admin_usersCreateWithoutSessionsInput = {
   display_username?: string | null
   profile_image?: runtime.Bytes | null
   profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -935,6 +955,7 @@ export type admin_usersUncheckedCreateWithoutSessionsInput = {
   display_username?: string | null
   profile_image?: runtime.Bytes | null
   profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -975,6 +996,7 @@ export type admin_usersUpdateWithoutSessionsInput = {
   display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
   profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1001,6 +1023,7 @@ export type admin_usersUncheckedUpdateWithoutSessionsInput = {
   display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
   profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1025,6 +1048,7 @@ export type admin_usersCreateWithoutNotesInput = {
   display_username?: string | null
   profile_image?: runtime.Bytes | null
   profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -1051,6 +1075,7 @@ export type admin_usersUncheckedCreateWithoutNotesInput = {
   display_username?: string | null
   profile_image?: runtime.Bytes | null
   profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -1091,6 +1116,7 @@ export type admin_usersUpdateWithoutNotesInput = {
   display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
   profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1117,6 +1143,7 @@ export type admin_usersUncheckedUpdateWithoutNotesInput = {
   display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
   profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1141,6 +1168,7 @@ export type admin_usersCreateWithoutAudit_eventsInput = {
   display_username?: string | null
   profile_image?: runtime.Bytes | null
   profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -1167,6 +1195,7 @@ export type admin_usersUncheckedCreateWithoutAudit_eventsInput = {
   display_username?: string | null
   profile_image?: runtime.Bytes | null
   profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -1207,6 +1236,7 @@ export type admin_usersUpdateWithoutAudit_eventsInput = {
   display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
   profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1233,6 +1263,7 @@ export type admin_usersUncheckedUpdateWithoutAudit_eventsInput = {
   display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
   profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1257,6 +1288,7 @@ export type admin_usersCreateWithoutGift_card_actionsInput = {
   display_username?: string | null
   profile_image?: runtime.Bytes | null
   profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -1283,6 +1315,7 @@ export type admin_usersUncheckedCreateWithoutGift_card_actionsInput = {
   display_username?: string | null
   profile_image?: runtime.Bytes | null
   profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -1323,6 +1356,7 @@ export type admin_usersUpdateWithoutGift_card_actionsInput = {
   display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
   profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1349,6 +1383,7 @@ export type admin_usersUncheckedUpdateWithoutGift_card_actionsInput = {
   display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
   profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1373,6 +1408,7 @@ export type admin_usersCreateWithoutVoucher_actionsInput = {
   display_username?: string | null
   profile_image?: runtime.Bytes | null
   profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -1399,6 +1435,7 @@ export type admin_usersUncheckedCreateWithoutVoucher_actionsInput = {
   display_username?: string | null
   profile_image?: runtime.Bytes | null
   profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -1439,6 +1476,7 @@ export type admin_usersUpdateWithoutVoucher_actionsInput = {
   display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
   profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1465,6 +1503,7 @@ export type admin_usersUncheckedUpdateWithoutVoucher_actionsInput = {
   display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
   profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1489,6 +1528,7 @@ export type admin_usersCreateWithoutExpensesInput = {
   display_username?: string | null
   profile_image?: runtime.Bytes | null
   profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -1515,6 +1555,7 @@ export type admin_usersUncheckedCreateWithoutExpensesInput = {
   display_username?: string | null
   profile_image?: runtime.Bytes | null
   profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -1555,6 +1596,7 @@ export type admin_usersUpdateWithoutExpensesInput = {
   display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
   profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1581,6 +1623,7 @@ export type admin_usersUncheckedUpdateWithoutExpensesInput = {
   display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
   profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1605,6 +1648,7 @@ export type admin_usersCreateWithoutRecurring_expensesInput = {
   display_username?: string | null
   profile_image?: runtime.Bytes | null
   profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -1631,6 +1675,7 @@ export type admin_usersUncheckedCreateWithoutRecurring_expensesInput = {
   display_username?: string | null
   profile_image?: runtime.Bytes | null
   profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -1671,6 +1716,7 @@ export type admin_usersUpdateWithoutRecurring_expensesInput = {
   display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
   profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1697,6 +1743,7 @@ export type admin_usersUncheckedUpdateWithoutRecurring_expensesInput = {
   display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
   profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1721,6 +1768,7 @@ export type admin_usersCreateManyCustom_roleInput = {
   display_username?: string | null
   profile_image?: runtime.Bytes | null
   profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Date | string
   updated_at?: Date | string
   allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
@@ -1739,6 +1787,7 @@ export type admin_usersUpdateWithoutCustom_roleInput = {
   display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
   profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1764,6 +1813,7 @@ export type admin_usersUncheckedUpdateWithoutCustom_roleInput = {
   display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
   profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1789,6 +1839,7 @@ export type admin_usersUncheckedUpdateManyWithoutCustom_roleInput = {
   display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
   profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
@@ -1893,6 +1944,7 @@ export type admin_usersSelect<ExtArgs extends runtime.Types.Extensions.InternalA
   display_username?: boolean
   profile_image?: boolean
   profile_image_mime?: boolean
+  preferences?: boolean
   created_at?: boolean
   updated_at?: boolean
   allowed_pages?: boolean
@@ -1921,6 +1973,7 @@ export type admin_usersSelectCreateManyAndReturn<ExtArgs extends runtime.Types.E
   display_username?: boolean
   profile_image?: boolean
   profile_image_mime?: boolean
+  preferences?: boolean
   created_at?: boolean
   updated_at?: boolean
   allowed_pages?: boolean
@@ -1941,6 +1994,7 @@ export type admin_usersSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.E
   display_username?: boolean
   profile_image?: boolean
   profile_image_mime?: boolean
+  preferences?: boolean
   created_at?: boolean
   updated_at?: boolean
   allowed_pages?: boolean
@@ -1961,12 +2015,13 @@ export type admin_usersSelectScalar = {
   display_username?: boolean
   profile_image?: boolean
   profile_image_mime?: boolean
+  preferences?: boolean
   created_at?: boolean
   updated_at?: boolean
   allowed_pages?: boolean
 }
 
-export type admin_usersOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "email" | "username" | "password_hash" | "role" | "role_id" | "totp_secret" | "totp_enabled" | "recovery_codes" | "is_active" | "display_username" | "profile_image" | "profile_image_mime" | "created_at" | "updated_at" | "allowed_pages", ExtArgs["result"]["admin_users"]>
+export type admin_usersOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "email" | "username" | "password_hash" | "role" | "role_id" | "totp_secret" | "totp_enabled" | "recovery_codes" | "is_active" | "display_username" | "profile_image" | "profile_image_mime" | "preferences" | "created_at" | "updated_at" | "allowed_pages", ExtArgs["result"]["admin_users"]>
 export type admin_usersInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   custom_role?: boolean | Prisma.admin_users$custom_roleArgs<ExtArgs>
   audit_events?: boolean | Prisma.admin_users$audit_eventsArgs<ExtArgs>
@@ -2011,6 +2066,7 @@ export type $admin_usersPayload<ExtArgs extends runtime.Types.Extensions.Interna
     display_username: string | null
     profile_image: runtime.Bytes | null
     profile_image_mime: string | null
+    preferences: runtime.JsonValue | null
     created_at: Date
     updated_at: Date
     allowed_pages: string[]
@@ -2458,6 +2514,7 @@ export interface admin_usersFieldRefs {
   readonly display_username: Prisma.FieldRef<"admin_users", 'String'>
   readonly profile_image: Prisma.FieldRef<"admin_users", 'Bytes'>
   readonly profile_image_mime: Prisma.FieldRef<"admin_users", 'String'>
+  readonly preferences: Prisma.FieldRef<"admin_users", 'Json'>
   readonly created_at: Prisma.FieldRef<"admin_users", 'DateTime'>
   readonly updated_at: Prisma.FieldRef<"admin_users", 'DateTime'>
   readonly allowed_pages: Prisma.FieldRef<"admin_users", 'String[]'>
