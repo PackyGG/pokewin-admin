@@ -72,6 +72,7 @@ import {
   tierLabel,
 } from "@/lib/fraud/score-types";
 import type { SharedIdentityUser } from "@/lib/fraud/shared-identity-types";
+import { FadeIn } from "@/components/fade-in";
 
 // ---------------------------------------------------------------------------
 // Re-exports — preserve the public surface so call sites that previously
@@ -427,53 +428,59 @@ export function UserViewModern({
         </div>
       </div>
 
-      {/* ── TAB CONTENT ────────────────────────────────────────────── */}
-      {activeTab === "overview" && (
-        <OverviewTab
-          data={data}
-          gamingTx={gamingTx}
-          financialTx={financialTx}
-          pnlBreakdown={pnlBreakdown}
-          isAdmin={isAdmin}
-        />
-      )}
+      {/* ── TAB CONTENT ──────────────────────────────────────────────
+          Wrapped in FadeIn keyed on the active tab so switching panels
+          fades the new content in rather than snapping — matches the
+          analytics tabs behaviour and lines up with the top progress
+          bar timing (~200ms). */}
+      <FadeIn key={activeTab} speed="fast">
+        {activeTab === "overview" && (
+          <OverviewTab
+            data={data}
+            gamingTx={gamingTx}
+            financialTx={financialTx}
+            pnlBreakdown={pnlBreakdown}
+            isAdmin={isAdmin}
+          />
+        )}
 
-      {activeTab === "finances" && (
-        <FinancesTab
-          data={data}
-          financialTx={financialTx}
-          isAdmin={isAdmin}
-        />
-      )}
+        {activeTab === "finances" && (
+          <FinancesTab
+            data={data}
+            financialTx={financialTx}
+            isAdmin={isAdmin}
+          />
+        )}
 
-      {activeTab === "rewards" && <RewardsTab rewards={rewards} />}
+        {activeTab === "rewards" && <RewardsTab rewards={rewards} />}
 
-      {activeTab === "gaming" && (
-        <GamingTab data={data} gamingTx={gamingTx} />
-      )}
+        {activeTab === "gaming" && (
+          <GamingTab data={data} gamingTx={gamingTx} />
+        )}
 
-      {activeTab === "inventory" && (
-        <InventoryTab
-          data={data}
-          inventory={inventory}
-          disposedInventory={disposedInventory}
-        />
-      )}
+        {activeTab === "inventory" && (
+          <InventoryTab
+            data={data}
+            inventory={inventory}
+            disposedInventory={disposedInventory}
+          />
+        )}
 
-      {activeTab === "trust" && (
-        <TrustTab
-          userId={user.id}
-          breakdown={riskBreakdown}
-          sharedIps={sharedIps}
-          sharedFingerprints={sharedFingerprints}
-        />
-      )}
+        {activeTab === "trust" && (
+          <TrustTab
+            userId={user.id}
+            breakdown={riskBreakdown}
+            sharedIps={sharedIps}
+            sharedFingerprints={sharedFingerprints}
+          />
+        )}
 
-      {activeTab === "creator" && <CreatorTab data={data} />}
+        {activeTab === "creator" && <CreatorTab data={data} />}
 
-      {activeTab === "account" && (
-        <AccountTab data={data} notes={notes} isAdmin={isAdmin} />
-      )}
+        {activeTab === "account" && (
+          <AccountTab data={data} notes={notes} isAdmin={isAdmin} />
+        )}
+      </FadeIn>
     </div>
   );
 }

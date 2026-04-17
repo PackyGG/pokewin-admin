@@ -73,7 +73,13 @@ function TabsContent({ className, ...props }: TabsPrimitive.Panel.Props) {
   return (
     <TabsPrimitive.Panel
       data-slot="tabs-content"
-      className={cn("flex-1 text-sm outline-none", className)}
+      className={cn(
+        "flex-1 text-sm outline-none",
+        // Subtle fade-in when a panel becomes active. motion-safe so users
+        // with prefers-reduced-motion skip the animation entirely.
+        "motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200",
+        className
+      )}
       {...props}
     />
   )
