@@ -60,6 +60,7 @@ import {
   CreatorTab,
   AccountTab,
 } from "./user-view-modern-tabs";
+import { ChangeRoleDialog } from "./user-tabs-dialogs";
 
 // ---------------------------------------------------------------------------
 // Re-exports — preserve the public surface so call sites that previously
@@ -132,8 +133,9 @@ export function UserViewModern({
   notes: AdminNote[];
   pnlBreakdown: PnlBreakdown;
 }) {
-  const { user, balances, counts } = data;
+  const { user, balances, counts, capabilities } = data;
   const isAdmin = data.sessionRole === "admin";
+  const canChangeUserRoles = capabilities.canChangeUserRoles;
   const [activeTab, setActiveTab] = useState<TabKey>("overview");
 
   const visibleTabs = useMemo(
@@ -194,6 +196,14 @@ export function UserViewModern({
         />
 
         <div className="relative p-5 md:p-6">
+          {/* Action row — admin-only controls that live in the hero. On
+              wide screens it sits above the identity+KPI flex; on narrow
+              it stacks naturally. Empty when the user has no permissions. */}
+          {canChangeUserRoles && (
+            <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
+              <ChangeRoleDialog userId={user.id} currentRole={user.role} />
+            </div>
+          )}
           <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
             {/* Identity */}
             <div className="flex items-start gap-4 min-w-0">

@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Pencil } from "lucide-react";
+import { Pencil, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -33,9 +33,11 @@ import {
   DialogTrigger,
   DialogFooter,
 } from "@/components/ui/dialog";
+import { ROLES } from "@/lib/constants";
 import {
   adjustBalance,
   adjustXp,
+  changeRole,
   wipeUserAccount,
   updateUserIdentity,
 } from "./actions";
@@ -464,6 +466,128 @@ export function WipeAccountButton({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Change Role Dialog (Admin Only) — Select new role + confirm with 2FA
+// ---------------------------------------------------------------------------
+export function ChangeRoleDialog({
+  userId,
+  currentRole,
+}: {
+  userId: string;
+  currentRole: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [newRole, setNewRole] = useState<string>(currentRole);
+  const [totpCode, setTotpCode] = useState("");
+  const [isPending, startTransition] = useTransition();
+  const router = useRouter();
+
+  function handleOpenChange(v: boolean) {
+    setOpen(v);
+    if (!v) {
+      // Reset form on close
+      setNewRole(currentRole);
+      setTotpCode("");
+    }
+  }
+
+  function handleSubmit() {
+    if (!newRole || newRole === currentRole) {
+      toast.error("Please pick a different role");
+      return;
+    }
+    if (!totpCode.trim()) {
+      toast.error("Please enter your 2FA code");
+      return;
+    }
+    startTransition(async () => {
+      try {
+        await changeRole(userId, newRole, totpCode.trim());
+        toast.success("Role updated");
+        setOpen(false);
+        setTotpCode("");
+        router.refresh();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Failed to update role");
+      }
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogTrigger
+        render={<Button variant="outline" size="sm" className="h-8 gap-1.5" />}
+      >
+        <ShieldCheck className="size-3.5" />
+        Change Role
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Change Role</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Role</Label>
+            <Select
+              value={newRole}
+              onValueChange={(v) => {
+                if (!v) return;
+                setNewRole(v);
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Pick a role..." />
+              </SelectTrigger>
+              <SelectContent>
+                {ROLES.map((r) => (
+                  <SelectItem key={r} value={r}>
+                    {r.charAt(0).toUpperCase() + r.slice(1)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Current role:{" "}
+              <span className="font-medium text-foreground">{currentRole}</span>
+            </p>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">2FA Code</Label>
+            <Input
+              type="text"
+              inputMode="numeric"
+              placeholder="Enter your 6-digit code"
+              value={totpCode}
+              onChange={(e) => setTotpCode(e.target.value)}
+              maxLength={6}
+              autoComplete="one-time-code"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setOpen(false)}
+            disabled={isPending}
+          >
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            onClick={handleSubmit}
+            disabled={
+              isPending || !totpCode.trim() || newRole === currentRole
+            }
+          >
+            {isPending ? "Updating..." : "Change role"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
