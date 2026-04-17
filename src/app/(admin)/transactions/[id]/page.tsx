@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { getTransactionDetail } from "@/lib/queries/transactions";
+import { requirePageAccess } from "@/lib/dal";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { CardImage } from "@/components/card-image";
@@ -26,6 +27,10 @@ export default async function TransactionDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  // Gate on /transactions page access — transaction detail shows balances,
+  // crypto addresses, metadata, and should only be visible to roles the
+  // admin panel lets view the transactions list itself.
+  await requirePageAccess("/transactions");
   const { id } = await params;
   const data = await getTransactionDetail(id);
 
