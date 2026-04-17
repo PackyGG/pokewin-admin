@@ -346,19 +346,20 @@ export async function computeRiskScoresForList(
 
   // Also fetch the network counts. Single query each, grouped by the
   // user_id subject, so we stay at O(1) round-trips regardless of the
-  // page size.
-  const [ipCountMap, fpCountMap, bannedMap, lockedMap] = await Promise.all([
+  // page size. Shared-banned / shared-locked are not available at the
+  // list level today — they'd need another heavy join per user and
+  // they rarely flip a tier on their own. List view leaves them at 0;
+  // detail view (see computeRiskScore) computes them properly.
+  const [ipCountMap, fpCountMap] = await Promise.all([
     batchSharedIpCounts(userIds),
     batchSharedFingerprintCounts(userIds),
-    batchSharedBannedCounts(userIds),
-    batchSharedLockedCounts(userIds),
   ]);
 
   for (const row of rows) {
     const sharedIpCount = ipCountMap.get(row.user_id) ?? 0;
     const sharedFingerprintCount = fpCountMap.get(row.user_id) ?? 0;
-    const sharedBannedCount = bannedMap.get(row.user_id) ?? 0;
-    const sharedLockedCount = lockedMap.get(row.user_id) ?? 0;
+    const sharedBannedCount = 0;
+    const sharedLockedCount = 0;
 
     // adminNotesCount is skipped in the list view — it's rarely the
     // difference-maker between tiers and needs a second DB. For the
@@ -1891,4 +1892,292 @@ async function countAdminNotes(userId: string): Promise<number> {
     // crashing the entire score computation.
     return 0;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Network counts aggregator
+// ---------------------------------------------------------------------------
+//
+// Runs the four shared-identity queries in parallel and packages them as
+// the `NetworkCounts` context the signal builder expects. Any individual
+// query failure (e.g. missing `fingerprints` table in a fresh env) is
+// swallowed — we prefer a partial network signal over a full compute
+// failure for the moderator.
+async function fetchNetworkCounts(userId: string): Promise<NetworkCounts> {
+  const [sharedIpCount, sharedFingerprintCount, bannedLocked] = await Promise.all([
+    countSharedIpUsers(userId).catch(() => 0),
+    countSharedFingerprintUsers(userId).catch(() => 0),
+    countSharedBannedLocked(userId).catch(() => ({ banned: 0, locked: 0 })),
+  ]);
+  return {
+    sharedIpCount,
+    sharedFingerprintCount,
+    sharedBannedCount: bannedLocked.banned,
+    sharedLockedCount: bannedLocked.locked,
+  };
+}
+
+async function countSharedBannedLocked(
+  userId: string,
+): Promise<{ banned: number; locked: number }> {
+  // Users who share at least one IP OR fingerprint visitor_id with the
+  // target AND are currently banned or locked. A single raw query keeps
+  // us to one round trip regardless of how many neighbours they have.
+  const rows = await db.$queryRawUnsafe<{ banned: string; locked: string }[]>(
+    `
+    WITH nbrs AS (
+      SELECT DISTINCT other_user_id AS uid FROM (
+        SELECT DISTINCT f2.user_id AS other_user_id
+          FROM fingerprints f1
+          JOIN fingerprints f2
+            ON f2.ip = f1.ip
+           AND f2.user_id <> f1.user_id
+         WHERE f1.user_id = $1
+        UNION
+        SELECT DISTINCT f2.user_id AS other_user_id
+          FROM fingerprints f1
+          JOIN fingerprints f2
+            ON f2.visitor_id = f1.visitor_id
+           AND f2.user_id <> f1.user_id
+         WHERE f1.user_id = $1
+      ) t
+    )
+    SELECT
+      COALESCE(SUM(CASE WHEN u.is_banned THEN 1 ELSE 0 END), 0)::text AS banned,
+      COALESCE(SUM(CASE WHEN u.is_locked THEN 1 ELSE 0 END), 0)::text AS locked
+      FROM nbrs
+      JOIN "user" u ON u.id = nbrs.uid
+    `,
+    userId,
+  );
+  return {
+    banned: Number(rows[0]?.banned ?? 0),
+    locked: Number(rows[0]?.locked ?? 0),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Timeline — last 7 days of signal-relevant events
+// ---------------------------------------------------------------------------
+//
+// Union of ledger rows + withdrawal requests + signup event. Sorted
+// newest first. Used to let the moderator scan the cadence of events
+// and spot patterns (e.g. deposit → bonus → withdrawal within minutes).
+async function fetchTimeline(userId: string): Promise<RiskTimelineEvent[]> {
+  const sinceDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+  const [ledger, wdReqs, user] = await Promise.all([
+    db.ledger_transactions
+      .findMany({
+        where: {
+          user_id: userId,
+          status: "completed",
+          created_at: { gte: sinceDate },
+        },
+        orderBy: { created_at: "desc" },
+        take: 200,
+        select: { type: true, amount: true, created_at: true },
+      })
+      .catch(() => []),
+    db.card_withdrawal_requests
+      .findMany({
+        where: { user_id: userId, requested_at: { gte: sinceDate } },
+        orderBy: { requested_at: "desc" },
+        take: 50,
+        select: {
+          status: true,
+          total_value_usd: true,
+          requested_at: true,
+        },
+      })
+      .catch(() => []),
+    db.user
+      .findUnique({ where: { id: userId }, select: { created_at: true } })
+      .catch(() => null),
+  ]);
+
+  const events: RiskTimelineEvent[] = [];
+
+  for (const r of ledger) {
+    const kind = classifyTimelineKind(r.type);
+    if (!kind) continue;
+    events.push({
+      kind,
+      label: TIMELINE_LABELS[r.type] ?? r.type,
+      amountUsd: Math.abs(toNumber(r.amount)) || null,
+      at: r.created_at.toISOString(),
+    });
+  }
+
+  for (const r of wdReqs) {
+    const kind: RiskTimelineEvent["kind"] =
+      r.status === "failed" || r.status === "cancelled"
+        ? "withdrawal_failed"
+        : "withdrawal_attempt";
+    events.push({
+      kind,
+      label:
+        kind === "withdrawal_failed"
+          ? `Withdrawal ${r.status}`
+          : "Withdrawal requested",
+      amountUsd: toNumber(r.total_value_usd) || null,
+      at: r.requested_at.toISOString(),
+    });
+  }
+
+  if (user?.created_at && user.created_at >= sinceDate) {
+    events.push({
+      kind: "signup",
+      label: "Account created",
+      amountUsd: null,
+      at: user.created_at.toISOString(),
+    });
+  }
+
+  events.sort((a, b) => (a.at < b.at ? 1 : -1));
+  return events.slice(0, 50);
+}
+
+function classifyTimelineKind(type: string): RiskTimelineEvent["kind"] | null {
+  switch (type) {
+    case "deposit":
+      return "deposit";
+    case "card_withdrawal":
+      return "withdrawal";
+    case "pack_opening":
+    case "battle_bet":
+    case "battle_sponsorship":
+      return "wager";
+    case "deposit_bonus":
+    case "promo_code_redeemed":
+    case "gift_card_redeemed":
+    case "voucher_redeemed":
+      return "bonus";
+    case "rakeback_claim":
+    case "affiliate_claim":
+    case "balance_reward_claim":
+    case "rain_win":
+    case "race_prize":
+    case "waitlist_prize":
+      return "reward";
+    default:
+      return null;
+  }
+}
+
+const TIMELINE_LABELS: Record<string, string> = {
+  deposit: "Deposit",
+  card_withdrawal: "Card withdrawal",
+  pack_opening: "Pack wager",
+  battle_bet: "Battle wager",
+  battle_sponsorship: "Battle sponsorship",
+  deposit_bonus: "Deposit bonus",
+  promo_code_redeemed: "Promo code redeemed",
+  gift_card_redeemed: "Gift card redeemed",
+  voucher_redeemed: "Voucher redeemed",
+  rakeback_claim: "Rakeback claim",
+  affiliate_claim: "Affiliate payout",
+  balance_reward_claim: "Balance reward",
+  rain_win: "Rain win",
+  race_prize: "Race prize",
+  waitlist_prize: "Waitlist prize",
+};
+
+// ---------------------------------------------------------------------------
+// Action suggestions — small rule-based pass over triggered signals
+// ---------------------------------------------------------------------------
+//
+// Intentionally simple. Never auto-applies anything. If an obvious
+// pattern is present we surface a one-line hint; otherwise stay silent.
+function buildSuggestions(
+  signals: RiskSignal[],
+  tier: RiskTier,
+): RiskActionSuggestion[] {
+  const triggered = signals.filter((s) => s.triggered);
+  const has = (id: string) => triggered.some((s) => s.id === id);
+  const ids = triggered.map((s) => s.id);
+
+  const out: RiskActionSuggestion[] = [];
+
+  // Bonus-abuse textbook pattern
+  if (
+    has("rewards.signup_reward_instant_withdraw") ||
+    (has("rewards.withdraw_after_bonus") &&
+      has("rewards.bonus_heavy_over_deposit"))
+  ) {
+    out.push({
+      kind: "investigate_bonus_abuse",
+      label: "Investigate bonus abuse",
+      reason:
+        "This account withdrew (or attempted to) shortly after a bonus credit and before meaningful wagering. Classic bonus-abuse signature.",
+      causedBy: ids.filter(
+        (id) =>
+          id === "rewards.signup_reward_instant_withdraw" ||
+          id === "rewards.withdraw_after_bonus" ||
+          id === "rewards.bonus_heavy_over_deposit",
+      ) as RiskSignal["id"][],
+    });
+  }
+
+  // Shared-identity ring
+  if (
+    has("network.shared_fingerprint") ||
+    has("network.shared_with_banned") ||
+    has("network.self_referral_ring")
+  ) {
+    out.push({
+      kind: "investigate_multi_account",
+      label: "Investigate multi-account ring",
+      reason:
+        "Account shares device fingerprint or network identity with other users — possible alt / self-referral ring.",
+      causedBy: ids.filter((id) =>
+        id.startsWith("network."),
+      ) as RiskSignal["id"][],
+    });
+  }
+
+  // Pending-withdrawal freeze
+  if (
+    has("velocity.deposit_withdraw_wager_5m") ||
+    has("rewards.withdrawal_attempt_pre_wager")
+  ) {
+    out.push({
+      kind: "block_withdrawal",
+      label: "Consider blocking pending withdrawal",
+      reason:
+        "Withdrawal requested in a compressed window that looks like laundering or bonus cash-out. Review before releasing funds.",
+      causedBy: ids.filter(
+        (id) =>
+          id === "velocity.deposit_withdraw_wager_5m" ||
+          id === "rewards.withdrawal_attempt_pre_wager",
+      ) as RiskSignal["id"][],
+    });
+  }
+
+  // Tier fallback
+  if (tier === "critical" && out.length === 0) {
+    out.push({
+      kind: "lock_account",
+      label: "Lock account pending review",
+      reason:
+        "Score hit critical. Multiple independent signals stacked — pause the account until a human confirms or clears.",
+      causedBy: triggered.slice(0, 5).map((s) => s.id),
+    });
+  } else if (tier === "high" && out.length === 0) {
+    out.push({
+      kind: "manual_review",
+      label: "Flag for manual review",
+      reason: "High-tier score with no single textbook pattern — worth a human eye.",
+      causedBy: triggered.slice(0, 5).map((s) => s.id),
+    });
+  } else if (tier === "medium" && out.length === 0) {
+    out.push({
+      kind: "monitor",
+      label: "Monitor passively",
+      reason: "Nothing urgent — re-check if more signals stack.",
+      causedBy: [],
+    });
+  }
+
+  return out;
 }

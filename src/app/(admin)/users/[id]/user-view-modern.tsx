@@ -62,7 +62,7 @@ import {
   CreatorTab,
   AccountTab,
 } from "./user-view-modern-tabs";
-import { ChangeRoleDialog } from "./user-tabs-dialogs";
+import { ChangeRoleDialog, EditIdentityButton } from "./user-tabs-dialogs";
 import { UserAdminActions } from "./user-tabs-moderation";
 import type { PaginatedInventory } from "./user-tabs-types";
 import { TrustTab } from "./user-tabs-trust";
@@ -255,8 +255,9 @@ export function UserViewModern({
                       </span>
                     )}
                   {/* Admin toolbar lives inline next to the username so the
-                      hero box doesn't grow a dedicated action row. The
-                      flex-wrap on the parent lets it stack on narrow screens. */}
+                      hero box doesn't grow a dedicated action row. Edit
+                      identity sits LEFT of Change Role per user request. */}
+                  <EditIdentityButton user={user} />
                   {canChangeUserRoles && (
                     <ChangeRoleDialog userId={user.id} currentRole={user.role} />
                   )}

@@ -43,6 +43,9 @@ import { DeleteUserDialog, WipeAccountButton, EditIdentityButton } from "./user-
  * Moderation toolbar — the action buttons that used to live at the top of
  * the Moderation section. Rendered in the hero of the user detail page
  * now so admins don't have to scroll to Account → Moderation to act.
+ *
+ * NOTE: EditIdentityButton is NOT included here — it lives in the hero
+ * directly, to the LEFT of ChangeRole, per user request.
  */
 export function UserAdminActions({
   user,
@@ -61,7 +64,6 @@ export function UserAdminActions({
       ) : (
         <LockButton userId={user.id} />
       )}
-      <EditIdentityButton user={user} />
       <DeleteUserDialog user={user} isPending={false} />
       <WipeAccountButton
         userId={user.id}
