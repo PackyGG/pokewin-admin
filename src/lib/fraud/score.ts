@@ -24,10 +24,40 @@
  *     companion list-score query for a batch flavour of the same logic.
  *
  * Tier mapping (CLAUDE.md house-POV: red = house loses = suspicious user):
- *   0-29   → low       (emerald)
- *   30-59  → medium    (amber)
- *   60-79  → high      (orange)
- *   80-100 → critical  (rose)
+ *   0-19    → low       (emerald)
+ *   20-49   → medium    (amber)
+ *   50-74   → high      (orange)
+ *   75-100  → critical  (rose)
+ *
+ * ----------------------------------------------------------------------
+ * FIXTURES (manual test scenarios).
+ *
+ * 1. Clean user
+ *    - 90-day-old account, 2FA on, email verified.
+ *    - Deposited $200 twice, wagered $500, withdrew $50 after wagering.
+ *    - One country, unique fingerprint, no feature locks.
+ *    Expected: score ≤ 10, tier "low".
+ *
+ * 2. Bonus-abuse new account
+ *    - 14-minute-old account.
+ *    - Claimed a $10 signup reward (balance_reward_claim).
+ *    - Did NOT wager.
+ *    - Submitted a card_withdrawal request.
+ *    Expected: score ≥ 75, tier "critical".
+ *
+ * 3. Multi-accounter sharing IP + fingerprint
+ *    - 3-day-old account.
+ *    - Shares IP with 4 users, fingerprint with 2, one banned.
+ *    - Uses affiliate code owned by IP-shared user.
+ *    Expected: score ≥ 75, tier "critical".
+ *
+ * 4. Grinder — low house edge, otherwise clean
+ *    - 120-day-old account, $50k wagered, 1.2% user house edge.
+ *    Expected: score 20-49, tier "medium".
+ *
+ * 5. Banned user
+ *    - is_banned=true, 2 feature locks, 5 admin notes, 3 chat mutes.
+ *    Expected: score ≥ 75, tier "critical".
  */
 
 import { db } from "@/lib/db";
