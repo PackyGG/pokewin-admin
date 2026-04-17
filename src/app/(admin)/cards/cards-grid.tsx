@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Layers, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { CardImage } from "@/components/card-image";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
@@ -110,6 +110,3 @@ export function CardsGrid({ data }: { data: CardListItem[] }) {
     </div>
   );
 }
-
-/** Re-export the icon so the page can reuse the same Layers icon in headings. */
-export { Layers as CardsIcon };
