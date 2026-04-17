@@ -169,16 +169,20 @@ export async function getLiveActivity(params: {
   const limit = Math.max(1, Math.min(60, Math.floor(params.limit)));
   const since = params.sinceCreatedAt ? new Date(params.sinceCreatedAt) : null;
 
-  const [ledgerRows, signupRows] = await Promise.all([
+  const [ledgerRows, withdrawalRequests, signupRows] = await Promise.all([
     db.ledger_transactions.findMany({
       where: {
         status: "completed",
         ...(since ? { created_at: { gt: since } } : {}),
         user: EXCLUDE_STAFF_USER_RELATION,
         type: {
+          // Note: `card_withdrawal` is intentionally NOT in this list.
+          // That ledger row is only created AFTER admin processing, so
+          // polling it means pending withdrawal requests are invisible.
+          // Instead we pull from card_withdrawal_requests below, which
+          // captures the moment the user hits submit.
           in: [
             "deposit",
-            "card_withdrawal",
             "creator_tip",
             "rain_win",
             "race_prize",
@@ -214,6 +218,19 @@ export async function getLiveActivity(params: {
         user: { select: { username: true, email: true, image: true } },
       },
     }),
+    db.card_withdrawal_requests.findMany({
+      where: {
+        ...(since ? { requested_at: { gt: since } } : {}),
+        user_card_withdrawal_requests_user_idTouser: EXCLUDE_STAFF_USER_RELATION,
+      },
+      orderBy: { requested_at: "desc" },
+      take: limit,
+      include: {
+        user_card_withdrawal_requests_user_idTouser: {
+          select: { username: true, email: true, image: true },
+        },
+      },
+    }),
     db.user.findMany({
       where: {
         role: { notIn: ["admin", "creator"] },
@@ -244,6 +261,21 @@ export async function getLiveActivity(params: {
     createdAt: r.created_at.toISOString(),
   }));
 
+  const withdrawalItems: LiveActivityItem[] = withdrawalRequests.map((r) => {
+    const u = r.user_card_withdrawal_requests_user_idTouser;
+    return {
+      id: `wd:${r.id}`,
+      kind: "withdrawal" as const,
+      type: "card_withdrawal",
+      userId: r.user_id,
+      username: u?.username ?? u?.email ?? "Unknown",
+      image: u?.image ?? null,
+      amount: toNumber(r.total_value_usd),
+      detail: r.method ? `${r.method}${r.crypto_asset ? ` · ${r.crypto_asset}` : ""}` : null,
+      createdAt: r.requested_at.toISOString(),
+    };
+  });
+
   const signupItems: LiveActivityItem[] = signupRows.map((u) => ({
     id: `user:${u.id}`,
     kind: "signup",
@@ -256,7 +288,7 @@ export async function getLiveActivity(params: {
     createdAt: u.created_at.toISOString(),
   }));
 
-  return [...ledgerItems, ...signupItems]
+  return [...ledgerItems, ...withdrawalItems, ...signupItems]
     .sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     )
