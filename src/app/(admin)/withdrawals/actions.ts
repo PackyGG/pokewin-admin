@@ -3,11 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { backendApiRequest } from "@/lib/backend-api";
 
 export async function processWithdrawal(withdrawalId: string) {
   const session = await requirePageAccess("/withdrawals");
+  await requireCapability(session, "__can_process_withdrawals", "process withdrawal requests");
 
   const withdrawal = await db.card_withdrawal_requests.findUnique({
     where: { id: withdrawalId },
@@ -80,6 +82,7 @@ export async function shipWithdrawal(
   carrier: string
 ) {
   const session = await requirePageAccess("/withdrawals");
+  await requireCapability(session, "__can_ship_withdrawals", "mark withdrawals as shipped");
 
   const withdrawal = await db.card_withdrawal_requests.findUnique({
     where: { id: withdrawalId },
@@ -118,6 +121,7 @@ export async function shipWithdrawal(
 
 export async function completeWithdrawal(withdrawalId: string) {
   const session = await requirePageAccess("/withdrawals");
+  await requireCapability(session, "__can_complete_withdrawals", "mark withdrawals as complete");
 
   const withdrawal = await db.card_withdrawal_requests.findUnique({
     where: { id: withdrawalId },
@@ -145,6 +149,7 @@ export async function completeWithdrawal(withdrawalId: string) {
 
 export async function cancelWithdrawal(withdrawalId: string, reason: string) {
   const session = await requirePageAccess("/withdrawals");
+  await requireCapability(session, "__can_cancel_withdrawals", "cancel withdrawals");
 
   const withdrawal = await db.card_withdrawal_requests.findUnique({
     where: { id: withdrawalId },
@@ -173,6 +178,7 @@ export async function cancelWithdrawal(withdrawalId: string, reason: string) {
 
 export async function failWithdrawal(withdrawalId: string, reason: string) {
   const session = await requirePageAccess("/withdrawals");
+  await requireCapability(session, "__can_fail_withdrawals", "mark withdrawals as failed");
 
   const withdrawal = await db.card_withdrawal_requests.findUnique({
     where: { id: withdrawalId },

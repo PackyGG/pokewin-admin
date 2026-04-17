@@ -99,6 +99,44 @@ export const CAPABILITIES: CapabilityDef[] = [
     description: "Delete messages in the chat",
     group: "Moderation",
   },
+  {
+    key: "__can_pin_messages",
+    label: "Pin / Unpin Chat Messages",
+    description: "Pin or unpin messages in the chat",
+    group: "Moderation",
+  },
+
+  // ── Withdrawals ─────────────────────────────────────────────────────
+  {
+    key: "__can_process_withdrawals",
+    label: "Process Withdrawals",
+    description: "Move pending withdrawals into processing",
+    group: "Withdrawals",
+  },
+  {
+    key: "__can_ship_withdrawals",
+    label: "Ship Withdrawals",
+    description: "Mark physical withdrawals as shipped (with tracking)",
+    group: "Withdrawals",
+  },
+  {
+    key: "__can_complete_withdrawals",
+    label: "Complete Withdrawals",
+    description: "Mark withdrawals as delivered / complete",
+    group: "Withdrawals",
+  },
+  {
+    key: "__can_cancel_withdrawals",
+    label: "Cancel Withdrawals",
+    description: "Cancel pending / processing withdrawals and refund balance",
+    group: "Withdrawals",
+  },
+  {
+    key: "__can_fail_withdrawals",
+    label: "Fail Withdrawals",
+    description: "Mark withdrawals as failed",
+    group: "Withdrawals",
+  },
 ];
 
 export const CAPABILITY_KEYS = CAPABILITIES.map((c) => c.key);
