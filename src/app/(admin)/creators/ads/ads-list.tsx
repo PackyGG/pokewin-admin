@@ -48,10 +48,7 @@ import {
 } from "@/lib/utils/format";
 import type { AdCodeSummary } from "@/lib/queries/ads";
 import { createAdCode, deleteAdCode } from "./actions";
-
-// Live URL where clicks are tracked — `affiliate_clicks.code` matches
-// whatever ships in the `/r/{code}` path on the main site.
-const AD_LINK_BASE = "https://packy.gg/r";
+import { getAdLink } from "./ad-link";
 
 export function AdsList({ codes }: { codes: AdCodeSummary[] }) {
   const router = useRouter();
@@ -257,7 +254,7 @@ function CopyLinkButton({ code }: { code: string }) {
   function handleCopy(e: React.MouseEvent) {
     // Prevent the row-level click from navigating to the detail page.
     e.stopPropagation();
-    const link = `${AD_LINK_BASE}/${code}`;
+    const link = getAdLink(code);
     navigator.clipboard
       .writeText(link)
       .then(() => {

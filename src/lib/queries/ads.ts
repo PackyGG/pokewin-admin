@@ -79,16 +79,24 @@ export async function getAdCodes(houseUserId: string): Promise<AdCodeSummary[]> 
 
   // Parallelize all the aggregate queries across every code, then slot
   // the results into each summary entry.
+  // Case-insensitive click match: the main site may normalise the code
+  // before writing to affiliate_clicks (lowercase is common), which
+  // would make `code = 'FBADS_JAN'` miss rows stored as `fbads_jan`.
+  // Raw SQL with LOWER() on both sides keeps the query correct no
+  // matter which case the site writes.
+  const lowerCodeList = codeList.map((c) => c.toLowerCase());
   const [
-    clickRows,
+    clickRowsRaw,
     signupRows,
     usageAggByCode,
   ] = await Promise.all([
-    db.affiliate_clicks.groupBy({
-      by: ["code"],
-      where: { code: { in: codeList } },
-      _count: { _all: true },
-    }),
+    db.$queryRawUnsafe<{ code_lower: string; count: string }[]>(
+      `SELECT LOWER(code) AS code_lower, COUNT(*)::text AS count
+         FROM affiliate_clicks
+        WHERE LOWER(code) = ANY($1::text[])
+        GROUP BY LOWER(code)`,
+      lowerCodeList,
+    ),
     db.user.groupBy({
       by: ["affiliate_code"],
       where: {
@@ -124,7 +132,11 @@ export async function getAdCodes(houseUserId: string): Promise<AdCodeSummary[]> 
     codeList,
   );
 
-  const clickMap = new Map(clickRows.map((r) => [r.code, r._count._all]));
+  // clickMap is keyed by LOWER(code) so lookups must lowercase before
+  // indexing. The admin DB row keeps its original casing for display.
+  const clickMap = new Map(
+    clickRowsRaw.map((r) => [r.code_lower, Number(r.count)]),
+  );
   const signupMap = new Map(
     signupRows
       .filter((r): r is typeof r & { affiliate_code: string } =>
@@ -146,7 +158,7 @@ export async function getAdCodes(houseUserId: string): Promise<AdCodeSummary[]> 
   );
 
   return codes.map((c) => {
-    const clicks = clickMap.get(c.code) ?? 0;
+    const clicks = clickMap.get(c.code.toLowerCase()) ?? 0;
     const signups = signupMap.get(c.code) ?? 0;
     const usage = usageMap.get(c.code) ?? { deposit: 0, wager: 0 };
     const depositors = depositorMap.get(c.code) ?? 0;
@@ -256,7 +268,12 @@ export async function getAdCodeDetail(
     clicksByCountryRows,
     signups,
   ] = await Promise.all([
-    db.affiliate_clicks.count({ where: { code } }),
+    // Case-insensitive — main site may normalise code casing before
+    // writing click rows, which would hide them from an exact match.
+    db.$queryRawUnsafe<{ count: string }[]>(
+      `SELECT COUNT(*)::text AS count FROM affiliate_clicks WHERE LOWER(code) = LOWER($1)`,
+      code,
+    ),
     db.user.count({
       where: { referred_by: houseUserId, affiliate_code: code },
     }),
@@ -279,7 +296,7 @@ export async function getAdCodeDetail(
       `SELECT TO_CHAR(DATE_TRUNC('day', created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS date,
               COUNT(*)::text AS clicks
          FROM affiliate_clicks
-        WHERE code = $1
+        WHERE LOWER(code) = LOWER($1)
           AND created_at >= $2
         GROUP BY DATE_TRUNC('day', created_at)
         ORDER BY DATE_TRUNC('day', created_at) ASC`,
@@ -289,7 +306,7 @@ export async function getAdCodeDetail(
     db.$queryRawUnsafe<{ country: string; clicks: string }[]>(
       `SELECT country, COUNT(*)::text AS clicks
          FROM affiliate_clicks
-        WHERE code = $1
+        WHERE LOWER(code) = LOWER($1)
         GROUP BY country
         ORDER BY COUNT(*) DESC
         LIMIT 10`,
@@ -329,15 +346,16 @@ export async function getAdCodeDetail(
     clicksByDay.push({ date: key, clicks: dayMap.get(key) ?? 0 });
   }
 
+  const clicksCountNum = Number(clicksCount[0]?.count ?? 0);
   const summary: AdCodeSummary = {
     code: record.code,
     createdAt: record.created_at.toISOString(),
-    clicks: clicksCount,
+    clicks: clicksCountNum,
     signups: signupsCount,
     depositors: Number(depositorRows[0]?.count ?? 0),
     depositVolumeUsd: toNumber(usageAgg._sum.deposit_amount_usd),
     wagerVolumeUsd: toNumber(usageAgg._sum.wager_amount_usd),
-    conversionRate: clicksCount > 0 ? signupsCount / clicksCount : 0,
+    conversionRate: clicksCountNum > 0 ? signupsCount / clicksCountNum : 0,
   };
 
   return {

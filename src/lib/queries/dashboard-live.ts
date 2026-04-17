@@ -151,23 +151,17 @@ export type LiveActivityItem = {
   createdAt: string;
 };
 
-// Wager / payout types filtered only for "interesting" events (big-ish or
-// payout-ish). Exact amount threshold tuned so the feed doesn't become a
-// waterfall of $1 pack openings. Kept here (not in the dashboard page) so
-// the query stays stable regardless of where it's called from.
-const INTERESTING_WAGER_MIN = 25; // $25+ wager counts as "interesting"
-const INTERESTING_PAYOUT_MIN = 10; // $10+ card_sale / big win
-
 /**
- * A mixed "interesting events" stream: signups + payouts + card sales +
- * significant wagers + deposits + withdrawals. Not a strict superset of the
- * deposits feed — we also show small deposits here so admins get a single
- * unified heartbeat of the platform.
+ * A live feed of every platform event the admin cares about: signups +
+ * deposits + withdrawals + pack/battle wagers + card sales + rain wins +
+ * race prizes + creator tips. No amount thresholds — admins wanted to
+ * see the full heartbeat, including the small $1 pack openings.
  *
- * Implementation note: we pull each source independently (ledger + signups)
- * and merge client-side because the two sources live in different tables
- * with different date semantics. Limit is applied after the merge so we
- * return the globally-newest N across all sources.
+ * Implementation note: we pull each source independently (ledger +
+ * signups) and merge client-side because the two sources live in
+ * different tables with different date semantics. Limit is applied
+ * after the merge so we return the globally-newest N across all
+ * sources.
  */
 export async function getLiveActivity(params: {
   sinceCreatedAt: string | null;
@@ -182,21 +176,20 @@ export async function getLiveActivity(params: {
         status: "completed",
         ...(since ? { created_at: { gt: since } } : {}),
         user: EXCLUDE_STAFF_USER_RELATION,
-        OR: [
-          { type: "deposit" },
-          { type: "card_withdrawal" },
-          { type: "creator_tip" },
-          { type: "rain_win" },
-          { type: "race_prize" },
-          {
-            type: { in: ["card_sale", "reward_card_sale"] },
-            amount: { gte: INTERESTING_PAYOUT_MIN },
-          },
-          {
-            type: { in: ["pack_opening", "battle_bet", "battle_sponsorship"] },
-            amount: { lte: -INTERESTING_WAGER_MIN },
-          },
-        ],
+        type: {
+          in: [
+            "deposit",
+            "card_withdrawal",
+            "creator_tip",
+            "rain_win",
+            "race_prize",
+            "card_sale",
+            "reward_card_sale",
+            "pack_opening",
+            "battle_bet",
+            "battle_sponsorship",
+          ],
+        },
       },
       orderBy: { created_at: "desc" },
       take: limit,

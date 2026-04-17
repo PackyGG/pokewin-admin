@@ -4,16 +4,16 @@ import { useState } from "react";
 import { Check, Copy, Link as LinkIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { getAdLink } from "../ad-link";
 
 /**
- * Displays the shareable packy.gg/r/{code} URL with a copy-to-clipboard
- * action. Pure client-side — the URL is a deterministic format the
- * website already supports for affiliate attribution, so we don't need
- * to round-trip through a server action.
+ * Displays the shareable /r/{code} URL with a copy-to-clipboard action.
+ * Base host is driven by NEXT_PUBLIC_MAIN_SITE_URL so beta.packy.gg and
+ * production both work without code changes.
  */
 export function CopyShareLink({ code }: { code: string }) {
   const [copied, setCopied] = useState(false);
-  const url = `https://packy.gg/r/${code}`;
+  const url = getAdLink(code);
 
   async function handleCopy() {
     try {
