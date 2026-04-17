@@ -16,6 +16,7 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from "@/components/ui/chart";
+import { formatCompactUsd } from "@/lib/utils/format";
 
 type DailyData = {
   date: string;
@@ -124,11 +125,7 @@ const affiliateConfig = {
   rewardAffiliate: { label: "Affiliate Payouts", color: "var(--color-chart-3)" },
 } satisfies ChartConfig;
 
-const currencyFormatter = (v: number) => {
-  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000) return `$${(v / 1_000).toFixed(0)}K`;
-  return `$${v}`;
-};
+const currencyFormatter = formatCompactUsd;
 
 /**
  * Tooltip row that shows the color indicator, the label from config,

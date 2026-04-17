@@ -22,7 +22,7 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from "@/components/ui/chart";
-import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { formatCompactUsd, formatCurrency, formatNumber } from "@/lib/utils/format";
 import type { PackStats } from "@/lib/queries/packs";
 
 const RANGES = [
@@ -52,11 +52,7 @@ const PIE_COLORS = [
   "var(--chart-5)",
 ];
 
-const formatValue = (v: number) => {
-  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000) return `$${(v / 1_000).toFixed(0)}K`;
-  return `$${v.toFixed(0)}`;
-};
+const formatValue = formatCompactUsd;
 
 const PERIOD_KEYS = ["d1", "d3", "d7", "d30", "all"] as const;
 const PERIOD_LABELS: Record<string, string> = {

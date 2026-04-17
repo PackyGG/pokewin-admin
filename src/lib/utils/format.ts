@@ -26,3 +26,11 @@ export function formatRelative(date: Date | string): string {
 export function formatNumber(num: number): string {
   return new Intl.NumberFormat("en-US").format(num);
 }
+
+export function formatCompactUsd(v: number): string {
+  const sign = v < 0 ? "-" : "";
+  const abs = Math.abs(v);
+  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(1)}K`;
+  return `${sign}$${abs.toFixed(0)}`;
+}

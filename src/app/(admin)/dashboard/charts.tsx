@@ -8,6 +8,7 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from "@/components/ui/chart";
+import { formatCompactUsd } from "@/lib/utils/format";
 
 const wagerConfig = {
   packs: {
@@ -62,11 +63,7 @@ export function WagerChart({
               axisLine={false}
               tickMargin={8}
               width={70}
-              tickFormatter={(v) => {
-                if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
-                if (v >= 1_000) return `$${(v / 1_000).toFixed(0)}K`;
-                return `$${v}`;
-              }}
+              tickFormatter={formatCompactUsd}
             />
             <ChartTooltip
               content={
@@ -128,11 +125,7 @@ export function DepositsChart({
               axisLine={false}
               tickMargin={8}
               width={70}
-              tickFormatter={(v) => {
-                if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
-                if (v >= 1_000) return `$${(v / 1_000).toFixed(0)}K`;
-                return `$${v}`;
-              }}
+              tickFormatter={formatCompactUsd}
             />
             <ChartTooltip
               content={
