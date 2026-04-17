@@ -10,14 +10,13 @@ import { getAnalyticsData } from "@/lib/queries/analytics";
 import { formatCurrency } from "@/lib/utils/format";
 import { StatCard } from "../dashboard/stat-card";
 import { AnalyticsCharts } from "./charts";
-import { BattleModesSection, PackPopularitySection } from "./sections";
 import { FadeIn } from "@/components/fade-in";
 import type { AnalyticsPeriod } from "./types";
 
 /**
- * Default tab — renders the existing headline KPIs, battle/pack breakdowns,
- * and daily chart grid. Nothing here is new; it was extracted out of
- * `page.tsx` so each tab is an independently-rendered async segment.
+ * Default tab — renders the headline KPIs and the daily chart grid.
+ * The battle/pack breakdown sections live on the dedicated
+ * "Pack & Battle" tab so the overview stays focused on high-level KPIs.
  */
 export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
   const data = await getAnalyticsData(period);
@@ -96,11 +95,6 @@ export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
             {battleBorrowPct}%)
           </p>
         </StatCard>
-      </div>
-
-      <div className="space-y-4">
-        <BattleModesSection stats={data.battleStats} />
-        <PackPopularitySection stats={data.packStats} />
       </div>
 
       <FadeIn>

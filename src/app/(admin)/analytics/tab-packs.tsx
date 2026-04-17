@@ -16,6 +16,8 @@ import {
   getPackProfitability,
   type PacksPeriod,
 } from "@/lib/queries/analytics-packs";
+import { getAnalyticsData } from "@/lib/queries/analytics";
+import { BattleModesSection, PackPopularitySection } from "./sections";
 import type { AnalyticsPeriod } from "./types";
 
 type SortKey = "revenue" | "margin" | "margin_pct" | "opens";
@@ -32,10 +34,11 @@ function parseSort(v: string | undefined): SortKey {
 }
 
 /**
- * Pack & battle profitability deep-dive. Two sortable tables — packs
- * (solo openings) and battle-packs (packs included in battles). Columns:
- * opens/plays, gross revenue, payouts out (card sales), gross margin,
- * margin %. Sort key persists via `?packsSort=…`.
+ * Pack & battle tab — hosts the battle-mode and pack-popularity
+ * breakdowns at the top, followed by the profitability deep-dive: two
+ * sortable tables (packs / solo openings and battle-packs) with opens,
+ * gross revenue, payouts (card sales), gross margin, margin %. Sort key
+ * persists via `?packsSort=…`.
  */
 export async function PacksBattlesTab({
   period: heroPeriod,
@@ -55,7 +58,15 @@ export async function PacksBattlesTab({
         : "30d";
 
   const sort = parseSort(sortKey);
-  const data = await getPackProfitability(period);
+  // `getPackProfitability` powers the profitability tables below; the
+  // battle-mode / pack-popularity breakdowns at the top of this tab are
+  // sourced from the shared analytics bundle. Each tab is rendered as its
+  // own suspense boundary (see `page.tsx`) so this call only fires when
+  // the user actually opens the Pack & Battle tab.
+  const [data, overview] = await Promise.all([
+    getPackProfitability(period),
+    getAnalyticsData(heroPeriod),
+  ]);
   const sortFn = (a: {
     revenue: number;
     grossMargin: number;
@@ -83,6 +94,11 @@ export async function PacksBattlesTab({
   return (
     <FadeIn>
       <div className="space-y-4">
+        <div className="space-y-4">
+          <BattleModesSection stats={overview.battleStats} />
+          <PackPopularitySection stats={overview.packStats} />
+        </div>
+
         <div className="flex items-start gap-3 rounded-xl border bg-muted/20 p-4">
           <div className="rounded-md bg-primary/10 p-1.5">
             <Package className="size-4 text-primary" />
