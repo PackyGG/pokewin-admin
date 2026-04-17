@@ -81,12 +81,18 @@ export {
   type RiskSignal,
   type RiskScoreBreakdown,
   type RiskScoreLite,
+  type RiskActionSuggestion,
+  type RiskTimelineEvent,
+  type SignalId,
 } from "./score-types";
 import type {
   RiskTier,
   RiskScoreBreakdown,
   RiskScoreLite,
   RiskSignal,
+  RiskActionSuggestion,
+  RiskTimelineEvent,
+  SignalId,
 } from "./score-types";
 import { tierForScore } from "./score-types";
 
