@@ -16,8 +16,15 @@ import { createAdminAuditEvent } from "@/lib/admin-audit";
 // House account — the real user that owns every ad code.
 // ---------------------------------------------------------------------------
 
+// Main-site user IDs are plain `String` (not UUID) — see model User in
+// prisma/schema.prisma. Accept any trimmed non-empty id up to a sane cap.
+// Existence is re-checked against the users table below before persisting.
 const setHouseAccountSchema = z.object({
-  userId: z.string().uuid({ message: "Invalid user id" }),
+  userId: z
+    .string()
+    .trim()
+    .min(1, "User id is required")
+    .max(64, "User id is too long"),
 });
 
 export async function setHouseAccount(userId: string) {
