@@ -1,0 +1,334 @@
+import { db } from "@/lib/db";
+import { toNumber } from "@/lib/utils/decimal";
+import type { PaginatedResult } from "@/lib/types";
+import { Prisma } from "@/generated/prisma/client";
+
+type UserListItem = {
+  id: string;
+  username: string | null;
+  email: string | null;
+  image: string | null;
+  role: string;
+  status: string;
+  country: string | null;
+  countryCode: string | null;
+  availableBalance: number;
+  inventoryValue: number;
+  totalDeposited: number;
+  totalWithdrawn: number;
+  totalWagered: number;
+  depositCount: number;
+  pnl: number;
+  createdAt: string;
+};
+
+export async function getUsers(params: {
+  page?: number;
+  perPage?: number;
+  search?: string;
+  role?: string;
+  status?: string;
+  sortBy?: string;
+  sortOrder?: string;
+}): Promise<PaginatedResult<UserListItem>> {
+  const {
+    page = 1,
+    perPage = 20,
+    search,
+    role,
+    status,
+    sortBy = "created_at",
+    sortOrder = "desc",
+  } = params;
+
+  const where: Prisma.UserWhereInput = {};
+
+  // Discord snowflake IDs are 17-20 digit numeric strings. We match the
+  // linked Discord account (account.providerId = 'discord', account.accountId
+  // = snowflake) only when the search looks like one — otherwise a generic
+  // numeric username would trigger an unnecessary join.
+  const isDiscordId = /^\d{17,20}$/.test(search ?? "");
+
+  if (search) {
+    const or: Prisma.UserWhereInput[] = [
+      { username: { contains: search, mode: "insensitive" } },
+      { email: { contains: search, mode: "insensitive" } },
+      { id: search },
+    ];
+    if (isDiscordId) {
+      or.push({
+        account: {
+          some: { providerId: "discord", accountId: search },
+        },
+      });
+    }
+    where.OR = or;
+  }
+
+  if (role && role !== "all") {
+    where.role = role as Prisma.Enumuser_roleFieldUpdateOperationsInput["set"];
+  }
+
+  if (status === "banned") where.is_banned = true;
+  else if (status === "locked") where.is_locked = true;
+  else if (status === "active") {
+    where.is_banned = false;
+    where.is_locked = false;
+  }
+
+  const order = sortOrder === "asc" ? "asc" : "desc";
+  const balanceSortFields = new Set([
+    "balance",
+    "totalDeposited",
+    "totalWagered",
+  ]);
+  const userSortFields = new Set(["created_at", "email", "username", "role", "country"]);
+
+  let users: Array<
+    Prisma.UserGetPayload<{
+      include: {
+        balances: {
+          select: {
+            available_balance: true;
+            locked_balance: true;
+            total_deposited: true;
+            total_withdrawn: true;
+            total_wagered: true;
+          };
+        };
+      };
+    }>
+  >;
+  let total: number;
+
+  // These computed sorts need raw SQL because the displayed value combines
+  // multiple tables (e.g. totalWithdrawn = balances.total_withdrawn + card_withdrawal_requests).
+  const rawSqlSorts = new Set(["pnl", "totalWithdrawn", "inventoryValue"]);
+
+  if (rawSqlSorts.has(sortBy)) {
+    const orderSql = order === "asc" ? "ASC" : "DESC";
+    const whereSql: string[] = [];
+    if (search) {
+      const safe = search.replace(/'/g, "''");
+      const discordClause = isDiscordId
+        ? ` OR EXISTS (SELECT 1 FROM account a WHERE a."userId" = u.id AND a."providerId" = 'discord' AND a."accountId" = '${safe}')`
+        : "";
+      whereSql.push(
+        `(u.username ILIKE '%${safe}%' OR u.email ILIKE '%${safe}%' OR u.id = '${safe}'${discordClause})`,
+      );
+    }
+    if (role && role !== "all") {
+      whereSql.push(`u.role = '${role.replace(/'/g, "''")}'::user_role`);
+    }
+    if (status === "banned") whereSql.push("u.is_banned = true");
+    else if (status === "locked") whereSql.push("u.is_locked = true");
+    else if (status === "active")
+      whereSql.push("u.is_banned = false AND u.is_locked = false");
+    const whereClause = whereSql.length ? `WHERE ${whereSql.join(" AND ")}` : "";
+
+    const orderedRows = await db.$queryRawUnsafe<{ id: string }[]>(`
+      SELECT u.id
+      FROM "user" u
+      LEFT JOIN balances b ON b.user_id = u.id
+      LEFT JOIN (
+        SELECT user_id, COALESCE(SUM(value_at_obtained::numeric), 0) AS inv_value
+        FROM user_inventory
+        WHERE sold_at IS NULL AND exchanged_at IS NULL
+        GROUP BY user_id
+      ) inv ON inv.user_id = u.id
+      LEFT JOIN (
+        SELECT user_id, COALESCE(SUM(total_value_usd::numeric), 0) AS wd_value
+        FROM card_withdrawal_requests
+        WHERE status IN ('completed', 'shipped')
+        GROUP BY user_id
+      ) cw ON cw.user_id = u.id
+      LEFT JOIN (
+        SELECT user_id, COALESCE(SUM(value::numeric), 0) AS voucher_value
+        FROM vouchers
+        WHERE claimed_at IS NULL
+        GROUP BY user_id
+      ) vc ON vc.user_id = u.id
+      ${whereClause}
+      ORDER BY (${
+        sortBy === "totalWithdrawn"
+          ? `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)`
+          : sortBy === "inventoryValue"
+            ? `COALESCE(inv.inv_value, 0)`
+            : `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)
+               + COALESCE(b.available_balance::numeric, 0)
+               + COALESCE(b.locked_balance::numeric, 0)
+               + COALESCE(inv.inv_value, 0)
+               + COALESCE(vc.voucher_value, 0)
+               - COALESCE(b.total_deposited::numeric, 0)`
+      }) ${orderSql} NULLS LAST, u.id ${orderSql}
+      LIMIT ${perPage} OFFSET ${(page - 1) * perPage}
+    `);
+
+    const ids = orderedRows.map((r) => r.id);
+    const [unordered, totalCount] = await Promise.all([
+      ids.length > 0
+        ? db.user.findMany({
+            where: { id: { in: ids } },
+            include: {
+              balances: {
+                select: {
+                  available_balance: true,
+                  locked_balance: true,
+                  total_deposited: true,
+                  total_withdrawn: true,
+                  total_wagered: true,
+                },
+              },
+            },
+          })
+        : Promise.resolve([]),
+      db.user.count({ where }),
+    ]);
+    const byId = new Map(unordered.map((u) => [u.id, u]));
+    users = ids
+      .map((id) => byId.get(id))
+      .filter((u): u is (typeof unordered)[number] => Boolean(u));
+    total = totalCount;
+  } else {
+    let orderBy: Prisma.UserOrderByWithRelationInput;
+    if (balanceSortFields.has(sortBy)) {
+      const balanceField = (
+        {
+          balance: "available_balance",
+          totalDeposited: "total_deposited",
+          totalWagered: "total_wagered",
+        } as Record<string, string>
+      )[sortBy];
+      orderBy = {
+        balances: {
+          [balanceField]: order,
+        } as Prisma.balancesOrderByWithRelationInput,
+      };
+    } else {
+      const field = userSortFields.has(sortBy) ? sortBy : "created_at";
+      orderBy = { [field]: order } as Prisma.UserOrderByWithRelationInput;
+    }
+
+    const result = await Promise.all([
+      db.user.findMany({
+        where,
+        orderBy,
+        skip: (page - 1) * perPage,
+        take: perPage,
+        include: {
+          balances: {
+            select: {
+              available_balance: true,
+              locked_balance: true,
+              total_deposited: true,
+              total_withdrawn: true,
+              total_wagered: true,
+            },
+          },
+        },
+      }),
+      db.user.count({ where }),
+    ]);
+    users = result[0];
+    total = result[1];
+  }
+
+  // Fetch unsold inventory values for all users in the page
+  const userIds = users.map((u) => u.id);
+  const inventoryValues = await db.user_inventory.groupBy({
+    by: ["user_id"],
+    where: {
+      user_id: { in: userIds },
+      sold_at: null,
+      exchanged_at: null,
+    },
+    _sum: { value_at_obtained: true },
+  });
+  const inventoryMap = new Map(
+    inventoryValues.map((iv) => [iv.user_id, toNumber(iv._sum.value_at_obtained)])
+  );
+
+  // Card withdrawals (completed/shipped) per user — not tracked in balances.total_withdrawn
+  const cardWithdrawalValues = userIds.length > 0
+    ? await db.card_withdrawal_requests.groupBy({
+        by: ["user_id"],
+        where: {
+          user_id: { in: userIds },
+          status: { in: ["completed", "shipped"] },
+        },
+        _sum: { total_value_usd: true },
+      })
+    : [];
+  const cardWithdrawalMap = new Map(
+    cardWithdrawalValues.map((cw) => [cw.user_id, toNumber(cw._sum.total_value_usd)])
+  );
+
+  // Open vouchers per user
+  const voucherValues = userIds.length > 0
+    ? await db.vouchers.groupBy({
+        by: ["user_id"],
+        where: {
+          user_id: { in: userIds },
+          claimed_at: null,
+        },
+        _sum: { value: true },
+      })
+    : [];
+  const voucherMap = new Map(
+    voucherValues.map((v) => [v.user_id, toNumber(v._sum.value)])
+  );
+
+  // Count of completed deposit ledger transactions per user. One
+  // batch groupBy per page instead of N+1 per-user counts.
+  const depositCountRows = userIds.length > 0
+    ? await db.ledger_transactions.groupBy({
+        by: ["user_id"],
+        where: {
+          user_id: { in: userIds },
+          type: "deposit",
+          status: "completed",
+        },
+        _count: { _all: true },
+      })
+    : [];
+  const depositCountMap = new Map(
+    depositCountRows.map((d) => [d.user_id, d._count._all]),
+  );
+
+  return {
+    data: users.map((u) => {
+      const availableBalance = toNumber(u.balances?.available_balance);
+      const lockedBalance = toNumber(u.balances?.locked_balance);
+      const totalDeposited = toNumber(u.balances?.total_deposited);
+      const totalWithdrawn = toNumber(u.balances?.total_withdrawn) + (cardWithdrawalMap.get(u.id) ?? 0);
+      const totalWagered = toNumber(u.balances?.total_wagered);
+      const inventoryValue = inventoryMap.get(u.id) ?? 0;
+      const vouchersValue = voucherMap.get(u.id) ?? 0;
+      // P&L: withdrawn + balance + locked + inventory + vouchers − deposited
+      const pnl =
+        totalWithdrawn + availableBalance + lockedBalance + inventoryValue + vouchersValue - totalDeposited;
+      return {
+        id: u.id,
+        username: u.username,
+        email: u.email,
+        image: u.image,
+        role: u.role,
+        status: u.is_banned ? "banned" : u.is_locked ? "locked" : "active",
+        country: u.country,
+        countryCode: u.country_code,
+        availableBalance,
+        inventoryValue,
+        totalDeposited,
+        totalWithdrawn,
+        totalWagered,
+        depositCount: depositCountMap.get(u.id) ?? 0,
+        pnl,
+        createdAt: u.created_at.toISOString(),
+      };
+    }),
+    total,
+    page,
+    perPage,
+    totalPages: Math.ceil(total / perPage),
+  };
+}
