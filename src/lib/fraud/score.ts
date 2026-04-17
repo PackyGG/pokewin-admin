@@ -1,5 +1,5 @@
 /**
- * Risk / Trust scoring for a single platform user.
+ * Risk / Trust scoring for a single platform user — v2.
  *
  * What this module does
  * ─────────────────────
