@@ -274,10 +274,14 @@ export async function fetchPendingEvents(
   if (eventType === "signup") {
     return fetchPendingSignups(cursor, capped);
   }
-
-  const ledgerType =
-    eventType === "deposit" ? "deposit" : "card_withdrawal";
-  return fetchPendingLedger(ledgerType, cursor, capped);
+  if (eventType === "deposit") {
+    return fetchPendingLedger("deposit", cursor, capped);
+  }
+  // Withdrawals alert on REQUEST (card_withdrawal_requests row created),
+  // not on ledger settlement. The request event is what an admin needs
+  // to act on — the ledger row only exists after processing and would
+  // have been filtered out here by `status='completed'` anyway.
+  return fetchPendingWithdrawalRequests(cursor, capped);
 }
 
 async function fetchPendingLedger(
@@ -329,6 +333,52 @@ async function fetchPendingLedger(
       userId: r.user_id,
       username: r.user?.username ?? r.user?.email ?? null,
       amountUsd,
+      extra,
+    };
+  });
+}
+
+async function fetchPendingWithdrawalRequests(
+  cursor: string | null,
+  limit: number,
+): Promise<PendingEvent[]> {
+  // Cursor tracks the last-seen `requested_at` ISO timestamp. Alerts
+  // fire on ANY new row in card_withdrawal_requests regardless of
+  // status — the row is created the moment the user hits submit.
+  const since = cursor ? new Date(cursor) : null;
+
+  const rows = await db.card_withdrawal_requests.findMany({
+    where: {
+      ...(since && !Number.isNaN(since.getTime())
+        ? { requested_at: { gt: since } }
+        : {}),
+      user_card_withdrawal_requests_user_idTouser: EXCLUDE_STAFF_USER_RELATION,
+    },
+    orderBy: [{ requested_at: "asc" }, { id: "asc" }],
+    take: limit,
+    include: {
+      user_card_withdrawal_requests_user_idTouser: {
+        select: {
+          username: true,
+          email: true,
+          country_code: true,
+        },
+      },
+    },
+  });
+
+  return rows.map((r) => {
+    const u = r.user_card_withdrawal_requests_user_idTouser;
+    const extra: Record<string, string> = {};
+    if (r.method) extra.method = r.method;
+    if (r.crypto_asset) extra.crypto_asset = r.crypto_asset;
+    if (u?.country_code) extra.country_code = u.country_code;
+    return {
+      id: r.id,
+      createdAt: r.requested_at,
+      userId: r.user_id,
+      username: u?.username ?? u?.email ?? null,
+      amountUsd: toNumber(r.total_value_usd),
       extra,
     };
   });
