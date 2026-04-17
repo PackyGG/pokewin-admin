@@ -134,10 +134,15 @@ export function CreatePackButton() {
 
   useEffect(() => {
     if (open && pickerSets.length === 0) {
-      getCardPickerFilters().then(({ sets, rarities }) => {
-        setPickerSets(sets);
-        setPickerRarities(rarities);
-      });
+      getCardPickerFilters()
+        .then(({ sets, rarities }) => {
+          setPickerSets(sets);
+          setPickerRarities(rarities);
+        })
+        .catch((err) => {
+          console.error("[card picker filters]", err);
+          toast.error("Failed to load filter options");
+        });
     }
   }, [open, pickerSets]);
 
