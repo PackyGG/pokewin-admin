@@ -63,6 +63,7 @@ import {
   AccountTab,
 } from "./user-view-modern-tabs";
 import { ChangeRoleDialog } from "./user-tabs-dialogs";
+import { UserAdminActions } from "./user-tabs-moderation";
 import type { PaginatedInventory } from "./user-tabs-types";
 import { TrustTab } from "./user-tabs-trust";
 import {
@@ -252,11 +253,13 @@ export function UserViewModern({
                         @{user.username}
                       </span>
                     )}
-                  {/* Admin action lives inline next to the username so it
-                      doesn't add a full row on top of the hero. */}
+                  {/* Admin toolbar lives inline next to the username so the
+                      hero box doesn't grow a dedicated action row. The
+                      flex-wrap on the parent lets it stack on narrow screens. */}
                   {canChangeUserRoles && (
                     <ChangeRoleDialog userId={user.id} currentRole={user.role} />
                   )}
+                  <UserAdminActions user={user} />
                 </div>
                 <p className="text-xs text-muted-foreground truncate">
                   {user.email}

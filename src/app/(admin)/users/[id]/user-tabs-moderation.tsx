@@ -39,6 +39,40 @@ import type { UserDetail } from "./user-tabs-types";
 import { banUser, unbanUser, lockUser, unlockUser } from "../actions";
 import { DeleteUserDialog, WipeAccountButton, EditIdentityButton } from "./user-tabs-dialogs";
 
+/**
+ * Moderation toolbar — the action buttons that used to live at the top of
+ * the Moderation section. Rendered in the hero of the user detail page
+ * now so admins don't have to scroll to Account → Moderation to act.
+ */
+export function UserAdminActions({
+  user,
+}: {
+  user: UserDetail["user"];
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {user.isBanned ? (
+        <UnbanButton userId={user.id} />
+      ) : (
+        <BanButton userId={user.id} />
+      )}
+      {user.isLocked ? (
+        <UnlockButton userId={user.id} />
+      ) : (
+        <LockButton userId={user.id} />
+      )}
+      <EditIdentityButton user={user} />
+      <DeleteUserDialog user={user} isPending={false} />
+      <WipeAccountButton
+        userId={user.id}
+        displayName={
+          user.displayUsername ?? user.username ?? user.email ?? user.id
+        }
+      />
+    </div>
+  );
+}
+
 export const ModerationSection = React.memo(function ModerationSection({
   user,
   mutes,
@@ -48,26 +82,6 @@ export const ModerationSection = React.memo(function ModerationSection({
 }) {
   return (
     <div className="space-y-6">
-      {/* Admin action row — ban/unban, lock/unlock, delete, wipe, edit. */}
-      <div className="flex flex-wrap items-center gap-2">
-        {user.isBanned ? (
-          <UnbanButton userId={user.id} />
-        ) : (
-          <BanButton userId={user.id} />
-        )}
-        {user.isLocked ? (
-          <UnlockButton userId={user.id} />
-        ) : (
-          <LockButton userId={user.id} />
-        )}
-        <EditIdentityButton user={user} />
-        <DeleteUserDialog user={user} isPending={false} />
-        <WipeAccountButton
-          userId={user.id}
-          displayName={user.displayUsername ?? user.username ?? user.email ?? user.id}
-        />
-      </div>
-
       {/* Ban/Lock Metadata */}
       {(user.isBanned || user.isLocked) && (
         <div className="space-y-3">
