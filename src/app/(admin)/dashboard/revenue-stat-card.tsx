@@ -53,15 +53,16 @@ export function PnlStatCard({ pnl }: { pnl: number }) {
 // because GGR is inherently a time-window metric, unlike realized P&L which
 // is a balance-sheet snapshot.
 //
-// Colors: house-POV. Positive GGR (we made money on gameplay) = emerald,
-// negative GGR (users net-won against us in the period) = rose.
+// Card identity color is cyan so this card is visually distinct from the
+// other period-aware cards. The NUMBER itself still flips emerald/rose by
+// sign so direction is readable at a glance.
 export function GgrStatCard({ ggr }: { ggr: Record<string, number> }) {
   const [selected, setSelected] = useState<string>("24h");
   const value = ggr[selected] ?? 0;
   const isProfit = value >= 0;
 
   return (
-    <Card className={cn(isProfit ? "bg-emerald-500/10" : "bg-rose-500/10")}>
+    <Card className="bg-cyan-500/10">
       <CardHeader className="flex flex-row items-center justify-between pb-2">
         <div className="flex items-center gap-2">
           <CardTitle className="text-card-title text-muted-foreground">
@@ -75,9 +76,7 @@ export function GgrStatCard({ ggr }: { ggr: Record<string, number> }) {
                 className={cn(
                   "rounded px-1.5 py-0.5 text-tiny font-medium transition-colors",
                   selected === r
-                    ? isProfit
-                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-                      : "bg-rose-500/15 text-rose-600 dark:text-rose-400"
+                    ? "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400"
                     : "text-muted-foreground hover:text-foreground"
                 )}
               >
@@ -104,9 +103,9 @@ export function GgrStatCard({ ggr }: { ggr: Record<string, number> }) {
   );
 }
 
-// Wagers = money the user sent into the house treasury for a bet. House
-// gain by definition, so the card tracks the emerald accent even though
-// wagers are always positive (no direction flip needed).
+// Wagers = money the user sent into the house treasury for a bet.
+// Always positive, so we give it a purple identity color to differentiate
+// from the other period cards (Deposits/GGR/PnL/Withdrawals).
 export function WagerStatCard({
   wagers,
 }: {
@@ -115,7 +114,7 @@ export function WagerStatCard({
   const [selected, setSelected] = useState<string>("24h");
 
   return (
-    <Card className="bg-emerald-500/10">
+    <Card className="bg-purple-500/10">
       <CardHeader className="flex flex-row items-center justify-between pb-2">
         <div className="flex items-center gap-2">
           <CardTitle className="text-card-title text-muted-foreground">
@@ -129,7 +128,7 @@ export function WagerStatCard({
                 className={cn(
                   "rounded px-1.5 py-0.5 text-tiny font-medium transition-colors",
                   selected === r
-                    ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                    ? "bg-purple-500/15 text-purple-600 dark:text-purple-400"
                     : "text-muted-foreground hover:text-foreground"
                 )}
               >
@@ -196,9 +195,10 @@ export function DepositsStatCard({
   );
 }
 
-// Crypto + card withdrawals totalled per period. Shares the Deposits card's
-// range selector (24h / 3d / 7d / 30d / all) so an admin can compare net
-// flow at a glance.
+// Crypto + card withdrawals totalled per period. Uses a pink identity so
+// it's visually distinct from the PnL card (which uses rose when negative).
+// The semantic is still "money leaving the house" but the card color is
+// purely an identity signal.
 export function WithdrawalsStatCard({
   withdrawals,
 }: {
@@ -207,7 +207,7 @@ export function WithdrawalsStatCard({
   const [selected, setSelected] = useState<string>("24h");
 
   return (
-    <Card className="bg-rose-500/10">
+    <Card className="bg-pink-500/10">
       <CardHeader className="flex flex-row items-center justify-between pb-2">
         <div className="flex items-center gap-2">
           <CardTitle className="text-card-title text-muted-foreground">
@@ -221,7 +221,7 @@ export function WithdrawalsStatCard({
                 className={cn(
                   "rounded px-1.5 py-0.5 text-tiny font-medium transition-colors",
                   selected === r
-                    ? "bg-rose-500/15 text-rose-600 dark:text-rose-400"
+                    ? "bg-pink-500/15 text-pink-600 dark:text-pink-400"
                     : "text-muted-foreground hover:text-foreground"
                 )}
               >

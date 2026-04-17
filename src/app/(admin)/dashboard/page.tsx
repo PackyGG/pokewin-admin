@@ -72,9 +72,10 @@ export default async function DashboardPage() {
           icon={Users}
           color="blue"
         />
-        {/* Users Total Balance is a HOUSE LIABILITY — every dollar here is a
-            dollar we owe users. Growing that number is bad for us, so we
-            accent the card with the rose "house loss" color per CLAUDE.md. */}
+        {/* Users Total Balance is a HOUSE LIABILITY but we accent it orange
+            (not rose) so it's visually distinct from the Withdrawals / PnL
+            cards that also use rose. The magnitude is what admins care about
+            here, not a direction signal. */}
         <StatCard
           title="Users Total Balance"
           animatedValue={
@@ -84,16 +85,17 @@ export default async function DashboardPage() {
           formatKind="currency"
           subtitle={`${formatCurrency(stats.financials.totalSiteBalance)} cash · ${formatCurrency(stats.financials.totalInventoryValue)} unsold inventory`}
           icon={Wallet}
-          color="rose"
+          color="orange"
         />
-        {/* Average deposit — a deposit is cash INTO the house → emerald. */}
+        {/* Avg Deposit is an inflow stat. Using cyan here so each secondary
+            card has its own identity color. */}
         <StatCard
           title="Avg Deposit"
           animatedValue={stats.financials.avgDeposit}
           formatKind="currency"
           subtitle="Across all users (lifetime)"
           icon={Coins}
-          color="emerald"
+          color="cyan"
         />
         <StatCard
           title="Avg RTP"
