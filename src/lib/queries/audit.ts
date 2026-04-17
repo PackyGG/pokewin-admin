@@ -58,40 +58,41 @@ export async function getAuditEvents(params: {
     adminDb.admin_audit_events.count({ where }),
   ]);
 
-  // Batch lookup target usernames from main DB
+  // Build ID lists from the event batch first (pure in-memory work) then
+  // hit the three independent lookup tables in one Promise.all round-trip.
   const targetUserIds = [...new Set(events.map((e) => e.target_user_id).filter(Boolean))] as string[];
-  const targetUsers = targetUserIds.length > 0
-    ? await db.user.findMany({
-        where: { id: { in: targetUserIds } },
-        select: { id: true, username: true },
-      })
-    : [];
-  const targetUserMap = new Map(targetUsers.map((u) => [u.id, u.username]));
-
-  // Batch lookup promo code IDs by code_hash
   const codeHashes = events
     .map((e) => (e.metadata as Record<string, unknown>)?.code_hash)
     .filter((h): h is string => typeof h === "string");
   const uniqueCodeHashes = [...new Set(codeHashes)];
-  const promoCodes = uniqueCodeHashes.length > 0
-    ? await db.promo_codes.findMany({
-        where: { code_hash: { in: uniqueCodeHashes } },
-        select: { id: true, code_hash: true },
-      })
-    : [];
-  const promoCodeMap = new Map(promoCodes.map((p) => [p.code_hash, p.id]));
-
-  // Batch lookup chat message contents
   const messageIds = events
     .map((e) => (e.metadata as Record<string, unknown>)?.message_id)
     .filter((id): id is string => typeof id === "string");
   const uniqueMessageIds = [...new Set(messageIds)];
-  const messages = uniqueMessageIds.length > 0
-    ? await db.chat_messages.findMany({
-        where: { id: { in: uniqueMessageIds } },
-        select: { id: true, content: true, is_deleted: true },
-      })
-    : [];
+
+  const [targetUsers, promoCodes, messages] = await Promise.all([
+    targetUserIds.length > 0
+      ? db.user.findMany({
+          where: { id: { in: targetUserIds } },
+          select: { id: true, username: true },
+        })
+      : Promise.resolve([] as Array<{ id: string; username: string | null }>),
+    uniqueCodeHashes.length > 0
+      ? db.promo_codes.findMany({
+          where: { code_hash: { in: uniqueCodeHashes } },
+          select: { id: true, code_hash: true },
+        })
+      : Promise.resolve([] as Array<{ id: string; code_hash: string }>),
+    uniqueMessageIds.length > 0
+      ? db.chat_messages.findMany({
+          where: { id: { in: uniqueMessageIds } },
+          select: { id: true, content: true, is_deleted: true },
+        })
+      : Promise.resolve([] as Array<{ id: string; content: string; is_deleted: boolean }>),
+  ]);
+
+  const targetUserMap = new Map(targetUsers.map((u) => [u.id, u.username]));
+  const promoCodeMap = new Map(promoCodes.map((p) => [p.code_hash, p.id]));
   const messageMap = new Map(messages.map((m) => [m.id, m]));
 
   return {

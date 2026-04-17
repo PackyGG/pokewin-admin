@@ -60,66 +60,71 @@ export async function getUserTransactions(
     db.ledger_transactions.count({ where }),
   ]);
 
-  // Resolve pack names for pack_opening transactions
-  // game_id may reference packs directly or user_packs
+  // Three independent lookup chains run in parallel:
+  //   1) pack-name resolution (two-step: packs → user_packs fallback)
+  //   2) card-sale inventory + card detail (two-step: inventory → cards)
+  //   3) full user inventory snapshot for per-tx valuation
   const gameSessionsWithPacks = transactions
     .filter((t) => t.game_sessions_ledger_transactions_game_session_idTogame_sessions?.game_type === "pack")
     .map((t) => t.game_sessions_ledger_transactions_game_session_idTogame_sessions!);
 
   const packGameIds = [...new Set(gameSessionsWithPacks.map((gs) => gs.game_id).filter(Boolean))] as string[];
-  const packByGameId = new Map<string, { id: string; name: string }>();
 
-  if (packGameIds.length > 0) {
-    // Try direct pack lookup first
+  const cardSaleItemIds = transactions
+    .filter((t) => t.type === "card_sale" && t.metadata && typeof t.metadata === "object")
+    .map((t) => (t.metadata as Record<string, unknown>)?.inventory_item_id)
+    .filter((id): id is string => typeof id === "string");
+
+  async function resolvePacks(): Promise<Map<string, { id: string; name: string }>> {
+    const result = new Map<string, { id: string; name: string }>();
+    if (packGameIds.length === 0) return result;
     const directPacks = await db.packs.findMany({
       where: { id: { in: packGameIds } },
       select: { id: true, name: true },
     });
-    for (const p of directPacks) {
-      packByGameId.set(p.id, p);
-    }
-
-    // For any remaining IDs, try user_packs
-    const remaining = packGameIds.filter((id) => !packByGameId.has(id));
+    for (const p of directPacks) result.set(p.id, p);
+    const remaining = packGameIds.filter((id) => !result.has(id));
     if (remaining.length > 0) {
       const userPacks = await db.user_packs.findMany({
         where: { id: { in: remaining } },
         include: { packs: { select: { id: true, name: true } } },
       });
       for (const up of userPacks) {
-        if (up.packs) packByGameId.set(up.id, up.packs);
+        if (up.packs) result.set(up.id, up.packs);
       }
     }
+    return result;
   }
 
-  // Resolve card details for card_sale transactions
-  const cardSaleItemIds = transactions
-    .filter((t) => t.type === "card_sale" && t.metadata && typeof t.metadata === "object")
-    .map((t) => (t.metadata as Record<string, unknown>)?.inventory_item_id)
-    .filter((id): id is string => typeof id === "string");
+  async function resolveInventoryWithCards() {
+    if (cardSaleItemIds.length === 0) {
+      return { inventoryItems: [] as Array<{ id: string; card_id: string; source_type: string | null; source_id: string | null }>, cards: [] as Array<{ id: string; name: string; image_url: string | null; rarity: string | null }> };
+    }
+    const inventoryItems = await db.user_inventory.findMany({
+      where: { id: { in: cardSaleItemIds } },
+      select: { id: true, card_id: true, source_type: true, source_id: true },
+    });
+    const cardIds = [...new Set(inventoryItems.map((i) => i.card_id))];
+    const cards = cardIds.length > 0
+      ? await db.cards.findMany({
+          where: { id: { in: cardIds } },
+          select: { id: true, name: true, image_url: true, rarity: true },
+        })
+      : [];
+    return { inventoryItems, cards };
+  }
 
-  const inventoryItems = cardSaleItemIds.length > 0
-    ? await db.user_inventory.findMany({
-        where: { id: { in: cardSaleItemIds } },
-        select: { id: true, card_id: true, source_type: true, source_id: true },
-      })
-    : [];
-
-  const cardIds = [...new Set(inventoryItems.map((i) => i.card_id))];
-  const cards = cardIds.length > 0
-    ? await db.cards.findMany({
-        where: { id: { in: cardIds } },
-        select: { id: true, name: true, image_url: true, rarity: true },
-      })
-    : [];
+  const [packByGameId, invAndCards, allInventory] = await Promise.all([
+    resolvePacks(),
+    resolveInventoryWithCards(),
+    db.user_inventory.findMany({
+      where: { user_id: userId },
+      select: { value_at_obtained: true, obtained_at: true, sold_at: true, exchanged_at: true },
+    }),
+  ]);
+  const { inventoryItems, cards } = invAndCards;
   const cardMap = new Map(cards.map((c) => [c.id, c]));
   const inventoryMap = new Map(inventoryItems.map((i) => [i.id, { ...i, card: cardMap.get(i.card_id) ?? null }]));
-
-  // Compute inventory value snapshot at each transaction's timestamp
-  const allInventory = await db.user_inventory.findMany({
-    where: { user_id: userId },
-    select: { value_at_obtained: true, obtained_at: true, sold_at: true, exchanged_at: true },
-  });
   const inventoryValueByTx = new Map<string, number>();
   for (const t of transactions) {
     const ts = t.created_at;
