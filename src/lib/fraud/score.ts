@@ -1029,11 +1029,11 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
   //      that it starts looking like a multi-account farm. Graded weight.
   const d1Weight =
     ctx.sharedIpCount >= 5
-      ? 18
+      ? 14
       : ctx.sharedIpCount >= 3
-        ? 12
+        ? 9
         : ctx.sharedIpCount >= 2
-          ? 6
+          ? 5
           : 0;
   signals.push({
     id: "network.shared_ip",
@@ -1054,11 +1054,11 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
   //      rate is much lower.
   const d2Weight =
     ctx.sharedFingerprintCount >= 3
-      ? 22
+      ? 18
       : ctx.sharedFingerprintCount >= 2
-        ? 16
+        ? 13
         : ctx.sharedFingerprintCount >= 1
-          ? 10
+          ? 8
           : 0;
   signals.push({
     id: "network.shared_fingerprint",
@@ -1077,7 +1077,7 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
   //      (home + travel). 4+ distinct countries across sessions is
   //      VPN-hopping or a shared account.
   const countryCount = toNumber(row.session_country_count);
-  const d3Weight = countryCount >= 5 ? 8 : countryCount >= 4 ? 4 : 0;
+  const d3Weight = countryCount >= 5 ? 6 : countryCount >= 4 ? 3 : 0;
   signals.push({
     id: "network.country_hopping",
     category: "network",
@@ -1095,7 +1095,7 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
   //      High-confidence multi-account signal — two users sharing a
   //      blockchain destination address is effectively proof.
   const sharedCryptoAddr = toNumber(row.deposit_address_shared_accounts);
-  const d4Weight = sharedCryptoAddr >= 2 ? 25 : sharedCryptoAddr >= 1 ? 15 : 0;
+  const d4Weight = sharedCryptoAddr >= 2 ? 18 : sharedCryptoAddr >= 1 ? 12 : 0;
   signals.push({
     id: "network.shared_deposit_address",
     category: "network",
@@ -1109,8 +1109,94 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
         : "No crypto deposit address overlap with other accounts.",
   });
 
+  // D5 — At least one user in the shared-identity set (IP or
+  //      fingerprint) is currently banned or locked. A banned alt is a
+  //      near-guarantee this account is a re-registration.
+  const d5Weight =
+    ctx.sharedBannedCount >= 2
+      ? 18
+      : ctx.sharedBannedCount >= 1
+        ? 14
+        : ctx.sharedLockedCount >= 1
+          ? 6
+          : 0;
+  signals.push({
+    id: "network.shared_with_banned",
+    category: "network",
+    label: "Shares identity with banned or locked accounts",
+    weight: d5Weight,
+    triggered: d5Weight > 0,
+    value: `${ctx.sharedBannedCount} banned / ${ctx.sharedLockedCount} locked`,
+    explanation:
+      ctx.sharedBannedCount > 0
+        ? `${ctx.sharedBannedCount} banned account${ctx.sharedBannedCount === 1 ? "" : "s"} share${ctx.sharedBannedCount === 1 ? "s" : ""} an IP or device fingerprint with this user. Very likely an alt re-registration.`
+        : ctx.sharedLockedCount > 0
+          ? `${ctx.sharedLockedCount} locked account${ctx.sharedLockedCount === 1 ? "" : "s"} share${ctx.sharedLockedCount === 1 ? "s" : ""} an IP or device fingerprint with this user. Worth checking before any payout.`
+          : "No banned or locked accounts in the user's identity set.",
+  });
+
+  // D6 — Self-referral ring: the user's `referred_by` is a user who
+  //      shares an IP or fingerprint with the subject. Classic affiliate
+  //      kickback exploit.
+  const selfReferral = toNumber(row.affiliate_referrer_also_shares_ip);
+  const d6Weight = selfReferral > 0 ? 14 : 0;
+  signals.push({
+    id: "network.self_referral_ring",
+    category: "network",
+    label: "Affiliate referrer shares identity with this user",
+    weight: d6Weight,
+    triggered: d6Weight > 0,
+    value: selfReferral,
+    explanation:
+      d6Weight > 0
+        ? "The user who referred this account shares at least one IP or device fingerprint with this user. Self-referral / affiliate kickback loop is almost certain."
+        : "Affiliate referrer does not overlap this user's identity set.",
+  });
+
+  // D7 — Withdrawal IPs differ from deposit IPs. Heuristic — if there
+  //      are materially more distinct withdrawal-attempt IPs than
+  //      deposit IPs we flag it as a possible compromised account or
+  //      handoff.
+  const d7Weight = (() => {
+    if (depositIps24h === 0 || withdrawIpsAll === 0) return 0;
+    if (!firstWithdrawalAttemptAt) return 0;
+    if (withdrawIpsAll <= depositIps24h) return 0;
+    const delta = withdrawIpsAll - depositIps24h;
+    return delta >= 2 ? 8 : 4;
+  })();
+  signals.push({
+    id: "network.withdrawal_ip_mismatch",
+    category: "network",
+    label: "Withdrawal IPs differ from deposit IPs",
+    weight: d7Weight,
+    triggered: d7Weight > 0,
+    value: `dep ${depositIps24h} / wd ${withdrawIpsAll}`,
+    explanation:
+      d7Weight > 0
+        ? `Observed ${depositIps24h} distinct deposit IPs (24h) and ${withdrawIpsAll} distinct withdrawal-attempt IPs with limited overlap. Could be a compromised account or handoff.`
+        : "Deposit and withdrawal IPs look consistent.",
+  });
+
+  // D8 — Many deposit IPs in a short window. Token-sharing / shared
+  //      account signature.
+  const d8Weight = depositIps24h >= 4 ? 9 : depositIps24h >= 3 ? 5 : 0;
+  signals.push({
+    id: "network.deposit_ip_spread",
+    category: "network",
+    label: "Deposits came from many distinct IPs in 24h",
+    weight: d8Weight,
+    triggered: d8Weight > 0,
+    value: depositIps24h,
+    explanation:
+      d8Weight > 0
+        ? `Past 24h deposits came from ${depositIps24h} distinct IPs. Pattern suggests shared-account or token-sharing activity.`
+        : depositIps24h > 0
+          ? `${depositIps24h} deposit IP${depositIps24h === 1 ? "" : "s"} in 24h — normal.`
+          : "No recent deposit IPs recorded.",
+  });
+
   // ═══════════════════════════════════════════════════════════════════
-  // CATEGORY E — Account state red flags (max ~20)
+  // CATEGORY E — Account state red flags
   // ═══════════════════════════════════════════════════════════════════
 
   // E1 — Already banned or locked by an admin. If another human already
