@@ -80,13 +80,16 @@ export default async function AnalyticsPage({
           icon={TrendingUp}
           color="green"
         />
+        {/* GGR is wagers minus payouts — when positive (the normal case)
+            it's net house revenue on gameplay → emerald per CLAUDE.md
+            house-POV rule. */}
         <StatCard
           title="GGR (Gross Gaming Revenue)"
           animatedValue={data.ggr}
           formatKind="currency"
           subtitle={`${formatCurrency(totalWager)} wagered total`}
           icon={DollarSign}
-          color="blue"
+          color="emerald"
         />
         <StatCard
           title="Unique Visitors"

@@ -396,7 +396,15 @@ export function CreatePackButton() {
                   EV/card: {formatCurrency(evPerCard)} · EV/open: {formatCurrency(expectedPayout)}
                 </p>
                 <span className="text-muted-foreground/40">|</span>
-                <p className={houseEdge < 0 ? "text-red-400" : houseEdge < 5 ? "text-yellow-500" : "text-green-400"}>
+                <p
+                  className={
+                    houseEdge < 0
+                      ? "text-rose-600 dark:text-rose-400"
+                      : houseEdge < 5
+                        ? "text-yellow-500"
+                        : "text-emerald-600 dark:text-emerald-400"
+                  }
+                >
                   RTP: {packPrice > 0 ? ((expectedPayout / packPrice) * 100).toFixed(6) : "0.000000"}% · House edge: {houseEdge.toFixed(6)}%
                 </p>
               </div>

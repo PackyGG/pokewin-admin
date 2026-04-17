@@ -22,23 +22,28 @@ export type LedgerDirection = "house-gain" | "house-loss" | "neutral";
  */
 export function ledgerDirection(type: string): LedgerDirection {
   switch (type) {
-    // ── House receives money from the user ────────────────────────────
+    // ── House receives money from the user (balance shrinks, cash/
+    // commitment flows into our coffers). ────────────────────────────
     case "deposit":
     case "deposit_bonus": // bonus shown next to its parent deposit row
     case "pack_opening":
     case "battle_bet":
     case "battle_sponsorship":
-    case "card_sale":
-    case "reward_card_sale":
-    case "card_exchange":
-    case "voucher_exchange":
     case "vault_lock":
     case "withdrawal_shipping_fee":
       return "house-gain";
 
-    // ── House pays money to the user ──────────────────────────────────
+    // ── House pays money to the user (balance grows, a liability we
+    // already owed is being settled out). ────────────────────────────
     case "card_withdrawal":
     case "withdrawal":
+    case "card_sale": // user sells card back → we credit them USD
+    case "reward_card_sale":
+    case "card_exchange":
+    case "voucher_exchange":
+    case "exchange_excess_credit":
+    case "exchange_excess_to_voucher":
+    case "battle_excess_to_voucher":
     case "battle_refund":
     case "rain_win":
     case "race_prize":

@@ -265,28 +265,31 @@ export function CreatorTab({ data }: { data: UserDetail }) {
             accent="cyan"
             icon={Coins}
           />
+          {/* All four tiles below describe money the HOUSE paid (or
+              will pay) this creator and their users → house-loss side
+              of the ledger → rose per CLAUDE.md. */}
           <ModernMetricTile
             label="Total Earned"
             value={formatCurrency(affiliate.totalEarnedUsd)}
-            accent="emerald"
+            accent="rose"
             icon={TrendingUp}
           />
           <ModernMetricTile
             label="Available"
             value={formatCurrency(affiliate.availableUsd)}
-            accent="blue"
+            accent="rose"
             icon={Wallet}
           />
           <ModernMetricTile
             label="Paid Out"
             value={formatCurrency(affiliate.totalPaidOutUsd)}
-            accent="emerald"
+            accent="rose"
             icon={ArrowUpFromLine}
           />
           <ModernMetricTile
             label="Bonus Distributed"
             value={formatCurrency(affiliate.totalBonusDistributedUsd)}
-            accent="amber"
+            accent="rose"
             icon={Gift}
           />
         </div>
