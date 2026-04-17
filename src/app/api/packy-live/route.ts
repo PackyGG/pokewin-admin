@@ -41,21 +41,37 @@ const ROTATION_MS = 240_000; // 4 min
 const HEARTBEAT_MS = 15_000;
 
 /**
- * Exact handshake headers copied 1:1 from a known-working browser WS to
- * the packy.gg gateway. Protocol-level fields (Upgrade, Connection,
- * Sec-WebSocket-Key, Sec-WebSocket-Version, Sec-WebSocket-Extensions)
- * are driven by the `ws` library itself — the library would override
- * any override we tried anyway, and Sec-WebSocket-Key must be random
- * per handshake for the WS protocol to work. permessage-deflate is
- * wired via the `perMessageDeflate` option below.
+ * Exact handshake headers copied 1:1 from the known-working browser WS
+ * to the packy.gg gateway. Everything from the reference handshake goes
+ * through verbatim except:
+ *
+ *   - Sec-WebSocket-Key: intentionally omitted. The WS protocol
+ *     *requires* a fresh random key per handshake — the server's
+ *     Sec-WebSocket-Accept response is sha1(key + GUID), and the `ws`
+ *     library verifies the response against the key IT generated. If
+ *     we pin Sec-WebSocket-Key to a fixed value here, our outbound
+ *     header would override ws's generated key but ws would still
+ *     verify against its own → verification fails, handshake drops.
+ *   - Sec-WebSocket-Extensions: routed via the `perMessageDeflate`
+ *     option below so ws actually negotiates + decompresses; setting
+ *     it via headers alone would make the server send compressed
+ *     frames that ws doesn't know how to inflate.
+ *
+ * Everything else (Upgrade, Connection, Sec-WebSocket-Version) is
+ * spread AFTER ws's defaults so it wins on duplicate — values match
+ * what ws would emit anyway, so no difference on the wire, but the
+ * explicit listing makes the intent auditable.
  */
 const PACKY_WS_HEADERS: Record<string, string> = {
+  Upgrade: "websocket",
   Origin: "https://beta.packy.gg",
   "Cache-Control": "no-cache",
   "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
   Pragma: "no-cache",
+  Connection: "Upgrade",
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+  "Sec-WebSocket-Version": "13",
 };
 
 export async function GET(request: Request): Promise<Response> {
@@ -129,12 +145,15 @@ export async function GET(request: Request): Promise<Response> {
       try {
         upstream = new WebSocket(PACKY_WS_URL, {
           headers: PACKY_WS_HEADERS,
-          // Matches `Sec-WebSocket-Extensions: permessage-deflate;
-          // client_max_window_bits` from the known-good browser
-          // handshake. 15 = default max window size (what Chrome
-          // negotiates by default; accepts a boolean-ish form in the
-          // `ws` runtime but @types/ws only types the numeric variant).
-          perMessageDeflate: { clientMaxWindowBits: 15 },
+          // Emits `Sec-WebSocket-Extensions: permessage-deflate;
+          // client_max_window_bits` exactly as the browser handshake
+          // does. `ws` at runtime accepts `true` for the bare form
+          // (no `=N`) but @types/ws only types the numeric form —
+          // cast through unknown to keep the types happy without
+          // changing the wire.
+          perMessageDeflate: {
+            clientMaxWindowBits: true as unknown as number,
+          },
           // Extra-long handshake timeout — we've observed up to ~8s on
           // cold paths. The default (none) means it could hang forever.
           handshakeTimeout: 15_000,
