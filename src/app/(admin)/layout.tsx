@@ -4,6 +4,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { AdminHeader } from "@/components/admin-header";
 import { TopProgressBar } from "@/components/top-progress-bar";
 import { ChatPanel } from "@/components/chat-panel/chat-panel";
+import { CommandPalette } from "@/components/command-palette";
 import { verifySession, getUserPermissions } from "@/lib/dal";
 import { adminDb } from "@/lib/admin-db";
 
@@ -66,6 +67,7 @@ export default async function AdminLayout({
         />
         <main className="flex-1 overflow-auto p-4 md:p-6">{children}</main>
       </div>
+      <CommandPalette role={session.role} allowedPages={allowedPages} />
       {canOpenChatPanel && <ChatPanel role={session.role} />}
     </SidebarProvider>
   );
