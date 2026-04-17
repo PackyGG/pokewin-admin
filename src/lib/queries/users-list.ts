@@ -241,75 +241,85 @@ export async function getUsers(params: {
     total = result[1];
   }
 
-  // Fetch unsold inventory values for all users in the page
+  // All per-page aggregates below are independent keyed on user_id; run
+  // them in parallel. Previously five sequential awaits — each is already
+  // a single batched groupBy query, so the bottleneck was pure serialization.
   const userIds = users.map((u) => u.id);
-  const inventoryValues = await db.user_inventory.groupBy({
-    by: ["user_id"],
-    where: {
-      user_id: { in: userIds },
-      sold_at: null,
-      exchanged_at: null,
-    },
-    _sum: { value_at_obtained: true },
-  });
+  const empty = {
+    inventory: [] as Array<{ user_id: string; _sum: { value_at_obtained: unknown } }>,
+    withdrawals: [] as Array<{ user_id: string; _sum: { total_value_usd: unknown } }>,
+    vouchers: [] as Array<{ user_id: string; _sum: { value: unknown } }>,
+    deposits: [] as Array<{ user_id: string; _count: { _all: number } }>,
+  };
+  const [
+    inventoryValues,
+    cardWithdrawalValues,
+    voucherValues,
+    depositCountRows,
+    riskScoresMap,
+  ] = await Promise.all([
+    userIds.length > 0
+      ? db.user_inventory.groupBy({
+          by: ["user_id"],
+          where: {
+            user_id: { in: userIds },
+            sold_at: null,
+            exchanged_at: null,
+          },
+          _sum: { value_at_obtained: true },
+        })
+      : Promise.resolve(empty.inventory),
+    userIds.length > 0
+      ? db.card_withdrawal_requests.groupBy({
+          by: ["user_id"],
+          where: {
+            user_id: { in: userIds },
+            status: { in: ["completed", "shipped"] },
+          },
+          _sum: { total_value_usd: true },
+        })
+      : Promise.resolve(empty.withdrawals),
+    userIds.length > 0
+      ? db.vouchers.groupBy({
+          by: ["user_id"],
+          where: {
+            user_id: { in: userIds },
+            claimed_at: null,
+          },
+          _sum: { value: true },
+        })
+      : Promise.resolve(empty.vouchers),
+    userIds.length > 0
+      ? db.ledger_transactions.groupBy({
+          by: ["user_id"],
+          where: {
+            user_id: { in: userIds },
+            type: "deposit",
+            status: "completed",
+          },
+          _count: { _all: true },
+        })
+      : Promise.resolve(empty.deposits),
+    // Risk score — batched internally for the whole page.
+    userIds.length > 0
+      ? computeRiskScoresForList(userIds)
+      : Promise.resolve(
+          new Map<string, { score: number; tier: RiskTier; sharedIpCount: number; sharedFingerprintCount: number }>(),
+        ),
+  ]);
+
   const inventoryMap = new Map(
     inventoryValues.map((iv) => [iv.user_id, toNumber(iv._sum.value_at_obtained)])
   );
-
-  // Card withdrawals (completed/shipped) per user — not tracked in balances.total_withdrawn
-  const cardWithdrawalValues = userIds.length > 0
-    ? await db.card_withdrawal_requests.groupBy({
-        by: ["user_id"],
-        where: {
-          user_id: { in: userIds },
-          status: { in: ["completed", "shipped"] },
-        },
-        _sum: { total_value_usd: true },
-      })
-    : [];
   const cardWithdrawalMap = new Map(
     cardWithdrawalValues.map((cw) => [cw.user_id, toNumber(cw._sum.total_value_usd)])
   );
-
-  // Open vouchers per user
-  const voucherValues = userIds.length > 0
-    ? await db.vouchers.groupBy({
-        by: ["user_id"],
-        where: {
-          user_id: { in: userIds },
-          claimed_at: null,
-        },
-        _sum: { value: true },
-      })
-    : [];
   const voucherMap = new Map(
     voucherValues.map((v) => [v.user_id, toNumber(v._sum.value)])
   );
-
-  // Count of completed deposit ledger transactions per user. One
-  // batch groupBy per page instead of N+1 per-user counts.
-  const depositCountRows = userIds.length > 0
-    ? await db.ledger_transactions.groupBy({
-        by: ["user_id"],
-        where: {
-          user_id: { in: userIds },
-          type: "deposit",
-          status: "completed",
-        },
-        _count: { _all: true },
-      })
-    : [];
   const depositCountMap = new Map(
     depositCountRows.map((d) => [d.user_id, d._count._all]),
   );
-
-  // Risk score — batched so one query covers the whole page.
-  // Expected runtime is ~40-80ms for 50 rows; kept out of the main
-  // Promise.all so it doesn't block the other aggregates.
-  const riskScoresMap =
-    userIds.length > 0
-      ? await computeRiskScoresForList(userIds)
-      : new Map<string, { score: number; tier: RiskTier; sharedIpCount: number; sharedFingerprintCount: number }>();
 
   return {
     data: users.map((u) => {

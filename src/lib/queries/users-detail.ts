@@ -151,7 +151,9 @@ export async function getUserDetail(id: string) {
 
   if (!user) return null;
 
-  // Resolve referred_by username
+  // Resolve referred_by username. One extra round-trip — cheap, single row
+  // lookup on a PK — but doing it after the main Promise.all keeps the
+  // page shell above the fold unaffected while we wait on this.
   let referredByUsername: string | null = null;
   if (user.referred_by) {
     const referrer = await db.user.findUnique({

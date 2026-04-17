@@ -38,18 +38,17 @@ export async function getActiveSessionCount(): Promise<number> {
  * Distinct admins with at least one active session right now.
  * Useful alongside the raw session count — multiple devices per admin
  * shouldn't double-count as "active admins".
+ *
+ * Uses a raw COUNT(DISTINCT) so PG can answer with an index scan instead
+ * of materialising the full result set and counting rows in JS.
  */
 export async function getDistinctActiveAdmins(): Promise<number> {
-  const now = new Date();
-  const rows = await adminDb.admin_sessions.findMany({
-    where: {
-      expires_at: { gt: now },
-      logged_out_at: null,
-    },
-    select: { admin_user_id: true },
-    distinct: ["admin_user_id"],
-  });
-  return rows.length;
+  const rows = await adminDb.$queryRaw<{ c: bigint }[]>`
+    SELECT COUNT(DISTINCT admin_user_id)::bigint AS c
+    FROM admin_sessions
+    WHERE expires_at > NOW() AND logged_out_at IS NULL
+  `;
+  return Number(rows[0]?.c ?? 0);
 }
 
 export type SessionHealth = {

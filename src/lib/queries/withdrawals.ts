@@ -139,17 +139,31 @@ export async function getWithdrawalDetail(id: string) {
   const user = withdrawal.user_card_withdrawal_requests_user_idTouser;
 
   // Fetch inventory items and vouchers in parallel — they're independent.
+  // Inventory items only carry card_id references; we need to fetch the
+  // actual cards in a second round-trip. Only `id`, `image_url`, `name`,
+  // `rarity` are needed downstream so the select stays tight.
   const [inventoryItems, voucherRows] = await Promise.all([
     withdrawal.inventory_item_ids.length > 0
       ? db.user_inventory.findMany({
           where: { id: { in: withdrawal.inventory_item_ids } },
+          select: { id: true, card_id: true, value_at_obtained: true },
         })
-      : Promise.resolve([] as Awaited<ReturnType<typeof db.user_inventory.findMany>>),
+      : Promise.resolve(
+          [] as Array<{ id: string; card_id: string; value_at_obtained: unknown }>,
+        ),
     withdrawal.voucher_ids.length > 0
       ? db.vouchers.findMany({
           where: { id: { in: withdrawal.voucher_ids } },
+          select: { id: true, value: true, origin: true, description: true },
         })
-      : Promise.resolve([] as Awaited<ReturnType<typeof db.vouchers.findMany>>),
+      : Promise.resolve(
+          [] as Array<{
+            id: string;
+            value: unknown;
+            origin: string;
+            description: string | null;
+          }>,
+        ),
   ]);
 
   let items: { id: string; cardName: string; imageUrl: string | null; rarity: string | null; value: number }[] = [];

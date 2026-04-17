@@ -38,7 +38,12 @@ export default async function UserDetailPage({
   const CARD_SALE_TYPES = ["card_sale", "reward_card_sale"];
   const EXCHANGE_TYPES = ["card_exchange", "exchange_excess_to_voucher", "exchange_excess_credit", "battle_excess_to_voucher", "voucher_exchange"];
 
-  const [data, transactions, auditLog, inventory, disposedInventory, pnlBreakdown, notes, gamingTx, financialTx, rewards, riskBreakdown, sharedIps, sharedFingerprints] = await Promise.all([
+  // Resolve permissions in parallel with the data queries — admins can
+  // skip the permissions fetch entirely (they get all capabilities by
+  // definition), so only non-admins trigger the extra round-trip. Previously
+  // this was awaited inside the JSX after the main Promise.all, adding
+  // a serial round-trip to the page's time-to-render.
+  const [data, transactions, auditLog, inventory, disposedInventory, pnlBreakdown, notes, gamingTx, financialTx, rewards, riskBreakdown, sharedIps, sharedFingerprints, permissions] = await Promise.all([
     getUserDetail(id),
     getUserTransactions(id, txPage, txPerPage, {
       type: typeof sp.txType === "string" ? sp.txType : undefined,
@@ -61,9 +66,35 @@ export default async function UserDetailPage({
     computeRiskScore(id),
     getSharedIpUsers(id),
     getSharedFingerprintUsers(id),
+    session.role === "admin" ? Promise.resolve(null) : getUserPermissions(session.userId),
   ]);
 
   if (!data) notFound();
+
+  const capabilities =
+    session.role === "admin"
+      ? {
+          canAdjustBalance: true,
+          canAdjustXp: true,
+          canEditIdentity: true,
+          canBanUsers: true,
+          canLockUsers: true,
+          canToggleFeatureLocks: true,
+          canAssignAffiliate: true,
+          canWipeAccounts: true,
+          canChangeUserRoles: true,
+        }
+      : {
+          canAdjustBalance: hasCapability(permissions ?? [], "__can_adjust_balance"),
+          canAdjustXp: hasCapability(permissions ?? [], "__can_adjust_xp"),
+          canEditIdentity: hasCapability(permissions ?? [], "__can_edit_identity"),
+          canBanUsers: hasCapability(permissions ?? [], "__can_ban_users"),
+          canLockUsers: hasCapability(permissions ?? [], "__can_lock_users"),
+          canToggleFeatureLocks: hasCapability(permissions ?? [], "__can_toggle_feature_locks"),
+          canAssignAffiliate: hasCapability(permissions ?? [], "__can_assign_affiliate"),
+          canWipeAccounts: hasCapability(permissions ?? [], "__can_wipe_accounts"),
+          canChangeUserRoles: hasCapability(permissions ?? [], "__can_change_user_roles"),
+        };
 
   return (
     <div className="space-y-4">
@@ -78,34 +109,7 @@ export default async function UserDetailPage({
           <p className="text-sm text-muted-foreground">{data.user.email}</p>
         </div>
       </div>
-      <UserTabs data={{ ...data, sessionRole: session.role, capabilities: await (async () => {
-        if (session.role === "admin") {
-          // Admins have all capabilities
-          return {
-            canAdjustBalance: true,
-            canAdjustXp: true,
-            canEditIdentity: true,
-            canBanUsers: true,
-            canLockUsers: true,
-            canToggleFeatureLocks: true,
-            canAssignAffiliate: true,
-            canWipeAccounts: true,
-            canChangeUserRoles: true,
-          };
-        }
-        const perms = await getUserPermissions(session.userId);
-        return {
-          canAdjustBalance: hasCapability(perms, "__can_adjust_balance"),
-          canAdjustXp: hasCapability(perms, "__can_adjust_xp"),
-          canEditIdentity: hasCapability(perms, "__can_edit_identity"),
-          canBanUsers: hasCapability(perms, "__can_ban_users"),
-          canLockUsers: hasCapability(perms, "__can_lock_users"),
-          canToggleFeatureLocks: hasCapability(perms, "__can_toggle_feature_locks"),
-          canAssignAffiliate: hasCapability(perms, "__can_assign_affiliate"),
-          canWipeAccounts: hasCapability(perms, "__can_wipe_accounts"),
-          canChangeUserRoles: hasCapability(perms, "__can_change_user_roles"),
-        };
-      })() }} transactions={transactions} auditLog={auditLog} inventory={inventory} disposedInventory={disposedInventory} pnlBreakdown={pnlBreakdown} notes={notes} gamingTx={gamingTx} financialTx={financialTx} rewards={rewards} riskBreakdown={riskBreakdown} sharedIps={sharedIps} sharedFingerprints={sharedFingerprints} />
+      <UserTabs data={{ ...data, sessionRole: session.role, capabilities }} transactions={transactions} auditLog={auditLog} inventory={inventory} disposedInventory={disposedInventory} pnlBreakdown={pnlBreakdown} notes={notes} gamingTx={gamingTx} financialTx={financialTx} rewards={rewards} riskBreakdown={riskBreakdown} sharedIps={sharedIps} sharedFingerprints={sharedFingerprints} />
     </div>
   );
 }
