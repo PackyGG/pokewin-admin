@@ -111,8 +111,8 @@ function ChatView({
             return [...prev, ...fresh.map((m) => ({ ...m, activeMuteId: null }))];
           });
         }
-      } catch {
-        // silently ignore polling errors
+      } catch (err) {
+        console.error("[chat poll]", err);
       }
     };
     const id = setInterval(tick, 3000);
