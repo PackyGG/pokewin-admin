@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/creator-fills",
       "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/cron/notifications",
+      "schedule": "*/1 * * * *"
     }
   ]
 }
