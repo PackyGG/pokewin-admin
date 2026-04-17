@@ -115,8 +115,17 @@ export function LimitRow({
         <span className="text-sm text-muted-foreground">{label}</span>
         <div className="flex items-center gap-1.5">
           <span
+            role="button"
+            tabIndex={0}
             className="text-sm font-medium cursor-pointer hover:underline"
             onClick={() => { setValue(String(currentAmount)); setEditing(true); }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setValue(String(currentAmount));
+                setEditing(true);
+              }
+            }}
           >
             ${currentAmount.toFixed(2)}
           </span>
