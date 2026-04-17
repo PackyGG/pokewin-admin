@@ -1,0 +1,75 @@
+"use client";
+
+import * as React from "react";
+
+/**
+ * Smoothly animates a numeric value from 0 (on mount) or from the previous
+ * value (on update) to the current `value`. Intentionally small and dep-free
+ * — uses requestAnimationFrame + an ease-out curve.
+ *
+ * - Respects `prefers-reduced-motion`: when reduce-motion is set, the target
+ *   value is rendered immediately with no animation.
+ * - The output string is produced by `format(current)` so callers keep their
+ *   existing formatters (`formatCurrency`, `formatNumber`, etc.) without
+ *   duplication.
+ * - Uses `tabular-nums` on the rendered span so digits don't jitter width
+ *   during the ramp.
+ */
+export function AnimatedNumber({
+  value,
+  format,
+  duration = 400,
+  className,
+}: {
+  value: number;
+  format: (n: number) => string;
+  duration?: number;
+  className?: string;
+}) {
+  const [display, setDisplay] = React.useState<number>(() => {
+    if (typeof window === "undefined") return value;
+    const mql = window.matchMedia("(prefers-reduced-motion: reduce)");
+    return mql.matches ? value : 0;
+  });
+  const previousRef = React.useRef<number>(0);
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mql = window.matchMedia("(prefers-reduced-motion: reduce)");
+    if (mql.matches) {
+      setDisplay(value);
+      previousRef.current = value;
+      return;
+    }
+
+    const start = previousRef.current;
+    const delta = value - start;
+    if (delta === 0) {
+      setDisplay(value);
+      return;
+    }
+    const startTime = performance.now();
+    let raf = 0;
+
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - startTime) / duration);
+      // easeOutCubic — punchy on entry, calm landing
+      const eased = 1 - Math.pow(1 - t, 3);
+      setDisplay(start + delta * eased);
+      if (t < 1) {
+        raf = requestAnimationFrame(tick);
+      } else {
+        previousRef.current = value;
+      }
+    };
+
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [value, duration]);
+
+  return (
+    <span className={className} style={{ fontVariantNumeric: "tabular-nums" }}>
+      {format(display)}
+    </span>
+  );
+}

@@ -1,6 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { AnimatedNumber } from "@/components/animated-number";
 
 const colorMap = {
   blue: { bg: "bg-blue-500/10", icon: "text-blue-400" },
@@ -13,22 +14,34 @@ const colorMap = {
 
 export type StatCardColor = keyof typeof colorMap;
 
+/**
+ * Pass `value` for a plain rendered string, OR `animatedValue` + `formatValue`
+ * to get a smooth count-up on mount. The animated path is used for hero KPIs
+ * (analytics top tiles, dashboard secondary stats) so the page feels alive
+ * after a data load. Reduce-motion users see the final value instantly.
+ */
 export function StatCard({
   title,
   value,
+  animatedValue,
+  formatValue,
   subtitle,
   icon: Icon,
   color,
   children,
 }: {
   title: string;
-  value: string | number;
+  value?: string | number;
+  animatedValue?: number;
+  formatValue?: (n: number) => string;
   subtitle?: string;
   icon: LucideIcon;
   color?: StatCardColor;
   children?: React.ReactNode;
 }) {
   const colors = color ? colorMap[color] : null;
+  const useAnimated =
+    typeof animatedValue === "number" && typeof formatValue === "function";
 
   return (
     <Card className={cn(colors?.bg)}>
@@ -39,7 +52,13 @@ export function StatCard({
         <Icon className={cn("size-4", colors?.icon ?? "text-muted-foreground")} />
       </CardHeader>
       <CardContent>
-        <div className="text-stat-value">{value}</div>
+        <div className="text-stat-value">
+          {useAnimated ? (
+            <AnimatedNumber value={animatedValue!} format={formatValue!} />
+          ) : (
+            value
+          )}
+        </div>
         {subtitle && (
           <p className="text-stat-label">{subtitle}</p>
         )}

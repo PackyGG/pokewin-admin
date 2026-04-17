@@ -82,12 +82,16 @@ export function WagerChart({
               stackId="wager"
               fill="var(--color-packs)"
               radius={[0, 0, 0, 0]}
+              animationDuration={700}
+              animationEasing="ease-out"
             />
             <Bar
               dataKey="battles"
               stackId="wager"
               fill="var(--color-battles)"
               radius={[4, 4, 0, 0]}
+              animationDuration={700}
+              animationEasing="ease-out"
             />
           </BarChart>
         </ChartContainer>
@@ -141,6 +145,8 @@ export function DepositsChart({
               dataKey="amount"
               fill="var(--color-amount)"
               radius={[4, 4, 0, 0]}
+              animationDuration={700}
+              animationEasing="ease-out"
             />
           </BarChart>
         </ChartContainer>
@@ -176,6 +182,8 @@ export function SignupsChart({
               dataKey="count"
               fill="var(--color-count)"
               radius={[4, 4, 0, 0]}
+              animationDuration={700}
+              animationEasing="ease-out"
             />
           </BarChart>
         </ChartContainer>
