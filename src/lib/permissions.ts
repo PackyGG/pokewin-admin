@@ -81,6 +81,7 @@ export const CAPABILITIES = [
       { key: "pages.admin_roles", label: "Admin Roles", description: "Manage custom roles + permissions." },
       { key: "pages.settings_roles", label: "Legacy Role Permissions", description: "Legacy role-permissions page at /settings/roles." },
       { key: "pages.bots", label: "Bots", description: "Manage chat bots." },
+      { key: "pages.notifications", label: "Notifications", description: "Configure Telegram notification forwarding." },
       { key: "pages.settings", label: "Settings", description: "Global admin settings." },
       { key: "pages.audit", label: "Audit Log", description: "View the admin audit log." },
     ],
@@ -391,6 +392,17 @@ export const CAPABILITIES = [
       { key: "settings.update_country_restriction", label: "Update country restriction", description: "Edit the country restriction list." },
       { key: "settings.toggle_country_restriction", label: "Toggle country restriction", description: "Enable / disable the country block list." },
       { key: "settings.update_role_permissions", label: "Legacy: update role permissions", description: "Legacy hardcoded-role permissions editor at /settings/roles." },
+    ],
+  },
+
+  // ── Notifications (Telegram forwarding) ────────────────────────────────
+  {
+    domain: "notifications",
+    label: "Notifications",
+    description: "Configure Telegram forwarding for platform events.",
+    capabilities: [
+      { key: "notifications.manage", label: "Manage notification settings", description: "Enable/disable channels and update bot credentials." },
+      { key: "notifications.test", label: "Send test notifications", description: "Fire a test message to the configured Telegram chat." },
     ],
   },
 

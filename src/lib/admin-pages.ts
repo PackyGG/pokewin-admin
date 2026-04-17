@@ -52,6 +52,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "System", label: "Admin Roles", key: "/admin-users/roles" },
   { group: "System", label: "Role Permissions", key: "/settings/roles" },
   { group: "System", label: "Bots", key: "/bots" },
+  { group: "System", label: "Notifications", key: "/notifications" },
   { group: "System", label: "Settings", key: "/settings" },
   { group: "System", label: "Audit Log", key: "/audit" },
 ];
