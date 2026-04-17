@@ -330,66 +330,10 @@ function classifyLedgerKind(type: string): LiveActivityEventKind {
   }
 }
 
-// ─── Live Users (global top-bar indicator) ─────────────────────────
-
-export type LiveUserCount = {
-  /** Distinct non-staff users with a ledger event in the last 60 seconds. */
-  liveNow: number;
-  /** Distinct non-staff users with a ledger event in the last 5 minutes. */
-  last5m: number;
-  /** Distinct non-staff users with a ledger event in the last 60 minutes. */
-  last60m: number;
-  /** Distinct non-staff users with a ledger event since midnight (UTC). */
-  todayTotal: number;
-};
-
-/**
- * Count "online" non-staff users based on recent ledger activity.
- *
- * The Main-DB schema does not expose a per-user `last_seen_at`, so we use
- * the freshest available proxy: any completed `ledger_transactions` row
- * in the window. This captures every meaningful user action (deposit,
- * wager, withdrawal, reward claim, tip, …) without requiring a new
- * heartbeat column.
- *
- * All four counts are produced in a single round-trip via conditional
- * `COUNT(DISTINCT ...)` aggregates so the /admin header can poll this
- * cheaply (15s interval, every page). Staff excluded via the shared
- * EXCL_STAFF_FRAG so the number matches dashboard analytics.
- */
-export async function getLiveUserCount(): Promise<LiveUserCount> {
-  const now = new Date();
-  const min1 = new Date(now.getTime() - 60 * 1000);
-  const min5 = new Date(now.getTime() - 5 * 60 * 1000);
-  const min60 = new Date(now.getTime() - 60 * 60 * 1000);
-  // Today = since UTC midnight. Matches how the rest of the dashboard
-  // bucketizes "today" and keeps the number stable regardless of the
-  // admin's local zone.
-  const todayStart = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-  );
-
-  const rows = await db.$queryRaw<
-    { live_now: string; last_5m: string; last_60m: string; today_total: string }[]
-  >`
-    SELECT
-      COUNT(DISTINCT CASE WHEN created_at >= ${min1}   THEN user_id END)::text AS live_now,
-      COUNT(DISTINCT CASE WHEN created_at >= ${min5}   THEN user_id END)::text AS last_5m,
-      COUNT(DISTINCT CASE WHEN created_at >= ${min60}  THEN user_id END)::text AS last_60m,
-      COUNT(DISTINCT CASE WHEN created_at >= ${todayStart} THEN user_id END)::text AS today_total
-    FROM ledger_transactions
-    WHERE status = 'completed'
-      AND created_at >= ${todayStart}
-      AND user_id IN (
-        SELECT id FROM "user" WHERE role NOT IN ('admin','creator')
-      )
-  `;
-
-  const r = rows[0];
-  return {
-    liveNow: Number(r?.live_now ?? 0),
-    last5m: Number(r?.last_5m ?? 0),
-    last60m: Number(r?.last_60m ?? 0),
-    todayTotal: Number(r?.today_total ?? 0),
-  };
-}
+// ─── Live Users ────────────────────────────────────────────────────
+//
+// The global top-bar LiveIndicator now subscribes to the packy.gg
+// WebSocket (`active.users.count` event) via `src/lib/packy-ws.ts`, so
+// the ledger-proxy `getLiveUserCount` that used to feed it was removed.
+// Re-add it here only if a non-WS code path (e.g. a server-side analytics
+// export) actually needs the count.
