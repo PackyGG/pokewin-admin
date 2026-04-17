@@ -169,12 +169,26 @@ export function EventDetails({ event }: { event: AdminAuditEventItem }) {
     );
   }
 
-  // Balance adjustment
+  // Balance adjustment — house-POV: a positive credit to the user is a
+  // house loss (we gave them money), a negative debit is a house gain
+  // (we pulled money back). Per CLAUDE.md the sign and color both
+  // follow the house's direction, not the ledger sign.
   if (meta.amount != null && event.eventType === "balance_adjustment") {
     const amt = Number(meta.amount);
+    const houseGain = amt < 0;
     details.push(
-      <span key="amount" className={`text-xs font-medium tabular-nums ${amt >= 0 ? "text-green-400" : "text-red-400"}`}>
-        {amt >= 0 ? "+" : ""}{amt.toFixed(2)} USD
+      <span
+        key="amount"
+        className={`text-xs font-medium tabular-nums ${
+          amt === 0
+            ? "text-muted-foreground"
+            : houseGain
+              ? "text-emerald-600 dark:text-emerald-400"
+              : "text-rose-600 dark:text-rose-400"
+        }`}
+      >
+        {houseGain ? "+" : amt > 0 ? "-" : ""}
+        {Math.abs(amt).toFixed(2)} USD
       </span>
     );
   }
@@ -221,10 +235,13 @@ export function EventDetails({ event }: { event: AdminAuditEventItem }) {
     );
   }
 
-  // Promo code
+  // Promo code value — credit we'll hand to users → house liability → rose.
   if (meta.value != null && event.eventType === "promo_code_created") {
     details.push(
-      <span key="promo-value" className="text-xs font-medium">
+      <span
+        key="promo-value"
+        className="text-xs font-medium text-rose-600 dark:text-rose-400"
+      >
         ${Number(meta.value).toFixed(2)}
       </span>
     );
@@ -237,10 +254,14 @@ export function EventDetails({ event }: { event: AdminAuditEventItem }) {
     }
   }
 
-  // Affiliate payout
+  // Affiliate payout = money the house paid to the affiliate → house
+  // loss → rose per CLAUDE.md.
   if (meta.amount != null && event.eventType === "affiliate_payout_processed") {
     details.push(
-      <span key="payout-amount" className="text-xs font-medium text-green-400">
+      <span
+        key="payout-amount"
+        className="text-xs font-medium text-rose-600 dark:text-rose-400"
+      >
         ${Number(meta.amount).toFixed(2)}
       </span>
     );

@@ -150,20 +150,36 @@ function MetadataCell({
   }
 
   if (m.amount != null) {
+    // Admin balance adjustments: a positive `amount` means the admin
+    // CREDITED the user — from the house's perspective that's a loss
+    // (we paid the user), so it reads rose with a − sign. A negative
+    // adjustment (debit) is money back to the house → emerald / +.
     const amt = Number(m.amount);
+    const houseGain = amt < 0;
     items.push(
       <span
         key="amt"
-        className={`text-xs font-medium ${amt >= 0 ? "text-green-400" : "text-red-400"}`}
+        className={`text-xs font-medium ${
+          amt === 0
+            ? "text-muted-foreground"
+            : houseGain
+              ? "text-emerald-600 dark:text-emerald-400"
+              : "text-rose-600 dark:text-rose-400"
+        }`}
       >
-        {amt >= 0 ? "+" : ""}
-        {formatCurrency(amt)}
+        {houseGain ? "+" : amt > 0 ? "-" : ""}
+        {formatCurrency(Math.abs(amt))}
       </span>
     );
   }
   if (m.amount_usd != null) {
+    // `amount_usd` is used on withdrawal_* / payout_* events — money
+    // leaving the house, so colored rose per CLAUDE.md.
     items.push(
-      <span key="amtusd" className="text-xs font-medium text-green-400">
+      <span
+        key="amtusd"
+        className="text-xs font-medium text-rose-600 dark:text-rose-400"
+      >
         {formatCurrency(Number(m.amount_usd))}
       </span>
     );
@@ -234,8 +250,13 @@ function MetadataCell({
     );
   }
   if (m.value != null && !m.amount && eventType.includes("promo")) {
+    // Promo code value — the credit we hand out → house liability →
+    // rose per CLAUDE.md.
     items.push(
-      <span key="val" className="text-xs font-medium text-green-400">
+      <span
+        key="val"
+        className="text-xs font-medium text-rose-600 dark:text-rose-400"
+      >
         {formatCurrency(Number(m.value))}
       </span>
     );

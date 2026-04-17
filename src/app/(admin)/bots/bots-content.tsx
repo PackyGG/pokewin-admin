@@ -283,9 +283,23 @@ export function BotsContent({ data }: { data: BotListItem[] }) {
                 <TableCell>{formatNumber(bot.battlesPlayed)}</TableCell>
                 <TableCell>{formatNumber(bot.battlesWon)}</TableCell>
                 <TableCell>{formatCurrency(bot.totalWageredUsd)}</TableCell>
-                <TableCell className="text-green-400">{formatCurrency(bot.totalWonUsd)}</TableCell>
-                <TableCell className="text-red-400">{formatCurrency(bot.totalLostUsd)}</TableCell>
-                <TableCell className={bot.totalWonUsd - bot.totalLostUsd >= 0 ? "text-green-400" : "text-red-400"}>
+                {/* Bots are house-controlled, so their P/L is the
+                    house's P/L directly: bot wins = house gains, bot
+                    losses = house losses. Palette matches the
+                    emerald/rose house-POV tone used everywhere else. */}
+                <TableCell className="text-emerald-600 dark:text-emerald-400">
+                  {formatCurrency(bot.totalWonUsd)}
+                </TableCell>
+                <TableCell className="text-rose-600 dark:text-rose-400">
+                  {formatCurrency(bot.totalLostUsd)}
+                </TableCell>
+                <TableCell
+                  className={
+                    bot.totalWonUsd - bot.totalLostUsd >= 0
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-rose-600 dark:text-rose-400"
+                  }
+                >
                   {formatCurrency(bot.totalWonUsd - bot.totalLostUsd)}
                 </TableCell>
                 <TableCell>

@@ -133,7 +133,11 @@ async function ClaimsTab({ page, perPage, type, search }: { page: number; perPag
                   </TableCell>
                   <TableCell>{formatDateTime(c.periodStart)}</TableCell>
                   <TableCell>{formatCurrency(c.wageredAmountUsd)}</TableCell>
-                  <TableCell>{formatCurrency(c.rakebackAmountUsd)}</TableCell>
+                  {/* Rakeback we'll pay (or paid) the user → house loss
+                      → rose per CLAUDE.md house-POV rule. */}
+                  <TableCell className="text-rose-600 dark:text-rose-400 tabular-nums">
+                    {formatCurrency(c.rakebackAmountUsd)}
+                  </TableCell>
                   <TableCell>
                     {c.claimedAt ? (
                       <Badge variant="outline" className="bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30">
