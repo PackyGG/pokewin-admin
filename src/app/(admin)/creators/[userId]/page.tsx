@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
+import { PageHero } from "@/components/modern-panels";
 import { getCreatorDetail, getCreatorTips, refreshStaleSocials } from "@/lib/queries/creators";
 import { requirePageAccess } from "@/lib/dal";
 import { Card, CardContent } from "@/components/ui/card";
@@ -54,23 +55,25 @@ export default async function CreatorDetailPage({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <Link href="/creators" className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground">
-          <ArrowLeft className="size-4" />
-        </Link>
-        <div className="flex-1">
-          <div className="flex items-center gap-3">
-            <Link href={`/users/${data.userId}`} className="text-page-title hover:underline">
-              {data.username ?? data.email}
-            </Link>
-            <RoleSelect userId={data.userId} currentRole={data.role} />
-            <Badge variant="outline" className="font-mono">{data.code}</Badge>
-            <LevelSelect userId={data.userId} currentLevel={data.level} />
+      <PageHero>
+        <div className="flex items-center gap-3">
+          <Link href="/creators" className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground">
+            <ArrowLeft className="size-4" />
+          </Link>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-3 flex-wrap">
+              <Link href={`/users/${data.userId}`} className="text-2xl font-bold hover:underline">
+                {data.username ?? data.email}
+              </Link>
+              <RoleSelect userId={data.userId} currentRole={data.role} />
+              <Badge variant="outline" className="font-mono">{data.code}</Badge>
+              <LevelSelect userId={data.userId} currentLevel={data.level} />
+            </div>
+            <p className="text-sm text-muted-foreground mt-0.5">{data.email}</p>
           </div>
-          <p className="text-description">{data.email}</p>
+          <CreatorPayoutButton affiliateUserId={data.userId} availableUsd={data.availableUsd} />
         </div>
-        <CreatorPayoutButton affiliateUserId={data.userId} availableUsd={data.availableUsd} />
-      </div>
+      </PageHero>
 
       <OverviewCard
         deals={data.deals}

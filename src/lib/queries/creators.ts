@@ -292,20 +292,26 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
 
   if (!account) return null;
 
+  // Referrals list now sources from signups (user.referred_by = creatorId) so
+  // we show every user who registered via this creator's link — including
+  // those who haven't deposited/wagered yet. The previous implementation
+  // pulled from affiliate_code_usages, which only records deposit/wager
+  // events, so freshly-signed-up users were invisible in the list.
   const [referrals, referralsTotal, payouts, allCodes, limits, webhooks, deals, socials, pnl] = await Promise.all([
-    db.affiliate_code_usages.findMany({
-      where: { affiliate_user_id: userId },
-      include: {
-        user_affiliate_code_usages_referred_user_idTouser: {
-          select: { username: true, email: true },
-        },
+    db.user.findMany({
+      where: { referred_by: userId },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        created_at: true,
       },
       orderBy: { created_at: "desc" },
       skip: ((refPage ?? 1) - 1) * (refPerPage ?? 20),
       take: refPerPage ?? 20,
     }),
-    db.affiliate_code_usages.count({
-      where: { affiliate_user_id: userId },
+    db.user.count({
+      where: { referred_by: userId },
     }),
     db.affiliate_payouts.findMany({
       where: { affiliate_user_id: userId },
@@ -372,14 +378,54 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
       : Promise.resolve(0),
   ]);
 
-  // FTD lookup for referred users
-  const referredUserIds = [...new Set(referrals.map((r) => r.referred_user_id))];
+  // For each signed-up user, look up their aggregated usage data +
+  // balance. If the user hasn't deposited/wagered yet we still show
+  // them in the list with zeros, so the admin can see who signed up.
+  const referredUserIds = referrals.map((r) => r.id);
+  const usageMap = new Map<
+    string,
+    {
+      depositAmountUsd: number;
+      wagerAmountUsd: number;
+      referrerCutUsd: number;
+      userBonusUsd: number;
+      usageCount: number;
+      lastUsageType: string | null;
+    }
+  >();
   let ftdMap = new Map<string, boolean>();
   if (referredUserIds.length > 0) {
-    const balances = await db.balances.findMany({
-      where: { user_id: { in: referredUserIds } },
-      select: { user_id: true, total_deposited: true },
-    });
+    const [usages, balances] = await Promise.all([
+      db.affiliate_code_usages.findMany({
+        where: {
+          affiliate_user_id: userId,
+          referred_user_id: { in: referredUserIds },
+        },
+        orderBy: { created_at: "desc" },
+      }),
+      db.balances.findMany({
+        where: { user_id: { in: referredUserIds } },
+        select: { user_id: true, total_deposited: true },
+      }),
+    ]);
+    for (const u of usages) {
+      const prev = usageMap.get(u.referred_user_id) ?? {
+        depositAmountUsd: 0,
+        wagerAmountUsd: 0,
+        referrerCutUsd: 0,
+        userBonusUsd: 0,
+        usageCount: 0,
+        lastUsageType: null,
+      };
+      usageMap.set(u.referred_user_id, {
+        depositAmountUsd: prev.depositAmountUsd + toNumber(u.deposit_amount_usd),
+        wagerAmountUsd: prev.wagerAmountUsd + toNumber(u.wager_amount_usd),
+        referrerCutUsd: prev.referrerCutUsd + toNumber(u.referrer_cut_usd),
+        userBonusUsd: prev.userBonusUsd + toNumber(u.user_bonus_usd),
+        usageCount: prev.usageCount + 1,
+        lastUsageType: prev.lastUsageType ?? u.usage_type,
+      });
+    }
     ftdMap = new Map(
       balances.map((b) => [b.user_id, toNumber(b.total_deposited) > 0])
     );
@@ -457,18 +503,21 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
         }
       : null,
     referrals: {
-      data: referrals.map((r) => ({
-        id: r.id,
-        referredUserId: r.referred_user_id,
-        referredUsername: r.user_affiliate_code_usages_referred_user_idTouser?.username ?? null,
-        usageType: r.usage_type,
-        depositAmountUsd: toNumber(r.deposit_amount_usd),
-        wagerAmountUsd: toNumber(r.wager_amount_usd),
-        referrerCutUsd: toNumber(r.referrer_cut_usd),
-        userBonusUsd: toNumber(r.user_bonus_usd),
-        isFtd: ftdMap.get(r.referred_user_id) ?? false,
-        createdAt: r.created_at.toISOString(),
-      })),
+      data: referrals.map((r) => {
+        const usage = usageMap.get(r.id);
+        return {
+          id: r.id,
+          referredUserId: r.id,
+          referredUsername: r.username ?? null,
+          usageType: usage?.lastUsageType ?? "signup",
+          depositAmountUsd: usage?.depositAmountUsd ?? 0,
+          wagerAmountUsd: usage?.wagerAmountUsd ?? 0,
+          referrerCutUsd: usage?.referrerCutUsd ?? 0,
+          userBonusUsd: usage?.userBonusUsd ?? 0,
+          isFtd: ftdMap.get(r.id) ?? false,
+          createdAt: r.created_at.toISOString(),
+        };
+      }),
       total: referralsTotal,
       page: refPage ?? 1,
       perPage: refPerPage ?? 20,

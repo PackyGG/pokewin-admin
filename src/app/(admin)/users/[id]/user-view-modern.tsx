@@ -353,7 +353,7 @@ export function UserViewModern({
 
       {activeTab === "inventory" && <InventoryTab data={data} />}
 
-      {activeTab === "creator" && <CreatorTab />}
+      {activeTab === "creator" && <CreatorTab data={data} />}
 
       {activeTab === "account" && (
         <AccountTab data={data} notes={notes} isAdmin={isAdmin} />
@@ -417,26 +417,26 @@ function KpiTile({
   return (
     <div
       className={cn(
-        "group relative overflow-hidden rounded-xl border px-4 py-3 transition-all hover:shadow-md min-w-[160px]",
+        "group relative overflow-hidden rounded-xl border px-5 py-4 transition-all hover:shadow-md min-w-[200px]",
         colors.bg,
       )}
     >
       <div className="flex items-center gap-2">
-        <Icon className={cn("size-4", colors.icon)} />
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <Icon className={cn("size-5", colors.icon)} />
+        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           {label}
         </span>
       </div>
       <p
         className={cn(
-          "mt-1 text-xl font-bold tabular-nums leading-tight",
+          "mt-1.5 text-2xl font-bold tabular-nums leading-tight",
           colors.text,
         )}
       >
         {value}
       </p>
       {sub && (
-        <p className="mt-0.5 text-[11px] text-muted-foreground truncate">
+        <p className="mt-1 text-xs text-muted-foreground truncate">
           {sub}
         </p>
       )}
@@ -768,21 +768,113 @@ function InventoryTab({ data }: { data: UserDetail }) {
   );
 }
 
-function CreatorTab() {
-  // Creator section is complex (has its own data fetch via lazy-load
-  // elsewhere). For now, inform the admin to use classic view for full
-  // creator context — this tab will get a dedicated rebuild in a
-  // follow-up batch once the core modern layout is approved.
+function CreatorTab({ data }: { data: UserDetail }) {
+  const { user, affiliate } = data;
+  // For creators, send admins to the dedicated /creators/[userId] page
+  // which has the full affiliate panel (deals, webhooks, payouts, code
+  // analytics, clicks, signups, etc.). Replicating all that inline on
+  // the user page would be duplication — one source of truth is cleaner.
   return (
-    <Card>
-      <CardContent className="py-12 text-center text-sm text-muted-foreground">
-        <Sparkles className="mx-auto size-8 opacity-50" />
-        <p className="mt-3">
-          Full Creator / Affiliate data — switch to Classic view for the
-          detailed breakdown. Modern version coming next.
-        </p>
-      </CardContent>
-    </Card>
+    <div className="space-y-4">
+      <Card className="overflow-hidden">
+        <CardContent className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 items-center justify-center rounded-lg bg-purple-500/15">
+              <Sparkles className="size-5 text-purple-500" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold">Creator / Affiliate</p>
+              <p className="text-xs text-muted-foreground">
+                {user.affiliateCode
+                  ? `Code ${user.affiliateCode}`
+                  : "No affiliate code"}
+                {affiliate ? ` · ${affiliate.totalReferred} referred` : ""}
+              </p>
+            </div>
+          </div>
+          <a
+            href={`/creators/${user.id}`}
+            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+          >
+            Open Creator Dashboard
+            <span aria-hidden>→</span>
+          </a>
+        </CardContent>
+      </Card>
+
+      {affiliate && (
+        <div className="grid gap-4 md:grid-cols-3">
+          <ModernMetricTile
+            label="Total Referred"
+            value={affiliate.totalReferred.toLocaleString()}
+            accent="purple"
+            icon={Sparkles}
+          />
+          <ModernMetricTile
+            label="Wager Volume"
+            value={formatCurrency(affiliate.totalWagerVolumeUsd)}
+            accent="cyan"
+            icon={Coins}
+          />
+          <ModernMetricTile
+            label="Total Earned"
+            value={formatCurrency(affiliate.totalEarnedUsd)}
+            accent="emerald"
+            icon={TrendingUp}
+          />
+          <ModernMetricTile
+            label="Available"
+            value={formatCurrency(affiliate.availableUsd)}
+            accent="blue"
+            icon={Wallet}
+          />
+          <ModernMetricTile
+            label="Paid Out"
+            value={formatCurrency(affiliate.totalPaidOutUsd)}
+            accent="emerald"
+            icon={ArrowUpFromLine}
+          />
+          <ModernMetricTile
+            label="Bonus Distributed"
+            value={formatCurrency(affiliate.totalBonusDistributedUsd)}
+            accent="amber"
+            icon={Gift}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Compact metric tile — similar to the hero KPI tile but for in-tab use.
+ * Kept inline rather than reusing the hero KpiTile so in-tab tiles can
+ * have their own sizing rules independent of the hero.
+ */
+function ModernMetricTile({
+  label,
+  value,
+  accent,
+  icon: Icon,
+}: {
+  label: string;
+  value: string;
+  accent: keyof typeof TILE_COLORS;
+  icon: React.ElementType;
+}) {
+  const colors = TILE_COLORS[accent] ?? TILE_COLORS.blue;
+  return (
+    <div className={cn("rounded-xl border p-4", colors.bg)}>
+      <div className="flex items-center gap-2">
+        <Icon className={cn("size-4", colors.icon)} />
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          {label}
+        </span>
+      </div>
+      <p className={cn("mt-1 text-2xl font-bold tabular-nums", colors.text)}>
+        {value}
+      </p>
+    </div>
   );
 }
 

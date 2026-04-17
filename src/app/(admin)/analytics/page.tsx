@@ -5,6 +5,7 @@ import {
   UserPlus,
   Package,
   Swords,
+  BarChart3,
 } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { getAnalyticsData } from "@/lib/queries/analytics";
@@ -14,6 +15,7 @@ import { AutoRefresh } from "../dashboard/auto-refresh";
 import { PeriodFilter } from "./period-filter";
 import { AnalyticsCharts } from "./charts";
 import { BattleModesSection, PackPopularitySection } from "./sections";
+import { PageHero } from "@/components/modern-panels";
 
 export const metadata = { title: "Analytics" };
 
@@ -50,10 +52,22 @@ export default async function AnalyticsPage({
   return (
     <div className="space-y-6">
       <AutoRefresh />
-      <div className="flex items-center justify-between">
-        <h1 className="text-page-title">Analytics</h1>
-        <PeriodFilter />
-      </div>
+      <PageHero>
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
+              <BarChart3 className="size-5 text-primary" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold leading-tight">Analytics</h1>
+              <p className="text-sm text-muted-foreground">
+                Revenue, acquisition, and gameplay metrics over time.
+              </p>
+            </div>
+          </div>
+          <PeriodFilter />
+        </div>
+      </PageHero>
 
       {/* Stat Cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">

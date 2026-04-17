@@ -3,6 +3,9 @@ import {
   Percent,
   Wallet,
   Coins,
+  LayoutDashboard,
+  Activity,
+  LineChart,
 } from "lucide-react";
 import { getDashboardStats, getRecentActivity } from "@/lib/queries/dashboard";
 import { requirePageAccess } from "@/lib/dal";
@@ -18,6 +21,7 @@ import { AutoRefresh } from "./auto-refresh";
 import { WagerChart, DepositsChart, SignupsChart } from "./charts";
 import { RecentActivity } from "./recent-activity";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
+import { PageHero, SectionHeading } from "@/components/modern-panels";
 
 export const metadata = { title: "Dashboard" };
 
@@ -39,7 +43,20 @@ export default async function DashboardPage({
   return (
     <div className="space-y-6">
       <AutoRefresh />
-      <h1 className="text-page-title">Dashboard</h1>
+
+      <PageHero>
+        <div className="flex items-center gap-3">
+          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
+            <LayoutDashboard className="size-5 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold leading-tight">Dashboard</h1>
+            <p className="text-sm text-muted-foreground">
+              Live platform overview — revenue, users, and recent activity.
+            </p>
+          </div>
+        </div>
+      </PageHero>
 
       {/* Primary stats — period-aware cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -81,20 +98,26 @@ export default async function DashboardPage({
       </div>
 
       {/* Charts */}
-      <div className="grid gap-4 lg:grid-cols-3">
-        <WagerChart data={stats.dailyWagers} />
-        <DepositsChart data={stats.dailyDeposits} />
-        <SignupsChart data={stats.dailySignups} />
+      <div className="space-y-3">
+        <SectionHeading icon={LineChart} title="Trends" />
+        <div className="grid gap-4 lg:grid-cols-3">
+          <WagerChart data={stats.dailyWagers} />
+          <DepositsChart data={stats.dailyDeposits} />
+          <SignupsChart data={stats.dailySignups} />
+        </div>
       </div>
 
       {/* Recent activity */}
-      <RecentActivity items={activity.data} />
-      <DataTablePagination
-        page={activity.page}
-        totalPages={activity.totalPages}
-        total={activity.total}
-        perPage={activity.perPage}
-      />
+      <div className="space-y-3">
+        <SectionHeading icon={Activity} title="Recent Activity" />
+        <RecentActivity items={activity.data} />
+        <DataTablePagination
+          page={activity.page}
+          totalPages={activity.totalPages}
+          total={activity.total}
+          perPage={activity.perPage}
+        />
+      </div>
     </div>
   );
 }
