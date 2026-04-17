@@ -76,17 +76,17 @@ export function AdminHeader({
             are enough identity to keep visible. */}
         <Link
           href="/profile"
-          className="flex items-center gap-2 rounded-full p-0.5 pr-2 hover:bg-accent transition-colors"
+          className="flex items-center gap-2.5 rounded-full p-1 pr-3 hover:bg-accent transition-colors"
           aria-label="Open my profile"
           title={label}
         >
-          <Avatar size="sm">
+          <Avatar className="size-9">
             {hasAvatar && (
               <AvatarImage src={`/api/admin/avatar/${adminId}`} alt={label} />
             )}
-            <AvatarFallback>{initials(label)}</AvatarFallback>
+            <AvatarFallback className="text-sm font-semibold">{initials(label)}</AvatarFallback>
           </Avatar>
-          <span className="hidden text-sm sm:inline">{label}</span>
+          <span className="hidden text-sm font-medium sm:inline">{label}</span>
         </Link>
         <Badge variant="outline" className={ROLE_COLORS[role]}>
           {role}

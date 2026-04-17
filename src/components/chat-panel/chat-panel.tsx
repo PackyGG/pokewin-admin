@@ -18,8 +18,9 @@ import { ChatPanelContent } from "./chat-panel-content";
  * two-tab switcher at the top of the Sheet. Data fetching for each tab is
  * lazy — only the active tab runs its server action.
  *
- * The trigger is a fixed-position icon button in the top-right corner so
- * it coexists with the existing admin top bar without competing for space.
+ * The trigger is a floating action button in the bottom-right corner —
+ * persistent and reachable from every admin page without competing with
+ * the top bar.
  */
 export function ChatPanel({ role }: { role: string }) {
   const [open, setOpen] = useState(false);
@@ -27,14 +28,12 @@ export function ChatPanel({ role }: { role: string }) {
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       <Button
-        variant="ghost"
-        size="icon"
         onClick={() => setOpen(true)}
         aria-label="Open chat and mutes panel"
         title="Chat & mutes"
-        className="fixed right-4 top-3 z-40 size-9 rounded-full border border-border/60 bg-background/80 shadow-sm backdrop-blur hover:bg-accent"
+        className="fixed right-6 bottom-6 z-40 size-14 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 text-white shadow-lg shadow-blue-500/30 ring-1 ring-white/10 transition-all hover:scale-105 hover:shadow-xl hover:shadow-blue-500/40 focus-visible:ring-2 focus-visible:ring-blue-400 [&_svg]:size-6"
       >
-        <MessagesSquare className="size-4" />
+        <MessagesSquare />
       </Button>
       <SheetContent
         side="right"
