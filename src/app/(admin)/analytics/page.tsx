@@ -75,7 +75,7 @@ export default async function AnalyticsPage({
         <StatCard
           title="Realized Profit"
           animatedValue={data.realizedProfit}
-          formatValue={formatCurrency}
+          formatKind="currency"
           subtitle={`Dep ${formatCurrency(data.realizedProfitBreakdown.totalDeposits)} − WD ${formatCurrency(data.realizedProfitBreakdown.totalWithdrawals)} − Bal ${formatCurrency(data.realizedProfitBreakdown.userBalance)} − Inv ${formatCurrency(data.realizedProfitBreakdown.inventory)} − Vouchers ${formatCurrency(data.realizedProfitBreakdown.vouchers)} − Rakeback ${formatCurrency(data.realizedProfitBreakdown.unclaimedRakeback)}`}
           icon={TrendingUp}
           color="green"
@@ -83,7 +83,7 @@ export default async function AnalyticsPage({
         <StatCard
           title="GGR (Gross Gaming Revenue)"
           animatedValue={data.ggr}
-          formatValue={formatCurrency}
+          formatKind="currency"
           subtitle={`${formatCurrency(totalWager)} wagered total`}
           icon={DollarSign}
           color="blue"
@@ -91,7 +91,7 @@ export default async function AnalyticsPage({
         <StatCard
           title="Unique Visitors"
           animatedValue={data.uniqueVisitors}
-          formatValue={(n) => formatNumber(Math.round(n))}
+          formatKind="number"
           subtitle="Distinct users with transactions"
           icon={Eye}
           color="cyan"
@@ -99,7 +99,7 @@ export default async function AnalyticsPage({
         <StatCard
           title="New Signups"
           animatedValue={data.newSignups}
-          formatValue={(n) => formatNumber(Math.round(n))}
+          formatKind="number"
           subtitle={`${data.uniqueVisitors > 0 ? ((data.newSignups / data.uniqueVisitors) * 100).toFixed(1) : "0"}% of active users`}
           icon={UserPlus}
           color="purple"
@@ -107,7 +107,7 @@ export default async function AnalyticsPage({
         <StatCard
           title="Pack Wagers"
           animatedValue={data.packWager}
-          formatValue={formatCurrency}
+          formatKind="currency"
           subtitle={`${packPct}% of total wagers`}
           icon={Package}
           color="orange"
@@ -119,7 +119,7 @@ export default async function AnalyticsPage({
         <StatCard
           title="Battle Wagers"
           animatedValue={data.battleWager}
-          formatValue={formatCurrency}
+          formatKind="currency"
           subtitle={`${battlePct}% of total wagers`}
           icon={Swords}
           color="pink"

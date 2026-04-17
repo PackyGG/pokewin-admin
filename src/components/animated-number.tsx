@@ -1,6 +1,21 @@
 "use client";
 
 import * as React from "react";
+import { formatCurrency, formatNumber } from "@/lib/utils/format";
+
+export type AnimatedNumberFormat = "currency" | "number" | "percent";
+
+function formatByKind(kind: AnimatedNumberFormat, n: number): string {
+  switch (kind) {
+    case "currency":
+      return formatCurrency(n);
+    case "percent":
+      return `${n.toFixed(2)}%`;
+    case "number":
+    default:
+      return formatNumber(Math.round(n));
+  }
+}
 
 /**
  * Smoothly animates a numeric value from 0 (on mount) or from the previous
@@ -22,7 +37,9 @@ export function AnimatedNumber({
   className,
 }: {
   value: number;
-  format: (n: number) => string;
+  /** Serializable format kind — so this component is safe to use from
+   *  Server Components. Function formatters would break RSC serialization. */
+  format: AnimatedNumberFormat;
   duration?: number;
   className?: string;
 }) {
@@ -71,7 +88,7 @@ export function AnimatedNumber({
 
   return (
     <span className={className} style={{ fontVariantNumeric: "tabular-nums" }}>
-      {format(display)}
+      {formatByKind(format, display)}
     </span>
   );
 }

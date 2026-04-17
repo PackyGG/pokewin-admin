@@ -37,7 +37,7 @@ export function PnlStatCard({ pnl }: { pnl: number }) {
         <div className="text-stat-value">
           <span className={isProfit ? "text-emerald-400" : "text-red-400"}>
             {isProfit ? "+" : ""}
-            <AnimatedNumber value={pnl} format={formatCurrency} />
+            <AnimatedNumber value={pnl} format="currency" />
           </span>
         </div>
       </CardContent>
@@ -89,7 +89,7 @@ export function GgrStatCard({ ggr }: { ggr: Record<string, number> }) {
         <div className="text-stat-value">
           <span className={isProfit ? "text-sky-400" : "text-red-400"}>
             {isProfit ? "+" : ""}
-            <AnimatedNumber value={value} format={formatCurrency} />
+            <AnimatedNumber value={value} format="currency" />
           </span>
         </div>
       </CardContent>
@@ -133,7 +133,7 @@ export function WagerStatCard({
         <div className="text-stat-value">
           <AnimatedNumber
             value={wagers[selected] ?? 0}
-            format={formatCurrency}
+            format="currency"
           />
         </div>
       </CardContent>
@@ -177,7 +177,7 @@ export function DepositsStatCard({
         <div className="text-stat-value">
           <AnimatedNumber
             value={deposits[selected] ?? 0}
-            format={formatCurrency}
+            format="currency"
           />
         </div>
       </CardContent>

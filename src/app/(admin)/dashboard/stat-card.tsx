@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { AnimatedNumber } from "@/components/animated-number";
+import { AnimatedNumber, type AnimatedNumberFormat } from "@/components/animated-number";
 
 const colorMap = {
   blue: { bg: "bg-blue-500/10", icon: "text-blue-400" },
@@ -15,16 +15,16 @@ const colorMap = {
 export type StatCardColor = keyof typeof colorMap;
 
 /**
- * Pass `value` for a plain rendered string, OR `animatedValue` + `formatValue`
- * to get a smooth count-up on mount. The animated path is used for hero KPIs
- * (analytics top tiles, dashboard secondary stats) so the page feels alive
- * after a data load. Reduce-motion users see the final value instantly.
+ * Pass `value` for a plain rendered string, OR `animatedValue` + `formatKind`
+ * to get a smooth transition on value changes. `formatKind` is a serializable
+ * string enum so the component works across the RSC boundary — passing a
+ * function formatter would crash Server Component rendering.
  */
 export function StatCard({
   title,
   value,
   animatedValue,
-  formatValue,
+  formatKind,
   subtitle,
   icon: Icon,
   color,
@@ -33,7 +33,7 @@ export function StatCard({
   title: string;
   value?: string | number;
   animatedValue?: number;
-  formatValue?: (n: number) => string;
+  formatKind?: AnimatedNumberFormat;
   subtitle?: string;
   icon: LucideIcon;
   color?: StatCardColor;
@@ -41,7 +41,7 @@ export function StatCard({
 }) {
   const colors = color ? colorMap[color] : null;
   const useAnimated =
-    typeof animatedValue === "number" && typeof formatValue === "function";
+    typeof animatedValue === "number" && typeof formatKind === "string";
 
   return (
     <Card className={cn(colors?.bg)}>
@@ -54,7 +54,7 @@ export function StatCard({
       <CardContent>
         <div className="text-stat-value">
           {useAnimated ? (
-            <AnimatedNumber value={animatedValue!} format={formatValue!} />
+            <AnimatedNumber value={animatedValue!} format={formatKind!} />
           ) : (
             value
           )}

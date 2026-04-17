@@ -72,7 +72,7 @@ export default async function DashboardPage({
         <StatCard
           title="Total Users"
           animatedValue={stats.users.total}
-          formatValue={(n) => formatNumber(Math.round(n))}
+          formatKind="number"
           subtitle={`+${stats.users.today} today, +${stats.users.week} this week`}
           icon={Users}
           color="blue"
@@ -83,7 +83,7 @@ export default async function DashboardPage({
             stats.financials.totalSiteBalance +
             stats.financials.totalInventoryValue
           }
-          formatValue={formatCurrency}
+          formatKind="currency"
           subtitle={`${formatCurrency(stats.financials.totalSiteBalance)} cash · ${formatCurrency(stats.financials.totalInventoryValue)} unsold inventory`}
           icon={Wallet}
           color="green"
@@ -91,7 +91,7 @@ export default async function DashboardPage({
         <StatCard
           title="Avg Deposit"
           animatedValue={stats.financials.avgDeposit}
-          formatValue={formatCurrency}
+          formatKind="currency"
           subtitle="Across all users (lifetime)"
           icon={Coins}
           color="orange"
@@ -104,7 +104,7 @@ export default async function DashboardPage({
                 100
               : 0
           }
-          formatValue={(n) => `${n.toFixed(2)}%`}
+          formatKind="percent"
           icon={Percent}
           color="pink"
         />
