@@ -252,15 +252,34 @@ function openSocket() {
     if (evt) dispatch(evt);
   };
 
-  socket.onerror = () => {
+  socket.onerror = (ev) => {
     // Don't null ws here — the browser will follow up with `close` and
     // we let that handler do the cleanup so reconnect state stays in
-    // one place.
+    // one place. We DO log the error now because the most common failure
+    // modes (wrong URL, blocked by origin policy, DNS, TLS) silently
+    // produce a close-without-reason in most browsers — without this log
+    // operators can't tell a working-but-empty feed apart from a broken
+    // connection.
+    console.error(
+      `[packy-ws] socket error (url=${getWsUrl()})`,
+      ev,
+    );
   };
 
-  socket.onclose = () => {
+  socket.onclose = (ev) => {
     if (ws !== socket) return;
     ws = null;
+    // Log the close code + reason so the devtools console surfaces WHY
+    // the socket died. Browsers give us limited info on a refused
+    // handshake, but code 1006 (abnormal) + empty reason is the classic
+    // signal for "handshake rejected" (origin blocked, 403, etc).
+    if (ev.code !== 1000 && ev.code !== 1001) {
+      console.warn(
+        `[packy-ws] socket closed code=${ev.code} reason=${
+          ev.reason || "(none)"
+        } wasClean=${ev.wasClean} url=${getWsUrl()}`,
+      );
+    }
     if (totalSubscribers() === 0) {
       setStatus("closed");
       return;
