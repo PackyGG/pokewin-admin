@@ -2,35 +2,48 @@ import { db } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 
 export async function getUserDetail(id: string) {
-  let inventoryValueResult: { _sum: { value_at_obtained: unknown } };
-  let wagerBreakdown: { type: string; _sum: { amount: unknown } }[];
-  let vouchersResult: { _sum: { value: unknown } };
-  try {
-    [inventoryValueResult, wagerBreakdown, vouchersResult] = await Promise.all([
-      db.user_inventory.aggregate({
-        where: { user_id: id, sold_at: null, exchanged_at: null },
-        _sum: { value_at_obtained: true },
-      }),
-      db.ledger_transactions.groupBy({
-        by: ["type"],
-        where: {
-          user_id: id,
-          type: { in: ["pack_opening", "battle_bet", "battle_sponsorship"] },
-          status: "completed",
-        },
-        _sum: { amount: true },
-      }),
-      db.vouchers.aggregate({
-        where: { user_id: id, claimed_at: null },
-        _sum: { value: true },
-      }),
-    ]);
-  } catch (e) {
-    console.error("[getUserDetail] inventory/wager/vouchers query failed:", e);
-    inventoryValueResult = { _sum: { value_at_obtained: null } };
-    wagerBreakdown = [];
-    vouchersResult = { _sum: { value: null } };
-  }
+  // Everything is independent — one Promise.all instead of two serialized ones
+  // cuts the worst-case latency roughly in half on hot user-detail loads.
+  let inventoryValueResult: { _sum: { value_at_obtained: unknown } } = {
+    _sum: { value_at_obtained: null },
+  };
+  let wagerBreakdown: { type: string; _sum: { amount: unknown } }[] = [];
+  let vouchersResult: { _sum: { value: unknown } } = { _sum: { value: null } };
+
+  const inventoryValuePromise = db.user_inventory
+    .aggregate({
+      where: { user_id: id, sold_at: null, exchanged_at: null },
+      _sum: { value_at_obtained: true },
+    })
+    .catch((e) => {
+      console.error("[getUserDetail] inventory aggregate failed:", e);
+      return { _sum: { value_at_obtained: null as unknown } };
+    });
+
+  const wagerBreakdownPromise = db.ledger_transactions
+    .groupBy({
+      by: ["type"],
+      where: {
+        user_id: id,
+        type: { in: ["pack_opening", "battle_bet", "battle_sponsorship"] },
+        status: "completed",
+      },
+      _sum: { amount: true },
+    })
+    .catch((e) => {
+      console.error("[getUserDetail] wager breakdown query failed:", e);
+      return [] as { type: string; _sum: { amount: unknown } }[];
+    });
+
+  const vouchersPromise = db.vouchers
+    .aggregate({
+      where: { user_id: id, claimed_at: null },
+      _sum: { value: true },
+    })
+    .catch((e) => {
+      console.error("[getUserDetail] vouchers aggregate failed:", e);
+      return { _sum: { value: null as unknown } };
+    });
 
   const [
     user,
@@ -49,6 +62,9 @@ export async function getUserDetail(id: string) {
     depositCount,
     depositTotalAgg,
     withdrawalCount,
+    inventoryValueResolved,
+    wagerBreakdownResolved,
+    vouchersResolved,
   ] = await Promise.all([
     db.user.findUnique({
       where: { id },
@@ -124,7 +140,14 @@ export async function getUserDetail(id: string) {
         status: { in: ["completed", "shipped"] },
       },
     }),
+    inventoryValuePromise,
+    wagerBreakdownPromise,
+    vouchersPromise,
   ]);
+
+  inventoryValueResult = inventoryValueResolved as typeof inventoryValueResult;
+  wagerBreakdown = wagerBreakdownResolved as typeof wagerBreakdown;
+  vouchersResult = vouchersResolved as typeof vouchersResult;
 
   if (!user) return null;
 

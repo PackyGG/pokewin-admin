@@ -95,13 +95,24 @@ export async function getRaffleDetail(id: string, params?: { page?: number; perP
   const packIds = rawPrizes.filter((p) => p.type === "pack").map((p) => p.id);
   const cardIds = rawPrizes.filter((p) => p.type === "card").map((p) => p.id);
 
-  const [packs, cards] = await Promise.all([
+  // Packs, cards, entries and entries-count are all independent — run together.
+  const [packs, cards, entries, entriesTotal] = await Promise.all([
     packIds.length > 0
       ? db.packs.findMany({ where: { id: { in: packIds } }, select: { id: true, name: true, image_url: true, price: true } })
-      : [],
+      : Promise.resolve([] as Array<{ id: string; name: string; image_url: string | null; price: unknown }>),
     cardIds.length > 0
       ? db.cards.findMany({ where: { id: { in: cardIds } }, select: { id: true, name: true, image_url: true, price: true } })
-      : [],
+      : Promise.resolve([] as Array<{ id: string; name: string; image_url: string | null; price: unknown }>),
+    db.raffle_entries.findMany({
+      where: { raffle_id: id },
+      include: {
+        user: { select: { username: true } },
+      },
+      orderBy: { created_at: "desc" },
+      skip: (entriesPage - 1) * entriesPerPage,
+      take: entriesPerPage,
+    }),
+    db.raffle_entries.count({ where: { raffle_id: id } }),
   ]);
 
   const packMap = new Map(packs.map((p) => [p.id, p]));
@@ -116,19 +127,6 @@ export async function getRaffleDetail(id: string, params?: { page?: number; perP
       priceUsd: item?.price != null ? toNumber(item.price) : null,
     };
   });
-
-  const [entries, entriesTotal] = await Promise.all([
-    db.raffle_entries.findMany({
-      where: { raffle_id: id },
-      include: {
-        user: { select: { username: true } },
-      },
-      orderBy: { created_at: "desc" },
-      skip: (entriesPage - 1) * entriesPerPage,
-      take: entriesPerPage,
-    }),
-    db.raffle_entries.count({ where: { raffle_id: id } }),
-  ]);
 
   return {
     id: raffle.id,

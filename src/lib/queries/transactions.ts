@@ -376,58 +376,78 @@ export async function getTransactionDetail(id: string) {
     });
 
     if (session) {
-      // Fetch pack info based on game type
+      // Fetch pack info based on game type, card details, and related
+      // transactions in parallel — they're independent.
       let packs: { name: string; imageUrl: string | null; priceUsd: number; quantity: number }[] = [];
 
-      if (session.game_type === "pack") {
-        const pack = await db.packs.findUnique({
-          where: { id: session.game_id },
-          select: { name: true, image_url: true, price: true, cards_per_open: true },
-        });
-        if (pack) {
-          const cardsCount = session.provably_fair_results.length;
-          const packsOpened = pack.cards_per_open > 0 ? Math.round(cardsCount / pack.cards_per_open) : 1;
-          packs = [{ name: pack.name, imageUrl: pack.image_url, priceUsd: toNumber(pack.price), quantity: packsOpened }];
-        }
-      } else if (session.game_type === "battle") {
-        const battle = await db.battles.findUnique({
-          where: { id: session.game_id },
-          select: { pack_ids: true, bet_amount: true },
-        });
-        if (battle && battle.pack_ids.length > 0) {
-          const battlePacks = await db.packs.findMany({
-            where: { id: { in: battle.pack_ids } },
-            select: { name: true, image_url: true, price: true },
-          });
-          packs = battlePacks.map((p) => ({
-            name: p.name,
-            imageUrl: p.image_url,
-            priceUsd: toNumber(p.price),
-            quantity: 1,
-          }));
-        }
-      }
-
-      // Fetch cards from inventory items
       const cardIds = session.provably_fair_results
         .map((pf) => pf.user_inventory?.card_id)
         .filter((cid): cid is string => !!cid);
 
-      const cards = cardIds.length > 0
-        ? await db.cards.findMany({
-            where: { id: { in: cardIds } },
-            select: { id: true, name: true, image_url: true, rarity: true, price: true },
-          })
-        : [];
+      const packsPromise =
+        session.game_type === "pack"
+          ? db.packs
+              .findUnique({
+                where: { id: session.game_id },
+                select: { name: true, image_url: true, price: true, cards_per_open: true },
+              })
+              .then((pack) => {
+                if (!pack) return [];
+                const cardsCount = session.provably_fair_results.length;
+                const packsOpened =
+                  pack.cards_per_open > 0 ? Math.round(cardsCount / pack.cards_per_open) : 1;
+                return [
+                  {
+                    name: pack.name,
+                    imageUrl: pack.image_url,
+                    priceUsd: toNumber(pack.price),
+                    quantity: packsOpened,
+                  },
+                ];
+              })
+          : session.game_type === "battle"
+          ? db.battles
+              .findUnique({
+                where: { id: session.game_id },
+                select: { pack_ids: true, bet_amount: true },
+              })
+              .then(async (battle) => {
+                if (!battle || battle.pack_ids.length === 0) return [];
+                const battlePacks = await db.packs.findMany({
+                  where: { id: { in: battle.pack_ids } },
+                  select: { name: true, image_url: true, price: true },
+                });
+                return battlePacks.map((p) => ({
+                  name: p.name,
+                  imageUrl: p.image_url,
+                  priceUsd: toNumber(p.price),
+                  quantity: 1,
+                }));
+              })
+          : Promise.resolve([] as { name: string; imageUrl: string | null; priceUsd: number; quantity: number }[]);
 
-      const cardsMap = new Map(cards.map((c) => [c.id, c]));
+      const cardsPromise =
+        cardIds.length > 0
+          ? db.cards.findMany({
+              where: { id: { in: cardIds } },
+              select: { id: true, name: true, image_url: true, rarity: true, price: true },
+            })
+          : Promise.resolve([] as Array<{ id: string; name: string; image_url: string | null; rarity: string | null; price: unknown }>);
 
-      // Fetch all ledger transactions linked to this game session
-      const relatedTxs = await db.ledger_transactions.findMany({
+      const relatedTxsPromise = db.ledger_transactions.findMany({
         where: { game_session_id: tx.game_session_id! },
         orderBy: { created_at: "asc" },
         select: { id: true, type: true, amount: true, balance_before: true, balance_after: true, description: true },
       });
+
+      const [packsResolved, cards, relatedTxs] = await Promise.all([
+        packsPromise,
+        cardsPromise,
+        relatedTxsPromise,
+      ]);
+      packs = packsResolved;
+
+      const cardsMap = new Map(cards.map((c) => [c.id, c]));
 
       const betAmount = toNumber(session.bet_amount);
       const totalPayout = session.provably_fair_results

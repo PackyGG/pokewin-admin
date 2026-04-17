@@ -138,13 +138,22 @@ export async function getWithdrawalDetail(id: string) {
 
   const user = withdrawal.user_card_withdrawal_requests_user_idTouser;
 
-  // Fetch inventory items
-  let items: { id: string; cardName: string; imageUrl: string | null; rarity: string | null; value: number }[] = [];
-  if (withdrawal.inventory_item_ids.length > 0) {
-    const inventoryItems = await db.user_inventory.findMany({
-      where: { id: { in: withdrawal.inventory_item_ids } },
-    });
+  // Fetch inventory items and vouchers in parallel — they're independent.
+  const [inventoryItems, voucherRows] = await Promise.all([
+    withdrawal.inventory_item_ids.length > 0
+      ? db.user_inventory.findMany({
+          where: { id: { in: withdrawal.inventory_item_ids } },
+        })
+      : Promise.resolve([] as Awaited<ReturnType<typeof db.user_inventory.findMany>>),
+    withdrawal.voucher_ids.length > 0
+      ? db.vouchers.findMany({
+          where: { id: { in: withdrawal.voucher_ids } },
+        })
+      : Promise.resolve([] as Awaited<ReturnType<typeof db.vouchers.findMany>>),
+  ]);
 
+  let items: { id: string; cardName: string; imageUrl: string | null; rarity: string | null; value: number }[] = [];
+  if (inventoryItems.length > 0) {
     const cardIds = [...new Set(inventoryItems.map((i) => i.card_id))];
     const cards = cardIds.length > 0
       ? await db.cards.findMany({
@@ -166,19 +175,12 @@ export async function getWithdrawalDetail(id: string) {
     });
   }
 
-  // Fetch vouchers
-  let vouchers: { id: string; value: number; origin: string; description: string | null }[] = [];
-  if (withdrawal.voucher_ids.length > 0) {
-    const voucherRows = await db.vouchers.findMany({
-      where: { id: { in: withdrawal.voucher_ids } },
-    });
-    vouchers = voucherRows.map((v) => ({
-      id: v.id,
-      value: toNumber(v.value),
-      origin: v.origin,
-      description: v.description,
-    }));
-  }
+  const vouchers: { id: string; value: number; origin: string; description: string | null }[] = voucherRows.map((v) => ({
+    id: v.id,
+    value: toNumber(v.value),
+    origin: v.origin,
+    description: v.description,
+  }));
 
   return {
     id: withdrawal.id,

@@ -179,14 +179,6 @@ export async function getBattleDetail(id: string) {
 
   if (!battle) return null;
 
-  // Fetch packs
-  const packs = battle.pack_ids.length > 0
-    ? await db.packs.findMany({
-        where: { id: { in: battle.pack_ids } },
-        select: { id: true, name: true, image_url: true, price: true },
-      })
-    : [];
-
   // Collect all provably_fair_results and extract card IDs
   type CardEntry = {
     id: string;
@@ -210,12 +202,22 @@ export async function getBattleDetail(id: string) {
       cardIds.add(meta.card_id as string);
     }
   }
-  const cards = cardIds.size > 0
-    ? await db.cards.findMany({
-        where: { id: { in: [...cardIds] } },
-        select: { id: true, name: true, image_url: true, rarity: true, price: true },
-      })
-    : [];
+
+  // Fetch packs and cards in parallel — they're independent lookups.
+  const [packs, cards] = await Promise.all([
+    battle.pack_ids.length > 0
+      ? db.packs.findMany({
+          where: { id: { in: battle.pack_ids } },
+          select: { id: true, name: true, image_url: true, price: true },
+        })
+      : Promise.resolve([] as Array<{ id: string; name: string; image_url: string | null; price: unknown }>),
+    cardIds.size > 0
+      ? db.cards.findMany({
+          where: { id: { in: [...cardIds] } },
+          select: { id: true, name: true, image_url: true, rarity: true, price: true },
+        })
+      : Promise.resolve([] as Array<{ id: string; name: string; image_url: string | null; rarity: string | null; price: unknown }>),
+  ]);
   const cardMap = new Map(cards.map((c) => [c.id, c]));
 
   // Distribute cards by participant_id from result_metadata

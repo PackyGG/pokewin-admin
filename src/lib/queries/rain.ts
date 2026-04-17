@@ -128,23 +128,33 @@ export async function getRainDetail(
 ): Promise<RainDetail | null> {
   const { page = 1, perPage = 20 } = params;
 
-  const rain = await db.rains.findUnique({
-    where: { id },
-    include: {
-      user: { select: { username: true } },
-      rain_tips: {
-        include: { user: { select: { username: true, role: true } } },
-        orderBy: { created_at: "desc" },
+  // Rain, admin-users (for team check) and paginated entries are independent —
+  // fetch them in parallel. Tipper-user lookup needs the rain first since it
+  // depends on rain.rain_tips[].user_id, so it stays on a second hop.
+  const [rain, adminUsers, entries, totalEntries] = await Promise.all([
+    db.rains.findUnique({
+      where: { id },
+      include: {
+        user: { select: { username: true } },
+        rain_tips: {
+          include: { user: { select: { username: true, role: true } } },
+          orderBy: { created_at: "desc" },
+        },
       },
-    },
-  });
+    }),
+    adminDb.admin_users.findMany({ select: { email: true } }),
+    db.rain_entries.findMany({
+      where: { rain_id: id },
+      include: { user: { select: { username: true } } },
+      orderBy: { created_at: "desc" },
+      skip: (page - 1) * perPage,
+      take: perPage,
+    }),
+    db.rain_entries.count({ where: { rain_id: id } }),
+  ]);
 
   if (!rain) return null;
 
-  // Get admin user emails to cross-reference team members
-  const adminUsers = await adminDb.admin_users.findMany({
-    select: { email: true },
-  });
   const adminEmails = new Set(adminUsers.map((a) => a.email));
 
   // Get user emails for tippers to check team membership
@@ -156,18 +166,6 @@ export async function getRainDetail(
       })
     : [];
   const tipperMap = new Map(tipperUsers.map((u) => [u.id, u]));
-
-  // Paginated entries
-  const [entries, totalEntries] = await Promise.all([
-    db.rain_entries.findMany({
-      where: { rain_id: id },
-      include: { user: { select: { username: true } } },
-      orderBy: { created_at: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
-    }),
-    db.rain_entries.count({ where: { rain_id: id } }),
-  ]);
 
   return {
     id: rain.id,

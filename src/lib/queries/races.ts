@@ -151,27 +151,28 @@ async function getAllTimeLeaderboard(params: {
 
   const searchFilter = search ? `%${search}%` : null;
 
-  const rows = await db.$queryRaw<
-    { user_id: string; username: string | null; total_wagered: number }[]
-  >`
-    SELECT
-      s.user_id,
-      u.username,
-      SUM(s.wagered_usd)::float AS total_wagered
-    FROM race_leaderboard_snapshots s
-    LEFT JOIN "user" u ON u.id = s.user_id
-    WHERE (${searchFilter}::text IS NULL OR u.username ILIKE ${searchFilter} OR u.email ILIKE ${searchFilter} OR s.user_id = ${search ?? ""})
-    GROUP BY s.user_id, u.username
-    ORDER BY total_wagered DESC
-    LIMIT ${perPage} OFFSET ${offset}
-  `;
-
-  const countResult = await db.$queryRaw<{ count: bigint }[]>`
-    SELECT COUNT(DISTINCT s.user_id) AS count
-    FROM race_leaderboard_snapshots s
-    LEFT JOIN "user" u ON u.id = s.user_id
-    WHERE (${searchFilter}::text IS NULL OR u.username ILIKE ${searchFilter} OR u.email ILIKE ${searchFilter} OR s.user_id = ${search ?? ""})
-  `;
+  const [rows, countResult] = await Promise.all([
+    db.$queryRaw<
+      { user_id: string; username: string | null; total_wagered: number }[]
+    >`
+      SELECT
+        s.user_id,
+        u.username,
+        SUM(s.wagered_usd)::float AS total_wagered
+      FROM race_leaderboard_snapshots s
+      LEFT JOIN "user" u ON u.id = s.user_id
+      WHERE (${searchFilter}::text IS NULL OR u.username ILIKE ${searchFilter} OR u.email ILIKE ${searchFilter} OR s.user_id = ${search ?? ""})
+      GROUP BY s.user_id, u.username
+      ORDER BY total_wagered DESC
+      LIMIT ${perPage} OFFSET ${offset}
+    `,
+    db.$queryRaw<{ count: bigint }[]>`
+      SELECT COUNT(DISTINCT s.user_id) AS count
+      FROM race_leaderboard_snapshots s
+      LEFT JOIN "user" u ON u.id = s.user_id
+      WHERE (${searchFilter}::text IS NULL OR u.username ILIKE ${searchFilter} OR u.email ILIKE ${searchFilter} OR s.user_id = ${search ?? ""})
+    `,
+  ]);
 
   const total = Number(countResult[0]?.count ?? 0);
 

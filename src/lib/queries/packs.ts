@@ -187,32 +187,63 @@ export async function getPackStats(
 ): Promise<PackStats> {
   // The single source of truth: provably_fair_results.result_metadata->>'pack_id'
   // tells us exactly which pack produced each card in both solo and battle openings.
-  const rows = await db.$queryRawUnsafe<
-    {
-      date: Date;
-      openings: string;
-      solo: string;
-      battle: string;
-      borrowed: string;
-      sponsored: string;
-      payout: string;
-    }[]
-  >(`
-    SELECT
-      DATE(pf.created_at) AS date,
-      COUNT(*)::text AS openings,
-      COUNT(*) FILTER (WHERE pf.battle_id IS NULL)::text AS solo,
-      COUNT(*) FILTER (WHERE pf.battle_id IS NOT NULL)::text AS battle,
-      COUNT(*) FILTER (WHERE b.borrow_percentage > 0)::text AS borrowed,
-      COUNT(*) FILTER (WHERE b.sponsorship_percentage > 0)::text AS sponsored,
-      COALESCE(SUM(c.price::numeric), 0)::text AS payout
-    FROM provably_fair_results pf
-    LEFT JOIN cards c ON c.id = (pf.result_metadata->>'card_id')::uuid
-    LEFT JOIN battles b ON b.id = pf.battle_id
-    WHERE pf.result_metadata->>'pack_id' = $1
-    GROUP BY DATE(pf.created_at)
-    ORDER BY date
-  `, packId);
+  // Fetch the daily breakdown and the borrow/sponsor breakdown in parallel —
+  // they're independent queries against the same base table.
+  const [rows, breakdownRows] = await Promise.all([
+    db.$queryRawUnsafe<
+      {
+        date: Date;
+        openings: string;
+        solo: string;
+        battle: string;
+        borrowed: string;
+        sponsored: string;
+        payout: string;
+      }[]
+    >(`
+      SELECT
+        DATE(pf.created_at) AS date,
+        COUNT(*)::text AS openings,
+        COUNT(*) FILTER (WHERE pf.battle_id IS NULL)::text AS solo,
+        COUNT(*) FILTER (WHERE pf.battle_id IS NOT NULL)::text AS battle,
+        COUNT(*) FILTER (WHERE b.borrow_percentage > 0)::text AS borrowed,
+        COUNT(*) FILTER (WHERE b.sponsorship_percentage > 0)::text AS sponsored,
+        COALESCE(SUM(c.price::numeric), 0)::text AS payout
+      FROM provably_fair_results pf
+      LEFT JOIN cards c ON c.id = (pf.result_metadata->>'card_id')::uuid
+      LEFT JOIN battles b ON b.id = pf.battle_id
+      WHERE pf.result_metadata->>'pack_id' = $1
+      GROUP BY DATE(pf.created_at)
+      ORDER BY date
+    `, packId),
+    // Breakdown for pie charts: borrow% / sponsored% per mode.
+    // For battles: borrow_percentage / sponsorship_percentage from battles table.
+    // For solo: borrow% from ledger_transactions description (e.g. "90% borrowed").
+    // result_metadata contains borrow_percentage for BOTH solo and battle results.
+    // For battles, sponsorship_percentage comes from the battles table.
+    db.$queryRawUnsafe<
+      {
+        is_battle: boolean;
+        borrow_pct: number;
+        sponsor_pct: number;
+        count: string;
+      }[]
+    >(`
+      SELECT
+        (pf.battle_id IS NOT NULL) AS is_battle,
+        CASE
+          WHEN pf.battle_id IS NOT NULL THEN COALESCE(b.borrow_percentage, 0)
+          ELSE COALESCE((pf.result_metadata->>'borrow_percentage')::int, 0)
+        END AS borrow_pct,
+        COALESCE(b.sponsorship_percentage, 0) AS sponsor_pct,
+        COUNT(*)::text AS count
+      FROM provably_fair_results pf
+      LEFT JOIN battles b ON b.id = pf.battle_id
+      WHERE pf.result_metadata->>'pack_id' = $1
+      GROUP BY is_battle, borrow_pct, sponsor_pct
+      ORDER BY count DESC
+    `, packId),
+  ]);
 
   const now = new Date();
   const day = 24 * 60 * 60 * 1000;
@@ -284,34 +315,6 @@ export async function getPackStats(
   const dbRtp = dbTotals.actualRtp;
   const rtp = dbRtp > 2 ? dbRtp / 100 : dbRtp; // normalize to 0-1
   const houseEdge = 1 - rtp;
-
-  // Breakdown for pie charts: borrow% / sponsored% per mode.
-  // For battles: borrow_percentage / sponsorship_percentage from battles table.
-  // For solo: borrow% from ledger_transactions description (e.g. "90% borrowed").
-  // result_metadata contains borrow_percentage for BOTH solo and battle results.
-  // For battles, sponsorship_percentage comes from the battles table.
-  const breakdownRows = await db.$queryRawUnsafe<
-    {
-      is_battle: boolean;
-      borrow_pct: number;
-      sponsor_pct: number;
-      count: string;
-    }[]
-  >(`
-    SELECT
-      (pf.battle_id IS NOT NULL) AS is_battle,
-      CASE
-        WHEN pf.battle_id IS NOT NULL THEN COALESCE(b.borrow_percentage, 0)
-        ELSE COALESCE((pf.result_metadata->>'borrow_percentage')::int, 0)
-      END AS borrow_pct,
-      COALESCE(b.sponsorship_percentage, 0) AS sponsor_pct,
-      COUNT(*)::text AS count
-    FROM provably_fair_results pf
-    LEFT JOIN battles b ON b.id = pf.battle_id
-    WHERE pf.result_metadata->>'pack_id' = $1
-    GROUP BY is_battle, borrow_pct, sponsor_pct
-    ORDER BY count DESC
-  `, packId);
 
   function buildBreakdown(isBattle: boolean) {
     const filtered = breakdownRows.filter((r) => r.is_battle === isBattle);
@@ -399,16 +402,15 @@ export async function getPackGames(
         : "pf.created_at";
   const orderDir = filters?.sortOrder === "asc" ? "ASC" : "DESC";
 
-  const countResult = await db.$queryRawUnsafe<{ count: string }[]>(
-    `SELECT COUNT(*)::text AS count
-     FROM provably_fair_results pf
-     LEFT JOIN "user" u ON u.id = (pf.result_metadata->>'user_id')
-     WHERE ${whereClause}`,
-    ...params,
-  );
-  const total = Number(countResult[0]?.count ?? 0);
-
-  const rows = await db.$queryRawUnsafe<
+  const [countResult, rows] = await Promise.all([
+    db.$queryRawUnsafe<{ count: string }[]>(
+      `SELECT COUNT(*)::text AS count
+       FROM provably_fair_results pf
+       LEFT JOIN "user" u ON u.id = (pf.result_metadata->>'user_id')
+       WHERE ${whereClause}`,
+      ...params,
+    ),
+    db.$queryRawUnsafe<
     {
       id: string;
       user_id: string | null;
@@ -446,8 +448,10 @@ export async function getPackGames(
      WHERE ${whereClause}
      ORDER BY ${orderCol} ${orderDir}
      LIMIT ${perPage} OFFSET ${(page - 1) * perPage}`,
-    ...params,
-  );
+      ...params,
+    ),
+  ]);
+  const total = Number(countResult[0]?.count ?? 0);
 
   return {
     data: rows.map((r) => ({
