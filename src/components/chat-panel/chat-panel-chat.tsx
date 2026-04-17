@@ -405,7 +405,7 @@ function ConfirmAction({
   // dispatches onClick but does not guarantee closing when the handler
   // kicks off an async transition — the user was seeing the dialog
   // stay open after "Confirm" even though the action ran successfully.
-  const [open, setOpen] = React.useState(false);
+  const [open, setOpen] = useState(false);
   return (
     <AlertDialog open={open} onOpenChange={setOpen}>
       <AlertDialogTrigger
