@@ -61,6 +61,7 @@ import {
   AccountTab,
 } from "./user-view-modern-tabs";
 import { ChangeRoleDialog } from "./user-tabs-dialogs";
+import type { PaginatedInventory } from "./user-tabs-types";
 
 // ---------------------------------------------------------------------------
 // Re-exports — preserve the public surface so call sites that previously
@@ -125,6 +126,8 @@ export function UserViewModern({
   rewards,
   notes,
   pnlBreakdown,
+  inventory,
+  disposedInventory,
 }: {
   data: UserDetail;
   gamingTx: PaginatedTransactions;
@@ -132,6 +135,8 @@ export function UserViewModern({
   rewards: UserRewards;
   notes: AdminNote[];
   pnlBreakdown: PnlBreakdown;
+  inventory: PaginatedInventory;
+  disposedInventory: PaginatedInventory;
 }) {
   const { user, balances, counts, capabilities } = data;
   const isAdmin = data.sessionRole === "admin";
@@ -392,7 +397,13 @@ export function UserViewModern({
         <GamingTab data={data} gamingTx={gamingTx} />
       )}
 
-      {activeTab === "inventory" && <InventoryTab data={data} />}
+      {activeTab === "inventory" && (
+        <InventoryTab
+          data={data}
+          inventory={inventory}
+          disposedInventory={disposedInventory}
+        />
+      )}
 
       {activeTab === "creator" && <CreatorTab data={data} />}
 

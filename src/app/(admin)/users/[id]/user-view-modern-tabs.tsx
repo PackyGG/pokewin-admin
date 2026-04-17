@@ -49,6 +49,7 @@ import {
   GAMING_TX_TYPES,
   FINANCIAL_TX_TYPES,
 } from "./user-tabs";
+import type { PaginatedInventory } from "./user-tabs-types";
 import type { UserRewards } from "@/lib/queries/users";
 import {
   SectionHeading,
@@ -195,25 +196,29 @@ export function GamingTab({
 //  INVENTORY TAB
 // ───────────────────────────────────────────────────────────────────
 
-export function InventoryTab({ data }: { data: UserDetail }) {
+export function InventoryTab({
+  data,
+  inventory,
+  disposedInventory,
+}: {
+  data: UserDetail;
+  inventory: PaginatedInventory;
+  disposedInventory: PaginatedInventory;
+}) {
   const { user, balances } = data;
-  // NOTE: the classic view lazy-loads inventory. For the modern view we
-  // just mount the InventoryGrid with an empty initial set — it will
-  // fetch on mount via its internal mechanism the same way the classic
-  // tab does when opened.
   return (
     <div className="space-y-6">
       <SectionHeading icon={Gem} title="Current Inventory" />
       <InventoryGrid
         userId={user.id}
-        initialInventory={emptyInventoryPage()}
+        initialInventory={inventory}
         inventoryValue={balances?.inventoryValue ?? 0}
         statusFilter="owned"
       />
       <SectionHeading icon={Trophy} title="Sold & Exchanged" />
       <DisposedCardsTable
         userId={user.id}
-        initialInventory={emptyInventoryPage()}
+        initialInventory={disposedInventory}
       />
     </div>
   );
@@ -451,14 +456,3 @@ function iconFor(type: string): React.ElementType {
   return Coins;
 }
 
-// Empty inventory page placeholder — InventoryGrid fetches its own data
-// on mount, so we start with an empty paginated shape.
-function emptyInventoryPage() {
-  return {
-    data: [],
-    total: 0,
-    page: 1,
-    perPage: 24,
-    totalPages: 0,
-  };
-}

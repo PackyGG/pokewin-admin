@@ -69,8 +69,6 @@ export function UserTabs({
   // sites (page.tsx) and type stability.
   void transactions;
   void auditLog;
-  void inventory;
-  void disposedInventory;
   return (
     <UserViewModern
       data={data}
@@ -79,6 +77,8 @@ export function UserTabs({
       rewards={rewards}
       notes={notes}
       pnlBreakdown={pnlBreakdown}
+      inventory={inventory}
+      disposedInventory={disposedInventory}
     />
   );
 }
