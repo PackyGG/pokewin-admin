@@ -1,35 +1,22 @@
 "use client";
 
-import Link from "next/link";
 import { Search } from "lucide-react";
-import { CardImage } from "@/components/card-image";
+import { CardTile, TileDataRow } from "@/components/card-tile";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import type { CardListItem } from "@/lib/queries/cards";
 
-// Compact rarity colors — small dots/badges, not full pills. Matches the
-// palette used across the admin (STATUS_COLORS style) but trimmed for
-// density. Keys must be lowercased before lookup.
-const RARITY_DOT: Record<string, string> = {
-  common: "bg-zinc-400",
-  uncommon: "bg-green-500",
-  rare: "bg-blue-500",
-  "ultra rare": "bg-purple-500",
-  secret: "bg-yellow-500",
-};
-
-const RARITY_RING: Record<string, string> = {
-  common: "ring-zinc-500/20",
-  uncommon: "ring-green-500/30",
-  rare: "ring-blue-500/30",
-  "ultra rare": "ring-purple-500/40",
-  secret: "ring-yellow-500/40",
-};
-
-function rarityKey(rarity: string | null): string {
-  return (rarity ?? "").toLowerCase();
-}
-
+/**
+ * Compact 10-per-row catalog grid. Each tile delegates to the shared
+ * <CardTile /> so the visual vocabulary stays in lockstep with the card
+ * grid rendered inside /packs/[id].
+ *
+ * Layout choices:
+ *   - Image uses the 5/7 aspect defined in <CardTile />, which is a touch
+ *     calmer than the old 3/4 and matches the natural TCG proportion.
+ *   - Below the name we stack two sparse data rows (rarity + price, set +
+ *     card number) in tabular-nums so numbers line up down the column.
+ */
 export function CardsGrid({ data }: { data: CardListItem[] }) {
   if (data.length === 0) {
     return (
@@ -54,57 +41,71 @@ export function CardsGrid({ data }: { data: CardListItem[] }) {
       )}
     >
       {data.map((card) => {
-        const key = rarityKey(card.rarity);
-        const dot = RARITY_DOT[key] ?? "bg-muted-foreground/40";
-        const ring = RARITY_RING[key] ?? "ring-border";
+        const rarityLabel = card.rarity ?? null;
+        const setLabel = card.setName ?? null;
+        const cardNumber = card.cardNumber ?? null;
+
         return (
-          <Link
+          <CardTile
             key={card.id}
+            id={card.id}
             href={`/cards/${card.id}`}
-            className={cn(
-              "group relative flex flex-col overflow-hidden rounded-xl border bg-card/50",
-              "transition-all duration-200",
-              "motion-safe:hover:-translate-y-0.5 hover:shadow-md hover:bg-card hover:border-primary/40",
-            )}
-          >
-            {/* Rarity accent line — a hair on top, tinted by rarity. */}
-            <div className={cn("h-0.5 w-full", dot)} aria-hidden />
-
-            {/* Image box — padded inside the container, NOT edge-to-edge. */}
-            <div className="relative px-2 pt-2">
-              <div
-                className={cn(
-                  "relative overflow-hidden rounded-lg bg-muted/40 ring-1",
-                  ring,
-                )}
-                style={{ aspectRatio: "3 / 4" }}
-              >
-                <CardImage
-                  src={card.imageUrl}
-                  alt={card.name}
-                  className="absolute inset-0 size-full motion-safe:transition-transform motion-safe:duration-200 motion-safe:group-hover:scale-[1.03]"
+            name={card.name}
+            imageUrl={card.imageUrl}
+            rarity={card.rarity}
+            // Set name sits under the name as a muted subtitle. If we don't
+            // have one fall back to the card type so the row isn't empty.
+            subtitle={setLabel ?? card.type ?? null}
+            extraRows={
+              <>
+                {/* Rarity + price row — rarity on the left reads like a
+                    category label, price aligns right in tabular-nums. */}
+                <TileDataRow
+                  label={
+                    rarityLabel ? (
+                      <span className="capitalize">{rarityLabel}</span>
+                    ) : (
+                      "—"
+                    )
+                  }
+                  value={
+                    card.priceUsd > 0 ? (
+                      formatCurrency(card.priceUsd)
+                    ) : (
+                      <span className="text-muted-foreground/60">—</span>
+                    )
+                  }
                 />
-
-                {/* Tiny price chip over the image bottom-right */}
-                {card.priceUsd > 0 && (
-                  <div className="absolute bottom-1 right-1 rounded-md bg-background/85 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums shadow-sm ring-1 ring-border backdrop-blur-sm">
-                    {formatCurrency(card.priceUsd)}
-                  </div>
+                {/* Card # + HP (or type fallback) — secondary density row. */}
+                {(cardNumber || card.hp != null) && (
+                  <TileDataRow
+                    label={
+                      cardNumber ? (
+                        <span className="font-mono">#{cardNumber}</span>
+                      ) : (
+                        card.type ?? "—"
+                      )
+                    }
+                    value={
+                      card.hp != null ? (
+                        <span>
+                          {card.hp}
+                          <span className="text-muted-foreground/60">
+                            {" "}
+                            HP
+                          </span>
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground/60 capitalize">
+                          {card.type ?? "—"}
+                        </span>
+                      )
+                    }
+                  />
                 )}
-              </div>
-            </div>
-
-            {/* Footer: name + rarity dot. Kept tight to max density. */}
-            <div className="flex items-center gap-1.5 px-2 py-1.5">
-              <span
-                className={cn("size-1.5 shrink-0 rounded-full", dot)}
-                aria-hidden
-              />
-              <h3 className="min-w-0 flex-1 truncate text-[11px] font-medium leading-tight group-hover:text-primary">
-                {card.name}
-              </h3>
-            </div>
-          </Link>
+              </>
+            }
+          />
         );
       })}
     </div>

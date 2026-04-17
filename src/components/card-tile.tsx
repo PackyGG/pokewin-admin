@@ -64,7 +64,7 @@ export function TileDataRow({
   value,
   valueClassName,
 }: {
-  label: string;
+  label: React.ReactNode;
   value: React.ReactNode;
   valueClassName?: string;
 }) {
