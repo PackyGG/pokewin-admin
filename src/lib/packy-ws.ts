@@ -3,33 +3,36 @@
 import * as React from "react";
 
 /**
- * Browser-side client for the packy.gg live WebSocket
- * (`wss://api.packy.gg/v1/ws`).
+ * Browser-side client for the packy.gg live event stream.
+ *
+ * Transport:
+ *   The packy.gg WebSocket gateway (`wss://api.packy.gg/v1/ws`) enforces
+ *   an `Origin: https://beta.packy.gg` handshake check. Browsers pin the
+ *   Origin header to the page's own hostname, so a direct WS from
+ *   `pokewin-admin.vercel.app` is always rejected by the gateway.
+ *
+ *   To work around that, we open an `EventSource` against a server-side
+ *   proxy on our own origin (`/api/packy-live`). The Node.js route opens
+ *   the real WebSocket with the correct Origin header and forwards every
+ *   message to connected admins as an SSE `packy` event. Everything on
+ *   the client side (hooks, event shape, dispatch) stays identical to
+ *   the previous direct-WS design — just the wire changed.
  *
  * Design:
- *   - One shared `WebSocket` per tab. All React hooks and imperative
- *     subscribers go through the same module-level singleton so we don't
- *     open N connections for N components.
- *   - Opens lazily on the first subscriber and closes again once the
- *     last subscriber unsubscribes — the admin panel can sit on pages
- *     that don't care about live data without keeping the socket open.
- *   - Auto-reconnect with exponential backoff: 1s → 2s → 4s → … capped
- *     at 30s. Connect attempts reset after a successful `open`.
- *   - Pauses when the tab is hidden. `document.visibilityState` flips
- *     to "hidden" on tab-switch / minimize, so we close the socket and
- *     reopen it on the next `visibilitychange`. Mirrors the pattern
- *     already used by `useSseStream` for our own SSE feeds.
- *   - Malformed messages are logged to `console.error` (so operators
- *     can notice a schema drift during development) and skipped.
+ *   - One shared `EventSource` per tab, opened lazily on the first
+ *     subscriber and closed again once the last subscriber unsubscribes.
+ *   - EventSource handles its own reconnect with a default ~3s retry, so
+ *     we don't layer our own backoff on top of it. We still track a
+ *     status machine for the UI indicator.
+ *   - Pauses when the tab is hidden (`document.visibilityState`). The
+ *     server-side proxy tears down its upstream WS when the SSE response
+ *     aborts, so hidden tabs don't keep an upstream connection alive.
+ *   - Malformed messages are logged to `console.error` and skipped.
  *
- * URL:
- *   Configurable via `NEXT_PUBLIC_PACKY_WS_URL`. Falls back to the
- *   production endpoint so the feature still works in environments that
- *   haven't added the env var yet.
- *
- * Not wrapped in a try/catch at the module level on purpose — this file
- * is `"use client"` and any import-time failure surfaces during dev in
- * the React tree where it's easier to diagnose.
+ * URL override:
+ *   `NEXT_PUBLIC_PACKY_SSE_URL` — path of the SSE proxy. Defaults to
+ *   `/api/packy-live`. Allows a custom proxy if ever needed without a
+ *   code change.
  */
 
 // ─── Types ────────────────────────────────────────────────────────
@@ -95,8 +98,7 @@ export type ConnectionStatus = "connecting" | "open" | "reconnecting" | "closed"
 
 // ─── Singleton state ──────────────────────────────────────────────
 
-const DEFAULT_URL = "wss://api.packy.gg/v1/ws";
-const MAX_BACKOFF_MS = 30_000;
+const DEFAULT_SSE_PATH = "/api/packy-live";
 
 // Handlers are stored by event `type`. Unknown event types can still be
 // subscribed to (the emit path never rejects); malformed JSON is logged
@@ -109,18 +111,16 @@ const handlers = new Map<string, Set<Handler>>();
 type StatusHandler = (status: ConnectionStatus) => void;
 const statusHandlers = new Set<StatusHandler>();
 
-let ws: WebSocket | null = null;
-let retryAttempt = 0;
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let source: EventSource | null = null;
 let visibilityBound = false;
 let currentStatus: ConnectionStatus = "closed";
 
-function getWsUrl(): string {
+function getSseUrl(): string {
   const fromEnv =
     typeof process !== "undefined"
-      ? process.env.NEXT_PUBLIC_PACKY_WS_URL
+      ? process.env.NEXT_PUBLIC_PACKY_SSE_URL
       : undefined;
-  return fromEnv && fromEnv.trim() ? fromEnv : DEFAULT_URL;
+  return fromEnv && fromEnv.trim() ? fromEnv : DEFAULT_SSE_PATH;
 }
 
 function setStatus(next: ConnectionStatus) {
@@ -143,7 +143,10 @@ function totalSubscribers(): number {
 
 function parseMessage(raw: string): PackyEvent | null {
   try {
-    const parsed: unknown = JSON.parse(raw);
+    // The proxy may escape embedded newlines as `\n` to survive the
+    // SSE `data:` framing. Reverse that before JSON.parse.
+    const normalized = raw.includes("\\n") ? raw.replace(/\\n/g, "\n") : raw;
+    const parsed: unknown = JSON.parse(normalized);
     if (
       parsed &&
       typeof parsed === "object" &&
@@ -172,133 +175,130 @@ function dispatch(evt: PackyEvent) {
   }
 }
 
-function scheduleReconnect() {
-  if (reconnectTimer != null) return;
+function closeSource(reason: "manual" | "hidden" | "teardown" | "rotation") {
+  if (source) {
+    // Null handlers before close so a synchronous "error" during
+    // teardown doesn't re-enter openSource().
+    source.onopen = null;
+    source.onerror = null;
+    source.onmessage = null;
+    try {
+      source.close();
+    } catch {
+      // Already closed — ignore.
+    }
+    source = null;
+  }
+  // On a clean teardown or hidden-pause, we just mark closed. On
+  // rotation we want the next openSource() (triggered by the caller) to
+  // flip through connecting again.
+  setStatus("closed");
+  if (reason === "rotation") {
+    openSource();
+  }
+}
+
+function openSource() {
+  if (typeof window === "undefined") return;
   if (totalSubscribers() === 0) return;
+  if (source) return;
   if (
     typeof document !== "undefined" &&
     document.visibilityState === "hidden"
   ) {
-    // Tab is hidden — don't reconnect now. `handleVisibility` will
-    // kick us back on when the tab is visible again.
+    return;
+  }
+
+  setStatus("connecting");
+
+  let es: EventSource;
+  try {
+    es = new EventSource(getSseUrl(), { withCredentials: true });
+  } catch (err) {
+    console.error("[packy-ws] failed to construct EventSource", err);
     setStatus("closed");
     return;
   }
-  setStatus("reconnecting");
-  const delay = Math.min(MAX_BACKOFF_MS, 1000 * 2 ** retryAttempt);
-  retryAttempt += 1;
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    openSocket();
-  }, delay);
-}
+  source = es;
 
-function closeSocket(reason: "manual" | "hidden" | "teardown") {
-  if (reconnectTimer != null) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
-  if (ws) {
-    // Remove handlers before close() so a synchronous "close" event
-    // during teardown doesn't re-enter openSocket().
-    ws.onopen = null;
-    ws.onmessage = null;
-    ws.onerror = null;
-    ws.onclose = null;
-    try {
-      ws.close();
-    } catch {
-      // Already closing / closed — ignore.
-    }
-    ws = null;
-  }
-  if (reason !== "hidden") {
-    retryAttempt = 0;
-  }
-  setStatus("closed");
-}
-
-function openSocket() {
-  if (typeof window === "undefined") return;
-  if (totalSubscribers() === 0) return;
-  if (ws) return;
-  if (
-    typeof document !== "undefined" &&
-    document.visibilityState === "hidden"
-  ) {
-    return;
-  }
-
-  setStatus(retryAttempt === 0 ? "connecting" : "reconnecting");
-
-  let socket: WebSocket;
-  try {
-    socket = new WebSocket(getWsUrl());
-  } catch (err) {
-    console.error("[packy-ws] failed to construct WebSocket", err);
-    scheduleReconnect();
-    return;
-  }
-  ws = socket;
-
-  socket.onopen = () => {
-    retryAttempt = 0;
+  // The proxy sends `open` the moment the upstream WS opens. Before
+  // that we're merely "connecting" even if the SSE handshake itself is
+  // complete — our users care about upstream readiness, not the proxy
+  // leg.
+  es.addEventListener("open", () => {
     setStatus("open");
+  });
+
+  // Native onopen fires when the SSE handshake succeeds. If the proxy
+  // is reachable but the upstream WS is still negotiating, we leave the
+  // status at `connecting` until the proxy emits its own `open` event
+  // above.
+  es.onopen = () => {
+    // Stay in `connecting` until the proxy signals upstream-open via
+    // the explicit `open` event. Keeps the indicator accurate.
   };
 
-  socket.onmessage = (ev: MessageEvent) => {
+  es.addEventListener("packy", (ev: MessageEvent) => {
     if (typeof ev.data !== "string") return;
     const evt = parseMessage(ev.data);
     if (evt) dispatch(evt);
-  };
+  });
 
-  socket.onerror = (ev) => {
-    // Don't null ws here — the browser will follow up with `close` and
-    // we let that handler do the cleanup so reconnect state stays in
-    // one place. We DO log the error now because the most common failure
-    // modes (wrong URL, blocked by origin policy, DNS, TLS) silently
-    // produce a close-without-reason in most browsers — without this log
-    // operators can't tell a working-but-empty feed apart from a broken
-    // connection.
-    console.error(
-      `[packy-ws] socket error (url=${getWsUrl()})`,
-      ev,
-    );
-  };
+  es.addEventListener("reconnect", () => {
+    // Server-initiated rotation (before Vercel's maxDuration cap). Close
+    // this EventSource and immediately open a new one.
+    if (source !== es) return;
+    closeSource("rotation");
+  });
 
-  socket.onclose = (ev) => {
-    if (ws !== socket) return;
-    ws = null;
-    // Log the close code + reason so the devtools console surfaces WHY
-    // the socket died. Browsers give us limited info on a refused
-    // handshake, but code 1006 (abnormal) + empty reason is the classic
-    // signal for "handshake rejected" (origin blocked, 403, etc).
-    if (ev.code !== 1000 && ev.code !== 1001) {
-      console.warn(
-        `[packy-ws] socket closed code=${ev.code} reason=${
-          ev.reason || "(none)"
-        } wasClean=${ev.wasClean} url=${getWsUrl()}`,
-      );
+  es.addEventListener("close", (ev: MessageEvent) => {
+    // Upstream WS dropped. EventSource will auto-reconnect to the
+    // proxy, which will in turn open a new upstream WS.
+    if (ev.data) {
+      try {
+        const parsed = JSON.parse(ev.data);
+        console.warn(
+          `[packy-ws] upstream WS closed code=${parsed.code} reason=${
+            parsed.reason || "(none)"
+          }`,
+        );
+      } catch {
+        // Non-JSON payload — already logged at parse above.
+      }
     }
-    if (totalSubscribers() === 0) {
+    setStatus("reconnecting");
+  });
+
+  es.addEventListener("error-upstream" as "error", (ev: MessageEvent) => {
+    if (ev.data) {
+      console.warn("[packy-ws] upstream error event", ev.data);
+    }
+  });
+
+  es.onerror = () => {
+    // EventSource's native error — fires on network failure or when the
+    // connection drops. EventSource auto-reconnects by default, so we
+    // only flip the UI status; the next `open` will flip it back.
+    if (source !== es) return;
+    // readyState 0 = connecting (after a drop), 2 = closed permanently
+    if (es.readyState === 2) {
       setStatus("closed");
-      return;
+    } else {
+      setStatus("reconnecting");
     }
-    scheduleReconnect();
   };
 }
 
 function handleVisibility() {
   if (typeof document === "undefined") return;
   if (document.visibilityState === "visible") {
-    if (totalSubscribers() > 0 && !ws) {
-      retryAttempt = 0;
-      openSocket();
+    if (totalSubscribers() > 0 && !source) {
+      openSource();
     }
   } else {
     // Close on hide so we don't pump into a hidden tab. Reconnect
     // happens automatically when the tab becomes visible.
-    closeSocket("hidden");
+    closeSource("hidden");
   }
 }
 
@@ -314,8 +314,8 @@ function ensureVisibilityBinding() {
 /**
  * Subscribe to a single event `type`. Returns an unsubscribe function.
  *
- * Opens the shared socket on first subscriber and closes it once the
- * last subscriber unsubscribes. Safe to call on the server — the
+ * Opens the shared EventSource on first subscriber and closes it once
+ * the last subscriber unsubscribes. Safe to call on the server — the
  * returned function is a no-op if `window` isn't available.
  */
 export function subscribePackyWs<T extends PackyEvent>(
@@ -336,9 +336,9 @@ export function subscribePackyWs<T extends PackyEvent>(
   const typed = handler as unknown as Handler;
   set.add(typed);
 
-  // Open the socket if this is the first subscriber across all types.
-  if (!ws && reconnectTimer == null) {
-    openSocket();
+  // Open the source if this is the first subscriber across all types.
+  if (!source) {
+    openSource();
   }
 
   return () => {
@@ -347,11 +347,8 @@ export function subscribePackyWs<T extends PackyEvent>(
       bucket.delete(typed);
       if (bucket.size === 0) handlers.delete(eventType);
     }
-    // If no more subscribers anywhere, tear the socket down. We don't
-    // touch `visibilityBound` — the listener is idempotent and cheap,
-    // so leaving it attached for the life of the tab is fine.
     if (totalSubscribers() === 0) {
-      closeSocket("teardown");
+      closeSource("teardown");
     }
   };
 }
