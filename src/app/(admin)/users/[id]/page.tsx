@@ -6,6 +6,11 @@ import { getNotesForUser } from "@/lib/queries/admin-notes";
 import { requirePageAccess, getUserPermissions } from "@/lib/dal";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { UserTabs } from "./user-tabs";
+import { computeRiskScore } from "@/lib/fraud/score";
+import {
+  getSharedIpUsers,
+  getSharedFingerprintUsers,
+} from "@/lib/fraud/shared-identity";
 
 export const metadata = { title: "User Detail" };
 
@@ -33,7 +38,7 @@ export default async function UserDetailPage({
   const CARD_SALE_TYPES = ["card_sale", "reward_card_sale"];
   const EXCHANGE_TYPES = ["card_exchange", "exchange_excess_to_voucher", "exchange_excess_credit", "battle_excess_to_voucher", "voucher_exchange"];
 
-  const [data, transactions, auditLog, inventory, disposedInventory, pnlBreakdown, notes, gamingTx, financialTx, rewards] = await Promise.all([
+  const [data, transactions, auditLog, inventory, disposedInventory, pnlBreakdown, notes, gamingTx, financialTx, rewards, riskBreakdown, sharedIps, sharedFingerprints] = await Promise.all([
     getUserDetail(id),
     getUserTransactions(id, txPage, txPerPage, {
       type: typeof sp.txType === "string" ? sp.txType : undefined,
@@ -51,6 +56,11 @@ export default async function UserDetailPage({
     getUserTransactions(id, 1, 10, { types: GAMING_TYPES }),
     getUserTransactions(id, 1, 10, { types: FINANCIAL_TYPES }),
     getUserRewards(id),
+    // Fraud / trust assessment. Heavy aggregation — cached in-memory
+    // for 60s so moderators clicking around the user don't re-run it.
+    computeRiskScore(id),
+    getSharedIpUsers(id),
+    getSharedFingerprintUsers(id),
   ]);
 
   if (!data) notFound();
@@ -95,7 +105,7 @@ export default async function UserDetailPage({
           canWipeAccounts: hasCapability(perms, "__can_wipe_accounts"),
           canChangeUserRoles: hasCapability(perms, "__can_change_user_roles"),
         };
-      })() }} transactions={transactions} auditLog={auditLog} inventory={inventory} disposedInventory={disposedInventory} pnlBreakdown={pnlBreakdown} notes={notes} gamingTx={gamingTx} financialTx={financialTx} rewards={rewards} />
+      })() }} transactions={transactions} auditLog={auditLog} inventory={inventory} disposedInventory={disposedInventory} pnlBreakdown={pnlBreakdown} notes={notes} gamingTx={gamingTx} financialTx={financialTx} rewards={rewards} riskBreakdown={riskBreakdown} sharedIps={sharedIps} sharedFingerprints={sharedFingerprints} />
     </div>
   );
 }

@@ -10,6 +10,8 @@ import type {
   AdminNote,
 } from "./user-tabs-types";
 import type { UserRewards } from "@/lib/queries/users";
+import type { RiskScoreBreakdown } from "@/lib/fraud/score";
+import type { SharedIdentityUser } from "@/lib/fraud/shared-identity";
 
 // ---------------------------------------------------------------------------
 // Re-exports — preserve the public surface so existing imports keep working.
@@ -52,6 +54,9 @@ export function UserTabs({
   gamingTx,
   financialTx,
   rewards,
+  riskBreakdown,
+  sharedIps,
+  sharedFingerprints,
 }: {
   data: UserDetail;
   transactions: PaginatedTransactions;
@@ -63,6 +68,9 @@ export function UserTabs({
   gamingTx: PaginatedTransactions;
   financialTx: PaginatedTransactions;
   rewards: UserRewards;
+  riskBreakdown: RiskScoreBreakdown;
+  sharedIps: SharedIdentityUser[];
+  sharedFingerprints: SharedIdentityUser[];
 }) {
   // Classic view was removed — UserTabs now always renders the modern
   // user detail page. The wrapper is kept for backwards-compatible call
@@ -79,6 +87,9 @@ export function UserTabs({
       pnlBreakdown={pnlBreakdown}
       inventory={inventory}
       disposedInventory={disposedInventory}
+      riskBreakdown={riskBreakdown}
+      sharedIps={sharedIps}
+      sharedFingerprints={sharedFingerprints}
     />
   );
 }
