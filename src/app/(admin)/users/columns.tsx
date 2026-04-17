@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { UsersSortHeader } from "./sort-header";
 import { ROLE_COLORS, USER_STATUS_COLORS } from "@/lib/constants";
-import { formatCurrency, formatDate } from "@/lib/utils/format";
+import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
 export type UserRow = {
@@ -175,8 +175,8 @@ export const columns: ColumnDef<UserRow>[] = [
       <UsersSortHeader title="Registered" sortKey="created_at" />
     ),
     cell: ({ row }) => (
-      <span className="text-xs text-muted-foreground">
-        {formatDate(row.original.createdAt)}
+      <span className="whitespace-nowrap text-xs tabular-nums text-muted-foreground">
+        {formatDateTime(row.original.createdAt)}
       </span>
     ),
   },

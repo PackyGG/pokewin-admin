@@ -188,6 +188,21 @@ export async function getLiveActivity(params: {
             "pack_opening",
             "battle_bet",
             "battle_sponsorship",
+            // Battle wins — the house paying a user back because they
+            // won. Classified as a payout (red) so the feed actually
+            // shows every win, not just the bet that started it.
+            "battle_refund",
+            // Bonus credits the house granted — rakeback / affiliate
+            // claims / admin balance adjustments / deposit bonuses.
+            "rakeback_claim",
+            "affiliate_claim",
+            "deposit_bonus",
+            "admin_balance_adjustment",
+            "balance_reward_claim",
+            "waitlist_prize",
+            "gift_card_redeemed",
+            "promo_code_redeemed",
+            "voucher_redeemed",
           ],
         },
       },
@@ -246,6 +261,10 @@ export async function getLiveActivity(params: {
     .slice(0, limit);
 }
 
+// House-perspective classifier. `wager` = money flowing INTO the house
+// (bet placed, green). Everything else that gives the user money is a
+// `payout` (red). `deposit` / `withdrawal` / `card_sale` kept as
+// specific kinds so the icon + label read naturally.
 function classifyLedgerKind(type: string): LiveActivityEventKind {
   switch (type) {
     case "deposit":
@@ -259,6 +278,18 @@ function classifyLedgerKind(type: string): LiveActivityEventKind {
     case "card_sale":
     case "reward_card_sale":
       return "card_sale";
+    // Anything that credits the user's balance — battle wins, rakeback,
+    // affiliate claims, admin top-ups, reward claims, bonuses, etc.
+    case "battle_refund":
+    case "rakeback_claim":
+    case "affiliate_claim":
+    case "deposit_bonus":
+    case "admin_balance_adjustment":
+    case "balance_reward_claim":
+    case "waitlist_prize":
+    case "gift_card_redeemed":
+    case "promo_code_redeemed":
+    case "voucher_redeemed":
     case "rain_win":
     case "race_prize":
     case "creator_tip":

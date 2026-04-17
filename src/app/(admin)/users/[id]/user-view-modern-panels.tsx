@@ -175,19 +175,30 @@ export function ModernPnlPanel({
   balances: UserDetail["balances"];
   pnlBreakdown: PnlBreakdown;
 }) {
-  // Same calc as the hero KPI strip (house perspective: deposits minus
-  // withdrawals) so the two P&L numbers on this page always agree.
-  // Previously this panel showed gambling PnL (wagers - won) which is a
-  // different metric and didn't match the header — that mismatch was
-  // confusing.
-  const pnl = balances ? balances.totalDeposited - balances.totalWithdrawn : 0;
+  // True house-perspective P&L for this user, matching CLAUDE.md's
+  // financial coloring rule:
+  //
+  //   pnl = deposits − withdrawals − (available + locked balance)
+  //                   − inventory value − voucher liability
+  //
+  // i.e. money we've captured minus money we still owe the user. If the
+  // user has more sitting on-site than they've deposited (paper win),
+  // the number goes negative and we show red.
+  const deposits = balances?.totalDeposited ?? 0;
+  const withdrawals = balances?.totalWithdrawn ?? 0;
+  const onSiteBalance =
+    (balances?.availableBalance ?? 0) + (balances?.lockedBalance ?? 0);
+  const inventoryValue = balances?.inventoryValue ?? 0;
+  const vouchersValue = balances?.vouchersValue ?? 0;
+  const pnl =
+    deposits - withdrawals - onSiteBalance - inventoryValue - vouchersValue;
   const isProfit = pnl >= 0;
   const Icon = isProfit ? TrendingUp : TrendingDown;
   return (
     <StatPanel title="Platform P&L" icon={Icon} accent={isProfit ? "emerald" : "rose"}>
       <div className="space-y-0.5">
         <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
-          Deposits − Withdrawals
+          Deposits − Withdrawals − Balance − Inventory
         </p>
         <p
           className={cn(
@@ -200,12 +211,15 @@ export function ModernPnlPanel({
         </p>
       </div>
       <div className="mt-4 space-y-0.5 border-t pt-3">
-        <PanelRow label="Deposited" value={formatCurrency(balances?.totalDeposited ?? 0)} />
-        <PanelRow label="Withdrawn" value={formatCurrency(balances?.totalWithdrawn ?? 0)} />
-        <PanelRow label="Wagered" value={formatCurrency(balances?.totalWagered ?? 0)} />
-        <PanelRow label="Won" value={formatCurrency(balances?.totalWon ?? 0)} />
+        <PanelRow label="Deposited" value={formatCurrency(deposits)} />
+        <PanelRow label="Withdrawn" value={formatCurrency(withdrawals)} />
+        <PanelRow label="On-site balance" value={`-${formatCurrency(onSiteBalance)}`} />
+        <PanelRow label="Inventory value" value={`-${formatCurrency(inventoryValue)}`} />
+        {vouchersValue > 0 ? (
+          <PanelRow label="Unclaimed vouchers" value={`-${formatCurrency(vouchersValue)}`} />
+        ) : null}
         <PanelRow
-          label="Bonuses Cost"
+          label="Bonuses given"
           value={
             <span className="text-rose-500">
               -{formatCurrency(pnlBreakdown.bonusesCost)}

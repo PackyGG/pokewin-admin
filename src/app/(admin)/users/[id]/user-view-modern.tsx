@@ -152,10 +152,20 @@ export function UserViewModern({
   // P&L is expressed from the HOUSE perspective:
   //   pnl = deposits - withdrawals
   //   > 0  we made money (user deposited more than they withdrew)  → GREEN
-  //   < 0  we lost money (user cashed out more than they deposited) → RED
+  //   < 0  we lost money (user holds more than they deposited net) → RED
+  //
+  // Note: matches the Platform P&L panel below — includes on-site balance
+  // and inventory value as liabilities so paper wins flip the sign to red.
   const totalValue =
     (balances?.availableBalance ?? 0) + (balances?.inventoryValue ?? 0);
-  const pnl = balances ? balances.totalDeposited - balances.totalWithdrawn : 0;
+  const deposits = balances?.totalDeposited ?? 0;
+  const withdrawals = balances?.totalWithdrawn ?? 0;
+  const onSiteBalance =
+    (balances?.availableBalance ?? 0) + (balances?.lockedBalance ?? 0);
+  const inventoryValue = balances?.inventoryValue ?? 0;
+  const vouchersValue = balances?.vouchersValue ?? 0;
+  const pnl =
+    deposits - withdrawals - onSiteBalance - inventoryValue - vouchersValue;
   const wagerMultiplier =
     balances && balances.totalDeposited > 0
       ? balances.totalWagered / balances.totalDeposited
