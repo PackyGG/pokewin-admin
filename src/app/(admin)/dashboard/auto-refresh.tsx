@@ -7,7 +7,11 @@ export function AutoRefresh() {
   const router = useRouter();
 
   useEffect(() => {
-    const interval = setInterval(() => router.refresh(), 15_000);
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        router.refresh();
+      }
+    }, 15_000);
     return () => clearInterval(interval);
   }, [router]);
 
