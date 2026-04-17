@@ -1,20 +1,29 @@
 import {
-  PageTitleSkeleton,
-  StatCardRowSkeleton,
+  PageHeroSkeleton,
+  KpiStripSkeleton,
+  SectionHeadingSkeleton,
   ChartRowSkeleton,
   TableSkeleton,
 } from "@/components/loading-skeletons";
 
-// Matches /dashboard layout: title, 4 primary stats, 4 secondary stats,
-// 3 charts (Wagers / Deposits / Signups), recent activity table.
+/**
+ * Matches /dashboard: PageHero, 5-tile primary stats, 4-tile secondary
+ * stats, Trends section (3 charts), Recent Activity section (table).
+ */
 export default function DashboardLoading() {
   return (
     <div className="space-y-6">
-      <PageTitleSkeleton width={140} />
-      <StatCardRowSkeleton count={4} />
-      <StatCardRowSkeleton count={4} />
-      <ChartRowSkeleton count={3} />
-      <TableSkeleton rows={8} />
+      <PageHeroSkeleton />
+      <KpiStripSkeleton count={5} />
+      <KpiStripSkeleton count={4} />
+      <div className="space-y-3">
+        <SectionHeadingSkeleton titleWidth={80} />
+        <ChartRowSkeleton count={3} height={300} />
+      </div>
+      <div className="space-y-3">
+        <SectionHeadingSkeleton titleWidth={160} />
+        <TableSkeleton rows={8} columns={6} />
+      </div>
     </div>
   );
 }

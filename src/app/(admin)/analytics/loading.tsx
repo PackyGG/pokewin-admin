@@ -1,23 +1,28 @@
+import { Skeleton } from "@/components/ui/skeleton";
 import {
-  PageTitleSkeleton,
-  StatCardRowSkeleton,
+  PageHeroSkeleton,
+  KpiStripSkeleton,
+  SectionHeadingSkeleton,
   ChartRowSkeleton,
 } from "@/components/loading-skeletons";
-import { Skeleton } from "@/components/ui/skeleton";
 
-// Matches /analytics: title + period filter, 6 stat cards, battle/pack
-// breakdown sections, 3-col chart grid.
+/**
+ * Matches /analytics: hero (with period filter), 6 stat cards, battle/pack
+ * breakdown cards, acquisition + gameplay chart rows.
+ */
 export default function AnalyticsLoading() {
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <PageTitleSkeleton width={140} />
-        <Skeleton className="h-9 w-[220px]" />
+      <PageHeroSkeleton action />
+      <KpiStripSkeleton count={6} />
+      <div className="grid gap-4 md:grid-cols-2">
+        <Skeleton className="h-64 rounded-2xl" />
+        <Skeleton className="h-64 rounded-2xl" />
       </div>
-      <StatCardRowSkeleton count={3} />
-      <Skeleton className="h-64 rounded-xl" />
-      <Skeleton className="h-64 rounded-xl" />
-      <ChartRowSkeleton count={3} height={300} />
+      <div className="space-y-3">
+        <SectionHeadingSkeleton titleWidth={140} />
+        <ChartRowSkeleton count={3} height={300} />
+      </div>
     </div>
   );
 }

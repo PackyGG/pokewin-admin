@@ -1,16 +1,20 @@
-import { Skeleton } from "@/components/ui/skeleton";
+import {
+  PageHeroSkeleton,
+  KpiStripSkeleton,
+  ChartRowSkeleton,
+} from "@/components/loading-skeletons";
 
+/**
+ * Root fallback — used when Next doesn't find a closer loading.tsx. Keep
+ * it generic but modern so it at least matches the hero + tiles layout
+ * every admin page uses.
+ */
 export default function AdminLoading() {
   return (
-    <div className="space-y-4">
-      <Skeleton className="h-8 w-48" />
-      <Skeleton className="h-10 w-full max-w-md" />
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <Skeleton className="h-32 rounded-xl" />
-        <Skeleton className="h-32 rounded-xl" />
-        <Skeleton className="h-32 rounded-xl" />
-      </div>
-      <Skeleton className="h-64 rounded-xl" />
+    <div className="space-y-6">
+      <PageHeroSkeleton />
+      <KpiStripSkeleton count={4} />
+      <ChartRowSkeleton count={2} height={260} />
     </div>
   );
 }
