@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { MessageSquare, Send, X } from "lucide-react";
+import { toast } from "sonner";
 import {
   updateCardAction,
   deleteCardAction,
@@ -67,7 +68,12 @@ export function CardDetailSheet({
       setNewComment("");
       setLightboxUrl(null);
       // Load comments
-      getCardCommentsAction(card.id).then(setComments).catch(() => {});
+      getCardCommentsAction(card.id)
+        .then(setComments)
+        .catch((err) => {
+          console.error("[trello comments]", err);
+          toast.error("Failed to load comments");
+        });
     }
   }, [card]);
 
