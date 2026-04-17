@@ -1,59 +1,22 @@
 "use client";
 
-import { useState, useTransition, type ComponentType } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import {
-  ArrowDownToLine,
-  ArrowUpFromLine,
-  Send,
-  UserPlus,
-  type LucideIcon,
-} from "lucide-react";
+import { Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import type { AccentColor } from "@/components/modern-panels";
 import { TILE_COLORS } from "@/components/modern-panels";
-import type {
-  NotificationConfigSummary,
-  NotificationEvent,
-} from "@/lib/queries/notifications";
+import type { NotificationConfigSummary } from "@/lib/queries/notifications";
+import { EVENT_META } from "./event-meta";
 import {
   saveNotificationConfigAction,
   testNotificationAction,
 } from "./actions";
-
-type EventMeta = {
-  label: string;
-  description: string;
-  icon: LucideIcon;
-  accent: AccentColor;
-};
-
-const EVENT_META: Record<NotificationEvent, EventMeta> = {
-  deposit: {
-    label: "Deposits",
-    description: "Notify when a user completes a deposit.",
-    icon: ArrowDownToLine,
-    accent: "emerald",
-  },
-  withdrawal: {
-    label: "Withdrawals",
-    description: "Notify when a new withdrawal is requested.",
-    icon: ArrowUpFromLine,
-    accent: "rose",
-  },
-  signup: {
-    label: "Signups",
-    description: "Notify when a new user registers.",
-    icon: UserPlus,
-    accent: "blue",
-  },
-};
 
 export function NotificationsForm({
   configs,
@@ -274,18 +237,6 @@ function ConfiguredChip({ has }: { has: boolean }) {
   );
 }
 
-// Re-export for the page, so it can render a stable icon in the KPI strip
-// without redeclaring the mapping.
-export function getEventIcon(event: NotificationEvent): ComponentType<{
-  className?: string;
-}> {
-  return EVENT_META[event].icon;
-}
-
-export function getEventAccent(event: NotificationEvent): AccentColor {
-  return EVENT_META[event].accent;
-}
-
-export function getEventLabel(event: NotificationEvent): string {
-  return EVENT_META[event].label;
-}
+// Helpers moved to ./event-meta — shared between server + client so the
+// Server Component page isn't calling a function through a client
+// reference.

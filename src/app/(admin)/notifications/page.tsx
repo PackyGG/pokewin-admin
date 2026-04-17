@@ -6,12 +6,12 @@ import {
   getAllNotificationConfigs,
 } from "@/lib/queries/notifications";
 import { formatRelative } from "@/lib/utils/format";
+import { NotificationsForm } from "./notifications-form";
 import {
-  NotificationsForm,
   getEventAccent,
   getEventIcon,
   getEventLabel,
-} from "./notifications-form";
+} from "./event-meta";
 
 export const metadata = { title: "Notifications" };
 
