@@ -171,17 +171,14 @@ Der User arbeitet in einem "Task-Spam"-Modus: er wirft Aufgaben nacheinander rei
 
    Wenn zwei Agents dieselbe Hotspot-Datei brauchen: den zweiten mit einem PROPOSED-Patch reporten lassen, dann nach dem Konsolidieren selbst anwenden.
 
-4. **Commit-Disziplin bei paralleler Arbeit:**
+4. **Commit- und Push-Disziplin bei paralleler Arbeit:**
    - Jeder Agent committet in **kleinen logischen Chunks** (nicht eine Riesen-Commit am Ende).
    - `git commit --only <paths>` wenn andere Agents gleichzeitig staged Changes haben.
    - `tsc --noEmit` + `npm run lint` **nach jedem Commit**, nicht erst am Ende.
-   - Kein Agent pusht. Der Haupt-Thread (du) pusht nach Konsolidierung.
+   - **Agents dürfen und sollen direkt pushen** sobald tsc + lint grün sind. Der User will nicht auf eine Konsolidierungsphase warten. Jeder Agent pushed seine eigenen Commits sobald seine Arbeit fertig und verifiziert ist.
+   - Wenn ein Push wegen Divergenz (`non-fast-forward`) scheitert: zuerst `git pull --rebase`, dann nochmal pushen. Keine destruktiven Operationen ohne User-Zustimmung.
 
-5. **Konsolidierungs-Phase** nachdem mehrere Agents gelandet sind:
-   - `git log` prüfen — hat irgendein Commit versehentlich Changes anderer Agents mitgezogen? Wenn ja, flagen aber nicht rückgängig (die Changes sind im Tree korrekt).
-   - `tsc --noEmit` + `lint` im kombinierten State.
-   - Cross-Agent-Konflikte fixen (z.B. orphan references, inkonsistente API-Shapes).
-   - **Dann erst pushen.**
+5. **Konsolidierungs-Phase ist optional** und passiert nur wenn offene Issues quer durch mehrere Agents zu fixen sind (orphan references, inkonsistente API-Shapes, TSC/Lint-Failures die keiner Agent alleine verursacht hat). Sonst: einfach pushen und weiter.
 
 6. **Honest-Reporting** pro Agent:
    - "FIXED" = wirklich gemacht + im Commit.
@@ -191,9 +188,8 @@ Der User arbeitet in einem "Task-Spam"-Modus: er wirft Aufgaben nacheinander rei
 
 7. **Aufgaben, die du NICHT an Agents delegierst:**
    - Trivial Fixes (< 1 Minute, 1 Datei).
-   - Git Operationen (status, log, push).
    - Schnelle Fragen an die Codebase (1–2 Greps reichen).
-   - Die Konsolidierungs- + Push-Phase selbst.
+   - Live-Troubleshooting mit dem User (Logs anschauen etc.).
 
 8. **Wenn der User zu schnell Tasks reinwirft:**
    - Nicht zögern — sofort agent starten.
