@@ -3,41 +3,15 @@
 import * as React from "react";
 
 /**
- * Browser-side client for the packy.gg live event stream.
+ * Direct browser WebSocket to the packy.gg live gateway.
  *
- * Transport:
- *   The packy.gg WebSocket gateway (`wss://api.packy.gg/v1/ws`) enforces
- *   an `Origin: https://beta.packy.gg` handshake check. Browsers pin the
- *   Origin header to the page's own hostname, so a direct WS from
- *   `pokewin-admin.vercel.app` is always rejected by the gateway.
- *
- *   To work around that, we open an `EventSource` against a server-side
- *   proxy on our own origin (`/api/packy-live`). The Node.js route opens
- *   the real WebSocket with the correct Origin header and forwards every
- *   message to connected admins as an SSE `packy` event. Everything on
- *   the client side (hooks, event shape, dispatch) stays identical to
- *   the previous direct-WS design — just the wire changed.
- *
- * Design:
- *   - One shared `EventSource` per tab, opened lazily on the first
- *     subscriber and closed again once the last subscriber unsubscribes.
- *   - EventSource handles its own reconnect with a default ~3s retry, so
- *     we don't layer our own backoff on top of it. We still track a
- *     status machine for the UI indicator.
- *   - Pauses when the tab is hidden (`document.visibilityState`). The
- *     server-side proxy tears down its upstream WS when the SSE response
- *     aborts, so hidden tabs don't keep an upstream connection alive.
- *   - Malformed messages are logged to `console.error` and skipped.
+ * No server-side proxy — the browser opens wss://api.packy.gg/v1/ws
+ * straight from the admin page. Every header on the handshake is
+ * whatever the browser sends; no custom logic rewrites the request.
  */
 
 // ─── Types ────────────────────────────────────────────────────────
 
-/**
- * A single card pull broadcast over the live stream. Shape mirrors the
- * sample payload from the packy.gg gateway. Most fields aren't used by
- * the admin UI today but are kept verbatim so downstream consumers can
- * grow into them without re-plumbing the transport layer.
- */
 export type Pull = {
   card: {
     pack_id: string;
@@ -61,13 +35,6 @@ export type Pull = {
   timestamp: string;
 };
 
-/**
- * A chat message broadcast over the live stream. The exact shape isn't
- * documented publicly — we treat `payload.messages` as an array of
- * records with loose typing and normalize at the consumer boundary. The
- * fields below are the ones the consumer attempts to read; anything
- * missing is treated as null/empty.
- */
 export type ChatMessage = {
   id: string;
   user_id: string;
@@ -93,20 +60,18 @@ export type ConnectionStatus = "connecting" | "open" | "reconnecting" | "closed"
 
 // ─── Singleton state ──────────────────────────────────────────────
 
-const SSE_PATH = "/api/packy-live";
+const WS_URL = "wss://api.packy.gg/v1/ws";
+const MAX_BACKOFF_MS = 30_000;
 
-// Handlers are stored by event `type`. Unknown event types can still be
-// subscribed to (the emit path never rejects); malformed JSON is logged
-// and skipped earlier in parseMessage().
 type Handler = (evt: PackyEvent) => void;
 const handlers = new Map<string, Set<Handler>>();
 
-// Connection status subscribers — used by hooks that want to render a
-// "Connected / Reconnecting / Offline" chip.
 type StatusHandler = (status: ConnectionStatus) => void;
 const statusHandlers = new Set<StatusHandler>();
 
-let source: EventSource | null = null;
+let ws: WebSocket | null = null;
+let retryAttempt = 0;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let visibilityBound = false;
 let currentStatus: ConnectionStatus = "closed";
 
@@ -117,7 +82,7 @@ function setStatus(next: ConnectionStatus) {
     try {
       h(next);
     } catch {
-      // A misbehaving consumer must not break the status broadcast.
+      // ignore — keep broadcasting
     }
   }
 }
@@ -130,10 +95,7 @@ function totalSubscribers(): number {
 
 function parseMessage(raw: string): PackyEvent | null {
   try {
-    // The proxy may escape embedded newlines as `\n` to survive the
-    // SSE `data:` framing. Reverse that before JSON.parse.
-    const normalized = raw.includes("\\n") ? raw.replace(/\\n/g, "\n") : raw;
-    const parsed: unknown = JSON.parse(normalized);
+    const parsed: unknown = JSON.parse(raw);
     if (
       parsed &&
       typeof parsed === "object" &&
@@ -156,39 +118,57 @@ function dispatch(evt: PackyEvent) {
     try {
       h(evt);
     } catch (err) {
-      // Swallow handler errors so one bad consumer can't break others.
       console.error("[packy-ws] handler threw for", evt.type, err);
     }
   }
 }
 
-function closeSource(reason: "manual" | "hidden" | "teardown" | "rotation") {
-  if (source) {
-    // Null handlers before close so a synchronous "error" during
-    // teardown doesn't re-enter openSource().
-    source.onopen = null;
-    source.onerror = null;
-    source.onmessage = null;
-    try {
-      source.close();
-    } catch {
-      // Already closed — ignore.
-    }
-    source = null;
+function scheduleReconnect() {
+  if (reconnectTimer != null) return;
+  if (totalSubscribers() === 0) return;
+  if (
+    typeof document !== "undefined" &&
+    document.visibilityState === "hidden"
+  ) {
+    setStatus("closed");
+    return;
   }
-  // On a clean teardown or hidden-pause, we just mark closed. On
-  // rotation we want the next openSource() (triggered by the caller) to
-  // flip through connecting again.
-  setStatus("closed");
-  if (reason === "rotation") {
-    openSource();
-  }
+  setStatus("reconnecting");
+  const delay = Math.min(MAX_BACKOFF_MS, 1000 * 2 ** retryAttempt);
+  retryAttempt += 1;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    openSocket();
+  }, delay);
 }
 
-function openSource() {
+function closeSocket(reason: "manual" | "hidden" | "teardown") {
+  if (reconnectTimer != null) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  if (ws) {
+    ws.onopen = null;
+    ws.onmessage = null;
+    ws.onerror = null;
+    ws.onclose = null;
+    try {
+      ws.close();
+    } catch {
+      // already closing — ignore
+    }
+    ws = null;
+  }
+  if (reason !== "hidden") {
+    retryAttempt = 0;
+  }
+  setStatus("closed");
+}
+
+function openSocket() {
   if (typeof window === "undefined") return;
   if (totalSubscribers() === 0) return;
-  if (source) return;
+  if (ws) return;
   if (
     typeof document !== "undefined" &&
     document.visibilityState === "hidden"
@@ -196,96 +176,60 @@ function openSource() {
     return;
   }
 
-  setStatus("connecting");
+  setStatus(retryAttempt === 0 ? "connecting" : "reconnecting");
 
-  let es: EventSource;
+  let socket: WebSocket;
   try {
-    es = new EventSource(SSE_PATH, { withCredentials: true });
+    socket = new WebSocket(WS_URL);
   } catch (err) {
-    console.error("[packy-ws] failed to construct EventSource", err);
-    setStatus("closed");
+    console.error("[packy-ws] failed to construct WebSocket", err);
+    scheduleReconnect();
     return;
   }
-  source = es;
+  ws = socket;
 
-  // The proxy sends `open` the moment the upstream WS opens. Before
-  // that we're merely "connecting" even if the SSE handshake itself is
-  // complete — our users care about upstream readiness, not the proxy
-  // leg.
-  es.addEventListener("open", () => {
+  socket.onopen = () => {
+    retryAttempt = 0;
     setStatus("open");
-  });
-
-  // Native onopen fires when the SSE handshake succeeds. If the proxy
-  // is reachable but the upstream WS is still negotiating, we leave the
-  // status at `connecting` until the proxy emits its own `open` event
-  // above.
-  es.onopen = () => {
-    // Stay in `connecting` until the proxy signals upstream-open via
-    // the explicit `open` event. Keeps the indicator accurate.
   };
 
-  es.addEventListener("packy", (ev: MessageEvent) => {
+  socket.onmessage = (ev: MessageEvent) => {
     if (typeof ev.data !== "string") return;
     const evt = parseMessage(ev.data);
     if (evt) dispatch(evt);
-  });
+  };
 
-  es.addEventListener("reconnect", () => {
-    // Server-initiated rotation (before Vercel's maxDuration cap). Close
-    // this EventSource and immediately open a new one.
-    if (source !== es) return;
-    closeSource("rotation");
-  });
+  socket.onerror = (ev) => {
+    console.error(`[packy-ws] socket error (url=${WS_URL})`, ev);
+  };
 
-  es.addEventListener("close", (ev: MessageEvent) => {
-    // Upstream WS dropped. EventSource will auto-reconnect to the
-    // proxy, which will in turn open a new upstream WS.
-    if (ev.data) {
-      try {
-        const parsed = JSON.parse(ev.data);
-        console.warn(
-          `[packy-ws] upstream WS closed code=${parsed.code} reason=${
-            parsed.reason || "(none)"
-          }`,
-        );
-      } catch {
-        // Non-JSON payload — already logged at parse above.
-      }
+  socket.onclose = (ev) => {
+    if (ws !== socket) return;
+    ws = null;
+    if (ev.code !== 1000 && ev.code !== 1001) {
+      console.warn(
+        `[packy-ws] socket closed code=${ev.code} reason=${
+          ev.reason || "(none)"
+        } wasClean=${ev.wasClean}`,
+      );
     }
-    setStatus("reconnecting");
-  });
-
-  es.addEventListener("error-upstream" as "error", (ev: MessageEvent) => {
-    if (ev.data) {
-      console.warn("[packy-ws] upstream error event", ev.data);
-    }
-  });
-
-  es.onerror = () => {
-    // EventSource's native error — fires on network failure or when the
-    // connection drops. EventSource auto-reconnects by default, so we
-    // only flip the UI status; the next `open` will flip it back.
-    if (source !== es) return;
-    // readyState 0 = connecting (after a drop), 2 = closed permanently
-    if (es.readyState === 2) {
+    if (totalSubscribers() === 0) {
       setStatus("closed");
-    } else {
-      setStatus("reconnecting");
+      return;
     }
+    scheduleReconnect();
   };
 }
 
 function handleVisibility() {
   if (typeof document === "undefined") return;
   if (document.visibilityState === "visible") {
-    if (totalSubscribers() > 0 && !source) {
-      openSource();
+    if (totalSubscribers() > 0 && !ws) {
+      retryAttempt = 0;
+      openSocket();
     }
   } else {
-    // Close on hide so we don't pump into a hidden tab. Reconnect
-    // happens automatically when the tab becomes visible.
-    closeSource("hidden");
+    closeSocket("hidden");
   }
 }
 
@@ -298,13 +242,6 @@ function ensureVisibilityBinding() {
 
 // ─── Public API ───────────────────────────────────────────────────
 
-/**
- * Subscribe to a single event `type`. Returns an unsubscribe function.
- *
- * Opens the shared EventSource on first subscriber and closes it once
- * the last subscriber unsubscribes. Safe to call on the server — the
- * returned function is a no-op if `window` isn't available.
- */
 export function subscribePackyWs<T extends PackyEvent>(
   eventType: T["type"],
   handler: (evt: T) => void,
@@ -323,9 +260,8 @@ export function subscribePackyWs<T extends PackyEvent>(
   const typed = handler as unknown as Handler;
   set.add(typed);
 
-  // Open the source if this is the first subscriber across all types.
-  if (!source) {
-    openSource();
+  if (!ws && reconnectTimer == null) {
+    openSocket();
   }
 
   return () => {
@@ -335,15 +271,11 @@ export function subscribePackyWs<T extends PackyEvent>(
       if (bucket.size === 0) handlers.delete(eventType);
     }
     if (totalSubscribers() === 0) {
-      closeSource("teardown");
+      closeSocket("teardown");
     }
   };
 }
 
-/**
- * Subscribe to connection-status changes. Unsubscribes via the returned
- * function. Fires immediately with the current status on subscribe.
- */
 export function subscribePackyWsStatus(
   handler: (status: ConnectionStatus) => void,
 ): () => void {
@@ -351,7 +283,7 @@ export function subscribePackyWsStatus(
   try {
     handler(currentStatus);
   } catch {
-    // Ignore — same logic as dispatch().
+    // ignore
   }
   return () => {
     statusHandlers.delete(handler);
@@ -360,12 +292,6 @@ export function subscribePackyWsStatus(
 
 // ─── React hooks ──────────────────────────────────────────────────
 
-/**
- * Current active-users count as broadcast by the WS. `null` until the
- * first `active.users.count` message arrives — callers distinguish this
- * from "zero" in the UI so the indicator doesn't flash an incorrect 0
- * during the connect window.
- */
 export function usePackyWsActiveUsers(): number | null {
   const [count, setCount] = React.useState<number | null>(null);
 
@@ -383,11 +309,6 @@ export function usePackyWsActiveUsers(): number | null {
   return count;
 }
 
-/**
- * Rolling window of the most recent pulls, newest-first. `max` caps the
- * array length so we don't grow memory on a long-running tab. Default
- * matches the dashboard "Live Pulls" card allowance.
- */
 export function usePackyWsLivePulls(max: number = 50): Pull[] {
   const [pulls, setPulls] = React.useState<Pull[]>([]);
 
@@ -398,10 +319,6 @@ export function usePackyWsLivePulls(max: number = 50): Pull[] {
       const incoming = evt.payload?.pulls;
       if (!Array.isArray(incoming) || incoming.length === 0) return;
 
-      // Server broadcasts either a running history (batch on open) or
-      // a single new pull per tick — either way we dedupe by the
-      // composite (card.id + timestamp) because individual pulls don't
-      // carry a stable id of their own in the sample payload.
       setPulls((prev) => {
         const existing = new Set(prev.map((p) => `${p.card.id}|${p.timestamp}`));
         const fresh: Pull[] = [];
@@ -413,8 +330,6 @@ export function usePackyWsLivePulls(max: number = 50): Pull[] {
         }
         if (fresh.length === 0) return prev;
 
-        // Server payloads may arrive oldest-first inside a batch; sort
-        // descending by timestamp so the freshest row ends up on top.
         const combined = [...fresh, ...prev].sort((a, b) => {
           const ta = new Date(a.timestamp).getTime();
           const tb = new Date(b.timestamp).getTime();
@@ -428,12 +343,6 @@ export function usePackyWsLivePulls(max: number = 50): Pull[] {
   return pulls;
 }
 
-/**
- * Rolling window of the most recent chat messages. Shape normalizes
- * defensively because the WS message schema isn't formally documented
- * yet — fields present in the sample are trusted, anything missing
- * falls back to null/empty.
- */
 export function usePackyWsChat(max: number = 50): ChatMessage[] {
   const [messages, setMessages] = React.useState<ChatMessage[]>([]);
 
@@ -460,7 +369,6 @@ export function usePackyWsChat(max: number = 50): ChatMessage[] {
           const tb = new Date(b.created_at).getTime();
           return ta - tb;
         });
-        // Keep newest `max` — drop from the front because we sort asc.
         return combined.slice(Math.max(0, combined.length - max));
       });
     });
@@ -469,17 +377,6 @@ export function usePackyWsChat(max: number = 50): ChatMessage[] {
   return messages;
 }
 
-/**
- * Live connection status. Useful for rendering a "Connected /
- * Reconnecting / Offline" indicator next to a live-feed card.
- *
- * Initial state is hardcoded to "closed" rather than reading from the
- * mutable module singleton. On a soft navigation the singleton may
- * already carry a live value ("open" / "reconnecting") from a previous
- * mount, which would seed React with a value that doesn't match the
- * SSR output and trigger a hydration mismatch under React 19 — the
- * subscribe effect below immediately refreshes the real current value.
- */
 export function usePackyWsStatus(): ConnectionStatus {
   const [status, setStatus] = React.useState<ConnectionStatus>("closed");
 
