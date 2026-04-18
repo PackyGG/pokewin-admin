@@ -94,7 +94,7 @@ const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
  * browser WS to the packy.gg gateway. Sent literally — no library
  * between us and the wire.
  */
-const PACKY_WS_KEY = "njdU0ZTreEX4D3OyMj9SEQ==";
+const PACKY_WS_KEY = "HA6rWURBabK4mgLQ3rdlrA==";
 const PACKY_WS_HEADERS: Record<string, string> = {
   Host: PACKY_HOST,
   Upgrade: "websocket",
