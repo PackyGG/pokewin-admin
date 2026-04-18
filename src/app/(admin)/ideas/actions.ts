@@ -5,7 +5,14 @@ import { z } from "zod";
 import { adminDb } from "@/lib/admin-db";
 import { requirePageAccess } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
-import { isValidStatus, type IdeaStatus } from "./types";
+import {
+  isValidStatus,
+  type IdeaStatus,
+  CANVAS_WIDTH,
+  CANVAS_HEIGHT,
+  CARD_WIDTH,
+  CARD_HEIGHT,
+} from "./types";
 
 // ── Validation ─────────────────────────────────────────────────────
 
@@ -20,26 +27,57 @@ const updateSchema = z.object({
   description: z.string().trim().max(2000).nullable().optional(),
 });
 
-const reorderSchema = z.object({
-  orderedIds: z.array(z.string().uuid()).min(1),
-});
-
 const statusSchema = z.object({
   id: z.string().uuid(),
   status: z.enum(["neutral", "green", "red"]),
 });
 
+const positionSchema = z.object({
+  id: z.string().uuid(),
+  x: z.number().finite(),
+  y: z.number().finite(),
+});
+
 // ── Pre-migration safety ───────────────────────────────────────────
 
-function isMissingTableError(err: unknown): boolean {
+function isMissingSchema(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const code = (err as { code?: string }).code;
   if (code === "P2021" || code === "P2022") return true;
-  return /relation .* does not exist/i.test(err.message);
+  return /(relation .* does not exist|column .* does not exist)/i.test(
+    err.message,
+  );
 }
 
 const PRE_MIGRATION_MESSAGE =
-  "Ideas table is not enabled yet — run the database migration (npm run admin:migrate).";
+  "Ideas table or position columns are not enabled yet — run the database migrations.";
+
+// ── Helpers ────────────────────────────────────────────────────────
+
+/** Clamp a single-axis position to the canvas bounds. */
+function clampX(x: number): number {
+  return Math.max(0, Math.min(CANVAS_WIDTH - CARD_WIDTH, x));
+}
+function clampY(y: number): number {
+  return Math.max(0, Math.min(CANVAS_HEIGHT - CARD_HEIGHT, y));
+}
+
+/**
+ * Place new cards in a staggered grid near the top-left so they don't
+ * all stack at (0, 0). Modulo 8 × 280 per row gives a comfortable
+ * spread; after filling a row, we wrap to the next one. Doesn't
+ * consider existing positions — just uses card count as a cheap way
+ * to keep consecutive additions from overlapping.
+ */
+function nextInitialPosition(existingCount: number): { x: number; y: number } {
+  const COLS = 8;
+  const COL_WIDTH = 280;
+  const ROW_HEIGHT = 200;
+  return {
+    x: 200 + (existingCount % COLS) * COL_WIDTH,
+    y: 200 + Math.floor(existingCount / COLS) * ROW_HEIGHT,
+  };
+}
 
 // ── Actions ────────────────────────────────────────────────────────
 
@@ -58,20 +96,16 @@ export async function createIdea(input: {
   }
 
   try {
-    // Append at the end by grabbing max(sort_order) + 1000. The +1000
-    // spacing leaves headroom for midpoint inserts without touching the
-    // neighbours during drag-reorders.
-    const max = await adminDb.admin_ideas.aggregate({
-      _max: { sort_order: true },
-    });
-    const nextOrder = (max._max.sort_order ?? 0) + 1000;
+    const count = await adminDb.admin_ideas.count();
+    const pos = nextInitialPosition(count);
 
     const row = await adminDb.admin_ideas.create({
       data: {
         title: parsed.data.title,
         description: parsed.data.description || null,
         status: "neutral",
-        sort_order: nextOrder,
+        position_x: pos.x,
+        position_y: pos.y,
         created_by_id: session.userId,
       },
       select: { id: true },
@@ -86,7 +120,7 @@ export async function createIdea(input: {
     revalidatePath("/ideas");
     return { success: true, id: row.id };
   } catch (err) {
-    if (isMissingTableError(err)) {
+    if (isMissingSchema(err)) {
       return { success: false, error: PRE_MIGRATION_MESSAGE };
     }
     return {
@@ -136,7 +170,7 @@ export async function updateIdea(input: {
     revalidatePath("/ideas");
     return { success: true };
   } catch (err) {
-    if (isMissingTableError(err)) {
+    if (isMissingSchema(err)) {
       return { success: false, error: PRE_MIGRATION_MESSAGE };
     }
     return {
@@ -159,8 +193,6 @@ export async function setIdeaStatus(input: {
       error: parsed.error.issues[0]?.message ?? "Invalid status",
     };
   }
-  // Redundant guard — keeps the type narrow for the enum check at the DB
-  // call site and future-proofs if the Zod schema drifts.
   if (!isValidStatus(parsed.data.status)) {
     return { success: false, error: "Invalid status" };
   }
@@ -181,12 +213,59 @@ export async function setIdeaStatus(input: {
     revalidatePath("/ideas");
     return { success: true };
   } catch (err) {
-    if (isMissingTableError(err)) {
+    if (isMissingSchema(err)) {
       return { success: false, error: PRE_MIGRATION_MESSAGE };
     }
     return {
       success: false,
       error: err instanceof Error ? err.message : "Failed to update status",
+    };
+  }
+}
+
+/**
+ * Persist a card's canvas position after a drag. Positions are clamped
+ * to stay within the canvas bounds server-side so a bad client payload
+ * can't park a card off-screen.
+ *
+ * NOT audit-logged — position changes can fire many times per session
+ * and would flood the audit feed without telling us anything useful.
+ * The card-level created/updated/deleted events remain audited.
+ */
+export async function updateIdeaPosition(input: {
+  id: string;
+  x: number;
+  y: number;
+}): Promise<{ success: true } | { success: false; error: string }> {
+  await requirePageAccess("/ideas");
+
+  const parsed = positionSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid position",
+    };
+  }
+
+  try {
+    await adminDb.admin_ideas.update({
+      where: { id: parsed.data.id },
+      data: {
+        position_x: clampX(parsed.data.x),
+        position_y: clampY(parsed.data.y),
+      },
+      select: { id: true },
+    });
+    // No revalidatePath — frequent updates would thrash the cache and
+    // the client already has the optimistic position.
+    return { success: true };
+  } catch (err) {
+    if (isMissingSchema(err)) {
+      return { success: false, error: PRE_MIGRATION_MESSAGE };
+    }
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to save position",
     };
   }
 }
@@ -215,59 +294,12 @@ export async function deleteIdea(
     revalidatePath("/ideas");
     return { success: true };
   } catch (err) {
-    if (isMissingTableError(err)) {
+    if (isMissingSchema(err)) {
       return { success: false, error: PRE_MIGRATION_MESSAGE };
     }
     return {
       success: false,
       error: err instanceof Error ? err.message : "Failed to delete idea",
-    };
-  }
-}
-
-export async function reorderIdeas(
-  orderedIds: string[],
-): Promise<{ success: true } | { success: false; error: string }> {
-  const session = await requirePageAccess("/ideas");
-
-  const parsed = reorderSchema.safeParse({ orderedIds });
-  if (!parsed.success) {
-    return {
-      success: false,
-      error: parsed.error.issues[0]?.message ?? "Invalid order",
-    };
-  }
-
-  try {
-    // Assign sort_order in increments of 1000 so each card has plenty
-    // of gap from its neighbours for future midpoint inserts. Batched in
-    // a single transaction so a partial failure can't leave the board
-    // in a half-sorted state.
-    await adminDb.$transaction(
-      parsed.data.orderedIds.map((id, idx) =>
-        adminDb.admin_ideas.update({
-          where: { id },
-          data: { sort_order: (idx + 1) * 1000 },
-          select: { id: true },
-        }),
-      ),
-    );
-
-    await createAdminAuditEvent({
-      adminUserId: session.userId,
-      eventType: "ideas_reordered",
-      metadata: { count: parsed.data.orderedIds.length },
-    });
-
-    revalidatePath("/ideas");
-    return { success: true };
-  } catch (err) {
-    if (isMissingTableError(err)) {
-      return { success: false, error: PRE_MIGRATION_MESSAGE };
-    }
-    return {
-      success: false,
-      error: err instanceof Error ? err.message : "Failed to reorder",
     };
   }
 }

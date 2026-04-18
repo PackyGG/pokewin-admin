@@ -28,10 +28,14 @@ export type AggregateAdmin_ideas = {
 
 export type Admin_ideasAvgAggregateOutputType = {
   sort_order: number | null
+  position_x: number | null
+  position_y: number | null
 }
 
 export type Admin_ideasSumAggregateOutputType = {
   sort_order: number | null
+  position_x: number | null
+  position_y: number | null
 }
 
 export type Admin_ideasMinAggregateOutputType = {
@@ -40,6 +44,8 @@ export type Admin_ideasMinAggregateOutputType = {
   description: string | null
   status: string | null
   sort_order: number | null
+  position_x: number | null
+  position_y: number | null
   created_by_id: string | null
   created_at: Date | null
   updated_at: Date | null
@@ -51,6 +57,8 @@ export type Admin_ideasMaxAggregateOutputType = {
   description: string | null
   status: string | null
   sort_order: number | null
+  position_x: number | null
+  position_y: number | null
   created_by_id: string | null
   created_at: Date | null
   updated_at: Date | null
@@ -62,6 +70,8 @@ export type Admin_ideasCountAggregateOutputType = {
   description: number
   status: number
   sort_order: number
+  position_x: number
+  position_y: number
   created_by_id: number
   created_at: number
   updated_at: number
@@ -71,10 +81,14 @@ export type Admin_ideasCountAggregateOutputType = {
 
 export type Admin_ideasAvgAggregateInputType = {
   sort_order?: true
+  position_x?: true
+  position_y?: true
 }
 
 export type Admin_ideasSumAggregateInputType = {
   sort_order?: true
+  position_x?: true
+  position_y?: true
 }
 
 export type Admin_ideasMinAggregateInputType = {
@@ -83,6 +97,8 @@ export type Admin_ideasMinAggregateInputType = {
   description?: true
   status?: true
   sort_order?: true
+  position_x?: true
+  position_y?: true
   created_by_id?: true
   created_at?: true
   updated_at?: true
@@ -94,6 +110,8 @@ export type Admin_ideasMaxAggregateInputType = {
   description?: true
   status?: true
   sort_order?: true
+  position_x?: true
+  position_y?: true
   created_by_id?: true
   created_at?: true
   updated_at?: true
@@ -105,6 +123,8 @@ export type Admin_ideasCountAggregateInputType = {
   description?: true
   status?: true
   sort_order?: true
+  position_x?: true
+  position_y?: true
   created_by_id?: true
   created_at?: true
   updated_at?: true
@@ -203,6 +223,8 @@ export type Admin_ideasGroupByOutputType = {
   description: string | null
   status: string
   sort_order: number
+  position_x: number
+  position_y: number
   created_by_id: string
   created_at: Date
   updated_at: Date
@@ -237,6 +259,8 @@ export type admin_ideasWhereInput = {
   description?: Prisma.StringNullableFilter<"admin_ideas"> | string | null
   status?: Prisma.StringFilter<"admin_ideas"> | string
   sort_order?: Prisma.FloatFilter<"admin_ideas"> | number
+  position_x?: Prisma.FloatFilter<"admin_ideas"> | number
+  position_y?: Prisma.FloatFilter<"admin_ideas"> | number
   created_by_id?: Prisma.UuidFilter<"admin_ideas"> | string
   created_at?: Prisma.DateTimeFilter<"admin_ideas"> | Date | string
   updated_at?: Prisma.DateTimeFilter<"admin_ideas"> | Date | string
@@ -249,6 +273,8 @@ export type admin_ideasOrderByWithRelationInput = {
   description?: Prisma.SortOrderInput | Prisma.SortOrder
   status?: Prisma.SortOrder
   sort_order?: Prisma.SortOrder
+  position_x?: Prisma.SortOrder
+  position_y?: Prisma.SortOrder
   created_by_id?: Prisma.SortOrder
   created_at?: Prisma.SortOrder
   updated_at?: Prisma.SortOrder
@@ -264,6 +290,8 @@ export type admin_ideasWhereUniqueInput = Prisma.AtLeast<{
   description?: Prisma.StringNullableFilter<"admin_ideas"> | string | null
   status?: Prisma.StringFilter<"admin_ideas"> | string
   sort_order?: Prisma.FloatFilter<"admin_ideas"> | number
+  position_x?: Prisma.FloatFilter<"admin_ideas"> | number
+  position_y?: Prisma.FloatFilter<"admin_ideas"> | number
   created_by_id?: Prisma.UuidFilter<"admin_ideas"> | string
   created_at?: Prisma.DateTimeFilter<"admin_ideas"> | Date | string
   updated_at?: Prisma.DateTimeFilter<"admin_ideas"> | Date | string
@@ -276,6 +304,8 @@ export type admin_ideasOrderByWithAggregationInput = {
   description?: Prisma.SortOrderInput | Prisma.SortOrder
   status?: Prisma.SortOrder
   sort_order?: Prisma.SortOrder
+  position_x?: Prisma.SortOrder
+  position_y?: Prisma.SortOrder
   created_by_id?: Prisma.SortOrder
   created_at?: Prisma.SortOrder
   updated_at?: Prisma.SortOrder
@@ -295,6 +325,8 @@ export type admin_ideasScalarWhereWithAggregatesInput = {
   description?: Prisma.StringNullableWithAggregatesFilter<"admin_ideas"> | string | null
   status?: Prisma.StringWithAggregatesFilter<"admin_ideas"> | string
   sort_order?: Prisma.FloatWithAggregatesFilter<"admin_ideas"> | number
+  position_x?: Prisma.FloatWithAggregatesFilter<"admin_ideas"> | number
+  position_y?: Prisma.FloatWithAggregatesFilter<"admin_ideas"> | number
   created_by_id?: Prisma.UuidWithAggregatesFilter<"admin_ideas"> | string
   created_at?: Prisma.DateTimeWithAggregatesFilter<"admin_ideas"> | Date | string
   updated_at?: Prisma.DateTimeWithAggregatesFilter<"admin_ideas"> | Date | string
@@ -306,6 +338,8 @@ export type admin_ideasCreateInput = {
   description?: string | null
   status?: string
   sort_order?: number
+  position_x?: number
+  position_y?: number
   created_at?: Date | string
   updated_at?: Date | string
   created_by: Prisma.admin_usersCreateNestedOneWithoutIdeasInput
@@ -317,6 +351,8 @@ export type admin_ideasUncheckedCreateInput = {
   description?: string | null
   status?: string
   sort_order?: number
+  position_x?: number
+  position_y?: number
   created_by_id: string
   created_at?: Date | string
   updated_at?: Date | string
@@ -328,6 +364,8 @@ export type admin_ideasUpdateInput = {
   description?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   status?: Prisma.StringFieldUpdateOperationsInput | string
   sort_order?: Prisma.FloatFieldUpdateOperationsInput | number
+  position_x?: Prisma.FloatFieldUpdateOperationsInput | number
+  position_y?: Prisma.FloatFieldUpdateOperationsInput | number
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   created_by?: Prisma.admin_usersUpdateOneRequiredWithoutIdeasNestedInput
@@ -339,6 +377,8 @@ export type admin_ideasUncheckedUpdateInput = {
   description?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   status?: Prisma.StringFieldUpdateOperationsInput | string
   sort_order?: Prisma.FloatFieldUpdateOperationsInput | number
+  position_x?: Prisma.FloatFieldUpdateOperationsInput | number
+  position_y?: Prisma.FloatFieldUpdateOperationsInput | number
   created_by_id?: Prisma.StringFieldUpdateOperationsInput | string
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -350,6 +390,8 @@ export type admin_ideasCreateManyInput = {
   description?: string | null
   status?: string
   sort_order?: number
+  position_x?: number
+  position_y?: number
   created_by_id: string
   created_at?: Date | string
   updated_at?: Date | string
@@ -361,6 +403,8 @@ export type admin_ideasUpdateManyMutationInput = {
   description?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   status?: Prisma.StringFieldUpdateOperationsInput | string
   sort_order?: Prisma.FloatFieldUpdateOperationsInput | number
+  position_x?: Prisma.FloatFieldUpdateOperationsInput | number
+  position_y?: Prisma.FloatFieldUpdateOperationsInput | number
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -371,6 +415,8 @@ export type admin_ideasUncheckedUpdateManyInput = {
   description?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   status?: Prisma.StringFieldUpdateOperationsInput | string
   sort_order?: Prisma.FloatFieldUpdateOperationsInput | number
+  position_x?: Prisma.FloatFieldUpdateOperationsInput | number
+  position_y?: Prisma.FloatFieldUpdateOperationsInput | number
   created_by_id?: Prisma.StringFieldUpdateOperationsInput | string
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -392,6 +438,8 @@ export type admin_ideasCountOrderByAggregateInput = {
   description?: Prisma.SortOrder
   status?: Prisma.SortOrder
   sort_order?: Prisma.SortOrder
+  position_x?: Prisma.SortOrder
+  position_y?: Prisma.SortOrder
   created_by_id?: Prisma.SortOrder
   created_at?: Prisma.SortOrder
   updated_at?: Prisma.SortOrder
@@ -399,6 +447,8 @@ export type admin_ideasCountOrderByAggregateInput = {
 
 export type admin_ideasAvgOrderByAggregateInput = {
   sort_order?: Prisma.SortOrder
+  position_x?: Prisma.SortOrder
+  position_y?: Prisma.SortOrder
 }
 
 export type admin_ideasMaxOrderByAggregateInput = {
@@ -407,6 +457,8 @@ export type admin_ideasMaxOrderByAggregateInput = {
   description?: Prisma.SortOrder
   status?: Prisma.SortOrder
   sort_order?: Prisma.SortOrder
+  position_x?: Prisma.SortOrder
+  position_y?: Prisma.SortOrder
   created_by_id?: Prisma.SortOrder
   created_at?: Prisma.SortOrder
   updated_at?: Prisma.SortOrder
@@ -418,6 +470,8 @@ export type admin_ideasMinOrderByAggregateInput = {
   description?: Prisma.SortOrder
   status?: Prisma.SortOrder
   sort_order?: Prisma.SortOrder
+  position_x?: Prisma.SortOrder
+  position_y?: Prisma.SortOrder
   created_by_id?: Prisma.SortOrder
   created_at?: Prisma.SortOrder
   updated_at?: Prisma.SortOrder
@@ -425,6 +479,8 @@ export type admin_ideasMinOrderByAggregateInput = {
 
 export type admin_ideasSumOrderByAggregateInput = {
   sort_order?: Prisma.SortOrder
+  position_x?: Prisma.SortOrder
+  position_y?: Prisma.SortOrder
 }
 
 export type admin_ideasCreateNestedManyWithoutCreated_byInput = {
@@ -483,6 +539,8 @@ export type admin_ideasCreateWithoutCreated_byInput = {
   description?: string | null
   status?: string
   sort_order?: number
+  position_x?: number
+  position_y?: number
   created_at?: Date | string
   updated_at?: Date | string
 }
@@ -493,6 +551,8 @@ export type admin_ideasUncheckedCreateWithoutCreated_byInput = {
   description?: string | null
   status?: string
   sort_order?: number
+  position_x?: number
+  position_y?: number
   created_at?: Date | string
   updated_at?: Date | string
 }
@@ -532,6 +592,8 @@ export type admin_ideasScalarWhereInput = {
   description?: Prisma.StringNullableFilter<"admin_ideas"> | string | null
   status?: Prisma.StringFilter<"admin_ideas"> | string
   sort_order?: Prisma.FloatFilter<"admin_ideas"> | number
+  position_x?: Prisma.FloatFilter<"admin_ideas"> | number
+  position_y?: Prisma.FloatFilter<"admin_ideas"> | number
   created_by_id?: Prisma.UuidFilter<"admin_ideas"> | string
   created_at?: Prisma.DateTimeFilter<"admin_ideas"> | Date | string
   updated_at?: Prisma.DateTimeFilter<"admin_ideas"> | Date | string
@@ -543,6 +605,8 @@ export type admin_ideasCreateManyCreated_byInput = {
   description?: string | null
   status?: string
   sort_order?: number
+  position_x?: number
+  position_y?: number
   created_at?: Date | string
   updated_at?: Date | string
 }
@@ -553,6 +617,8 @@ export type admin_ideasUpdateWithoutCreated_byInput = {
   description?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   status?: Prisma.StringFieldUpdateOperationsInput | string
   sort_order?: Prisma.FloatFieldUpdateOperationsInput | number
+  position_x?: Prisma.FloatFieldUpdateOperationsInput | number
+  position_y?: Prisma.FloatFieldUpdateOperationsInput | number
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -563,6 +629,8 @@ export type admin_ideasUncheckedUpdateWithoutCreated_byInput = {
   description?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   status?: Prisma.StringFieldUpdateOperationsInput | string
   sort_order?: Prisma.FloatFieldUpdateOperationsInput | number
+  position_x?: Prisma.FloatFieldUpdateOperationsInput | number
+  position_y?: Prisma.FloatFieldUpdateOperationsInput | number
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -573,6 +641,8 @@ export type admin_ideasUncheckedUpdateManyWithoutCreated_byInput = {
   description?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   status?: Prisma.StringFieldUpdateOperationsInput | string
   sort_order?: Prisma.FloatFieldUpdateOperationsInput | number
+  position_x?: Prisma.FloatFieldUpdateOperationsInput | number
+  position_y?: Prisma.FloatFieldUpdateOperationsInput | number
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
@@ -585,6 +655,8 @@ export type admin_ideasSelect<ExtArgs extends runtime.Types.Extensions.InternalA
   description?: boolean
   status?: boolean
   sort_order?: boolean
+  position_x?: boolean
+  position_y?: boolean
   created_by_id?: boolean
   created_at?: boolean
   updated_at?: boolean
@@ -597,6 +669,8 @@ export type admin_ideasSelectCreateManyAndReturn<ExtArgs extends runtime.Types.E
   description?: boolean
   status?: boolean
   sort_order?: boolean
+  position_x?: boolean
+  position_y?: boolean
   created_by_id?: boolean
   created_at?: boolean
   updated_at?: boolean
@@ -609,6 +683,8 @@ export type admin_ideasSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.E
   description?: boolean
   status?: boolean
   sort_order?: boolean
+  position_x?: boolean
+  position_y?: boolean
   created_by_id?: boolean
   created_at?: boolean
   updated_at?: boolean
@@ -621,12 +697,14 @@ export type admin_ideasSelectScalar = {
   description?: boolean
   status?: boolean
   sort_order?: boolean
+  position_x?: boolean
+  position_y?: boolean
   created_by_id?: boolean
   created_at?: boolean
   updated_at?: boolean
 }
 
-export type admin_ideasOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "title" | "description" | "status" | "sort_order" | "created_by_id" | "created_at" | "updated_at", ExtArgs["result"]["admin_ideas"]>
+export type admin_ideasOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "title" | "description" | "status" | "sort_order" | "position_x" | "position_y" | "created_by_id" | "created_at" | "updated_at", ExtArgs["result"]["admin_ideas"]>
 export type admin_ideasInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   created_by?: boolean | Prisma.admin_usersDefaultArgs<ExtArgs>
 }
@@ -648,6 +726,8 @@ export type $admin_ideasPayload<ExtArgs extends runtime.Types.Extensions.Interna
     description: string | null
     status: string
     sort_order: number
+    position_x: number
+    position_y: number
     created_by_id: string
     created_at: Date
     updated_at: Date
@@ -1080,6 +1160,8 @@ export interface admin_ideasFieldRefs {
   readonly description: Prisma.FieldRef<"admin_ideas", 'String'>
   readonly status: Prisma.FieldRef<"admin_ideas", 'String'>
   readonly sort_order: Prisma.FieldRef<"admin_ideas", 'Float'>
+  readonly position_x: Prisma.FieldRef<"admin_ideas", 'Float'>
+  readonly position_y: Prisma.FieldRef<"admin_ideas", 'Float'>
   readonly created_by_id: Prisma.FieldRef<"admin_ideas", 'String'>
   readonly created_at: Prisma.FieldRef<"admin_ideas", 'DateTime'>
   readonly updated_at: Prisma.FieldRef<"admin_ideas", 'DateTime'>

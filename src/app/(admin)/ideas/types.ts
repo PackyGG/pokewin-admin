@@ -11,12 +11,26 @@ export type Idea = {
   title: string;
   description: string | null;
   status: IdeaStatus;
+  /** Pixel position within the canvas coordinate space. */
+  positionX: number;
+  positionY: number;
   createdAt: string;
   createdBy: {
     id: string;
     username: string;
   } | null;
 };
+
+/**
+ * Canvas-space dimensions. The scrollable inner surface is this big,
+ * giving the team room to organize ideas across logical zones without
+ * instantly hitting an edge. Cards themselves are clamped to stay
+ * within this area on drag.
+ */
+export const CANVAS_WIDTH = 4000;
+export const CANVAS_HEIGHT = 4000;
+export const CARD_WIDTH = 260;
+export const CARD_HEIGHT = 160;
 
 /** Cycle order: neutral → green → red → neutral. */
 export const NEXT_STATUS: Record<IdeaStatus, IdeaStatus> = {

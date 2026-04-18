@@ -348,6 +348,8 @@ export const Admin_ideasScalarFieldEnum = {
   description: 'description',
   status: 'status',
   sort_order: 'sort_order',
+  position_x: 'position_x',
+  position_y: 'position_y',
   created_by_id: 'created_by_id',
   created_at: 'created_at',
   updated_at: 'updated_at'

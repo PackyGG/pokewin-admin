@@ -2,24 +2,6 @@
 
 import * as React from "react";
 import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from "@dnd-kit/core";
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  rectSortingStrategy,
-  arrayMove,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-import {
-  GripVertical,
   Plus,
   Trash2,
   Pencil,
@@ -27,6 +9,7 @@ import {
   Circle,
   CheckCircle2,
   XCircle,
+  Maximize2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -53,17 +36,21 @@ import { cn } from "@/lib/utils";
 import {
   createIdea,
   deleteIdea,
-  reorderIdeas,
   setIdeaStatus,
   updateIdea,
+  updateIdeaPosition,
 } from "./actions";
-import { NEXT_STATUS, type Idea, type IdeaStatus } from "./types";
+import {
+  CANVAS_HEIGHT,
+  CANVAS_WIDTH,
+  CARD_HEIGHT,
+  CARD_WIDTH,
+  NEXT_STATUS,
+  type Idea,
+  type IdeaStatus,
+} from "./types";
 
 // ─── Status → style mapping ──────────────────────────────────────
-//
-// House-POV note: these colors are a user-intent signal for the idea
-// (green = "yes, do it" / red = "kill it"), not a financial direction,
-// so the usual house-perspective flip doesn't apply. Green stays green.
 
 const STATUS_STYLES: Record<
   IdeaStatus,
@@ -85,16 +72,16 @@ const STATUS_STYLES: Record<
     Icon: Circle,
   },
   green: {
-    border: "border-emerald-500/50",
-    glow: "shadow-[0_0_24px_-8px_rgba(16,185,129,0.55)]",
+    border: "border-emerald-500/60",
+    glow: "shadow-[0_0_28px_-8px_rgba(16,185,129,0.55)]",
     chip: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 ring-1 ring-emerald-500/40",
     chipHover: "hover:bg-emerald-500/25",
     label: "Go",
     Icon: CheckCircle2,
   },
   red: {
-    border: "border-rose-500/50",
-    glow: "shadow-[0_0_24px_-8px_rgba(244,63,94,0.55)]",
+    border: "border-rose-500/60",
+    glow: "shadow-[0_0_28px_-8px_rgba(244,63,94,0.55)]",
     chip: "bg-rose-500/15 text-rose-600 dark:text-rose-400 ring-1 ring-rose-500/40",
     chipHover: "hover:bg-rose-500/25",
     label: "Kill",
@@ -102,80 +89,127 @@ const STATUS_STYLES: Record<
   },
 };
 
+// Movement below this threshold (in screen pixels) counts as a click,
+// not a drag. Keeps a quick tap on the card from scribbling it by a
+// pixel and firing an unnecessary server save.
+const DRAG_THRESHOLD_PX = 4;
+
 // ─── Board ───────────────────────────────────────────────────────
 
 export function IdeaBoard({ initial }: { initial: Idea[] }) {
   const [ideas, setIdeas] = React.useState<Idea[]>(initial);
-  // Track the last server-saved order so we can roll back on error.
-  const lastSavedRef = React.useRef<Idea[]>(initial);
-  // Pending status flips are applied optimistically so a click feels
-  // instant; a server failure reverts the card without a full refresh.
-  const [pendingId, setPendingId] = React.useState<string | null>(null);
   const [createOpen, setCreateOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<Idea | null>(null);
   const [deleting, setDeleting] = React.useState<Idea | null>(null);
+  const [pendingStatusId, setPendingStatusId] = React.useState<string | null>(
+    null,
+  );
+  // Card id that's currently being dragged — we bump its z-index so it
+  // sits on top of everything else during the drag.
+  const [activeId, setActiveId] = React.useState<string | null>(null);
 
-  // Keep local state in sync if the server-loaded initial prop changes
-  // (router.refresh on another tab, etc).
+  const canvasRef = React.useRef<HTMLDivElement | null>(null);
+  const scrollRef = React.useRef<HTMLDivElement | null>(null);
+
+  // Keep local state in sync when the server-loaded prop changes
+  // (router.refresh after create/delete/edit).
   React.useEffect(() => {
     setIdeas(initial);
-    lastSavedRef.current = initial;
   }, [initial]);
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      // Require a small drag distance so the pointerdown that starts a
-      // status-toggle click isn't misinterpreted as a drag.
-      activationConstraint: { distance: 6 },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    }),
-  );
-
-  const ids = React.useMemo(() => ideas.map((i) => i.id), [ideas]);
-
-  async function handleDragEnd(event: DragEndEvent) {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-
-    const from = ideas.findIndex((i) => i.id === active.id);
-    const to = ideas.findIndex((i) => i.id === over.id);
-    if (from === -1 || to === -1) return;
-
-    const next = arrayMove(ideas, from, to);
-    setIdeas(next);
-
-    const result = await reorderIdeas(next.map((i) => i.id));
-    if (!result.success) {
-      toast.error(result.error);
-      setIdeas(lastSavedRef.current);
+  // Centre the scroll viewport on the initial cluster of cards so the
+  // user lands on the content instead of an empty canvas corner.
+  React.useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (ideas.length === 0) {
+      // Centre on (0, 0)-ish for the empty state.
+      el.scrollTo({ left: 0, top: 0 });
       return;
     }
-    lastSavedRef.current = next;
+    // Find the centroid of the current cards and scroll there.
+    let sumX = 0;
+    let sumY = 0;
+    for (const i of ideas) {
+      sumX += i.positionX + CARD_WIDTH / 2;
+      sumY += i.positionY + CARD_HEIGHT / 2;
+    }
+    const cx = sumX / ideas.length;
+    const cy = sumY / ideas.length;
+    el.scrollTo({
+      left: Math.max(0, cx - el.clientWidth / 2),
+      top: Math.max(0, cy - el.clientHeight / 2),
+    });
+    // Only run on mount — if we re-ran every time `ideas` changes we'd
+    // yank the user's viewport around on every edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function setPositionLocal(id: string, x: number, y: number) {
+    setIdeas((list) =>
+      list.map((i) => (i.id === id ? { ...i, positionX: x, positionY: y } : i)),
+    );
   }
 
-  async function handleCycleStatus(idea: Idea) {
+  async function saveStatus(idea: Idea) {
     const target = NEXT_STATUS[idea.status];
     const prev = ideas;
-    setPendingId(idea.id);
+    setPendingStatusId(idea.id);
     setIdeas((list) =>
       list.map((i) => (i.id === idea.id ? { ...i, status: target } : i)),
     );
     const result = await setIdeaStatus({ id: idea.id, status: target });
-    setPendingId(null);
+    setPendingStatusId(null);
     if (!result.success) {
       toast.error(result.error);
       setIdeas(prev);
-    } else {
-      lastSavedRef.current = lastSavedRef.current.map((i) =>
-        i.id === idea.id ? { ...i, status: target } : i,
+    }
+  }
+
+  async function savePosition(
+    id: string,
+    x: number,
+    y: number,
+    original: { x: number; y: number },
+  ) {
+    const result = await updateIdeaPosition({ id, x, y });
+    if (!result.success) {
+      toast.error(result.error);
+      // Roll back just this card's position.
+      setIdeas((list) =>
+        list.map((i) =>
+          i.id === id
+            ? { ...i, positionX: original.x, positionY: original.y }
+            : i,
+        ),
       );
     }
   }
 
+  function recenter() {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (ideas.length === 0) {
+      el.scrollTo({ left: 0, top: 0, behavior: "smooth" });
+      return;
+    }
+    let sumX = 0;
+    let sumY = 0;
+    for (const i of ideas) {
+      sumX += i.positionX + CARD_WIDTH / 2;
+      sumY += i.positionY + CARD_HEIGHT / 2;
+    }
+    const cx = sumX / ideas.length;
+    const cy = sumY / ideas.length;
+    el.scrollTo({
+      left: Math.max(0, cx - el.clientWidth / 2),
+      top: Math.max(0, cy - el.clientHeight / 2),
+      behavior: "smooth",
+    });
+  }
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -185,37 +219,75 @@ export function IdeaBoard({ initial }: { initial: Idea[] }) {
             {ideas.filter((i) => i.status === "red").length} kill
           </span>
         </div>
-        <Button size="sm" onClick={() => setCreateOpen(true)}>
-          <Plus className="size-4" />
-          New idea
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={recenter}
+            disabled={ideas.length === 0}
+          >
+            <Maximize2 className="size-4" />
+            Recenter
+          </Button>
+          <Button size="sm" onClick={() => setCreateOpen(true)}>
+            <Plus className="size-4" />
+            New idea
+          </Button>
+        </div>
       </div>
 
-      {/* Board */}
-      {ideas.length === 0 ? (
-        <EmptyState onNew={() => setCreateOpen(true)} />
-      ) : (
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragEnd={handleDragEnd}
+      {/* Scroll viewport */}
+      <div
+        ref={scrollRef}
+        className={cn(
+          "relative h-[75vh] min-h-[560px] overflow-auto rounded-2xl border bg-background",
+          // Subtle dot grid — vocab-match with Excalidraw-style canvases.
+          "[background-image:radial-gradient(circle,var(--muted-foreground)_0.6px,transparent_0.6px)] [background-size:24px_24px]",
+          "[background-position:0_0]",
+        )}
+        // Scope the custom cursor when dragging a card over the canvas
+        // — gives the whole viewport a "grabbing" feel instead of just
+        // the card.
+        style={activeId ? { cursor: "grabbing" } : undefined}
+      >
+        {/* Canvas */}
+        <div
+          ref={canvasRef}
+          className="relative"
+          style={{
+            width: CANVAS_WIDTH,
+            height: CANVAS_HEIGHT,
+          }}
         >
-          <SortableContext items={ids} strategy={rectSortingStrategy}>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {ideas.map((idea) => (
-                <SortableCard
-                  key={idea.id}
-                  idea={idea}
-                  pending={pendingId === idea.id}
-                  onCycle={() => handleCycleStatus(idea)}
-                  onEdit={() => setEditing(idea)}
-                  onDelete={() => setDeleting(idea)}
-                />
-              ))}
-            </div>
-          </SortableContext>
-        </DndContext>
-      )}
+          {ideas.map((idea) => (
+            <CanvasCard
+              key={idea.id}
+              idea={idea}
+              active={activeId === idea.id}
+              pendingStatus={pendingStatusId === idea.id}
+              onActiveChange={(active) =>
+                setActiveId(active ? idea.id : null)
+              }
+              onPositionLocal={(x, y) => setPositionLocal(idea.id, x, y)}
+              onPositionCommit={(x, y, original) =>
+                savePosition(idea.id, x, y, original)
+              }
+              onCycleStatus={() => saveStatus(idea)}
+              onEdit={() => setEditing(idea)}
+              onDelete={() => setDeleting(idea)}
+            />
+          ))}
+        </div>
+
+        {ideas.length === 0 && (
+          <EmptyState
+            onNew={() => setCreateOpen(true)}
+            // Anchor the empty state to the top-left visible area so it
+            // shows up regardless of the canvas size.
+          />
+        )}
+      </div>
 
       <CreateDialog open={createOpen} onOpenChange={setCreateOpen} />
       <EditDialog
@@ -230,117 +302,203 @@ export function IdeaBoard({ initial }: { initial: Idea[] }) {
   );
 }
 
-// ─── Sortable card ───────────────────────────────────────────────
+// ─── Card with free-form drag ────────────────────────────────────
 
-function SortableCard({
+function CanvasCard({
   idea,
-  pending,
-  onCycle,
+  active,
+  pendingStatus,
+  onActiveChange,
+  onPositionLocal,
+  onPositionCommit,
+  onCycleStatus,
   onEdit,
   onDelete,
 }: {
   idea: Idea;
-  pending: boolean;
-  onCycle: () => void;
+  active: boolean;
+  pendingStatus: boolean;
+  onActiveChange: (active: boolean) => void;
+  onPositionLocal: (x: number, y: number) => void;
+  onPositionCommit: (
+    x: number,
+    y: number,
+    original: { x: number; y: number },
+  ) => void;
+  onCycleStatus: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: idea.id });
-
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  };
+  // Drag-specific transient state lives in a ref so pointer events
+  // don't cause re-renders on every move. The rendered position comes
+  // from idea.positionX/Y which the parent keeps in sync via
+  // onPositionLocal.
+  const dragRef = React.useRef<{
+    startClientX: number;
+    startClientY: number;
+    startCardX: number;
+    startCardY: number;
+    moved: boolean;
+  } | null>(null);
 
   const s = STATUS_STYLES[idea.status];
   const StatusIcon = s.Icon;
 
+  function onPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    // Left button only. Middle / right click should not start a drag
+    // so context menus + scroll wheels still work.
+    if (e.button !== 0) return;
+
+    // Interactive descendants (status chip, edit, delete) handle their
+    // own clicks — if the press originated on one of those we don't
+    // hijack it as a drag.
+    const target = e.target as HTMLElement;
+    if (target.closest("[data-no-drag]")) return;
+
+    e.preventDefault();
+    (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+    dragRef.current = {
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startCardX: idea.positionX,
+      startCardY: idea.positionY,
+      moved: false,
+    };
+    onActiveChange(true);
+  }
+
+  function onPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const dx = e.clientX - drag.startClientX;
+    const dy = e.clientY - drag.startClientY;
+
+    if (!drag.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) {
+      // Below threshold — treat as a still click, don't update.
+      return;
+    }
+    drag.moved = true;
+
+    const nextX = Math.max(
+      0,
+      Math.min(CANVAS_WIDTH - CARD_WIDTH, drag.startCardX + dx),
+    );
+    const nextY = Math.max(
+      0,
+      Math.min(CANVAS_HEIGHT - CARD_HEIGHT, drag.startCardY + dy),
+    );
+    onPositionLocal(nextX, nextY);
+  }
+
+  function endDrag(e: React.PointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    if (!drag) return;
+    dragRef.current = null;
+    try {
+      (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
+    } catch {
+      // Pointer was already released (e.g. pointercancel) — ignore.
+    }
+    onActiveChange(false);
+
+    if (drag.moved) {
+      onPositionCommit(idea.positionX, idea.positionY, {
+        x: drag.startCardX,
+        y: drag.startCardY,
+      });
+    }
+  }
+
   return (
     <div
-      ref={setNodeRef}
-      style={style}
+      data-idea-id={idea.id}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
       className={cn(
-        "group relative flex flex-col gap-3 rounded-xl border bg-card p-4 transition-shadow",
+        "group absolute rounded-xl border bg-card shadow-sm",
+        "transition-shadow",
         s.border,
         s.glow,
-        isDragging && "z-10 opacity-60 ring-2 ring-primary/40",
+        active && "z-20 ring-2 ring-primary/50",
       )}
+      style={{
+        width: CARD_WIDTH,
+        height: CARD_HEIGHT,
+        transform: `translate3d(${idea.positionX}px, ${idea.positionY}px, 0)`,
+        // Disable native touch gestures on the card so pointer-drag
+        // works cleanly on mobile without the page trying to scroll.
+        touchAction: "none",
+        cursor: active ? "grabbing" : "grab",
+      }}
     >
-      {/* Drag handle + row actions */}
-      <div className="flex items-center justify-between">
-        <button
-          type="button"
-          aria-label="Drag to reorder"
-          className="-ml-1 rounded-md p-1 text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing"
-          style={{ cursor: "grab" }}
-          {...attributes}
-          {...listeners}
-        >
-          <GripVertical className="size-4" />
-        </button>
-        <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-7"
-            onClick={onEdit}
-            aria-label="Edit idea"
+      <div className="flex h-full flex-col gap-2 p-4">
+        {/* Top row: hover-revealed edit + delete */}
+        <div className="flex items-start justify-between gap-2">
+          <h3 className="line-clamp-2 flex-1 text-sm font-semibold leading-snug text-foreground">
+            {idea.title}
+          </h3>
+          <div
+            className={cn(
+              "flex shrink-0 items-center gap-0.5",
+              "opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100",
+            )}
+            data-no-drag
           >
-            <Pencil className="size-3.5" />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-7 text-rose-500 hover:bg-rose-500/10 hover:text-rose-500"
-            onClick={onDelete}
-            aria-label="Delete idea"
-          >
-            <Trash2 className="size-3.5" />
-          </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              onClick={onEdit}
+              aria-label="Edit idea"
+              data-no-drag
+            >
+              <Pencil className="size-3" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-6 text-rose-500 hover:bg-rose-500/10 hover:text-rose-500"
+              onClick={onDelete}
+              aria-label="Delete idea"
+              data-no-drag
+            >
+              <Trash2 className="size-3" />
+            </Button>
+          </div>
         </div>
-      </div>
 
-      {/* Title + description */}
-      <div className="space-y-1.5">
-        <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">
-          {idea.title}
-        </h3>
         {idea.description && (
-          <p className="line-clamp-4 text-xs text-muted-foreground">
+          <p className="line-clamp-3 text-xs leading-snug text-muted-foreground">
             {idea.description}
           </p>
         )}
-      </div>
 
-      {/* Status chip — click cycles neutral → green → red → neutral */}
-      <div className="mt-auto flex items-center justify-between pt-1">
-        <button
-          type="button"
-          onClick={onCycle}
-          disabled={pending}
-          aria-label={`Cycle status (currently ${s.label})`}
-          className={cn(
-            "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider transition-colors",
-            s.chip,
-            s.chipHover,
-            pending && "opacity-50",
-          )}
-        >
-          <StatusIcon className="size-3.5" />
-          {s.label}
-        </button>
-        <span className="text-[10px] text-muted-foreground/80">
-          {idea.createdBy?.username ?? "—"}
-        </span>
+        {/* Bottom row: status chip (click to cycle) + author */}
+        <div className="mt-auto flex items-center justify-between">
+          <button
+            type="button"
+            data-no-drag
+            onClick={onCycleStatus}
+            disabled={pendingStatus}
+            aria-label={`Cycle status (currently ${s.label})`}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider transition-colors",
+              s.chip,
+              s.chipHover,
+              pendingStatus && "opacity-50",
+            )}
+          >
+            <StatusIcon className="size-3.5" />
+            {s.label}
+          </button>
+          <span className="truncate text-[10px] text-muted-foreground/70">
+            {idea.createdBy?.username ?? "—"}
+          </span>
+        </div>
       </div>
     </div>
   );
@@ -350,20 +508,23 @@ function SortableCard({
 
 function EmptyState({ onNew }: { onNew: () => void }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
-      <div className="flex size-12 items-center justify-center rounded-full bg-primary/10">
-        <Lightbulb className="size-5 text-primary" />
+    <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+      <div className="pointer-events-auto flex flex-col items-center gap-3 rounded-xl border border-dashed border-border bg-card/80 px-8 py-12 text-center shadow-sm backdrop-blur-sm">
+        <div className="flex size-12 items-center justify-center rounded-full bg-primary/10">
+          <Lightbulb className="size-5 text-primary" />
+        </div>
+        <div>
+          <p className="text-sm font-medium">No ideas yet</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Drag cards anywhere on the canvas. Click a chip to cycle neutral →
+            go → kill.
+          </p>
+        </div>
+        <Button size="sm" onClick={onNew}>
+          <Plus className="size-4" />
+          New idea
+        </Button>
       </div>
-      <div>
-        <p className="text-sm font-medium">No ideas yet</p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Capture a thought — drag to reorder, click the chip to mark go or kill.
-        </p>
-      </div>
-      <Button size="sm" onClick={onNew}>
-        <Plus className="size-4" />
-        New idea
-      </Button>
     </div>
   );
 }
@@ -381,7 +542,6 @@ function CreateDialog({
   const [description, setDescription] = React.useState("");
   const [saving, setSaving] = React.useState(false);
 
-  // Reset fields whenever the dialog closes so the next open starts clean.
   React.useEffect(() => {
     if (!open) {
       setTitle("");
@@ -473,7 +633,6 @@ function EditDialog({
   const [description, setDescription] = React.useState("");
   const [saving, setSaving] = React.useState(false);
 
-  // Snap fields to the incoming idea when the dialog opens.
   React.useEffect(() => {
     if (idea) {
       setTitle(idea.title);
