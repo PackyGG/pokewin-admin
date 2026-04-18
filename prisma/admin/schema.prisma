@@ -42,6 +42,7 @@ model admin_users {
   voucher_actions       admin_voucher_actions[]
   expenses              expenses[]
   recurring_expenses    recurring_expenses[]
+  ideas                 admin_ideas[]
 }
 
 // Custom role definitions for the granular-permissions system. Four
@@ -319,5 +320,29 @@ model admin_settings {
   value      String
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
   updated_by String?  @db.Uuid
+}
+
+// Admin idea board — free-form cards the team can create, reorder, and
+// flag green (approved / go) / red (rejected / no) or leave neutral.
+// Purely an internal brainstorming surface, no link to any main-DB user
+// or product entity.
+model admin_ideas {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title          String
+  description    String?
+  // "neutral" | "green" | "red" — kept as String so new statuses can be
+  // added without a migration. Validated at the action boundary.
+  status         String       @default("neutral")
+  // Float lets us insert between two existing cards without rewriting
+  // every sibling's sort_order (midpoint pattern). New cards append at
+  // max(sort_order) + 1000.
+  sort_order     Float        @default(0)
+  created_by_id  String       @db.Uuid
+  created_by     admin_users  @relation(fields: [created_by_id], references: [id])
+  created_at     DateTime     @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime     @updatedAt @db.Timestamptz(6)
+
+  @@index([sort_order])
+  @@index([status])
 }
 

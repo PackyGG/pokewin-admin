@@ -36,6 +36,7 @@ import {
   Wallet,
   Globe,
   Megaphone,
+  Lightbulb,
   ChevronRight,
   type LucideIcon,
 } from "lucide-react";
@@ -93,6 +94,7 @@ const ICONS: Record<string, LucideIcon> = {
   Wallet,
   Globe,
   Megaphone,
+  Lightbulb,
 };
 
 type NavItem = {
@@ -112,6 +114,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Overview",
     items: [
       { label: "Dashboard", href: "/dashboard", icon: "LayoutDashboard" },
+      { label: "Ideas", href: "/ideas", icon: "Lightbulb" },
       { label: "Analytics", href: "/analytics", icon: "BarChart3" },
       { label: "Map", href: "/map", icon: "Globe" },
       { label: "Users", href: "/users", icon: "Users" },
