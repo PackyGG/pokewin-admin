@@ -118,9 +118,9 @@ type TabDef = {
 
 const TABS: TabDef[] = [
   { key: "overview", label: "Overview", icon: Activity },
+  { key: "gaming", label: "Gaming", icon: Swords },
   { key: "finances", label: "Finances", icon: Wallet },
   { key: "rewards", label: "Rewards", icon: Gift },
-  { key: "gaming", label: "Gaming", icon: Swords },
   { key: "inventory", label: "Inventory", icon: Gem },
   { key: "trust", label: "Trust", icon: ShieldAlert },
   {
