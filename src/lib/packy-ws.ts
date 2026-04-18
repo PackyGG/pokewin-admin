@@ -3,11 +3,13 @@
 import * as React from "react";
 
 /**
- * Direct browser WebSocket to the packy.gg live gateway.
+ * Client for the packy.gg live event stream via a server-side proxy.
  *
- * No server-side proxy — the browser opens wss://api.packy.gg/v1/ws
- * straight from the admin page. Every header on the handshake is
- * whatever the browser sends; no custom logic rewrites the request.
+ * Uses an EventSource to /api/packy-live. The Node.js route on our
+ * server opens the real WebSocket with the exact reference browser
+ * handshake (headers the browser can't set directly) and forwards
+ * every frame as an SSE `packy` event. All hooks below keep the same
+ * public API so consumers don't care about the transport.
  */
 
 // ─── Types ────────────────────────────────────────────────────────
@@ -60,8 +62,7 @@ export type ConnectionStatus = "connecting" | "open" | "reconnecting" | "closed"
 
 // ─── Singleton state ──────────────────────────────────────────────
 
-const WS_URL = "wss://api.packy.gg/v1/ws";
-const MAX_BACKOFF_MS = 30_000;
+const SSE_PATH = "/api/packy-live";
 
 type Handler = (evt: PackyEvent) => void;
 const handlers = new Map<string, Set<Handler>>();
@@ -69,9 +70,7 @@ const handlers = new Map<string, Set<Handler>>();
 type StatusHandler = (status: ConnectionStatus) => void;
 const statusHandlers = new Set<StatusHandler>();
 
-let ws: WebSocket | null = null;
-let retryAttempt = 0;
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let source: EventSource | null = null;
 let visibilityBound = false;
 let currentStatus: ConnectionStatus = "closed";
 
@@ -95,7 +94,10 @@ function totalSubscribers(): number {
 
 function parseMessage(raw: string): PackyEvent | null {
   try {
-    const parsed: unknown = JSON.parse(raw);
+    // The proxy escapes embedded newlines as `\n` to survive SSE
+    // `data:` framing. Reverse that before JSON.parse.
+    const normalized = raw.includes("\\n") ? raw.replace(/\\n/g, "\n") : raw;
+    const parsed: unknown = JSON.parse(normalized);
     if (
       parsed &&
       typeof parsed === "object" &&
@@ -123,113 +125,98 @@ function dispatch(evt: PackyEvent) {
   }
 }
 
-function scheduleReconnect() {
-  if (reconnectTimer != null) return;
+function closeSource(reason: "manual" | "hidden" | "teardown" | "rotation") {
+  if (source) {
+    source.onopen = null;
+    source.onerror = null;
+    source.onmessage = null;
+    try {
+      source.close();
+    } catch {
+      // already closed — ignore
+    }
+    source = null;
+  }
+  setStatus("closed");
+  if (reason === "rotation") {
+    openSource();
+  }
+}
+
+function openSource() {
+  if (typeof window === "undefined") return;
   if (totalSubscribers() === 0) return;
+  if (source) return;
   if (
     typeof document !== "undefined" &&
     document.visibilityState === "hidden"
   ) {
+    return;
+  }
+
+  setStatus("connecting");
+
+  let es: EventSource;
+  try {
+    es = new EventSource(SSE_PATH, { withCredentials: true });
+  } catch (err) {
+    console.error("[packy-ws] failed to construct EventSource", err);
     setStatus("closed");
     return;
   }
-  setStatus("reconnecting");
-  const delay = Math.min(MAX_BACKOFF_MS, 1000 * 2 ** retryAttempt);
-  retryAttempt += 1;
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    openSocket();
-  }, delay);
-}
+  source = es;
 
-function closeSocket(reason: "manual" | "hidden" | "teardown") {
-  if (reconnectTimer != null) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
-  if (ws) {
-    ws.onopen = null;
-    ws.onmessage = null;
-    ws.onerror = null;
-    ws.onclose = null;
-    try {
-      ws.close();
-    } catch {
-      // already closing — ignore
-    }
-    ws = null;
-  }
-  if (reason !== "hidden") {
-    retryAttempt = 0;
-  }
-  setStatus("closed");
-}
-
-function openSocket() {
-  if (typeof window === "undefined") return;
-  if (totalSubscribers() === 0) return;
-  if (ws) return;
-  if (
-    typeof document !== "undefined" &&
-    document.visibilityState === "hidden"
-  ) {
-    return;
-  }
-
-  setStatus(retryAttempt === 0 ? "connecting" : "reconnecting");
-
-  let socket: WebSocket;
-  try {
-    socket = new WebSocket(WS_URL);
-  } catch (err) {
-    console.error("[packy-ws] failed to construct WebSocket", err);
-    scheduleReconnect();
-    return;
-  }
-  ws = socket;
-
-  socket.onopen = () => {
-    retryAttempt = 0;
+  // Proxy emits `event: open` the moment the upstream WS opens — we
+  // care about upstream readiness, not the SSE handshake.
+  es.addEventListener("open", () => {
     setStatus("open");
-  };
+  });
 
-  socket.onmessage = (ev: MessageEvent) => {
+  es.addEventListener("packy", (ev: MessageEvent) => {
     if (typeof ev.data !== "string") return;
     const evt = parseMessage(ev.data);
     if (evt) dispatch(evt);
-  };
+  });
 
-  socket.onerror = (ev) => {
-    console.error(`[packy-ws] socket error (url=${WS_URL})`, ev);
-  };
+  es.addEventListener("reconnect", () => {
+    if (source !== es) return;
+    closeSource("rotation");
+  });
 
-  socket.onclose = (ev) => {
-    if (ws !== socket) return;
-    ws = null;
-    if (ev.code !== 1000 && ev.code !== 1001) {
-      console.warn(
-        `[packy-ws] socket closed code=${ev.code} reason=${
-          ev.reason || "(none)"
-        } wasClean=${ev.wasClean}`,
-      );
+  es.addEventListener("close", (ev: MessageEvent) => {
+    if (ev.data) {
+      try {
+        const parsed = JSON.parse(ev.data);
+        console.warn(
+          `[packy-ws] upstream WS closed code=${parsed.code} reason=${
+            parsed.reason || "(none)"
+          }`,
+        );
+      } catch {
+        // non-JSON payload — ignore
+      }
     }
-    if (totalSubscribers() === 0) {
+    setStatus("reconnecting");
+  });
+
+  es.onerror = () => {
+    if (source !== es) return;
+    if (es.readyState === 2) {
       setStatus("closed");
-      return;
+    } else {
+      setStatus("reconnecting");
     }
-    scheduleReconnect();
   };
 }
 
 function handleVisibility() {
   if (typeof document === "undefined") return;
   if (document.visibilityState === "visible") {
-    if (totalSubscribers() > 0 && !ws) {
-      retryAttempt = 0;
-      openSocket();
+    if (totalSubscribers() > 0 && !source) {
+      openSource();
     }
   } else {
-    closeSocket("hidden");
+    closeSource("hidden");
   }
 }
 
@@ -260,8 +247,8 @@ export function subscribePackyWs<T extends PackyEvent>(
   const typed = handler as unknown as Handler;
   set.add(typed);
 
-  if (!ws && reconnectTimer == null) {
-    openSocket();
+  if (!source) {
+    openSource();
   }
 
   return () => {
@@ -271,7 +258,7 @@ export function subscribePackyWs<T extends PackyEvent>(
       if (bucket.size === 0) handlers.delete(eventType);
     }
     if (totalSubscribers() === 0) {
-      closeSocket("teardown");
+      closeSource("teardown");
     }
   };
 }

@@ -1,0 +1,354 @@
+import { verifySession } from "@/lib/dal";
+import https from "node:https";
+import crypto from "node:crypto";
+import type { Duplex, Writable } from "node:stream";
+import WsDefault from "ws";
+
+/**
+ * Server-side proxy for the packy.gg live event stream. Opens the
+ * upstream WebSocket with the exact handshake headers the browser
+ * reference uses (browsers can't set Origin / Sec-WebSocket-Key
+ * directly — the spec pins them), then fans every message out to
+ * authenticated admins over SSE.
+ */
+
+// `Receiver` and `PerMessageDeflate` are runtime-only exports on the
+// ws package (attached to the WebSocket class for CJS interop). They
+// are NOT typed by @types/ws, so we narrow minimal shapes ourselves.
+type ReceiverLike = Writable & {
+  on(
+    event: "message",
+    cb: (
+      data: Buffer | ArrayBuffer | Buffer[] | string,
+      isBinary: boolean,
+    ) => void,
+  ): ReceiverLike;
+  on(
+    event: "conclude",
+    cb: (code: number, reason: Buffer) => void,
+  ): ReceiverLike;
+  on(event: "error", cb: (err: Error) => void): ReceiverLike;
+  removeAllListeners(event?: string): ReceiverLike;
+};
+type ReceiverCtor = new (opts?: {
+  binaryType?: "nodebuffer" | "arraybuffer" | "fragments";
+  extensions?: Record<string, unknown>;
+  isServer?: boolean;
+  maxPayload?: number;
+  skipUTF8Validation?: boolean;
+}) => ReceiverLike;
+type PerMessageDeflateCtor = new (
+  options: Record<string, unknown>,
+  isServer: boolean,
+  maxPayload: number,
+) => {
+  accept(offers: Record<string, unknown>[]): Record<string, unknown>;
+  offer(): Record<string, unknown>;
+};
+const WsExtras = WsDefault as unknown as {
+  Receiver: ReceiverCtor;
+  PerMessageDeflate: PerMessageDeflateCtor & { extensionName: string };
+};
+const Receiver = WsExtras.Receiver;
+const PerMessageDeflate = WsExtras.PerMessageDeflate;
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 300;
+
+const PACKY_HOST = "api.packy.gg";
+const PACKY_PATH = "/v1/ws";
+const ROTATION_MS = 240_000;
+const HEARTBEAT_MS = 15_000;
+
+const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+/**
+ * Full handshake header set copied 1:1 from the reference browser WS
+ * to the packy.gg gateway. Sent literally — manual HTTP upgrade so
+ * the `ws` library can't rewrite Sec-WebSocket-Key.
+ */
+const PACKY_WS_KEY = "LMUTEH207xvS5FA2bTrXCw==";
+const PACKY_WS_HEADERS: Record<string, string> = {
+  Host: PACKY_HOST,
+  Upgrade: "websocket",
+  Origin: "https://beta.packy.gg",
+  "Cache-Control": "no-cache",
+  "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
+  Pragma: "no-cache",
+  Connection: "Upgrade",
+  "Sec-WebSocket-Key": PACKY_WS_KEY,
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+  "Sec-WebSocket-Version": "13",
+  "Sec-WebSocket-Extensions": "permessage-deflate; client_max_window_bits",
+};
+
+const EXPECTED_ACCEPT = crypto
+  .createHash("sha1")
+  .update(PACKY_WS_KEY + WS_GUID)
+  .digest("base64");
+
+export async function GET(request: Request): Promise<Response> {
+  try {
+    await verifySession();
+  } catch {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      let closed = false;
+      let req: ReturnType<typeof https.request> | null = null;
+      let socket: Duplex | null = null;
+      let receiver: ReceiverLike | null = null;
+      let heartbeat: ReturnType<typeof setInterval> | null = null;
+      let rotation: ReturnType<typeof setTimeout> | null = null;
+
+      const cleanup = () => {
+        if (closed) return;
+        closed = true;
+        if (heartbeat) clearInterval(heartbeat);
+        if (rotation) clearTimeout(rotation);
+        if (receiver) {
+          try {
+            receiver.removeAllListeners();
+            receiver.end();
+          } catch {
+            // ignore
+          }
+          receiver = null;
+        }
+        if (socket) {
+          try {
+            socket.removeAllListeners();
+            socket.destroy();
+          } catch {
+            // ignore
+          }
+          socket = null;
+        }
+        if (req) {
+          try {
+            req.destroy();
+          } catch {
+            // ignore
+          }
+          req = null;
+        }
+        try {
+          controller.close();
+        } catch {
+          // ignore
+        }
+      };
+
+      const write = (chunk: string) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(chunk));
+        } catch {
+          cleanup();
+        }
+      };
+
+      const writeEvent = (event: string, data: string) => {
+        write(`event: ${event}\ndata: ${data}\n\n`);
+      };
+
+      if (request.signal.aborted) {
+        cleanup();
+        return;
+      }
+      request.signal.addEventListener("abort", cleanup, { once: true });
+
+      try {
+        req = https.request({
+          host: PACKY_HOST,
+          port: 443,
+          path: PACKY_PATH,
+          method: "GET",
+          headers: PACKY_WS_HEADERS,
+          timeout: 15_000,
+        });
+      } catch (err) {
+        writeEvent(
+          "error",
+          JSON.stringify({
+            message: "upstream-init-failed",
+            detail: err instanceof Error ? err.message : String(err),
+          }),
+        );
+        cleanup();
+        return;
+      }
+
+      req.on("error", (err) => {
+        writeEvent(
+          "error",
+          JSON.stringify({
+            message: err.message ?? String(err),
+            phase: "request",
+          }),
+        );
+        cleanup();
+      });
+
+      req.on("response", (res) => {
+        writeEvent(
+          "error",
+          JSON.stringify({
+            message: "upstream-did-not-upgrade",
+            status: res.statusCode ?? 0,
+          }),
+        );
+        cleanup();
+      });
+
+      req.on("upgrade", (res, rawSocket, head) => {
+        if (closed) {
+          rawSocket.destroy();
+          return;
+        }
+
+        const accept = res.headers["sec-websocket-accept"];
+        if (accept !== EXPECTED_ACCEPT) {
+          writeEvent(
+            "error",
+            JSON.stringify({
+              message: "accept-mismatch",
+              expected: EXPECTED_ACCEPT,
+              got: String(accept ?? "(none)"),
+            }),
+          );
+          rawSocket.destroy();
+          cleanup();
+          return;
+        }
+
+        socket = rawSocket;
+
+        const extHeader = res.headers["sec-websocket-extensions"];
+        const extensions: Record<string, unknown> = {};
+        if (extHeader && String(extHeader).includes("permessage-deflate")) {
+          const pmd = new PerMessageDeflate(
+            {},
+            false,
+            100 * 1024 * 1024,
+          );
+          try {
+            pmd.accept([{}]);
+            extensions[PerMessageDeflate.extensionName] = pmd;
+          } catch {
+            // fall back uncompressed
+          }
+        }
+
+        receiver = new Receiver({
+          binaryType: "nodebuffer",
+          extensions,
+          isServer: false,
+          maxPayload: 100 * 1024 * 1024,
+          skipUTF8Validation: false,
+        });
+
+        receiver.on("message", (data) => {
+          let payload: string;
+          if (typeof data === "string") {
+            payload = data;
+          } else if (Buffer.isBuffer(data)) {
+            payload = data.toString("utf8");
+          } else if (Array.isArray(data)) {
+            payload = Buffer.concat(data as Buffer[]).toString("utf8");
+          } else if (data instanceof ArrayBuffer) {
+            payload = Buffer.from(new Uint8Array(data)).toString("utf8");
+          } else {
+            return;
+          }
+          if (payload.includes("\n")) {
+            payload = payload.replace(/\n/g, "\\n");
+          }
+          writeEvent("packy", payload);
+        });
+
+        receiver.on("conclude", (code, reason) => {
+          writeEvent(
+            "close",
+            JSON.stringify({
+              code,
+              reason: reason?.toString("utf8") ?? "",
+            }),
+          );
+          cleanup();
+        });
+
+        receiver.on("error", (err) => {
+          writeEvent(
+            "error",
+            JSON.stringify({
+              message: err.message ?? String(err),
+              phase: "receiver",
+            }),
+          );
+          cleanup();
+        });
+
+        if (head && head.length > 0) {
+          receiver.write(head);
+        }
+        rawSocket.on("data", (chunk) => {
+          if (closed || !receiver) return;
+          receiver.write(chunk);
+        });
+        rawSocket.on("close", () => {
+          if (!closed) {
+            writeEvent(
+              "close",
+              JSON.stringify({ code: 1006, reason: "socket-closed" }),
+            );
+            cleanup();
+          }
+        });
+        rawSocket.on("error", (err) => {
+          writeEvent(
+            "error",
+            JSON.stringify({
+              message: err.message ?? String(err),
+              phase: "socket",
+            }),
+          );
+          cleanup();
+        });
+
+        writeEvent("open", "{}");
+      });
+
+      req.end();
+
+      heartbeat = setInterval(() => {
+        if (closed) return;
+        write(`:heartbeat\n\n`);
+      }, HEARTBEAT_MS);
+
+      rotation = setTimeout(() => {
+        if (closed) return;
+        writeEvent("reconnect", JSON.stringify({ reason: "rotation" }));
+        cleanup();
+      }, ROTATION_MS);
+    },
+    cancel() {
+      // abort listener handles cleanup
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
