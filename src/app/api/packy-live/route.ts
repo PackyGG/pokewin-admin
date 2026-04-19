@@ -2,7 +2,16 @@ import { verifySession } from "@/lib/dal";
 import https from "node:https";
 import crypto from "node:crypto";
 import type { Duplex, Writable } from "node:stream";
-import WsDefault from "ws";
+// Namespace import — we need `Receiver` + `PerMessageDeflate` which
+// the ws package exports as top-level names from its ESM entry
+// (wrapper.mjs). `import WsDefault from "ws"` ONLY gives the
+// WebSocket class in ESM (the CJS `WebSocket.Receiver` attribute
+// isn't set on the ESM default export), so the previous
+// `as unknown as { Receiver }` cast hit an undefined at runtime and
+// the proxy silently failed on every upgrade. @types/ws doesn't
+// declare these names, but the runtime values exist — grab them off
+// the namespace import and cast to the constructor shapes.
+import * as ws from "ws";
 
 /**
  * Server-side proxy for the packy.gg live event stream. Opens the
@@ -12,45 +21,24 @@ import WsDefault from "ws";
  * authenticated admins over SSE.
  */
 
-// `Receiver` and `PerMessageDeflate` are runtime-only exports on the
-// ws package (attached to the WebSocket class for CJS interop). They
-// are NOT typed by @types/ws, so we narrow minimal shapes ourselves.
-type ReceiverLike = Writable & {
+// `Receiver` is a Writable stream but the @types/ws package doesn't
+// export its class type — narrow the minimum shape we rely on so the
+// strict-mode build stays honest.
+type ReceiverWithEvents = Writable & {
   on(
     event: "message",
     cb: (
       data: Buffer | ArrayBuffer | Buffer[] | string,
       isBinary: boolean,
     ) => void,
-  ): ReceiverLike;
+  ): ReceiverWithEvents;
   on(
     event: "conclude",
     cb: (code: number, reason: Buffer) => void,
-  ): ReceiverLike;
-  on(event: "error", cb: (err: Error) => void): ReceiverLike;
-  removeAllListeners(event?: string): ReceiverLike;
+  ): ReceiverWithEvents;
+  on(event: "error", cb: (err: Error) => void): ReceiverWithEvents;
+  removeAllListeners(event?: string): ReceiverWithEvents;
 };
-type ReceiverCtor = new (opts?: {
-  binaryType?: "nodebuffer" | "arraybuffer" | "fragments";
-  extensions?: Record<string, unknown>;
-  isServer?: boolean;
-  maxPayload?: number;
-  skipUTF8Validation?: boolean;
-}) => ReceiverLike;
-type PerMessageDeflateCtor = new (
-  options: Record<string, unknown>,
-  isServer: boolean,
-  maxPayload: number,
-) => {
-  accept(offers: Record<string, unknown>[]): Record<string, unknown>;
-  offer(): Record<string, unknown>;
-};
-const WsExtras = WsDefault as unknown as {
-  Receiver: ReceiverCtor;
-  PerMessageDeflate: PerMessageDeflateCtor & { extensionName: string };
-};
-const Receiver = WsExtras.Receiver;
-const PerMessageDeflate = WsExtras.PerMessageDeflate;
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -103,7 +91,7 @@ export async function GET(request: Request): Promise<Response> {
       let closed = false;
       let req: ReturnType<typeof https.request> | null = null;
       let socket: Duplex | null = null;
-      let receiver: ReceiverLike | null = null;
+      let receiver: ReceiverWithEvents | null = null;
       let heartbeat: ReturnType<typeof setInterval> | null = null;
       let rotation: ReturnType<typeof setTimeout> | null = null;
 
@@ -233,20 +221,74 @@ export async function GET(request: Request): Promise<Response> {
         const extHeader = res.headers["sec-websocket-extensions"];
         const extensions: Record<string, unknown> = {};
         if (extHeader && String(extHeader).includes("permessage-deflate")) {
-          const pmd = new PerMessageDeflate(
-            {},
-            false,
-            100 * 1024 * 1024,
-          );
+          // PerMessageDeflate constructor args: (options, isServer,
+          // maxPayload). @types/ws doesn't expose this class, so we
+          // grab it off the namespace import and cast to the real
+          // constructor shape. `extensionName` is a static on the
+          // class ("permessage-deflate") used as the extensions-map
+          // key Receiver expects.
+          const PmdCtor = (
+            ws as unknown as {
+              PerMessageDeflate: {
+                new (
+                  options: Record<string, unknown>,
+                  isServer: boolean,
+                  maxPayload: number,
+                ): {
+                  accept(
+                    offers: Record<string, unknown>[],
+                  ): Record<string, unknown>;
+                };
+                extensionName: string;
+              };
+            }
+          ).PerMessageDeflate;
+          if (typeof PmdCtor !== "function") {
+            writeEvent(
+              "error",
+              JSON.stringify({
+                message:
+                  "PerMessageDeflate not available — ws import misresolved",
+              }),
+            );
+            rawSocket.destroy();
+            cleanup();
+            return;
+          }
+          const pmd = new PmdCtor({}, false, 100 * 1024 * 1024);
           try {
             pmd.accept([{}]);
-            extensions[PerMessageDeflate.extensionName] = pmd;
+            extensions[PmdCtor.extensionName] = pmd;
           } catch {
             // fall back uncompressed
           }
         }
 
-        receiver = new Receiver({
+        // @types/ws doesn't export Receiver either — same namespace
+        // cast pattern.
+        const ReceiverCtor = (
+          ws as unknown as {
+            Receiver: new (opts?: {
+              binaryType?: "nodebuffer" | "arraybuffer" | "fragments";
+              extensions?: Record<string, unknown>;
+              isServer?: boolean;
+              maxPayload?: number;
+              skipUTF8Validation?: boolean;
+            }) => ReceiverWithEvents;
+          }
+        ).Receiver;
+        if (typeof ReceiverCtor !== "function") {
+          writeEvent(
+            "error",
+            JSON.stringify({
+              message: "Receiver not available — ws import misresolved",
+            }),
+          );
+          rawSocket.destroy();
+          cleanup();
+          return;
+        }
+        receiver = new ReceiverCtor({
           binaryType: "nodebuffer",
           extensions,
           isServer: false,
