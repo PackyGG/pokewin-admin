@@ -5,6 +5,7 @@ import { z } from "zod";
 import { adminDb } from "@/lib/admin-db";
 import { requirePageAccess } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { ensureIdeaPositionColumns } from "./queries";
 import {
   isValidStatus,
   type IdeaStatus,
@@ -47,6 +48,13 @@ function isMissingSchema(err: unknown): boolean {
   return /(relation .* does not exist|column .* does not exist)/i.test(
     err.message,
   );
+}
+
+function isMissingColumn(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const code = (err as { code?: string }).code;
+  if (code === "P2022") return true;
+  return /column .* does not exist/i.test(err.message);
 }
 
 const PRE_MIGRATION_MESSAGE =
@@ -95,14 +103,15 @@ export async function createIdea(input: {
     };
   }
 
-  try {
+  const title = parsed.data.title;
+  const description = parsed.data.description || null;
+  async function insertOnce() {
     const count = await adminDb.admin_ideas.count();
     const pos = nextInitialPosition(count);
-
-    const row = await adminDb.admin_ideas.create({
+    return adminDb.admin_ideas.create({
       data: {
-        title: parsed.data.title,
-        description: parsed.data.description || null,
+        title,
+        description,
         status: "neutral",
         position_x: pos.x,
         position_y: pos.y,
@@ -110,11 +119,24 @@ export async function createIdea(input: {
       },
       select: { id: true },
     });
+  }
+
+  try {
+    let row: { id: string };
+    try {
+      row = await insertOnce();
+    } catch (err) {
+      // Same self-heal pattern as updateIdeaPosition: if position
+      // columns aren't on the DB yet, add them and retry the insert.
+      if (!isMissingColumn(err)) throw err;
+      await ensureIdeaPositionColumns();
+      row = await insertOnce();
+    }
 
     await createAdminAuditEvent({
       adminUserId: session.userId,
       eventType: "idea_created",
-      metadata: { ideaId: row.id, title: parsed.data.title },
+      metadata: { ideaId: row.id, title },
     });
 
     revalidatePath("/ideas");
@@ -260,6 +282,41 @@ export async function updateIdeaPosition(input: {
     // the client already has the optimistic position.
     return { success: true };
   } catch (err) {
+    if (isMissingColumn(err)) {
+      // Columns haven't been added yet — self-heal and retry once.
+      // Same safety story as queries.ts: idempotent ADD COLUMN IF NOT
+      // EXISTS under an ACCESS EXCLUSIVE lock, no data rewrite.
+      try {
+        await ensureIdeaPositionColumns();
+      } catch (ensureErr) {
+        return {
+          success: false,
+          error:
+            ensureErr instanceof Error
+              ? `Could not enable position columns: ${ensureErr.message}`
+              : "Could not enable position columns",
+        };
+      }
+      try {
+        await adminDb.admin_ideas.update({
+          where: { id: parsed.data.id },
+          data: {
+            position_x: clampX(parsed.data.x),
+            position_y: clampY(parsed.data.y),
+          },
+          select: { id: true },
+        });
+        return { success: true };
+      } catch (retryErr) {
+        return {
+          success: false,
+          error:
+            retryErr instanceof Error
+              ? retryErr.message
+              : "Failed to save position",
+        };
+      }
+    }
     if (isMissingSchema(err)) {
       return { success: false, error: PRE_MIGRATION_MESSAGE };
     }
