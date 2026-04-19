@@ -364,6 +364,68 @@ export async function GET(request: Request): Promise<Response> {
           cleanup();
         });
 
+        // ── Opt into the feeds we care about ────────────────────────
+        // The gateway broadcasts `active.users.count` without any
+        // action from us, but pull + chat feeds are pull-based: the
+        // client has to send a `*.feed.subscribe` message after the
+        // handshake to start receiving `live.pull.history` /
+        // `chat.pull.history` frames. Without these, pulls never
+        // arrive — confirmed end-to-end via the probe scripts in
+        // scripts/test-packy-ws-*.mjs.
+        //
+        // Send via ws.Sender so the frames are properly masked (WS
+        // spec requires client→server text frames to be masked).
+        const SenderCtor = (
+          ws as unknown as {
+            Sender: new (
+              socket: Duplex,
+              extensions: Record<string, unknown>,
+            ) => {
+              send(
+                data: string | Buffer,
+                options: {
+                  binary: boolean;
+                  mask: boolean;
+                  fin: boolean;
+                  compress: boolean;
+                },
+              ): void;
+            };
+          }
+        ).Sender;
+        if (typeof SenderCtor === "function") {
+          const sender = new SenderCtor(rawSocket, extensions);
+          const subscribes = [
+            { type: "live.pull.feed.subscribe" },
+            { type: "chat.pull.feed.subscribe" },
+          ];
+          for (const msg of subscribes) {
+            try {
+              sender.send(JSON.stringify(msg), {
+                binary: false,
+                mask: true,
+                fin: true,
+                compress: false,
+              });
+            } catch (err) {
+              writeEvent(
+                "error",
+                JSON.stringify({
+                  phase: "subscribe",
+                  msg: err instanceof Error ? err.message : String(err),
+                }),
+              );
+            }
+          }
+        } else {
+          writeEvent(
+            "error",
+            JSON.stringify({
+              message: "Sender not available — ws import misresolved",
+            }),
+          );
+        }
+
         writeEvent("open", "{}");
       });
 
