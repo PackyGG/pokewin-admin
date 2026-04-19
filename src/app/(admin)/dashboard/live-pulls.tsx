@@ -265,13 +265,18 @@ function PullRow({ pull: p, isNew }: { pull: Pull; isNew: boolean }) {
         </div>
       </div>
 
-      {/* Price chip — always rose since each pull is money leaving the
-          house when the user wins the card. Muted for $0 items. */}
+      {/* Price chip — neutral styling. A pull is a display event, not
+          a ledger event. The actual wager was already booked when the
+          user paid to open the pack / enter the battle, and any payout
+          lands as a separate transaction in the ledger feed. Coloring
+          this chip red/green would double-count the same money.
+          Muted for $0 items, same muted tone (slightly stronger) for
+          priced items — no directional signal. */}
       <div
         className={cn(
           "shrink-0 rounded-lg px-2.5 py-1 text-right text-sm font-bold tabular-nums",
           price > 0
-            ? "bg-rose-500/10 text-rose-600 ring-1 ring-rose-500/20 dark:text-rose-400"
+            ? "bg-muted/70 text-foreground ring-1 ring-border"
             : "bg-muted text-muted-foreground/60",
         )}
       >
