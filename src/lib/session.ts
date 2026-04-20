@@ -5,7 +5,6 @@ const secretKey = process.env.SESSION_SECRET!;
 const encodedKey = new TextEncoder().encode(secretKey);
 const COOKIE_NAME = "admin_session";
 const PENDING_COOKIE_NAME = "admin_2fa_pending";
-const TOTP_SETUP_COOKIE_NAME = "admin_totp_setup";
 
 export type SessionPayload = {
   userId: string;
@@ -20,12 +19,12 @@ type PendingSessionPayload = {
   email: string;
   username: string;
   role: string;
-  expiresAt: Date;
-};
-
-type TOTPSetupPayload = {
-  secret: string;
-  adminUserId: string;
+  // Present only on the first-time-setup path (admin_users.totp_secret
+  // is still NULL). Carried inside the signed pending cookie so the
+  // /setup-2fa page and confirmSetup action can read it without needing
+  // a separate cookie — avoiding a Server Component cookie-write that
+  // Next.js 15 rejects.
+  totpSecret?: string;
   expiresAt: Date;
 };
 
@@ -121,30 +120,3 @@ export async function deletePendingSession() {
   cookieStore.delete(PENDING_COOKIE_NAME);
 }
 
-// --- TOTP setup cookie (10-min expiry) ---
-
-export async function createTOTPSetupCookie(payload: Omit<TOTPSetupPayload, "expiresAt">) {
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-  const token = await encryptGeneric({ ...payload, expiresAt: expiresAt.toISOString() }, "10m");
-  const cookieStore = await cookies();
-
-  cookieStore.set(TOTP_SETUP_COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    expires: expiresAt,
-    path: "/",
-  });
-}
-
-export async function getTOTPSetupCookie(): Promise<TOTPSetupPayload | null> {
-  const cookieStore = await cookies();
-  const token = cookieStore.get(TOTP_SETUP_COOKIE_NAME)?.value;
-  if (!token) return null;
-  return decryptGeneric<TOTPSetupPayload>(token);
-}
-
-export async function deleteTOTPSetupCookie() {
-  const cookieStore = await cookies();
-  cookieStore.delete(TOTP_SETUP_COOKIE_NAME);
-}

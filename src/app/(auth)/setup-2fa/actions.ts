@@ -8,8 +8,6 @@ import {
   getPendingSession,
   deletePendingSession,
   createSession,
-  getTOTPSetupCookie,
-  deleteTOTPSetupCookie,
 } from "@/lib/session";
 import { verifyTOTP, generateRecoveryCodes, hashRecoveryCodes } from "@/lib/totp";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -37,14 +35,13 @@ export async function confirmSetup(
       return { error: "Please enter a valid 6-digit code." };
     }
 
-    // Read the TOTP secret from the signed, httpOnly setup cookie — NOT
-    // from the client form body. Trusting a client-supplied secret would
-    // let an attacker submit a secret they already knew and bypass 2FA.
-    const setupCookie = await getTOTPSetupCookie();
-    if (!setupCookie || setupCookie.adminUserId !== pending.adminUserId) {
+    // Secret is carried inside the signed pending-session cookie — NOT
+    // trusted from the client form body. A client-supplied secret would
+    // let an attacker submit one they already knew and bypass 2FA.
+    if (!pending.totpSecret) {
       return { error: "Setup session error. Please login again." };
     }
-    const secret = setupCookie.secret;
+    const secret = pending.totpSecret;
 
     const isValid = verifyTOTP(secret, code);
     if (!isValid) {
@@ -106,7 +103,6 @@ export async function confirmSetup(
   ]);
 
   await deletePendingSession();
-  await deleteTOTPSetupCookie();
 
   redirect(await getDefaultRouteForUser(pending.adminUserId, pending.role));
 }
