@@ -24,10 +24,15 @@ export async function getAffiliateAnalytics(period: Period): Promise<AffiliateAn
 
   const [signupsAgg, payoutsAgg, usagesAgg, clicksAgg, activeCreators, dailyUsages, dailyClicks] =
     await Promise.all([
+      // Signups = rows with the dedicated `signup` usage_type written
+      // when a new user registers via an affiliate code. Previously
+      // this query counted `deposit` rows under the "signups" label,
+      // which double-counted every deposit and ignored users who
+      // signed up but never deposited.
       db.$queryRawUnsafe<{ count: string }[]>(`
         SELECT COUNT(*)::text AS count
         FROM affiliate_code_usages
-        WHERE usage_type = 'deposit' ${dateFilter}
+        WHERE usage_type = 'signup' ${dateFilter}
       `),
       db.$queryRawUnsafe<{ total: string }[]>(`
         SELECT COALESCE(SUM(amount_usd::numeric), 0)::text AS total
@@ -56,7 +61,7 @@ export async function getAffiliateAnalytics(period: Period): Promise<AffiliateAn
       >(`
         SELECT
           DATE(created_at) AS date,
-          COUNT(CASE WHEN usage_type = 'deposit' THEN 1 END)::text AS signups,
+          COUNT(CASE WHEN usage_type = 'signup' THEN 1 END)::text AS signups,
           COALESCE(SUM(wager_amount_usd::numeric), 0)::text AS wager,
           COALESCE(SUM(deposit_amount_usd::numeric), 0)::text AS deposit,
           COALESCE(SUM(referrer_cut_usd::numeric), 0)::text AS commission

@@ -3,6 +3,7 @@ import {
   DollarSign,
   MousePointerClick,
   UserPlus,
+  Percent,
   TrendingUp,
   Users,
   Wallet,
@@ -59,7 +60,7 @@ export default async function CreatorAnalyticsPage({
           title="Affiliate Signups"
           animatedValue={data.totalSignups}
           formatKind="number"
-          subtitle="Via affiliate deposit codes"
+          subtitle="Users registered via an affiliate code"
           icon={UserPlus}
           color="purple"
         />
@@ -96,6 +97,21 @@ export default async function CreatorAnalyticsPage({
           subtitle="Affiliate link clicks"
           icon={MousePointerClick}
           color="orange"
+        />
+        {/* Click → signup conversion. Now meaningful because signups
+            count real `usage_type = 'signup'` rows rather than deposits.
+            Guard against divide-by-zero when there are no clicks yet. */}
+        <StatCard
+          title="Conversion Rate"
+          animatedValue={
+            data.totalClicks > 0
+              ? (data.totalSignups / data.totalClicks) * 100
+              : 0
+          }
+          formatKind="percent"
+          subtitle={`${data.totalSignups} signups / ${data.totalClicks} clicks`}
+          icon={Percent}
+          color="emerald"
         />
         <StatCard
           title="Active Creators"
