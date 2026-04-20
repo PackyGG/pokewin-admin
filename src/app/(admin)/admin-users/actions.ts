@@ -60,6 +60,7 @@ export async function toggleAdminActive(adminUserId: string, isActive: boolean) 
   await adminDb.admin_users.update({
     where: { id: adminUserId },
     data: { is_active: isActive },
+    select: { id: true },
   });
 
   await createAdminAuditEvent({
@@ -81,6 +82,7 @@ export async function resetAdmin2FA(adminUserId: string) {
       totp_enabled: false,
       recovery_codes: [],
     },
+    select: { id: true },
   });
 
   await createAdminAuditEvent({
@@ -104,6 +106,7 @@ export async function changeAdminRole(adminUserId: string, newRole: string, totp
   await adminDb.admin_users.update({
     where: { id: adminUserId },
     data: { role: newRole as admin_role },
+    select: { id: true },
   });
 
   await createAdminAuditEvent({

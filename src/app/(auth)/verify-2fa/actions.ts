@@ -103,6 +103,7 @@ export async function verify2FA(
     await adminDb.admin_users.update({
       where: { id: adminUser.id },
       data: { recovery_codes: updatedCodes },
+      select: { id: true },
     });
   } else {
     const code = formData.get("code") as string;

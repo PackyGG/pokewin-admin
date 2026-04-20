@@ -55,6 +55,13 @@ export async function confirmSetup(
     const recoveryCodes = generateRecoveryCodes(8);
     const hashedCodes = await hashRecoveryCodes(recoveryCodes);
 
+    // Explicit select — without it, Prisma emits RETURNING * which
+    // references every column the generated client knows about
+    // (preferences, role_id, display_username, profile_image*). If
+    // any of those hasn't been applied to the prod DB yet, the
+    // otherwise-valid update throws P2022 and the client sees the
+    // generic "Application error: a client-side exception" page
+    // exactly when a new admin enters their first TOTP code.
     await adminDb.admin_users.update({
       where: { id: pending.adminUserId },
       data: {
@@ -62,6 +69,7 @@ export async function confirmSetup(
         totp_enabled: true,
         recovery_codes: hashedCodes,
       },
+      select: { id: true },
     });
 
     return { recoveryCodes };

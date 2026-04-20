@@ -116,6 +116,7 @@ export async function updateProfile(input: {
     await adminDb.admin_users.update({
       where: { id: session.userId },
       data,
+      select: { id: true },
     });
   } catch (err) {
     if (isMissingColumnError(err)) throw new Error(PRE_MIGRATION_MESSAGE);
@@ -182,6 +183,7 @@ export async function uploadAvatar(formData: FormData) {
         profile_image: storedBytes,
         profile_image_mime: mime,
       },
+      select: { id: true },
     });
   } catch (err) {
     if (isMissingColumnError(err)) throw new Error(PRE_MIGRATION_MESSAGE);

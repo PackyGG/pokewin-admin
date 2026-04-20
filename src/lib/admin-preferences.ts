@@ -148,6 +148,7 @@ export async function setAdminPreferences(
       // JSONB-typed column: Prisma accepts a plain object which it
       // serializes via its input JSON encoder.
       data: { preferences: merged },
+      select: { id: true },
     });
   } catch (err) {
     if (isMissingColumnError(err)) {

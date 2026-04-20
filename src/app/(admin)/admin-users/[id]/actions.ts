@@ -44,6 +44,7 @@ export async function updateUserPermissions(userId: string, pages: string[]) {
   await adminDb.admin_users.update({
     where: { id: userId },
     data: { allowed_pages: validPages },
+    select: { id: true },
   });
 
   await createAdminAuditEvent({
@@ -102,6 +103,7 @@ export async function linkCreatorToMainUser(adminUserId: string, mainUserId: str
   await adminDb.admin_users.update({
     where: { id: adminUserId },
     data: { email: mainUser.email },
+    select: { id: true },
   });
 
   // If the main user isn't already a creator, set them up
