@@ -110,26 +110,30 @@ export function HeaderSocials({
           );
         })}
 
-        <DialogTrigger asChild>
-          <button
-            type="button"
-            className={cn(
-              "inline-flex items-center gap-1 rounded-md border border-dashed px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
-            )}
-            aria-label={connected.length === 0 ? "Link socials" : "Manage socials"}
-          >
-            {connected.length === 0 ? (
-              <>
-                <Plus className="size-3" />
-                Link socials
-              </>
-            ) : (
-              <>
-                <Pencil className="size-3" />
-                Manage
-              </>
-            )}
-          </button>
+        <DialogTrigger
+          render={
+            <button
+              type="button"
+              className={cn(
+                "inline-flex items-center gap-1 rounded-md border border-dashed px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
+              )}
+              aria-label={
+                connected.length === 0 ? "Link socials" : "Manage socials"
+              }
+            />
+          }
+        >
+          {connected.length === 0 ? (
+            <>
+              <Plus className="size-3" />
+              Link socials
+            </>
+          ) : (
+            <>
+              <Pencil className="size-3" />
+              Manage
+            </>
+          )}
         </DialogTrigger>
       </div>
 
