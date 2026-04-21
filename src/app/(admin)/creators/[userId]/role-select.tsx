@@ -20,7 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ROLES, ROLE_COLORS } from "@/lib/constants";
+import { ROLES } from "@/lib/constants";
 import { changeRole } from "@/app/(admin)/users/[id]/actions";
 
 export function RoleSelect({
@@ -60,7 +60,10 @@ export function RoleSelect({
   return (
     <>
       <Select value={currentRole} onValueChange={handleChange} disabled={isPending}>
-        <SelectTrigger className={`!h-5 !py-0 !pl-2 !pr-1.5 !gap-0.5 rounded-4xl text-xs font-medium [&_svg]:!size-3 ${ROLE_COLORS[currentRole] ?? ""}`}>
+        <SelectTrigger
+          size="sm"
+          className="!h-6 !px-1.5 !py-0 !gap-1 !w-fit !rounded-md border-transparent bg-transparent text-xs text-muted-foreground hover:bg-accent hover:text-foreground [&_svg]:!size-3 dark:bg-transparent dark:hover:bg-accent"
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>

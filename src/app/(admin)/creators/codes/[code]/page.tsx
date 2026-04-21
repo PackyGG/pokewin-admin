@@ -23,6 +23,8 @@ import {
 } from "@/components/ui/table";
 import { formatCurrency, formatDateTime, formatNumber } from "@/lib/utils/format";
 import { CodeAnalyticsCharts } from "./charts";
+import { CountryBreakdown } from "../../[userId]/country-breakdown";
+import { AcquisitionChart } from "../../[userId]/acquisition-chart";
 import {
   PageHero,
   SectionHeading,
@@ -121,6 +123,23 @@ export default async function CodeAnalyticsPage({
         />
       </div>
 
+      {/* Acquisition panel (24h/7d toggle, recharts grouped bars +
+          collapsible bucket-by-bucket table) side-by-side with country
+          ranking. Same AcquisitionChart component used on the creator
+          detail page so every admin surface tells the same story. */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <AcquisitionChart
+            hourly={data.acquisition.hourly}
+            daily={data.acquisition.daily}
+          />
+        </div>
+        <CountryBreakdown rows={data.countryBreakdown} />
+      </div>
+
+      {/* Financial daily chart (deposits/wagers/commission) — stays as-is
+          since the acquisition chart covers clicks/signups; this one is the
+          money view and retains the existing referrals+clicks bars. */}
       {data.daily.length > 0 && (
         <FadeIn>
           <CodeAnalyticsCharts data={data.daily} />

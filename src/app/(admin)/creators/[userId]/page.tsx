@@ -1,11 +1,11 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { PageHero } from "@/components/modern-panels";
 import { getCreatorDetail, getCreatorTips, refreshStaleSocials } from "@/lib/queries/creators";
 import { requirePageAccess } from "@/lib/dal";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Table,
   TableBody,
@@ -17,7 +17,6 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatDateTime, formatNumber } from "@/lib/utils/format";
-import { AFFILIATE_LEVEL_COLORS, AFFILIATE_LEVEL_LABELS } from "@/lib/constants";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { CreatorPayoutButton } from "./payout-button";
 import { LevelSelect } from "./level-select";
@@ -26,8 +25,13 @@ import { LimitsCard } from "./limits-card";
 import { RoleSelect } from "./role-select";
 import { WebhooksCard } from "./webhooks-card";
 import { DealsCard } from "./deals-card";
-import { SocialsDisplay } from "./socials-display";
 import { OverviewCard } from "./overview-card";
+import { MaskedEmail } from "./masked-email";
+import { AcquisitionChart } from "./acquisition-chart";
+import { FunnelTable } from "./funnel-table";
+import { FinancialsCard } from "./financials-card";
+import { CountryBreakdown } from "./country-breakdown";
+import { HeaderSocials } from "./header-socials";
 
 export const metadata = { title: "Creator Detail" };
 
@@ -53,59 +57,107 @@ export default async function CreatorDetailPage({
   // Refresh stale social stats in the background (non-blocking)
   refreshStaleSocials(userId).catch(() => {});
 
+  // Preview helper: append `?demo=1` to the URL to see how the OverviewCard
+  // renders for a creator with a fully-populated active deal. Pure UI
+  // visualisation — no DB writes, no impact on any other surface.
+  const previewDeals = sp.demo === "1" && data.deals.length === 0
+    ? [
+        {
+          id: "demo-deal",
+          dealName: "Sample Streaming Deal",
+          dealType: "revenue_share",
+          amount: 0,
+          currency: "USD",
+          startDate: new Date().toISOString(),
+          endDate: null,
+          status: "active",
+          notes: null,
+          dailyFillAmount: 500,
+          dailyFillTime: null,
+          dailyFillEnabled: true,
+          keepPercentage: 0.8,
+          currencyLimitAmount: 10000,
+          currencyLimitResetDays: 30,
+          percentageLimit: 0.05,
+          tipLimit: 1000,
+          tipLimitResetDays: 7,
+          leaderboardPrizePool: 0,
+          leaderboardOurShare: 0,
+          leaderboardFrequency: null,
+          minStreamMinutes: null,
+          maxFinancialExposure: 50000,
+          createdAt: new Date().toISOString(),
+        },
+      ]
+    : data.deals;
+
   return (
     <div className="space-y-6">
-      <PageHero>
-        <div className="flex items-center gap-3">
-          <Link href="/creators" className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground">
-            <ArrowLeft className="size-4" />
-          </Link>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-3 flex-wrap">
-              <Link href={`/users/${data.userId}`} className="text-2xl font-bold hover:underline">
-                {data.username ?? data.email}
-              </Link>
-              <RoleSelect userId={data.userId} currentRole={data.role} />
-              <Badge variant="outline" className="font-mono">{data.code}</Badge>
-              <LevelSelect userId={data.userId} currentLevel={data.level} />
-            </div>
-            <p className="text-sm text-muted-foreground mt-0.5">{data.email}</p>
+      {/* Flat header — no card chrome / glow orbs. Bottom border separates
+          it from the deal summary below; both share the same horizontal
+          rhythm so the page reads as one quiet top-section, not two
+          stacked decorative cards. */}
+      <div className="flex items-center gap-3 pb-4 border-b">
+        <Link href="/creators" className="inline-flex size-8 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground">
+          <ArrowLeft className="size-4" />
+        </Link>
+        <Avatar className="size-10">
+          {data.image && <AvatarImage src={data.image} alt="" />}
+          <AvatarFallback className="text-xs font-semibold">
+            {(data.username ?? data.email ?? "?").slice(0, 2).toUpperCase()}
+          </AvatarFallback>
+        </Avatar>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Link href={`/users/${data.userId}`} className="text-xl font-semibold hover:underline">
+              {data.username ?? data.email}
+            </Link>
+            <Badge variant="outline" className="font-mono text-[11px]">{data.code}</Badge>
+            <span className="text-muted-foreground/40">·</span>
+            <RoleSelect userId={data.userId} currentRole={data.role} />
+            <LevelSelect userId={data.userId} currentLevel={data.level} />
           </div>
-          <CreatorPayoutButton affiliateUserId={data.userId} availableUsd={data.availableUsd} />
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+            {data.email && <MaskedEmail email={data.email} />}
+            <HeaderSocials socials={data.socials} userId={data.userId} />
+          </div>
         </div>
-      </PageHero>
+        <CreatorPayoutButton affiliateUserId={data.userId} availableUsd={data.availableUsd} />
+      </div>
 
       <OverviewCard
-        deals={data.deals}
+        deals={previewDeals}
         socials={data.socials}
         availableUsd={data.availableUsd}
         totalPaidOutUsd={data.totalPaidOutUsd}
       />
 
-      {/* Acquisition funnel: clicks → signups → depositors (Referred).
-          totalReferred only counts users who hit a usage event
-          (deposit/wager); signups includes every attributed registration. */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Total Clicks" value={formatNumber(data.totalClicks)} />
-        <StatCard
-          label="Signups"
-          value={formatNumber(data.signups.total)}
-          subtitle={`+${data.signups.last24h} 24h · +${data.signups.last7d} 7d · +${data.signups.last30d} 30d${data.signups.pending > 0 ? ` · ${data.signups.pending} pending` : ""}`}
-        />
-        <StatCard
-          label="Depositors"
-          value={formatNumber(data.totalReferred)}
-          subtitle={
-            data.signups.total > 0
-              ? `${((data.totalReferred / data.signups.total) * 100).toFixed(1)}% conversion`
-              : undefined
-          }
-        />
-        <StatCard label="Wager Volume" value={formatCurrency(data.totalWagerVolumeUsd)} />
-        <StatCard label="Total Earned" value={formatCurrency(data.totalEarnedUsd)} />
-        <StatCard label="Available" value={formatCurrency(data.availableUsd)} />
-        <StatCard label="Paid Out" value={formatCurrency(data.totalPaidOutUsd)} />
-        <StatCard label="Bonus Distributed" value={formatCurrency(data.totalBonusDistributedUsd)} />
+      {/* Acquisition funnel + financials. Left column: hourly/daily chart
+          stacked with the full Clicks→Signups→FTDs period table. Right
+          column: compact financials list. Replaces the previous 8 flat
+          StatCards — same information, denser and grouped by semantic. */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="space-y-4 lg:col-span-2">
+          <AcquisitionChart
+            hourly={data.acquisition.hourly}
+            daily={data.acquisition.daily}
+          />
+          <FunnelTable
+            clicks={data.clicks}
+            signups={data.signups}
+            ftdByPeriod={data.ftdByPeriod}
+          />
+        </div>
+        <div className="space-y-4">
+          <FinancialsCard
+            wagerVolumeUsd={data.totalWagerVolumeUsd}
+            earnedUsd={data.totalEarnedUsd}
+            availableUsd={data.availableUsd}
+            paidOutUsd={data.totalPaidOutUsd}
+            bonusDistributedUsd={data.totalBonusDistributedUsd}
+          />
+          <CountryBreakdown rows={data.countryBreakdown} />
+        </div>
       </div>
 
       {/* Platform PnL — already a house-POV figure (positive = house won
@@ -173,8 +225,6 @@ export default async function CreatorDetailPage({
           </Table>
         </CardContent>
       </Card>
-
-      <SocialsDisplay socials={data.socials} userId={data.userId} />
 
       <Tabs defaultValue="settings">
         <TabsList>
@@ -388,28 +438,6 @@ export default async function CreatorDetailPage({
         </TabsContent>
       </Tabs>
     </div>
-  );
-}
-
-function StatCard({
-  label,
-  value,
-  subtitle,
-}: {
-  label: string;
-  value: string;
-  subtitle?: string;
-}) {
-  return (
-    <Card>
-      <CardContent>
-        <p className="text-stat-label">{label}</p>
-        <p className="text-stat-value">{value}</p>
-        {subtitle && (
-          <p className="mt-0.5 text-[11px] text-muted-foreground">{subtitle}</p>
-        )}
-      </CardContent>
-    </Card>
   );
 }
 
