@@ -212,9 +212,14 @@ export function CreateAdCodeButton() {
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="ad-code">Code</Label>
+            <Label htmlFor="campaign-code">Code</Label>
+            {/* id/htmlFor intentionally do NOT contain "ad" — generic
+                adblocker filter rules (uBlock Origin, Brave Shields)
+                hide any element with id matching `#ad-*`, which meant
+                users with those extensions saw an empty dialog. Don't
+                reintroduce "ad" in form-field ids on this page. */}
             <Input
-              id="ad-code"
+              id="campaign-code"
               value={code}
               onChange={(e) => setCode(e.target.value)}
               placeholder="e.g. SPRING24"
