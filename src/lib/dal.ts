@@ -4,6 +4,7 @@ import { getSession, type SessionPayload } from "./session";
 import { adminDb } from "./admin-db";
 import { getDefaultRoute } from "./admin-roles";
 import type { AdminRole } from "./admin-roles";
+import { resolveAndBindDbEnv } from "./db-env";
 import {
   SYSTEM_ROLE_CAPABILITIES,
   type CapabilityKey,
@@ -13,6 +14,13 @@ export { getDefaultRoute };
 export type { AdminRole };
 
 export const verifySession = cache(async (): Promise<SessionPayload> => {
+  // NOTE: DB env binding is handled OUTSIDE this cache() wrapper (see
+  // requireAdmin/requirePageAccess/requireRole/requireCapability below
+  // and in require-capability.ts). `cache()` only runs this body once
+  // per React render, and `store.enterWith()` only binds ALS in the
+  // first caller's async context — children/siblings created later
+  // don't inherit, so bind inline at each caller instead.
+
   const session = await getSession();
   if (!session) redirect("/login");
   if (new Date(session.expiresAt) < new Date()) redirect("/login");
@@ -45,6 +53,7 @@ export const getUserPermissions = cache(async (userId: string): Promise<string[]
 });
 
 export const requireAdmin = cache(async (): Promise<SessionPayload> => {
+  await resolveAndBindDbEnv();
   const session = await verifySession();
   if (session.role !== "admin") {
     const allowedPages = await getUserPermissions(session.userId);
@@ -54,6 +63,7 @@ export const requireAdmin = cache(async (): Promise<SessionPayload> => {
 });
 
 export async function requireRole(allowedRoles: AdminRole[]): Promise<SessionPayload> {
+  await resolveAndBindDbEnv();
   const session = await verifySession();
   if (!allowedRoles.includes(session.role as AdminRole)) {
     const allowedPages = await getUserPermissions(session.userId);
@@ -63,6 +73,7 @@ export async function requireRole(allowedRoles: AdminRole[]): Promise<SessionPay
 }
 
 export async function requirePageAccess(pageKey: string): Promise<SessionPayload> {
+  await resolveAndBindDbEnv();
   const session = await verifySession();
   if (session.role === "admin") return session;
 
@@ -176,6 +187,7 @@ export async function hasCapability(
  * Intended for NEW server actions / routes; existing checks are untouched.
  */
 export async function requireCapability(key: CapabilityKey): Promise<SessionPayload> {
+  await resolveAndBindDbEnv();
   const session = await verifySession();
   if (session.role === "admin") return session;
 

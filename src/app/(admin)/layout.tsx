@@ -9,6 +9,8 @@ import { TimezoneProvider } from "@/components/timezone-provider";
 import { verifySession, getUserPermissions } from "@/lib/dal";
 import { adminDb } from "@/lib/admin-db";
 import { getAdminPreferences } from "@/lib/admin-preferences";
+import { readDbEnvFromCookie, isDevDbConfigured } from "@/lib/db-env";
+import { DevDbBanner } from "@/components/dev-db-banner";
 
 /**
  * Read the optional profile fields. This runs on every admin page load,
@@ -43,14 +45,19 @@ export default async function AdminLayout({
   children: React.ReactNode;
 }) {
   const session = await verifySession();
-  // Permissions, header profile, and preferences are independent lookups
-  // keyed on the same userId. Serializing them cost ~3 round-trips on
-  // every admin page load — Promise.all collapses them into one.
-  const [allowedPages, profile, preferences] = await Promise.all([
+  // Permissions, header profile, preferences, and the current DB env
+  // are independent lookups keyed on the same userId/cookie jar.
+  // Serializing them cost ~4 round-trips on every admin page load —
+  // Promise.all collapses them into one.
+  const [allowedPages, profile, preferences, dbEnv] = await Promise.all([
     getUserPermissions(session.userId),
     loadHeaderProfile(session.userId),
     getAdminPreferences(session.userId),
+    readDbEnvFromCookie(),
   ]);
+  // Only surface the switcher to admins on servers where a dev DB is
+  // actually configured; otherwise the toggle would be a dead option.
+  const canSwitchDbEnv = session.role === "admin" && isDevDbConfigured();
 
   // Chat/mutes panel is only surfaced to users who could reach the old
   // /chat page — keeps the same permission boundary as the removed route.
@@ -70,12 +77,15 @@ export default async function AdminLayout({
         </Suspense>
         <AppSidebar role={session.role} allowedPages={allowedPages} />
         <div className="flex flex-1 flex-col">
+          {dbEnv === "dev" && <DevDbBanner />}
           <AdminHeader
             adminId={session.userId}
             username={session.username}
             displayUsername={profile.displayUsername}
             hasAvatar={profile.hasAvatar}
             role={session.role}
+            dbEnv={dbEnv}
+            canSwitchDbEnv={canSwitchDbEnv}
           />
           <main className="flex-1 overflow-auto p-4 md:p-6">{children}</main>
         </div>

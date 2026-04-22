@@ -1,4 +1,5 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
+import type { PrismaClient } from "@/generated/prisma/client";
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
@@ -32,7 +33,7 @@ export type ActivityItem = {
  * Row shape: one text column per (metric × period). Caller converts to
  * number via toNumber / parseFloat.
  */
-function getPeriodAggregates(startOfDay: Date, threeDaysAgo: Date, sevenDaysAgo: Date, thirtyDaysAgo: Date) {
+function getPeriodAggregates(db: PrismaClient, startOfDay: Date, threeDaysAgo: Date, sevenDaysAgo: Date, thirtyDaysAgo: Date) {
   return db.$queryRaw<
     {
       revenue_24h: string; revenue_3d: string; revenue_7d: string; revenue_30d: string; revenue_all: string;
@@ -128,6 +129,7 @@ export async function getDashboardStats() {
 }
 
 async function dashboardStatsInner() {
+  const db = await getDb();
   const now = new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const startOfWeek = new Date(startOfDay);
@@ -235,7 +237,7 @@ async function dashboardStatsInner() {
     `,
     // Single batched query replaces 20 independent aggregates (revenue, withdrawal,
     // wager, ggr × 5 periods each). Same plan + same index scan — but one round-trip.
-    getPeriodAggregates(startOfDay, threeDaysAgo, sevenDaysAgo, thirtyDaysAgo),
+    getPeriodAggregates(db, startOfDay, threeDaysAgo, sevenDaysAgo, thirtyDaysAgo),
     db.user_statistics.aggregate({
       where: { user: EXCLUDE_STAFF_USER_RELATION },
       _sum: { opened_packs_count: true, battles_played: true },
@@ -425,6 +427,7 @@ async function dashboardStatsInner() {
 }
 
 export async function getRecentActivity({ page = 1, perPage = 20 }: { page?: number; perPage?: number }) {
+  const db = await getDb();
   const skip = (page - 1) * perPage;
 
   // Fetch from both sources with enough items to fill the page
