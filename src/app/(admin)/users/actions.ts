@@ -1,13 +1,14 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { requirePageAccess, requireAdmin } from "@/lib/dal";
 import { require2FA } from "@/lib/require-2fa";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 
 export async function banUser(userId: string, reason: string) {
+  const db = await getDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_ban_users", "ban users");
 
@@ -37,6 +38,7 @@ export async function banUser(userId: string, reason: string) {
 }
 
 export async function unbanUser(userId: string) {
+  const db = await getDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_ban_users", "unban users");
 
@@ -63,6 +65,7 @@ export async function unbanUser(userId: string) {
 }
 
 export async function lockUser(userId: string, reason: string) {
+  const db = await getDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_lock_users", "lock user accounts");
 
@@ -90,6 +93,7 @@ export async function lockUser(userId: string, reason: string) {
 }
 
 export async function unlockUser(userId: string) {
+  const db = await getDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_lock_users", "unlock user accounts");
 
@@ -117,6 +121,7 @@ export async function unlockUser(userId: string) {
 }
 
 export async function deleteUser(userId: string, totpCode: string) {
+  const db = await getDb();
   const session = await requireAdmin();
   await require2FA(session.userId, totpCode);
 
@@ -141,6 +146,7 @@ export async function deleteUser(userId: string, totpCode: string) {
 }
 
 export async function bulkDeleteUsers(userIds: string[], totpCode: string) {
+  const db = await getDb();
   const session = await requireAdmin();
   await require2FA(session.userId, totpCode);
 

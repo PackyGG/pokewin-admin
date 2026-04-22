@@ -17,9 +17,10 @@ import { fetchPublicStats } from "@/lib/socials-public";
  * the main user_id in the admin_users username field as "creator_{username}"
  * and match by email. We query the main DB to find the user by email.
  */
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 
 async function getCreatorTargetUserId(): Promise<string> {
+  const db = await getDb();
   const session = await verifySession();
   if (session.role !== "creator") throw new Error("Not a creator");
 

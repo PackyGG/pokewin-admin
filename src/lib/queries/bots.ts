@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 
@@ -20,6 +20,7 @@ export async function getBots(params: {
   perPage?: number;
   search?: string;
 }): Promise<PaginatedResult<BotListItem>> {
+  const db = await getDb();
   const { page = 1, perPage = 20, search } = params;
 
   const where: Record<string, unknown> = {};

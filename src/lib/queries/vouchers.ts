@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
@@ -34,6 +34,7 @@ export async function getVouchers(params: {
   maxValue?: number;
   createdBy?: string; // admin user id
 }): Promise<PaginatedResult<VoucherListItem>> {
+  const db = await getDb();
   const { page = 1, perPage = 20, claimed, search, minValue, maxValue, createdBy } = params;
 
   // If filtering by createdBy, pre-fetch voucher IDs from admin DB

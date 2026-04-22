@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 
@@ -29,6 +29,7 @@ export type RaceLeaderboardEntry = {
 };
 
 export async function getRacePrizeTiers() {
+  const db = await getDb();
   const tiers = await db.race_prize_tiers.findMany({
     orderBy: [{ race_type: "asc" }, { position: "asc" }],
   });
@@ -46,6 +47,7 @@ export async function getRaceClaims(params: {
   perPage?: number;
   raceType?: string;
 }): Promise<PaginatedResult<RaceClaimItem>> {
+  const db = await getDb();
   const { page = 1, perPage = 20, raceType } = params;
 
   const where: Record<string, unknown> = {};
@@ -91,6 +93,7 @@ export async function getRaceLeaderboard(params: {
   page?: number;
   perPage?: number;
 }): Promise<PaginatedResult<RaceLeaderboardEntry>> {
+  const db = await getDb();
   const { raceType = "daily", periodStart, search, page = 1, perPage = 20 } = params;
 
   if (raceType === "all") {
@@ -146,6 +149,7 @@ async function getAllTimeLeaderboard(params: {
   page?: number;
   perPage?: number;
 }): Promise<PaginatedResult<RaceLeaderboardEntry>> {
+  const db = await getDb();
   const { search, page = 1, perPage = 20 } = params;
   const offset = (page - 1) * perPage;
 

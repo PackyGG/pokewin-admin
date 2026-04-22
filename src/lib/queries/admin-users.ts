@@ -1,8 +1,9 @@
 import { adminDb } from "@/lib/admin-db";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import type { PaginatedResult } from "@/lib/types";
 
 export async function getAdminUserDetail(id: string) {
+  const db = await getDb();
   const user = await adminDb.admin_users.findUnique({
     where: { id },
     select: {
@@ -165,6 +166,7 @@ export async function getAdminUserAuditEvents(
   perPage: number = 20,
   filters?: { eventType?: string; search?: string }
 ): Promise<PaginatedResult<AdminAuditEventItem>> {
+  const db = await getDb();
   const where: Record<string, unknown> = { admin_user_id: adminUserId };
   if (filters?.eventType && filters.eventType !== "all") {
     where.event_type = filters.eventType;

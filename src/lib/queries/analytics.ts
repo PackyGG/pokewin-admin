@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
 // SQL fragment for user_id filtering — injected via string concat (safe: hardcoded role name)
@@ -95,6 +95,7 @@ export type AnalyticsData = {
 };
 
 export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
+  const db = await getDb();
   const dateFilter = periodToDateFilter(period);
   // Same filter, but without the leading "AND " because it'll be the only WHERE condition
   // Exclude battles created by admin/creator (support counts as normal user)

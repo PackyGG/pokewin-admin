@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import {
@@ -28,6 +28,7 @@ const setHouseAccountSchema = z.object({
 });
 
 export async function setHouseAccount(userId: string) {
+  const db = await getDb();
   const session = await requirePageAccess("/creators/ads");
   await requireCapability(session, "__can_set_house_account", "set the ads house account");
 
@@ -82,6 +83,7 @@ async function getRequiredHouseUserId(): Promise<string> {
 }
 
 export async function createAdCode(code: string) {
+  const db = await getDb();
   const session = await requirePageAccess("/creators/ads");
   await requireCapability(session, "__can_create_ad_code", "create ad codes");
 
@@ -134,6 +136,7 @@ export async function createAdCode(code: string) {
 }
 
 export async function deleteAdCode(code: string) {
+  const db = await getDb();
   const session = await requirePageAccess("/creators/ads");
   await requireCapability(session, "__can_delete_ad_code", "delete ad codes");
 
@@ -173,6 +176,7 @@ export async function deleteAdCode(code: string) {
 // ---------------------------------------------------------------------------
 
 export async function searchUsersForHouse(query: string) {
+  const db = await getDb();
   await requirePageAccess("/creators/ads");
 
   const q = query.trim();

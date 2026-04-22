@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import type { CreatorPnlData, CreatorPnlPeriod } from "./creators-types";
 
 const PNL_PERIODS = ["3h", "12h", "24h", "3d", "7d", "14d", "30d"] as const;
@@ -12,6 +12,7 @@ const COST_TYPES = `('deposit_bonus','promo_code_redeemed','gift_card_redeemed',
   'exchange_excess_to_voucher','battle_excess_to_voucher')`;
 
 export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
+  const db = await getDb();
   const [allTimeRows, periodRows, creatorCostRows] = await Promise.all([
     // Query A: All-time PnL from referred users
     db.$queryRawUnsafe<{ ggr: string; costs: string }[]>(`

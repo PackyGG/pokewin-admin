@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
@@ -6,6 +6,7 @@ import { getCreatorPnl } from "./creators-pnl";
 import type { CreatorTipItem } from "./creators-types";
 
 export async function getCreatorDetail(userId: string, refPage?: number, refPerPage?: number) {
+  const db = await getDb();
   const account = await db.affiliate_accounts.findUnique({
     where: { user_id: userId },
     select: {
@@ -582,6 +583,7 @@ export async function getCreatorTips(
   page: number = 1,
   perPage: number = 20,
 ): Promise<PaginatedResult<CreatorTipItem> & { totalTipped: number }> {
+  const db = await getDb();
   const [tips, total, totalAgg] = await Promise.all([
     db.rain_tips.findMany({
       where: { user_id: userId },

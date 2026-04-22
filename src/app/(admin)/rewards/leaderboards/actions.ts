@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { requireAdmin } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import type { race_type } from "@/generated/prisma/enums";
@@ -20,6 +20,7 @@ export async function upsertRacePrizeTier(
   position: number,
   prizeAmountUsd: number,
 ) {
+  const db = await getDb();
   const session = await requireAdmin();
 
   if (!VALID_RACE_TYPES.has(raceType as race_type)) {
@@ -76,6 +77,7 @@ export async function upsertRacePrizeTier(
  * podium. Deletion is hard; no soft-delete column on the table.
  */
 export async function deleteRacePrizeTier(id: string) {
+  const db = await getDb();
   const session = await requireAdmin();
 
   const existing = await db.race_prize_tiers.findUnique({

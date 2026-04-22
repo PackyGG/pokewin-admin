@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { dispatchWebhook } from "@/lib/webhook-dispatcher";
 import { toNumber } from "@/lib/utils/decimal";
 
 export async function GET(request: Request) {
+  const db = await getDb();
   // Verify cron secret (Vercel sets Authorization header for cron jobs)
   const authHeader = request.headers.get("authorization");
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {

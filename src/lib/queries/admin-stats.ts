@@ -14,7 +14,7 @@
  */
 
 import { adminDb } from "@/lib/admin-db";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 
 // ---------------------------------------------------------------------------
 // Sessions
@@ -295,6 +295,7 @@ export type TableRowCounts = {
 };
 
 export async function getTableRowCounts(): Promise<TableRowCounts> {
+  const db = await getDb();
   const [admin, main] = await Promise.all([
     countsFromPgClass(adminDb, ADMIN_TABLES),
     countsFromPgClass(db, MAIN_TABLES),

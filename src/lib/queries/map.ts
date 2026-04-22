@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 
 export type Period = "today" | "7d" | "30d" | "90d" | "all";
 
@@ -39,6 +39,7 @@ export type MapData = {
  * Users without country_code are counted separately (not plotted on the map).
  */
 export async function getUsersByCountry(period: Period): Promise<MapData> {
+  const db = await getDb();
   const dateFilter = periodToDateFilter(period);
   const staffFilter = `role NOT IN ('admin', 'creator')`;
 
