@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { Prisma } from "@/generated/prisma/client";
 
@@ -29,6 +29,7 @@ export async function getProvablyFairResults(
   perPage: number = 20,
   filters?: { search?: string; gameType?: string }
 ) {
+  const db = await getDb();
   const where: Prisma.provably_fair_resultsWhereInput = {
     game_sessions: { user_id: userId },
   };
@@ -110,6 +111,7 @@ export async function getSeedRotationHistory(
   page: number = 1,
   perPage: number = 10
 ) {
+  const db = await getDb();
   const where: Prisma.seed_rotation_historyWhereInput = { user_id: userId };
 
   const [items, total] = await Promise.all([

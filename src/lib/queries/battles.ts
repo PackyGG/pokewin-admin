@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
@@ -27,6 +27,7 @@ export async function getBattles(params: {
   search?: string;
 }): Promise<PaginatedResult<BattleListItem>> {
   const { page = 1, perPage = 20, status, mode, search } = params;
+  const db = await getDb();
 
   const where: Prisma.battlesWhereInput = {};
 
@@ -150,6 +151,7 @@ export async function getBattles(params: {
 }
 
 export async function getBattleDetail(id: string) {
+  const db = await getDb();
   const battle = await db.battles.findUnique({
     where: { id },
     include: {

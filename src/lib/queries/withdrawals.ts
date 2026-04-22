@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
@@ -32,6 +32,7 @@ export async function getWithdrawals(params: {
   maxValue?: number;
 }): Promise<PaginatedResult<WithdrawalListItem>> {
   const { page = 1, perPage = 20, status, statuses, method, search, minValue, maxValue } = params;
+  const db = await getDb();
 
   const where: Prisma.card_withdrawal_requestsWhereInput = {};
 
@@ -114,6 +115,7 @@ export async function getWithdrawals(params: {
 }
 
 export async function getWithdrawalDetail(id: string) {
+  const db = await getDb();
   const withdrawal = await db.card_withdrawal_requests.findUnique({
     where: { id },
     include: {
