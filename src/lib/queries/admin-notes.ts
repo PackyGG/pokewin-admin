@@ -1,5 +1,5 @@
 import { adminDb } from "@/lib/admin-db";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 
 export async function getNotesForUser(targetUserId: string) {
   const notes = await adminDb.admin_notes.findMany({
@@ -23,6 +23,7 @@ export async function getNotesForUser(targetUserId: string) {
 export type AdminNote = Awaited<ReturnType<typeof getNotesForUser>>[number];
 
 export async function getNotesFromAdmin(adminUserId: string) {
+  const db = await getDb();
   const notes = await adminDb.admin_notes.findMany({
     where: { admin_user_id: adminUserId },
     orderBy: { created_at: "desc" },

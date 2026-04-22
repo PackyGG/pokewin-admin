@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { Prisma } from "@/generated/prisma/client";
 
@@ -8,6 +8,7 @@ export async function getUserTransactions(
   perPage: number = 20,
   filters?: { type?: string; types?: string[]; status?: string; dateFrom?: string; dateTo?: string }
 ) {
+  const db = await getDb();
   const where: Prisma.ledger_transactionsWhereInput = { user_id: userId };
 
   if (filters?.type && filters.type !== "all") {

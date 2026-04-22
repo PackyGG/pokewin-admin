@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 
 export type UserSession = {
@@ -19,6 +19,7 @@ export type UserSession = {
 };
 
 export async function getUserSessions(userId: string): Promise<UserSession[]> {
+  const db = await getDb();
   // Transactions and crypto-withdrawal requests are independent — fetch in parallel.
   const [transactions, cryptoWithdrawals] = await Promise.all([
     db.ledger_transactions.findMany({

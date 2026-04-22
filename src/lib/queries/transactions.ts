@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
@@ -58,6 +58,7 @@ export async function getDepositTransactions(params: {
     search,
     status,
   } = params;
+  const db = await getDb();
   const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
   const safePage = Math.max(1, Math.floor(page));
   const offset = (safePage - 1) * safePerPage;
@@ -229,6 +230,7 @@ export async function getTransactions(params: {
   maxAmount?: number;
 }): Promise<PaginatedResult<TransactionListItem>> {
   const { page = 1, perPage = 20, search, type, types, status, minAmount, maxAmount } = params;
+  const db = await getDb();
 
   const where: Prisma.ledger_transactionsWhereInput = {};
 
@@ -326,6 +328,7 @@ export async function getTransactions(params: {
 }
 
 export async function getTransactionDetail(id: string) {
+  const db = await getDb();
   const tx = await db.ledger_transactions.findUnique({
     where: { id },
     include: {

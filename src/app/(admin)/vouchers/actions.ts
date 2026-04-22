@@ -1,12 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { requirePageAccess } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 
 export async function searchUsers(query: string) {
+  const db = await getDb();
   await requirePageAccess("/vouchers");
 
   if (!query || query.length < 2) return [];
@@ -35,6 +36,7 @@ export async function createVoucher(data: {
   value: number;
   description?: string;
 }) {
+  const db = await getDb();
   const session = await requirePageAccess("/vouchers");
 
   const user = await db.user.findUnique({ where: { id: data.userId } });

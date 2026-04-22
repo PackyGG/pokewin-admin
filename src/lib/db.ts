@@ -1,10 +1,9 @@
 import { PrismaClient } from "@/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { getDbEnvSync, readDbEnv, type DbEnv } from "./db-env";
+import { readDbEnv, type DbEnv } from "./db-env";
 
 const globalForPrisma = globalThis as unknown as {
   prismaClients: Map<DbEnv, PrismaClient> | undefined;
-  prismaProxy: PrismaClient | undefined;
 };
 
 function createClient(connectionString: string | undefined, label: string) {
@@ -98,56 +97,6 @@ function getClient(env: DbEnv): PrismaClient {
   client = createClient(connectionString, env);
   clients.set(env, client);
   return client;
-}
-
-/**
- * The shared Main-DB client. Transparently routes to either the prod
- * or the dev PrismaClient based on the current request's DB env
- * (resolved synchronously via AsyncLocalStorage — see ./db-env).
- *
- * Property access is forwarded directly to the underlying real client
- * so Prisma's internals — model delegates, PrismaPromise identity,
- * $transaction([...]) — all continue to work as if `db` were a normal
- * client. Functions returned off the client (`$transaction`,
- * `$queryRaw`, etc.) are bound to the real client so `this` is
- * correct at invocation time.
- */
-function createDbProxy(): PrismaClient {
-  return new Proxy({} as PrismaClient, {
-    get(_target, prop, _receiver) {
-      const client = getClient(getDbEnvSync());
-      const value = Reflect.get(client, prop, client);
-      if (typeof value === "function") {
-        return value.bind(client);
-      }
-      return value;
-    },
-    has(_target, prop) {
-      const client = getClient(getDbEnvSync());
-      return prop in client;
-    },
-    getPrototypeOf() {
-      const client = getClient(getDbEnvSync());
-      return Object.getPrototypeOf(client);
-    },
-  });
-}
-
-/**
- * @deprecated — the Proxy reads env via ALS (`getDbEnvSync`), which
- * doesn't propagate reliably across React Server Component render
- * boundaries. Call sites often see stale "prod" even when the admin
- * has toggled to dev. Prefer `await getDb()` below — it reads the
- * cookie fresh per request and returns the right client.
- *
- * Kept for backwards compat until all 77 existing call sites are
- * migrated. New code MUST use `getDb()`.
- */
-export const db: PrismaClient =
-  globalForPrisma.prismaProxy ?? createDbProxy();
-
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prismaProxy = db;
 }
 
 /**

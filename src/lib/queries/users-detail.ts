@@ -1,7 +1,8 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 
 export async function getUserDetail(id: string) {
+  const db = await getDb();
   // Everything is independent — one Promise.all instead of two serialized ones
   // cuts the worst-case latency roughly in half on hot user-detail loads.
   let inventoryValueResult: { _sum: { value_at_obtained: unknown } } = {

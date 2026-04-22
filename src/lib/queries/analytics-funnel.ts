@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 
 /**
  * Acquisition funnel: clicks → signups → first-deposit → first-wager →
@@ -41,6 +41,7 @@ export type FunnelData = {
 };
 
 export async function getFunnelData(period: FunnelPeriod): Promise<FunnelData> {
+  const db = await getDb();
   const days = daysForPeriod(period);
   const dateFilter = days !== null ? `AND created_at >= NOW() - INTERVAL '${days} days'` : "";
   const usersDateFilter =

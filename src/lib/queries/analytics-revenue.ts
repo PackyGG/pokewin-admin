@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 
 /**
@@ -87,6 +87,7 @@ export type RevenueData = {
 export async function getRevenueBreakdown(
   period: RevenuePeriod,
 ): Promise<RevenueData> {
+  const db = await getDb();
   const days = daysForPeriod(period);
   const dateFilter =
     days !== null ? `AND created_at >= NOW() - INTERVAL '${days} days'` : "";

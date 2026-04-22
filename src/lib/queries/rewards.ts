@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 
@@ -35,6 +35,7 @@ export type RakebackStats = {
 };
 
 export async function getRakebackConfigs(): Promise<RakebackConfigItem[]> {
+  const db = await getDb();
   const configs = await db.rakeback_config.findMany({
     orderBy: { type: "asc" },
   });
@@ -55,6 +56,7 @@ export async function getRakebackClaims(params: {
   type?: string;
   search?: string;
 }): Promise<PaginatedResult<RakebackClaimItem>> {
+  const db = await getDb();
   const { page = 1, perPage = 20, type, search } = params;
 
   const where: Record<string, unknown> = {};
@@ -125,6 +127,7 @@ export async function getRewards(params: {
   minCashAmount?: number;
   maxCashAmount?: number;
 }): Promise<PaginatedResult<RewardItem>> {
+  const db = await getDb();
   const { page = 1, perPage = 20, search, type, minCashAmount, maxCashAmount } = params;
 
   const where: Record<string, unknown> = {};
@@ -193,6 +196,7 @@ export async function getLevelUpRewards(params: {
   page?: number;
   perPage?: number;
 }): Promise<PaginatedResult<RewardItem>> {
+  const db = await getDb();
   const { page = 1, perPage = 20 } = params;
 
   const where = {
@@ -244,6 +248,7 @@ export async function getLevelUpRewards(params: {
 }
 
 export async function getRakebackStats(): Promise<RakebackStats> {
+  const db = await getDb();
   // Previously this pulled every rakeback_claims row and aggregated in JS —
   // that scales linearly with claim count. Push the aggregation to Postgres
   // and fetch only the two summaries we actually need.

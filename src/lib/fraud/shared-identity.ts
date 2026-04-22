@@ -16,7 +16,7 @@
  * current state.
  */
 
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 
 // The type moved to ./shared-identity-types so client components can
 // import it without pulling Prisma into the browser bundle. Re-exported
@@ -47,6 +47,7 @@ type Row = {
 export async function getSharedIpUsers(
   userId: string,
 ): Promise<SharedIdentityUser[]> {
+  const db = await getDb();
   const rows = await db.$queryRaw<Row[]>`
     SELECT
       u.id                              AS user_id,
@@ -94,6 +95,7 @@ export async function getSharedIpUsers(
 export async function getSharedFingerprintUsers(
   userId: string,
 ): Promise<SharedIdentityUser[]> {
+  const db = await getDb();
   const rows = await db.$queryRaw<Row[]>`
     SELECT
       u.id                                     AS user_id,

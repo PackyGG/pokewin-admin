@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 
 /**
  * Creator true LTV analysis. For every creator (user with role='creator'
@@ -65,6 +65,7 @@ export type CreatorLtvData = {
 };
 
 export async function getCreatorLtv(period: LtvPeriod): Promise<CreatorLtvData> {
+  const db = await getDb();
   const days = daysForPeriod(period);
   const periodWhere =
     days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";

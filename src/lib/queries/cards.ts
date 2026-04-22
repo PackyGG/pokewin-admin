@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
@@ -38,6 +38,7 @@ export async function getCards(params: {
     sortBy = "created_at",
     sortOrder = "desc",
   } = params;
+  const db = await getDb();
 
   const where: Prisma.cardsWhereInput = {};
 
@@ -99,6 +100,7 @@ export async function getCards(params: {
 }
 
 export async function getCardDetail(id: string) {
+  const db = await getDb();
   const [card, inventoryCountRows] = await Promise.all([
     db.cards.findUnique({
       where: { id },
@@ -144,6 +146,7 @@ export async function getCardDetail(id: string) {
 }
 
 export async function getSets() {
+  const db = await getDb();
   const sets = await db.sets.findMany({
     orderBy: { name: "asc" },
     select: { id: true, name: true },
@@ -152,6 +155,7 @@ export async function getSets() {
 }
 
 export async function getRarities() {
+  const db = await getDb();
   const result = await db.cards.findMany({
     distinct: ["rarity"],
     select: { rarity: true },
@@ -175,6 +179,7 @@ export type CardsStats = {
  * RSC payload.
  */
 export async function getCardsStats(): Promise<CardsStats> {
+  const db = await getDb();
   const [total, totalSets, priceAgg, rarityGroups] = await Promise.all([
     db.cards.count(),
     db.sets.count(),

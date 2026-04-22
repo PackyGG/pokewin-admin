@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import type { CodeListItem } from "./creators-types";
@@ -18,6 +18,7 @@ export async function getCodes(params: {
     sortOrder = "desc",
   } = params;
 
+  const db = await getDb();
   const validFields = ["code", "created_at"];
   const sortField = validFields.includes(sortBy) ? sortBy : "created_at";
   const direction = sortOrder === "asc" ? "ASC" : "DESC";
@@ -83,6 +84,7 @@ export async function getCodeAnalytics(code: string) {
   // legacy rows, (2) use the ROW's stored casing for usages queries so they
   // match the actual insert casing, (3) use UPPERCASE for affiliate_clicks
   // where we know the stored casing is always upper.
+  const db = await getDb();
   const uppercaseCode = code.toUpperCase();
 
   const codeRecord = await db

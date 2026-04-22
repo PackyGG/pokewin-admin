@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
 import { createHash } from "crypto";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -18,6 +18,7 @@ export async function createPromoCode(data: {
   maxUses: number;
   expiresAt: string | null;
 }) {
+  const db = await getDb();
   const session = await requirePageAccess("/promo-codes");
 
   const codeHash = createHash("sha256").update(data.code.toUpperCase()).digest("hex");
@@ -54,6 +55,7 @@ export async function createPromoCode(data: {
 }
 
 export async function getRedemptions(promoCodeId: string) {
+  const db = await getDb();
   await requirePageAccess("/promo-codes");
   const redemptions = await db.promo_code_redemptions.findMany({
     where: { promo_code_id: promoCodeId },
@@ -75,6 +77,7 @@ export async function getRedemptions(promoCodeId: string) {
 }
 
 export async function deletePromoCode(promoCodeId: string) {
+  const db = await getDb();
   const session = await requirePageAccess("/promo-codes");
 
   await db.promo_codes.delete({ where: { id: promoCodeId } });

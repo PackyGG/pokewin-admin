@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
 import { getPackGames } from "@/lib/queries/packs";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -65,6 +65,7 @@ export async function getCardPickerFilters() {
 }
 
 export async function togglePackActive(packId: string, active: boolean) {
+  const db = await getDb();
   const session = await requirePageAccess("/packs");
 
   await db.packs.update({
@@ -117,6 +118,7 @@ export async function createPack(data: {
   difficulty: number | null;
   cards: PackCardInput[];
 }): Promise<string> {
+  const db = await getDb();
   const session = await requirePageAccess("/packs");
 
   if (!data.name.trim()) throw new Error("Name is required");
@@ -182,6 +184,7 @@ export async function updatePack(
     cards: PackCardInput[];
   },
 ): Promise<void> {
+  const db = await getDb();
   const session = await requirePageAccess("/packs");
 
   if (!data.name.trim()) throw new Error("Name is required");
@@ -234,6 +237,7 @@ export async function updatePack(
 }
 
 export async function deletePack(packId: string): Promise<void> {
+  const db = await getDb();
   const session = await requirePageAccess("/packs");
 
   const pack = await db.packs.findUnique({

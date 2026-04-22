@@ -1,11 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 
 export async function cancelBattle(battleId: string) {
+  const db = await getDb();
   const session = await requirePageAccess("/battles");
 
   const battle = await db.battles.findUnique({

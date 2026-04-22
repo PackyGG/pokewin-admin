@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 
@@ -16,6 +16,7 @@ export async function getCreatorReferralClicks(
   city: string;
   createdAt: string | null;
 }>> {
+  const db = await getDb();
   const where = { code: affiliateCode };
   const [clicks, total] = await Promise.all([
     db.affiliate_clicks.findMany({
@@ -60,6 +61,7 @@ export async function getCreatorCodeUsages(
   userBonusUsd: number;
   createdAt: string;
 }>> {
+  const db = await getDb();
   const where = { affiliate_user_id: userId };
   const [usages, total] = await Promise.all([
     db.affiliate_code_usages.findMany({
@@ -99,6 +101,7 @@ export async function getCreatorCodeUsages(
 }
 
 export async function getCreatorWithdrawalLimits(userId: string) {
+  const db = await getDb();
   const limits = await db.creator_withdrawal_limits.findUnique({
     where: { user_id: userId },
   });

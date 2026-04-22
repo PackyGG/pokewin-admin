@@ -60,7 +60,7 @@
  *    Expected: score ≥ 75, tier "critical".
  */
 
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
 
@@ -238,6 +238,7 @@ export async function computeRiskScore(
   userId: string,
   opts?: { skipCache?: boolean },
 ): Promise<RiskScoreBreakdown> {
+  const db = await getDb();
   if (!opts?.skipCache) {
     const cached = getCached(userId);
     if (cached) return cached;
@@ -336,6 +337,7 @@ export async function computeRiskScore(
 export async function computeRiskScoresForList(
   userIds: readonly string[],
 ): Promise<Map<string, RiskScoreLite>> {
+  const db = await getDb();
   const out = new Map<string, RiskScoreLite>();
   if (userIds.length === 0) return out;
 
@@ -350,9 +352,12 @@ export async function computeRiskScoresForList(
   // list level today — they'd need another heavy join per user and
   // they rarely flip a tier on their own. List view leaves them at 0;
   // detail view (see computeRiskScore) computes them properly.
+  // Missing `fingerprints` table (e.g. fresh dev DB) must not crash the
+  // whole user list — swallow the failure and treat every user as having
+  // zero shared-identity neighbours.
   const [ipCountMap, fpCountMap] = await Promise.all([
-    batchSharedIpCounts(userIds),
-    batchSharedFingerprintCounts(userIds),
+    batchSharedIpCounts(userIds).catch(() => new Map<string, number>()),
+    batchSharedFingerprintCounts(userIds).catch(() => new Map<string, number>()),
   ]);
 
   for (const row of rows) {
@@ -1802,6 +1807,7 @@ LEFT JOIN (
  * which stores IP + user_id for every login/signup event.
  */
 async function countSharedIpUsers(userId: string): Promise<number> {
+  const db = await getDb();
   const rows = await db.$queryRaw<{ c: bigint }[]>`
     SELECT COUNT(DISTINCT f2.user_id)::bigint AS c
     FROM fingerprints f1
@@ -1820,6 +1826,7 @@ async function countSharedIpUsers(userId: string): Promise<number> {
  * stable across IPs on the same device.
  */
 async function countSharedFingerprintUsers(userId: string): Promise<number> {
+  const db = await getDb();
   const rows = await db.$queryRaw<{ c: bigint }[]>`
     SELECT COUNT(DISTINCT f2.user_id)::bigint AS c
     FROM fingerprints f1
@@ -1839,6 +1846,7 @@ async function countSharedFingerprintUsers(userId: string): Promise<number> {
 async function batchSharedIpCounts(
   userIds: readonly string[],
 ): Promise<Map<string, number>> {
+  const db = await getDb();
   if (userIds.length === 0) return new Map();
   const rows = await db.$queryRawUnsafe<{ user_id: string; c: bigint }[]>(
     `
@@ -1859,6 +1867,7 @@ async function batchSharedIpCounts(
 async function batchSharedFingerprintCounts(
   userIds: readonly string[],
 ): Promise<Map<string, number>> {
+  const db = await getDb();
   if (userIds.length === 0) return new Map();
   const rows = await db.$queryRawUnsafe<{ user_id: string; c: bigint }[]>(
     `
@@ -1920,6 +1929,7 @@ async function fetchNetworkCounts(userId: string): Promise<NetworkCounts> {
 async function countSharedBannedLocked(
   userId: string,
 ): Promise<{ banned: number; locked: number }> {
+  const db = await getDb();
   // Users who share at least one IP OR fingerprint visitor_id with the
   // target AND are currently banned or locked. A single raw query keeps
   // us to one round trip regardless of how many neighbours they have.
@@ -1964,6 +1974,7 @@ async function countSharedBannedLocked(
 // newest first. Used to let the moderator scan the cadence of events
 // and spot patterns (e.g. deposit → bonus → withdrawal within minutes).
 async function fetchTimeline(userId: string): Promise<RiskTimelineEvent[]> {
+  const db = await getDb();
   const sinceDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
   const [ledger, wdReqs, user] = await Promise.all([

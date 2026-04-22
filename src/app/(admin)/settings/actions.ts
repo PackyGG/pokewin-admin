@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { requireAdmin } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { refreshSiteConfig } from "@/lib/refresh-site-config";
@@ -11,6 +11,7 @@ export async function upsertVaultLockTime(
   hours: number,
   label: string
 ) {
+  const db = await getDb();
   const session = await requireAdmin();
 
   if (hours <= 0) throw new Error("Hours must be positive");
@@ -37,6 +38,7 @@ export async function upsertVaultLockTime(
 }
 
 export async function deleteVaultLockTime(id: string) {
+  const db = await getDb();
   const session = await requireAdmin();
 
   await db.vault_lock_times.delete({ where: { id } });
@@ -55,6 +57,7 @@ export async function updateCountryRestrictionArray(
   field: string,
   values: string[]
 ) {
+  const db = await getDb();
   const session = await requireAdmin();
 
   const validFields = [
@@ -84,6 +87,7 @@ export async function toggleCountryRestriction(
   field: string,
   value: boolean
 ) {
+  const db = await getDb();
   const session = await requireAdmin();
 
   const validFields = [

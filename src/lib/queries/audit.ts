@@ -1,5 +1,5 @@
 import { adminDb } from "@/lib/admin-db";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import type { PaginatedResult } from "@/lib/types";
 
 export type AuditListItem = {
@@ -24,6 +24,7 @@ export async function getAuditEvents(params: {
   eventType?: string;
   targetUserId?: string;
 }): Promise<PaginatedResult<AuditListItem>> {
+  const db = await getDb();
   const { page = 1, perPage = 20, search, eventType, targetUserId } = params;
 
   const where: Record<string, unknown> = {};

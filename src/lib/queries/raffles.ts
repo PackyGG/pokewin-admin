@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import type { PaginatedResult } from "@/lib/types";
 import { toNumber } from "@/lib/utils/decimal";
 
@@ -35,6 +35,7 @@ export async function getRaffles(params: {
   status?: string;
   search?: string;
 }): Promise<PaginatedResult<RaffleListItem>> {
+  const db = await getDb();
   const { page = 1, perPage = 20, status, search } = params;
 
   const where: Record<string, unknown> = {};
@@ -78,6 +79,7 @@ export async function getRaffles(params: {
 }
 
 export async function getRaffleDetail(id: string, params?: { page?: number; perPage?: number }) {
+  const db = await getDb();
   const entriesPage = params?.page ?? 1;
   const entriesPerPage = params?.perPage ?? 20;
 

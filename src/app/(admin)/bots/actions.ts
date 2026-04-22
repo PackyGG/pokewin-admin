@@ -1,10 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { requireAdmin } from "@/lib/dal";
 
 export async function toggleBotActive(botId: string, isActive: boolean) {
+  const db = await getDb();
   await requireAdmin();
 
   await db.bots.update({
@@ -16,6 +17,7 @@ export async function toggleBotActive(botId: string, isActive: boolean) {
 }
 
 export async function createBot(data: { username: string; imageUrl: string | null }) {
+  const db = await getDb();
   await requireAdmin();
 
   await db.bots.create({
@@ -33,6 +35,7 @@ export async function updateBot(
   botId: string,
   data: { username: string; imageUrl: string | null }
 ) {
+  const db = await getDb();
   await requireAdmin();
 
   await db.bots.update({

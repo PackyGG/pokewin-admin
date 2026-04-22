@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
@@ -27,6 +27,7 @@ export async function getRains(params: {
   minParticipants?: number;
   maxParticipants?: number;
 }): Promise<PaginatedResult<RainListItem>> {
+  const db = await getDb();
   const { page = 1, perPage = 20, status, search } = params;
 
   const where: Record<string, unknown> = {};
@@ -126,6 +127,7 @@ export async function getRainDetail(
   id: string,
   params: { page?: number; perPage?: number },
 ): Promise<RainDetail | null> {
+  const db = await getDb();
   const { page = 1, perPage = 20 } = params;
 
   // Rain, admin-users (for team check) and paginated entries are independent —

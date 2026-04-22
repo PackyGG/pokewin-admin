@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
@@ -22,6 +22,7 @@ export async function getPromoCodes(params: {
   region?: string;
   status?: string;
 }): Promise<PaginatedResult<PromoCodeListItem>> {
+  const db = await getDb();
   const { page = 1, perPage = 20, region, status } = params;
 
   const where: Prisma.promo_codesWhereInput = {};
@@ -76,6 +77,7 @@ export async function getPromoCodes(params: {
 }
 
 export async function getPromoCodeDetail(id: string) {
+  const db = await getDb();
   const code = await db.promo_codes.findUnique({
     where: { id },
     include: {

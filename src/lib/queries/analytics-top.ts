@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 
 /**
@@ -67,6 +67,7 @@ function periodFilter(period: LeaderboardPeriod, column = "lt.created_at"): stri
 export async function getTopDepositors(
   period: LeaderboardPeriod,
 ): Promise<UserLeaderRow[]> {
+  const db = await getDb();
   const rows = await db.$queryRawUnsafe<
     { id: string; username: string | null; image: string | null; amount: string }[]
   >(`
@@ -91,6 +92,7 @@ export async function getTopDepositors(
 export async function getTopWagerers(
   period: LeaderboardPeriod,
 ): Promise<UserLeaderRow[]> {
+  const db = await getDb();
   const rows = await db.$queryRawUnsafe<
     { id: string; username: string | null; image: string | null; amount: string }[]
   >(`
@@ -119,6 +121,7 @@ export async function getTopWagerers(
 export async function getTopLosers(
   period: LeaderboardPeriod,
 ): Promise<UserLeaderRow[]> {
+  const db = await getDb();
   const rows = await db.$queryRawUnsafe<
     { id: string; username: string | null; image: string | null; amount: string }[]
   >(`
@@ -161,6 +164,7 @@ export async function getTopLosers(
 export async function getTopWinners(
   period: LeaderboardPeriod,
 ): Promise<UserLeaderRow[]> {
+  const db = await getDb();
   const rows = await db.$queryRawUnsafe<
     { id: string; username: string | null; image: string | null; amount: string }[]
   >(`
@@ -199,6 +203,7 @@ export async function getTopWinners(
 export async function getTopCreatorsByVolume(
   period: LeaderboardPeriod,
 ): Promise<CreatorLeaderRow[]> {
+  const db = await getDb();
   const days = daysForPeriod(period);
   const refWindow =
     days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";
@@ -258,6 +263,7 @@ export async function getTopCreatorsByVolume(
 export async function getTopCountries(
   period: LeaderboardPeriod,
 ): Promise<CountryLeaderRow[]> {
+  const db = await getDb();
   const rows = await db.$queryRawUnsafe<
     {
       country: string;

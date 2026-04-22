@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { requireAdmin } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 
@@ -28,6 +28,7 @@ export async function upsertSiteConfig(
   value: string,
   description: string | null
 ) {
+  const db = await getDb();
   const session = await requireAdmin();
 
   const trimmedKey = key.trim();
@@ -51,6 +52,7 @@ export async function upsertSiteConfig(
 }
 
 export async function deleteSiteConfig(key: string) {
+  const db = await getDb();
   const session = await requireAdmin();
 
   await db.site_config.delete({ where: { key } });

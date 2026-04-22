@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 
 /**
@@ -68,6 +68,7 @@ export type AdCodeDetail = {
  * traffic doesn't inflate another code's count.
  */
 export async function getAdCodes(houseUserId: string): Promise<AdCodeSummary[]> {
+  const db = await getDb();
   const codes = await db.affiliate_codes.findMany({
     where: { user_id: houseUserId },
     select: { code: true, created_at: true },
@@ -182,6 +183,7 @@ export async function getAdCodes(houseUserId: string): Promise<AdCodeSummary[]> 
 export async function getAdCodesAggregate(
   houseUserId: string,
 ): Promise<AdAggregate> {
+  const db = await getDb();
   const codeRows = await db.affiliate_codes.findMany({
     where: { user_id: houseUserId },
     select: { code: true },
@@ -248,6 +250,7 @@ export async function getAdCodeDetail(
   houseUserId: string,
   code: string,
 ): Promise<AdCodeDetail | null> {
+  const db = await getDb();
   const record = await db.affiliate_codes.findFirst({
     where: { user_id: houseUserId, code },
     select: { code: true, created_at: true },
@@ -389,6 +392,7 @@ export async function getAdCodeDetail(
 export async function getHouseUserInfo(
   houseUserId: string,
 ): Promise<{ id: string; username: string | null; email: string | null } | null> {
+  const db = await getDb();
   const user = await db.user.findUnique({
     where: { id: houseUserId },
     select: { id: true, username: true, email: true },

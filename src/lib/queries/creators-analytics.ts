@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { AffiliateAnalyticsData } from "./creators-types";
 
@@ -20,6 +20,7 @@ function periodToDateFilter(period: Period): string {
 }
 
 export async function getAffiliateAnalytics(period: Period): Promise<AffiliateAnalyticsData> {
+  const db = await getDb();
   const dateFilter = periodToDateFilter(period);
 
   const [signupsAgg, payoutsAgg, usagesAgg, clicksAgg, activeCreators, dailyUsages, dailyClicks] =
@@ -114,6 +115,7 @@ export async function getAffiliateAnalytics(period: Period): Promise<AffiliateAn
 }
 
 export async function getAffiliateLevelConfigs() {
+  const db = await getDb();
   const configs = await db.affiliate_level_configs.findMany({
     orderBy: { level: "asc" },
   });

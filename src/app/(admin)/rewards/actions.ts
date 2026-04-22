@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { requireAdmin } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -36,6 +36,7 @@ export async function createReward(data: {
   cashAmount?: number;
   metadata?: Record<string, unknown>;
 }) {
+  const db = await getDb();
   const session = await requireAdmin();
 
   if (!data.slug.trim() || !data.name.trim()) {
@@ -88,6 +89,7 @@ export async function updateReward(
     metadata?: Record<string, unknown>;
   }
 ) {
+  const db = await getDb();
   const session = await requireAdmin();
 
   if (!data.slug.trim() || !data.name.trim()) {
@@ -123,6 +125,7 @@ export async function updateReward(
 }
 
 export async function deleteReward(rewardId: string) {
+  const db = await getDb();
   const session = await requireAdmin();
 
   await db.user_rewards.deleteMany({ where: { reward_id: rewardId } });
@@ -143,6 +146,7 @@ export async function updateRakebackConfig(
   id: string,
   data: { percentage: number; expirationDays: number; enabled: boolean }
 ) {
+  const db = await getDb();
   const session = await requireAdmin();
 
   await db.rakeback_config.update({

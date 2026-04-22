@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 
 export type UserRewards = {
@@ -8,6 +8,7 @@ export type UserRewards = {
 };
 
 export async function getUserRewards(userId: string): Promise<UserRewards> {
+  const db = await getDb();
   // Each number was previously computed by fetching every row and
   // aggregating in JS. Push all three down to SQL so the payload stays
   // at O(1) regardless of the user's reward history size.

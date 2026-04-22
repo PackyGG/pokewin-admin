@@ -1,8 +1,9 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
 
 export async function getMyProfileData(adminUserId: string) {
+  const db = await getDb();
   // Find the admin user to get email
   const adminUser = await adminDb.admin_users.findUnique({
     where: { id: adminUserId },

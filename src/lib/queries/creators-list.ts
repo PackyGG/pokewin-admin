@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import type { CreatorListItem, UserSearchResult } from "./creators-types";
@@ -6,6 +6,7 @@ import type { CreatorListItem, UserSearchResult } from "./creators-types";
 export async function searchNonCreatorUsers(search: string): Promise<UserSearchResult[]> {
   if (!search || search.length < 2) return [];
 
+  const db = await getDb();
   const users = await db.user.findMany({
     where: {
       role: { not: "creator" },
@@ -41,6 +42,7 @@ export async function getCreators(params: {
     sortOrder = "desc",
   } = params;
 
+  const db = await getDb();
   const where: Record<string, unknown> = {
     user: { role: "creator" },
   };
