@@ -173,7 +173,8 @@ export async function getCodeAnalytics(code: string) {
         FROM affiliate_code_usages acu
         JOIN "user" u ON u.id = acu.referred_user_id
         WHERE UPPER(acu.code) = $2
-          AND u.country IS NOT NULL AND u.country <> ''
+          AND acu.usage_type = 'signup'
+          AND u.country IS NOT NULL AND u.country <> '' AND u.country <> 'unknown'
         GROUP BY u.country
       )
       SELECT
