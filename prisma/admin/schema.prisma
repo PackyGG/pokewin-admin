@@ -43,6 +43,8 @@ model admin_users {
   expenses              expenses[]
   recurring_expenses    recurring_expenses[]
   ideas                 admin_ideas[]
+  shifts_created        admin_shifts[]              @relation("admin_shifts_created_by")
+  shift_assignments     admin_shift_assignments[]
 }
 
 // Custom role definitions for the granular-permissions system. Four
@@ -351,3 +353,54 @@ model admin_ideas {
   @@index([status])
 }
 
+
+// ─── Shift planner ─────────────────────────────────────────────────
+// Weekly support-team rota. Each week has up to 3 shifts per day; the
+// admin who plans the week sets the concrete start/end instant for each
+// shift + tags one or more admin_users as the people on duty. Times
+// are stored as absolute UTC Timestamptz so TZ conversion on the client
+// is unambiguous — viewers see them in their own preference zone.
+model admin_shifts {
+  id             String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Monday 00:00 UTC of the ISO week the shift belongs to. Used as the
+  // primary grouping key on reads + for the unique constraint.
+  week_start     DateTime                  @db.Timestamptz(6)
+  // 0 = Monday … 6 = Sunday (ISO week numbering).
+  day_of_week    Int
+  // 0, 1, 2 — which of the three daily shift slots this is. Slots are
+  // stable across weeks so "slot 0" of this week can be compared to
+  // "slot 0" of last week even if the hours changed.
+  shift_slot     Int
+  // Concrete start / end instants. The pair must fall within the same
+  // 24h window rooted at week_start + day_of_week — validated at the
+  // action boundary, not via a DB constraint (which would be awkward).
+  start_at       DateTime                  @db.Timestamptz(6)
+  end_at         DateTime                  @db.Timestamptz(6)
+  // Free-form note — "on-call for card withdrawals", "sponsored tourney",
+  // etc. Optional.
+  notes          String?
+  created_by_id  String                    @db.Uuid
+  created_by     admin_users               @relation("admin_shifts_created_by", fields: [created_by_id], references: [id])
+  assignments    admin_shift_assignments[]
+  created_at     DateTime                  @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime                  @updatedAt @db.Timestamptz(6)
+
+  // One shift per (week, day, slot). Upsert-keyed off this triple.
+  @@unique([week_start, day_of_week, shift_slot])
+  @@index([week_start])
+}
+
+// Many-to-many between shifts and admin_users. Explicit join table (not
+// an array column on admin_shifts) so admin user deletion cascades
+// cleanly and we keep referential integrity.
+model admin_shift_assignments {
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  shift_id      String       @db.Uuid
+  admin_user_id String       @db.Uuid
+  shift         admin_shifts @relation(fields: [shift_id], references: [id], onDelete: Cascade)
+  admin_user    admin_users  @relation(fields: [admin_user_id], references: [id], onDelete: Cascade)
+  created_at    DateTime     @default(now()) @db.Timestamptz(6)
+
+  @@unique([shift_id, admin_user_id])
+  @@index([admin_user_id])
+}

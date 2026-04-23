@@ -102,3 +102,13 @@ export type admin_settings = Prisma.admin_settingsModel
  * 
  */
 export type admin_ideas = Prisma.admin_ideasModel
+/**
+ * Model admin_shifts
+ * 
+ */
+export type admin_shifts = Prisma.admin_shiftsModel
+/**
+ * Model admin_shift_assignments
+ * 
+ */
+export type admin_shift_assignments = Prisma.admin_shift_assignmentsModel

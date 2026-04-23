@@ -400,7 +400,9 @@ export const ModelName = {
   expenses: 'expenses',
   recurring_expenses: 'recurring_expenses',
   admin_settings: 'admin_settings',
-  admin_ideas: 'admin_ideas'
+  admin_ideas: 'admin_ideas',
+  admin_shifts: 'admin_shifts',
+  admin_shift_assignments: 'admin_shift_assignments'
 } as const
 
 export type ModelName = (typeof ModelName)[keyof typeof ModelName]
@@ -416,7 +418,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "admin_users" | "admin_roles" | "admin_sessions" | "admin_notes" | "admin_audit_events" | "admin_gift_card_actions" | "admin_voucher_actions" | "creator_webhooks" | "creator_deals" | "creator_socials" | "webhook_deliveries" | "creator_balance_fills" | "admin_balance_limits" | "expenses" | "recurring_expenses" | "admin_settings" | "admin_ideas"
+    modelProps: "admin_users" | "admin_roles" | "admin_sessions" | "admin_notes" | "admin_audit_events" | "admin_gift_card_actions" | "admin_voucher_actions" | "creator_webhooks" | "creator_deals" | "creator_socials" | "webhook_deliveries" | "creator_balance_fills" | "admin_balance_limits" | "expenses" | "recurring_expenses" | "admin_settings" | "admin_ideas" | "admin_shifts" | "admin_shift_assignments"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -1678,6 +1680,154 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         }
       }
     }
+    admin_shifts: {
+      payload: Prisma.$admin_shiftsPayload<ExtArgs>
+      fields: Prisma.admin_shiftsFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.admin_shiftsFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_shiftsPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.admin_shiftsFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_shiftsPayload>
+        }
+        findFirst: {
+          args: Prisma.admin_shiftsFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_shiftsPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.admin_shiftsFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_shiftsPayload>
+        }
+        findMany: {
+          args: Prisma.admin_shiftsFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_shiftsPayload>[]
+        }
+        create: {
+          args: Prisma.admin_shiftsCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_shiftsPayload>
+        }
+        createMany: {
+          args: Prisma.admin_shiftsCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.admin_shiftsCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_shiftsPayload>[]
+        }
+        delete: {
+          args: Prisma.admin_shiftsDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_shiftsPayload>
+        }
+        update: {
+          args: Prisma.admin_shiftsUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_shiftsPayload>
+        }
+        deleteMany: {
+          args: Prisma.admin_shiftsDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.admin_shiftsUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.admin_shiftsUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_shiftsPayload>[]
+        }
+        upsert: {
+          args: Prisma.admin_shiftsUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_shiftsPayload>
+        }
+        aggregate: {
+          args: Prisma.Admin_shiftsAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateAdmin_shifts>
+        }
+        groupBy: {
+          args: Prisma.admin_shiftsGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Admin_shiftsGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.admin_shiftsCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Admin_shiftsCountAggregateOutputType> | number
+        }
+      }
+    }
+    admin_shift_assignments: {
+      payload: Prisma.$admin_shift_assignmentsPayload<ExtArgs>
+      fields: Prisma.admin_shift_assignmentsFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.admin_shift_assignmentsFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_shift_assignmentsPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.admin_shift_assignmentsFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_shift_assignmentsPayload>
+        }
+        findFirst: {
+          args: Prisma.admin_shift_assignmentsFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_shift_assignmentsPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.admin_shift_assignmentsFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_shift_assignmentsPayload>
+        }
+        findMany: {
+          args: Prisma.admin_shift_assignmentsFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_shift_assignmentsPayload>[]
+        }
+        create: {
+          args: Prisma.admin_shift_assignmentsCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_shift_assignmentsPayload>
+        }
+        createMany: {
+          args: Prisma.admin_shift_assignmentsCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.admin_shift_assignmentsCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_shift_assignmentsPayload>[]
+        }
+        delete: {
+          args: Prisma.admin_shift_assignmentsDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_shift_assignmentsPayload>
+        }
+        update: {
+          args: Prisma.admin_shift_assignmentsUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_shift_assignmentsPayload>
+        }
+        deleteMany: {
+          args: Prisma.admin_shift_assignmentsDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.admin_shift_assignmentsUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.admin_shift_assignmentsUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_shift_assignmentsPayload>[]
+        }
+        upsert: {
+          args: Prisma.admin_shift_assignmentsUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_shift_assignmentsPayload>
+        }
+        aggregate: {
+          args: Prisma.Admin_shift_assignmentsAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateAdmin_shift_assignments>
+        }
+        groupBy: {
+          args: Prisma.admin_shift_assignmentsGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Admin_shift_assignmentsGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.admin_shift_assignmentsCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Admin_shift_assignmentsCountAggregateOutputType> | number
+        }
+      }
+    }
   }
 } & {
   other: {
@@ -1987,6 +2137,32 @@ export const Admin_ideasScalarFieldEnum = {
 } as const
 
 export type Admin_ideasScalarFieldEnum = (typeof Admin_ideasScalarFieldEnum)[keyof typeof Admin_ideasScalarFieldEnum]
+
+
+export const Admin_shiftsScalarFieldEnum = {
+  id: 'id',
+  week_start: 'week_start',
+  day_of_week: 'day_of_week',
+  shift_slot: 'shift_slot',
+  start_at: 'start_at',
+  end_at: 'end_at',
+  notes: 'notes',
+  created_by_id: 'created_by_id',
+  created_at: 'created_at',
+  updated_at: 'updated_at'
+} as const
+
+export type Admin_shiftsScalarFieldEnum = (typeof Admin_shiftsScalarFieldEnum)[keyof typeof Admin_shiftsScalarFieldEnum]
+
+
+export const Admin_shift_assignmentsScalarFieldEnum = {
+  id: 'id',
+  shift_id: 'shift_id',
+  admin_user_id: 'admin_user_id',
+  created_at: 'created_at'
+} as const
+
+export type Admin_shift_assignmentsScalarFieldEnum = (typeof Admin_shift_assignmentsScalarFieldEnum)[keyof typeof Admin_shift_assignmentsScalarFieldEnum]
 
 
 export const SortOrder = {
@@ -2357,6 +2533,8 @@ export type GlobalOmitConfig = {
   recurring_expenses?: Prisma.recurring_expensesOmit
   admin_settings?: Prisma.admin_settingsOmit
   admin_ideas?: Prisma.admin_ideasOmit
+  admin_shifts?: Prisma.admin_shiftsOmit
+  admin_shift_assignments?: Prisma.admin_shift_assignmentsOmit
 }
 
 /* Types for Logging */
