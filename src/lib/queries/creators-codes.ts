@@ -100,12 +100,9 @@ export async function getCodeAnalytics(code: string) {
 
   if (!codeRecord) return null;
 
-  // Canonical casing as stored in affiliate_codes — use this for
-  // affiliate_code_usages lookups since those rows mirror this casing.
-  const storedCode = codeRecord.code;
-
   const [
     usages,
+    totalReferralsCount,
     clickCount,
     dailyUsages,
     dailyClicks,
@@ -114,7 +111,7 @@ export async function getCodeAnalytics(code: string) {
     acquisitionDaily,
   ] = await Promise.all([
     db.affiliate_code_usages.findMany({
-      where: { code: storedCode },
+      where: { code: { equals: uppercaseCode, mode: "insensitive" } },
       include: {
         user_affiliate_code_usages_referred_user_idTouser: {
           select: { username: true },
@@ -122,6 +119,9 @@ export async function getCodeAnalytics(code: string) {
       },
       orderBy: { created_at: "desc" },
       take: 50,
+    }),
+    db.affiliate_code_usages.count({
+      where: { code: { equals: uppercaseCode, mode: "insensitive" } },
     }),
     db.affiliate_clicks.count({ where: { code: uppercaseCode } }),
     db.$queryRawUnsafe<
@@ -140,10 +140,10 @@ export async function getCodeAnalytics(code: string) {
         COALESCE(SUM(wager_amount_usd::numeric), 0)::text AS wager_volume,
         COALESCE(SUM(referrer_cut_usd::numeric), 0)::text AS commission
       FROM affiliate_code_usages
-      WHERE code = $1
+      WHERE UPPER(code) = $1
       GROUP BY DATE(created_at)
       ORDER BY date
-    `, storedCode),
+    `, uppercaseCode),
     db.$queryRawUnsafe<{ date: Date; clicks: string }[]>(`
       SELECT DATE(created_at) AS date, COUNT(*)::text AS clicks
       FROM affiliate_clicks
@@ -172,7 +172,7 @@ export async function getCodeAnalytics(code: string) {
         SELECT u.country, COUNT(DISTINCT acu.referred_user_id)::int AS signups
         FROM affiliate_code_usages acu
         JOIN "user" u ON u.id = acu.referred_user_id
-        WHERE acu.code = $2
+        WHERE UPPER(acu.code) = $2
           AND u.country IS NOT NULL AND u.country <> ''
         GROUP BY u.country
       )
@@ -215,7 +215,7 @@ export async function getCodeAnalytics(code: string) {
         SELECT date_trunc('hour', created_at) AS bucket,
                COUNT(DISTINCT referred_user_id)::int AS n
         FROM affiliate_code_usages
-        WHERE code = $2
+        WHERE UPPER(code) = $2
           AND usage_type = 'signup'
           AND created_at >= NOW() - INTERVAL '24 hours'
         GROUP BY 1
@@ -253,7 +253,7 @@ export async function getCodeAnalytics(code: string) {
         SELECT date_trunc('day', created_at) AS bucket,
                COUNT(DISTINCT referred_user_id)::int AS n
         FROM affiliate_code_usages
-        WHERE code = $2
+        WHERE UPPER(code) = $2
           AND usage_type = 'signup'
           AND created_at >= NOW() - INTERVAL '7 days'
         GROUP BY 1
@@ -267,13 +267,13 @@ export async function getCodeAnalytics(code: string) {
       ORDER BY s.bucket ASC
       `,
       uppercaseCode,
-      storedCode,
+      uppercaseCode,
     ),
   ]);
 
   const isActive = codeRecord.is_active;
 
-  const totalReferrals = usages.length;
+  const totalReferrals = totalReferralsCount;
   const totalDeposits = usages.reduce((sum, u) => sum + toNumber(u.deposit_amount_usd), 0);
   const totalWagers = usages.reduce((sum, u) => sum + toNumber(u.wager_amount_usd), 0);
   const totalCommission = usages.reduce((sum, u) => sum + toNumber(u.referrer_cut_usd), 0);
@@ -330,7 +330,7 @@ export async function getCodeAnalytics(code: string) {
     // Display the code exactly as stored in affiliate_codes (canonical
     // casing). URL param may arrive in any casing; this keeps the hero
     // consistent with the DB row.
-    code: storedCode,
+    code: codeRecord.code,
     ownerUserId: codeRecord.user_id,
     ownerUsername: codeRecord.username ?? null,
     isActive,
