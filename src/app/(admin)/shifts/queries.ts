@@ -113,9 +113,22 @@ export async function ensureShiftsSchema(): Promise<void> {
  * /ideas — and auto-applies the schema so the next call succeeds.
  */
 export async function getShiftsForWeek(weekStart: Date): Promise<Shift[]> {
+  return getShiftsForWeeks([weekStart]);
+}
+
+/**
+ * Load every shift + its assignments for a contiguous or arbitrary set
+ * of week-start dates in one round trip. Used by the board which
+ * renders several weeks stacked together — one query is cheaper than
+ * N per-week queries.
+ */
+export async function getShiftsForWeeks(
+  weekStarts: Date[],
+): Promise<Shift[]> {
+  if (weekStarts.length === 0) return [];
   try {
     const rows = await adminDb.admin_shifts.findMany({
-      where: { week_start: weekStart },
+      where: { week_start: { in: weekStarts } },
       select: {
         id: true,
         week_start: true,
@@ -128,7 +141,11 @@ export async function getShiftsForWeek(weekStart: Date): Promise<Shift[]> {
           select: { admin_user_id: true },
         },
       },
-      orderBy: [{ day_of_week: "asc" }, { shift_slot: "asc" }],
+      orderBy: [
+        { week_start: "asc" },
+        { day_of_week: "asc" },
+        { shift_slot: "asc" },
+      ],
     });
 
     return rows.map((r) => ({

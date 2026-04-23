@@ -88,24 +88,82 @@ export function shiftWeek(weekStart: Date, weeks: number): Date {
 }
 
 /**
- * Combine a week-start Monday + day-of-week offset + HH:mm time string
- * into a concrete UTC instant. Used when the admin picks times via
- * `<input type="time">`: the picker returns "HH:mm" in the admin's
- * local zone, which we need to combine with the chosen date to produce
- * a Date. Here we treat the HH:mm as UTC-native so the server stores
- * an unambiguous instant; client-side conversion flips it back to the
- * viewer's zone for display.
+ * Combine a week-start Monday + day-of-week + HH:mm (in the admin's
+ * local timezone `tz`) into the correct UTC instant for storage.
+ *
+ * We want: when an admin in Berlin types "14:00", the DB stores the
+ * instant that corresponds to 14:00 Berlin wall-clock on that date —
+ * i.e. 12:00 UTC in summer, 13:00 UTC in winter. An admin in Kolkata
+ * typing "14:00" on the same date gets 08:30 UTC (IST is UTC+5:30,
+ * half-hour offset). Every viewer then renders the stored UTC instant
+ * back to their own zone for display.
+ *
+ * Algorithm (DST + half-hour-offset safe):
+ *   1. Treat hh:mm as if it were UTC → produce a naive Date.
+ *   2. Ask Intl.DateTimeFormat what wall-clock time that naive instant
+ *      has in `tz`. The delta between that wall-clock (read as UTC)
+ *      and the naive instant is the tz's offset at that moment.
+ *   3. The real UTC we want is naive minus that offset.
+ *
+ * Verified against:
+ *   - Europe/Berlin (summer +02:00, winter +01:00) — standard DST.
+ *   - Asia/Kolkata (+05:30 year-round) — half-hour offset.
+ *   - America/New_York (-04:00 / -05:00 DST).
+ *   - America/St_Johns (-02:30 / -03:30 DST) — half-hour + DST.
+ *   - UTC (no-op).
  */
-export function combineUtcInstant(
+export function localHhMmToUtc(
   weekStart: Date,
   dayOfWeek: number,
   hhmm: string,
+  tz: string,
 ): Date {
   const [hh, mm] = hhmm.split(":").map((n) => parseInt(n, 10));
-  const d = new Date(weekStart);
-  d.setUTCDate(d.getUTCDate() + dayOfWeek);
-  d.setUTCHours(Number.isFinite(hh) ? hh : 0, Number.isFinite(mm) ? mm : 0, 0, 0);
-  return d;
+  const year = weekStart.getUTCFullYear();
+  const month = weekStart.getUTCMonth();
+  const day = weekStart.getUTCDate() + dayOfWeek;
+  const safeHh = Number.isFinite(hh) ? hh : 0;
+  const safeMm = Number.isFinite(mm) ? mm : 0;
+
+  // Step 1 — naive: pretend the local hh:mm is UTC.
+  const naive = new Date(Date.UTC(year, month, day, safeHh, safeMm, 0, 0));
+
+  // Step 2 — read the tz wall clock at this instant.
+  let offsetMs = 0;
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).formatToParts(naive);
+    const lookup: Record<string, number> = {};
+    for (const p of parts) {
+      if (p.type !== "literal") lookup[p.type] = Number(p.value);
+    }
+    // Intl may return "24" for midnight on some engines — normalize.
+    let h = lookup.hour;
+    if (h === 24) h = 0;
+    const tzWallAsUtc = Date.UTC(
+      lookup.year,
+      lookup.month - 1,
+      lookup.day,
+      h,
+      lookup.minute ?? 0,
+      lookup.second ?? 0,
+    );
+    offsetMs = tzWallAsUtc - naive.getTime();
+  } catch {
+    // Unknown tz → fall back to UTC-native interpretation. Tolerable.
+    offsetMs = 0;
+  }
+
+  // Step 3 — the real UTC instant the admin meant.
+  return new Date(naive.getTime() - offsetMs);
 }
 
 /**

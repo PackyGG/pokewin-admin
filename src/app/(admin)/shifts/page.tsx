@@ -3,16 +3,23 @@ import { requirePageAccess } from "@/lib/dal";
 import { PageHero } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { ShiftBoard } from "./shift-board";
-import { getAssignableWorkers, getShiftsForWeek } from "./queries";
+import { getAssignableWorkers, getShiftsForWeeks } from "./queries";
 import {
   getWeekStart,
   parseWeekStartParam,
+  shiftWeek,
   weekStartToParam,
   type Shift,
   type Worker,
 } from "./types";
 
 export const metadata = { title: "Shifts" };
+
+// Show four weeks stacked at once by default. Feels like a month view,
+// lets the admin plan the current + next three weeks without paging.
+// Bounded at 12 to keep the query + render cheap.
+const DEFAULT_WEEKS = 4;
+const MAX_WEEKS = 12;
 
 export default async function ShiftsPage({
   searchParams,
@@ -22,11 +29,21 @@ export default async function ShiftsPage({
   await requirePageAccess("/shifts");
   const params = await searchParams;
 
-  const weekStart = parseWeekStartParam(params.week);
+  const firstWeekStart = parseWeekStartParam(params.week);
   const currentWeekStart = getWeekStart(new Date());
+  const weeksCount = Math.min(
+    MAX_WEEKS,
+    Math.max(1, Number.parseInt(params.weeks ?? "", 10) || DEFAULT_WEEKS),
+  );
+
+  // Build the set of week-start dates we want to render.
+  const weekStarts: Date[] = [];
+  for (let i = 0; i < weeksCount; i++) {
+    weekStarts.push(shiftWeek(firstWeekStart, i));
+  }
 
   const [shifts, workers]: [Shift[], Worker[]] = await Promise.all([
-    getShiftsForWeek(weekStart),
+    getShiftsForWeeks(weekStarts),
     getAssignableWorkers(),
   ]);
 
@@ -41,8 +58,7 @@ export default async function ShiftsPage({
             <h1 className="text-2xl font-bold leading-tight">Shifts</h1>
             <p className="text-sm text-muted-foreground">
               Weekly support rota — three shift slots per day with flexible
-              times. Hours are stored in UTC and rendered in your own
-              timezone.
+              times. Every shift renders in your own timezone.
             </p>
           </div>
         </div>
@@ -50,7 +66,7 @@ export default async function ShiftsPage({
 
       <FadeIn>
         <ShiftBoard
-          weekStartIso={weekStart.toISOString()}
+          weekStartsIso={weekStarts.map((w) => w.toISOString())}
           currentWeekStartIso={currentWeekStart.toISOString()}
           currentWeekParam={weekStartToParam(currentWeekStart)}
           shifts={shifts}
