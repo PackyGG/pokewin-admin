@@ -119,8 +119,9 @@ export async function getAdCodes(houseUserId: string): Promise<AdCodeSummary[]> 
     }),
   ]);
 
-  // Depositors = DISTINCT referred_user_id per code — groupBy doesn't
-  // give us a DISTINCT count so drop to a raw query.
+  // Depositors = DISTINCT referred_user_id per code where usage_type =
+  // 'deposit'. Without this filter, signup-type rows are included and
+  // inflate the count to equal the signup count.
   const depositorRows = await db.$queryRawUnsafe<
     { code: string; count: string }[]
   >(
@@ -128,6 +129,7 @@ export async function getAdCodes(houseUserId: string): Promise<AdCodeSummary[]> 
        FROM affiliate_code_usages
       WHERE affiliate_user_id = $1
         AND code = ANY($2::text[])
+        AND usage_type = 'deposit'
       GROUP BY code`,
     houseUserId,
     codeList,
@@ -216,7 +218,8 @@ export async function getAdCodesAggregate(
       `SELECT COUNT(DISTINCT referred_user_id)::text AS count
          FROM affiliate_code_usages
         WHERE affiliate_user_id = $1
-          AND code = ANY($2::text[])`,
+          AND code = ANY($2::text[])
+          AND usage_type = 'deposit'`,
       houseUserId,
       codeList,
     ),
@@ -284,7 +287,8 @@ export async function getAdCodeDetail(
       `SELECT COUNT(DISTINCT referred_user_id)::text AS count
          FROM affiliate_code_usages
         WHERE affiliate_user_id = $1
-          AND code = $2`,
+          AND code = $2
+          AND usage_type = 'deposit'`,
       houseUserId,
       code,
     ),
