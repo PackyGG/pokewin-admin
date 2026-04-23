@@ -1076,6 +1076,7 @@ enum affiliate_payout_status {
 enum affiliate_usage_type {
   deposit
   wager
+  signup
 }
 
 enum audit_event_type {
