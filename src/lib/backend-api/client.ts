@@ -73,6 +73,20 @@ export const backendApiRequest = async <T = unknown>(
       payload.message ||
       payload.error ||
       `Backend request failed: ${res.status} ${res.statusText}`;
+    // Terminal-only diagnostic logs — console.log (not .error) so Next.js
+    // doesn't surface them in the browser error overlay. The real error is
+    // the thrown BackendApiError below; these lines are for grepability.
+    if (res.status === 401 || res.status === 403) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[backend-api] auth rejected env=${config.env} method=${method} url=${url} status=${res.status} adminKeyTail=...${config.adminKey.slice(-6)} cfHeaders=${Object.keys(config.cfHeaders).length > 0}`,
+      );
+    } else if (res.status >= 500) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[backend-api] server error env=${config.env} method=${method} url=${url} status=${res.status} payload=${JSON.stringify(payload)}`,
+      );
+    }
     throw new BackendApiError(res.status, message, payload);
   }
 
