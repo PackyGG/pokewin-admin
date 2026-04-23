@@ -37,6 +37,7 @@ import {
   Globe,
   Megaphone,
   Lightbulb,
+  CalendarClock,
   ChevronRight,
   type LucideIcon,
 } from "lucide-react";
@@ -95,6 +96,7 @@ const ICONS: Record<string, LucideIcon> = {
   Globe,
   Megaphone,
   Lightbulb,
+  CalendarClock,
 };
 
 type NavItem = {
@@ -115,6 +117,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Dashboard", href: "/dashboard", icon: "LayoutDashboard" },
       { label: "Ideas", href: "/ideas", icon: "Lightbulb" },
+      { label: "Shifts", href: "/shifts", icon: "CalendarClock" },
       { label: "Analytics", href: "/analytics", icon: "BarChart3" },
       { label: "Map", href: "/map", icon: "Globe" },
       { label: "Users", href: "/users", icon: "Users" },
