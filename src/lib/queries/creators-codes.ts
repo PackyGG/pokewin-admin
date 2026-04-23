@@ -156,7 +156,7 @@ export async function getCodeAnalytics(code: string) {
     //    by the geolocation service at track time. Clicks are always stored
     //    UPPERCASE.
     //  - Signups: derived from affiliate_code_usages.referred_user_id joined
-    //    to user.country. Uses storedCode casing (usages mirror affiliate_codes
+    //    to user.country. Uses uppercaseCode for case-insensitive matching.
     //    casing). DISTINCT on referred_user_id so a user who made multiple
     //    usages under this code still counts once.
     db.$queryRawUnsafe<{ country: string; clicks: number; signups: number }[]>(
@@ -187,12 +187,11 @@ export async function getCodeAnalytics(code: string) {
       LIMIT 30
       `,
       uppercaseCode,
-      storedCode,
+      uppercaseCode,
     ),
     // Hourly acquisition series (last 24h, 24 buckets).
     //  - Clicks: affiliate_clicks, uppercase code (always uppercase stored).
-    //  - Signups: affiliate_code_usages with usage_type='signup', storedCode
-    //    casing (usages mirror affiliate_codes casing).
+    //  - Signups: affiliate_code_usages with usage_type='signup', uppercaseCode.
     // generate_series + LEFT JOIN guarantees continuous buckets even when
     // a given hour saw zero activity — chart renders flat bar, not a gap.
     db.$queryRawUnsafe<{ bucket: string; clicks: number; signups: number }[]>(
@@ -229,7 +228,7 @@ export async function getCodeAnalytics(code: string) {
       ORDER BY s.bucket ASC
       `,
       uppercaseCode,
-      storedCode,
+      uppercaseCode,
     ),
     // Daily acquisition series (last 7d, 7 buckets). Same structure as
     // hourly but truncated to day.
