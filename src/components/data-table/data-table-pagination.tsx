@@ -16,19 +16,25 @@ export function DataTablePagination({
   totalPages,
   total,
   perPage,
+  pageKey = "page",
+  perPageKey = "perPage",
 }: {
   page: number;
   totalPages: number;
   total: number;
   perPage: number;
+  /** URL search-param key holding the 1-based page index. */
+  pageKey?: string;
+  /** URL search-param key holding the rows-per-page value. */
+  perPageKey?: string;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
   function navigate(newPage: number, newPerPage?: number) {
     const params = new URLSearchParams(searchParams.toString());
-    params.set("page", String(newPage));
-    if (newPerPage) params.set("perPage", String(newPerPage));
+    params.set(pageKey, String(newPage));
+    if (newPerPage) params.set(perPageKey, String(newPerPage));
     router.push(`?${params.toString()}`);
   }
 

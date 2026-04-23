@@ -37,9 +37,8 @@ export async function processWithdrawal(withdrawalId: string) {
 
     try {
       result = await backendApiRequest("/admin/process-approved", {
-        withdrawal_id: withdrawalId,
-      }, {
-        adminActorId: session.userId,
+        method: "POST",
+        body: { withdrawal_id: withdrawalId },
       });
     } catch (error) {
       // Revert status back to pending since the transfer failed to initiate
@@ -134,9 +133,8 @@ export async function completeWithdrawal(withdrawalId: string) {
   }
 
   await backendApiRequest("/admin/complete", {
-    withdrawal_id: withdrawalId,
-  }, {
-    adminActorId: session.userId,
+    method: "POST",
+    body: { withdrawal_id: withdrawalId },
   });
 
   await createAdminAuditEvent({
@@ -163,10 +161,8 @@ export async function cancelWithdrawal(withdrawalId: string, reason: string) {
   }
 
   await backendApiRequest("/admin/cancel", {
-    withdrawal_id: withdrawalId,
-    reason,
-  }, {
-    adminActorId: session.userId,
+    method: "POST",
+    body: { withdrawal_id: withdrawalId, reason },
   });
 
   await createAdminAuditEvent({
@@ -193,10 +189,8 @@ export async function failWithdrawal(withdrawalId: string, reason: string) {
   }
 
   await backendApiRequest("/admin/fail", {
-    withdrawal_id: withdrawalId,
-    reason,
-  }, {
-    adminActorId: session.userId,
+    method: "POST",
+    body: { withdrawal_id: withdrawalId, reason },
   });
 
   await createAdminAuditEvent({
