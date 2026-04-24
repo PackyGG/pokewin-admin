@@ -1,4 +1,9 @@
-import { db } from "@/lib/db";
+// `@/lib/db` on main was refactored to export `getDb()` (async) +
+// `getProdDb()` in place of the old `db` singleton — it now
+// resolves the prod/dev DB per-request from a cookie. Use getDb()
+// here so the email export follows whichever environment the
+// calling admin has toggled on.
+import { getDb } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 
 export type ExportDepositFilter = "any" | "has_deposited" | "no_deposit";
@@ -40,6 +45,7 @@ export type ExportedUser = {
 export async function getDistinctUserCountries(): Promise<
   { code: string; name: string }[]
 > {
+  const db = await getDb();
   const rows = await db.$queryRawUnsafe<
     { country_code: string | null; country: string | null }[]
   >(`
@@ -114,6 +120,7 @@ export async function exportUsers(
     ];
   }
 
+  const db = await getDb();
   const rows = await db.user.findMany({
     where,
     select: {
