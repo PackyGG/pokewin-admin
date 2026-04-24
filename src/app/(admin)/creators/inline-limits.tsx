@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,7 +26,6 @@ export function InlineLimits({
   const [tipLimit, setTipLimit] = useState(limits.tipLimit ? String(limits.tipLimit) : "");
   const [resetDays, setResetDays] = useState(limits.currencyLimitResetDays ? String(limits.currencyLimitResetDays) : "");
   const [isPending, startTransition] = useTransition();
-  const router = useRouter();
 
   const hasLimits = limits.currencyLimitAmount || limits.percentageLimit || limits.tipLimit || limits.currencyLimitResetDays;
 
@@ -51,7 +49,6 @@ export function InlineLimits({
         });
         toast.success("Limits updated");
         setOpen(false);
-        router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to update limits");
       }

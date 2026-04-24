@@ -1,7 +1,6 @@
 "use client";
 
 import { useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { processCreatorPayout } from "./actions";
@@ -15,7 +14,6 @@ export function InlinePayoutButton({
   availableUsd: number;
 }) {
   const [isPending, startTransition] = useTransition();
-  const router = useRouter();
 
   if (availableUsd <= 0) return null;
 
@@ -24,7 +22,6 @@ export function InlinePayoutButton({
       try {
         await processCreatorPayout(userId);
         toast.success("Payout processed");
-        router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to process payout");
       }

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Activity, Loader2, OctagonX } from "lucide-react";
 
@@ -175,7 +174,6 @@ function ForceEndButton({
   userId: string;
   sessionId: string;
 }) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
 
@@ -187,7 +185,6 @@ function ForceEndButton({
         });
         toast.success("Session force-ended");
         setOpen(false);
-        router.refresh();
       } catch (err) {
         toast.error(
           err instanceof Error ? err.message : "Failed to end session",

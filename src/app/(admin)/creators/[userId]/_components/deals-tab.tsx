@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Ban, Loader2, PackageOpen } from "lucide-react";
 
@@ -172,7 +171,6 @@ function TerminateDealButton({
   userId: string;
   deal: CreatorDealResponse;
 }) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
 
@@ -185,7 +183,6 @@ function TerminateDealButton({
         });
         toast.success("Deal terminated");
         setOpen(false);
-        router.refresh();
       } catch (err) {
         toast.error(
           err instanceof Error ? err.message : "Failed to terminate deal",

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   Select,
@@ -31,7 +30,6 @@ export function RoleSelect({
   currentRole: string;
 }) {
   const [isPending, startTransition] = useTransition();
-  const router = useRouter();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [pendingRole, setPendingRole] = useState<string | null>(null);
   const [totpCode, setTotpCode] = useState("");
@@ -50,7 +48,6 @@ export function RoleSelect({
         await changeRole(userId, pendingRole, totpCode.trim());
         toast.success("Role updated");
         setDialogOpen(false);
-        router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to update role");
       }

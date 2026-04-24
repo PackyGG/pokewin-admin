@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Plus, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,7 +31,6 @@ export function CodesCard({
   const [adding, setAdding] = useState(false);
   const [newCode, setNewCode] = useState("");
   const [isPending, startTransition] = useTransition();
-  const router = useRouter();
 
   function handleAdd() {
     if (!newCode.trim()) return;
@@ -42,7 +40,6 @@ export function CodesCard({
         toast.success("Code added");
         setNewCode("");
         setAdding(false);
-        router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to add code");
       }
@@ -54,7 +51,6 @@ export function CodesCard({
       try {
         await removeAffiliateCode(codeId);
         toast.success("Code removed");
-        router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to remove code");
       }
@@ -66,7 +62,6 @@ export function CodesCard({
       try {
         await toggleAffiliateCode(codeId, isActive);
         toast.success(isActive ? "Code activated" : "Code deactivated");
-        router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to toggle code");
       }
@@ -78,7 +73,6 @@ export function CodesCard({
       try {
         await toggleCodeActive(userId, active);
         toast.success(active ? "Primary code activated" : "Primary code deactivated");
-        router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to toggle code");
       }
