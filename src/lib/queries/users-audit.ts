@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { Prisma } from "@/generated/prisma/client";
 
@@ -21,6 +21,7 @@ export async function getUserAuditLog(
   perPage: number = 20,
   filters?: { eventType?: string }
 ) {
+  const db = await getDb();
   const explicitFilter =
     filters?.eventType && filters.eventType !== "all"
       ? filters.eventType

@@ -1,19 +1,15 @@
-import { Suspense } from "react";
-import { Sparkles, Users, DollarSign, Wallet } from "lucide-react";
-import { getCreators, searchNonCreatorUsers } from "@/lib/queries/creators";
+import { Sparkles } from "lucide-react";
+
 import { requirePageAccess } from "@/lib/dal";
-import { CreatorsDataTable } from "./data-table";
+import { FadeIn } from "@/components/fade-in";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
-import { Skeleton } from "@/components/ui/skeleton";
-import { UserSearchResults } from "./user-search-results";
-import {
-  PageHero,
-  SectionHeading,
-  KpiTile,
-} from "@/components/modern-panels";
-import { FadeIn } from "@/components/fade-in";
-import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { formatNumber } from "@/lib/utils/format";
+
+import { parseCreatorsSearchParams } from "./_lib/search-params";
+import { listCreatorsForPage } from "./_queries/list-creators";
+import { CreatorsTable } from "./_components/creators-table";
+import { AddCreatorDialog } from "./_components/add-creator-dialog";
 
 export const metadata = { title: "Creators" };
 
@@ -23,84 +19,39 @@ export default async function CreatorsPage({
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   await requirePageAccess("/creators");
-  const params = await searchParams;
-  const page = Number(params.page) || 1;
-  const perPage = Number(params.perPage) || 20;
 
-  const [result, nonCreators] = await Promise.all([
-    getCreators({
-      page,
-      perPage,
-      search: params.search,
-      sortBy: params.sortBy,
-      sortOrder: params.sortOrder,
-    }),
-    params.search ? searchNonCreatorUsers(params.search) : Promise.resolve([]),
-  ]);
-
-  const pageReferred = result.data.reduce((sum, c) => sum + c.totalReferred, 0);
-  const pageEarned = result.data.reduce((sum, c) => sum + c.totalEarnedUsd, 0);
-  const pageAvailable = result.data.reduce((sum, c) => sum + c.availableUsd, 0);
+  const params = parseCreatorsSearchParams(await searchParams);
+  const result = await listCreatorsForPage(params);
 
   return (
-    <div className="space-y-6">
-      <PageHero>
+    <div className="space-y-5">
+      <header className="flex flex-wrap items-start justify-between gap-4 pb-4 border-b">
         <div className="flex items-center gap-3">
           <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
             <Sparkles className="size-5 text-primary" />
           </div>
-          <div>
-            <h1 className="text-2xl font-bold leading-tight">Creators</h1>
+          <div className="space-y-0.5">
+            <h1 className="text-xl font-semibold leading-tight tracking-tight">
+              Creators
+            </h1>
             <p className="text-sm text-muted-foreground">
-              Affiliate partners with commission tracking, referrals, and payouts.
+              {formatNumber(result.total)} total · weekly fill deals, stream sessions, payouts
             </p>
           </div>
         </div>
-      </PageHero>
+        <AddCreatorDialog />
+      </header>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <KpiTile
-          label="Total Creators"
-          value={formatNumber(result.total)}
-          icon={Sparkles}
-          accent="purple"
+      <FadeIn className="space-y-4">
+        <DataTableToolbar searchPlaceholder="Search by username or email..." />
+        <CreatorsTable data={result.data} />
+        <DataTablePagination
+          page={result.page}
+          totalPages={result.totalPages}
+          total={result.total}
+          perPage={result.perPage}
         />
-        <KpiTile
-          label="Referred (page)"
-          value={formatNumber(pageReferred)}
-          icon={Users}
-          accent="blue"
-        />
-        <KpiTile
-          label="Earned (page)"
-          value={formatCurrency(pageEarned)}
-          icon={DollarSign}
-          accent="emerald"
-        />
-        <KpiTile
-          label="Available (page)"
-          value={formatCurrency(pageAvailable)}
-          icon={Wallet}
-          accent="amber"
-        />
-      </div>
-
-      <div className="space-y-3">
-        <SectionHeading icon={Sparkles} title="All Creators" />
-        <FadeIn className="space-y-4">
-          <Suspense fallback={<Skeleton className="h-10 w-full" />}>
-            <DataTableToolbar searchPlaceholder="Search by code or username..." />
-          </Suspense>
-          <CreatorsDataTable data={result.data} />
-          <DataTablePagination
-            page={result.page}
-            totalPages={result.totalPages}
-            total={result.total}
-            perPage={result.perPage}
-          />
-          {nonCreators.length > 0 && <UserSearchResults users={nonCreators} />}
-        </FadeIn>
-      </div>
+      </FadeIn>
     </div>
   );
 }

@@ -64,8 +64,10 @@ export default async function UserDetailPage({
     // Fraud / trust assessment. Heavy aggregation — cached in-memory
     // for 60s so moderators clicking around the user don't re-run it.
     computeRiskScore(id),
-    getSharedIpUsers(id),
-    getSharedFingerprintUsers(id),
+    // Fingerprints table may be absent in fresh/dev environments — degrade
+    // gracefully to an empty list rather than crashing the user detail page.
+    getSharedIpUsers(id).catch(() => []),
+    getSharedFingerprintUsers(id).catch(() => []),
     session.role === "admin" ? Promise.resolve(null) : getUserPermissions(session.userId),
   ]);
 

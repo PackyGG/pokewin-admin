@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 
 /**
@@ -65,6 +65,7 @@ export type PacksProfitData = {
 export async function getPackProfitability(
   period: PacksPeriod,
 ): Promise<PacksProfitData> {
+  const db = await getDb();
   const days = daysForPeriod(period);
   const ltWhere =
     days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";

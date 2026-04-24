@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 
 export type PnlBreakdown = {
@@ -31,6 +31,7 @@ export type PnlBreakdown = {
 };
 
 export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown> {
+  const db = await getDb();
   const [rows, inventoryValue] = await Promise.all([
     db.$queryRaw<{ type: string; net: string }[]>`
       SELECT type,
@@ -104,6 +105,7 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
 }
 
 export async function getUserBalanceHistory(userId: string) {
+  const db = await getDb();
   // Pull the last `balance_after` per calendar day in a single aggregated
   // query instead of streaming every completed transaction back to Node.
   // Uses DISTINCT ON (day) + ORDER BY created_at DESC so PG returns one

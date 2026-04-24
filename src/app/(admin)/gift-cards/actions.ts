@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createHash, randomBytes } from "crypto";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { requirePageAccess } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -13,6 +13,7 @@ export async function createGiftCard(data: {
   expiresAt?: string;
   code?: string;
 }) {
+  const db = await getDb();
   const session = await requirePageAccess("/gift-cards");
 
   const code = data.code?.trim() || randomBytes(8).toString("hex").toUpperCase();
@@ -46,6 +47,7 @@ export async function createGiftCard(data: {
 }
 
 export async function cancelGiftCard(giftCardId: string) {
+  const db = await getDb();
   const session = await requirePageAccess("/gift-cards");
 
   const card = await db.gift_cards.findUnique({ where: { id: giftCardId } });

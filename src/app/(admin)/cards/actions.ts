@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { requireAdmin } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { uploadImage } from "@/lib/imagekit";
@@ -31,6 +31,7 @@ export async function createCard(data: {
   cardNumber: string | null;
   setId: string | null;
 }): Promise<string> {
+  const db = await getDb();
   const session = await requireAdmin();
 
   if (!data.name.trim()) throw new Error("Name is required");
@@ -78,6 +79,7 @@ export async function updateCard(
     setId: string | null;
   },
 ): Promise<void> {
+  const db = await getDb();
   const session = await requireAdmin();
 
   if (!data.name.trim()) throw new Error("Name is required");
@@ -113,6 +115,7 @@ export async function updateCard(
 }
 
 export async function deleteCard(cardId: string): Promise<void> {
+  const db = await getDb();
   const session = await requireAdmin();
 
   const card = await db.cards.findUnique({

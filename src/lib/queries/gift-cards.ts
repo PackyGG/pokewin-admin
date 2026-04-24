@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
@@ -27,6 +27,7 @@ export async function getGiftCards(params: {
   region?: string;
   search?: string;
 }): Promise<PaginatedResult<GiftCardListItem>> {
+  const db = await getDb();
   const { page = 1, perPage = 20, status, region, search } = params;
 
   const where: Record<string, unknown> = {};

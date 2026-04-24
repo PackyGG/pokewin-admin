@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 
 export type SiteConfigRow = {
   key: string;
@@ -7,6 +7,7 @@ export type SiteConfigRow = {
 };
 
 export async function getSiteConfig(): Promise<SiteConfigRow[]> {
+  const db = await getDb();
   const rows = await db.site_config.findMany({
     orderBy: { key: "asc" },
   });

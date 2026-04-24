@@ -5,6 +5,7 @@ import bcrypt from "bcryptjs";
 import { headers } from "next/headers";
 import { adminDb } from "@/lib/admin-db";
 import { createSession, createPendingSession } from "@/lib/session";
+import { generateSecret } from "@/lib/totp";
 import { redirect } from "next/navigation";
 import { getDefaultRouteForUser } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -95,13 +96,18 @@ export async function login(
     return { requires2FA: true };
   }
 
-  // If TOTP is not set up yet, require setup
+  // If TOTP is not set up yet, require setup. The freshly generated
+  // secret is embedded in the signed pending-session cookie (not a
+  // separate cookie), because Next.js 15 forbids cookie writes from a
+  // Server Component render — this keeps everything in one cookie set
+  // from a Server Action.
   if (!adminUser.totp_secret) {
     await createPendingSession({
       adminUserId: adminUser.id,
       email: adminUser.email,
       username: adminUser.username,
       role: adminUser.role,
+      totpSecret: generateSecret(),
     });
     return { requiresSetup: true };
   }

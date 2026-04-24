@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { EXCLUDE_STAFF_USER_RELATION } from "./_exclude-staff";
 
@@ -39,6 +39,7 @@ export async function getLiveDeposits(params: {
   sinceCreatedAt: string | null;
   limit: number;
 }): Promise<LiveDepositsResult> {
+  const db = await getDb();
   const limit = Math.max(1, Math.min(50, Math.floor(params.limit)));
   const since = params.sinceCreatedAt ? new Date(params.sinceCreatedAt) : null;
 
@@ -166,6 +167,7 @@ export async function getLiveActivity(params: {
   sinceCreatedAt: string | null;
   limit: number;
 }): Promise<LiveActivityItem[]> {
+  const db = await getDb();
   const limit = Math.max(1, Math.min(60, Math.floor(params.limit)));
   const since = params.sinceCreatedAt ? new Date(params.sinceCreatedAt) : null;
 

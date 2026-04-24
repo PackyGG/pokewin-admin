@@ -1,13 +1,14 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { backendApiRequest } from "@/lib/backend-api";
 
 export async function processWithdrawal(withdrawalId: string) {
+  const db = await getDb();
   const session = await requirePageAccess("/withdrawals");
   await requireCapability(session, "__can_process_withdrawals", "process withdrawal requests");
 
@@ -36,9 +37,8 @@ export async function processWithdrawal(withdrawalId: string) {
 
     try {
       result = await backendApiRequest("/admin/process-approved", {
-        withdrawal_id: withdrawalId,
-      }, {
-        adminActorId: session.userId,
+        method: "POST",
+        body: { withdrawal_id: withdrawalId },
       });
     } catch (error) {
       // Revert status back to pending since the transfer failed to initiate
@@ -81,6 +81,7 @@ export async function shipWithdrawal(
   trackingNumber: string,
   carrier: string
 ) {
+  const db = await getDb();
   const session = await requirePageAccess("/withdrawals");
   await requireCapability(session, "__can_ship_withdrawals", "mark withdrawals as shipped");
 
@@ -120,6 +121,7 @@ export async function shipWithdrawal(
 }
 
 export async function completeWithdrawal(withdrawalId: string) {
+  const db = await getDb();
   const session = await requirePageAccess("/withdrawals");
   await requireCapability(session, "__can_complete_withdrawals", "mark withdrawals as complete");
 
@@ -131,9 +133,8 @@ export async function completeWithdrawal(withdrawalId: string) {
   }
 
   await backendApiRequest("/admin/complete", {
-    withdrawal_id: withdrawalId,
-  }, {
-    adminActorId: session.userId,
+    method: "POST",
+    body: { withdrawal_id: withdrawalId },
   });
 
   await createAdminAuditEvent({
@@ -148,6 +149,7 @@ export async function completeWithdrawal(withdrawalId: string) {
 }
 
 export async function cancelWithdrawal(withdrawalId: string, reason: string) {
+  const db = await getDb();
   const session = await requirePageAccess("/withdrawals");
   await requireCapability(session, "__can_cancel_withdrawals", "cancel withdrawals");
 
@@ -159,10 +161,8 @@ export async function cancelWithdrawal(withdrawalId: string, reason: string) {
   }
 
   await backendApiRequest("/admin/cancel", {
-    withdrawal_id: withdrawalId,
-    reason,
-  }, {
-    adminActorId: session.userId,
+    method: "POST",
+    body: { withdrawal_id: withdrawalId, reason },
   });
 
   await createAdminAuditEvent({
@@ -177,6 +177,7 @@ export async function cancelWithdrawal(withdrawalId: string, reason: string) {
 }
 
 export async function failWithdrawal(withdrawalId: string, reason: string) {
+  const db = await getDb();
   const session = await requirePageAccess("/withdrawals");
   await requireCapability(session, "__can_fail_withdrawals", "mark withdrawals as failed");
 
@@ -188,10 +189,8 @@ export async function failWithdrawal(withdrawalId: string, reason: string) {
   }
 
   await backendApiRequest("/admin/fail", {
-    withdrawal_id: withdrawalId,
-    reason,
-  }, {
-    adminActorId: session.userId,
+    method: "POST",
+    body: { withdrawal_id: withdrawalId, reason },
   });
 
   await createAdminAuditEvent({

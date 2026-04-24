@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import type { PaginatedResult } from "@/lib/types";
 
 export type ChatMessageItem = {
@@ -31,6 +31,7 @@ export async function getChatMessages(params: {
   perPage?: number;
   search?: string;
 }): Promise<PaginatedResult<ChatMessageItem>> {
+  const db = await getDb();
   const { page = 1, perPage = 20, search } = params;
 
   const where: Record<string, unknown> = {};
@@ -116,6 +117,7 @@ export async function getChatMessagesSince(
   sinceIso: string,
   limit = 100,
 ): Promise<ChatMessageItem[]> {
+  const db = await getDb();
   const since = new Date(sinceIso);
   const rows = await db.chat_messages.findMany({
     where: { created_at: { gt: since } },
@@ -152,6 +154,7 @@ export async function getMutes(params: {
   page?: number;
   perPage?: number;
 }): Promise<PaginatedResult<MuteItem>> {
+  const db = await getDb();
   const { page = 1, perPage = 20 } = params;
 
   const [mutes, total] = await Promise.all([

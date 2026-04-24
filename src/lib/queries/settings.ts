@@ -1,6 +1,7 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 
 export async function getSettings() {
+  const db = await getDb();
   const [vaultLockTimes, countryRestrictions] = await Promise.all([
     db.vault_lock_times.findMany({ orderBy: { hours: "asc" } }),
     db.country_restrictions.findMany({ orderBy: { country_code: "asc" } }),

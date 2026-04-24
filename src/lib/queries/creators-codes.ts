@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import type { CodeListItem } from "./creators-types";
@@ -18,6 +18,7 @@ export async function getCodes(params: {
     sortOrder = "desc",
   } = params;
 
+  const db = await getDb();
   const validFields = ["code", "created_at"];
   const sortField = validFields.includes(sortBy) ? sortBy : "created_at";
   const direction = sortOrder === "asc" ? "ASC" : "DESC";
@@ -70,23 +71,47 @@ export async function getCodes(params: {
 }
 
 export async function getCodeAnalytics(code: string) {
+  // Code casing history:
+  //  - affiliate_clicks: always UPPERCASE (trackClick does code.toUpperCase()
+  //    before insert — backend/src/routes/v1/affiliate/track.ts).
+  //  - affiliate_codes: MIXED. createCode uppercases new codes, but migration
+  //    0068 backfilled pre-existing codes from affiliate_accounts.code
+  //    as-is, so legacy rows can be lowercase/mixed-case (e.g. "insta1").
+  //  - affiliate_code_usages: mirrors whatever casing the caller resolved
+  //    from affiliate_codes, so also MIXED for legacy codes.
+  //
+  // We therefore: (1) look up the code record case-insensitively to handle
+  // legacy rows, (2) use the ROW's stored casing for usages queries so they
+  // match the actual insert casing, (3) use UPPERCASE for affiliate_clicks
+  // where we know the stored casing is always upper.
+  const db = await getDb();
+  const uppercaseCode = code.toUpperCase();
+
+  const codeRecord = await db
+    .$queryRawUnsafe<{ code: string; user_id: string; username: string | null }[]>(
+      `SELECT ac.code, ac.user_id, u.username
+       FROM affiliate_codes ac
+       JOIN "user" u ON u.id = ac.user_id
+       WHERE UPPER(ac.code) = $1
+       LIMIT 1`,
+      uppercaseCode
+    )
+    .then((rows) => (rows[0] ? { ...rows[0], is_active: true } : null));
+
+  if (!codeRecord) return null;
+
   const [
-    codeRecord,
     usages,
+    totalReferralsCount,
     clickCount,
     dailyUsages,
     dailyClicks,
+    countryBreakdown,
+    acquisitionHourly,
+    acquisitionDaily,
   ] = await Promise.all([
-    db.$queryRawUnsafe<{ user_id: string; username: string | null }[]>(
-      `SELECT ac.user_id, u.username
-       FROM affiliate_codes ac
-       JOIN "user" u ON u.id = ac.user_id
-       WHERE ac.code = $1
-       LIMIT 1`,
-      code
-    ).then((rows) => rows[0] ? { ...rows[0], is_active: true } : null),
     db.affiliate_code_usages.findMany({
-      where: { code },
+      where: { code: { equals: uppercaseCode, mode: "insensitive" } },
       include: {
         user_affiliate_code_usages_referred_user_idTouser: {
           select: { username: true },
@@ -95,7 +120,10 @@ export async function getCodeAnalytics(code: string) {
       orderBy: { created_at: "desc" },
       take: 50,
     }),
-    db.affiliate_clicks.count({ where: { code } }),
+    db.affiliate_code_usages.count({
+      where: { code: { equals: uppercaseCode, mode: "insensitive" } },
+    }),
+    db.affiliate_clicks.count({ where: { code: uppercaseCode } }),
     db.$queryRawUnsafe<
       {
         date: Date;
@@ -112,44 +140,184 @@ export async function getCodeAnalytics(code: string) {
         COALESCE(SUM(wager_amount_usd::numeric), 0)::text AS wager_volume,
         COALESCE(SUM(referrer_cut_usd::numeric), 0)::text AS commission
       FROM affiliate_code_usages
-      WHERE code = $1
+      WHERE UPPER(code) = $1
       GROUP BY DATE(created_at)
       ORDER BY date
-    `, code),
+    `, uppercaseCode),
     db.$queryRawUnsafe<{ date: Date; clicks: string }[]>(`
       SELECT DATE(created_at) AS date, COUNT(*)::text AS clicks
       FROM affiliate_clicks
       WHERE code = $1
       GROUP BY DATE(created_at)
       ORDER BY date
-    `, code),
+    `, uppercaseCode),
+    // Country breakdown scoped to THIS code.
+    //  - Clicks: affiliate_clicks.country is the full country name populated
+    //    by the geolocation service at track time. Clicks are always stored
+    //    UPPERCASE.
+    //  - Signups: derived from affiliate_code_usages.referred_user_id joined
+    //    to user.country. Uses uppercaseCode for case-insensitive matching.
+    //    casing). DISTINCT on referred_user_id so a user who made multiple
+    //    usages under this code still counts once.
+    db.$queryRawUnsafe<{ country: string; clicks: number; signups: number }[]>(
+      `
+      WITH click_countries AS (
+        SELECT country, COUNT(*)::int AS clicks
+        FROM affiliate_clicks
+        WHERE code = $1
+          AND country IS NOT NULL AND country <> 'unknown'
+        GROUP BY country
+      ),
+      signup_countries AS (
+        SELECT u.country, COUNT(DISTINCT acu.referred_user_id)::int AS signups
+        FROM affiliate_code_usages acu
+        JOIN "user" u ON u.id = acu.referred_user_id
+        WHERE UPPER(acu.code) = $2
+          AND acu.usage_type = 'signup'
+          AND u.country IS NOT NULL AND u.country <> '' AND u.country <> 'unknown'
+        GROUP BY u.country
+      )
+      SELECT
+        COALESCE(c.country, s.country) AS country,
+        COALESCE(c.clicks, 0) AS clicks,
+        COALESCE(s.signups, 0) AS signups
+      FROM click_countries c
+      FULL OUTER JOIN signup_countries s ON c.country = s.country
+      WHERE COALESCE(c.country, s.country) IS NOT NULL
+      ORDER BY (COALESCE(c.clicks, 0) + COALESCE(s.signups, 0)) DESC
+      LIMIT 30
+      `,
+      uppercaseCode,
+      uppercaseCode,
+    ),
+    // Hourly acquisition series (last 24h, 24 buckets).
+    //  - Clicks: affiliate_clicks, uppercase code (always uppercase stored).
+    //  - Signups: affiliate_code_usages with usage_type='signup', uppercaseCode.
+    // generate_series + LEFT JOIN guarantees continuous buckets even when
+    // a given hour saw zero activity — chart renders flat bar, not a gap.
+    db.$queryRawUnsafe<{ bucket: string; clicks: number; signups: number }[]>(
+      `
+      WITH series AS (
+        SELECT generate_series(
+          date_trunc('hour', NOW() - INTERVAL '23 hours'),
+          date_trunc('hour', NOW()),
+          INTERVAL '1 hour'
+        ) AS bucket
+      ),
+      clicks_agg AS (
+        SELECT date_trunc('hour', created_at) AS bucket, COUNT(*)::int AS n
+        FROM affiliate_clicks
+        WHERE code = $1
+          AND created_at >= NOW() - INTERVAL '24 hours'
+        GROUP BY 1
+      ),
+      signups_agg AS (
+        SELECT date_trunc('hour', created_at) AS bucket,
+               COUNT(DISTINCT referred_user_id)::int AS n
+        FROM affiliate_code_usages
+        WHERE UPPER(code) = $2
+          AND usage_type = 'signup'
+          AND created_at >= NOW() - INTERVAL '24 hours'
+        GROUP BY 1
+      )
+      SELECT s.bucket::text AS bucket,
+             COALESCE(c.n, 0) AS clicks,
+             COALESCE(su.n, 0) AS signups
+      FROM series s
+      LEFT JOIN clicks_agg c ON c.bucket = s.bucket
+      LEFT JOIN signups_agg su ON su.bucket = s.bucket
+      ORDER BY s.bucket ASC
+      `,
+      uppercaseCode,
+      uppercaseCode,
+    ),
+    // Daily acquisition series (last 7d, 7 buckets). Same structure as
+    // hourly but truncated to day.
+    db.$queryRawUnsafe<{ bucket: string; clicks: number; signups: number }[]>(
+      `
+      WITH series AS (
+        SELECT generate_series(
+          date_trunc('day', NOW() - INTERVAL '6 days'),
+          date_trunc('day', NOW()),
+          INTERVAL '1 day'
+        ) AS bucket
+      ),
+      clicks_agg AS (
+        SELECT date_trunc('day', created_at) AS bucket, COUNT(*)::int AS n
+        FROM affiliate_clicks
+        WHERE code = $1
+          AND created_at >= NOW() - INTERVAL '7 days'
+        GROUP BY 1
+      ),
+      signups_agg AS (
+        SELECT date_trunc('day', created_at) AS bucket,
+               COUNT(DISTINCT referred_user_id)::int AS n
+        FROM affiliate_code_usages
+        WHERE UPPER(code) = $2
+          AND usage_type = 'signup'
+          AND created_at >= NOW() - INTERVAL '7 days'
+        GROUP BY 1
+      )
+      SELECT s.bucket::text AS bucket,
+             COALESCE(c.n, 0) AS clicks,
+             COALESCE(su.n, 0) AS signups
+      FROM series s
+      LEFT JOIN clicks_agg c ON c.bucket = s.bucket
+      LEFT JOIN signups_agg su ON su.bucket = s.bucket
+      ORDER BY s.bucket ASC
+      `,
+      uppercaseCode,
+      uppercaseCode,
+    ),
   ]);
-
-  if (!codeRecord) return null;
 
   const isActive = codeRecord.is_active;
 
-  const totalReferrals = usages.length;
+  const totalReferrals = totalReferralsCount;
   const totalDeposits = usages.reduce((sum, u) => sum + toNumber(u.deposit_amount_usd), 0);
   const totalWagers = usages.reduce((sum, u) => sum + toNumber(u.wager_amount_usd), 0);
   const totalCommission = usages.reduce((sum, u) => sum + toNumber(u.referrer_cut_usd), 0);
 
-  // Merge daily data
-  const clicksMap = new Map(
-    dailyClicks.map((d) => [new Date(d.date).toISOString().split("T")[0], Number(d.clicks)])
-  );
+  // Merge daily data. `DATE(created_at)` comes back from Prisma as either
+  // a Date object or an ISO string depending on the driver; guard the
+  // conversion so a null/invalid row never crashes the merge. Before the
+  // uppercase-normalisation fix dailyClicks was always empty for lowercase
+  // URLs and this defensive path was silently not exercised.
+  const safeDateKey = (value: unknown): string | null => {
+    if (value == null) return null;
+    const d = value instanceof Date ? value : new Date(value as string);
+    if (Number.isNaN(d.getTime())) return null;
+    const iso = d.toISOString();
+    const key = iso.split("T")[0];
+    return key ?? null;
+  };
 
-  const daily = dailyUsages.map((d) => {
-    const dateStr = new Date(d.date).toISOString().split("T")[0];
-    return {
-      date: dateStr,
+  const clicksMap = new Map<string, number>();
+  for (const d of dailyClicks) {
+    const key = safeDateKey(d.date);
+    if (key) clicksMap.set(key, Number(d.clicks));
+  }
+
+  const daily: {
+    date: string;
+    referrals: number;
+    depositVolume: number;
+    wagerVolume: number;
+    commission: number;
+    clicks: number;
+  }[] = [];
+  for (const d of dailyUsages) {
+    const key = safeDateKey(d.date);
+    if (!key) continue;
+    daily.push({
+      date: key,
       referrals: Number(d.referrals),
       depositVolume: toNumber(d.deposit_volume),
       wagerVolume: toNumber(d.wager_volume),
       commission: toNumber(d.commission),
-      clicks: clicksMap.get(dateStr) ?? 0,
-    };
-  });
+      clicks: clicksMap.get(key) ?? 0,
+    });
+  }
 
   for (const [dateStr, clicks] of clicksMap) {
     if (!daily.find((d) => d.date === dateStr)) {
@@ -159,7 +327,10 @@ export async function getCodeAnalytics(code: string) {
   daily.sort((a, b) => a.date.localeCompare(b.date));
 
   return {
-    code,
+    // Display the code exactly as stored in affiliate_codes (canonical
+    // casing). URL param may arrive in any casing; this keeps the hero
+    // consistent with the DB row.
+    code: codeRecord.code,
     ownerUserId: codeRecord.user_id,
     ownerUsername: codeRecord.username ?? null,
     isActive,
@@ -169,6 +340,23 @@ export async function getCodeAnalytics(code: string) {
     totalCommission,
     totalClicks: clickCount,
     daily,
+    acquisition: {
+      hourly: acquisitionHourly.map((r) => ({
+        bucket: r.bucket,
+        clicks: Number(r.clicks),
+        signups: Number(r.signups),
+      })),
+      daily: acquisitionDaily.map((r) => ({
+        bucket: r.bucket,
+        clicks: Number(r.clicks),
+        signups: Number(r.signups),
+      })),
+    },
+    countryBreakdown: countryBreakdown.map((r) => ({
+      country: r.country,
+      clicks: Number(r.clicks),
+      signups: Number(r.signups),
+    })),
     recentReferrals: usages.map((u) => ({
       id: u.id,
       referredUserId: u.referred_user_id,

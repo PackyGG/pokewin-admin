@@ -3,7 +3,7 @@
 import crypto from "crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { requireAdmin, requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
@@ -26,6 +26,7 @@ export async function adjustBalance(data: {
   reason: string;
   totpCode: string;
 }): Promise<{ success: true } | { success: false; error: string }> {
+  const db = await getDb();
   const session = await requirePageAccess("/users");
 
   const parseResult = adjustBalanceSchema.safeParse(data);
@@ -154,6 +155,7 @@ export async function adjustBalance(data: {
 }
 
 export async function changeRole(userId: string, newRole: string, totpCode: string) {
+  const db = await getDb();
   // Role changes remain admin-only (+ 2FA). The capability check is kept as
   // defence-in-depth so `__can_change_user_roles` is catalogued; admins pass
   // automatically.
@@ -189,6 +191,7 @@ export async function updateUserIdentity(
     displayUsername?: string;
   },
 ): Promise<{ success: true } | { success: false; error: string }> {
+  const db = await getDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_edit_identity", "edit user identity");
 
@@ -268,6 +271,7 @@ export async function toggleFeatureLock(
   feature: string,
   locked: boolean
 ) {
+  const db = await getDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_toggle_feature_locks", "toggle feature locks");
 
@@ -334,6 +338,7 @@ export async function fetchInventory(
 }
 
 export async function getGameSessionDetails(gameSessionId: string) {
+  const db = await getDb();
   await requirePageAccess("/users");
 
   const session = await db.game_sessions.findUnique({
@@ -438,6 +443,7 @@ export async function updateWithdrawalLimits(data: {
   currencyLimitResetDays: number | null;
   percentageLimit: number | null;
 }) {
+  const db = await getDb();
   const session = await requireAdmin();
   const parsed = withdrawalLimitsSchema.parse(data);
 
@@ -494,6 +500,7 @@ export async function fetchCreatorCodeUsages(
 }
 
 export async function assignAffiliateCode(userId: string, affiliateCode: string | null) {
+  const db = await getDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_assign_affiliate", "assign affiliate codes");
 
@@ -572,6 +579,7 @@ export async function assignAffiliateCode(userId: string, affiliateCode: string 
 }
 
 export async function createAffiliateCode(userId: string, code: string) {
+  const db = await getDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_assign_affiliate", "create affiliate codes");
   const trimmed = code.trim();
@@ -624,6 +632,7 @@ export async function adjustXp(data: {
   amount: number;
   reason: string;
 }) {
+  const db = await getDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_adjust_xp", "adjust user XP");
   const parsed = adjustXpSchema.parse(data);
@@ -707,6 +716,7 @@ export async function wipeUserAccount(
   userId: string,
   confirmUsername: string,
 ): Promise<{ success: true } | { success: false; error: string }> {
+  const db = await getDb();
   const session = await requireAdmin();
 
   // Verify the user exists and the confirmation username matches

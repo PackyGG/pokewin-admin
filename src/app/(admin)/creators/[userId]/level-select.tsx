@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { AFFILIATE_LEVEL_COLORS, AFFILIATE_LEVEL_LABELS } from "@/lib/constants";
+import { AFFILIATE_LEVEL_LABELS } from "@/lib/constants";
 import { updateAffiliateLevel } from "../actions";
 
 const LEVELS = [1, 2, 3, 4, 5, 6, 7, 8];
@@ -42,7 +42,10 @@ export function LevelSelect({
 
   return (
     <Select value={String(currentLevel)} onValueChange={handleChange} disabled={isPending}>
-      <SelectTrigger className={`!h-5 !py-0 !pl-2 !pr-1.5 !gap-0.5 rounded-4xl text-xs font-medium [&_svg]:!size-3 ${AFFILIATE_LEVEL_COLORS[currentLevel] ?? ""}`}>
+      <SelectTrigger
+        size="sm"
+        className="!h-6 !px-1.5 !py-0 !gap-1 !w-fit !rounded-md border-transparent bg-transparent text-xs text-muted-foreground hover:bg-accent hover:text-foreground [&_svg]:!size-3 dark:bg-transparent dark:hover:bg-accent"
+      >
         <SelectValue />
       </SelectTrigger>
       <SelectContent>

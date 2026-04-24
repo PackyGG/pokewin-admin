@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 
 /**
  * Read one or more keys from the generic site_config table in a single
@@ -15,6 +15,7 @@ export async function getSiteConfigValues(
 ): Promise<Record<string, string>> {
   if (keys.length === 0) return {};
 
+  const db = await getDb();
   const rows = await db.site_config.findMany({
     where: { key: { in: keys } },
     select: { key: true, value: true },

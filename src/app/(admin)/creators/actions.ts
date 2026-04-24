@@ -3,7 +3,7 @@
 import crypto from "crypto";
 import { revalidatePath } from "next/cache";
 import bcrypt from "bcryptjs";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { requirePageAccess } from "@/lib/dal";
 import { toNumber } from "@/lib/utils/decimal";
@@ -13,6 +13,7 @@ import { fetchPublicStats } from "@/lib/socials-public";
 import type { deal_type, deal_status } from "@/generated/admin-prisma/client";
 
 export async function makeCreator(userId: string) {
+  const db = await getDb();
   const session = await requirePageAccess("/creators");
 
   const user = await db.user.findUnique({
@@ -88,6 +89,7 @@ export async function makeCreator(userId: string) {
 }
 
 export async function updateAffiliateLevel(userId: string, level: number) {
+  const db = await getDb();
   const session = await requirePageAccess("/creators");
 
   if (level < 1 || level > 8) throw new Error("Invalid level");
@@ -109,6 +111,7 @@ export async function updateAffiliateLevel(userId: string, level: number) {
 }
 
 export async function addAffiliateCode(userId: string, code: string) {
+  const db = await getDb();
   const session = await requirePageAccess("/creators");
 
   const trimmed = code.trim().toLowerCase();
@@ -135,6 +138,7 @@ export async function addAffiliateCode(userId: string, code: string) {
 }
 
 export async function removeAffiliateCode(codeId: string) {
+  const db = await getDb();
   const session = await requirePageAccess("/creators");
 
   const code = await db.affiliate_codes.findUnique({ where: { id: codeId } });
@@ -153,6 +157,7 @@ export async function removeAffiliateCode(codeId: string) {
 }
 
 export async function toggleAffiliateCode(codeId: string, isActive: boolean) {
+  const db = await getDb();
   const session = await requirePageAccess("/creators");
 
   const code = await db.affiliate_codes.findUnique({ where: { id: codeId } });
@@ -182,6 +187,7 @@ export async function updateCreatorLimits(
     currencyLimitResetDays?: number | null;
   }
 ) {
+  const db = await getDb();
   const session = await requirePageAccess("/creators");
 
   await db.creator_withdrawal_limits.upsert({
@@ -219,6 +225,7 @@ export async function updateCreatorLimits(
 }
 
 export async function processCreatorPayout(affiliateUserId: string) {
+  const db = await getDb();
   const session = await requirePageAccess("/creators");
 
   // Run everything inside a single interactive transaction so we can:
@@ -308,6 +315,7 @@ export async function updateLevelConfig(
   level: number,
   data: { label?: string; commissionRate?: number; threshold?: number }
 ) {
+  const db = await getDb();
   const session = await requirePageAccess("/creators");
 
   const updateData: Record<string, unknown> = {};
@@ -348,6 +356,7 @@ export async function updateLevelConfig(
 export async function updateAffiliateCutExpiration(
   days: number | null,
 ): Promise<{ success: true } | { success: false; error: string }> {
+  const db = await getDb();
   const session = await requirePageAccess("/creators");
 
   if (days !== null && (!Number.isFinite(days) || days < 0)) {
@@ -387,6 +396,7 @@ export async function updateAffiliateCutExpiration(
 }
 
 export async function toggleCodeActive(userId: string, isActive: boolean) {
+  const db = await getDb();
   const session = await requirePageAccess("/creators");
 
   await db.user.update({
@@ -762,6 +772,7 @@ export async function updateDeal(
 }
 
 export async function manualFill(targetUserId: string, dealId: string) {
+  const db = await getDb();
   const session = await requirePageAccess("/creators");
 
   const deal = await adminDb.creator_deals.findUnique({ where: { id: dealId } });
@@ -847,6 +858,7 @@ async function syncWithdrawalLimits(
     tipLimitResetDays?: number | null;
   }
 ) {
+  const db = await getDb();
   await db.creator_withdrawal_limits.upsert({
     where: { user_id: userId },
     create: {

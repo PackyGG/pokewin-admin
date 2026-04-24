@@ -14,7 +14,7 @@
 //   - Cap the result set at 8 rows. The palette shows them inline.
 //   - No cross-DB joins. Only user columns are returned.
 
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { verifySession } from "@/lib/dal";
 
 export type GlobalUserSearchResult = {
@@ -33,6 +33,7 @@ const UUID_REGEX =
 export async function searchUsersGlobal(
   query: string,
 ): Promise<GlobalUserSearchResult[]> {
+  const db = await getDb();
   const session = await verifySession();
 
   // Normalize & validate the query client-side is untrusted.

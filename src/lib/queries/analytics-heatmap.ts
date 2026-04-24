@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 
 /**
@@ -52,6 +52,7 @@ export type HeatmapData = {
 export async function getActivityHeatmap(
   period: HeatmapPeriod,
 ): Promise<HeatmapData> {
+  const db = await getDb();
   const days = daysForPeriod(period);
 
   const rows = await db.$queryRawUnsafe<

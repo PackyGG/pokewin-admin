@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 
 /**
  * Retention / churn curves.
@@ -35,6 +35,7 @@ export type RetentionData = {
 };
 
 export async function getRetentionCurve(): Promise<RetentionData> {
+  const db = await getDb();
   // Pull per-day retention in one shot. For each (cohort, day-offset)
   // bucket, count distinct users that wagered in that bucket. The
   // "eligible cohort" for day N is everyone who signed up at least N

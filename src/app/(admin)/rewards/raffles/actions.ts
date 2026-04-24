@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { reloadPacks } from "@/app/(admin)/rewards/actions";
@@ -48,6 +48,7 @@ export async function searchItems(
   type: "pack" | "card",
   filters?: { minPrice?: number; maxPrice?: number },
 ): Promise<SearchItem[]> {
+  const db = await getDb();
   await requirePageAccess("/rewards/raffles");
   const isUuid = UUID_RE.test(query);
 
@@ -255,6 +256,7 @@ export async function updateRaffle(
     prizes: { type: "pack" | "card"; id: string; quantity: number }[];
   },
 ): Promise<{ success: true } | { success: false; error: string }> {
+  const db = await getDb();
   const session = await requirePageAccess("/rewards/raffles");
 
   const parseResult = updateRaffleSchema.safeParse(data);
@@ -331,6 +333,7 @@ export async function updateRaffle(
 export async function cancelRaffle(
   id: string,
 ): Promise<{ success: true } | { success: false; error: string }> {
+  const db = await getDb();
   const session = await requirePageAccess("/rewards/raffles");
 
   const raffle = await db.raffles.findUnique({ where: { id } });

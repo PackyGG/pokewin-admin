@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { withTiming } from "@/lib/observability/query-timings";
 
 /**
@@ -37,6 +37,7 @@ export async function getRealizedPnlSnapshot(): Promise<RealizedPnlSnapshot> {
 }
 
 async function realizedPnlSnapshotInner(): Promise<RealizedPnlSnapshot> {
+  const db = await getDb();
   const rows = await db.$queryRaw<
     {
       deposited: string;

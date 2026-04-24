@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { adminDb } from "@/lib/admin-db";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { requireAdmin } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { ALL_PAGE_KEYS } from "@/lib/admin-pages";
@@ -58,6 +58,7 @@ export async function updateUserPermissions(userId: string, pages: string[]) {
 }
 
 export async function searchMainSiteUsers(query: string) {
+  const db = await getDb();
   await requireAdmin();
 
   if (!query || query.length < 2) return [];
@@ -82,6 +83,7 @@ export async function searchMainSiteUsers(query: string) {
 }
 
 export async function linkCreatorToMainUser(adminUserId: string, mainUserId: string) {
+  const db = await getDb();
   const session = await requireAdmin();
 
   const adminUser = await adminDb.admin_users.findUnique({

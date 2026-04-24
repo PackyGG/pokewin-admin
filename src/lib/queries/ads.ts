@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 
 /**
@@ -68,6 +68,7 @@ export type AdCodeDetail = {
  * traffic doesn't inflate another code's count.
  */
 export async function getAdCodes(houseUserId: string): Promise<AdCodeSummary[]> {
+  const db = await getDb();
   const codes = await db.affiliate_codes.findMany({
     where: { user_id: houseUserId },
     select: { code: true, created_at: true },
@@ -118,8 +119,9 @@ export async function getAdCodes(houseUserId: string): Promise<AdCodeSummary[]> 
     }),
   ]);
 
-  // Depositors = DISTINCT referred_user_id per code — groupBy doesn't
-  // give us a DISTINCT count so drop to a raw query.
+  // Depositors = DISTINCT referred_user_id per code where usage_type =
+  // 'deposit'. Without this filter, signup-type rows are included and
+  // inflate the count to equal the signup count.
   const depositorRows = await db.$queryRawUnsafe<
     { code: string; count: string }[]
   >(
@@ -127,6 +129,7 @@ export async function getAdCodes(houseUserId: string): Promise<AdCodeSummary[]> 
        FROM affiliate_code_usages
       WHERE affiliate_user_id = $1
         AND code = ANY($2::text[])
+        AND usage_type = 'deposit'
       GROUP BY code`,
     houseUserId,
     codeList,
@@ -182,6 +185,7 @@ export async function getAdCodes(houseUserId: string): Promise<AdCodeSummary[]> 
 export async function getAdCodesAggregate(
   houseUserId: string,
 ): Promise<AdAggregate> {
+  const db = await getDb();
   const codeRows = await db.affiliate_codes.findMany({
     where: { user_id: houseUserId },
     select: { code: true },
@@ -214,7 +218,8 @@ export async function getAdCodesAggregate(
       `SELECT COUNT(DISTINCT referred_user_id)::text AS count
          FROM affiliate_code_usages
         WHERE affiliate_user_id = $1
-          AND code = ANY($2::text[])`,
+          AND code = ANY($2::text[])
+          AND usage_type = 'deposit'`,
       houseUserId,
       codeList,
     ),
@@ -248,6 +253,7 @@ export async function getAdCodeDetail(
   houseUserId: string,
   code: string,
 ): Promise<AdCodeDetail | null> {
+  const db = await getDb();
   const record = await db.affiliate_codes.findFirst({
     where: { user_id: houseUserId, code },
     select: { code: true, created_at: true },
@@ -281,7 +287,8 @@ export async function getAdCodeDetail(
       `SELECT COUNT(DISTINCT referred_user_id)::text AS count
          FROM affiliate_code_usages
         WHERE affiliate_user_id = $1
-          AND code = $2`,
+          AND code = $2
+          AND usage_type = 'deposit'`,
       houseUserId,
       code,
     ),
@@ -389,6 +396,7 @@ export async function getAdCodeDetail(
 export async function getHouseUserInfo(
   houseUserId: string,
 ): Promise<{ id: string; username: string | null; email: string | null } | null> {
+  const db = await getDb();
   const user = await db.user.findUnique({
     where: { id: houseUserId },
     select: { id: true, username: true, email: true },

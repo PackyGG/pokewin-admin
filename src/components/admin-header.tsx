@@ -3,7 +3,17 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LogOut, RotateCw, User, Sun, Moon, Monitor, Clock, Check } from "lucide-react";
+import {
+  LogOut,
+  RotateCw,
+  User,
+  Sun,
+  Moon,
+  Monitor,
+  Clock,
+  Check,
+  Database,
+} from "lucide-react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -25,10 +35,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { logout } from "@/lib/actions/auth";
+import { switchDbEnv } from "@/lib/actions/db-env";
 import { ROLE_COLORS } from "@/lib/constants";
 import { TIMEZONE_GROUPS } from "@/lib/timezones";
 import { updatePreferences } from "@/app/(admin)/profile/preferences-actions";
 import { useTimezoneContext } from "@/components/timezone-provider";
+import type { DbEnv } from "@/lib/db-env";
 
 function getBreadcrumbs(pathname: string) {
   const segments = pathname.split("/").filter(Boolean);
@@ -148,18 +160,83 @@ function TimezoneSubmenu() {
   );
 }
 
+/**
+ * Database-env submenu — admin-only. Lets the current admin route
+ * their own requests at the prod or dev Main-DB. The switcher is
+ * hidden entirely unless the server confirms both `canSwitch` (admin
+ * role) and that a DEV_DATABASE_URL is configured. The active env is
+ * server-sourced so it survives navigation and reloads.
+ */
+function DbEnvSubmenu({ active }: { active: DbEnv }) {
+  const router = useRouter();
+  const [pending, setPending] = React.useState(false);
+
+  async function pick(next: DbEnv) {
+    if (pending || next === active) return;
+    setPending(true);
+    try {
+      await switchDbEnv(next);
+      toast.success(
+        next === "dev"
+          ? "Switched to DEV environment"
+          : "Switched back to PROD environment",
+      );
+      // Force the layout to re-read the cookie and refresh RSC payload
+      // so the banner appears/disappears immediately.
+      router.refresh();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Could not switch environment",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>
+        <Database className="mr-1 size-4" />
+        <span>Database</span>
+        <span
+          className={
+            "ml-auto text-[10px] font-semibold uppercase tracking-wide " +
+            (active === "dev" ? "text-rose-500" : "text-muted-foreground")
+          }
+        >
+          {active}
+        </span>
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent className="min-w-[200px]">
+        <DropdownMenuItem onClick={() => pick("prod")} disabled={pending}>
+          <span>Production</span>
+          {active === "prod" && <Check className="ml-auto size-4" />}
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => pick("dev")} disabled={pending}>
+          <span>Development</span>
+          {active === "dev" && <Check className="ml-auto size-4" />}
+        </DropdownMenuItem>
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
+  );
+}
+
 export function AdminHeader({
   adminId,
   username,
   displayUsername,
   hasAvatar,
   role,
+  dbEnv,
+  canSwitchDbEnv,
 }: {
   adminId: string;
   username: string;
   displayUsername: string | null;
   hasAvatar: boolean;
   role: string;
+  dbEnv: DbEnv;
+  canSwitchDbEnv: boolean;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -244,6 +321,7 @@ export function AdminHeader({
             </Link>
             <ThemeSubmenu />
             <TimezoneSubmenu />
+            {canSwitchDbEnv && <DbEnvSubmenu active={dbEnv} />}
             <DropdownMenuSeparator />
             <DropdownMenuItem
               variant="destructive"

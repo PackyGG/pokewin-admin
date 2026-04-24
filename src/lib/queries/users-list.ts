@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
@@ -39,6 +39,7 @@ export async function getUsers(params: {
   sortBy?: string;
   sortOrder?: string;
 }): Promise<PaginatedResult<UserListItem>> {
+  const db = await getDb();
   const {
     page = 1,
     perPage = 20,

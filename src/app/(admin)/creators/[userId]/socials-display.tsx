@@ -4,7 +4,6 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Unlink, Check } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatNumber } from "@/lib/utils/format";
@@ -105,145 +104,140 @@ export function SocialsDisplay({
     });
   }
 
+  // One row per platform, stacked vertically. Used inside the header
+  // "Manage socials" dialog — single-column layout reads linearly and
+  // keeps connected + unconnected platforms visually consistent.
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-sm font-medium">
-          Social Connections
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {ALL_PLATFORMS.map((platform) => {
-            const config = PLATFORM_CONFIG[platform]!;
-            const social = socials.find((s) => s.platform === platform);
+    <ul className="divide-y divide-border/60">
+      {ALL_PLATFORMS.map((platform) => {
+        const config = PLATFORM_CONFIG[platform]!;
+        const social = socials.find((s) => s.platform === platform);
 
-            if (social) {
-              return (
-                <div
-                  key={platform}
-                  className={`rounded-lg border p-4 ${config.bgColor}`}
-                >
-                  <p className={`text-sm font-medium ${config.color}`}>
+        return (
+          <li key={platform} className="py-3 first:pt-0 last:pb-0">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-baseline gap-2">
+                  <span className={`text-sm font-semibold ${config.color}`}>
                     {config.label}
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">@{social.username}</p>
-                  {social.followerCount !== null &&
-                    social.followerCount > 0 && (
-                      <p className="text-2xl font-bold">
-                        {formatNumber(social.followerCount)}{" "}
-                        <span className="text-sm font-normal text-muted-foreground">followers</span>
-                      </p>
-                    )}
+                  </span>
+                  {social ? (
+                    <span className="text-xs text-muted-foreground">
+                      @{social.username}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">
+                      Not linked
+                    </span>
+                  )}
+                </div>
 
-                  <div className="mt-2 space-y-1">
+                {social ? (
+                  <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-xs">
+                    {social.followerCount != null && social.followerCount > 0 && (
+                      <StatInline
+                        label="Followers"
+                        value={formatNumber(social.followerCount)}
+                      />
+                    )}
                     {social.subscriberCount != null &&
                       social.subscriberCount !== social.followerCount && (
-                        <StatLine
-                          label="Subscribers"
+                        <StatInline
+                          label="Subs"
                           value={formatNumber(social.subscriberCount)}
                         />
                       )}
                     {social.totalViews != null && (
-                      <StatLine
-                        label="Total Views"
+                      <StatInline
+                        label="Views"
                         value={formatNumber(social.totalViews)}
                       />
                     )}
                     {social.avgViews30d != null && (
-                      <StatLine
-                        label="Avg Views (30d)"
+                      <StatInline
+                        label="Avg views 30d"
                         value={formatNumber(social.avgViews30d)}
                       />
                     )}
                     {social.avgViewers != null && (
-                      <StatLine
-                        label="Avg Viewers"
+                      <StatInline
+                        label="Avg viewers"
                         value={formatNumber(social.avgViewers)}
                       />
                     )}
                     {social.avgViewers30d != null && (
-                      <StatLine
-                        label="Avg Viewers (30d)"
+                      <StatInline
+                        label="Avg viewers 30d"
                         value={formatNumber(social.avgViewers30d)}
                       />
                     )}
                     {social.likesAvg != null && (
-                      <StatLine
-                        label="Avg Likes"
+                      <StatInline
+                        label="Avg likes"
                         value={formatNumber(social.likesAvg)}
                       />
                     )}
                     {social.engagementRate != null && (
-                      <StatLine
+                      <StatInline
                         label="Engagement"
                         value={`${(social.engagementRate * 100).toFixed(1)}%`}
                       />
                     )}
                   </div>
-
-                  <div className="mt-2 flex gap-1">
+                ) : (
+                  <div className="mt-1.5 flex gap-1.5">
+                    <Input
+                      placeholder={config.placeholder}
+                      value={inputs[platform] ?? ""}
+                      onChange={(e) =>
+                        setInputs((prev) => ({
+                          ...prev,
+                          [platform]: e.target.value,
+                        }))
+                      }
+                      onKeyDown={(e) => e.key === "Enter" && handleLink(platform)}
+                      className="h-8 text-xs"
+                      disabled={isPending}
+                    />
                     <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 text-xs text-destructive hover:text-destructive"
-                      onClick={() => handleUnlink(social.id)}
+                      variant="outline"
+                      size="icon"
+                      className="size-8 shrink-0"
+                      onClick={() => handleLink(platform)}
                       disabled={isPending}
                     >
-                      <Unlink className="mr-1 size-3" />
-                      Unlink
+                      <Check className="size-3.5" />
                     </Button>
                   </div>
-                </div>
-              );
-            }
-
-            return (
-              <div
-                key={platform}
-                className="rounded-lg border border-dashed p-4"
-              >
-                <p className={`mb-2 text-sm font-medium ${config.color}`}>
-                  {config.label}
-                </p>
-                <div className="flex gap-1.5">
-                  <Input
-                    placeholder={config.placeholder}
-                    value={inputs[platform] ?? ""}
-                    onChange={(e) =>
-                      setInputs((prev) => ({
-                        ...prev,
-                        [platform]: e.target.value,
-                      }))
-                    }
-                    onKeyDown={(e) => e.key === "Enter" && handleLink(platform)}
-                    className="h-8 text-xs"
-                    disabled={isPending}
-                  />
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    className="size-8 shrink-0"
-                    onClick={() => handleLink(platform)}
-                    disabled={isPending}
-                  >
-                    <Check className="size-3.5" />
-                  </Button>
-                </div>
+                )}
               </div>
-            );
-          })}
-        </div>
-      </CardContent>
-    </Card>
+
+              {social ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 shrink-0 text-xs text-destructive hover:text-destructive"
+                  onClick={() => handleUnlink(social.id)}
+                  disabled={isPending}
+                >
+                  <Unlink className="mr-1 size-3" />
+                  Unlink
+                </Button>
+              ) : null}
+            </div>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
-function StatLine({ label, value }: { label: string; value: string }) {
+function StatInline({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between text-sm">
+    <span className="inline-flex items-baseline gap-1">
       <span className="text-muted-foreground">{label}</span>
-      <span className="font-medium">{value}</span>
-    </div>
+      <span className="font-medium tabular-nums">{value}</span>
+    </span>
   );
 }
+

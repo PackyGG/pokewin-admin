@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
@@ -6,6 +6,7 @@ import { getCreatorPnl } from "./creators-pnl";
 import type { CreatorTipItem } from "./creators-types";
 
 export async function getCreatorDetail(userId: string, refPage?: number, refPerPage?: number) {
+  const db = await getDb();
   const account = await db.affiliate_accounts.findUnique({
     where: { user_id: userId },
     select: {
@@ -18,7 +19,7 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
       total_bonus_distributed_usd: true,
       last_payout_at: true,
       created_at: true,
-      user: { select: { username: true, email: true, role: true, affiliate_code: true, affiliate_code_active: true } },
+      user: { select: { username: true, email: true, image: true, role: true, affiliate_code: true, affiliate_code_active: true } },
     },
   });
 
@@ -32,7 +33,14 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
   //
   // signupsTotal / referralsTotal were previously duplicated as two separate
   // queries (same WHERE). Consolidated into one batch here, then reused.
-  const primaryCodeFromUser = account.user?.affiliate_code ?? "";
+  //
+  // NOTE: `user.affiliate_code` is NOT this creator's own code — it's the
+  // referral cookie they are carrying from another creator who referred THEM
+  // (set/cleared by repository/user/affiliate.ts#setAffiliateCode). The only
+  // source of truth for a creator's own codes is the `affiliate_codes` table,
+  // populated exclusively by affiliate.service.ts#createCode. Using
+  // user.affiliate_code here previously caused the admin to display a
+  // different creator's code and silently miscount this creator's clicks.
   const now = new Date();
   const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -103,17 +111,164 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
   ]);
 
   const referralsTotal = signupsTotal;
-  const primaryCode = primaryCodeFromUser || allCodes[0]?.code || "";
+  // Primary = oldest row in affiliate_codes (the first code this creator
+  // ever minted). `allCodes` is already ORDER BY created_at ASC above.
+  const primaryCode = allCodes[0]?.code ?? "";
 
-  // Click count + pending signups depend on the resolved primary code, so
-  // they're a second parallel batch. Tiny — one count each.
-  const [clickCount, pendingSignups] = await Promise.all([
-    primaryCode
-      ? db.affiliate_clicks.count({ where: { code: primaryCode } })
+  // Backend always inserts affiliate_clicks with code.toUpperCase() (see
+  // affiliate.service.ts#trackClick), and creators can own multiple codes —
+  // click totals must cover every code they own so additional codes aren't
+  // silently undercounted.
+  const clickCodes = Array.from(
+    new Set(
+      allCodes.map((c) => c.code.toUpperCase()).filter((c) => !!c),
+    ),
+  );
+
+  const now_clicks_24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const now_clicks_7d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const now_clicks_30d = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+  // Hourly (24 buckets) and daily (7 buckets) time-series for the
+  // acquisition chart. Uses generate_series + LEFT JOIN so empty buckets
+  // still appear as 0 instead of being skipped — required for a continuous
+  // bar chart. Runs a noop when the creator owns no codes.
+  const hasClickCodes = clickCodes.length > 0;
+
+  const [
+    clickCount,
+    clicks24h,
+    clicks7d,
+    clicks30d,
+    pendingSignups,
+    acquisitionHourly,
+    acquisitionDaily,
+    countryBreakdown,
+  ] = await Promise.all([
+    hasClickCodes
+      ? db.affiliate_clicks.count({ where: { code: { in: clickCodes } } })
+      : Promise.resolve(0),
+    hasClickCodes
+      ? db.affiliate_clicks.count({
+          where: { code: { in: clickCodes }, created_at: { gte: now_clicks_24h } },
+        })
+      : Promise.resolve(0),
+    hasClickCodes
+      ? db.affiliate_clicks.count({
+          where: { code: { in: clickCodes }, created_at: { gte: now_clicks_7d } },
+        })
+      : Promise.resolve(0),
+    hasClickCodes
+      ? db.affiliate_clicks.count({
+          where: { code: { in: clickCodes }, created_at: { gte: now_clicks_30d } },
+        })
       : Promise.resolve(0),
     primaryCode
       ? db.affiliate_code_queue.count({ where: { code: primaryCode } })
       : Promise.resolve(0),
+    db.$queryRawUnsafe<{ bucket: string; clicks: number; signups: number }[]>(
+      `
+      WITH series AS (
+        SELECT generate_series(
+          date_trunc('hour', NOW() - INTERVAL '23 hours'),
+          date_trunc('hour', NOW()),
+          INTERVAL '1 hour'
+        ) AS bucket
+      ),
+      clicks_agg AS (
+        SELECT date_trunc('hour', created_at) AS bucket, COUNT(*)::int AS n
+        FROM affiliate_clicks
+        WHERE code = ANY($1::text[])
+          AND created_at >= NOW() - INTERVAL '24 hours'
+        GROUP BY 1
+      ),
+      signups_agg AS (
+        SELECT date_trunc('hour', created_at) AS bucket, COUNT(*)::int AS n
+        FROM "user"
+        WHERE referred_by = $2
+          AND created_at >= NOW() - INTERVAL '24 hours'
+        GROUP BY 1
+      )
+      SELECT s.bucket::text AS bucket,
+             COALESCE(c.n, 0) AS clicks,
+             COALESCE(su.n, 0) AS signups
+      FROM series s
+      LEFT JOIN clicks_agg c ON c.bucket = s.bucket
+      LEFT JOIN signups_agg su ON su.bucket = s.bucket
+      ORDER BY s.bucket ASC
+      `,
+      hasClickCodes ? clickCodes : ["__none__"],
+      userId,
+    ),
+    db.$queryRawUnsafe<{ bucket: string; clicks: number; signups: number }[]>(
+      `
+      WITH series AS (
+        SELECT generate_series(
+          date_trunc('day', NOW() - INTERVAL '6 days'),
+          date_trunc('day', NOW()),
+          INTERVAL '1 day'
+        ) AS bucket
+      ),
+      clicks_agg AS (
+        SELECT date_trunc('day', created_at) AS bucket, COUNT(*)::int AS n
+        FROM affiliate_clicks
+        WHERE code = ANY($1::text[])
+          AND created_at >= NOW() - INTERVAL '7 days'
+        GROUP BY 1
+      ),
+      signups_agg AS (
+        SELECT date_trunc('day', created_at) AS bucket, COUNT(*)::int AS n
+        FROM "user"
+        WHERE referred_by = $2
+          AND created_at >= NOW() - INTERVAL '7 days'
+        GROUP BY 1
+      )
+      SELECT s.bucket::text AS bucket,
+             COALESCE(c.n, 0) AS clicks,
+             COALESCE(su.n, 0) AS signups
+      FROM series s
+      LEFT JOIN clicks_agg c ON c.bucket = s.bucket
+      LEFT JOIN signups_agg su ON su.bucket = s.bucket
+      ORDER BY s.bucket ASC
+      `,
+      hasClickCodes ? clickCodes : ["__none__"],
+      userId,
+    ),
+    // Country-level breakdown. Clicks are stored with the FULL country
+    // name (affiliate_clicks.country, populated by the geolocation service
+    // at track time). Signed-up users also carry a `country` column from
+    // the same service at signup. Joining on the full name is therefore
+    // safe — they flow from the same source. FULL OUTER JOIN so countries
+    // with only clicks OR only signups both show up.
+    db.$queryRawUnsafe<{ country: string; clicks: number; signups: number }[]>(
+      `
+      WITH click_countries AS (
+        SELECT country, COUNT(*)::int AS clicks
+        FROM affiliate_clicks
+        WHERE code = ANY($1::text[])
+          AND country IS NOT NULL AND country <> 'unknown'
+        GROUP BY country
+      ),
+      signup_countries AS (
+        SELECT country, COUNT(*)::int AS signups
+        FROM "user"
+        WHERE referred_by = $2
+          AND country IS NOT NULL AND country <> ''
+        GROUP BY country
+      )
+      SELECT
+        COALESCE(c.country, s.country) AS country,
+        COALESCE(c.clicks, 0) AS clicks,
+        COALESCE(s.signups, 0) AS signups
+      FROM click_countries c
+      FULL OUTER JOIN signup_countries s ON c.country = s.country
+      WHERE COALESCE(c.country, s.country) IS NOT NULL
+      ORDER BY (COALESCE(c.clicks, 0) + COALESCE(s.signups, 0)) DESC
+      LIMIT 30
+      `,
+      hasClickCodes ? clickCodes : ["__none__"],
+      userId,
+    ),
   ]);
 
   // For each signed-up user, look up their aggregated usage data +
@@ -284,9 +439,13 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
     userId: account.user_id,
     username: account.user?.username ?? null,
     email: account.user?.email ?? null,
+    image: account.user?.image ?? null,
     role: account.user?.role ?? "user",
     code: primaryCode,
-    codeActive: account.user?.affiliate_code_active ?? false,
+    // Presence in affiliate_codes is the only authoritative "has a code"
+    // signal. user.affiliate_code_active tracks the referral cookie on this
+    // user (unrelated to whether they OWN any creator codes).
+    codeActive: allCodes.length > 0,
     level: 1,
     totalReferred: account.total_referred,
     totalWagerVolumeUsd: toNumber(account.total_wager_volume_usd),
@@ -296,6 +455,29 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
     totalBonusDistributedUsd: toNumber(account.total_bonus_distributed_usd),
     lastPayoutAt: account.last_payout_at?.toISOString() ?? null,
     totalClicks: clickCount,
+    clicks: {
+      total: clickCount,
+      last24h: clicks24h,
+      last7d: clicks7d,
+      last30d: clicks30d,
+    },
+    acquisition: {
+      hourly: acquisitionHourly.map((r) => ({
+        bucket: r.bucket,
+        clicks: Number(r.clicks),
+        signups: Number(r.signups),
+      })),
+      daily: acquisitionDaily.map((r) => ({
+        bucket: r.bucket,
+        clicks: Number(r.clicks),
+        signups: Number(r.signups),
+      })),
+    },
+    countryBreakdown: countryBreakdown.map((r) => ({
+      country: r.country,
+      clicks: Number(r.clicks),
+      signups: Number(r.signups),
+    })),
     signups: {
       total: signupsTotal,
       last24h: signups24h,
@@ -401,6 +583,7 @@ export async function getCreatorTips(
   page: number = 1,
   perPage: number = 20,
 ): Promise<PaginatedResult<CreatorTipItem> & { totalTipped: number }> {
+  const db = await getDb();
   const [tips, total, totalAgg] = await Promise.all([
     db.rain_tips.findMany({
       where: { user_id: userId },

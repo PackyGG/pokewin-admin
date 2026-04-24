@@ -2,7 +2,7 @@
 
 import { randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -32,6 +32,7 @@ export async function fetchMutesPanel(params: {
 }
 
 export async function deleteMessage(messageId: string) {
+  const db = await getDb();
   const session = await requirePageAccess("/chat");
   await requireCapability(session, "__can_delete_messages", "delete chat messages");
 
@@ -62,6 +63,7 @@ export async function deleteMessage(messageId: string) {
 }
 
 export async function pinMessage(messageId: string) {
+  const db = await getDb();
   const session = await requirePageAccess("/chat");
   await requireCapability(session, "__can_pin_messages", "pin messages");
 
@@ -92,6 +94,7 @@ export async function pinMessage(messageId: string) {
 }
 
 export async function unpinMessage(messageId: string) {
+  const db = await getDb();
   const session = await requirePageAccess("/chat");
   await requireCapability(session, "__can_pin_messages", "unpin messages");
 
@@ -122,6 +125,7 @@ export async function muteUser(data: {
   reason: string;
   expiresAt: string | null;
 }) {
+  const db = await getDb();
   const session = await requirePageAccess("/chat");
   await requireCapability(session, "__can_mute_users", "mute users");
 
@@ -159,6 +163,7 @@ export async function pollMessages(sinceIso: string): Promise<{
   isPinned: boolean;
   createdAt: string;
 }[]> {
+  const db = await getDb();
   await requirePageAccess("/chat");
   const since = new Date(sinceIso);
   const rows = await db.chat_messages.findMany({
@@ -192,6 +197,7 @@ export async function pollMessages(sinceIso: string): Promise<{
 }
 
 export async function unmuteUser(muteId: string) {
+  const db = await getDb();
   const session = await requirePageAccess("/chat");
   await requireCapability(session, "__can_mute_users", "unmute users");
 

@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
@@ -45,6 +45,7 @@ export async function getPacks(params: {
     sortBy = "created_at",
     sortOrder = "desc",
   } = params;
+  const db = await getDb();
 
   const where: Prisma.packsWhereInput = {};
 
@@ -130,6 +131,7 @@ export async function getPacks(params: {
 }
 
 export async function getPackDetail(id: string) {
+  const db = await getDb();
   const pack = await db.packs.findUnique({
     where: { id },
     include: {
@@ -209,6 +211,7 @@ export async function getPackStats(
   packPrice: number,
   dbTotals: { totalPayout: number; actualRtp: number },
 ): Promise<PackStats> {
+  const db = await getDb();
   // The single source of truth: provably_fair_results.result_metadata->>'pack_id'
   // tells us exactly which pack produced each card in both solo and battle openings.
   // Fetch the daily breakdown and the borrow/sponsor breakdown in parallel —
@@ -388,6 +391,7 @@ export async function getPackGames(
     type?: string; // "all" | "solo" | "battle"
   }
 ) {
+  const db = await getDb();
   // Build WHERE clauses for the raw query
   const conditions: string[] = [`pf.result_metadata->>'pack_id' = $1`];
   const params: unknown[] = [packId];

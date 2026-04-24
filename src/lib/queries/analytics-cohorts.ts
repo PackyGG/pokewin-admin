@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 
 /**
  * Cohort retention analysis.
@@ -42,6 +42,7 @@ const MAX_PERIODS = 10;
 export async function getCohortRetention(
   granularity: CohortGranularity,
 ): Promise<CohortData> {
+  const db = await getDb();
   const dateTrunc = granularity === "week" ? "week" : "month";
   const periodInterval = granularity === "week" ? "7 days" : "1 month";
   const cohortHorizon = granularity === "week" ? "140 days" : "36 months";

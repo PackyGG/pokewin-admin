@@ -1,4 +1,4 @@
-import { db } from "@/lib/db";
+import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { Prisma } from "@/generated/prisma/client";
 
@@ -15,6 +15,7 @@ export async function getUserInventory(
     priceMax?: number;
   }
 ) {
+  const db = await getDb();
   const where: Prisma.user_inventoryWhereInput = { user_id: userId };
 
   if (filters?.status === "owned") {

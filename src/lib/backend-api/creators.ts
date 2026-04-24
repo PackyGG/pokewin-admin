@@ -1,0 +1,242 @@
+import "server-only";
+
+import { backendApi } from "./client";
+
+export type CreatorDealStatus =
+  | "scheduled"
+  | "active"
+  | "completed"
+  | "terminated";
+
+export type StreamSessionStatus = "active" | "ended" | "converted";
+
+export type PendingConversionStatus = "pending" | "claimed";
+
+export type CreatorListItem = {
+  id: string;
+  username: string | null;
+  email: string | null;
+  image: string | null;
+  role: "user" | "support" | "admin" | "creator";
+  created_at: string;
+  current_deal: {
+    id: string;
+    status: CreatorDealStatus;
+    week_start_utc: string;
+    week_end_utc: string;
+    fills_allowed: number;
+    fills_used: number;
+    per_fill_amount_usd: string;
+  } | null;
+  active_session_id: string | null;
+  total_deals_count: number;
+};
+
+export type CreatorDealResponse = {
+  id: string;
+  user_id: string;
+  status: CreatorDealStatus;
+  week_start_utc: string;
+  week_end_utc: string;
+  fills_allowed: number;
+  fills_used: number;
+  per_fill_amount_usd: string;
+  conversion_rate_bps: number;
+  cooldown_minutes: number;
+  max_tip_per_stream_usd: string;
+  max_tip_per_user_usd: string;
+  max_sponsored_battle_usd: string;
+  allow_site_leaderboards: boolean;
+  allow_code_leaderboards: boolean;
+  terms: unknown;
+  created_by: string | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CreatorSessionResponse = {
+  id: string;
+  deal_id: string;
+  user_id: string;
+  status: StreamSessionStatus;
+  activated_at: string;
+  first_bet_at: string | null;
+  ended_at: string | null;
+  converted_at: string | null;
+  auto_end_at: string | null;
+  fill_loaded_usd: string;
+  fill_spent_usd: string;
+  fill_refunded_usd: string;
+  fill_remaining_usd: string;
+  tips_spent_this_session_usd: string;
+  sponsorship_spent_this_session_usd: string;
+  ending_balance_usd: string | null;
+  conversion_rate_bps_snapshot: number | null;
+  converted_to_raw_usd: string | null;
+  version: number;
+  created_at: string;
+};
+
+export type PendingConversionResponse = {
+  id: string;
+  session_id: string;
+  deal_id: string;
+  user_id: string;
+  source: "battle_win" | "battle_refund";
+  amount_usd: string;
+  battle_id: string | null;
+  conversion_rate_bps_snapshot: number;
+  status: PendingConversionStatus;
+  claimed_at: string | null;
+  created_at: string;
+};
+
+export type CreateDealInput = {
+  week_start_utc: string;
+  week_end_utc: string;
+  status?: "scheduled" | "active";
+  fills_allowed: number;
+  per_fill_amount_usd: number;
+  conversion_rate_bps: number;
+  cooldown_minutes?: number;
+  max_tip_per_stream_usd: number;
+  max_tip_per_user_usd: number;
+  max_sponsored_battle_usd: number;
+  allow_site_leaderboards?: boolean;
+  allow_code_leaderboards?: boolean;
+  terms?: Record<string, unknown> | null;
+};
+
+export type UpdateDealInput = {
+  expected_version: number;
+  patch: Partial<{
+    week_start_utc: string;
+    week_end_utc: string;
+    fills_allowed: number;
+    per_fill_amount_usd: number;
+    conversion_rate_bps: number;
+    cooldown_minutes: number;
+    max_tip_per_stream_usd: number;
+    max_tip_per_user_usd: number;
+    max_sponsored_battle_usd: number;
+    allow_site_leaderboards: boolean;
+    allow_code_leaderboards: boolean;
+    terms: Record<string, unknown> | null;
+  }>;
+};
+
+type Paginated<T> = {
+  data: T[];
+  total: number;
+  offset: number;
+  limit: number;
+};
+
+type Success<T> = { success: boolean; data: T };
+
+export const creatorsApi = {
+  list: (query: { search?: string; offset?: number; limit?: number } = {}) =>
+    backendApi
+      .get<Success<Paginated<CreatorListItem>>>("/admin/creators", { query })
+      .then((r) => r.data),
+
+  promote: (userId: string) =>
+    backendApi
+      .post<
+        Success<{ user_id: string; role: string; already_creator: boolean }>
+      >(`/admin/creators/${encodeURIComponent(userId)}/promote`, {})
+      .then((r) => r.data),
+
+  demote: (userId: string) =>
+    backendApi
+      .post<Success<{ user_id: string; role: string }>>(
+        `/admin/creators/${encodeURIComponent(userId)}/demote`,
+        {}
+      )
+      .then((r) => r.data),
+
+  listDeals: (
+    userId: string,
+    query: { offset?: number; limit?: number } = {}
+  ) =>
+    backendApi
+      .get<Success<Paginated<CreatorDealResponse>>>(
+        `/admin/creators/${encodeURIComponent(userId)}/deals`,
+        { query }
+      )
+      .then((r) => r.data),
+
+  getDeal: (userId: string, dealId: string) =>
+    backendApi
+      .get<Success<CreatorDealResponse>>(
+        `/admin/creators/${encodeURIComponent(userId)}/deals/${encodeURIComponent(dealId)}`
+      )
+      .then((r) => r.data),
+
+  createDeal: (userId: string, input: CreateDealInput) =>
+    backendApi
+      .post<Success<CreatorDealResponse>>(
+        `/admin/creators/${encodeURIComponent(userId)}/deals`,
+        input
+      )
+      .then((r) => r.data),
+
+  updateDeal: (userId: string, dealId: string, input: UpdateDealInput) =>
+    backendApi
+      .patch<Success<CreatorDealResponse>>(
+        `/admin/creators/${encodeURIComponent(userId)}/deals/${encodeURIComponent(dealId)}`,
+        input
+      )
+      .then((r) => r.data),
+
+  terminateDeal: (
+    userId: string,
+    dealId: string,
+    input: { reason?: string; force_end_active_session?: boolean } = {}
+  ) =>
+    backendApi
+      .post<Success<CreatorDealResponse>>(
+        `/admin/creators/${encodeURIComponent(userId)}/deals/${encodeURIComponent(dealId)}/terminate`,
+        input
+      )
+      .then((r) => r.data),
+
+  listSessions: (
+    userId: string,
+    query: {
+      status?: StreamSessionStatus;
+      offset?: number;
+      limit?: number;
+    } = {}
+  ) =>
+    backendApi
+      .get<Success<Paginated<CreatorSessionResponse>>>(
+        `/admin/creators/${encodeURIComponent(userId)}/sessions`,
+        { query }
+      )
+      .then((r) => r.data),
+
+  forceEndSession: (
+    userId: string,
+    sessionId: string,
+    input: { reason?: string } = {}
+  ) =>
+    backendApi
+      .post<Success<CreatorSessionResponse>>(
+        `/admin/creators/${encodeURIComponent(userId)}/sessions/${encodeURIComponent(sessionId)}/force-end`,
+        input
+      )
+      .then((r) => r.data),
+
+  listPendingConversions: (
+    userId: string,
+    query: { status?: PendingConversionStatus } = {}
+  ) =>
+    backendApi
+      .get<Success<{ data: PendingConversionResponse[] }>>(
+        `/admin/creators/${encodeURIComponent(userId)}/pending-conversions`,
+        { query }
+      )
+      .then((r) => r.data.data),
+};
