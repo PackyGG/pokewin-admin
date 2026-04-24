@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { Users } from "lucide-react";
 import { getUsers } from "@/lib/queries/users";
+import { getDistinctUserCountries } from "@/lib/queries/users-export";
 import { requirePageAccess } from "@/lib/dal";
 import { UsersDataTable } from "./data-table";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
@@ -8,6 +9,7 @@ import { DataTablePagination } from "@/components/data-table/data-table-paginati
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHero } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { ExportUsersButton } from "./export-dialog";
 
 export const metadata = { title: "Users" };
 
@@ -21,15 +23,18 @@ export default async function UsersPage({
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
 
-  const result = await getUsers({
-    page,
-    perPage,
-    search: params.search,
-    role: params.role,
-    status: params.status,
-    sortBy: params.sortBy,
-    sortOrder: params.sortOrder,
-  });
+  const [result, countries] = await Promise.all([
+    getUsers({
+      page,
+      perPage,
+      search: params.search,
+      role: params.role,
+      status: params.status,
+      sortBy: params.sortBy,
+      sortOrder: params.sortOrder,
+    }),
+    getDistinctUserCountries(),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -72,7 +77,9 @@ export default async function UsersPage({
                 ],
               },
             ]}
-          />
+          >
+            <ExportUsersButton countries={countries} />
+          </DataTableToolbar>
         </Suspense>
         <FadeIn>
           <UsersDataTable data={result.data} />

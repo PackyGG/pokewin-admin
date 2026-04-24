@@ -14,6 +14,7 @@ import {
   Trash2,
   Check,
   X,
+  CalendarDays,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,12 +41,13 @@ import {
 import { cn } from "@/lib/utils";
 import { ROLE_COLORS } from "@/lib/constants";
 import { useTimezone } from "@/components/timezone-provider";
+import { timezoneLabel } from "@/lib/timezones";
 import { copyWeek, deleteShift, upsertShift } from "./actions";
 import {
-  combineUtcInstant,
   DAY_NAMES,
   DAY_SHORT,
   formatWeekRange,
+  localHhMmToUtc,
   parseWeekStartParam,
   shiftWeek,
   SHIFTS_PER_DAY,
@@ -59,30 +61,39 @@ import {
 // ─── Board ───────────────────────────────────────────────────────
 
 export function ShiftBoard({
-  weekStartIso,
+  weekStartsIso,
   currentWeekStartIso,
   currentWeekParam,
   shifts,
   workers,
 }: {
-  weekStartIso: string;
+  weekStartsIso: string[];
   currentWeekStartIso: string;
   currentWeekParam: string;
   shifts: Shift[];
   workers: Worker[];
 }) {
   const router = useRouter();
-  const weekStart = React.useMemo(() => new Date(weekStartIso), [weekStartIso]);
-  const isCurrentWeek = weekStartIso === currentWeekStartIso;
+  const tz = useTimezone();
 
-  // Index by (day, slot) for O(1) cell lookup.
-  const grid = React.useMemo(() => {
-    const map = new Map<string, Shift>();
-    for (const s of shifts) {
-      map.set(`${s.dayOfWeek}|${s.shiftSlot}`, s);
+  const firstWeekStart = React.useMemo(
+    () => new Date(weekStartsIso[0] ?? currentWeekStartIso),
+    [weekStartsIso, currentWeekStartIso],
+  );
+
+  // Group shifts by week-start ISO for O(1) per-cell lookup below.
+  const shiftsByWeek = React.useMemo(() => {
+    const byWeek = new Map<string, Map<string, Shift>>();
+    for (const iso of weekStartsIso) {
+      byWeek.set(iso, new Map());
     }
-    return map;
-  }, [shifts]);
+    for (const s of shifts) {
+      const week = byWeek.get(s.weekStart);
+      if (!week) continue;
+      week.set(`${s.dayOfWeek}|${s.shiftSlot}`, s);
+    }
+    return byWeek;
+  }, [shifts, weekStartsIso]);
 
   const workersById = React.useMemo(() => {
     const m = new Map<string, Worker>();
@@ -91,125 +102,102 @@ export function ShiftBoard({
   }, [workers]);
 
   const [editing, setEditing] = React.useState<{
+    weekStart: Date;
     dayOfWeek: number;
     shiftSlot: number;
     shift: Shift | null;
   } | null>(null);
 
-  const [copyOpen, setCopyOpen] = React.useState(false);
+  const [copyTarget, setCopyTarget] = React.useState<Date | null>(null);
 
-  function go(weeksDelta: number) {
-    const target = shiftWeek(weekStart, weeksDelta);
+  function goWeeks(delta: number) {
+    const target = shiftWeek(firstWeekStart, delta);
     router.push(`/shifts?week=${weekStartToParam(target)}`);
   }
 
   return (
-    <div className="space-y-4">
-      {/* Toolbar */}
+    <div className="space-y-6">
+      {/* Toolbar — global navigator, applies to the whole stack. */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Button
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => go(-1)}
-            aria-label="Previous week"
+            onClick={() => goWeeks(-1)}
+            aria-label="Shift range one week earlier"
           >
             <ChevronLeft className="size-4" />
           </Button>
-          <div className="flex flex-col items-center px-2">
+          <div className="flex flex-col px-1 text-left">
             <span className="text-sm font-semibold">
-              {formatWeekRange(weekStart)}
+              Showing {weekStartsIso.length} week
+              {weekStartsIso.length === 1 ? "" : "s"}
             </span>
-            {!isCurrentWeek && (
-              <button
-                type="button"
-                onClick={() =>
-                  router.push(`/shifts?week=${currentWeekParam}`)
-                }
-                className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-              >
-                Jump to this week
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => router.push(`/shifts?week=${currentWeekParam}`)}
+              className="self-start text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              disabled={weekStartsIso[0] === currentWeekStartIso}
+            >
+              {weekStartsIso[0] === currentWeekStartIso
+                ? "Starts with the current week"
+                : "Jump to this week"}
+            </button>
           </div>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => go(1)}
-            aria-label="Next week"
+            onClick={() => goWeeks(1)}
+            aria-label="Shift range one week later"
           >
             <ChevronRight className="size-4" />
           </Button>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => setCopyOpen(true)}
-          >
-            <Copy className="size-4" />
-            Copy from another week
-          </Button>
+        <div className="flex items-center gap-2 rounded-full border border-border bg-muted/40 px-3 py-1 text-xs text-muted-foreground">
+          <Clock className="size-3.5" />
+          Your timezone:{" "}
+          <span className="font-medium text-foreground">
+            {timezoneLabel(tz)}
+          </span>
         </div>
       </div>
 
-      {/* Grid */}
-      <div className="rounded-2xl border overflow-hidden">
-        {/* Header row — day names */}
-        <div className="grid grid-cols-[90px_repeat(7,1fr)] border-b bg-muted/40">
-          <div className="p-3" />
-          {DAY_SHORT.map((d, i) => (
-            <DayHeader key={d} short={d} full={DAY_NAMES[i]} weekStart={weekStart} day={i} />
-          ))}
-        </div>
-
-        {/* Body rows — one per slot */}
-        {Array.from({ length: SHIFTS_PER_DAY }).map((_, slot) => (
-          <div
-            key={slot}
-            className="grid grid-cols-[90px_repeat(7,1fr)] border-b last:border-b-0"
-          >
-            <div className="flex items-center justify-center border-r bg-muted/20 p-2 text-xs font-semibold text-muted-foreground">
-              {SLOT_LABELS[slot]}
-            </div>
-            {Array.from({ length: 7 }).map((_, day) => {
-              const shift = grid.get(`${day}|${slot}`) ?? null;
-              return (
-                <ShiftCell
-                  key={day}
-                  shift={shift}
-                  workersById={workersById}
-                  onClick={() =>
-                    setEditing({
-                      dayOfWeek: day,
-                      shiftSlot: slot,
-                      shift,
-                    })
-                  }
-                />
-              );
-            })}
-          </div>
-        ))}
+      {/* Stacked week boards. */}
+      <div className="space-y-6">
+        {weekStartsIso.map((iso) => {
+          const ws = new Date(iso);
+          const isCurrent = iso === currentWeekStartIso;
+          const grid = shiftsByWeek.get(iso) ?? new Map<string, Shift>();
+          return (
+            <WeekBoard
+              key={iso}
+              weekStart={ws}
+              isCurrent={isCurrent}
+              grid={grid}
+              workersById={workersById}
+              onCellClick={(day, slot, shift) =>
+                setEditing({
+                  weekStart: ws,
+                  dayOfWeek: day,
+                  shiftSlot: slot,
+                  shift,
+                })
+              }
+              onCopyInto={() => setCopyTarget(ws)}
+            />
+          );
+        })}
       </div>
-
-      {/* Legend */}
-      <p className="text-xs text-muted-foreground">
-        Click any cell to edit or assign workers. Times are displayed in
-        your preference timezone — the underlying instant is UTC so every
-        viewer sees the same moment translated locally.
-      </p>
 
       {/* Edit dialog */}
       {editing && (
         <ShiftEditDialog
           open={editing !== null}
           onClose={() => setEditing(null)}
-          weekStart={weekStart}
+          weekStart={editing.weekStart}
           dayOfWeek={editing.dayOfWeek}
           shiftSlot={editing.shiftSlot}
           existing={editing.shift}
@@ -217,12 +205,118 @@ export function ShiftBoard({
         />
       )}
 
-      <CopyWeekDialog
-        open={copyOpen}
-        onClose={() => setCopyOpen(false)}
-        currentWeekStart={weekStart}
-      />
+      {/* Copy-week dialog (per target week) */}
+      {copyTarget && (
+        <CopyWeekDialog
+          open={copyTarget !== null}
+          onClose={() => setCopyTarget(null)}
+          targetWeekStart={copyTarget}
+        />
+      )}
     </div>
+  );
+}
+
+// ─── One week ────────────────────────────────────────────────────
+
+function WeekBoard({
+  weekStart,
+  isCurrent,
+  grid,
+  workersById,
+  onCellClick,
+  onCopyInto,
+}: {
+  weekStart: Date;
+  isCurrent: boolean;
+  grid: Map<string, Shift>;
+  workersById: Map<string, Worker>;
+  onCellClick: (day: number, slot: number, shift: Shift | null) => void;
+  onCopyInto: () => void;
+}) {
+  return (
+    <section
+      className={cn(
+        "rounded-2xl border bg-card shadow-sm overflow-hidden",
+        isCurrent && "ring-1 ring-primary/30",
+      )}
+    >
+      {/* Prominent week header — the "top-left week/date label" the user
+          asked to make bigger. Rendered above each grid, not inside it,
+          so it reads as a section title. */}
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/30 px-5 py-4">
+        <div className="flex items-center gap-3">
+          <div
+            className={cn(
+              "flex size-10 items-center justify-center rounded-xl",
+              isCurrent
+                ? "bg-primary/15 text-primary"
+                : "bg-muted text-muted-foreground",
+            )}
+          >
+            <CalendarDays className="size-5" />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold leading-tight">
+              {formatWeekRange(weekStart)}
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              {isCurrent ? (
+                <span className="font-medium text-primary">Current week</span>
+              ) : (
+                <>Week of {DAY_NAMES[0]}</>
+              )}
+            </p>
+          </div>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={onCopyInto}
+        >
+          <Copy className="size-4" />
+          Copy from…
+        </Button>
+      </header>
+
+      {/* Day header row */}
+      <div className="grid grid-cols-[96px_repeat(7,1fr)] border-b bg-muted/20">
+        <div className="p-3" />
+        {DAY_SHORT.map((d, i) => (
+          <DayHeader
+            key={d}
+            short={d}
+            full={DAY_NAMES[i]}
+            weekStart={weekStart}
+            day={i}
+          />
+        ))}
+      </div>
+
+      {/* Body — 3 slot rows */}
+      {Array.from({ length: SHIFTS_PER_DAY }).map((_, slot) => (
+        <div
+          key={slot}
+          className="grid grid-cols-[96px_repeat(7,1fr)] border-b last:border-b-0"
+        >
+          <div className="flex items-center justify-center border-r bg-muted/10 p-2 text-xs font-semibold text-muted-foreground">
+            {SLOT_LABELS[slot]}
+          </div>
+          {Array.from({ length: 7 }).map((_, day) => {
+            const shift = grid.get(`${day}|${slot}`) ?? null;
+            return (
+              <ShiftCell
+                key={day}
+                shift={shift}
+                workersById={workersById}
+                onClick={() => onCellClick(day, slot, shift)}
+              />
+            );
+          })}
+        </div>
+      ))}
+    </section>
   );
 }
 
@@ -351,12 +445,13 @@ function ShiftCell({
 
 // ─── Edit dialog ─────────────────────────────────────────────────
 
-// Default time templates for "Add" on an empty slot — just so the
-// inputs have a sensible starting value. Admin picks the real times.
+// Default templates for "Add" on an empty slot — in the admin's local
+// zone. Admin can edit freely; these just give the picker sensible
+// starting values.
 const DEFAULT_TIMES: [string, string][] = [
   ["06:00", "14:00"], // slot 0 (morning)
   ["14:00", "22:00"], // slot 1 (afternoon)
-  ["22:00", "06:00"], // slot 2 (night — crosses midnight; end is next day)
+  ["22:00", "06:00"], // slot 2 (night — crosses midnight)
 ];
 
 function ShiftEditDialog({
@@ -379,8 +474,6 @@ function ShiftEditDialog({
   const router = useRouter();
   const tz = useTimezone();
 
-  // Initial form state derived from the existing shift or the default
-  // template for this slot.
   const [startHHmm, setStartHHmm] = React.useState("");
   const [endHHmm, setEndHHmm] = React.useState("");
   const [notes, setNotes] = React.useState("");
@@ -388,7 +481,6 @@ function ShiftEditDialog({
   const [saving, setSaving] = React.useState(false);
   const [showDelete, setShowDelete] = React.useState(false);
 
-  // Snap form state to the open shift whenever the dialog opens.
   React.useEffect(() => {
     if (!open) return;
     if (existing) {
@@ -419,15 +511,13 @@ function ShiftEditDialog({
       toast.error("Start and end time required");
       return;
     }
-    // Convert HH:mm (in UTC as our convention) back to instants.
-    // We intentionally treat the picker input as UTC-native so the
-    // stored instant is stable across admins in different zones. The
-    // viewer's preference timezone is only for DISPLAY.
-    const start = combineUtcInstant(weekStart, dayOfWeek, startHHmm);
-    const end = combineUtcInstant(weekStart, dayOfWeek, endHHmm);
-    // If the slot crosses midnight (end <= start), shift end by 24h so
-    // night shifts end on the next day.
+    // Admin enters hh:mm in THEIR local timezone. Convert to UTC for
+    // storage. Every other viewer then translates the UTC instant to
+    // their own zone on render.
+    const start = localHhMmToUtc(weekStart, dayOfWeek, startHHmm, tz);
+    const end = localHhMmToUtc(weekStart, dayOfWeek, endHHmm, tz);
     if (end <= start) {
+      // Night shift crossing midnight — roll end to the next day.
       end.setUTCDate(end.getUTCDate() + 1);
     }
 
@@ -484,11 +574,11 @@ function ShiftEditDialog({
           </DialogHeader>
 
           <div className="space-y-4 py-2">
-            {/* Times */}
+            {/* Times — always in the admin's own timezone. */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label htmlFor="shift-start" className="text-xs font-medium">
-                  Start (UTC)
+                  Start
                 </Label>
                 <Input
                   id="shift-start"
@@ -500,7 +590,7 @@ function ShiftEditDialog({
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="shift-end" className="text-xs font-medium">
-                  End (UTC)
+                  End
                 </Label>
                 <Input
                   id="shift-end"
@@ -512,9 +602,14 @@ function ShiftEditDialog({
               </div>
             </div>
             <p className="-mt-2 text-[11px] text-muted-foreground">
-              Times are stored in UTC and shown in every admin&apos;s own
-              timezone. If end &lt;= start, the shift automatically rolls
-              over to the next day (night shifts).
+              Times are entered in{" "}
+              <span className="font-medium text-foreground">
+                {timezoneLabel(tz)}
+              </span>{" "}
+              and stored as absolute UTC instants, so every viewer sees
+              them translated into their own zone. If end is earlier than
+              or equal to start, the shift automatically rolls over to
+              the next day (night shifts).
             </p>
 
             {/* Workers */}
@@ -724,31 +819,30 @@ function WorkerPicker({
 function CopyWeekDialog({
   open,
   onClose,
-  currentWeekStart,
+  targetWeekStart,
 }: {
   open: boolean;
   onClose: () => void;
-  currentWeekStart: Date;
+  targetWeekStart: Date;
 }) {
   const router = useRouter();
   const [fromParam, setFromParam] = React.useState(() =>
-    weekStartToParam(shiftWeek(currentWeekStart, -1)),
+    weekStartToParam(shiftWeek(targetWeekStart, -1)),
   );
   const [copying, setCopying] = React.useState(false);
 
   React.useEffect(() => {
     if (open) {
-      // Default to "previous week" whenever the dialog opens.
-      setFromParam(weekStartToParam(shiftWeek(currentWeekStart, -1)));
+      setFromParam(weekStartToParam(shiftWeek(targetWeekStart, -1)));
     }
-  }, [open, currentWeekStart]);
+  }, [open, targetWeekStart]);
 
   async function submit() {
     const fromWeek = parseWeekStartParam(fromParam);
     setCopying(true);
     const result = await copyWeek({
       fromWeekStart: fromWeek.toISOString(),
-      toWeekStart: currentWeekStart.toISOString(),
+      toWeekStart: targetWeekStart.toISOString(),
     });
     setCopying(false);
     if (!result.success) {
@@ -775,13 +869,12 @@ function CopyWeekDialog({
     >
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Copy week</DialogTitle>
+          <DialogTitle>Copy week into {formatWeekRange(targetWeekStart)}</DialogTitle>
         </DialogHeader>
         <div className="space-y-3 py-2">
           <p className="text-xs text-muted-foreground">
             Clone every shift (times + workers) from the source week into
-            the currently open week. Existing shifts in overlapping slots
-            are overwritten.
+            this one. Existing shifts in overlapping slots are overwritten.
           </p>
           <div className="space-y-1.5">
             <Label htmlFor="copy-from" className="text-xs font-medium">
@@ -794,15 +887,14 @@ function CopyWeekDialog({
               onChange={(e) => setFromParam(e.target.value)}
             />
           </div>
-          <p className="text-xs text-muted-foreground">
-            Target:{" "}
-            <span className="font-medium text-foreground">
-              {formatWeekRange(currentWeekStart)}
-            </span>
-          </p>
         </div>
         <DialogFooter>
-          <Button type="button" variant="ghost" onClick={onClose} disabled={copying}>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={onClose}
+            disabled={copying}
+          >
             Cancel
           </Button>
           <Button type="button" onClick={submit} disabled={copying}>
