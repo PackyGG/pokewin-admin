@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Pencil, Check, X } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -40,7 +39,6 @@ function LevelRow({ config }: { config: LevelConfig }) {
   const [rate, setRate] = useState(String(config.commission_rate * 100));
   const [threshold, setThreshold] = useState(String(config.threshold));
   const [isPending, startTransition] = useTransition();
-  const router = useRouter();
 
   function handleSave() {
     const rateVal = parseFloat(rate);
@@ -62,7 +60,6 @@ function LevelRow({ config }: { config: LevelConfig }) {
         });
         toast.success("Level config updated");
         setEditing(false);
-        router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to update");
       }

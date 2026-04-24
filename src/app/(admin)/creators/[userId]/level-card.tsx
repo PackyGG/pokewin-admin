@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Pencil, Check, X } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,7 +28,6 @@ export function LevelCard({
   const [editing, setEditing] = useState(false);
   const [level, setLevel] = useState(String(currentLevel));
   const [isPending, startTransition] = useTransition();
-  const router = useRouter();
 
   function handleSave() {
     const val = parseInt(level, 10);
@@ -42,7 +40,6 @@ export function LevelCard({
         await updateAffiliateLevel(userId, val);
         toast.success("Level updated");
         setEditing(false);
-        router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to update level");
       }

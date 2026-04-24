@@ -1,7 +1,6 @@
 "use client";
 
-import { useOptimistic, useTransition } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
 
 import {
   CardAction,
@@ -14,7 +13,6 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
-import { cn } from "@/lib/utils";
 
 type TabValue = "deals" | "sessions" | "pending";
 
@@ -28,18 +26,12 @@ type Props = {
 };
 
 /**
- * URL-driven Tabs wrapper. Switches are optimistic: clicking a tab flips
- * the visible panel immediately via `useOptimistic`, then fires off a
- * `router.replace` inside a transition so the RSC re-fetch (for the new
- * `?tab=` / pagination / filter params) happens without blocking the UI.
- *
- * Tab panels are passed in as slots (not children) so each can remain a
- * server component while this shell owns the client tab state.
- *
- * `keepMounted` on TabsContent means all three panels stay in the DOM —
- * they're already pre-rendered on the server, so there's no cost to
- * keeping them, and it avoids the remount glitch that happened on rapid
- * tab switching.
+ * All three panels are pre-rendered server-side with their own
+ * pagination/filter defaults. Switching tabs only hides/shows already
+ * mounted content — we sync the URL via `window.history.replaceState`
+ * so deep-linking still works without firing a full RSC re-fetch on
+ * every click. Pagination / filter changes inside a panel still go
+ * through the normal router and re-fetch the data they need.
  */
 export function DealTabs({
   value,
@@ -49,28 +41,24 @@ export function DealTabs({
   sessionsPanel,
   pendingPanel,
 }: Props) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const [isPending, startTransition] = useTransition();
-  const [optimisticTab, setOptimisticTab] = useOptimistic(value);
+  const [tab, setTab] = useState<TabValue>(value);
 
-  function onValueChange(next: TabValue) {
-    const params = new URLSearchParams(searchParams.toString());
-    params.set("tab", next);
+  useEffect(() => {
+    setTab(value);
+  }, [value]);
 
-    startTransition(() => {
-      setOptimisticTab(next);
-      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-    });
+  function onValueChange(next: string) {
+    const tabValue = next as TabValue;
+    setTab(tabValue);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("tab", tabValue);
+      window.history.replaceState(null, "", url.toString());
+    }
   }
 
   return (
-    <Tabs
-      value={optimisticTab}
-      onValueChange={(v) => onValueChange(v as TabValue)}
-      className={cn("gap-0", isPending && "opacity-90")}
-    >
+    <Tabs value={tab} onValueChange={onValueChange} className="gap-0">
       <CardHeader className="border-b">
         <TabsList variant="line" className="-mb-[3px] self-start">
           <TabsTrigger value="deals">

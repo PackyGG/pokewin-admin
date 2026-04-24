@@ -2,6 +2,7 @@
 
 import crypto from "crypto";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import bcrypt from "bcryptjs";
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
@@ -205,13 +206,17 @@ export async function updateCreatorLimits(
     },
   });
 
-  // Dispatch webhook when tip limit changes
+  // Dispatch webhook when tip limit changes — fire-and-forget so the
+  // action can return without waiting on the creator's webhook endpoint.
   if (limits.tipLimit !== undefined) {
-    await dispatchWebhook(userId, "deal_data", {
-      action: "tip_limit_updated",
-      userId,
-      tipLimit: limits.tipLimit,
-    }).catch(() => {});
+    const tipLimit = limits.tipLimit;
+    after(() => {
+      dispatchWebhook(userId, "deal_data", {
+        action: "tip_limit_updated",
+        userId,
+        tipLimit,
+      }).catch(() => {});
+    });
   }
 
   await createAdminAuditEvent({
@@ -829,14 +834,17 @@ export async function manualFill(targetUserId: string, dealId: string) {
     },
   });
 
-  // Dispatch webhook
-  await dispatchWebhook(targetUserId, "balance_fill", {
-    userId: targetUserId,
-    amount,
-    dealId,
-    dealName: deal.deal_name,
-    triggeredBy: "manual",
-  }).catch(() => {});
+  // Dispatch webhook fire-and-forget so the action can return promptly.
+  const dealName = deal.deal_name;
+  after(() => {
+    dispatchWebhook(targetUserId, "balance_fill", {
+      userId: targetUserId,
+      amount,
+      dealId,
+      dealName,
+      triggeredBy: "manual",
+    }).catch(() => {});
+  });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -874,13 +882,16 @@ async function syncWithdrawalLimits(
     },
   });
 
-  // Dispatch webhook when tip limit changes
+  // Dispatch webhook when tip limit changes — fire-and-forget.
   if (data.tipLimit !== undefined) {
-    await dispatchWebhook(userId, "deal_data", {
-      action: "tip_limit_updated",
-      userId,
-      tipLimit: data.tipLimit,
-    }).catch(() => {});
+    const tipLimit = data.tipLimit;
+    after(() => {
+      dispatchWebhook(userId, "deal_data", {
+        action: "tip_limit_updated",
+        userId,
+        tipLimit,
+      }).catch(() => {});
+    });
   }
 }
 

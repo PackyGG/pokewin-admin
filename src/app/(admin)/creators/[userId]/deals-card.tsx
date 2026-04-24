@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Plus, Trash2, Pencil, DollarSign, Clock, Trophy, Monitor, AlertTriangle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -116,7 +115,6 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
   const [isPending, startTransition] = useTransition();
   const [fillingDealId, setFillingDealId] = useState<string | null>(null);
   const [fillConfirmDeal, setFillConfirmDeal] = useState<Deal | null>(null);
-  const router = useRouter();
 
   function openCreate() {
     setEditingDeal(null);
@@ -203,7 +201,6 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
           toast.success("Deal created");
         }
         setDialogOpen(false);
-        router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to save deal");
       }
@@ -215,7 +212,6 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
       try {
         await deleteDeal(dealId);
         toast.success("Deal deleted");
-        router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to delete deal");
       }
@@ -236,7 +232,6 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
       try {
         await manualFill(userId, dealId);
         toast.success("Balance filled successfully");
-        router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to fill balance");
       } finally {

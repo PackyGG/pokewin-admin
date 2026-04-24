@@ -1,7 +1,6 @@
 "use client";
 
 import { useId, useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2, Pencil, Plus } from "lucide-react";
 
@@ -210,7 +209,6 @@ function parseUtcInput(value: string): string | null {
 
 export function DealFormDialog(props: Props) {
   const { userId, mode = "create", deal, trigger } = props;
-  const router = useRouter();
   const formId = useId();
   const [open, setOpen] = useState(false);
   const initial = useMemo<FormState>(
@@ -320,7 +318,6 @@ export function DealFormDialog(props: Props) {
         }
 
         setOpen(false);
-        router.refresh();
       } catch (err) {
         toast.error(
           err instanceof Error

@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Megaphone, Search } from "lucide-react";
 import { PageHero } from "@/components/modern-panels";
@@ -22,7 +21,6 @@ type UserResult = {
  * the full Ads dashboard.
  */
 export function HouseAccountSetup() {
-  const router = useRouter();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<UserResult[]>([]);
   const [showResults, setShowResults] = useState(false);
@@ -78,7 +76,6 @@ export function HouseAccountSetup() {
       try {
         await setHouseAccount(selected.id);
         toast.success("House account configured");
-        router.refresh();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Failed to save");
       }

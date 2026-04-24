@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Unlink, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -68,7 +67,6 @@ export function SocialsDisplay({
 }) {
   const [isPending, startTransition] = useTransition();
   const [inputs, setInputs] = useState<Record<string, string>>({});
-  const router = useRouter();
 
   function handleLink(platform: string) {
     const username = inputs[platform]?.trim();
@@ -85,7 +83,6 @@ export function SocialsDisplay({
             : "Linked successfully"
         );
         setInputs((prev) => ({ ...prev, [platform]: "" }));
-        router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to link account");
       }
@@ -97,7 +94,6 @@ export function SocialsDisplay({
       try {
         await adminUnlinkSocial(userId, socialId);
         toast.success("Account unlinked");
-        router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to unlink");
       }
