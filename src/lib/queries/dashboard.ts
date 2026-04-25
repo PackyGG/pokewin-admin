@@ -118,6 +118,7 @@ export async function getDashboardStats() {
     avgSessionValueResult,
     totalInventoryValue,
     pendingConfirmationWithdrawals,
+    depositorStats,
   ] = await Promise.all([
     db.user.count({ where: { role: { notIn: ["admin", "creator"] } } }),
     db.user.count({ where: { role: { notIn: ["admin", "creator"] }, created_at: { gte: startOfDay } } }),
@@ -265,13 +266,45 @@ export async function getDashboardStats() {
       _count: true,
       _sum: { total_value_usd: true },
     }),
+    // Depositor stats:
+    //   total = lifetime distinct users with at least one completed deposit
+    //   today = users whose FIRST-EVER deposit landed since startOfDay
+    //   week  = users whose FIRST-EVER deposit landed since startOfWeek
+    // The today/week deltas are true FTDs (first-time depositors in the
+    // window), not just users with any deposit in the window. Computed in
+    // a single round trip via a CTE so the aggregate stays cheap.
+    db.$queryRaw<
+      { total: string; today: string; week: string }[]
+    >`
+      WITH first_deposits AS (
+        SELECT user_id, MIN(created_at) AS first_at
+        FROM ledger_transactions
+        WHERE type = 'deposit' AND status = 'completed'
+          AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))
+        GROUP BY user_id
+      )
+      SELECT
+        COUNT(*)::text AS total,
+        COUNT(*) FILTER (WHERE first_at >= ${startOfDay})::text AS today,
+        COUNT(*) FILTER (WHERE first_at >= ${startOfWeek})::text AS week
+      FROM first_deposits
+    `,
   ]);
 
   const totalWagered = toNumber(balanceAggregates._sum?.total_wagered);
   const totalWon = toNumber(balanceAggregates._sum?.total_won);
   const totalActivityCount = totalAuditEvents + totalTransactions;
 
+  const depositorRow = depositorStats[0];
+
   return {
+    // Distinct users with at least one completed deposit (lifetime), plus
+    // FTDs in the current day/week. See the depositors query above.
+    depositors: {
+      total: Number(depositorRow?.total ?? 0),
+      today: Number(depositorRow?.today ?? 0),
+      week: Number(depositorRow?.week ?? 0),
+    },
     users: {
       total: totalUsers,
       today: usersToday,

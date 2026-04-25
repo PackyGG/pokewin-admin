@@ -1,5 +1,6 @@
 import {
   Users,
+  UserCheck,
   ArrowDownToLine,
   Package,
   Percent,
@@ -36,8 +37,9 @@ export default async function DashboardPage({
       <AutoRefresh />
       <h1 className="text-page-title">Dashboard</h1>
 
-      {/* Stat cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      {/* Stat cards. Six tiles fit cleanly at every breakpoint:
+            md=2 cols (3 rows), lg=3 cols (2 rows), xl=6 cols (1 row). */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <PnlStatCard pnl={stats.realizedPnl} />
         <GgrStatCard ggr={stats.ggr} />
         <WagerStatCard wagers={stats.wagers} />
@@ -54,6 +56,21 @@ export default async function DashboardPage({
           subtitle={`+${stats.users.today} today, +${stats.users.week} this week`}
           icon={Users}
           color="blue"
+        />
+        {/* FTDs = lifetime distinct depositors. Subtitle adds conversion
+            rate (% of total users that ever deposited) and FTDs in the
+            current day/week so admins can spot a sudden conversion spike
+            without leaving the dashboard. */}
+        <StatCard
+          title="FTDs"
+          value={formatNumber(stats.depositors.total)}
+          subtitle={`${
+            stats.users.total > 0
+              ? ((stats.depositors.total / stats.users.total) * 100).toFixed(1)
+              : "0"
+          }% of users · +${stats.depositors.today} today, +${stats.depositors.week} this week`}
+          icon={UserCheck}
+          color="green"
         />
       </div>
 
