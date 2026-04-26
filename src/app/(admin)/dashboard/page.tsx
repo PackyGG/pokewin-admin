@@ -7,6 +7,7 @@ import {
   Activity,
   LineChart,
   Sparkles,
+  BadgeDollarSign,
 } from "lucide-react";
 import { getDashboardStats } from "@/lib/queries/dashboard";
 import { getLiveActivity } from "@/lib/queries/dashboard-live";
@@ -65,7 +66,7 @@ export default async function DashboardPage() {
       </div>
 
       {/* Secondary stats — all-time / snapshot */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
         <StatCard
           title="Total Users"
           animatedValue={stats.users.total}
@@ -73,6 +74,26 @@ export default async function DashboardPage() {
           subtitle={`+${stats.users.today} today, +${stats.users.week} this week`}
           icon={Users}
           color="blue"
+        />
+        {/* Distinct depositors = how many real users have completed at
+            least one deposit. Different from "Total Users" (signups,
+            many of whom never deposit) and from "Avg Deposit" (per-
+            transaction). Uses purple to read as a separate identity
+            from the user-count tile. */}
+        <StatCard
+          title="Depositors"
+          animatedValue={stats.financials.uniqueDepositors}
+          formatKind="number"
+          subtitle={
+            stats.users.total > 0
+              ? `${(
+                  (stats.financials.uniqueDepositors / stats.users.total) *
+                  100
+                ).toFixed(1)}% of users have funded`
+              : "Unique players who funded at least once"
+          }
+          icon={BadgeDollarSign}
+          color="purple"
         />
         {/* Users Total Balance is a HOUSE LIABILITY but we accent it orange
             (not rose) so it's visually distinct from the Withdrawals / PnL
