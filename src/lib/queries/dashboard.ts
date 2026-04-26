@@ -159,6 +159,7 @@ async function dashboardStatsInner() {
     periodAggregates,
     activityTotals,
     depositCount,
+    uniqueDepositorsResult,
     realizedPnlResult,
     avgSessionValueResult,
     totalInventoryValue,
@@ -249,6 +250,17 @@ async function dashboardStatsInner() {
         user: EXCLUDE_STAFF_USER_RELATION,
       },
     }),
+    // Distinct depositor count — # of unique real users who have
+    // completed at least one deposit. Powers the dashboard's
+    // "Depositors" KPI. Raw SQL with COUNT(DISTINCT) avoids
+    // materializing per-user rows; same staff-exclusion as everything
+    // else.
+    db.$queryRaw<{ count: string }[]>`
+      SELECT COUNT(DISTINCT user_id)::text AS count
+      FROM ledger_transactions
+      WHERE type = 'deposit' AND status = 'completed'
+        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))
+    `,
     getRealizedPnlSnapshot(),
     db.$queryRaw<{ avg_session_value: string }[]>`
       WITH real_users AS (
@@ -388,6 +400,12 @@ async function dashboardStatsInner() {
           ? toNumber(balanceAggregates._sum?.total_deposited) / depositCount
           : 0,
       depositCount,
+      // Unique players who have ever completed at least one deposit
+      // (real users only; staff excluded via EXCLUDE_STAFF). Distinct
+      // from depositCount above which counts deposit transactions —
+      // a single user with five deposits = depositCount 5,
+      // uniqueDepositors 1.
+      uniqueDepositors: Number(uniqueDepositorsResult[0]?.count ?? 0),
       avgSessionValue: Number(avgSessionValueResult[0]?.avg_session_value ?? 0),
       pendingWithdrawalsCount: pendingWithdrawals._count,
       pendingWithdrawalsValue: toNumber(pendingWithdrawals._sum?.total_value_usd),
