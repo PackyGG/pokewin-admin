@@ -45,6 +45,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Creators", label: "Ads", key: "/creators/ads" },
   { group: "Creators", label: "Analytics", key: "/creators/analytics" },
   { group: "Creators", label: "Settings", key: "/creators/settings" },
+  { group: "Creators", label: "Leaderboards", key: "/creators/leaderboards" },
   // Moderation
   { group: "Moderation", label: "Chat", key: "/chat" },
   // Security
