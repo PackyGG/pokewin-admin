@@ -5,29 +5,23 @@ import { getDb } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { requireAdmin } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { backendApi, BackendApiError } from "@/lib/backend-api";
 
 export async function reloadPacks() {
-  // Backend sits behind a Cloudflare bot-protection gate; trusted server-to-
-  // server callers must send `x-bypass-secret`. Same pattern as the frontend.
-  const headers: Record<string, string> = {
-    "x-api-key": process.env.BACKEND_API_KEY!,
-  };
-  const bypassSecret =
-    process.env.CF_BYPASS_SECRET || process.env.BACKEND_BYPASS_SECRET;
-  if (bypassSecret) {
-    headers["x-bypass-secret"] = bypassSecret;
-  }
-
-  const res = await fetch(
-    `${process.env.BACKEND_API_URL}/admin/reload-packs`,
-    {
-      method: "POST",
-      headers,
+  // Routes through the central backendApi client so env-specific URL+key,
+  // CF Access service tokens, and `x-bypass-secret` are all picked up.
+  try {
+    await backendApi.post("/admin/reload-packs");
+    console.log("[reloadPacks] backend ok");
+  } catch (err) {
+    if (err instanceof BackendApiError) {
+      console.error(
+        `[reloadPacks] backend error status=${err.status} code=${err.code ?? "none"} payload=${JSON.stringify(err.payload)}`,
+      );
+      return;
     }
-  );
-
-  if (!res.ok) {
-    console.error("Failed to reload packs cache:", await res.text().catch(() => "Unknown error"));
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error(`[reloadPacks] failed to reach backend: ${message}`, err);
   }
 }
 

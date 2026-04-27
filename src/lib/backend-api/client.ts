@@ -75,6 +75,17 @@ export const backendApiRequest = async <T = unknown>(
     cache: options.cache ?? "no-store",
   });
 
+  // Diagnostic context shared across success/error branches. Includes which
+  // env was selected, where the request went, key tail (safe to log; full
+  // key never appears) and which side-channel headers were attached.
+  const ctx =
+    `env=${config.env}` +
+    ` method=${method}` +
+    ` url=${url}` +
+    ` adminKeyTail=...${config.adminKey.slice(-6)}` +
+    ` cfHeaders=${Object.keys(config.cfHeaders).length > 0}` +
+    ` bypassSecret=${bypassSecret ? "set" : "missing"}`;
+
   if (!res.ok) {
     const payload = ((await safeJson(res)) ?? {}) as BackendErrorPayload;
     const message =
@@ -87,12 +98,18 @@ export const backendApiRequest = async <T = unknown>(
     if (res.status === 401 || res.status === 403) {
       // eslint-disable-next-line no-console
       console.log(
-        `[backend-api] auth rejected env=${config.env} method=${method} url=${url} status=${res.status} adminKeyTail=...${config.adminKey.slice(-6)} cfHeaders=${Object.keys(config.cfHeaders).length > 0}`,
+        `[backend-api] auth rejected ${ctx} status=${res.status} backendMessage="${message}" payload=${JSON.stringify(payload)}`,
       );
     } else if (res.status >= 500) {
       // eslint-disable-next-line no-console
       console.log(
-        `[backend-api] server error env=${config.env} method=${method} url=${url} status=${res.status} payload=${JSON.stringify(payload)}`,
+        `[backend-api] server error ${ctx} status=${res.status} payload=${JSON.stringify(payload)}`,
+      );
+    } else {
+      // 4xx other than auth — useful to see during validation/logic errors
+      // eslint-disable-next-line no-console
+      console.log(
+        `[backend-api] request failed ${ctx} status=${res.status} payload=${JSON.stringify(payload)}`,
       );
     }
     throw new BackendApiError(res.status, message, payload);
