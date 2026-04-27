@@ -3,7 +3,11 @@ import { Trophy } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
 import { getDb } from "@/lib/db";
-import { backendApi } from "@/lib/backend-api/client";
+import {
+    affiliateLeaderboardsApi,
+    type ApprovalStatus,
+    type TimeStatus,
+} from "@/lib/backend-api/affiliate-leaderboards";
 import { PageHero } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { Badge } from "@/components/ui/badge";
@@ -22,45 +26,6 @@ import { formatDateTime } from "@/lib/utils/format";
 import { ListRowActions } from "./_components/list-row-actions";
 
 export const metadata = { title: "Affiliate Leaderboards" };
-
-type ApprovalStatus = "pending" | "approved" | "rejected";
-type TimeStatus = "upcoming" | "active" | "ended";
-
-type LeaderboardAdminRow = {
-    id: string;
-    creator_user_id: string;
-    title: string;
-    affiliate_codes: string[];
-    creator_prize_usd: string;
-    site_bonus_usd: string;
-    total_prize_usd: string;
-    is_sponsored: boolean;
-    start_date: string;
-    end_date: string;
-    created_at: string;
-    approval_status: ApprovalStatus;
-    approved_at: string | null;
-    approved_by: string | null;
-    rejection_reason: string | null;
-    cancelled_at: string | null;
-    cancelled_by: string | null;
-    refunded_at: string | null;
-    refund_amount_usd: string | null;
-    creation_ledger_tx_id: string | null;
-    refund_ledger_tx_id: string | null;
-    time_status: TimeStatus;
-    prize_tiers: Array<{ position: number; prize_amount_usd: string }>;
-};
-
-type ListResponse = {
-    success: boolean;
-    data: {
-        leaderboards: LeaderboardAdminRow[];
-        total: number;
-        offset: number;
-        limit: number;
-    };
-};
 
 const APPROVAL_COLORS: Record<ApprovalStatus, string> = {
     pending: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
@@ -106,17 +71,15 @@ export default async function AffiliateLeaderboardsPage({
     const creatorUserId = params.creator_user_id?.trim() || undefined;
     const offset = Number(params.offset) || 0;
 
-    const response = await backendApi.get<ListResponse>("/admin/affiliate-leaderboards", {
-        query: {
-            status: tab === "all" ? undefined : tab,
-            creator_user_id: creatorUserId,
-            limit: PAGE_LIMIT,
-            offset,
-        },
+    const result = await affiliateLeaderboardsApi.list({
+        status: tab === "all" ? undefined : tab,
+        creator_user_id: creatorUserId,
+        limit: PAGE_LIMIT,
+        offset,
     });
 
-    const rows = response.data.leaderboards;
-    const total = response.data.total;
+    const rows = result.leaderboards;
+    const total = result.total;
 
     // Hydrate creator usernames from local Prisma DB so admins see who owns each row.
     const creatorIds = [...new Set(rows.map((r) => r.creator_user_id))];

@@ -18,6 +18,7 @@ type Row = {
     cancelled_at: string | null;
     creator_prize_usd: string;
     site_bonus_usd: string;
+    total_prize_usd: string;
     affiliate_codes: string[];
     start_date: string;
     end_date: string;
@@ -33,6 +34,28 @@ export function DetailActions({ row }: { row: Row }) {
 
     const isCancelled = row.cancelled_at !== null;
 
+    function confirmApprove(): void {
+        // Approval credits the creator's funded prize against the active leaderboard
+        // and exposes it publicly. Reverting requires a refund-bearing cancel, so
+        // the user explicitly confirms before we fire the action.
+        if (
+            !confirm(
+                `Approve "${row.title}"?\n\nThis goes live immediately and exposes the leaderboard publicly. To revert you'd have to cancel and refund.`,
+            )
+        ) {
+            return;
+        }
+        startTransition(async () => {
+            const r = await approveLeaderboard(row.id);
+            if (!r.success) {
+                toast.error(r.error);
+                return;
+            }
+            toast.success("Approved");
+            router.refresh();
+        });
+    }
+
     return (
         <div className="flex gap-2 flex-wrap">
             {row.approval_status === "pending" && !isCancelled && (
@@ -40,17 +63,7 @@ export function DetailActions({ row }: { row: Row }) {
                     <Button
                         variant="outline"
                         disabled={isPending}
-                        onClick={() => {
-                            startTransition(async () => {
-                                const r = await approveLeaderboard(row.id);
-                                if (!r.success) {
-                                    toast.error(r.error);
-                                    return;
-                                }
-                                toast.success("Approved");
-                                router.refresh();
-                            });
-                        }}
+                        onClick={confirmApprove}
                     >
                         Approve
                     </Button>

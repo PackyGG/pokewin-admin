@@ -3,7 +3,11 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { backendApi } from "@/lib/backend-api/client";
+import {
+    affiliateLeaderboardsApi,
+    type EditInput,
+    type LeaderboardAdminRow,
+} from "@/lib/backend-api/affiliate-leaderboards";
 import { BackendApiError } from "@/lib/backend-api/errors";
 import { requirePageAccess } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -50,6 +54,17 @@ function toErrorMessage(err: unknown): string {
     return "Unknown error";
 }
 
+function logAuditFailure(action: string, err: unknown): void {
+    // Audit logging must not fail the operation — backend already committed.
+    // eslint-disable-next-line no-console
+    console.error(`[${action}] audit logging failed:`, err);
+}
+
+function revalidate(id: string): void {
+    revalidatePath(PAGE_KEY);
+    revalidatePath(`${PAGE_KEY}/${id}`);
+}
+
 export async function approveLeaderboard(id: string): Promise<ActionResult> {
     const session = await requirePageAccess(PAGE_KEY);
     const parsed = idSchema.safeParse(id);
@@ -58,9 +73,7 @@ export async function approveLeaderboard(id: string): Promise<ActionResult> {
     }
 
     try {
-        await backendApi.post(`/admin/affiliate-leaderboards/${parsed.data}/approve`, {}, {
-            headers: { "x-admin-user-id": session.userId },
-        });
+        await affiliateLeaderboardsApi.approve(parsed.data, session.userId);
     } catch (err) {
         return { success: false, error: toErrorMessage(err) };
     }
@@ -72,13 +85,10 @@ export async function approveLeaderboard(id: string): Promise<ActionResult> {
             metadata: { leaderboard_id: parsed.data },
         });
     } catch (err) {
-        // Don't fail the whole operation if audit fails — backend already committed.
-        // eslint-disable-next-line no-console
-        console.error("[approveLeaderboard] audit logging failed:", err);
+        logAuditFailure("approveLeaderboard", err);
     }
 
-    revalidatePath(PAGE_KEY);
-    revalidatePath(`${PAGE_KEY}/${parsed.data}`);
+    revalidate(parsed.data);
     return { success: true };
 }
 
@@ -97,11 +107,7 @@ export async function rejectLeaderboard(
     }
 
     try {
-        await backendApi.post(
-            `/admin/affiliate-leaderboards/${parsedId.data}/reject`,
-            parsed.data,
-            { headers: { "x-admin-user-id": session.userId } },
-        );
+        await affiliateLeaderboardsApi.reject(parsedId.data, parsed.data, session.userId);
     } catch (err) {
         return { success: false, error: toErrorMessage(err) };
     }
@@ -110,15 +116,16 @@ export async function rejectLeaderboard(
         await createAdminAuditEvent({
             adminUserId: session.userId,
             eventType: "affiliate_leaderboard_rejected",
-            metadata: { leaderboard_id: parsedId.data, rejection_reason: parsed.data.rejection_reason },
+            metadata: {
+                leaderboard_id: parsedId.data,
+                rejection_reason: parsed.data.rejection_reason,
+            },
         });
     } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error("[rejectLeaderboard] audit logging failed:", err);
+        logAuditFailure("rejectLeaderboard", err);
     }
 
-    revalidatePath(PAGE_KEY);
-    revalidatePath(`${PAGE_KEY}/${parsedId.data}`);
+    revalidate(parsedId.data);
     return { success: true };
 }
 
@@ -136,12 +143,20 @@ export async function editLeaderboard(
         return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
     }
 
+    // Snapshot the current state *before* mutating so the audit metadata can
+    // record an exact diff. If this read fails, we still proceed with the edit
+    // and log an audit event without before/after — the mutation is the
+    // source-of-truth, audit detail is best-effort.
+    let before: LeaderboardAdminRow | null = null;
     try {
-        await backendApi.patch(
-            `/admin/affiliate-leaderboards/${parsedId.data}`,
-            parsed.data,
-            { headers: { "x-admin-user-id": session.userId } },
-        );
+        before = await affiliateLeaderboardsApi.get(parsedId.data);
+    } catch (err) {
+        logAuditFailure("editLeaderboard.snapshot", err);
+    }
+
+    let after: LeaderboardAdminRow;
+    try {
+        after = await affiliateLeaderboardsApi.edit(parsedId.data, parsed.data, session.userId);
     } catch (err) {
         return { success: false, error: toErrorMessage(err) };
     }
@@ -150,15 +165,18 @@ export async function editLeaderboard(
         await createAdminAuditEvent({
             adminUserId: session.userId,
             eventType: "affiliate_leaderboard_edited",
-            metadata: { leaderboard_id: parsedId.data, fields: Object.keys(parsed.data) },
+            metadata: {
+                leaderboard_id: parsedId.data,
+                fields: Object.keys(parsed.data),
+                ...(before ? { before: extractEditedFields(before, parsed.data) } : {}),
+                after: extractEditedFields(after, parsed.data),
+            },
         });
     } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error("[editLeaderboard] audit logging failed:", err);
+        logAuditFailure("editLeaderboard", err);
     }
 
-    revalidatePath(PAGE_KEY);
-    revalidatePath(`${PAGE_KEY}/${parsedId.data}`);
+    revalidate(parsedId.data);
     return { success: true };
 }
 
@@ -176,12 +194,19 @@ export async function sponsorLeaderboard(
         return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
     }
 
+    // Snapshot pre-sponsor totals so the audit shows exactly which pool the
+    // delta was added to (and what the resulting total became).
+    let before: Pick<LeaderboardAdminRow, "site_bonus_usd" | "total_prize_usd"> | null = null;
     try {
-        await backendApi.post(
-            `/admin/affiliate-leaderboards/${parsedId.data}/sponsor`,
-            parsed.data,
-            { headers: { "x-admin-user-id": session.userId } },
-        );
+        const row = await affiliateLeaderboardsApi.get(parsedId.data);
+        before = { site_bonus_usd: row.site_bonus_usd, total_prize_usd: row.total_prize_usd };
+    } catch (err) {
+        logAuditFailure("sponsorLeaderboard.snapshot", err);
+    }
+
+    let after: LeaderboardAdminRow;
+    try {
+        after = await affiliateLeaderboardsApi.sponsor(parsedId.data, parsed.data, session.userId);
     } catch (err) {
         return { success: false, error: toErrorMessage(err) };
     }
@@ -190,15 +215,21 @@ export async function sponsorLeaderboard(
         await createAdminAuditEvent({
             adminUserId: session.userId,
             eventType: "affiliate_leaderboard_sponsored",
-            metadata: { leaderboard_id: parsedId.data, additional_bonus_usd: parsed.data.additional_bonus_usd },
+            metadata: {
+                leaderboard_id: parsedId.data,
+                additional_bonus_usd: parsed.data.additional_bonus_usd,
+                ...(before ? { before } : {}),
+                after: {
+                    site_bonus_usd: after.site_bonus_usd,
+                    total_prize_usd: after.total_prize_usd,
+                },
+            },
         });
     } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error("[sponsorLeaderboard] audit logging failed:", err);
+        logAuditFailure("sponsorLeaderboard", err);
     }
 
-    revalidatePath(PAGE_KEY);
-    revalidatePath(`${PAGE_KEY}/${parsedId.data}`);
+    revalidate(parsedId.data);
     return { success: true };
 }
 
@@ -210,11 +241,7 @@ export async function cancelLeaderboard(id: string): Promise<ActionResult> {
     }
 
     try {
-        await backendApi.post(
-            `/admin/affiliate-leaderboards/${parsedId.data}/cancel`,
-            {},
-            { headers: { "x-admin-user-id": session.userId } },
-        );
+        await affiliateLeaderboardsApi.cancel(parsedId.data, session.userId);
     } catch (err) {
         return { success: false, error: toErrorMessage(err) };
     }
@@ -226,11 +253,27 @@ export async function cancelLeaderboard(id: string): Promise<ActionResult> {
             metadata: { leaderboard_id: parsedId.data },
         });
     } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error("[cancelLeaderboard] audit logging failed:", err);
+        logAuditFailure("cancelLeaderboard", err);
     }
 
-    revalidatePath(PAGE_KEY);
-    revalidatePath(`${PAGE_KEY}/${parsedId.data}`);
+    revalidate(parsedId.data);
     return { success: true };
+}
+
+/**
+ * Project a LeaderboardAdminRow down to only the fields that were touched in
+ * this edit, so before/after audit metadata stays minimal and meaningful
+ * instead of dumping the entire row.
+ */
+function extractEditedFields(
+    row: LeaderboardAdminRow,
+    edited: EditInput,
+): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    if (edited.title !== undefined) out.title = row.title;
+    if (edited.affiliate_codes !== undefined) out.affiliate_codes = row.affiliate_codes;
+    if (edited.start_date !== undefined) out.start_date = row.start_date;
+    if (edited.end_date !== undefined) out.end_date = row.end_date;
+    if (edited.prize_tiers !== undefined) out.prize_tiers = row.prize_tiers;
+    return out;
 }

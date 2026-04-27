@@ -44,7 +44,10 @@ export function SponsorDialog({ open, onOpenChange, leaderboardId, leaderboardTi
                 toast.error(r.error);
                 return;
             }
-            toast.success("Sponsor bonus added");
+            const newTotal = (Number(currentTotalPrizeUsd) + value).toFixed(2);
+            toast.success(`Bonus added. New total pool: $${newTotal}`, {
+                description: "Edit prize tiers to redistribute the new total.",
+            });
             setAmount("");
             onOpenChange(false);
             router.refresh();

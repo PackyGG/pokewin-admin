@@ -46,6 +46,20 @@ function toLocalDateTimeInput(iso: string): string {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/**
+ * Affiliate leaderboards must align to whole-hour UTC marks (backend rule).
+ * For whole-hour-offset timezones — which we support — that's equivalent to
+ * checking the local date for minutes/seconds/ms === 0. Half-hour zones (Iran,
+ * India) would fail this *and* the backend's UTC check, which is by design.
+ */
+function isTopOfHour(date: Date): boolean {
+    return (
+        date.getMinutes() === 0 &&
+        date.getSeconds() === 0 &&
+        date.getMilliseconds() === 0
+    );
+}
+
 export function EditDialog({ open, onOpenChange, leaderboard }: Props) {
     const [title, setTitle] = useState(leaderboard.title);
     const [codesText, setCodesText] = useState(leaderboard.affiliate_codes.join(", "));
@@ -76,8 +90,20 @@ export function EditDialog({ open, onOpenChange, leaderboard }: Props) {
         const codesChanged =
             JSON.stringify(codesParsed) !== JSON.stringify(leaderboard.affiliate_codes);
 
-        const startISO = startDate ? new Date(startDate).toISOString() : undefined;
-        const endISO = endDate ? new Date(endDate).toISOString() : undefined;
+        const startParsed = startDate ? new Date(startDate) : null;
+        const endParsed = endDate ? new Date(endDate) : null;
+
+        if (startParsed && !isTopOfHour(startParsed)) {
+            toast.error("Start must be a whole hour (e.g. 17:00, 18:00)");
+            return;
+        }
+        if (endParsed && !isTopOfHour(endParsed)) {
+            toast.error("End must be a whole hour (e.g. 17:00, 18:00)");
+            return;
+        }
+
+        const startISO = startParsed ? startParsed.toISOString() : undefined;
+        const endISO = endParsed ? endParsed.toISOString() : undefined;
         const startChanged = startISO && startISO !== new Date(leaderboard.start_date).toISOString();
         const endChanged = endISO && endISO !== new Date(leaderboard.end_date).toISOString();
 
@@ -186,24 +212,30 @@ export function EditDialog({ open, onOpenChange, leaderboard }: Props) {
 
                     <div className="grid grid-cols-2 gap-3">
                         <div className="space-y-2">
-                            <Label htmlFor="start_date">Start</Label>
+                            <Label htmlFor="start_date">Start (whole hour only)</Label>
                             <Input
                                 id="start_date"
                                 type="datetime-local"
+                                step={3600}
                                 value={startDate}
                                 onChange={(e) => setStartDate(e.target.value)}
                             />
                         </div>
                         <div className="space-y-2">
-                            <Label htmlFor="end_date">End</Label>
+                            <Label htmlFor="end_date">End (whole hour only)</Label>
                             <Input
                                 id="end_date"
                                 type="datetime-local"
+                                step={3600}
                                 value={endDate}
                                 onChange={(e) => setEndDate(e.target.value)}
                             />
                         </div>
                     </div>
+                    <p className="text-xs text-muted-foreground -mt-2">
+                        Leaderboard times must align to whole hours (e.g. 17:00, 18:00). Snapshot
+                        and cache jobs run on hourly ticks.
+                    </p>
 
                     <div className="space-y-2">
                         <div className="flex items-center justify-between">

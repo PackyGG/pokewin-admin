@@ -29,6 +29,16 @@ export function ListRowActions({ row }: { row: Row }) {
                     variant="outline"
                     disabled={isPending}
                     onClick={() => {
+                        // Approval exposes the leaderboard publicly; reverting needs a
+                        // refund-bearing cancel. Always confirm — single click is too
+                        // easy on a dense table.
+                        if (
+                            !confirm(
+                                `Approve "${row.title}"?\n\nThis goes live immediately. To revert you'd have to cancel and refund.`,
+                            )
+                        ) {
+                            return;
+                        }
                         startTransition(async () => {
                             const r = await approveLeaderboard(row.id);
                             if (!r.success) {

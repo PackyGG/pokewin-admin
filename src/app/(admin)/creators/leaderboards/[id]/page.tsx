@@ -4,7 +4,11 @@ import { ArrowLeft } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
 import { getDb } from "@/lib/db";
-import { backendApi } from "@/lib/backend-api/client";
+import {
+    affiliateLeaderboardsApi,
+    type ApprovalStatus,
+    type TimeStatus,
+} from "@/lib/backend-api/affiliate-leaderboards";
 import { BackendApiError } from "@/lib/backend-api/errors";
 import { PageHero } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
@@ -23,37 +27,6 @@ import { cn } from "@/lib/utils";
 import { DetailActions } from "../_components/detail-actions";
 
 export const metadata = { title: "Affiliate Leaderboard" };
-
-type ApprovalStatus = "pending" | "approved" | "rejected";
-type TimeStatus = "upcoming" | "active" | "ended";
-
-type LeaderboardAdminRow = {
-    id: string;
-    creator_user_id: string;
-    title: string;
-    affiliate_codes: string[];
-    creator_prize_usd: string;
-    site_bonus_usd: string;
-    total_prize_usd: string;
-    is_sponsored: boolean;
-    start_date: string;
-    end_date: string;
-    created_at: string;
-    approval_status: ApprovalStatus;
-    approved_at: string | null;
-    approved_by: string | null;
-    rejection_reason: string | null;
-    cancelled_at: string | null;
-    cancelled_by: string | null;
-    refunded_at: string | null;
-    refund_amount_usd: string | null;
-    creation_ledger_tx_id: string | null;
-    refund_ledger_tx_id: string | null;
-    time_status: TimeStatus;
-    prize_tiers: Array<{ position: number; prize_amount_usd: string }>;
-};
-
-type SingleResponse = { success: boolean; data: LeaderboardAdminRow };
 
 const APPROVAL_COLORS: Record<ApprovalStatus, string> = {
     pending: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
@@ -75,17 +48,15 @@ export default async function AffiliateLeaderboardDetailPage({
     await requirePageAccess("/creators/leaderboards");
     const { id } = await params;
 
-    let response: SingleResponse;
+    let lb;
     try {
-        response = await backendApi.get<SingleResponse>(`/admin/affiliate-leaderboards/${id}`);
+        lb = await affiliateLeaderboardsApi.get(id);
     } catch (err) {
         if (err instanceof BackendApiError && err.status === 404) {
             notFound();
         }
         throw err;
     }
-
-    const lb = response.data;
     const db = await getDb();
     const creator = await db.user.findUnique({
         where: { id: lb.creator_user_id },
