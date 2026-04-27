@@ -63,6 +63,16 @@ export type EditInput = {
   prize_tiers?: Array<{ position: number; prize_amount_usd: number }>;
 };
 
+export type CreateInput = {
+  creator_user_id: string;
+  title: string;
+  affiliate_codes: string[];
+  site_bonus_usd: number;
+  start_date: string;
+  end_date: string;
+  prize_tiers: Array<{ position: number; prize_amount_usd: number }>;
+};
+
 type Success<T> = { success: boolean; data: T };
 
 const BASE = "/admin/affiliate-leaderboards";
@@ -75,6 +85,15 @@ export const affiliateLeaderboardsApi = {
   list: (query: ListQuery = {}) =>
     backendApi
       .get<Success<ListResult>>(BASE, { query })
+      .then((r) => r.data),
+
+  create: (input: CreateInput, adminUserId: string) =>
+    backendApi
+      .post<Success<LeaderboardAdminRow>>(
+        BASE,
+        input,
+        { headers: adminHeaders(adminUserId) },
+      )
       .then((r) => r.data),
 
   get: (id: string) =>

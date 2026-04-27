@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Trophy } from "lucide-react";
+import { Trophy, Plus } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
 import { getDb } from "@/lib/db";
@@ -11,6 +11,7 @@ import {
 import { PageHero } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
     Table,
@@ -24,6 +25,7 @@ import { cn } from "@/lib/utils";
 import { formatDateTime } from "@/lib/utils/format";
 
 import { ListRowActions } from "./_components/list-row-actions";
+import { CreateDialog } from "./_components/create-dialog";
 
 export const metadata = { title: "Affiliate Leaderboards" };
 
@@ -106,10 +108,17 @@ export default async function AffiliateLeaderboardsPage({
                         <div>
                             <h1 className="text-2xl font-bold leading-tight">Affiliate Leaderboards</h1>
                             <p className="text-sm text-muted-foreground">
-                                Review pending creator submissions, approve or reject, edit, sponsor, or cancel.
+                                Create on behalf of any creator (site-funded), or manage existing entries.
                             </p>
                         </div>
                     </div>
+                    <CreateDialog
+                        trigger={
+                            <Button>
+                                <Plus className="size-4 mr-1" /> Create a creator leaderboard
+                            </Button>
+                        }
+                    />
                 </div>
             </PageHero>
 

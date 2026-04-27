@@ -18,6 +18,7 @@ import { AcquisitionChart } from "./acquisition-chart";
 import { FunnelTable } from "./funnel-table";
 import { FinancialsCard } from "./financials-card";
 import { CountryBreakdown } from "./country-breakdown";
+import { LeaderboardsCard } from "./leaderboards-card";
 
 import { parseCreatorDetailSearchParams } from "./_lib/search-params";
 import { getCreatorDealData } from "./_queries/get-creator-deal-data";
@@ -179,6 +180,11 @@ export default async function CreatorDetailPage({
         />
         <CountryBreakdown rows={profile.countryBreakdown} />
       </div>
+
+      {/* Affiliate leaderboards owned by this creator — read-only summary
+          with deep-link to the dedicated /creators/leaderboards management
+          surface for full action set (approve/reject/edit/sponsor/cancel). */}
+      <LeaderboardsCard userId={profile.userId} />
     </div>
   );
 }

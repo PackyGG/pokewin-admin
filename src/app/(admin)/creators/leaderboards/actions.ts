@@ -11,6 +11,79 @@ import {
 import { BackendApiError } from "@/lib/backend-api/errors";
 import { requirePageAccess } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { getDb } from "@/lib/db";
+
+export type CreatorSearchResult = {
+    userId: string;
+    username: string | null;
+    email: string | null;
+    affiliateCode: string | null;
+    codes: string[];
+};
+
+export async function searchCreators(query: string): Promise<CreatorSearchResult[]> {
+    await requirePageAccess(PAGE_KEY);
+    const trimmed = query.trim();
+    if (trimmed.length < 2) return [];
+
+    const db = await getDb();
+    // Match on the creator's own affiliate codes (from affiliate_codes table),
+    // not on user.affiliate_code (which is the code the user signed up with).
+    const rows = await db.$queryRaw<
+        Array<{
+            id: string;
+            username: string | null;
+            email: string | null;
+            codes: string[] | null;
+        }>
+    >`
+        SELECT
+            u.id,
+            u.username,
+            u.email,
+            COALESCE(
+                (
+                    SELECT array_agg(ac.code ORDER BY ac.created_at ASC)
+                    FROM affiliate_codes ac
+                    WHERE ac.user_id = u.id
+                ),
+                ARRAY[]::text[]
+            ) AS codes
+        FROM "user" u
+        WHERE u.role = 'creator'
+          AND (
+              u.username ILIKE ${"%" + trimmed + "%"}
+              OR u.email ILIKE ${"%" + trimmed + "%"}
+              OR EXISTS (
+                  SELECT 1 FROM affiliate_codes ac2
+                  WHERE ac2.user_id = u.id
+                    AND ac2.code ILIKE ${"%" + trimmed + "%"}
+              )
+          )
+        ORDER BY u.username ASC NULLS LAST
+        LIMIT 8
+    `;
+
+    return rows.map((r) => ({
+        userId: r.id,
+        username: r.username,
+        email: r.email,
+        affiliateCode: r.codes?.[0] ?? null,
+        codes: r.codes ?? [],
+    }));
+}
+
+export async function getCreatorCodes(userId: string): Promise<string[]> {
+    await requirePageAccess(PAGE_KEY);
+    if (!userId) return [];
+    const db = await getDb();
+    const rows = await db.affiliate_codes.findMany({
+        where: { user_id: userId },
+        select: { code: true },
+        orderBy: { created_at: "asc" },
+    });
+    return rows.map((r) => r.code);
+}
 
 const PAGE_KEY = "/creators/leaderboards";
 
@@ -26,6 +99,23 @@ const rejectSchema = z.object({
 
 const sponsorSchema = z.object({
     additional_bonus_usd: z.number().positive("Bonus must be positive"),
+});
+
+const createSchema = z.object({
+    creator_user_id: z.string().trim().min(1, "Creator user id is required"),
+    title: z.string().trim().min(1).max(100),
+    affiliate_codes: z.array(z.string()).default([]),
+    site_bonus_usd: z.number().positive("Total prize pool must be positive"),
+    start_date: z.string().min(1, "Start date is required"),
+    end_date: z.string().min(1, "End date is required"),
+    prize_tiers: z
+        .array(
+            z.object({
+                position: z.number().int().positive(),
+                prize_amount_usd: z.number().positive(),
+            }),
+        )
+        .min(1, "At least one prize tier is required"),
 });
 
 const editSchema = z.object({
@@ -63,6 +153,41 @@ function logAuditFailure(action: string, err: unknown): void {
 function revalidate(id: string): void {
     revalidatePath(PAGE_KEY);
     revalidatePath(`${PAGE_KEY}/${id}`);
+}
+
+export async function createLeaderboard(
+    input: z.infer<typeof createSchema>,
+): Promise<ActionResult<{ id: string }>> {
+    const session = await requirePageAccess(PAGE_KEY);
+    const parsed = createSchema.safeParse(input);
+    if (!parsed.success) {
+        return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+
+    let created: LeaderboardAdminRow;
+    try {
+        created = await affiliateLeaderboardsApi.create(parsed.data, session.userId);
+    } catch (err) {
+        return { success: false, error: toErrorMessage(err) };
+    }
+
+    try {
+        await createAdminAuditEvent({
+            adminUserId: session.userId,
+            eventType: "affiliate_leaderboard_created",
+            metadata: {
+                leaderboard_id: created.id,
+                creator_user_id: parsed.data.creator_user_id,
+                site_bonus_usd: parsed.data.site_bonus_usd,
+            },
+        });
+    } catch (err) {
+        logAuditFailure("createLeaderboard", err);
+    }
+
+    revalidatePath(PAGE_KEY);
+    revalidatePath(`/creators/${parsed.data.creator_user_id}`);
+    return { success: true, data: { id: created.id } };
 }
 
 export async function approveLeaderboard(id: string): Promise<ActionResult> {
