@@ -173,14 +173,25 @@ export async function createRaffle(data: {
   }
 
   // 4. Call backend
+  // Backend sits behind a Cloudflare bot-protection gate that expects
+  // `x-bypass-secret` for trusted server-to-server callers. Without this
+  // header, CF rejects the request with 403 before it reaches Fastify.
+  const bypassSecret =
+    process.env.CF_BYPASS_SECRET || process.env.BACKEND_BYPASS_SECRET;
+
+  const requestHeaders: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-api-key": backendKey,
+  };
+  if (bypassSecret) {
+    requestHeaders["x-bypass-secret"] = bypassSecret;
+  }
+
   let res: Response;
   try {
     res = await fetch(`${backendUrl}/admin/raffles`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": backendKey,
-      },
+      headers: requestHeaders,
       body: JSON.stringify({
         name: parsed.name,
         description: parsed.description,

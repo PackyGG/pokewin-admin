@@ -53,9 +53,17 @@ export const backendApiRequest = async <T = unknown>(
   const method = options.method ?? "GET";
   const url = `${config.baseUrl}${path}${buildQueryString(options.query)}`;
 
+  // Backend sits behind a Cloudflare bot-protection gate that expects
+  // `x-bypass-secret` for trusted server-to-server callers. Same pattern as
+  // the user-facing frontend (CF_BYPASS_SECRET → x-bypass-secret); legacy
+  // BACKEND_BYPASS_SECRET kept as fallback for envs that haven't been renamed.
+  const bypassSecret =
+    process.env.CF_BYPASS_SECRET || process.env.BACKEND_BYPASS_SECRET;
+
   const headers: Record<string, string> = {
     "x-api-key": config.adminKey,
     ...config.cfHeaders,
+    ...(bypassSecret ? { "x-bypass-secret": bypassSecret } : {}),
     ...(options.body !== undefined ? { "Content-Type": "application/json" } : {}),
     ...options.headers,
   };
