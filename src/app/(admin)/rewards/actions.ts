@@ -7,13 +7,22 @@ import { requireAdmin } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 
 export async function reloadPacks() {
+  // Backend sits behind a Cloudflare bot-protection gate; trusted server-to-
+  // server callers must send `x-bypass-secret`. Same pattern as the frontend.
+  const headers: Record<string, string> = {
+    "x-api-key": process.env.BACKEND_API_KEY!,
+  };
+  const bypassSecret =
+    process.env.CF_BYPASS_SECRET || process.env.BACKEND_BYPASS_SECRET;
+  if (bypassSecret) {
+    headers["x-bypass-secret"] = bypassSecret;
+  }
+
   const res = await fetch(
     `${process.env.BACKEND_API_URL}/admin/reload-packs`,
     {
       method: "POST",
-      headers: {
-        "x-api-key": process.env.BACKEND_API_KEY!,
-      },
+      headers,
     }
   );
 
