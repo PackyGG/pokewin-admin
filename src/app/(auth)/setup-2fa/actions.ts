@@ -11,6 +11,7 @@ import {
 } from "@/lib/session";
 import { verifyTOTP, generateRecoveryCodes, hashRecoveryCodes } from "@/lib/totp";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { MS_PER_HOUR } from "@/lib/utils/time";
 
 export type SetupState = {
   error?: string;
@@ -97,7 +98,7 @@ export async function confirmSetup(
         ip,
         user_agent: userAgent,
         auth_method: "totp",
-        expires_at: new Date(Date.now() + 8 * 60 * 60 * 1000),
+        expires_at: new Date(Date.now() + 8 * MS_PER_HOUR),
       },
     }),
   ]);

@@ -2,6 +2,7 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
+import { MS_PER_DAY } from "@/lib/utils/time";
 
 export type PackListCard = {
   id: string;
@@ -273,11 +274,10 @@ export async function getPackStats(
   ]);
 
   const now = new Date();
-  const day = 24 * 60 * 60 * 1000;
-  const since1 = new Date(now.getTime() - 1 * day);
-  const since3 = new Date(now.getTime() - 3 * day);
-  const since7 = new Date(now.getTime() - 7 * day);
-  const since30 = new Date(now.getTime() - 30 * day);
+  const since1 = new Date(now.getTime() - 1 * MS_PER_DAY);
+  const since3 = new Date(now.getTime() - 3 * MS_PER_DAY);
+  const since7 = new Date(now.getTime() - 7 * MS_PER_DAY);
+  const since30 = new Date(now.getTime() - 30 * MS_PER_DAY);
 
   const buckets = { d1: 0, d3: 0, d7: 0, d30: 0, all: 0 };
   const revBuckets = { ...buckets };

@@ -3,6 +3,7 @@ import type { PrismaClient } from "@/generated/prisma/client";
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
+import { MS_PER_DAY } from "@/lib/utils/time";
 import { EXCLUDE_STAFF_USER_RELATION } from "./_exclude-staff";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
 
@@ -136,9 +137,9 @@ async function dashboardStatsInner() {
   startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-  const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
-  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const threeDaysAgo = new Date(now.getTime() - 3 * MS_PER_DAY);
+  const sevenDaysAgo = new Date(now.getTime() - 7 * MS_PER_DAY);
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * MS_PER_DAY);
 
   const [
     totalUsers,

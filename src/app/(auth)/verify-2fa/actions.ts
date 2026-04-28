@@ -11,6 +11,7 @@ import {
 import { verifyTOTP, verifyRecoveryCode } from "@/lib/totp";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { headers } from "next/headers";
+import { MS_PER_MINUTE, MS_PER_HOUR } from "@/lib/utils/time";
 
 type VerifyState = {
   error?: string;
@@ -23,7 +24,7 @@ type VerifyState = {
 // move to a persistent store when the rate-limit infra (see flagged #6)
 // is in place.
 const MAX_FAILED_VERIFIES = 5;
-const VERIFY_WINDOW_MS = 5 * 60_000;
+const VERIFY_WINDOW_MS = 5 * MS_PER_MINUTE;
 const verifyFailures = new Map<
   string,
   { count: number; resetAt: number }
@@ -149,7 +150,7 @@ export async function verify2FA(
         ip,
         user_agent: userAgent,
         auth_method: mode === "recovery" ? "recovery_code" : "totp",
-        expires_at: new Date(Date.now() + 8 * 60 * 60 * 1000),
+        expires_at: new Date(Date.now() + 8 * MS_PER_HOUR),
       },
     }),
   ]);

@@ -15,6 +15,7 @@
 
 import { adminDb } from "@/lib/admin-db";
 import { getDb } from "@/lib/db";
+import { MS_PER_MINUTE, MS_PER_DAY } from "@/lib/utils/time";
 
 // ---------------------------------------------------------------------------
 // Sessions
@@ -130,7 +131,7 @@ export type AuditDailyPoint = { date: string; count: number };
 export async function getAuditEventCountPerDay(
   days: number,
 ): Promise<AuditDailyPoint[]> {
-  const since = new Date(Date.now() - (days - 1) * 24 * 60 * 60 * 1000);
+  const since = new Date(Date.now() - (days - 1) * MS_PER_DAY);
   const sinceStart = startOfDay(since);
 
   const rows = await adminDb.$queryRaw<
@@ -152,7 +153,7 @@ export async function getAuditEventCountPerDay(
 
   const out: AuditDailyPoint[] = [];
   for (let i = 0; i < days; i++) {
-    const d = new Date(sinceStart.getTime() + i * 24 * 60 * 60 * 1000);
+    const d = new Date(sinceStart.getTime() + i * MS_PER_DAY);
     const key = d.toISOString().slice(0, 10);
     out.push({ date: key, count: byDate.get(key) ?? 0 });
   }
@@ -338,7 +339,7 @@ export async function getCronHealth(): Promise<CronJobHealth[]> {
 
   const creatorFillsLastRun = latestFill?.created_at ?? null;
   const creatorFillsMinutes = creatorFillsLastRun
-    ? Math.round((now - creatorFillsLastRun.getTime()) / 60_000)
+    ? Math.round((now - creatorFillsLastRun.getTime()) / MS_PER_MINUTE)
     : null;
 
   return [

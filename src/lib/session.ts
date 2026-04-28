@@ -1,5 +1,6 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
+import { MS_PER_HOUR } from "@/lib/utils/time";
 
 const secretKey = process.env.SESSION_SECRET!;
 const encodedKey = new TextEncoder().encode(secretKey);
@@ -67,7 +68,7 @@ async function decryptGeneric<T>(token: string): Promise<T | null> {
 }
 
 export async function createSession(payload: Omit<SessionPayload, "expiresAt">) {
-  const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000);
+  const expiresAt = new Date(Date.now() + 8 * MS_PER_HOUR);
   const session = await encrypt({ ...payload, expiresAt });
   const cookieStore = await cookies();
 
