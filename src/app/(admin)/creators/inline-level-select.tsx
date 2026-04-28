@@ -1,7 +1,6 @@
 "use client";
 
 import { useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   Select,
@@ -22,7 +21,6 @@ export function InlineLevelSelect({
   currentLevel: number;
 }) {
   const [isPending, startTransition] = useTransition();
-  const router = useRouter();
 
   function handleChange(value: string | null) {
     if (!value) return;
@@ -32,7 +30,6 @@ export function InlineLevelSelect({
       try {
         await updateAffiliateLevel(userId, level);
         toast.success("Level updated");
-        router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to update level");
       }

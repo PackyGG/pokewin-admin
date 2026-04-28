@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -19,7 +18,6 @@ export function AffiliateExpirationCard({
     initialDays !== null && initialDays > 0 ? String(initialDays) : "",
   );
   const [isPending, startTransition] = useTransition();
-  const router = useRouter();
 
   const trimmed = input.trim();
   const parsed = trimmed === "" ? null : Number(trimmed);
@@ -41,7 +39,6 @@ export function AffiliateExpirationCard({
           return;
         }
         toast.success("Affiliate cut expiration updated");
-        router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to update");
       }

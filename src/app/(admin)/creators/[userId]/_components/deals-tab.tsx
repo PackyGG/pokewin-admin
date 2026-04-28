@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Ban, Loader2, PackageOpen } from "lucide-react";
 
@@ -73,7 +72,18 @@ export function DealsTab({ userId, deals }: Props) {
             <TableHead className="text-right">Fills</TableHead>
             <TableHead className="text-right">Per Fill</TableHead>
             <TableHead className="text-right">Convert</TableHead>
-            <TableHead className="text-right">Tip / Stream</TableHead>
+            <TableHead className="text-right">
+              Tip max
+              <div className="text-[10px] font-normal normal-case text-muted-foreground/70">
+                user / stream
+              </div>
+            </TableHead>
+            <TableHead className="text-right">
+              Sponsor max
+              <div className="text-[10px] font-normal normal-case text-muted-foreground/70">
+                battle / stream
+              </div>
+            </TableHead>
             <TableHead className="pr-4 text-right"></TableHead>
           </TableRow>
         </TableHeader>
@@ -151,7 +161,16 @@ function DealRow({
         {(deal.conversion_rate_bps / 100).toFixed(1)}%
       </TableCell>
       <TableCell className="text-right tabular-nums text-muted-foreground">
-        ${deal.max_tip_per_stream_usd}
+        <span className="font-medium text-foreground">
+          ${deal.max_tip_per_user_usd}
+        </span>
+        <span> / ${deal.max_tip_per_stream_usd}</span>
+      </TableCell>
+      <TableCell className="text-right tabular-nums text-muted-foreground">
+        <span className="font-medium text-foreground">
+          ${deal.max_sponsored_battle_usd}
+        </span>
+        <span> / ${deal.max_sponsorship_per_stream_usd}</span>
       </TableCell>
       <TableCell className="pr-2 text-right">
         {canTerminate && (
@@ -172,7 +191,6 @@ function TerminateDealButton({
   userId: string;
   deal: CreatorDealResponse;
 }) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
 
@@ -185,7 +203,6 @@ function TerminateDealButton({
         });
         toast.success("Deal terminated");
         setOpen(false);
-        router.refresh();
       } catch (err) {
         toast.error(
           err instanceof Error ? err.message : "Failed to terminate deal",

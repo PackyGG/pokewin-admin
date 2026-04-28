@@ -1,7 +1,6 @@
 "use client";
 
 import { useId, useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2, Pencil, Plus } from "lucide-react";
 
@@ -54,6 +53,7 @@ type FormState = {
   max_tip_per_stream_usd: string;
   max_tip_per_user_usd: string;
   max_sponsored_battle_usd: string;
+  max_sponsorship_per_stream_usd: string;
   allow_site_leaderboards: boolean;
   allow_code_leaderboards: boolean;
 };
@@ -77,6 +77,7 @@ const buildCreateDefaults = (): FormState => {
     max_tip_per_stream_usd: "100",
     max_tip_per_user_usd: "20",
     max_sponsored_battle_usd: "50",
+    max_sponsorship_per_stream_usd: "200",
     allow_site_leaderboards: false,
     allow_code_leaderboards: false,
   };
@@ -92,6 +93,7 @@ const buildEditDefaults = (deal: CreatorDealResponse): FormState => ({
   max_tip_per_stream_usd: String(deal.max_tip_per_stream_usd),
   max_tip_per_user_usd: String(deal.max_tip_per_user_usd),
   max_sponsored_battle_usd: String(deal.max_sponsored_battle_usd),
+  max_sponsorship_per_stream_usd: String(deal.max_sponsorship_per_stream_usd),
   allow_site_leaderboards: deal.allow_site_leaderboards,
   allow_code_leaderboards: deal.allow_code_leaderboards,
 });
@@ -166,6 +168,14 @@ function computePatch(
     patch.max_sponsored_battle_usd = sponsored;
   }
 
+  const sponsoredStream = parseFloat(form.max_sponsorship_per_stream_usd);
+  if (
+    Number.isFinite(sponsoredStream) &&
+    sponsoredStream !== Number(deal.max_sponsorship_per_stream_usd)
+  ) {
+    patch.max_sponsorship_per_stream_usd = sponsoredStream;
+  }
+
   if (form.allow_site_leaderboards !== deal.allow_site_leaderboards) {
     patch.allow_site_leaderboards = form.allow_site_leaderboards;
   }
@@ -210,7 +220,6 @@ function parseUtcInput(value: string): string | null {
 
 export function DealFormDialog(props: Props) {
   const { userId, mode = "create", deal, trigger } = props;
-  const router = useRouter();
   const formId = useId();
   const [open, setOpen] = useState(false);
   const initial = useMemo<FormState>(
@@ -256,6 +265,9 @@ export function DealFormDialog(props: Props) {
     const maxTipStream = parseFloat(form.max_tip_per_stream_usd);
     const maxTipUser = parseFloat(form.max_tip_per_user_usd);
     const maxSponsored = parseFloat(form.max_sponsored_battle_usd);
+    const maxSponsoredStream = parseFloat(
+      form.max_sponsorship_per_stream_usd,
+    );
 
     if (!Number.isFinite(fillsAllowed) || fillsAllowed <= 0) {
       toast.error("Fills allowed must be a positive integer");
@@ -284,11 +296,17 @@ export function DealFormDialog(props: Props) {
       return;
     }
     if (
-      [maxTipStream, maxTipUser, maxSponsored].some(
+      [maxTipStream, maxTipUser, maxSponsored, maxSponsoredStream].some(
         (v) => !Number.isFinite(v) || v < 0,
       )
     ) {
       toast.error("Spend limits must be 0 or greater");
+      return;
+    }
+    if (maxSponsoredStream < maxSponsored) {
+      toast.error(
+        "Per-stream sponsorship cap must be >= per-battle sponsorship cap",
+      );
       return;
     }
 
@@ -313,6 +331,7 @@ export function DealFormDialog(props: Props) {
             max_tip_per_stream_usd: maxTipStream,
             max_tip_per_user_usd: maxTipUser,
             max_sponsored_battle_usd: maxSponsored,
+            max_sponsorship_per_stream_usd: maxSponsoredStream,
             allow_site_leaderboards: form.allow_site_leaderboards,
             allow_code_leaderboards: form.allow_code_leaderboards,
           });
@@ -320,7 +339,6 @@ export function DealFormDialog(props: Props) {
         }
 
         setOpen(false);
-        router.refresh();
       } catch (err) {
         toast.error(
           err instanceof Error
@@ -476,29 +494,16 @@ export function DealFormDialog(props: Props) {
 
           <Separator />
 
-          <Section title="Spend limits (USD)">
-            <div className="grid gap-3 sm:grid-cols-3">
+          <Section
+            title="Tip limits"
+            description="Caps that apply while the creator is streaming on fill balance."
+          >
+            <div className="grid gap-3 sm:grid-cols-2">
               <Field
-                label="Tip / stream"
-                htmlFor="max_tip_per_stream_usd"
-                suffix="USD"
-              >
-                <Input
-                  id="max_tip_per_stream_usd"
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={form.max_tip_per_stream_usd}
-                  onChange={(e) =>
-                    update("max_tip_per_stream_usd", e.target.value)
-                  }
-                  required
-                />
-              </Field>
-              <Field
-                label="Tip / user"
+                label="Max tip per user"
                 htmlFor="max_tip_per_user_usd"
                 suffix="USD"
+                hint="Single tip from one viewer — caps the biggest tip any one user can send."
               >
                 <Input
                   id="max_tip_per_user_usd"
@@ -513,9 +518,38 @@ export function DealFormDialog(props: Props) {
                 />
               </Field>
               <Field
-                label="Sponsored battle"
+                label="Max tips per stream"
+                htmlFor="max_tip_per_stream_usd"
+                suffix="USD"
+                hint="Total tip spend the creator can rack up over one full stream session."
+              >
+                <Input
+                  id="max_tip_per_stream_usd"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={form.max_tip_per_stream_usd}
+                  onChange={(e) =>
+                    update("max_tip_per_stream_usd", e.target.value)
+                  }
+                  required
+                />
+              </Field>
+            </div>
+          </Section>
+
+          <Separator />
+
+          <Section
+            title="Sponsorship limits"
+            description="Caps for shared battles the creator sponsors during a stream."
+          >
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field
+                label="Max sponsorship per battle"
                 htmlFor="max_sponsored_battle_usd"
                 suffix="USD"
+                hint="Largest amount the creator can put into a single sponsored battle."
               >
                 <Input
                   id="max_sponsored_battle_usd"
@@ -525,6 +559,24 @@ export function DealFormDialog(props: Props) {
                   value={form.max_sponsored_battle_usd}
                   onChange={(e) =>
                     update("max_sponsored_battle_usd", e.target.value)
+                  }
+                  required
+                />
+              </Field>
+              <Field
+                label="Max sponsorship per stream"
+                htmlFor="max_sponsorship_per_stream_usd"
+                suffix="USD"
+                hint="Total sponsorship spend across all battles in one stream session. Must be ≥ per-battle cap."
+              >
+                <Input
+                  id="max_sponsorship_per_stream_usd"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={form.max_sponsorship_per_stream_usd}
+                  onChange={(e) =>
+                    update("max_sponsorship_per_stream_usd", e.target.value)
                   }
                   required
                 />
@@ -576,16 +628,25 @@ export function DealFormDialog(props: Props) {
 
 function Section({
   title,
+  description,
   children,
 }: {
   title: string;
+  description?: string;
   children: React.ReactNode;
 }) {
   return (
     <div className="space-y-3">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        {title}
-      </h3>
+      <div className="space-y-0.5">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {title}
+        </h3>
+        {description && (
+          <p className="text-[11px] leading-snug text-muted-foreground/80">
+            {description}
+          </p>
+        )}
+      </div>
       {children}
     </div>
   );
@@ -595,11 +656,13 @@ function Field({
   label,
   htmlFor,
   suffix,
+  hint,
   children,
 }: {
   label: string;
   htmlFor: string;
   suffix?: string;
+  hint?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -613,6 +676,11 @@ function Field({
         )}
       </Label>
       {children}
+      {hint && (
+        <p className="text-[11px] leading-snug text-muted-foreground">
+          {hint}
+        </p>
+      )}
     </div>
   );
 }

@@ -57,9 +57,17 @@ export const backendApiRequest = async <T = unknown>(
   const method = options.method ?? "GET";
   const url = `${config.baseUrl}${path}${buildQueryString(options.query)}`;
 
+  // Backend sits behind a Cloudflare bot-protection gate that expects
+  // `x-bypass-secret` for trusted server-to-server callers. Same pattern as
+  // the user-facing frontend (CF_BYPASS_SECRET → x-bypass-secret); legacy
+  // BACKEND_BYPASS_SECRET kept as fallback for envs that haven't been renamed.
+  const bypassSecret =
+    process.env.CF_BYPASS_SECRET || process.env.BACKEND_BYPASS_SECRET;
+
   const headers: Record<string, string> = {
     "x-api-key": config.adminKey,
     ...config.cfHeaders,
+    ...(bypassSecret ? { "x-bypass-secret": bypassSecret } : {}),
     ...(options.body !== undefined ? { "Content-Type": "application/json" } : {}),
     ...options.headers,
   };
@@ -87,6 +95,17 @@ export const backendApiRequest = async <T = unknown>(
     throw networkErr;
   }
 
+  // Diagnostic context shared across success/error branches. Includes which
+  // env was selected, where the request went, key tail (safe to log; full
+  // key never appears) and which side-channel headers were attached.
+  const ctx =
+    `env=${config.env}` +
+    ` method=${method}` +
+    ` url=${url}` +
+    ` adminKeyTail=...${config.adminKey.slice(-6)}` +
+    ` cfHeaders=${Object.keys(config.cfHeaders).length > 0}` +
+    ` bypassSecret=${bypassSecret ? "set" : "missing"}`;
+
   if (!res.ok) {
     const payload = ((await safeJson(res)) ?? {}) as BackendErrorPayload;
     const message =
@@ -99,12 +118,18 @@ export const backendApiRequest = async <T = unknown>(
     if (res.status === 401 || res.status === 403) {
       // eslint-disable-next-line no-console
       console.log(
-        `[backend-api] auth rejected env=${config.env} method=${method} url=${url} status=${res.status} adminKeyTail=...${config.adminKey.slice(-6)} cfHeaders=${Object.keys(config.cfHeaders).length > 0}`,
+        `[backend-api] auth rejected ${ctx} status=${res.status} backendMessage="${message}" payload=${JSON.stringify(payload)}`,
       );
     } else if (res.status >= 500) {
       // eslint-disable-next-line no-console
       console.log(
-        `[backend-api] server error env=${config.env} method=${method} url=${url} status=${res.status} payload=${JSON.stringify(payload)}`,
+        `[backend-api] server error ${ctx} status=${res.status} payload=${JSON.stringify(payload)}`,
+      );
+    } else {
+      // 4xx other than auth — useful to see during validation/logic errors
+      // eslint-disable-next-line no-console
+      console.log(
+        `[backend-api] request failed ${ctx} status=${res.status} payload=${JSON.stringify(payload)}`,
       );
     }
     throw new BackendApiError(res.status, message, payload);

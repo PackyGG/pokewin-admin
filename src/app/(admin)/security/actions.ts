@@ -9,8 +9,10 @@ async function refreshSiteConfig() {
   const headers: Record<string, string> = {
     "x-api-key": process.env.BACKEND_API_KEY!,
   };
-  if (process.env.BACKEND_BYPASS_SECRET) {
-    headers["x-bypass-secret"] = process.env.BACKEND_BYPASS_SECRET;
+  const bypassSecret =
+    process.env.CF_BYPASS_SECRET || process.env.BACKEND_BYPASS_SECRET;
+  if (bypassSecret) {
+    headers["x-bypass-secret"] = bypassSecret;
   }
 
   const res = await fetch(

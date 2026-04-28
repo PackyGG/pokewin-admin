@@ -74,6 +74,7 @@ export const CAPABILITIES = [
       { key: "pages.creators_codes", label: "Creator Codes", description: "Browse affiliate / creator codes." },
       { key: "pages.creators_analytics", label: "Creator Analytics", description: "View creator performance." },
       { key: "pages.creators_settings", label: "Creator Settings", description: "Global creator settings." },
+      { key: "pages.creators_leaderboards", label: "Affiliate Leaderboards", description: "Review, approve, and manage creator-submitted affiliate leaderboards." },
       { key: "pages.ads", label: "Ads", description: "Access the ads / generic codes page." },
       { key: "pages.chat", label: "Chat Moderation", description: "View and moderate chat." },
       { key: "pages.security", label: "Security", description: "Site security config." },

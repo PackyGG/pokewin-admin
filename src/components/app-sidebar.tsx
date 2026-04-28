@@ -132,6 +132,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Codes", href: "/creators/codes", icon: "Share2" },
       { label: "Ads", href: "/creators/ads", icon: "Megaphone" },
       { label: "Analytics", href: "/creators/analytics", icon: "BarChart3" },
+      { label: "Leaderboards", href: "/creators/leaderboards", icon: "Trophy" },
       { label: "Settings", href: "/creators/settings", icon: "Settings" },
     ],
   },

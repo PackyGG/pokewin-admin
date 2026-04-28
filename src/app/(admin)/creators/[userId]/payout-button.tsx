@@ -1,7 +1,6 @@
 "use client";
 
 import { useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,14 +25,12 @@ export function CreatorPayoutButton({
   availableUsd: number;
 }) {
   const [isPending, startTransition] = useTransition();
-  const router = useRouter();
 
   function handlePayout() {
     startTransition(async () => {
       try {
         await processCreatorPayout(affiliateUserId);
         toast.success("Payout processed");
-        router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to process payout");
       }

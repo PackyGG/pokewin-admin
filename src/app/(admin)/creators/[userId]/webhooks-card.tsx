@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Plus, Trash2, Send, Copy } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -39,7 +38,6 @@ export function WebhooksCard({
   const [newUrl, setNewUrl] = useState("");
   const [createdSecret, setCreatedSecret] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
-  const router = useRouter();
 
   function handleAdd() {
     if (!newUrl.trim()) return;
@@ -49,7 +47,6 @@ export function WebhooksCard({
         setCreatedSecret(result.secret);
         toast.success("Webhook created");
         setNewUrl("");
-        router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to create webhook");
       }
@@ -61,7 +58,6 @@ export function WebhooksCard({
       try {
         await deleteWebhook(webhookId);
         toast.success("Webhook deleted");
-        router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to delete webhook");
       }
@@ -73,7 +69,6 @@ export function WebhooksCard({
       try {
         await updateWebhook(webhookId, { enabled });
         toast.success(enabled ? "Webhook enabled" : "Webhook disabled");
-        router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to update webhook");
       }

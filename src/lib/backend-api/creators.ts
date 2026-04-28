@@ -46,6 +46,7 @@ export type CreatorDealResponse = {
   max_tip_per_stream_usd: string;
   max_tip_per_user_usd: string;
   max_sponsored_battle_usd: string;
+  max_sponsorship_per_stream_usd: string;
   allow_site_leaderboards: boolean;
   allow_code_leaderboards: boolean;
   terms: unknown;
@@ -103,6 +104,7 @@ export type CreateDealInput = {
   max_tip_per_stream_usd: number;
   max_tip_per_user_usd: number;
   max_sponsored_battle_usd: number;
+  max_sponsorship_per_stream_usd: number;
   allow_site_leaderboards?: boolean;
   allow_code_leaderboards?: boolean;
   terms?: Record<string, unknown> | null;
@@ -120,6 +122,7 @@ export type UpdateDealInput = {
     max_tip_per_stream_usd: number;
     max_tip_per_user_usd: number;
     max_sponsored_battle_usd: number;
+    max_sponsorship_per_stream_usd: number;
     allow_site_leaderboards: boolean;
     allow_code_leaderboards: boolean;
     terms: Record<string, unknown> | null;

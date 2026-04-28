@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Pencil } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -31,7 +30,6 @@ export function LimitsCard({
   const [tipLimit, setTipLimit] = useState(String(limits?.tipLimit ?? ""));
   const [resetDays, setResetDays] = useState(String(limits?.currencyLimitResetDays ?? ""));
   const [isPending, startTransition] = useTransition();
-  const router = useRouter();
 
   function handleSave() {
     startTransition(async () => {
@@ -44,7 +42,6 @@ export function LimitsCard({
         });
         toast.success("Limits updated");
         setEditing(false);
-        router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to update limits");
       }

@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2, Search, Sparkles, UserPlus } from "lucide-react";
 
@@ -29,7 +28,6 @@ const MIN_SEARCH_LENGTH = 2;
 const DEBOUNCE_MS = 250;
 
 export function AddCreatorDialog() {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<NonCreatorCandidate[]>([]);
@@ -96,7 +94,6 @@ export function AddCreatorDialog() {
         );
         setOpen(false);
         reset();
-        router.refresh();
       } catch (err) {
         toast.error(
           err instanceof Error ? err.message : "Failed to promote user",

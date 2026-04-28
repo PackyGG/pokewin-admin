@@ -172,7 +172,6 @@ export function AdsList({ codes }: { codes: AdCodeSummary[] }) {
 // ---------------------------------------------------------------------------
 
 export function CreateAdCodeButton() {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [code, setCode] = useState("");
   const [pending, startTransition] = useTransition();
@@ -189,7 +188,6 @@ export function CreateAdCodeButton() {
         toast.success("Ad code created");
         setCode("");
         setOpen(false);
-        router.refresh();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Failed to create code");
       }
@@ -295,7 +293,6 @@ function CopyLinkButton({ code }: { code: string }) {
 // ---------------------------------------------------------------------------
 
 function DeleteCodeButton({ code }: { code: string }) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
 
@@ -305,7 +302,6 @@ function DeleteCodeButton({ code }: { code: string }) {
         await deleteAdCode(code);
         toast.success("Ad code deleted");
         setOpen(false);
-        router.refresh();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Failed to delete");
       }

@@ -7,6 +7,7 @@ import { requirePageAccess } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { reloadPacks } from "@/app/(admin)/rewards/actions";
 import { toNumber } from "@/lib/utils/decimal";
+import { backendApi, BackendApiError } from "@/lib/backend-api";
 
 const prizeSchema = z.object({
   type: z.enum(["pack", "card"]),
@@ -155,70 +156,49 @@ export async function createRaffle(data: {
     };
   }
 
-  // 3. Env var check — without this, fetch() receives "undefined/admin/raffles"
-  // and throws an opaque TypeError.
-  const backendUrl = process.env.BACKEND_API_URL;
-  const backendKey = process.env.BACKEND_API_KEY;
-  if (!backendUrl) {
-    return {
-      success: false,
-      error: "BACKEND_API_URL is not configured on the server",
-    };
-  }
-  if (!backendKey) {
-    return {
-      success: false,
-      error: "BACKEND_API_KEY is not configured on the server",
-    };
-  }
-
-  // 4. Call backend
-  let res: Response;
-  try {
-    res = await fetch(`${backendUrl}/admin/raffles`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": backendKey,
-      },
-      body: JSON.stringify({
-        name: parsed.name,
-        description: parsed.description,
-        prizes: parsed.prizes,
-        min_points_per_entry: parsed.minPointsPerEntry,
-        max_points_per_entry: parsed.maxPointsPerEntry,
-        starts_at: startsAtDate.toISOString(),
-        ends_at: endsAtDate.toISOString(),
-      }),
-    });
-  } catch (err) {
-    console.error("[createRaffle] Failed to reach backend:", err);
-    const message = err instanceof Error ? err.message : "Unknown network error";
-    return { success: false, error: `Failed to reach backend: ${message}` };
-  }
-
-  const body = (await res.json().catch(() => null)) as {
+  // 3. Call backend via the central client — picks env-specific URL+key
+  // (BACKEND_API_URL_PROD/_DEV + BACKEND_ADMIN_KEY_PROD/_DEV) based on the
+  // `admin_db_env` cookie, attaches CF Access service tokens, and adds the
+  // `x-bypass-secret` header. Avoids the env-split mismatch that bit when
+  // this action read suffix-less BACKEND_API_URL/BACKEND_API_KEY directly
+  // while every other admin action used the suffixed pair.
+  type CreateRaffleResponse = {
     message?: string;
     data?: { raffle?: { id?: string } };
     raffle?: { id?: string };
     id?: string;
-  } | null;
+  };
 
-  if (!res.ok) {
-    const backendMessage = body?.message ?? `Backend returned HTTP ${res.status}`;
-    console.error(
-      "[createRaffle] Backend error:",
-      res.status,
-      JSON.stringify(body),
+  let body: CreateRaffleResponse;
+  try {
+    body = await backendApi.post<CreateRaffleResponse>("/admin/raffles", {
+      name: parsed.name,
+      description: parsed.description,
+      prizes: parsed.prizes,
+      min_points_per_entry: parsed.minPointsPerEntry,
+      max_points_per_entry: parsed.maxPointsPerEntry,
+      starts_at: startsAtDate.toISOString(),
+      ends_at: endsAtDate.toISOString(),
+    });
+    console.log(
+      `[createRaffle] backend ok name="${parsed.name}" prizes=${parsed.prizes.length}`,
     );
-    return { success: false, error: backendMessage };
+  } catch (err) {
+    if (err instanceof BackendApiError) {
+      console.error(
+        `[createRaffle] backend error status=${err.status} code=${err.code ?? "none"} message="${err.message}" payload=${JSON.stringify(err.payload)}`,
+      );
+      return { success: false, error: err.message };
+    }
+    const message = err instanceof Error ? err.message : "Unknown network error";
+    console.error(`[createRaffle] failed to reach backend: ${message}`, err);
+    return { success: false, error: `Failed to reach backend: ${message}` };
   }
 
   const raffleId = body?.data?.raffle?.id ?? body?.raffle?.id ?? body?.id;
   if (!raffleId || typeof raffleId !== "string") {
     console.error(
-      "[createRaffle] Unexpected backend response shape:",
-      JSON.stringify(body),
+      `[createRaffle] unexpected backend response shape: ${JSON.stringify(body)}`,
     );
     return {
       success: false,

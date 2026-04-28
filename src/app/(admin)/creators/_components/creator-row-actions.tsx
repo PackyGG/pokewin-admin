@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
 import { MoreHorizontal, ExternalLink, UserMinus } from "lucide-react";
@@ -38,7 +37,6 @@ export function CreatorRowActions({
   hasActiveSession,
   hasActiveDeal,
 }: Props) {
-  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [confirmOpen, setConfirmOpen] = useState(false);
 
@@ -55,7 +53,6 @@ export function CreatorRowActions({
         await demoteCreator(userId);
         toast.success("Creator role revoked");
         setConfirmOpen(false);
-        router.refresh();
       } catch (err) {
         toast.error(
           err instanceof Error ? err.message : "Failed to demote creator",
