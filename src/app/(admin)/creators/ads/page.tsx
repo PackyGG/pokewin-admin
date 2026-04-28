@@ -109,6 +109,7 @@ export default async function AdsPage() {
         <KpiTile
           label="Signups"
           value={formatNumber(aggregate.totalSignups)}
+          sub={`${formatNumber(aggregate.totalActiveReferrals)} active`}
           icon={UserPlus}
           accent="cyan"
         />

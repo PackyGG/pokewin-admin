@@ -103,9 +103,14 @@ export default async function AdCodeDetailPage({
           icon={MousePointerClick}
           accent="blue"
         />
+        {/* Signups = unique users with usage_type='signup' on this code
+            (canonical from affiliate_code_usages). Sub line shows how
+            many of them later deposited or wagered, so a code with lots
+            of signups but no activity is visible at a glance. */}
         <KpiTile
           label="Signups"
           value={formatNumber(summary.signups)}
+          sub={`${formatNumber(summary.activeReferrals)} active`}
           icon={UserPlus}
           accent="cyan"
         />

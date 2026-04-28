@@ -116,7 +116,12 @@ export function AdsList({ codes }: { codes: AdCodeSummary[] }) {
                   {formatNumber(c.clicks)}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {formatNumber(c.signups)}
+                  <div className="flex flex-col items-end leading-tight">
+                    <span>{formatNumber(c.signups)}</span>
+                    <span className="text-[10px] text-muted-foreground">
+                      {formatNumber(c.activeReferrals)} active
+                    </span>
+                  </div>
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {formatNumber(c.depositors)}
