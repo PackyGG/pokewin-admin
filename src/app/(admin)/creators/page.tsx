@@ -1,4 +1,4 @@
-import { AlertTriangle, Sparkles } from "lucide-react";
+import { AlertTriangle, Megaphone, Users } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
 import { FadeIn } from "@/components/fade-in";
@@ -6,6 +6,7 @@ import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { formatNumber } from "@/lib/utils/format";
 import { BackendApiError, BackendNetworkError } from "@/lib/backend-api";
+import { PageHero, KpiTile, SectionHeading } from "@/components/modern-panels";
 
 import { parseCreatorsSearchParams } from "./_lib/search-params";
 import {
@@ -69,25 +70,41 @@ export default async function CreatorsPage({
   }
 
   return (
-    <div className="space-y-5">
-      <header className="flex flex-wrap items-start justify-between gap-4 pb-4 border-b">
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-            <Sparkles className="size-5 text-primary" />
+    <div className="space-y-6">
+      <PageHero>
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 items-center justify-center rounded-xl bg-pink-500/10">
+              <Megaphone className="size-5 text-pink-500" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold leading-tight">Creators</h1>
+              <p className="text-sm text-muted-foreground">
+                Weekly fill deals, stream sessions, and payouts.
+              </p>
+            </div>
           </div>
-          <div className="space-y-0.5">
-            <h1 className="text-xl font-semibold leading-tight tracking-tight">
-              Creators
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              {result
-                ? `${formatNumber(result.total)} total · weekly fill deals, stream sessions, payouts`
-                : "Weekly fill deals, stream sessions, payouts"}
-            </p>
-          </div>
+          <AddCreatorDialog />
         </div>
-        <AddCreatorDialog />
-      </header>
+      </PageHero>
+
+      {result && (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-2">
+          <KpiTile
+            label="Total Creators"
+            value={formatNumber(result.total)}
+            icon={Megaphone}
+            accent="pink"
+          />
+          <KpiTile
+            label="On This Page"
+            value={String(result.data.length)}
+            sub={`Page ${result.page} of ${result.totalPages}`}
+            icon={Users}
+            accent="purple"
+          />
+        </div>
+      )}
 
       {loadError && (
         <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-4">
@@ -105,18 +122,21 @@ export default async function CreatorsPage({
         </div>
       )}
 
-      <FadeIn className="space-y-4">
-        <DataTableToolbar searchPlaceholder="Search by username or email..." />
-        <CreatorsTable data={result?.data ?? []} />
-        {result && (
-          <DataTablePagination
-            page={result.page}
-            totalPages={result.totalPages}
-            total={result.total}
-            perPage={result.perPage}
-          />
-        )}
-      </FadeIn>
+      <div className="space-y-3">
+        <SectionHeading icon={Users} title="All Creators" />
+        <FadeIn className="space-y-4">
+          <DataTableToolbar searchPlaceholder="Search by username or email..." />
+          <CreatorsTable data={result?.data ?? []} />
+          {result && (
+            <DataTablePagination
+              page={result.page}
+              totalPages={result.totalPages}
+              total={result.total}
+              perPage={result.perPage}
+            />
+          )}
+        </FadeIn>
+      </div>
     </div>
   );
 }
