@@ -1,26 +1,22 @@
 import { getDb } from "@/lib/db";
 import { withTiming } from "@/lib/observability/query-timings";
+import { computeHousePnl } from "./pnl";
 
 /**
  * Lifetime realized P&L from the house perspective — a balance-sheet snapshot.
  *
  * Single source of truth for the Dashboard and Analytics pages so the two
- * can never drift. Mirrors the per-user P&L definition in
- * src/lib/queries/users.ts (there it's user-profit, here it's house-profit,
- * so the sign is flipped).
+ * can never drift. Uses the canonical formula from `pnl.ts`:
  *
- *   pnl =   total deposits
- *         − total withdrawals (balances.total_withdrawn + shipped/completed
- *                              card_withdrawal_requests)
- *         − current user balance (available + locked)
- *         − unsold, non-exchanged inventory
- *         − unclaimed vouchers
- *         − unclaimed rakeback claims
+ *   housePnl = deposits − withdrawals − onSiteBalance − inventory − vouchers
+ *
+ * On top of that this snapshot subtracts an extra liability term — unclaimed
+ * rakeback — because at the platform level we owe those balances even though
+ * they aren't yet on the user's balance row. The per-user P&L (users-list /
+ * users-detail) sticks to the canonical five terms so the User Detail page
+ * stays in sync with what the user themselves would see.
  *
  * All aggregates exclude staff (admin/creator) — role NOT IN ('admin','creator').
- *
- * The returned breakdown is deliberately flat so consumers can pick the
- * fields they want to surface in their UI without re-running the query.
  */
 export type RealizedPnlSnapshot = {
   pnl: number;
@@ -76,13 +72,17 @@ async function realizedPnlSnapshotInner(): Promise<RealizedPnlSnapshot> {
   const vouchers = Number(r?.vouchers ?? 0);
   const unclaimedRakeback = Number(r?.unclaimed_rakeback ?? 0);
 
+  // Canonical formula via shared helper, then subtract the global-only
+  // unclaimed-rakeback liability. Keeps the arithmetic in one place across
+  // the dashboard/analytics/per-user surfaces.
   const pnl =
-    totalDeposited -
-    totalWithdrawn -
-    userBalance -
-    inventory -
-    vouchers -
-    unclaimedRakeback;
+    computeHousePnl({
+      deposits: totalDeposited,
+      withdrawals: totalWithdrawn,
+      onSiteBalance: userBalance,
+      inventoryValue: inventory,
+      unclaimedVouchers: vouchers,
+    }) - unclaimedRakeback;
 
   return {
     pnl,
