@@ -1,14 +1,27 @@
+import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { dispatchWebhook } from "@/lib/webhook-dispatcher";
 import { toNumber } from "@/lib/utils/decimal";
 
+function isAuthorizedCron(request: Request): boolean {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return false;
+  const header = request.headers.get("authorization");
+  if (!header) return false;
+  const expected = `Bearer ${secret}`;
+  const a = Buffer.from(expected);
+  const b = Buffer.from(header);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
 export async function GET(request: Request) {
   const db = await getDb();
-  // Verify cron secret (Vercel sets Authorization header for cron jobs)
-  const authHeader = request.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  // Verify cron secret (Vercel sets Authorization header for cron jobs).
+  // Use timingSafeEqual to avoid leaking length/prefix via timing side-channel.
+  if (!isAuthorizedCron(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
