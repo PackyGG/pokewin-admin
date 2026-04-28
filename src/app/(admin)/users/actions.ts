@@ -134,13 +134,17 @@ export async function deleteUser(userId: string, totpCode: string) {
 
   const label = user.username ?? user.email ?? userId;
 
-  await db.user.delete({ where: { id: userId } });
-
+  // Audit BEFORE the destructive delete so a failed/aborted attempt is still
+  // captured. If the audit insert itself fails, abort — never delete without
+  // a paper trail.
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "user_deleted",
+    targetUserId: userId,
     metadata: { deleted_user_id: userId, username: label },
   });
+
+  await db.user.delete({ where: { id: userId } });
 
   revalidatePath("/users");
 }
@@ -162,8 +166,8 @@ export async function bulkDeleteUsers(userIds: string[], totpCode: string) {
     users.map((u) => [u.id, u.username ?? u.email ?? u.id]),
   );
 
-  await db.user.deleteMany({ where: { id: { in: userIds } } });
-
+  // Audit BEFORE the destructive delete so a failed bulk-delete is still
+  // captured. The metadata snapshot is taken pre-delete from `users` above.
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "users_bulk_deleted",
@@ -172,6 +176,8 @@ export async function bulkDeleteUsers(userIds: string[], totpCode: string) {
       users: userIds.map((id) => ({ id, username: labels.get(id) ?? id })),
     },
   });
+
+  await db.user.deleteMany({ where: { id: { in: userIds } } });
 
   revalidatePath("/users");
 }
