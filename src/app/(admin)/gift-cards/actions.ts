@@ -35,6 +35,7 @@ export async function createGiftCard(data: {
       action: "created",
       admin_user_id: session.userId,
     },
+    select: { id: true },
   });
 
   await createAdminAuditEvent({
@@ -66,6 +67,7 @@ export async function cancelGiftCard(giftCardId: string) {
       action: "cancelled",
       admin_user_id: session.userId,
     },
+    select: { id: true },
   });
 
   await createAdminAuditEvent({

@@ -62,6 +62,7 @@ export async function createVoucher(data: {
       action: "created",
       admin_user_id: session.userId,
     },
+    select: { id: true },
   });
 
   await createAdminAuditEvent({
