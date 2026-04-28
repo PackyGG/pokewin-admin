@@ -53,6 +53,9 @@ export async function createCreatorWebhook(data: { url: string }) {
 
   const secret = crypto.randomBytes(32).toString("hex");
 
+  // Explicit select — only the id is consumed downstream, and a default
+  // RETURNING * crashes with P2022 when prod is missing a later-migration
+  // column the generated client knows about.
   const webhook = await adminDb.creator_webhooks.create({
     data: {
       target_user_id: userId,
@@ -60,6 +63,7 @@ export async function createCreatorWebhook(data: { url: string }) {
       secret,
       type: "balance_fill",
     },
+    select: { id: true },
   });
 
   revalidatePath("/my-profile");
@@ -90,6 +94,7 @@ export async function updateCreatorWebhook(
       ...(data.enabled !== undefined && { enabled: data.enabled }),
       updated_at: new Date(),
     },
+    select: { id: true },
   });
 
   revalidatePath("/my-profile");
@@ -101,7 +106,7 @@ export async function deleteCreatorWebhook(webhookId: string) {
   const webhook = await adminDb.creator_webhooks.findUnique({ where: { id: webhookId } });
   if (!webhook || webhook.target_user_id !== userId) throw new Error("Webhook not found");
 
-  await adminDb.creator_webhooks.delete({ where: { id: webhookId } });
+  await adminDb.creator_webhooks.delete({ where: { id: webhookId }, select: { id: true } });
   revalidatePath("/my-profile");
 }
 
@@ -151,7 +156,7 @@ export async function unlinkSocial(socialId: string) {
   const social = await adminDb.creator_socials.findUnique({ where: { id: socialId } });
   if (!social || social.target_user_id !== userId) throw new Error("Social connection not found");
 
-  await adminDb.creator_socials.delete({ where: { id: socialId } });
+  await adminDb.creator_socials.delete({ where: { id: socialId }, select: { id: true } });
   revalidatePath("/my-profile");
 }
 
@@ -183,6 +188,7 @@ export async function linkSocialByUsername(platform: string, username: string) {
       follower_count: stats.followerCount ?? 0,
       last_fetched_at: new Date(),
     },
+    select: { id: true },
   });
 
   revalidatePath("/my-profile");
