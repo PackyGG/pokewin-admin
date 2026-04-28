@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
 // stays consistent across pages.
 const RARITY_DOT: Record<string, string> = {
   common: "bg-zinc-400",
-  uncommon: "bg-green-500",
+  uncommon: "bg-emerald-500",
   rare: "bg-blue-500",
   "ultra rare": "bg-purple-500",
   "secret rare": "bg-pink-500",
@@ -33,7 +33,7 @@ const RARITY_DOT: Record<string, string> = {
 
 const RARITY_RING: Record<string, string> = {
   common: "ring-zinc-500/20",
-  uncommon: "ring-green-500/30",
+  uncommon: "ring-emerald-500/30",
   rare: "ring-blue-500/30",
   "ultra rare": "ring-purple-500/40",
   "secret rare": "ring-pink-500/40",

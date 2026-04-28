@@ -12,25 +12,25 @@ import { formatRelative, formatCurrency } from "@/lib/utils/format";
 import type { AuditListItem } from "@/lib/queries/audit";
 
 const EVENT_COLORS: Record<string, string> = {
-  admin_login: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
-  account_banned: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",
-  account_unbanned: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
+  admin_login: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
+  account_banned: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
+  account_unbanned: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
   account_locked: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
-  account_unlocked: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
+  account_unlocked: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
   balance_adjustment: "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
   role_changed: "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
   pack_activated: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
   pack_deactivated: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
   withdrawal_processed: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
   withdrawal_shipped: "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
-  withdrawal_completed: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
-  withdrawal_cancelled: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",
-  withdrawal_failed: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",
-  chat_message_deleted: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",
+  withdrawal_completed: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
+  withdrawal_cancelled: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
+  withdrawal_failed: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
+  chat_message_deleted: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
   chat_message_pinned: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
   chat_message_unpinned: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
   chat_muted: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
-  chat_unmuted: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
+  chat_unmuted: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
   admin_user_created: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
   promo_code_created: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
 };
@@ -142,7 +142,7 @@ function MetadataCell({
       <Badge
         key="lock"
         variant="outline"
-        className={`text-[10px] px-1.5 py-0 ${m.locked ? "bg-red-500/15 text-red-600 dark:text-red-400" : "bg-green-500/15 text-green-600 dark:text-green-400"}`}
+        className={`text-[10px] px-1.5 py-0 ${m.locked ? "bg-rose-500/15 text-rose-600 dark:text-rose-400" : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"}`}
       >
         {m.locked ? "locked" : "unlocked"}
       </Badge>
@@ -320,7 +320,7 @@ function MetadataCell({
         <Badge
           key="cfgval"
           variant="outline"
-          className={`text-[10px] px-1.5 py-0 ${m.value === true ? "bg-green-500/15 text-green-600 dark:text-green-400" : m.value === false ? "bg-red-500/15 text-red-600 dark:text-red-400" : ""}`}
+          className={`text-[10px] px-1.5 py-0 ${m.value === true ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : m.value === false ? "bg-rose-500/15 text-rose-600 dark:text-rose-400" : ""}`}
         >
           {String(m.value)}
         </Badge>

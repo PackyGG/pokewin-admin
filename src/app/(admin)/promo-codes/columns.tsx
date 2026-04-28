@@ -41,7 +41,7 @@ function codeStatus(
   if (isExpired)
     return {
       label: "Expired",
-      cls: "border-red-500/30 bg-red-500/15 text-red-400",
+      cls: "border-rose-500/30 bg-rose-500/15 text-rose-400",
     };
   if (isUsedUp)
     return {
@@ -50,7 +50,7 @@ function codeStatus(
     };
   return {
     label: "Active",
-    cls: "border-green-500/30 bg-green-500/15 text-green-400",
+    cls: "border-emerald-500/30 bg-emerald-500/15 text-emerald-400",
   };
 }
 
@@ -231,7 +231,7 @@ export const columns: ColumnDef<PromoCodeListItem>[] = [
       if (!row.original.expiresAt) return "Never";
       const expired = new Date(row.original.expiresAt) < new Date();
       return (
-        <span className={expired ? "text-red-400" : ""}>
+        <span className={expired ? "text-rose-400" : ""}>
           {formatDate(row.original.expiresAt)}
         </span>
       );

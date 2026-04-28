@@ -27,13 +27,13 @@ const BATTLE_STATUS_COLORS: Record<string, string> = {
   waiting: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
   in_progress: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
   animating: "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
-  completed: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
+  completed: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
   cancelled: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
 };
 
 const RARITY_COLORS: Record<string, string> = {
   common: "bg-zinc-700/90 text-zinc-100",
-  uncommon: "bg-green-700/90 text-green-100",
+  uncommon: "bg-emerald-700/90 text-emerald-100",
   rare: "bg-blue-700/90 text-blue-100",
   "ultra rare": "bg-purple-700/90 text-purple-100",
   "secret rare": "bg-yellow-600/90 text-yellow-100",
@@ -43,8 +43,8 @@ const RARITY_COLORS: Record<string, string> = {
 };
 
 const RESULT_COLORS: Record<string, string> = {
-  win: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
-  lose: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",
+  win: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
+  lose: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
   draw: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
 };
 
@@ -189,14 +189,14 @@ export default async function BattleDetailPage({
                 <div
                   key={team.teamNumber}
                   className={`relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80 ${
-                    team.isWinner ? "border-green-500/30" : ""
+                    team.isWinner ? "border-emerald-500/30" : ""
                   }`}
                 >
                   <div className="relative p-5">
                     <div className="mb-4 flex items-center gap-2">
                       <h3 className="text-sm font-medium">Team {team.teamNumber}</h3>
                       {team.isWinner && (
-                        <Badge variant="outline" className="bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30">
+                        <Badge variant="outline" className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
                           <Trophy className="size-3 mr-1" />
                           Winner
                         </Badge>

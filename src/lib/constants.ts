@@ -12,7 +12,7 @@ export const WITHDRAWAL_STATUSES = [
 export type WithdrawalStatus = (typeof WITHDRAWAL_STATUSES)[number];
 
 export const ROLE_COLORS: Record<string, string> = {
-  admin: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",
+  admin: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
   support: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
   marketing: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
   creator: "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
@@ -23,8 +23,8 @@ export const STATUS_COLORS: Record<string, string> = {
   pending: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
   processing: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
   shipped: "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
-  completed: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
-  failed: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",
+  completed: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
+  failed: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
   cancelled: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
 };
 
@@ -32,7 +32,7 @@ export const AFFILIATE_LEVEL_COLORS: Record<number, string> = {
   1: "bg-zinc-400/15 text-zinc-500 dark:text-zinc-300 border-zinc-400/30",
   2: "bg-orange-500/15 text-orange-600 dark:text-orange-400 border-orange-500/30",
   3: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
-  4: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
+  4: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
   5: "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-cyan-500/30",
   6: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
   7: "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
@@ -51,7 +51,7 @@ export const AFFILIATE_LEVEL_LABELS: Record<number, string> = {
 };
 
 export const USER_STATUS_COLORS: Record<string, string> = {
-  active: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
-  banned: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",
+  active: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
+  banned: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
   locked: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
 };

@@ -22,9 +22,9 @@ export function StatusTimeline({ steps }: { steps: TimelineStep[] }) {
           )}
           <div className="flex flex-col items-center gap-1">
             {step.failed ? (
-              <XCircle className="size-5 text-red-400" />
+              <XCircle className="size-5 text-rose-400" />
             ) : step.date ? (
-              <CheckCircle className="size-5 text-green-400" />
+              <CheckCircle className="size-5 text-emerald-400" />
             ) : step.active ? (
               <Circle className="size-5 text-blue-400 fill-blue-400" />
             ) : (

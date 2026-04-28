@@ -533,8 +533,8 @@ export const FeatureLocksCard = React.memo(function FeatureLocksCard({
                 variant="outline"
                 className={
                   f.locked
-                    ? "bg-red-500/15 text-red-600 dark:text-red-400"
-                    : "bg-green-500/15 text-green-600 dark:text-green-400"
+                    ? "bg-rose-500/15 text-rose-600 dark:text-rose-400"
+                    : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
                 }
               >
                 {f.locked ? "Locked" : "Open"}

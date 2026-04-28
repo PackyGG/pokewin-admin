@@ -140,7 +140,7 @@ async function ClaimsTab({ page, perPage, type, search }: { page: number; perPag
                   </TableCell>
                   <TableCell>
                     {c.claimedAt ? (
-                      <Badge variant="outline" className="bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30">
+                      <Badge variant="outline" className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
                         {formatDateTime(c.claimedAt)}
                       </Badge>
                     ) : (

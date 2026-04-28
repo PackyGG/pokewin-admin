@@ -16,8 +16,8 @@ import type { GiftCardListItem } from "@/lib/queries/gift-cards";
 
 const STATUS_STYLES: Record<string, string> = {
   available: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
-  redeemed: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
-  cancelled: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",
+  redeemed: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
+  cancelled: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
   expired: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
 };
 

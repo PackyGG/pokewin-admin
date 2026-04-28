@@ -125,7 +125,7 @@ export function PackStatsSection({ stats }: { stats: PackStats }) {
                       <div
                         className={`font-semibold tabular-nums ${
                           typeof rtp === "string" && parseFloat(rtp) > 100
-                            ? "text-red-400"
+                            ? "text-rose-400"
                             : ""
                         }`}
                       >
