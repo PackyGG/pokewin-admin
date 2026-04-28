@@ -1,9 +1,18 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import {
+  ArrowLeft,
+  CloudRain,
+  Coins,
+  DollarSign,
+  Users,
+  Trophy,
+  Info,
+  Gift,
+  Ticket,
+} from "lucide-react";
 import { getRainDetail } from "@/lib/queries/rain";
 import { requirePageAccess } from "@/lib/dal";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -15,12 +24,14 @@ import {
 } from "@/components/ui/table";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { formatCurrency, formatDateTime, formatNumber } from "@/lib/utils/format";
+import { PageHero, SectionHeading, KpiTile } from "@/components/modern-panels";
+import { FadeIn } from "@/components/fade-in";
 import { RainDetailsCard } from "./rain-detail-cards";
 
 export const metadata = { title: "Rain Detail" };
 
 const STATUS_COLORS: Record<string, string> = {
-  active: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
+  active: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
   drawing: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
   completed: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
   cancelled: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
@@ -47,31 +58,74 @@ export default async function RainDetailPage({
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <Link
-          href="/rain"
-          className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground"
-        >
-          <ArrowLeft className="size-4" />
-        </Link>
-        <div className="flex-1">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">Rain</h1>
+      <PageHero>
+        <div className="flex items-center gap-3">
+          <Link
+            href="/rain"
+            className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground"
+          >
+            <ArrowLeft className="size-4" />
+          </Link>
+          <div className="flex size-10 items-center justify-center rounded-xl bg-blue-500/10">
+            <CloudRain className="size-5 text-blue-500" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-2xl font-bold leading-tight">Rain</h1>
+              <Badge variant="outline" className={STATUS_COLORS[data.status] ?? ""}>
+                {data.status}
+              </Badge>
+            </div>
+            <p className="text-sm text-muted-foreground font-mono">
+              {data.id.slice(0, 8)}…
+            </p>
+          </div>
+        </div>
+      </PageHero>
+
+      {/* Rain payouts go FROM us TO the winning user → user wins → ROSE.
+          Tips that fund the pool come FROM users (deposits/wagers feeding
+          the pool) → emerald. Participation count is neutral → blue. */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <KpiTile
+          label="Total Pool"
+          value={formatCurrency(data.totalPoolUsd)}
+          sub="Paid to winner"
+          icon={DollarSign}
+          accent="rose"
+        />
+        <KpiTile
+          label="Tips"
+          value={formatCurrency(data.tipAmountUsd)}
+          sub={`${data.tips.length} tipper${data.tips.length === 1 ? "" : "s"}`}
+          icon={Coins}
+          accent="emerald"
+        />
+        <KpiTile
+          label="Participants"
+          value={formatNumber(data.participantCount)}
+          icon={Users}
+          accent="blue"
+        />
+        <KpiTile
+          label="Winner"
+          value={
+            data.winnerUsername ??
+            (data.winnerUserId ? data.winnerUserId.slice(0, 8) : "—")
+          }
+          icon={Trophy}
+          accent="amber"
+        />
+      </div>
+
+      <div className="space-y-3">
+        <SectionHeading icon={Info} title="Details" />
+        <FadeIn className="rounded-2xl border bg-card p-5 space-y-3">
+          <InfoRow label="Status">
             <Badge variant="outline" className={STATUS_COLORS[data.status] ?? ""}>
               {data.status}
             </Badge>
-          </div>
-        </div>
-      </div>
-
-      {/* Details Card */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium">Details</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <InfoRow label="Status">{data.status}</InfoRow>
+          </InfoRow>
           <RainDetailsCard
             rainId={data.id}
             baseAmountUsd={data.baseAmountUsd}
@@ -92,17 +146,15 @@ export default async function RainDetailPage({
               </Link>
             </InfoRow>
           )}
-        </CardContent>
-      </Card>
+        </FadeIn>
+      </div>
 
-      {/* Tips Card */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium">
-            Tips ({data.tips.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
+      <div className="space-y-3">
+        <SectionHeading
+          icon={Gift}
+          title={`Tips (${data.tips.length})`}
+        />
+        <FadeIn className="rounded-md border overflow-hidden">
           <Table>
             <TableHeader>
               <TableRow>
@@ -120,7 +172,11 @@ export default async function RainDetailPage({
                       {tip.username ?? tip.userId.slice(0, 8)}
                     </Link>
                   </TableCell>
-                  <TableCell>{formatCurrency(tip.amountUsd)}</TableCell>
+                  {/* Tips fund the pool — money flows FROM user TO us
+                      → emerald (house keeps it until winner takes it). */}
+                  <TableCell className="text-emerald-600 dark:text-emerald-400 tabular-nums">
+                    {formatCurrency(tip.amountUsd)}
+                  </TableCell>
                   <TableCell>
                     {tip.isTeamMember && (
                       <Badge variant="outline" className="bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30">
@@ -140,54 +196,54 @@ export default async function RainDetailPage({
               )}
             </TableBody>
           </Table>
-        </CardContent>
-      </Card>
+        </FadeIn>
+      </div>
 
-      {/* Entries Card */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium">
-            Entries ({data.entries.total})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>User</TableHead>
-                <TableHead>Verified At</TableHead>
-                <TableHead>Date</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data.entries.data.map((entry) => (
-                <TableRow key={entry.id}>
-                  <TableCell>
-                    <Link href={`/users/${entry.userId}`} className="hover:underline">
-                      {entry.username ?? entry.userId.slice(0, 8)}
-                    </Link>
-                  </TableCell>
-                  <TableCell>{formatDateTime(entry.turnstileVerifiedAt)}</TableCell>
-                  <TableCell>{formatDateTime(entry.createdAt)}</TableCell>
-                </TableRow>
-              ))}
-              {data.entries.data.length === 0 && (
+      <div className="space-y-3">
+        <SectionHeading
+          icon={Ticket}
+          title={`Entries (${data.entries.total})`}
+        />
+        <FadeIn className="space-y-4">
+          <div className="rounded-md border overflow-hidden">
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={3} className="h-24 text-center text-muted-foreground">
-                    No entries yet.
-                  </TableCell>
+                  <TableHead>User</TableHead>
+                  <TableHead>Verified At</TableHead>
+                  <TableHead>Date</TableHead>
                 </TableRow>
-              )}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {data.entries.data.map((entry) => (
+                  <TableRow key={entry.id}>
+                    <TableCell>
+                      <Link href={`/users/${entry.userId}`} className="hover:underline">
+                        {entry.username ?? entry.userId.slice(0, 8)}
+                      </Link>
+                    </TableCell>
+                    <TableCell>{formatDateTime(entry.turnstileVerifiedAt)}</TableCell>
+                    <TableCell>{formatDateTime(entry.createdAt)}</TableCell>
+                  </TableRow>
+                ))}
+                {data.entries.data.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={3} className="h-24 text-center text-muted-foreground">
+                      No entries yet.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
           <DataTablePagination
             page={data.entries.page}
             totalPages={data.entries.totalPages}
             total={data.entries.total}
             perPage={data.entries.perPage}
           />
-        </CardContent>
-      </Card>
+        </FadeIn>
+      </div>
     </div>
   );
 }
