@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Pencil, ShieldCheck } from "lucide-react";
+import { Pencil, ShieldAlert, ShieldCheck, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -385,6 +385,9 @@ export function XpAdjustDialog({
 // ---------------------------------------------------------------------------
 // Wipe Account Button + Confirmation Dialog (Admin Only)
 // ---------------------------------------------------------------------------
+// Two-gate destructive action: admin must (1) type-to-confirm the username
+// AND (2) enter their current TOTP code. The server re-verifies both before
+// running the wipe transaction.
 export function WipeAccountButton({
   userId,
   displayName,
@@ -394,16 +397,19 @@ export function WipeAccountButton({
 }) {
   const [open, setOpen] = useState(false);
   const [confirmValue, setConfirmValue] = useState("");
+  const [totpCode, setTotpCode] = useState("");
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
   const isConfirmed = confirmValue === displayName;
+  const hasTotp = totpCode.trim().length > 0;
+  const canSubmit = isConfirmed && hasTotp && !isPending;
 
   function handleWipe() {
-    if (!isConfirmed) return;
+    if (!canSubmit) return;
     startTransition(async () => {
       try {
-        const result = await wipeUserAccount(userId, confirmValue);
+        const result = await wipeUserAccount(userId, totpCode.trim());
         if (!result.success) {
           toast.error(result.error);
           return;
@@ -411,6 +417,7 @@ export function WipeAccountButton({
         toast.success("Account data wiped successfully");
         setOpen(false);
         setConfirmValue("");
+        setTotpCode("");
         router.refresh();
       } catch (e) {
         toast.error(
@@ -421,17 +428,27 @@ export function WipeAccountButton({
   }
 
   return (
-    <AlertDialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) setConfirmValue(""); }}>
-      <AlertDialogTrigger
-        render={
-          <Button variant="destructive" size="sm" />
+    <AlertDialog
+      open={open}
+      onOpenChange={(v) => {
+        setOpen(v);
+        if (!v) {
+          setConfirmValue("");
+          setTotpCode("");
         }
+      }}
+    >
+      <AlertDialogTrigger
+        render={<Button variant="destructive" size="sm" />}
       >
         Wipe
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Wipe All Account Data?</AlertDialogTitle>
+          <AlertDialogTitle className="flex items-center gap-2">
+            <ShieldAlert className="size-4 text-rose-500" />
+            Wipe All Account Data?
+          </AlertDialogTitle>
           <AlertDialogDescription className="space-y-2">
             <span className="block">
               This will <strong>permanently delete</strong> all data for this
@@ -440,27 +457,49 @@ export function WipeAccountButton({
             </span>
             <span className="block">
               The user record and login credentials will be preserved, but
-              everything else will be gone. <strong>This cannot be undone.</strong>
-            </span>
-            <span className="mt-3 block text-sm">
-              Type <strong className="font-mono text-foreground">{displayName}</strong> to confirm:
+              everything else will be gone.{" "}
+              <strong>This cannot be undone.</strong>
             </span>
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <Input
-          value={confirmValue}
-          onChange={(e) => setConfirmValue(e.target.value)}
-          placeholder={displayName}
-          className="font-mono"
-          autoComplete="off"
-        />
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">
+              Type{" "}
+              <span className="font-mono font-semibold text-foreground">
+                {displayName}
+              </span>{" "}
+              to confirm
+            </Label>
+            <Input
+              value={confirmValue}
+              onChange={(e) => setConfirmValue(e.target.value)}
+              placeholder={displayName}
+              className="font-mono"
+              autoComplete="off"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">2FA Code</Label>
+            <Input
+              type="text"
+              inputMode="numeric"
+              placeholder="Enter your 6-digit code"
+              value={totpCode}
+              onChange={(e) => setTotpCode(e.target.value)}
+              maxLength={6}
+              autoComplete="one-time-code"
+            />
+          </div>
+        </div>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <Button
             variant="destructive"
             onClick={handleWipe}
-            disabled={!isConfirmed || isPending}
+            disabled={!canSubmit}
           >
+            <Trash2 className="mr-1.5 size-3.5" />
             {isPending ? "Wiping..." : "Wipe Account Data"}
           </Button>
         </AlertDialogFooter>

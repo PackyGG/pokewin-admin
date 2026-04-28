@@ -714,22 +714,28 @@ export async function fetchCreatorWithdrawalLimits(userId: string) {
 
 export async function wipeUserAccount(
   userId: string,
-  confirmUsername: string,
+  totpCode: string,
 ): Promise<{ success: true } | { success: false; error: string }> {
   const db = await getDb();
   const session = await requireAdmin();
 
-  // Verify the user exists and the confirmation username matches
+  // 2FA gate — verify the calling admin's TOTP code BEFORE doing anything
+  // destructive. Mirrors the pattern used by deleteUser / changeRole.
+  try {
+    await require2FA(session.userId, totpCode);
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Invalid 2FA code",
+    };
+  }
+
+  // Verify the user exists
   const user = await db.user.findUnique({
     where: { id: userId },
     select: { id: true, username: true, email: true },
   });
   if (!user) return { success: false, error: "User not found" };
-
-  const displayName = user.username ?? user.email ?? user.id;
-  if (confirmUsername !== displayName) {
-    return { success: false, error: "Username confirmation does not match" };
-  }
 
   // Audit BEFORE the wipe — if the transaction fails, the attempt is still logged
   try {
