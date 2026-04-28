@@ -88,8 +88,8 @@ export const ModerationSection = React.memo(function ModerationSection({
       {(user.isBanned || user.isLocked) && (
         <div className="space-y-3">
           {user.isBanned && (
-            <div className="rounded-md border border-red-500/30 bg-red-500/5 p-3 space-y-2">
-              <p className="text-sm font-medium text-red-400">Banned</p>
+            <div className="rounded-md border border-rose-500/30 bg-rose-500/5 p-3 space-y-2">
+              <p className="text-sm font-medium text-rose-400">Banned</p>
               {user.bannedReason && (
                 <p className="text-xs text-muted-foreground">
                   Reason: {user.bannedReason}
@@ -165,8 +165,8 @@ export const ModerationSection = React.memo(function ModerationSection({
                       variant="outline"
                       className={
                         m.unmutedAt
-                          ? "bg-green-500/15 text-green-600 dark:text-green-400"
-                          : "bg-red-500/15 text-red-600 dark:text-red-400"
+                          ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                          : "bg-rose-500/15 text-rose-600 dark:text-rose-400"
                       }
                     >
                       {m.unmutedAt ? "Unmuted" : "Active"}

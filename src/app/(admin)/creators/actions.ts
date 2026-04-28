@@ -436,6 +436,9 @@ export async function createWebhook(
 
   const secret = crypto.randomBytes(32).toString("hex");
 
+  // Explicit select — only the id is consumed downstream, and a default
+  // RETURNING * crashes with P2022 when prod is missing a later-migration
+  // column the generated client knows about.
   const webhook = await adminDb.creator_webhooks.create({
     data: {
       target_user_id: targetUserId,
@@ -443,6 +446,7 @@ export async function createWebhook(
       secret,
       type: "balance_fill",
     },
+    select: { id: true },
   });
 
   await createAdminAuditEvent({
@@ -480,6 +484,7 @@ export async function updateWebhook(
       ...(data.enabled !== undefined && { enabled: data.enabled }),
       updated_at: new Date(),
     },
+    select: { id: true },
   });
 
   await createAdminAuditEvent({
@@ -498,7 +503,7 @@ export async function deleteWebhook(webhookId: string) {
   const webhook = await adminDb.creator_webhooks.findUnique({ where: { id: webhookId } });
   if (!webhook) throw new Error("Webhook not found");
 
-  await adminDb.creator_webhooks.delete({ where: { id: webhookId } });
+  await adminDb.creator_webhooks.delete({ where: { id: webhookId }, select: { id: true } });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -589,6 +594,7 @@ export async function adminLinkSocialByUsername(
       follower_count: stats.followerCount ?? 0,
       last_fetched_at: new Date(),
     },
+    select: { id: true },
   });
 
   revalidatePath(`/creators/${targetUserId}`);
@@ -608,7 +614,7 @@ export async function adminUnlinkSocial(
   if (!social || social.target_user_id !== targetUserId)
     throw new Error("Social connection not found");
 
-  await adminDb.creator_socials.delete({ where: { id: socialId } });
+  await adminDb.creator_socials.delete({ where: { id: socialId }, select: { id: true } });
 
   revalidatePath(`/creators/${targetUserId}`);
   revalidatePath("/my-profile");
@@ -672,6 +678,7 @@ export async function createDeal(
       max_financial_exposure: maxExposure,
       status: "active",
     },
+    select: { id: true },
   });
 
   // Sync withdrawal limits to main DB
@@ -755,6 +762,7 @@ export async function updateDeal(
       max_financial_exposure: maxExposure,
       updated_at: new Date(),
     },
+    select: { id: true },
   });
 
   // Sync withdrawal limits to main DB
@@ -832,6 +840,7 @@ export async function manualFill(targetUserId: string, dealId: string) {
       status: "completed",
       triggered_by: "manual",
     },
+    select: { id: true },
   });
 
   // Dispatch webhook fire-and-forget so the action can return promptly.
@@ -925,7 +934,7 @@ export async function deleteDeal(dealId: string) {
   const deal = await adminDb.creator_deals.findUnique({ where: { id: dealId } });
   if (!deal) throw new Error("Deal not found");
 
-  await adminDb.creator_deals.delete({ where: { id: dealId } });
+  await adminDb.creator_deals.delete({ where: { id: dealId }, select: { id: true } });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,

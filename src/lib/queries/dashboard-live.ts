@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { MS_PER_DAY } from "@/lib/utils/time";
 import { EXCLUDE_STAFF_USER_RELATION } from "./_exclude-staff";
 
 /**
@@ -43,7 +44,7 @@ export async function getLiveDeposits(params: {
   const limit = Math.max(1, Math.min(50, Math.floor(params.limit)));
   const since = params.sinceCreatedAt ? new Date(params.sinceCreatedAt) : null;
 
-  const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const dayAgo = new Date(Date.now() - MS_PER_DAY);
 
   const [rows, total24hAgg] = await Promise.all([
     db.ledger_transactions.findMany({

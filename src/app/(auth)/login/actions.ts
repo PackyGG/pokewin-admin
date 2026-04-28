@@ -9,6 +9,7 @@ import { generateSecret } from "@/lib/totp";
 import { redirect } from "next/navigation";
 import { getDefaultRouteForUser } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { MS_PER_MINUTE, MS_PER_HOUR } from "@/lib/utils/time";
 
 const loginSchema = z.object({
   email: z.string().email("Invalid email"),
@@ -27,7 +28,7 @@ function checkRateLimit(key: string): boolean {
   const now = Date.now();
   const entry = rateLimitMap.get(key);
   if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(key, { count: 1, resetAt: now + 60_000 });
+    rateLimitMap.set(key, { count: 1, resetAt: now + MS_PER_MINUTE });
     return true;
   }
   if (entry.count >= 5) return false;
@@ -139,7 +140,7 @@ export async function login(
         ip,
         user_agent: userAgent,
         auth_method: "no_2fa",
-        expires_at: new Date(Date.now() + 8 * 60 * 60 * 1000),
+        expires_at: new Date(Date.now() + 8 * MS_PER_HOUR),
       },
     }),
   ]);

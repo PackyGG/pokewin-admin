@@ -70,7 +70,7 @@ export default async function PromoCodeDetailPage({
                 {isExpired && (
                   <Badge
                     variant="outline"
-                    className="bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30"
+                    className="bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30"
                   >
                     Expired
                   </Badge>
@@ -138,7 +138,7 @@ export default async function PromoCodeDetailPage({
                 variant="outline"
                 className={
                   data.requiresDiscord
-                    ? "bg-green-500/15 text-green-400 border-green-500/30"
+                    ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
                     : ""
                 }
               >

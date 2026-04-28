@@ -21,7 +21,7 @@ export const metadata = { title: "Withdrawal Detail" };
 
 const RARITY_COLORS: Record<string, string> = {
   common: "bg-zinc-700/90 text-zinc-100",
-  uncommon: "bg-green-700/90 text-green-100",
+  uncommon: "bg-emerald-700/90 text-emerald-100",
   rare: "bg-blue-700/90 text-blue-100",
   "ultra rare": "bg-purple-700/90 text-purple-100",
   "secret rare": "bg-yellow-600/90 text-yellow-100",
@@ -152,7 +152,7 @@ export default async function WithdrawalDetailPage({
               {data.completedAt && <InfoRow label="Completed">{formatDateTime(data.completedAt)}</InfoRow>}
               {data.failureReason && (
                 <InfoRow label="Failure Reason">
-                  <span className="text-red-400">{data.failureReason}</span>
+                  <span className="text-rose-400">{data.failureReason}</span>
                 </InfoRow>
               )}
             </div>

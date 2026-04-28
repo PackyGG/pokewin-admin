@@ -1,6 +1,13 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import {
+  ArrowLeft,
+  Star,
+  MousePointerClick,
+  UserPlus,
+  Wallet,
+  HandCoins,
+} from "lucide-react";
 
 import {
   getCreatorDetail,
@@ -10,6 +17,9 @@ import { requirePageAccess } from "@/lib/dal";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card } from "@/components/ui/card";
+import { PageHero, KpiTile } from "@/components/modern-panels";
+import { FadeIn } from "@/components/fade-in";
+import { formatCurrency, formatNumber } from "@/lib/utils/format";
 
 import { MaskedEmail } from "./masked-email";
 import { HeaderSocials } from "./header-socials";
@@ -80,111 +90,148 @@ export default async function CreatorDetailPage({
 
   return (
     <div className="space-y-6">
-      {/* Flat header — no card chrome / glow orbs. Kept lean so the deal
-          summary below reads as the primary content for this creator. */}
-      <div className="flex items-center gap-3 pb-4 border-b">
-        <Link
-          href="/creators"
-          className="inline-flex size-8 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground"
-        >
-          <ArrowLeft className="size-4" />
-        </Link>
-        <Avatar className="size-10">
-          {profile.image && <AvatarImage src={profile.image} alt="" />}
-          <AvatarFallback className="text-xs font-semibold">
-            {(profile.username ?? profile.email ?? "?")
-              .slice(0, 2)
-              .toUpperCase()}
-          </AvatarFallback>
-        </Avatar>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <Link
-              href={`/users/${profile.userId}`}
-              className="text-xl font-semibold hover:underline"
-            >
-              {profile.username ?? profile.email}
-            </Link>
-            {profile.code && (
-              <Badge variant="outline" className="font-mono text-[11px]">
-                {profile.code}
-              </Badge>
-            )}
-            <span className="text-muted-foreground/40">·</span>
-            <RoleSelect
-              userId={profile.userId}
-              currentRole={profile.role}
-            />
+      <PageHero>
+        <div className="flex items-center gap-3">
+          <Link
+            href="/creators"
+            className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground"
+          >
+            <ArrowLeft className="size-4" />
+          </Link>
+          <Avatar className="size-11">
+            {profile.image && <AvatarImage src={profile.image} alt="" />}
+            <AvatarFallback className="text-xs font-semibold">
+              {(profile.username ?? profile.email ?? "?")
+                .slice(0, 2)
+                .toUpperCase()}
+            </AvatarFallback>
+          </Avatar>
+          <div className="flex size-10 items-center justify-center rounded-xl bg-pink-500/10">
+            <Star className="size-5 text-pink-500" />
           </div>
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-            {profile.email && <MaskedEmail email={profile.email} />}
-            <HeaderSocials
-              socials={profile.socials}
-              userId={profile.userId}
-            />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Link
+                href={`/users/${profile.userId}`}
+                className="text-2xl font-bold leading-tight hover:underline"
+              >
+                {profile.username ?? profile.email}
+              </Link>
+              {profile.code && (
+                <Badge variant="outline" className="font-mono text-[11px]">
+                  {profile.code}
+                </Badge>
+              )}
+              <span className="text-muted-foreground/40">·</span>
+              <RoleSelect
+                userId={profile.userId}
+                currentRole={profile.role}
+              />
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+              {profile.email && <MaskedEmail email={profile.email} />}
+              <HeaderSocials
+                socials={profile.socials}
+                userId={profile.userId}
+              />
+            </div>
           </div>
         </div>
-      </div>
+      </PageHero>
 
-      {/* Top band: deal management on the left (3/5), the acquisition
-          chart on the right (2/5). Both in matching Card chrome so the
-          row reads as one visual system with the analytics below. */}
-      <div className="grid gap-4 lg:grid-cols-5">
-        <Card size="sm" className="lg:col-span-3">
-          <DealTabs
-            value={sp.tab}
-            counts={{
-              deals: deals.total,
-              sessions: sessions.total,
-              pending: pending.length,
-            }}
-            action={<DealFormDialog userId={profile.userId} />}
-            dealsPanel={<DealsTab userId={profile.userId} deals={deals} />}
-            sessionsPanel={
-              <SessionsTab
-                userId={profile.userId}
-                sessions={sessions}
-                currentStatus={sp.sessionsStatus}
-              />
-            }
-            pendingPanel={
-              <PendingTab
-                pending={pending}
-                currentStatus={sp.pendingStatus}
-              />
-            }
-          />
-        </Card>
-
-        <aside className="lg:col-span-2">
-          <AcquisitionChart
-            hourly={profile.acquisition.hourly}
-            daily={profile.acquisition.daily}
-          />
-        </aside>
-      </div>
-
-      {/* Bottom band: three equal-width analytics cards. */}
-      <div className="grid gap-4 lg:grid-cols-3">
-        <FunnelTable
-          clicks={profile.clicks}
-          signups={profile.signups}
-          ftdByPeriod={profile.ftdByPeriod}
+      {/* KPI strip — house-POV financial colors:
+          - Total Earned: money paid TO creator → rose (house loss)
+          - Wager Volume: money flowing FROM users TO us → emerald
+          - Clicks / Signups: neutral funnel events → blue */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <KpiTile
+          label="Clicks"
+          value={formatNumber(profile.clicks.total)}
+          icon={MousePointerClick}
+          accent="blue"
         />
-        <FinancialsCard
-          wagerVolumeUsd={profile.totalWagerVolumeUsd}
-          earnedUsd={profile.totalEarnedUsd}
-          availableUsd={profile.availableUsd}
-          paidOutUsd={profile.totalPaidOutUsd}
-          bonusDistributedUsd={profile.totalBonusDistributedUsd}
+        <KpiTile
+          label="Signups"
+          value={formatNumber(profile.signups.total)}
+          icon={UserPlus}
+          accent="cyan"
         />
-        <CountryBreakdown rows={profile.countryBreakdown} />
+        <KpiTile
+          label="Wager Volume"
+          value={formatCurrency(profile.totalWagerVolumeUsd)}
+          icon={Wallet}
+          accent="emerald"
+        />
+        <KpiTile
+          label="Total Earned"
+          value={formatCurrency(profile.totalEarnedUsd)}
+          sub={`Paid out: ${formatCurrency(profile.totalPaidOutUsd)}`}
+          icon={HandCoins}
+          accent="rose"
+        />
       </div>
 
-      {/* Affiliate leaderboards owned by this creator — read-only summary
-          with deep-link to the dedicated /creators/leaderboards management
-          surface for full action set (approve/reject/edit/sponsor/cancel). */}
-      <LeaderboardsCard userId={profile.userId} />
+      <FadeIn className="space-y-6">
+        {/* Top band: deal management on the left (3/5), the acquisition
+            chart on the right (2/5). Both in matching Card chrome so the
+            row reads as one visual system with the analytics below. */}
+        <div className="grid gap-4 lg:grid-cols-5">
+          <Card size="sm" className="lg:col-span-3">
+            <DealTabs
+              value={sp.tab}
+              counts={{
+                deals: deals.total,
+                sessions: sessions.total,
+                pending: pending.length,
+              }}
+              action={<DealFormDialog userId={profile.userId} />}
+              dealsPanel={<DealsTab userId={profile.userId} deals={deals} />}
+              sessionsPanel={
+                <SessionsTab
+                  userId={profile.userId}
+                  sessions={sessions}
+                  currentStatus={sp.sessionsStatus}
+                />
+              }
+              pendingPanel={
+                <PendingTab
+                  pending={pending}
+                  currentStatus={sp.pendingStatus}
+                />
+              }
+            />
+          </Card>
+
+          <aside className="lg:col-span-2">
+            <AcquisitionChart
+              hourly={profile.acquisition.hourly}
+              daily={profile.acquisition.daily}
+            />
+          </aside>
+        </div>
+
+        {/* Bottom band: three equal-width analytics cards. */}
+        <div className="grid gap-4 lg:grid-cols-3">
+          <FunnelTable
+            clicks={profile.clicks}
+            signups={profile.signups}
+            ftdByPeriod={profile.ftdByPeriod}
+          />
+          <FinancialsCard
+            wagerVolumeUsd={profile.totalWagerVolumeUsd}
+            earnedUsd={profile.totalEarnedUsd}
+            availableUsd={profile.availableUsd}
+            paidOutUsd={profile.totalPaidOutUsd}
+            bonusDistributedUsd={profile.totalBonusDistributedUsd}
+          />
+          <CountryBreakdown rows={profile.countryBreakdown} />
+        </div>
+
+        {/* Affiliate leaderboards owned by this creator — read-only summary
+            with deep-link to the dedicated /creators/leaderboards management
+            surface for full action set (approve/reject/edit/sponsor/cancel). */}
+        <LeaderboardsCard userId={profile.userId} />
+      </FadeIn>
     </div>
   );
 }

@@ -42,7 +42,6 @@ model admin_users {
   voucher_actions       admin_voucher_actions[]
   expenses              expenses[]
   recurring_expenses    recurring_expenses[]
-  ideas                 admin_ideas[]
   shifts_created        admin_shifts[]              @relation("admin_shifts_created_by")
   shift_assignments     admin_shift_assignments[]
 }
@@ -323,36 +322,6 @@ model admin_settings {
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz(6)
   updated_by String?  @db.Uuid
 }
-
-// Admin idea board — free-form cards the team can create, reorder, and
-// flag green (approved / go) / red (rejected / no) or leave neutral.
-// Purely an internal brainstorming surface, no link to any main-DB user
-// or product entity.
-model admin_ideas {
-  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  title          String
-  description    String?
-  // "neutral" | "green" | "red" — kept as String so new statuses can be
-  // added without a migration. Validated at the action boundary.
-  status         String       @default("neutral")
-  // Legacy — kept for rollback compatibility. The board is now a
-  // free-form canvas (position_x, position_y); sort_order isn't used
-  // by any current code path.
-  sort_order     Float        @default(0)
-  // Free-form canvas position. Pixels within the canvas coordinate
-  // space — (0, 0) is the canvas top-left. Dragging a card writes
-  // the new position back through updateIdeaPosition.
-  position_x     Float        @default(0)
-  position_y     Float        @default(0)
-  created_by_id  String       @db.Uuid
-  created_by     admin_users  @relation(fields: [created_by_id], references: [id])
-  created_at     DateTime     @default(now()) @db.Timestamptz(6)
-  updated_at     DateTime     @updatedAt @db.Timestamptz(6)
-
-  @@index([sort_order])
-  @@index([status])
-}
-
 
 // ─── Shift planner ─────────────────────────────────────────────────
 // Weekly support-team rota. Each week has up to 3 shifts per day; the

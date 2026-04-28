@@ -33,7 +33,7 @@ export function CopyableAddress({ address }: { address: Record<string, string> }
       ))}
       <span className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
         {copied ? (
-          <Check className="size-3.5 text-green-400" />
+          <Check className="size-3.5 text-emerald-400" />
         ) : (
           <Copy className="size-3.5 text-muted-foreground" />
         )}

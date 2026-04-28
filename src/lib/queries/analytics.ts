@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { MS_PER_DAY } from "@/lib/utils/time";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
 // SQL fragment for user_id filtering — injected via string concat (safe: hardcoded role name)
 const EXCL_STAFF_FRAG = `AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))`;
@@ -113,7 +114,7 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
 
   const signupsDateFilter =
     period !== "all"
-      ? { created_at: { gte: new Date(Date.now() - parseDays(period) * 86_400_000) } }
+      ? { created_at: { gte: new Date(Date.now() - parseDays(period) * MS_PER_DAY) } }
       : {};
 
   const [

@@ -1,6 +1,14 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import {
+  ArrowLeft,
+  UserCog,
+  Activity,
+  Clock,
+  ShieldCheck,
+  CheckCircle2,
+  XCircle,
+} from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import {
   getAdminUserDetail,
@@ -8,6 +16,10 @@ import {
   getAdminUserAuditEvents,
 } from "@/lib/queries/admin-users";
 import { getLimitsForAdmin } from "@/lib/balance-limits";
+import { Badge } from "@/components/ui/badge";
+import { formatRelative } from "@/lib/utils/format";
+import { PageHero, KpiTile } from "@/components/modern-panels";
+import { FadeIn } from "@/components/fade-in";
 import { AdminUserTabs } from "./admin-user-tabs";
 
 export const metadata = { title: "Admin User Detail" };
@@ -43,31 +55,77 @@ export default async function AdminUserDetailPage({
   if (!detail) notFound();
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <Link
-          href="/admin-users"
-          className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground"
-        >
-          <ArrowLeft className="size-4" />
-        </Link>
-        <div>
-          <h1 className="text-2xl font-bold">{detail.username}</h1>
-          <p className="text-sm text-muted-foreground">{detail.email}</p>
+    <div className="space-y-6">
+      <PageHero>
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-3">
+            <Link
+              href="/admin-users"
+              className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground"
+            >
+              <ArrowLeft className="size-4" />
+            </Link>
+            <div className="flex size-10 items-center justify-center rounded-xl bg-purple-500/10">
+              <UserCog className="size-5 text-purple-500" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl font-bold leading-tight">
+                  {detail.username}
+                </h1>
+                <Badge variant="outline" className="text-xs uppercase">
+                  {detail.role}
+                </Badge>
+              </div>
+              <p className="text-sm text-muted-foreground">{detail.email}</p>
+            </div>
+          </div>
         </div>
+      </PageHero>
+
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <KpiTile
+          label="Status"
+          value={detail.isActive ? "Active" : "Inactive"}
+          icon={detail.isActive ? CheckCircle2 : XCircle}
+          accent={detail.isActive ? "emerald" : "rose"}
+        />
+        <KpiTile
+          label="2FA"
+          value={detail.totpEnabled ? "Enabled" : "Not set"}
+          icon={ShieldCheck}
+          accent={detail.totpEnabled ? "emerald" : "amber"}
+        />
+        <KpiTile
+          label="Total Actions"
+          value={String(auditStats.totalActions)}
+          icon={Activity}
+          accent="blue"
+        />
+        <KpiTile
+          label="Last Active"
+          value={
+            auditStats.lastActive ? formatRelative(auditStats.lastActive) : "Never"
+          }
+          icon={Clock}
+          accent="cyan"
+        />
       </div>
-      <AdminUserTabs
-        detail={detail}
-        auditStats={auditStats}
-        auditEvents={auditEvents}
-        balanceLimits={balanceLimits.map((l) => ({
-          ...l,
-          max_amount: Number(l.max_amount),
-          created_at: l.created_at.toISOString(),
-          updated_at: l.updated_at.toISOString(),
-        }))}
-        isCurrentUserAdmin={session.role === "admin"}
-      />
+
+      <FadeIn>
+        <AdminUserTabs
+          detail={detail}
+          auditStats={auditStats}
+          auditEvents={auditEvents}
+          balanceLimits={balanceLimits.map((l) => ({
+            ...l,
+            max_amount: Number(l.max_amount),
+            created_at: l.created_at.toISOString(),
+            updated_at: l.updated_at.toISOString(),
+          }))}
+          isCurrentUserAdmin={session.role === "admin"}
+        />
+      </FadeIn>
     </div>
   );
 }

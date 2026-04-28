@@ -12,7 +12,7 @@ import {
   createTextColumn,
 } from "react-datasheet-grid";
 import "react-datasheet-grid/dist/style.css";
-import type { Column } from "react-datasheet-grid";
+import type { CellProps, Column } from "react-datasheet-grid";
 import type { Operation } from "react-datasheet-grid/dist/types";
 import type { ExpenseListItem } from "@/lib/queries/spending";
 import {
@@ -56,8 +56,7 @@ function isRowReady(row: ExpenseRow): boolean {
 
 const selectColumn = (
   choices: readonly { value: string; label: string }[]
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-): Partial<Column<string | null, any, string>> => ({
+): Partial<Column<string | null, unknown, string>> => ({
   component: ({ rowData, setRowData, focus, stopEditing, active }) => (
     <SelectCell
       value={rowData}
@@ -88,8 +87,7 @@ const selectColumn = (
 
 const comboboxColumn = (
   suggestions: readonly { value: string; label: string }[]
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-): Partial<Column<string | null, any, string>> => ({
+): Partial<Column<string | null, unknown, string>> => ({
   component: ({ rowData, setRowData, focus, stopEditing, active }) => (
     <ComboboxCell
       value={rowData}
@@ -144,8 +142,7 @@ export function ExpensesTable({ data }: { data: ExpenseListItem[] }) {
     creatingRows.current.clear();
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const columns: Partial<Column<ExpenseRow, any, any>>[] = useMemo(
+  const columns: Partial<Column<ExpenseRow>>[] = useMemo(
     () => [
       {
         ...keyColumn("date", isoDateColumn),
@@ -210,8 +207,7 @@ export function ExpensesTable({ data }: { data: ExpenseListItem[] }) {
         minWidth: 100,
       },
       {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        component: ({ deleteRow }: any) => (
+        component: ({ deleteRow }: CellProps<ExpenseRow, unknown>) => (
           <button
             type="button"
             onClick={deleteRow}

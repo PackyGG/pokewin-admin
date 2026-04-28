@@ -65,7 +65,7 @@ export default async function PackDetailPage({
                 variant="outline"
                 className={
                   data.active
-                    ? "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30"
+                    ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
                     : "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"
                 }
               >

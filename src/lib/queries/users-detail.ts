@@ -1,25 +1,12 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { calculateUserPnl } from "./pnl";
 
 export async function getUserDetail(id: string) {
   const db = await getDb();
   // Everything is independent — one Promise.all instead of two serialized ones
   // cuts the worst-case latency roughly in half on hot user-detail loads.
-  let inventoryValueResult: { _sum: { value_at_obtained: unknown } } = {
-    _sum: { value_at_obtained: null },
-  };
   let wagerBreakdown: { type: string; _sum: { amount: unknown } }[] = [];
-  let vouchersResult: { _sum: { value: unknown } } = { _sum: { value: null } };
-
-  const inventoryValuePromise = db.user_inventory
-    .aggregate({
-      where: { user_id: id, sold_at: null, exchanged_at: null },
-      _sum: { value_at_obtained: true },
-    })
-    .catch((e) => {
-      console.error("[getUserDetail] inventory aggregate failed:", e);
-      return { _sum: { value_at_obtained: null as unknown } };
-    });
 
   const wagerBreakdownPromise = db.ledger_transactions
     .groupBy({
@@ -36,15 +23,15 @@ export async function getUserDetail(id: string) {
       return [] as { type: string; _sum: { amount: unknown } }[];
     });
 
-  const vouchersPromise = db.vouchers
-    .aggregate({
-      where: { user_id: id, claimed_at: null },
-      _sum: { value: true },
-    })
-    .catch((e) => {
-      console.error("[getUserDetail] vouchers aggregate failed:", e);
-      return { _sum: { value: null as unknown } };
-    });
+  // Canonical P&L components (deposits, withdrawals, on-site balance,
+  // inventory value, unclaimed vouchers) live in the shared helper so the
+  // formula stays identical to dashboard / users-list. We only use the
+  // components here — the page composes the displayed pnl client-side
+  // from the same fields surfaced on `balances`. Errors are not caught:
+  // matches the pre-refactor behaviour where the card_withdrawal
+  // aggregate ran in the same Promise.all without a .catch and would
+  // surface to the page error boundary.
+  const userPnlPromise = calculateUserPnl(id);
 
   const [
     user,
@@ -59,13 +46,11 @@ export async function getUserDetail(id: string) {
     cardWithdrawals,
     activeSeed,
     depositAddresses,
-    cardWithdrawalTotal,
     depositCount,
     depositTotalAgg,
     withdrawalCount,
-    inventoryValueResolved,
+    userPnl,
     wagerBreakdownResolved,
-    vouchersResolved,
   ] = await Promise.all([
     db.user.findUnique({
       where: { id },
@@ -108,13 +93,6 @@ export async function getUserDetail(id: string) {
       where: { user_id: id },
       orderBy: { created_at: "desc" },
     }),
-    db.card_withdrawal_requests.aggregate({
-      where: {
-        user_id: id,
-        status: { in: ["completed", "shipped"] },
-      },
-      _sum: { total_value_usd: true },
-    }),
     // Event counts surfaced at the top of the detail page header. Counts
     // are defined to mirror the existing "total withdrawn" aggregate in
     // balances so the header and the Balances card agree on what counts
@@ -141,14 +119,11 @@ export async function getUserDetail(id: string) {
         status: { in: ["completed", "shipped"] },
       },
     }),
-    inventoryValuePromise,
+    userPnlPromise,
     wagerBreakdownPromise,
-    vouchersPromise,
   ]);
 
-  inventoryValueResult = inventoryValueResolved as typeof inventoryValueResult;
   wagerBreakdown = wagerBreakdownResolved as typeof wagerBreakdown;
-  vouchersResult = vouchersResolved as typeof vouchersResult;
 
   if (!user) return null;
 
@@ -213,18 +188,16 @@ export async function getUserDetail(id: string) {
       ? {
           availableBalance: toNumber(balances.available_balance),
           lockedBalance: toNumber(balances.locked_balance),
-          totalDeposited: toNumber(balances.total_deposited),
-          totalWithdrawn: toNumber(balances.total_withdrawn) + toNumber(cardWithdrawalTotal._sum.total_value_usd),
+          // P&L components come from the shared helper so this view can
+          // never drift from users-list / dashboard.
+          totalDeposited: userPnl.deposits,
+          totalWithdrawn: userPnl.withdrawals,
           totalWagered: toNumber(balances.total_wagered),
           totalWon: toNumber(balances.total_won),
           bonusPoints: balances.bonus_points,
           unlockAt: balances.unlock_at?.toISOString() ?? null,
-          inventoryValue: inventoryValueResult._sum.value_at_obtained
-            ? toNumber(inventoryValueResult._sum.value_at_obtained)
-            : 0,
-          vouchersValue: vouchersResult._sum.value
-            ? toNumber(vouchersResult._sum.value)
-            : 0,
+          inventoryValue: userPnl.inventoryValue,
+          vouchersValue: userPnl.unclaimedVouchers,
           packsWagered: Math.abs(toNumber(
             wagerBreakdown.find((w) => w.type === "pack_opening")?._sum.amount ?? 0,
           )),

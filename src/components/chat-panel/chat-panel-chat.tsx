@@ -60,7 +60,7 @@ import {
 import { banUser } from "@/app/(admin)/users/actions";
 
 const ROLE_BADGE: Record<string, string> = {
-  admin: "bg-red-500/20 text-red-400",
+  admin: "bg-rose-500/20 text-rose-400",
   support: "bg-blue-500/20 text-blue-400",
   creator: "bg-purple-500/20 text-purple-400",
   marketing: "bg-amber-500/20 text-amber-400",
@@ -386,7 +386,7 @@ const ChatBubble = memo(function ChatBubble({
           {m.isDeleted && (
             <Badge
               variant="outline"
-              className="ml-1 border-red-500/30 bg-red-500/10 px-1 py-0 text-[9px] text-red-400"
+              className="ml-1 border-rose-500/30 bg-rose-500/10 px-1 py-0 text-[9px] text-rose-400"
             >
               deleted
             </Badge>
@@ -405,7 +405,7 @@ const ChatBubble = memo(function ChatBubble({
             isPending={isPending}
             tooltip="Delete message"
           >
-            <Trash2 className="size-3 text-red-400" />
+            <Trash2 className="size-3 text-rose-400" />
           </ConfirmAction>
         )}
         {canPin &&
@@ -649,7 +649,7 @@ function BanDialog({
           />
         }
       >
-        <Ban className="size-3 text-red-400" />
+        <Ban className="size-3 text-rose-400" />
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>

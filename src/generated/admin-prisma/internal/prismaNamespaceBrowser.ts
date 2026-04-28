@@ -67,7 +67,6 @@ export const ModelName = {
   expenses: 'expenses',
   recurring_expenses: 'recurring_expenses',
   admin_settings: 'admin_settings',
-  admin_ideas: 'admin_ideas',
   admin_shifts: 'admin_shifts',
   admin_shift_assignments: 'admin_shift_assignments'
 } as const
@@ -342,22 +341,6 @@ export const Admin_settingsScalarFieldEnum = {
 } as const
 
 export type Admin_settingsScalarFieldEnum = (typeof Admin_settingsScalarFieldEnum)[keyof typeof Admin_settingsScalarFieldEnum]
-
-
-export const Admin_ideasScalarFieldEnum = {
-  id: 'id',
-  title: 'title',
-  description: 'description',
-  status: 'status',
-  sort_order: 'sort_order',
-  position_x: 'position_x',
-  position_y: 'position_y',
-  created_by_id: 'created_by_id',
-  created_at: 'created_at',
-  updated_at: 'updated_at'
-} as const
-
-export type Admin_ideasScalarFieldEnum = (typeof Admin_ideasScalarFieldEnum)[keyof typeof Admin_ideasScalarFieldEnum]
 
 
 export const Admin_shiftsScalarFieldEnum = {

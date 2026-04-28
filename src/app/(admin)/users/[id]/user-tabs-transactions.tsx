@@ -60,7 +60,7 @@ const TX_STATUSES = ["all", "pending", "completed", "failed"] as const;
 
 const RARITY_COLORS: Record<string, string> = {
   common: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400",
-  uncommon: "bg-green-500/15 text-green-600 dark:text-green-400",
+  uncommon: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
   rare: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
   "ultra rare": "bg-purple-500/15 text-purple-600 dark:text-purple-400",
   "secret rare": "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400",
@@ -72,8 +72,8 @@ const CW_STATUS_COLORS: Record<string, string> = {
   pending: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400",
   processing: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
   shipped: "bg-purple-500/15 text-purple-600 dark:text-purple-400",
-  completed: "bg-green-500/15 text-green-600 dark:text-green-400",
-  failed: "bg-red-500/15 text-red-600 dark:text-red-400",
+  completed: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+  failed: "bg-rose-500/15 text-rose-600 dark:text-rose-400",
   cancelled: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400",
 };
 
@@ -709,7 +709,7 @@ function TransactionDetailModal({
   if (t.failureReason) {
     rows.push({
       label: "Failure Reason",
-      value: <span className="text-red-400">{t.failureReason}</span>,
+      value: <span className="text-rose-400">{t.failureReason}</span>,
     });
   }
   if (t.cryptoAsset) {

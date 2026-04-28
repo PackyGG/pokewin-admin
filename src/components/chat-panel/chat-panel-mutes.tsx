@@ -125,7 +125,7 @@ export function ChatPanelMutes({ role }: { role: string }) {
                       {m.unmutedAt ? (
                         <Badge
                           variant="outline"
-                          className="border-green-500/30 bg-green-500/15 text-green-400"
+                          className="border-emerald-500/30 bg-emerald-500/15 text-emerald-400"
                         >
                           Unmuted
                         </Badge>
@@ -139,7 +139,7 @@ export function ChatPanelMutes({ role }: { role: string }) {
                       ) : (
                         <Badge
                           variant="outline"
-                          className="border-red-500/30 bg-red-500/15 text-red-400"
+                          className="border-rose-500/30 bg-rose-500/15 text-rose-400"
                         >
                           Active
                         </Badge>

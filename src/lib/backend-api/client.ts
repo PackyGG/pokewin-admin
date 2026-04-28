@@ -1,7 +1,11 @@
 import "server-only";
 
 import { resolveBackendApiConfig } from "./config";
-import { BackendApiError, type BackendErrorPayload } from "./errors";
+import {
+  BackendApiError,
+  BackendNetworkError,
+  type BackendErrorPayload,
+} from "./errors";
 
 export type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
@@ -68,12 +72,28 @@ export const backendApiRequest = async <T = unknown>(
     ...options.headers,
   };
 
-  const res = await fetch(url, {
-    method,
-    headers,
-    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
-    cache: options.cache ?? "no-store",
-  });
+  // Wrap the fetch in try/catch so DNS / TCP / TLS failures throw a
+  // structured BackendNetworkError with the URL + underlying cause
+  // instead of a bare "fetch failed". Without this every caller just
+  // sees the cryptic stock message and ops can't tell whether the
+  // host is wrong, the port is wrong, or TLS is broken.
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method,
+      headers,
+      body:
+        options.body !== undefined ? JSON.stringify(options.body) : undefined,
+      cache: options.cache ?? "no-store",
+    });
+  } catch (err) {
+    const networkErr = new BackendNetworkError(url, err);
+    // eslint-disable-next-line no-console
+    console.log(
+      `[backend-api] network failure env=${config.env} method=${method} url=${url} code=${networkErr.causeCode ?? "unknown"} cause=${networkErr.causeMessage ?? "(none)"} cfHeaders=${Object.keys(config.cfHeaders).length > 0}`,
+    );
+    throw networkErr;
+  }
 
   // Diagnostic context shared across success/error branches. Includes which
   // env was selected, where the request went, key tail (safe to log; full

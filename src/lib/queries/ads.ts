@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { MS_PER_DAY } from "@/lib/utils/time";
 
 /**
  * Queries for the /creators/ads feature. Ad codes are plain
@@ -382,7 +383,7 @@ export async function getAdCodeDetail(
   const upperCode = record.code.toUpperCase();
   const now = new Date();
   // Last 30 days inclusive of today.
-  const thirtyDaysAgo = new Date(now.getTime() - 29 * 24 * 60 * 60 * 1000);
+  const thirtyDaysAgo = new Date(now.getTime() - 29 * MS_PER_DAY);
   thirtyDaysAgo.setUTCHours(0, 0, 0, 0);
 
   const [
@@ -542,7 +543,7 @@ export async function getAdCodeDetail(
   const dayMap = new Map(clicksByDayRows.map((r) => [r.date, Number(r.clicks)]));
   const clicksByDay: AdCodeClicksByDay[] = [];
   for (let i = 0; i < 30; i++) {
-    const d = new Date(thirtyDaysAgo.getTime() + i * 24 * 60 * 60 * 1000);
+    const d = new Date(thirtyDaysAgo.getTime() + i * MS_PER_DAY);
     const key = d.toISOString().slice(0, 10);
     clicksByDay.push({ date: key, clicks: dayMap.get(key) ?? 0 });
   }

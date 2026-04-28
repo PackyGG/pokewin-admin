@@ -28,7 +28,7 @@ import { FadeIn } from "@/components/fade-in";
 export const metadata = { title: "Rain" };
 
 const RAIN_STATUS_COLORS: Record<string, string> = {
-  active: "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
+  active: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
   drawing: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
   completed: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
   cancelled: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",

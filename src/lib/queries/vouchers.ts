@@ -25,6 +25,20 @@ const ORIGIN_LABELS: Record<string, string> = {
   manual: "Manual",
 };
 
+/**
+ * List vouchers with paginated server-side ordering.
+ *
+ * Authoritative ordering source: Main DB (`vouchers.created_at DESC`). All
+ * sortable/filterable columns (created_at, claimed_at, value, user search)
+ * live in Main DB, so ORDER BY + LIMIT/OFFSET + COUNT happen entirely at
+ * SQL level on Main DB — no in-memory pagination, no spilling.
+ *
+ * Admin DB (`admin_voucher_actions`) is used only as an enrichment lookup
+ * (creator metadata) AND as a way to translate the "Created By" filter
+ * into a set of voucher IDs (or NOT-IN set for the "system" pseudo-value)
+ * that we then push back into the Main-DB WHERE clause. We never join
+ * across DBs at SQL level — strict dual-DB separation per CLAUDE.md.
+ */
 export async function getVouchers(params: {
   page?: number;
   perPage?: number;
@@ -32,30 +46,43 @@ export async function getVouchers(params: {
   search?: string;
   minValue?: number;
   maxValue?: number;
-  createdBy?: string; // admin user id
+  createdBy?: string; // admin user id, or "system" for vouchers without an admin action
 }): Promise<PaginatedResult<VoucherListItem>> {
   const db = await getDb();
   const { page = 1, perPage = 20, claimed, search, minValue, maxValue, createdBy } = params;
 
-  // If filtering by createdBy, pre-fetch voucher IDs from admin DB
-  let createdByVoucherIds: string[] | undefined;
-  if (createdBy) {
-    if (createdBy === "system") {
-      // System = vouchers with NO admin action
-      // We'll handle this post-query
-    } else {
-      const actions = await adminDb.admin_voucher_actions.findMany({
-        where: { admin_user_id: createdBy, action: "created" },
-        select: { voucher_id: true },
-      });
-      createdByVoucherIds = actions.map((a) => a.voucher_id);
-      if (createdByVoucherIds.length === 0) {
-        return { data: [], total: 0, page, perPage, totalPages: 0 };
-      }
+  // Translate the "Created By" filter into a Main-DB id constraint by
+  // pre-fetching the relevant voucher_ids from Admin DB. Only IDs are
+  // pulled across — no rows joined cross-DB.
+  //
+  // - createdBy = <admin uuid>: WHERE id IN (their created voucher ids)
+  // - createdBy = "system":     WHERE id NOT IN (any admin-created voucher ids)
+  // - createdBy = undefined:    no constraint added.
+  const where: Record<string, unknown> = {};
+
+  if (createdBy === "system") {
+    const allAdminCreated = await adminDb.admin_voucher_actions.findMany({
+      where: { action: "created" },
+      select: { voucher_id: true },
+    });
+    const adminCreatedIds = allAdminCreated.map((a) => a.voucher_id);
+    // If there are no admin-created vouchers at all, "system" matches
+    // everything — leave the where clause untouched.
+    if (adminCreatedIds.length > 0) {
+      where.id = { notIn: adminCreatedIds };
     }
+  } else if (createdBy) {
+    const actions = await adminDb.admin_voucher_actions.findMany({
+      where: { admin_user_id: createdBy, action: "created" },
+      select: { voucher_id: true },
+    });
+    const createdByVoucherIds = actions.map((a) => a.voucher_id);
+    if (createdByVoucherIds.length === 0) {
+      return { data: [], total: 0, page, perPage, totalPages: 0 };
+    }
+    where.id = { in: createdByVoucherIds };
   }
 
-  const where: Record<string, unknown> = {};
   if (claimed === true) where.claimed_at = { not: null };
   else if (claimed === false) where.claimed_at = null;
 
@@ -76,10 +103,7 @@ export async function getVouchers(params: {
     where.value = valueFilter;
   }
 
-  if (createdByVoucherIds) {
-    where.id = { in: createdByVoucherIds };
-  }
-
+  // SQL-level ORDER BY + LIMIT/OFFSET + COUNT on the authoritative source.
   const [vouchers, total] = await Promise.all([
     db.vouchers.findMany({
       where,
@@ -93,7 +117,8 @@ export async function getVouchers(params: {
     db.vouchers.count({ where }),
   ]);
 
-  // Batch-fetch admin actions for creator info
+  // Enrichment pass: fetch admin-actor metadata for ONLY the rows on this
+  // page (`WHERE voucher_id IN (page_ids)`), then merge in code.
   const voucherIds = vouchers.map((v) => v.id);
   const adminActions = voucherIds.length > 0
     ? await adminDb.admin_voucher_actions.findMany({
@@ -106,16 +131,10 @@ export async function getVouchers(params: {
     adminActions.map((a) => [a.voucher_id, { id: a.admin_user.id, username: a.admin_user.username }])
   );
 
-  // For "system" filter: exclude vouchers that have an admin creator
-  let filteredVouchers = vouchers;
-  if (createdBy === "system") {
-    filteredVouchers = vouchers.filter((v) => !creatorByVoucherId.has(v.id));
-  }
-
-  // FTD lookup for claimed vouchers
+  // FTD lookup for claimed vouchers — only for the user_ids on this page.
   let ftdMap: Map<string, boolean> | undefined;
   if (claimed) {
-    const userIds = [...new Set(filteredVouchers.map((v) => v.user_id))];
+    const userIds = [...new Set(vouchers.map((v) => v.user_id))];
     if (userIds.length > 0) {
       const balances = await db.balances.findMany({
         where: { user_id: { in: userIds } },
@@ -127,10 +146,8 @@ export async function getVouchers(params: {
     }
   }
 
-  const finalTotal = createdBy === "system" ? filteredVouchers.length : total;
-
   return {
-    data: filteredVouchers.map((v) => ({
+    data: vouchers.map((v) => ({
       id: v.id,
       userId: v.user_id,
       username: v.user?.username ?? null,
@@ -144,10 +161,10 @@ export async function getVouchers(params: {
       createdAt: v.created_at.toISOString(),
       ...(ftdMap ? { isFtd: ftdMap.get(v.user_id) ?? false } : {}),
     })),
-    total: finalTotal,
+    total,
     page,
     perPage,
-    totalPages: Math.ceil(finalTotal / perPage),
+    totalPages: Math.ceil(total / perPage),
   };
 }
 

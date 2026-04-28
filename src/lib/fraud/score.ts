@@ -63,6 +63,12 @@
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
+import {
+  MS_PER_MINUTE,
+  MS_PER_HOUR,
+  MS_PER_DAY,
+  MS_PER_WEEK,
+} from "@/lib/utils/time";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -106,7 +112,7 @@ import { tierForScore } from "./score-types";
 // The cheaper list query (computeRiskScoresForList) has its own entries.
 
 type CacheEntry = { value: RiskScoreBreakdown; expiresAt: number };
-const CACHE_TTL_MS = 60_000;
+const CACHE_TTL_MS = MS_PER_MINUTE;
 const cache = new Map<string, CacheEntry>();
 
 function getCached(userId: string): RiskScoreBreakdown | null {
@@ -430,8 +436,8 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
   // Derived primitives ────────────────────────────────────────────────
   const now = Date.now();
   const accountAgeMs = now - new Date(row.created_at).getTime();
-  const accountAgeDays = accountAgeMs / (1000 * 60 * 60 * 24);
-  const accountAgeHours = accountAgeMs / (1000 * 60 * 60);
+  const accountAgeDays = accountAgeMs / MS_PER_DAY;
+  const accountAgeHours = accountAgeMs / MS_PER_HOUR;
 
   const totalDeposited = toNumber(row.total_deposited);
   const totalWithdrawn =
@@ -567,7 +573,7 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
     firstDepositAt && firstWagerAt
       ? firstWagerAt.getTime() - firstDepositAt.getTime()
       : 0;
-  const depositToWagerHours = depositToWagerMs / (1000 * 60 * 60);
+  const depositToWagerHours = depositToWagerMs / MS_PER_HOUR;
   const a4Weight =
     depositCountAll > 0 && !firstWagerAt && totalDeposited >= 100
       ? 8
@@ -662,7 +668,7 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
     ? firstWithdrawalAttemptAt.getTime() - new Date(row.created_at).getTime()
     : 0;
   const signupToFirstWithdrawHours =
-    signupToFirstWithdrawMs / (1000 * 60 * 60);
+    signupToFirstWithdrawMs / MS_PER_HOUR;
   const a8Weight = (() => {
     if (!firstWithdrawalAttemptAt) return 0;
     if (signupToFirstWithdrawHours < 1) return 14;
@@ -678,12 +684,12 @@ function buildSignals(row: DetailRow, ctx: SignalCtx): RiskSignal[] {
     triggered: a8Weight > 0,
     value: firstWithdrawalAttemptAt
       ? signupToFirstWithdrawHours < 1
-        ? `${(signupToFirstWithdrawMs / 60000).toFixed(0)} min`
+        ? `${(signupToFirstWithdrawMs / MS_PER_MINUTE).toFixed(0)} min`
         : `${signupToFirstWithdrawHours.toFixed(1)}h`
       : "no attempt",
     explanation: firstWithdrawalAttemptAt
       ? a8Weight > 0
-        ? `First-ever withdrawal request came only ${signupToFirstWithdrawHours < 1 ? (signupToFirstWithdrawMs / 60000).toFixed(0) + " minutes" : signupToFirstWithdrawHours.toFixed(1) + " hours"} after signup. Normal users play for days or weeks before cashing out.`
+        ? `First-ever withdrawal request came only ${signupToFirstWithdrawHours < 1 ? (signupToFirstWithdrawMs / MS_PER_MINUTE).toFixed(0) + " minutes" : signupToFirstWithdrawHours.toFixed(1) + " hours"} after signup. Normal users play for days or weeks before cashing out.`
         : `First withdrawal request came ${signupToFirstWithdrawHours.toFixed(0)}h after signup — within normal bounds.`
       : "User has not attempted a withdrawal.",
   });
@@ -1975,7 +1981,7 @@ async function countSharedBannedLocked(
 // and spot patterns (e.g. deposit → bonus → withdrawal within minutes).
 async function fetchTimeline(userId: string): Promise<RiskTimelineEvent[]> {
   const db = await getDb();
-  const sinceDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const sinceDate = new Date(Date.now() - MS_PER_WEEK);
 
   const [ledger, wdReqs, user] = await Promise.all([
     db.ledger_transactions
