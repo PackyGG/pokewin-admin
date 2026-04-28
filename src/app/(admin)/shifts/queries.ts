@@ -16,8 +16,8 @@ let shiftsSchemaEnsured = false;
 
 /**
  * Create the admin_shifts + admin_shift_assignments tables if they're
- * missing. Same rationale as ensureIdeaPositionColumns in /ideas: the
- * app self-heals on first use so ops don't have to run SQL manually.
+ * missing. The app self-heals on first use so ops don't have to run
+ * SQL manually.
  *
  * Uses CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS +
  * ADD CONSTRAINT with a try/catch for idempotence — PostgreSQL
@@ -109,8 +109,8 @@ export async function ensureShiftsSchema(): Promise<void> {
 
 /**
  * Load every shift + its assignments for the given ISO week. Returns
- * an empty list if the tables are missing — same defensive pattern as
- * /ideas — and auto-applies the schema so the next call succeeds.
+ * an empty list if the tables are missing — auto-applies the schema
+ * so the next call succeeds.
  */
 export async function getShiftsForWeek(weekStart: Date): Promise<Shift[]> {
   return getShiftsForWeeks([weekStart]);

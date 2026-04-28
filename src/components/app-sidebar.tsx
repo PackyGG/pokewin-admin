@@ -36,7 +36,6 @@ import {
   Wallet,
   Globe,
   Megaphone,
-  Lightbulb,
   CalendarClock,
   ChevronRight,
   type LucideIcon,
@@ -95,7 +94,6 @@ const ICONS: Record<string, LucideIcon> = {
   Wallet,
   Globe,
   Megaphone,
-  Lightbulb,
   CalendarClock,
 };
 
@@ -116,7 +114,6 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Overview",
     items: [
       { label: "Dashboard", href: "/dashboard", icon: "LayoutDashboard" },
-      { label: "Ideas", href: "/ideas", icon: "Lightbulb" },
       { label: "Shifts", href: "/shifts", icon: "CalendarClock" },
       { label: "Analytics", href: "/analytics", icon: "BarChart3" },
       { label: "Map", href: "/map", icon: "Globe" },
