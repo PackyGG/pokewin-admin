@@ -3,6 +3,20 @@ import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import type { CodeListItem } from "./creators-types";
 
+// Prod has historically been ahead of / behind dev on schema changes, and
+// missing tables / columns surface as PrismaClient errors that crash the
+// whole route. Wrapping every query in `safe()` keeps the page rendering
+// with empty values instead of a 500 — admins still see the static layout
+// and any queries that DID succeed.
+async function safe<T>(promise: Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await promise;
+  } catch (err) {
+    console.error("[creators-codes] query failed, using fallback:", err);
+    return fallback;
+  }
+}
+
 export async function getCodes(params: {
   page?: number;
   perPage?: number;
@@ -87,22 +101,29 @@ export async function getCodeAnalytics(code: string) {
   const db = await getDb();
   const uppercaseCode = code.toUpperCase();
 
-  const codeRecord = await db
-    .$queryRawUnsafe<{ code: string; user_id: string; username: string | null }[]>(
+  const codeRows = await safe(
+    db.$queryRawUnsafe<{ code: string; user_id: string; username: string | null }[]>(
       `SELECT ac.code, ac.user_id, u.username
        FROM affiliate_codes ac
        JOIN "user" u ON u.id = ac.user_id
        WHERE UPPER(ac.code) = $1
        LIMIT 1`,
-      uppercaseCode
-    )
-    .then((rows) => (rows[0] ? { ...rows[0], is_active: true } : null));
+      uppercaseCode,
+    ),
+    [] as { code: string; user_id: string; username: string | null }[],
+  );
+  const codeRecord = codeRows[0]
+    ? { ...codeRows[0], is_active: true }
+    : null;
 
   if (!codeRecord) return null;
 
   const [
     usages,
     totalReferralsCount,
+    activeReferralsRow,
+    totalsRow,
+    codeDepositTotalRow,
     clickCount,
     dailyUsages,
     dailyClicks,
@@ -110,47 +131,229 @@ export async function getCodeAnalytics(code: string) {
     acquisitionHourly,
     acquisitionDaily,
   ] = await Promise.all([
-    db.affiliate_code_usages.findMany({
-      where: { code: { equals: uppercaseCode, mode: "insensitive" } },
-      include: {
-        user_affiliate_code_usages_referred_user_idTouser: {
-          select: { username: true },
-        },
-      },
-      orderBy: { created_at: "desc" },
-      take: 50,
-    }),
-    db.affiliate_code_usages.count({
-      where: { code: { equals: uppercaseCode, mode: "insensitive" } },
-    }),
-    db.affiliate_clicks.count({ where: { code: uppercaseCode } }),
-    db.$queryRawUnsafe<
-      {
+    // Referrals table — one row per user who has ANY activity on this
+    // code (signup, deposit, or wager). Aggregated so a single user with
+    // 50 wager events shows up once with their cumulative volume; the
+    // previous "one row per usage" view drowned the table in repeats and
+    // hid users who deposited/wagered without a signup row (legacy
+    // orphans whose recordSignupUsage hook had failed at registration).
+    //
+    // first_activity is treated as the join/signup date because backend
+    // writes the signup row first, before any deposit/wager. has_signup
+    // distinguishes "fully tracked" users from legacy orphans.
+    safe(
+      db.$queryRawUnsafe<
+        {
+          referred_user_id: string;
+          referred_username: string | null;
+          referred_email: string | null;
+          first_activity: Date;
+          last_activity: Date;
+          total_deposits: string;
+          total_wagers: string;
+          total_commission: string;
+          has_signup: boolean;
+          active_elsewhere: boolean;
+          event_count: string;
+          code_deposit_total: string;
+          code_deposit_count: string;
+        }[]
+      >(
+        // active_elsewhere flags users who signed up via this code but
+        // generated their deposit/wager volume on a *different* code —
+        // they switched to another creator's code or typed a promo
+        // code in. They're still this creator's referral but no
+        // commission lands here, so the table surfaces them as a
+        // distinct status rather than lumping them in with "Signup
+        // only" (no activity at all) or "Active" (active here).
+        //
+        // code_deposit_total = the user's REAL deposit volume on this
+        // code, summed from ledger_transactions.deposit_bonus events
+        // (each one stores `deposit_usd` and `affiliate_code` in its
+        // metadata at the moment the deposit fired, so a user who
+        // switches codes gets each deposit booked against the code
+        // that was active at the time). The `total_deposits` column
+        // above only captures the FIRST deposit per user (backend's
+        // trackFirstTimeDeposit gates on depositCount === 1) — which
+        // is good for FTD reporting but understates the code's actual
+        // economic contribution. Pairing the two lets the table show
+        // "FTD $X / Total $Y" honestly.
+        `SELECT acu.referred_user_id,
+                u.username AS referred_username,
+                u.email    AS referred_email,
+                MIN(acu.created_at) AS first_activity,
+                MAX(acu.created_at) AS last_activity,
+                COALESCE(SUM(acu.deposit_amount_usd::numeric), 0)::text AS total_deposits,
+                COALESCE(SUM(acu.wager_amount_usd::numeric),   0)::text AS total_wagers,
+                COALESCE(SUM(acu.referrer_cut_usd::numeric),   0)::text AS total_commission,
+                BOOL_OR(acu.usage_type = 'signup') AS has_signup,
+                EXISTS (
+                  SELECT 1 FROM affiliate_code_usages other
+                  WHERE other.referred_user_id = acu.referred_user_id
+                    AND UPPER(other.code) <> $1
+                    AND other.usage_type IN ('deposit', 'wager')
+                ) AS active_elsewhere,
+                COUNT(*)::text AS event_count,
+                COALESCE((
+                  SELECT SUM((lt.metadata->>'deposit_usd')::numeric)
+                  FROM ledger_transactions lt
+                  WHERE lt.user_id = acu.referred_user_id
+                    AND lt.type = 'deposit_bonus'
+                    AND UPPER(lt.metadata->>'affiliate_code') = $1
+                ), 0)::text AS code_deposit_total,
+                COALESCE((
+                  SELECT COUNT(*)
+                  FROM ledger_transactions lt
+                  WHERE lt.user_id = acu.referred_user_id
+                    AND lt.type = 'deposit_bonus'
+                    AND UPPER(lt.metadata->>'affiliate_code') = $1
+                ), 0)::text AS code_deposit_count
+           FROM affiliate_code_usages acu
+           LEFT JOIN "user" u ON u.id = acu.referred_user_id
+          WHERE UPPER(acu.code) = $1
+          GROUP BY acu.referred_user_id, u.username, u.email
+          ORDER BY MAX(acu.created_at) DESC
+          LIMIT 50`,
+        uppercaseCode,
+      ),
+      [] as {
+        referred_user_id: string;
+        referred_username: string | null;
+        referred_email: string | null;
+        first_activity: Date;
+        last_activity: Date;
+        total_deposits: string;
+        total_wagers: string;
+        total_commission: string;
+        has_signup: boolean;
+        active_elsewhere: boolean;
+        event_count: string;
+        code_deposit_total: string;
+        code_deposit_count: string;
+      }[],
+    ),
+    // Referrals KPI — signup events only, raw SQL for the same reason as
+    // the recent referrals query above (avoid Prisma enum mismatch).
+    safe(
+      db.$queryRawUnsafe<{ n: string }[]>(
+        `SELECT COUNT(*)::text AS n
+         FROM affiliate_code_usages
+         WHERE UPPER(code) = $1
+           AND usage_type = 'signup'`,
+        uppercaseCode,
+      ),
+      [] as { n: string }[],
+    ),
+    // Active referrals = every distinct user generating deposit/wager
+    // volume on this code right now, regardless of where they signed
+    // up. Covers two cohorts:
+    //   1. Users who signed up via this code and stuck with it.
+    //   2. Users who signed up via a different path and later entered
+    //      this code — they're actively playing under it now, so they
+    //      count as this code's active referrals.
+    // Per-code commission is a separate metric (Volume & Commission KPI
+    // tiles) — it shares the same underlying rows but expresses dollars
+    // earned rather than user counts.
+    safe(
+      db.$queryRawUnsafe<{ active: string }[]>(
+        `SELECT COUNT(DISTINCT referred_user_id)::text AS active
+           FROM affiliate_code_usages
+          WHERE UPPER(code) = $1
+            AND usage_type IN ('deposit', 'wager')`,
+        uppercaseCode,
+      ),
+      [] as { active: string }[],
+    ),
+    // FTD / wager / commission totals from affiliate_code_usages.
+    // total_deposits here is FTD-only because backend's
+    // trackFirstTimeDeposit gates on depositCount===1 — that's the
+    // intentional behaviour for the FTD metric. Real total deposit
+    // volume comes from the ledger query below.
+    safe(
+      db.$queryRawUnsafe<
+        { total_deposits: string; total_wagers: string; total_commission: string }[]
+      >(
+        `SELECT
+           COALESCE(SUM(deposit_amount_usd::numeric), 0)::text AS total_deposits,
+           COALESCE(SUM(wager_amount_usd::numeric), 0)::text   AS total_wagers,
+           COALESCE(SUM(referrer_cut_usd::numeric), 0)::text   AS total_commission
+         FROM affiliate_code_usages
+         WHERE UPPER(code) = $1`,
+        uppercaseCode,
+      ),
+      [] as { total_deposits: string; total_wagers: string; total_commission: string }[],
+    ),
+    // Real total deposit volume + counts on this code, derived from
+    // ledger_transactions.deposit_bonus events whose metadata pins
+    // the deposit to this affiliate_code. Backend writes one such
+    // bonus event per deposit (not just the FTD), so this captures
+    // the full economic value the code has driven — including users
+    // who entered the code multiple times across separate deposits.
+    //  - total              = SUM of deposit_usd across every event
+    //  - deposit_event_count = number of deposits booked to this code
+    //  - unique_depositors   = distinct users behind those deposits
+    safe(
+      db.$queryRawUnsafe<
+        {
+          total: string;
+          deposit_event_count: string;
+          unique_depositors: string;
+        }[]
+      >(
+        `SELECT COALESCE(SUM((metadata->>'deposit_usd')::numeric), 0)::text AS total,
+                COUNT(*)::text AS deposit_event_count,
+                COUNT(DISTINCT user_id)::text AS unique_depositors
+           FROM ledger_transactions
+          WHERE type = 'deposit_bonus'
+            AND UPPER(metadata->>'affiliate_code') = $1`,
+        uppercaseCode,
+      ),
+      [] as {
+        total: string;
+        deposit_event_count: string;
+        unique_depositors: string;
+      }[],
+    ),
+    safe(db.affiliate_clicks.count({ where: { code: uppercaseCode } }), 0),
+    safe(
+      db.$queryRawUnsafe<
+        {
+          date: Date;
+          referrals: string;
+          deposit_volume: string;
+          wager_volume: string;
+          commission: string;
+        }[]
+      >(`
+        SELECT
+          DATE(created_at) AS date,
+          COUNT(*) FILTER (WHERE usage_type = 'signup')::text AS referrals,
+          COALESCE(SUM(deposit_amount_usd::numeric), 0)::text AS deposit_volume,
+          COALESCE(SUM(wager_amount_usd::numeric), 0)::text AS wager_volume,
+          COALESCE(SUM(referrer_cut_usd::numeric), 0)::text AS commission
+        FROM affiliate_code_usages
+        WHERE UPPER(code) = $1
+        GROUP BY DATE(created_at)
+        ORDER BY date
+      `, uppercaseCode),
+      [] as {
         date: Date;
         referrals: string;
         deposit_volume: string;
         wager_volume: string;
         commission: string;
-      }[]
-    >(`
-      SELECT
-        DATE(created_at) AS date,
-        COUNT(*)::text AS referrals,
-        COALESCE(SUM(deposit_amount_usd::numeric), 0)::text AS deposit_volume,
-        COALESCE(SUM(wager_amount_usd::numeric), 0)::text AS wager_volume,
-        COALESCE(SUM(referrer_cut_usd::numeric), 0)::text AS commission
-      FROM affiliate_code_usages
-      WHERE UPPER(code) = $1
-      GROUP BY DATE(created_at)
-      ORDER BY date
-    `, uppercaseCode),
-    db.$queryRawUnsafe<{ date: Date; clicks: string }[]>(`
-      SELECT DATE(created_at) AS date, COUNT(*)::text AS clicks
-      FROM affiliate_clicks
-      WHERE code = $1
-      GROUP BY DATE(created_at)
-      ORDER BY date
-    `, uppercaseCode),
+      }[],
+    ),
+    safe(
+      db.$queryRawUnsafe<{ date: Date; clicks: string }[]>(`
+        SELECT DATE(created_at) AS date, COUNT(*)::text AS clicks
+        FROM affiliate_clicks
+        WHERE code = $1
+        GROUP BY DATE(created_at)
+        ORDER BY date
+      `, uppercaseCode),
+      [] as { date: Date; clicks: string }[],
+    ),
     // Country breakdown scoped to THIS code.
     //  - Clicks: affiliate_clicks.country is the full country name populated
     //    by the geolocation service at track time. Clicks are always stored
@@ -159,124 +362,142 @@ export async function getCodeAnalytics(code: string) {
     //    to user.country. Uses uppercaseCode for case-insensitive matching.
     //    casing). DISTINCT on referred_user_id so a user who made multiple
     //    usages under this code still counts once.
-    db.$queryRawUnsafe<{ country: string; clicks: number; signups: number }[]>(
-      `
-      WITH click_countries AS (
-        SELECT country, COUNT(*)::int AS clicks
-        FROM affiliate_clicks
-        WHERE code = $1
-          AND country IS NOT NULL AND country <> 'unknown'
-        GROUP BY country
+    safe(
+      db.$queryRawUnsafe<{ country: string; clicks: number; signups: number }[]>(
+        `
+        WITH click_countries AS (
+          SELECT country, COUNT(*)::int AS clicks
+          FROM affiliate_clicks
+          WHERE code = $1
+            AND country IS NOT NULL AND country <> 'unknown'
+          GROUP BY country
+        ),
+        signup_countries AS (
+          SELECT u.country, COUNT(DISTINCT acu.referred_user_id)::int AS signups
+          FROM affiliate_code_usages acu
+          JOIN "user" u ON u.id = acu.referred_user_id
+          WHERE UPPER(acu.code) = $2
+            AND acu.usage_type = 'signup'
+            AND u.country IS NOT NULL AND u.country <> '' AND u.country <> 'unknown'
+          GROUP BY u.country
+        )
+        SELECT
+          COALESCE(c.country, s.country) AS country,
+          COALESCE(c.clicks, 0) AS clicks,
+          COALESCE(s.signups, 0) AS signups
+        FROM click_countries c
+        FULL OUTER JOIN signup_countries s ON c.country = s.country
+        WHERE COALESCE(c.country, s.country) IS NOT NULL
+        ORDER BY (COALESCE(c.clicks, 0) + COALESCE(s.signups, 0)) DESC
+        LIMIT 30
+        `,
+        uppercaseCode,
+        uppercaseCode,
       ),
-      signup_countries AS (
-        SELECT u.country, COUNT(DISTINCT acu.referred_user_id)::int AS signups
-        FROM affiliate_code_usages acu
-        JOIN "user" u ON u.id = acu.referred_user_id
-        WHERE UPPER(acu.code) = $2
-          AND acu.usage_type = 'signup'
-          AND u.country IS NOT NULL AND u.country <> '' AND u.country <> 'unknown'
-        GROUP BY u.country
-      )
-      SELECT
-        COALESCE(c.country, s.country) AS country,
-        COALESCE(c.clicks, 0) AS clicks,
-        COALESCE(s.signups, 0) AS signups
-      FROM click_countries c
-      FULL OUTER JOIN signup_countries s ON c.country = s.country
-      WHERE COALESCE(c.country, s.country) IS NOT NULL
-      ORDER BY (COALESCE(c.clicks, 0) + COALESCE(s.signups, 0)) DESC
-      LIMIT 30
-      `,
-      uppercaseCode,
-      uppercaseCode,
+      [] as { country: string; clicks: number; signups: number }[],
     ),
     // Hourly acquisition series (last 24h, 24 buckets).
     //  - Clicks: affiliate_clicks, uppercase code (always uppercase stored).
     //  - Signups: affiliate_code_usages with usage_type='signup', uppercaseCode.
     // generate_series + LEFT JOIN guarantees continuous buckets even when
     // a given hour saw zero activity — chart renders flat bar, not a gap.
-    db.$queryRawUnsafe<{ bucket: string; clicks: number; signups: number }[]>(
-      `
-      WITH series AS (
-        SELECT generate_series(
-          date_trunc('hour', NOW() - INTERVAL '23 hours'),
-          date_trunc('hour', NOW()),
-          INTERVAL '1 hour'
-        ) AS bucket
+    safe(
+      db.$queryRawUnsafe<{ bucket: string; clicks: number; signups: number }[]>(
+        `
+        WITH series AS (
+          SELECT generate_series(
+            date_trunc('hour', NOW() - INTERVAL '23 hours'),
+            date_trunc('hour', NOW()),
+            INTERVAL '1 hour'
+          ) AS bucket
+        ),
+        clicks_agg AS (
+          SELECT date_trunc('hour', created_at) AS bucket, COUNT(*)::int AS n
+          FROM affiliate_clicks
+          WHERE code = $1
+            AND created_at >= NOW() - INTERVAL '24 hours'
+          GROUP BY 1
+        ),
+        signups_agg AS (
+          SELECT date_trunc('hour', created_at) AS bucket,
+                 COUNT(DISTINCT referred_user_id)::int AS n
+          FROM affiliate_code_usages
+          WHERE UPPER(code) = $2
+            AND usage_type = 'signup'
+            AND created_at >= NOW() - INTERVAL '24 hours'
+          GROUP BY 1
+        )
+        SELECT s.bucket::text AS bucket,
+               COALESCE(c.n, 0) AS clicks,
+               COALESCE(su.n, 0) AS signups
+        FROM series s
+        LEFT JOIN clicks_agg c ON c.bucket = s.bucket
+        LEFT JOIN signups_agg su ON su.bucket = s.bucket
+        ORDER BY s.bucket ASC
+        `,
+        uppercaseCode,
+        uppercaseCode,
       ),
-      clicks_agg AS (
-        SELECT date_trunc('hour', created_at) AS bucket, COUNT(*)::int AS n
-        FROM affiliate_clicks
-        WHERE code = $1
-          AND created_at >= NOW() - INTERVAL '24 hours'
-        GROUP BY 1
-      ),
-      signups_agg AS (
-        SELECT date_trunc('hour', created_at) AS bucket,
-               COUNT(DISTINCT referred_user_id)::int AS n
-        FROM affiliate_code_usages
-        WHERE UPPER(code) = $2
-          AND usage_type = 'signup'
-          AND created_at >= NOW() - INTERVAL '24 hours'
-        GROUP BY 1
-      )
-      SELECT s.bucket::text AS bucket,
-             COALESCE(c.n, 0) AS clicks,
-             COALESCE(su.n, 0) AS signups
-      FROM series s
-      LEFT JOIN clicks_agg c ON c.bucket = s.bucket
-      LEFT JOIN signups_agg su ON su.bucket = s.bucket
-      ORDER BY s.bucket ASC
-      `,
-      uppercaseCode,
-      uppercaseCode,
+      [] as { bucket: string; clicks: number; signups: number }[],
     ),
     // Daily acquisition series (last 7d, 7 buckets). Same structure as
     // hourly but truncated to day.
-    db.$queryRawUnsafe<{ bucket: string; clicks: number; signups: number }[]>(
-      `
-      WITH series AS (
-        SELECT generate_series(
-          date_trunc('day', NOW() - INTERVAL '6 days'),
-          date_trunc('day', NOW()),
-          INTERVAL '1 day'
-        ) AS bucket
+    safe(
+      db.$queryRawUnsafe<{ bucket: string; clicks: number; signups: number }[]>(
+        `
+        WITH series AS (
+          SELECT generate_series(
+            date_trunc('day', NOW() - INTERVAL '6 days'),
+            date_trunc('day', NOW()),
+            INTERVAL '1 day'
+          ) AS bucket
+        ),
+        clicks_agg AS (
+          SELECT date_trunc('day', created_at) AS bucket, COUNT(*)::int AS n
+          FROM affiliate_clicks
+          WHERE code = $1
+            AND created_at >= NOW() - INTERVAL '7 days'
+          GROUP BY 1
+        ),
+        signups_agg AS (
+          SELECT date_trunc('day', created_at) AS bucket,
+                 COUNT(DISTINCT referred_user_id)::int AS n
+          FROM affiliate_code_usages
+          WHERE UPPER(code) = $2
+            AND usage_type = 'signup'
+            AND created_at >= NOW() - INTERVAL '7 days'
+          GROUP BY 1
+        )
+        SELECT s.bucket::text AS bucket,
+               COALESCE(c.n, 0) AS clicks,
+               COALESCE(su.n, 0) AS signups
+        FROM series s
+        LEFT JOIN clicks_agg c ON c.bucket = s.bucket
+        LEFT JOIN signups_agg su ON su.bucket = s.bucket
+        ORDER BY s.bucket ASC
+        `,
+        uppercaseCode,
+        uppercaseCode,
       ),
-      clicks_agg AS (
-        SELECT date_trunc('day', created_at) AS bucket, COUNT(*)::int AS n
-        FROM affiliate_clicks
-        WHERE code = $1
-          AND created_at >= NOW() - INTERVAL '7 days'
-        GROUP BY 1
-      ),
-      signups_agg AS (
-        SELECT date_trunc('day', created_at) AS bucket,
-               COUNT(DISTINCT referred_user_id)::int AS n
-        FROM affiliate_code_usages
-        WHERE UPPER(code) = $2
-          AND usage_type = 'signup'
-          AND created_at >= NOW() - INTERVAL '7 days'
-        GROUP BY 1
-      )
-      SELECT s.bucket::text AS bucket,
-             COALESCE(c.n, 0) AS clicks,
-             COALESCE(su.n, 0) AS signups
-      FROM series s
-      LEFT JOIN clicks_agg c ON c.bucket = s.bucket
-      LEFT JOIN signups_agg su ON su.bucket = s.bucket
-      ORDER BY s.bucket ASC
-      `,
-      uppercaseCode,
-      uppercaseCode,
+      [] as { bucket: string; clicks: number; signups: number }[],
     ),
   ]);
 
   const isActive = codeRecord.is_active;
 
-  const totalReferrals = totalReferralsCount;
-  const totalDeposits = usages.reduce((sum, u) => sum + toNumber(u.deposit_amount_usd), 0);
-  const totalWagers = usages.reduce((sum, u) => sum + toNumber(u.wager_amount_usd), 0);
-  const totalCommission = usages.reduce((sum, u) => sum + toNumber(u.referrer_cut_usd), 0);
+  const totalReferrals = Number(totalReferralsCount[0]?.n ?? 0);
+  const activeReferrals = Number(activeReferralsRow[0]?.active ?? 0);
+  const totalsAggregate = totalsRow[0];
+  const ftdDepositTotal = toNumber(totalsAggregate?.total_deposits ?? 0);
+  const codeDepositTotal = toNumber(codeDepositTotalRow[0]?.total ?? 0);
+  const codeDepositEventCount = Number(
+    codeDepositTotalRow[0]?.deposit_event_count ?? 0,
+  );
+  const codeUniqueDepositors = Number(
+    codeDepositTotalRow[0]?.unique_depositors ?? 0,
+  );
+  const totalWagers = toNumber(totalsAggregate?.total_wagers ?? 0);
+  const totalCommission = toNumber(totalsAggregate?.total_commission ?? 0);
 
   // Merge daily data. `DATE(created_at)` comes back from Prisma as either
   // a Date object or an ISO string depending on the driver; guard the
@@ -335,7 +556,11 @@ export async function getCodeAnalytics(code: string) {
     ownerUsername: codeRecord.username ?? null,
     isActive,
     totalReferrals,
-    totalDeposits,
+    activeReferrals,
+    totalDeposits: ftdDepositTotal,
+    codeDepositTotal,
+    codeDepositEventCount,
+    codeUniqueDepositors,
     totalWagers,
     totalCommission,
     totalClicks: clickCount,
@@ -358,14 +583,19 @@ export async function getCodeAnalytics(code: string) {
       signups: Number(r.signups),
     })),
     recentReferrals: usages.map((u) => ({
-      id: u.id,
       referredUserId: u.referred_user_id,
-      referredUsername: u.user_affiliate_code_usages_referred_user_idTouser?.username ?? null,
-      usageType: u.usage_type,
-      depositAmountUsd: toNumber(u.deposit_amount_usd),
-      wagerAmountUsd: toNumber(u.wager_amount_usd),
-      referrerCutUsd: toNumber(u.referrer_cut_usd),
-      createdAt: u.created_at.toISOString(),
+      referredUsername: u.referred_username ?? null,
+      referredEmail: u.referred_email ?? null,
+      firstActivityAt: u.first_activity.toISOString(),
+      lastActivityAt: u.last_activity.toISOString(),
+      ftdDepositUsd: toNumber(u.total_deposits),
+      codeDepositTotalUsd: toNumber(u.code_deposit_total),
+      codeDepositCount: Number(u.code_deposit_count),
+      totalWagersUsd: toNumber(u.total_wagers),
+      totalCommissionUsd: toNumber(u.total_commission),
+      hasSignup: u.has_signup,
+      activeElsewhere: u.active_elsewhere,
+      eventCount: Number(u.event_count),
     })),
   };
 }
