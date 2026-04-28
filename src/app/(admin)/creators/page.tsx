@@ -5,7 +5,7 @@ import { FadeIn } from "@/components/fade-in";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { formatNumber } from "@/lib/utils/format";
-import { BackendApiError } from "@/lib/backend-api";
+import { BackendApiError, BackendNetworkError } from "@/lib/backend-api";
 
 import { parseCreatorsSearchParams } from "./_lib/search-params";
 import {
@@ -38,7 +38,12 @@ export default async function CreatorsPage({
     result = await listCreatorsForPage(params);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (err instanceof BackendApiError) {
+    if (err instanceof BackendNetworkError) {
+      loadError = {
+        title: networkErrorTitle(err.causeCode),
+        detail: networkErrorDetail(err),
+      };
+    } else if (err instanceof BackendApiError) {
       loadError = {
         title: `Backend rejected the request (HTTP ${err.status})`,
         detail: message,
@@ -114,4 +119,64 @@ export default async function CreatorsPage({
       </FadeIn>
     </div>
   );
+}
+
+// ─── Helpers — keep error-state copy near the page that uses it ───
+
+/**
+ * Map a fetch-failure cause code to a human-readable headline. Covers
+ * the common Node fetch failure modes — anything we don't recognize
+ * falls back to a generic "unreachable" headline.
+ */
+function networkErrorTitle(code: string | null): string {
+  switch (code) {
+    case "ENOTFOUND":
+      return "Backend host not found (DNS failure)";
+    case "ECONNREFUSED":
+      return "Backend refused the connection";
+    case "ECONNRESET":
+      return "Backend dropped the connection";
+    case "ETIMEDOUT":
+      return "Backend connection timed out";
+    case "EAI_AGAIN":
+      return "Temporary DNS resolution failure";
+    case "CERT_HAS_EXPIRED":
+    case "UNABLE_TO_VERIFY_LEAF_SIGNATURE":
+    case "DEPTH_ZERO_SELF_SIGNED_CERT":
+    case "SELF_SIGNED_CERT_IN_CHAIN":
+      return "Backend TLS certificate is invalid";
+    default:
+      return "Backend unreachable";
+  }
+}
+
+function networkErrorDetail(err: BackendNetworkError): string {
+  const cause = err.causeCode
+    ? `${err.causeCode}${err.causeMessage ? ` — ${err.causeMessage}` : ""}`
+    : (err.causeMessage ?? "fetch failed");
+  let hint = "";
+  switch (err.causeCode) {
+    case "ENOTFOUND":
+      hint =
+        " Check BACKEND_API_URL_PROD on Vercel — typo in the hostname, or the DNS record is gone.";
+      break;
+    case "ECONNREFUSED":
+      hint =
+        " Backend is not listening on that host:port. Check the URL's port + that the service is running.";
+      break;
+    case "ETIMEDOUT":
+      hint =
+        " A firewall is dropping the connection silently. Cloudflare Access? IP allowlist? Vercel egress region?";
+      break;
+    case "ECONNRESET":
+      hint =
+        " The TCP socket got closed mid-handshake. Often a TLS / load-balancer mismatch on the backend.";
+      break;
+    case "CERT_HAS_EXPIRED":
+    case "UNABLE_TO_VERIFY_LEAF_SIGNATURE":
+    case "DEPTH_ZERO_SELF_SIGNED_CERT":
+      hint = " Renew the cert on the backend or add the CA to NODE_EXTRA_CA_CERTS.";
+      break;
+  }
+  return `URL: ${err.url} · ${cause}.${hint}`;
 }
