@@ -23,7 +23,8 @@ const EVENT_COLORS: Record<string, string> = {
   pack_deactivated: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
   withdrawal_processed: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
   withdrawal_shipped: "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
-  withdrawal_completed: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
+  // House-POV: completed withdrawal = user successfully took money out → rose.
+  withdrawal_completed: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
   withdrawal_cancelled: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
   withdrawal_failed: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
   chat_message_deleted: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",

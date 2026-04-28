@@ -42,9 +42,11 @@ const RARITY_COLORS: Record<string, string> = {
   secret: "bg-pink-700/90 text-pink-100",
 };
 
+// House-POV per CLAUDE.md: user-win → rose (house pays out),
+// user-lose → emerald (house keeps the wager).
 const RESULT_COLORS: Record<string, string> = {
-  win: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
-  lose: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
+  win: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
+  lose: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
   draw: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
 };
 
@@ -189,14 +191,15 @@ export default async function BattleDetailPage({
                 <div
                   key={team.teamNumber}
                   className={`relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80 ${
-                    team.isWinner ? "border-emerald-500/30" : ""
+                    team.isWinner ? "border-rose-500/30" : ""
                   }`}
                 >
                   <div className="relative p-5">
                     <div className="mb-4 flex items-center gap-2">
                       <h3 className="text-sm font-medium">Team {team.teamNumber}</h3>
                       {team.isWinner && (
-                        <Badge variant="outline" className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
+                        // House-POV: user team winning = house paying out → rose.
+                        <Badge variant="outline" className="bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30">
                           <Trophy className="size-3 mr-1" />
                           Winner
                         </Badge>

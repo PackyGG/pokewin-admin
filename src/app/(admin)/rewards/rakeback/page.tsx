@@ -140,7 +140,8 @@ async function ClaimsTab({ page, perPage, type, search }: { page: number; perPag
                   </TableCell>
                   <TableCell>
                     {c.claimedAt ? (
-                      <Badge variant="outline" className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
+                      // House-POV: claim happened = user got paid → rose (matches the amount column above).
+                      <Badge variant="outline" className="bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30">
                         {formatDateTime(c.claimedAt)}
                       </Badge>
                     ) : (
