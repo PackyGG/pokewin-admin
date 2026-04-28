@@ -116,12 +116,14 @@ export default async function AdsPage() {
         <KpiTile
           label="Depositors"
           value={formatNumber(aggregate.totalDepositors)}
+          sub={`${formatNumber(aggregate.totalDepositEventCount)} deposits`}
           icon={Users}
           accent="emerald"
         />
         <KpiTile
           label="Deposits"
           value={formatCurrency(aggregate.totalDepositVolumeUsd)}
+          sub={`FTD ${formatCurrency(aggregate.totalFtdVolumeUsd)}`}
           icon={ArrowDownToLine}
           accent="amber"
         />

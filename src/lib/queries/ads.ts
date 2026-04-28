@@ -45,8 +45,14 @@ export type AdCodeSummary = {
   signups: number;
   /** Signed-up users on this code who later deposited or wagered. */
   activeReferrals: number;
+  /** Unique users who made any deposit attributed to this code (from ledger). */
   depositors: number;
+  /** Total number of deposit events booked to this code (from ledger). */
+  depositEventCount: number;
+  /** Real deposit volume on this code, summed from ledger.deposit_bonus events. */
   depositVolumeUsd: number;
+  /** First-time deposit volume only (from affiliate_code_usages, FTD-gated by backend). */
+  ftdVolumeUsd: number;
   wagerVolumeUsd: number;
   /** signups / clicks (0-1). 0 when no clicks yet. */
   conversionRate: number;
@@ -58,7 +64,9 @@ export type AdAggregate = {
   totalSignups: number;
   totalActiveReferrals: number;
   totalDepositors: number;
+  totalDepositEventCount: number;
   totalDepositVolumeUsd: number;
+  totalFtdVolumeUsd: number;
   totalWagerVolumeUsd: number;
 };
 
@@ -117,6 +125,7 @@ export async function getAdCodes(houseUserId: string): Promise<AdCodeSummary[]> 
     activeRows,
     usageAggByCode,
     depositorRows,
+    ledgerRows,
   ] = await Promise.all([
     safe(
       db.$queryRawUnsafe<{ code_upper: string; count: string }[]>(
@@ -199,6 +208,37 @@ export async function getAdCodes(houseUserId: string): Promise<AdCodeSummary[]> 
       ),
       [] as { code_upper: string; count: string }[],
     ),
+    // Real deposit volume + counts from ledger.deposit_bonus, grouped
+    // by metadata.affiliate_code. Backend writes one bonus row per
+    // deposit (not just FTD), so this captures the full economic
+    // contribution of each ad code.
+    //  - real_volume     = SUM of deposit_usd (every deposit booked here)
+    //  - real_depositors = DISTINCT users behind those events
+    //  - event_count     = total number of deposit events on this code
+    safe(
+      db.$queryRawUnsafe<{
+        code_upper: string;
+        real_volume: string;
+        real_depositors: string;
+        event_count: string;
+      }[]>(
+        `SELECT UPPER(metadata->>'affiliate_code') AS code_upper,
+                COALESCE(SUM((metadata->>'deposit_usd')::numeric), 0)::text AS real_volume,
+                COUNT(DISTINCT user_id)::text AS real_depositors,
+                COUNT(*)::text AS event_count
+           FROM ledger_transactions
+          WHERE type = 'deposit_bonus'
+            AND UPPER(metadata->>'affiliate_code') = ANY($1::text[])
+          GROUP BY UPPER(metadata->>'affiliate_code')`,
+        upperCodeList,
+      ),
+      [] as {
+        code_upper: string;
+        real_volume: string;
+        real_depositors: string;
+        event_count: string;
+      }[],
+    ),
   ]);
 
   const clickMap = new Map(
@@ -216,8 +256,18 @@ export async function getAdCodes(houseUserId: string): Promise<AdCodeSummary[]> 
       { deposit: toNumber(r.deposit), wager: toNumber(r.wager) },
     ]),
   );
-  const depositorMap = new Map(
+  const ftdDepositorMap = new Map(
     depositorRows.map((r) => [r.code_upper, Number(r.count)]),
+  );
+  const ledgerMap = new Map(
+    ledgerRows.map((r) => [
+      r.code_upper,
+      {
+        volume: toNumber(r.real_volume),
+        depositors: Number(r.real_depositors),
+        events: Number(r.event_count),
+      },
+    ]),
   );
 
   return codes.map((c) => {
@@ -226,7 +276,11 @@ export async function getAdCodes(houseUserId: string): Promise<AdCodeSummary[]> 
     const signups = signupMap.get(key) ?? 0;
     const activeReferrals = activeMap.get(key) ?? 0;
     const usage = usageMap.get(key) ?? { deposit: 0, wager: 0 };
-    const depositors = depositorMap.get(key) ?? 0;
+    const ledger = ledgerMap.get(key) ?? { volume: 0, depositors: 0, events: 0 };
+    // Prefer ledger numbers (every deposit booked) over the FTD-only
+    // affiliate_code_usages count. ftdVolumeUsd is kept in the summary
+    // alongside it so the UI can still show the FTD slice when needed.
+    const depositors = ledger.depositors || ftdDepositorMap.get(key) || 0;
     return {
       code: c.code,
       createdAt: c.created_at.toISOString(),
@@ -234,7 +288,9 @@ export async function getAdCodes(houseUserId: string): Promise<AdCodeSummary[]> 
       signups,
       activeReferrals,
       depositors,
-      depositVolumeUsd: usage.deposit,
+      depositEventCount: ledger.events,
+      depositVolumeUsd: ledger.volume,
+      ftdVolumeUsd: usage.deposit,
       wagerVolumeUsd: usage.wager,
       conversionRate: clicks > 0 ? signups / clicks : 0,
     };
@@ -266,14 +322,16 @@ export async function getAdCodesAggregate(
       totalSignups: 0,
       totalActiveReferrals: 0,
       totalDepositors: 0,
+      totalDepositEventCount: 0,
       totalDepositVolumeUsd: 0,
+      totalFtdVolumeUsd: 0,
       totalWagerVolumeUsd: 0,
     };
   }
 
   const upperCodeList = codeList.map((c) => c.toUpperCase());
 
-  const [clicksRow, signupsRow, activeRow, depositorRow, sumsRow] =
+  const [clicksRow, signupsRow, activeRow, depositorRow, sumsRow, ledgerRow] =
     await Promise.all([
       safe(
         db.$queryRawUnsafe<{ count: string }[]>(
@@ -340,15 +398,43 @@ export async function getAdCodesAggregate(
         ),
         [] as { deposit: string; wager: string }[],
       ),
+      // Real deposit volume + counts from ledger across every ad code
+      // owned by the house user. Mirrors the per-code query above so
+      // the aggregate strip's "Deposits" tile matches the sum of the
+      // detail-page numbers.
+      safe(
+        db.$queryRawUnsafe<{
+          volume: string;
+          depositors: string;
+          events: string;
+        }[]>(
+          `SELECT COALESCE(SUM((metadata->>'deposit_usd')::numeric), 0)::text AS volume,
+                  COUNT(DISTINCT user_id)::text AS depositors,
+                  COUNT(*)::text AS events
+             FROM ledger_transactions
+            WHERE type = 'deposit_bonus'
+              AND UPPER(metadata->>'affiliate_code') = ANY($1::text[])`,
+          upperCodeList,
+        ),
+        [] as { volume: string; depositors: string; events: string }[],
+      ),
     ]);
+
+  // Prefer ledger numbers for depositor count + volume — they cover
+  // every booked deposit, not just the FTD slice. Fall back to the
+  // affiliate_code_usages number if ledger query failed.
+  const ledgerDepositors = Number(ledgerRow[0]?.depositors ?? 0);
+  const ftdDepositors = Number(depositorRow[0]?.count ?? 0);
 
   return {
     totalCodes,
     totalClicks: Number(clicksRow[0]?.count ?? 0),
     totalSignups: Number(signupsRow[0]?.count ?? 0),
     totalActiveReferrals: Number(activeRow[0]?.count ?? 0),
-    totalDepositors: Number(depositorRow[0]?.count ?? 0),
-    totalDepositVolumeUsd: toNumber(sumsRow[0]?.deposit ?? 0),
+    totalDepositors: ledgerDepositors || ftdDepositors,
+    totalDepositEventCount: Number(ledgerRow[0]?.events ?? 0),
+    totalDepositVolumeUsd: toNumber(ledgerRow[0]?.volume ?? 0),
+    totalFtdVolumeUsd: toNumber(sumsRow[0]?.deposit ?? 0),
     totalWagerVolumeUsd: toNumber(sumsRow[0]?.wager ?? 0),
   };
 }
@@ -392,6 +478,7 @@ export async function getAdCodeDetail(
     activeReferralsRow,
     depositorRows,
     usageSums,
+    ledgerRow,
     clicksByDayRows,
     clicksByCountryRows,
     signupsRaw,
@@ -459,6 +546,26 @@ export async function getAdCodeDetail(
         upperCode,
       ),
       [] as { deposit: string; wager: string }[],
+    ),
+    // Real deposit volume + counts from ledger.deposit_bonus events
+    // pinned to this code via metadata.affiliate_code. Captures every
+    // deposit booked here (not just FTD), so the headline tile reads
+    // the code's real economic contribution.
+    safe(
+      db.$queryRawUnsafe<{
+        volume: string;
+        depositors: string;
+        events: string;
+      }[]>(
+        `SELECT COALESCE(SUM((metadata->>'deposit_usd')::numeric), 0)::text AS volume,
+                COUNT(DISTINCT user_id)::text AS depositors,
+                COUNT(*)::text AS events
+           FROM ledger_transactions
+          WHERE type = 'deposit_bonus'
+            AND UPPER(metadata->>'affiliate_code') = $1`,
+        upperCode,
+      ),
+      [] as { volume: string; depositors: string; events: string }[],
     ),
     safe(
       db.$queryRawUnsafe<{ date: string; clicks: string }[]>(
@@ -550,14 +657,23 @@ export async function getAdCodeDetail(
 
   const clicksCountNum = Number(clicksCount[0]?.count ?? 0);
   const signupsCountNum = Number(signupsCount[0]?.count ?? 0);
+  const ledgerVolume = toNumber(ledgerRow[0]?.volume ?? 0);
+  const ledgerDepositors = Number(ledgerRow[0]?.depositors ?? 0);
+  const ledgerEvents = Number(ledgerRow[0]?.events ?? 0);
+  const ftdDepositors = Number(depositorRows[0]?.count ?? 0);
   const summary: AdCodeSummary = {
     code: record.code,
     createdAt: record.created_at.toISOString(),
     clicks: clicksCountNum,
     signups: signupsCountNum,
     activeReferrals: Number(activeReferralsRow[0]?.count ?? 0),
-    depositors: Number(depositorRows[0]?.count ?? 0),
-    depositVolumeUsd: toNumber(usageSums[0]?.deposit ?? 0),
+    // Ledger preferred — captures every deposit, not just FTD. Falls
+    // back to the FTD-only count if the ledger query came back empty
+    // (empty schema / safe() catch).
+    depositors: ledgerDepositors || ftdDepositors,
+    depositEventCount: ledgerEvents,
+    depositVolumeUsd: ledgerVolume,
+    ftdVolumeUsd: toNumber(usageSums[0]?.deposit ?? 0),
     wagerVolumeUsd: toNumber(usageSums[0]?.wager ?? 0),
     conversionRate: clicksCountNum > 0 ? signupsCountNum / clicksCountNum : 0,
   };

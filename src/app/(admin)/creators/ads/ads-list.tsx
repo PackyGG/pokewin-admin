@@ -124,7 +124,12 @@ export function AdsList({ codes }: { codes: AdCodeSummary[] }) {
                   </div>
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {formatNumber(c.depositors)}
+                  <div className="flex flex-col items-end leading-tight">
+                    <span>{formatNumber(c.depositors)}</span>
+                    <span className="text-[10px] text-muted-foreground">
+                      {formatNumber(c.depositEventCount)} deposits
+                    </span>
+                  </div>
                 </TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">
                   {c.clicks > 0
@@ -132,7 +137,14 @@ export function AdsList({ codes }: { codes: AdCodeSummary[] }) {
                     : "—"}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {formatCurrency(c.depositVolumeUsd)}
+                  <div className="flex flex-col items-end leading-tight">
+                    <span>{formatCurrency(c.depositVolumeUsd)}</span>
+                    {c.ftdVolumeUsd > 0 && (
+                      <span className="text-[10px] text-muted-foreground">
+                        FTD {formatCurrency(c.ftdVolumeUsd)}
+                      </span>
+                    )}
+                  </div>
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {formatCurrency(c.wagerVolumeUsd)}

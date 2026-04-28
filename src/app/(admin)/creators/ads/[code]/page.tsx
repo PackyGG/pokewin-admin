@@ -114,9 +114,14 @@ export default async function AdCodeDetailPage({
           icon={UserPlus}
           accent="cyan"
         />
+        {/* Depositors = unique users who made any deposit booked to
+            this ad code (from ledger.deposit_bonus events). Subtitle
+            shows total deposit event count, since one user often makes
+            many deposits — both numbers matter for ad performance. */}
         <KpiTile
           label="Depositors"
           value={formatNumber(summary.depositors)}
+          sub={`${formatNumber(summary.depositEventCount)} deposits`}
           icon={Users}
           accent="emerald"
         />
@@ -131,9 +136,14 @@ export default async function AdCodeDetailPage({
           icon={Percent}
           accent="amber"
         />
+        {/* Deposits = real volume from ledger (every deposit booked
+            to this code). FTD subtitle shows the first-deposit slice
+            from affiliate_code_usages, since that's still the headline
+            number elsewhere. */}
         <KpiTile
           label="Deposits"
           value={formatCurrency(summary.depositVolumeUsd)}
+          sub={`FTD ${formatCurrency(summary.ftdVolumeUsd)}`}
           icon={ArrowDownToLine}
           accent="purple"
         />
