@@ -26,7 +26,7 @@ export function ProfileCard({ detail }: { detail: AdminUserDetail }) {
             variant="outline"
             className={
               detail.totpEnabled
-                ? "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30"
+                ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
                 : "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30"
             }
           >
@@ -38,8 +38,8 @@ export function ProfileCard({ detail }: { detail: AdminUserDetail }) {
             variant="outline"
             className={
               detail.isActive
-                ? "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30"
-                : "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30"
+                ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                : "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30"
             }
           >
             {detail.isActive ? "Active" : "Inactive"}
