@@ -37,6 +37,9 @@ export async function createExpense(data: {
   const session = await requirePageAccess("/spending");
   const parsed = expenseSchema.parse(data);
 
+  // Explicit select — Prisma's default RETURNING * references every column
+  // the generated client knows about. If a new column is missing on prod,
+  // the insert crashes with P2022 even though the write columns are valid.
   const expense = await adminDb.expenses.create({
     data: {
       description: parsed.description,
@@ -49,6 +52,7 @@ export async function createExpense(data: {
       notes: parsed.notes || null,
       created_by_id: session.userId,
     },
+    select: { id: true },
   });
 
   await createAdminAuditEvent({
@@ -88,6 +92,7 @@ export async function updateExpense(
       notes: parsed.notes || null,
       updated_at: new Date(),
     },
+    select: { id: true },
   });
 
   await createAdminAuditEvent({
@@ -102,7 +107,7 @@ export async function updateExpense(
 export async function deleteExpense(id: string) {
   const session = await requirePageAccess("/spending");
 
-  await adminDb.expenses.delete({ where: { id } });
+  await adminDb.expenses.delete({ where: { id }, select: { id: true } });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -130,6 +135,7 @@ export async function createRecurringExpense(data: {
       notes: parsed.notes || null,
       created_by_id: session.userId,
     },
+    select: { id: true },
   });
 
   await createAdminAuditEvent({
@@ -162,6 +168,7 @@ export async function updateRecurringExpense(
       notes: parsed.notes || null,
       updated_at: new Date(),
     },
+    select: { id: true },
   });
 
   await createAdminAuditEvent({
@@ -179,6 +186,7 @@ export async function toggleRecurringExpense(id: string, isActive: boolean) {
   await adminDb.recurring_expenses.update({
     where: { id },
     data: { is_active: isActive, updated_at: new Date() },
+    select: { id: true },
   });
 
   await createAdminAuditEvent({
@@ -235,6 +243,7 @@ export async function updateExpenseField(
   await adminDb.expenses.update({
     where: { id },
     data: { [dbField]: dbValue, updated_at: new Date() },
+    select: { id: true },
   });
 
   await createAdminAuditEvent({
@@ -278,6 +287,7 @@ export async function updateRecurringExpenseField(
   await adminDb.recurring_expenses.update({
     where: { id },
     data: { [dbField]: value, updated_at: new Date() },
+    select: { id: true },
   });
 
   await createAdminAuditEvent({
@@ -292,7 +302,7 @@ export async function updateRecurringExpenseField(
 export async function deleteRecurringExpense(id: string) {
   const session = await requirePageAccess("/spending");
 
-  await adminDb.recurring_expenses.delete({ where: { id } });
+  await adminDb.recurring_expenses.delete({ where: { id }, select: { id: true } });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
