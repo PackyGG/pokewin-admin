@@ -12,7 +12,7 @@ import {
   createTextColumn,
 } from "react-datasheet-grid";
 import "react-datasheet-grid/dist/style.css";
-import type { Column } from "react-datasheet-grid";
+import type { CellProps, Column } from "react-datasheet-grid";
 import type { Operation } from "react-datasheet-grid/dist/types";
 import type { RecurringExpenseListItem } from "@/lib/queries/spending";
 import {
@@ -51,8 +51,7 @@ function isRowReady(row: RecurringRow): boolean {
 
 const comboboxColumn = (
   suggestions: readonly { value: string; label: string }[]
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-): Partial<Column<string | null, any, string>> => ({
+): Partial<Column<string | null, unknown, string>> => ({
   component: ({ rowData, setRowData, focus, stopEditing, active }) => (
     <ComboboxCell
       value={rowData}
@@ -108,8 +107,7 @@ export function RecurringTable({
     .filter((r) => r.isActive && r.id)
     .reduce((sum, r) => sum + (r.amount ?? 0), 0);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const columns: Partial<Column<RecurringRow, any, any>>[] = useMemo(
+  const columns: Partial<Column<RecurringRow>>[] = useMemo(
     () => [
       {
         ...keyColumn("name", textColumn),
@@ -150,8 +148,7 @@ export function RecurringTable({
         minWidth: 60,
       },
       {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        component: ({ deleteRow }: any) => (
+        component: ({ deleteRow }: CellProps<RecurringRow, unknown>) => (
           <button
             type="button"
             onClick={deleteRow}
