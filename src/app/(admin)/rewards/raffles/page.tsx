@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { Ticket } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
@@ -13,6 +14,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatDateTime, formatNumber } from "@/lib/utils/format";
+import {
+  TableSkeleton,
+  PaginationSkeleton,
+} from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
 import { CreateRaffleButton } from "./create-raffle-button";
 import { CancelRaffleButton } from "./cancel-raffle-button";
@@ -27,6 +32,79 @@ const STATUS_COLORS: Record<string, string> = {
   cancelled: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
 };
 
+async function RafflesContent({
+  page,
+  perPage,
+  status,
+  search,
+}: {
+  page: number;
+  perPage: number;
+  status?: string;
+  search?: string;
+}) {
+  const raffles = await getRaffles({ page, perPage, status, search });
+
+  return (
+    <>
+      <FadeIn>
+        <div className="rounded-md border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Entries</TableHead>
+                <TableHead>Participants</TableHead>
+                <TableHead>Winner</TableHead>
+                <TableHead>Starts</TableHead>
+                <TableHead>Ends</TableHead>
+                <TableHead className="w-[50px]" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {raffles.data.map((r) => (
+                <TableRow key={r.id}>
+                  <TableCell>
+                    <Link href={`/rewards/raffles/${r.id}`} className="font-medium hover:underline">
+                      {r.name}
+                    </Link>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className={STATUS_COLORS[r.status] ?? ""}>
+                      {r.status}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>{formatNumber(r.totalEntries)}</TableCell>
+                  <TableCell>{formatNumber(r.participantCount)}</TableCell>
+                  <TableCell>{r.winnerUsername ?? "-"}</TableCell>
+                  <TableCell>{formatDateTime(r.startsAt)}</TableCell>
+                  <TableCell>{formatDateTime(r.endsAt)}</TableCell>
+                  <TableCell>
+                    {r.status === "active" && <CancelRaffleButton raffleId={r.id} />}
+                  </TableCell>
+                </TableRow>
+              ))}
+              {raffles.data.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">No raffles found.</TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </FadeIn>
+
+      <DataTablePagination
+        page={raffles.page}
+        totalPages={raffles.totalPages}
+        total={raffles.total}
+        perPage={raffles.perPage}
+      />
+    </>
+  );
+}
+
 export default async function RafflesPage({
   searchParams,
 }: {
@@ -37,12 +115,7 @@ export default async function RafflesPage({
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
 
-  const raffles = await getRaffles({
-    page,
-    perPage,
-    status: params.status,
-    search: params.search,
-  });
+  const suspenseKey = `${page}|${perPage}|${params.status ?? ""}|${params.search ?? ""}`;
 
   return (
     <div className="space-y-6">
@@ -81,60 +154,22 @@ export default async function RafflesPage({
           ))}
         </div>
 
-        <FadeIn>
-          <div className="rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Entries</TableHead>
-                  <TableHead>Participants</TableHead>
-                  <TableHead>Winner</TableHead>
-                  <TableHead>Starts</TableHead>
-                  <TableHead>Ends</TableHead>
-                  <TableHead className="w-[50px]" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {raffles.data.map((r) => (
-                  <TableRow key={r.id}>
-                    <TableCell>
-                      <Link href={`/rewards/raffles/${r.id}`} className="font-medium hover:underline">
-                        {r.name}
-                      </Link>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className={STATUS_COLORS[r.status] ?? ""}>
-                        {r.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{formatNumber(r.totalEntries)}</TableCell>
-                    <TableCell>{formatNumber(r.participantCount)}</TableCell>
-                    <TableCell>{r.winnerUsername ?? "-"}</TableCell>
-                    <TableCell>{formatDateTime(r.startsAt)}</TableCell>
-                    <TableCell>{formatDateTime(r.endsAt)}</TableCell>
-                    <TableCell>
-                      {r.status === "active" && <CancelRaffleButton raffleId={r.id} />}
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {raffles.data.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">No raffles found.</TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </FadeIn>
-
-        <DataTablePagination
-          page={raffles.page}
-          totalPages={raffles.totalPages}
-          total={raffles.total}
-          perPage={raffles.perPage}
-        />
+        <Suspense
+          key={suspenseKey}
+          fallback={
+            <>
+              <TableSkeleton rows={12} columns={8} />
+              <PaginationSkeleton />
+            </>
+          }
+        >
+          <RafflesContent
+            page={page}
+            perPage={perPage}
+            status={params.status}
+            search={params.search}
+          />
+        </Suspense>
       </div>
     </div>
   );
