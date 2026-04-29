@@ -46,12 +46,26 @@ export async function getPromoCodes(params: {
       orderBy: { created_at: "desc" },
       skip: (page - 1) * perPage,
       take: perPage,
-      include: {
-        _count: { select: { promo_code_redemptions: true } },
-      },
     }),
     db.promo_codes.count({ where }),
   ]);
+
+  // Replace the per-row `_count` subquery (which Prisma compiles to a
+  // correlated subselect on every promo_code row) with one scoped groupBy
+  // on the visible page. One round-trip, one aggregate scan over the
+  // page's promo_code ids.
+  const visibleCodeIds = codes.map((c) => c.id);
+  const redemptionCounts =
+    visibleCodeIds.length > 0
+      ? await db.promo_code_redemptions.groupBy({
+          by: ["promo_code_id"],
+          where: { promo_code_id: { in: visibleCodeIds } },
+          _count: { _all: true },
+        })
+      : [];
+  const countByCodeId = new Map(
+    redemptionCounts.map((r) => [r.promo_code_id, r._count._all]),
+  );
 
   return {
     data: codes.map((c) => {
@@ -64,7 +78,7 @@ export async function getPromoCodes(params: {
         region: c.region,
         minimumLevel: c.minimum_level,
         maxUses: c.max_uses,
-        redemptionCount: c._count.promo_code_redemptions,
+        redemptionCount: countByCodeId.get(c.id) ?? 0,
         expiresAt: c.expires_at?.toISOString() ?? null,
         createdAt: c.created_at.toISOString(),
       };

@@ -117,34 +117,41 @@ export async function getVouchers(params: {
     db.vouchers.count({ where }),
   ]);
 
-  // Enrichment pass: fetch admin-actor metadata for ONLY the rows on this
-  // page (`WHERE voucher_id IN (page_ids)`), then merge in code.
+  // Enrichment pass: fetch admin-actor metadata + (when filtering claimed)
+  // FTD balance flags in parallel — they target different DBs and have no
+  // dependency on each other.
   const voucherIds = vouchers.map((v) => v.id);
-  const adminActions = voucherIds.length > 0
-    ? await adminDb.admin_voucher_actions.findMany({
+  const ftdUserIds = claimed
+    ? [...new Set(vouchers.map((v) => v.user_id))]
+    : [];
+
+  const adminActionsPromise = voucherIds.length > 0
+    ? adminDb.admin_voucher_actions.findMany({
         where: { voucher_id: { in: voucherIds }, action: "created" },
         include: { admin_user: { select: { id: true, username: true } } },
       })
-    : [];
+    : Promise.resolve([]);
+  const balanceRowsPromise = ftdUserIds.length > 0
+    ? db.balances.findMany({
+        where: { user_id: { in: ftdUserIds } },
+        select: { user_id: true, total_deposited: true },
+      })
+    : Promise.resolve(
+        [] as Array<{ user_id: string; total_deposited: unknown }>,
+      );
+
+  const [adminActions, balanceRows] = await Promise.all([
+    adminActionsPromise,
+    balanceRowsPromise,
+  ]);
 
   const creatorByVoucherId = new Map(
     adminActions.map((a) => [a.voucher_id, { id: a.admin_user.id, username: a.admin_user.username }])
   );
 
-  // FTD lookup for claimed vouchers — only for the user_ids on this page.
-  let ftdMap: Map<string, boolean> | undefined;
-  if (claimed) {
-    const userIds = [...new Set(vouchers.map((v) => v.user_id))];
-    if (userIds.length > 0) {
-      const balances = await db.balances.findMany({
-        where: { user_id: { in: userIds } },
-        select: { user_id: true, total_deposited: true },
-      });
-      ftdMap = new Map(
-        balances.map((b) => [b.user_id, toNumber(b.total_deposited) > 0])
-      );
-    }
-  }
+  const ftdMap = claimed
+    ? new Map(balanceRows.map((b) => [b.user_id, toNumber(b.total_deposited) > 0]))
+    : undefined;
 
   return {
     data: vouchers.map((v) => ({
