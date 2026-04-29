@@ -1,21 +1,19 @@
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   PageHeroSkeleton,
-  TabBarSkeleton,
 } from "@/components/loading-skeletons";
 
 /**
- * Matches /settings: hero, settings tabs (General / Rewards / Restrictions /
- * Maintenance), active tab panel with form rows.
+ * Matches /settings: hero, then a Vault Lock Times card and a Country
+ * Restrictions card (with a wide multi-column toggle table). No tab nav
+ * — the page just renders these sections sequentially.
  */
 export default function SettingsLoading() {
   return (
     <div className="space-y-6">
       <PageHeroSkeleton />
-      <div className="space-y-4">
-        <TabBarSkeleton count={4} />
-        <Skeleton className="h-[480px] rounded-2xl" />
-      </div>
+      <Skeleton className="h-48 rounded-2xl" />
+      <Skeleton className="h-[480px] rounded-2xl" />
     </div>
   );
 }
