@@ -58,13 +58,23 @@ export async function getRains(params: {
   if (params.maxParticipants != null && !isNaN(params.maxParticipants)) partFilter.lte = params.maxParticipants;
   if (Object.keys(partFilter).length > 0) where.participant_count = partFilter;
 
+  // List view skips provably-fair columns (server/client seeds, result
+  // hashes) — those are only surfaced on the detail page.
   const [rains, total] = await Promise.all([
     db.rains.findMany({
       where,
       orderBy: { created_at: "desc" },
       skip: (page - 1) * perPage,
       take: perPage,
-      include: {
+      select: {
+        id: true,
+        base_amount_usd: true,
+        tip_amount_usd: true,
+        total_pool_usd: true,
+        status: true,
+        participant_count: true,
+        starts_at: true,
+        ends_at: true,
         user: { select: { username: true } },
       },
     }),
