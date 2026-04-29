@@ -42,6 +42,12 @@ export default async function AdminUserDetailPage({
     ? Number(sp.auditPerPage)
     : 20;
 
+  // Balance limits are admin-only — only fetch (and only ship to the
+  // client) if the current viewer is a real admin. Non-admins with
+  // /admin-users access (e.g. via custom role) never see the data on
+  // the wire, so it can't leak through React DevTools or DOM inspection.
+  const isCurrentUserAdmin = session.role === "admin";
+
   const [detail, auditStats, auditEvents, balanceLimits] = await Promise.all([
     getAdminUserDetail(id),
     getAdminUserAuditStats(id),
@@ -49,7 +55,7 @@ export default async function AdminUserDetailPage({
       eventType: typeof sp.auditEventType === "string" ? sp.auditEventType : undefined,
       search: typeof sp.auditSearch === "string" ? sp.auditSearch : undefined,
     }),
-    getLimitsForAdmin(id),
+    isCurrentUserAdmin ? getLimitsForAdmin(id) : Promise.resolve([]),
   ]);
 
   if (!detail) notFound();
@@ -123,7 +129,7 @@ export default async function AdminUserDetailPage({
             created_at: l.created_at.toISOString(),
             updated_at: l.updated_at.toISOString(),
           }))}
-          isCurrentUserAdmin={session.role === "admin"}
+          isCurrentUserAdmin={isCurrentUserAdmin}
         />
       </FadeIn>
     </div>

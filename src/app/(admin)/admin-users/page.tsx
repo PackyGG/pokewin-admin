@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Shield, CheckCircle2, XCircle, ShieldCheck } from "lucide-react";
+import { Shield, CheckCircle2, XCircle, ShieldCheck, Wallet } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { adminDb } from "@/lib/admin-db";
 import { Badge } from "@/components/ui/badge";
@@ -16,23 +16,43 @@ import { FadeIn } from "@/components/fade-in";
 export const metadata = { title: "Admin Users" };
 
 export default async function AdminUsersPage() {
-  await requirePageAccess("/admin-users");
+  const session = await requirePageAccess("/admin-users");
+  // Surface balance-limit info only to real admins. Non-admins with
+  // /admin-users access (custom role) should not see who is or isn't
+  // limited — that's privileged information about other admins.
+  const isCurrentUserAdmin = session.role === "admin";
 
   // Explicit select — same defensive rationale as login/actions.ts. A
   // missing column from an unrun migration would otherwise crash this page
   // with P2022 before anything renders.
-  const users = await adminDb.admin_users.findMany({
-    orderBy: { created_at: "desc" },
-    select: {
-      id: true,
-      email: true,
-      username: true,
-      role: true,
-      totp_enabled: true,
-      is_active: true,
-      created_at: true,
-    },
-  });
+  const [users, balanceLimits] = await Promise.all([
+    adminDb.admin_users.findMany({
+      orderBy: { created_at: "desc" },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        role: true,
+        totp_enabled: true,
+        is_active: true,
+        created_at: true,
+      },
+    }),
+    isCurrentUserAdmin
+      ? adminDb.admin_balance_limits.findMany({
+          select: { admin_user_id: true, period_type: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  // Build a map of admin id → number of active limit rows. Used to
+  // render a "Limits: N" badge so admins can spot users with limits
+  // at a glance without drilling into each profile.
+  const limitsByAdmin = new Map<string, number>();
+  for (const l of balanceLimits) {
+    limitsByAdmin.set(l.admin_user_id, (limitsByAdmin.get(l.admin_user_id) ?? 0) + 1);
+  }
+  const adminsWithLimits = limitsByAdmin.size;
 
   const activeCount = users.filter((u) => u.is_active).length;
   const totpCount = users.filter((u) => u.totp_enabled).length;
@@ -57,7 +77,13 @@ export default async function AdminUsersPage() {
         </div>
       </PageHero>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div
+        className={
+          isCurrentUserAdmin
+            ? "grid grid-cols-2 gap-3 md:grid-cols-5"
+            : "grid grid-cols-2 gap-3 md:grid-cols-4"
+        }
+      >
         <KpiTile
           label="Total Admins"
           value={String(users.length)}
@@ -82,6 +108,14 @@ export default async function AdminUsersPage() {
           icon={ShieldCheck}
           accent="purple"
         />
+        {isCurrentUserAdmin && (
+          <KpiTile
+            label="With Balance Limits"
+            value={String(adminsWithLimits)}
+            icon={Wallet}
+            accent="amber"
+          />
+        )}
       </div>
 
       <div className="space-y-3">
@@ -95,6 +129,9 @@ export default async function AdminUsersPage() {
                 <th className="px-4 py-3 text-left text-sm font-medium">Role</th>
                 <th className="px-4 py-3 text-left text-sm font-medium">2FA</th>
                 <th className="px-4 py-3 text-left text-sm font-medium">Status</th>
+                {isCurrentUserAdmin && (
+                  <th className="px-4 py-3 text-left text-sm font-medium">Limits</th>
+                )}
                 <th className="px-4 py-3 text-left text-sm font-medium">Created</th>
                 <th className="px-4 py-3 text-right text-sm font-medium">Actions</th>
               </tr>
@@ -142,6 +179,21 @@ export default async function AdminUsersPage() {
                       {user.is_active ? "Active" : "Inactive"}
                     </Badge>
                   </td>
+                  {isCurrentUserAdmin && (
+                    <td className="px-4 py-3">
+                      {limitsByAdmin.has(user.id) ? (
+                        <Badge
+                          variant="outline"
+                          className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30"
+                        >
+                          {limitsByAdmin.get(user.id)} cap
+                          {limitsByAdmin.get(user.id) === 1 ? "" : "s"}
+                        </Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </td>
+                  )}
                   <td className="px-4 py-3 text-sm text-muted-foreground">
                     {formatDateTime(user.created_at.toISOString())}
                   </td>

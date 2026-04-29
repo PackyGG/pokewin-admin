@@ -29,11 +29,9 @@ export const CAPABILITIES: CapabilityDef[] = [
   {
     key: "__can_adjust_balance",
     label: "Adjust Balance",
-    description: "Add or subtract balance from user accounts",
+    description:
+      "Add or subtract balance from user accounts. Per-admin daily/weekly/monthly caps are configured individually on each admin's profile.",
     group: "User Management",
-    hasLimit: true,
-    limitLabel: "Max adjustment amount (USD)",
-    hasPeriod: true,
   },
   {
     key: "__can_adjust_xp",
