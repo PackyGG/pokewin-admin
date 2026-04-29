@@ -8,10 +8,58 @@ import { DataTablePagination } from "@/components/data-table/data-table-paginati
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { ValueRangeFilter } from "./value-range-filter";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TableSkeleton, PaginationSkeleton } from "@/components/loading-skeletons";
 import { PageHero } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Withdrawals" };
+
+/**
+ * Streaming server component for the withdrawals table. Pulled out of the
+ * page-level await so the hero + toolbar can flush immediately while the
+ * (potentially heavy) join-with-user query loads.
+ */
+async function WithdrawalsContent({
+  page,
+  perPage,
+  status,
+  method,
+  search,
+  minValue,
+  maxValue,
+}: {
+  page: number;
+  perPage: number;
+  status?: string;
+  method?: string;
+  search?: string;
+  minValue?: number;
+  maxValue?: number;
+}) {
+  const result = await getWithdrawals({
+    page,
+    perPage,
+    status,
+    method,
+    search,
+    minValue: minValue && !isNaN(minValue) ? minValue : undefined,
+    maxValue: maxValue && !isNaN(maxValue) ? maxValue : undefined,
+  });
+
+  return (
+    <>
+      <FadeIn>
+        <WithdrawalsDataTable columns={columns} data={result.data} />
+      </FadeIn>
+      <DataTablePagination
+        page={result.page}
+        totalPages={result.totalPages}
+        total={result.total}
+        perPage={result.perPage}
+      />
+    </>
+  );
+}
 
 export default async function WithdrawalsPage({
   searchParams,
@@ -26,19 +74,7 @@ export default async function WithdrawalsPage({
   const minValue = params.minValue ? Number(params.minValue) : undefined;
   const maxValue = params.maxValue ? Number(params.maxValue) : undefined;
 
-  // Single-page Withdrawals view — the old tabs (Requests / Shipping /
-  // Active / Finished / All) are gone. Everything is one list; admins
-  // filter via the Status + Method dropdowns in the toolbar, same
-  // pattern the Deposits page uses.
-  const result = await getWithdrawals({
-    page,
-    perPage,
-    status: params.status,
-    method: params.method,
-    search: params.search,
-    minValue: minValue && !isNaN(minValue) ? minValue : undefined,
-    maxValue: maxValue && !isNaN(maxValue) ? maxValue : undefined,
-  });
+  const suspenseKey = `${page}|${perPage}|${params.status ?? ""}|${params.method ?? ""}|${params.search ?? ""}|${params.minValue ?? ""}|${params.maxValue ?? ""}`;
 
   return (
     <div className="space-y-6">
@@ -86,15 +122,25 @@ export default async function WithdrawalsPage({
             <ValueRangeFilter />
           </DataTableToolbar>
         </Suspense>
-        <FadeIn>
-          <WithdrawalsDataTable columns={columns} data={result.data} />
-        </FadeIn>
-        <DataTablePagination
-          page={result.page}
-          totalPages={result.totalPages}
-          total={result.total}
-          perPage={result.perPage}
-        />
+        <Suspense
+          key={suspenseKey}
+          fallback={
+            <>
+              <TableSkeleton rows={12} columns={7} />
+              <PaginationSkeleton />
+            </>
+          }
+        >
+          <WithdrawalsContent
+            page={page}
+            perPage={perPage}
+            status={params.status}
+            method={params.method}
+            search={params.search}
+            minValue={minValue}
+            maxValue={maxValue}
+          />
+        </Suspense>
       </div>
     </div>
   );
