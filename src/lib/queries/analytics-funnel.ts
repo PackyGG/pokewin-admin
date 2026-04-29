@@ -48,88 +48,76 @@ export async function getFunnelData(period: FunnelPeriod): Promise<FunnelData> {
     days !== null ? `AND u.created_at >= NOW() - INTERVAL '${days} days'` : "";
   const maWCutoff = 30; // MAW = wager in the last 30 days
 
-  // Run all steps in parallel. Each returns a single integer count.
-  const [
-    clicksRow,
-    signupsRow,
-    firstDepositRow,
-    firstWagerRow,
-    repeatDepositRow,
-    mawRow,
-  ] = await Promise.all([
-    // Clicks = distinct IPs (over the period), excluding bots isn't possible
-    // from this table alone, so treat it as "raw visitor funnel top".
+  // Two parallel queries: one for the time-bounded top of the funnel
+  // (clicks, taken from affiliate_clicks) and one for the cohort-scoped
+  // funnel below it (signups → MAW). The cohort query uses a CTE so the
+  // user table is scanned once with the role/period filter — previously
+  // each step issued its own scan against `"user"` JOIN ledger.
+  const [clicksRow, cohortRow] = await Promise.all([
+    // Clicks = raw count of affiliate clicks in the period. Bot-filtering
+    // isn't available on this table — kept as the funnel's outermost
+    // visitor-shape signal.
     db.$queryRawUnsafe<{ count: string }[]>(`
       SELECT COUNT(*)::text AS count
       FROM affiliate_clicks
       WHERE 1=1 ${dateFilter}
     `),
-    // Signups in period (real users only).
-    db.$queryRawUnsafe<{ count: string }[]>(`
-      SELECT COUNT(*)::text AS count
-      FROM "user" u
-      WHERE u.role NOT IN ('admin','creator')
-        ${usersDateFilter.replace("created_at", "u.created_at")}
-    `),
-    // First-depositor = users (in the cohort) who have a completed deposit
-    // ledger row at any point. We sum from balances.total_deposited > 0 — same
-    // signal the rest of the admin uses.
-    db.$queryRawUnsafe<{ count: string }[]>(`
-      SELECT COUNT(*)::text AS count
-      FROM "user" u
-      JOIN balances b ON b.user_id = u.id
-      WHERE u.role NOT IN ('admin','creator')
-        AND b.total_deposited::numeric > 0
-        ${usersDateFilter}
-    `),
-    // First-wagerer = any wager transaction on the account OR
-    // user_statistics counters > 0. We check ledger so we don't rely on
-    // snapshot staleness.
-    db.$queryRawUnsafe<{ count: string }[]>(`
-      SELECT COUNT(DISTINCT u.id)::text AS count
-      FROM "user" u
-      JOIN ledger_transactions lt ON lt.user_id = u.id
-      WHERE u.role NOT IN ('admin','creator')
-        AND lt.status = 'completed'
-        AND lt.type IN ('pack_opening','battle_bet','battle_sponsorship')
-        ${usersDateFilter}
-    `),
-    // Repeat-depositor = >= 2 completed deposit ledger rows.
-    db.$queryRawUnsafe<{ count: string }[]>(`
-      SELECT COUNT(*)::text AS count
-      FROM (
+    // One CTE pass over the cohort produces all five cohort-scoped
+    // counts as columns. PG runs this as a single index scan on
+    // ledger_transactions per user instead of five repeated joins.
+    db.$queryRawUnsafe<
+      {
+        signups: string;
+        first_deposit: string;
+        first_wager: string;
+        repeat_deposit: string;
+        maw: string;
+      }[]
+    >(`
+      WITH cohort AS (
         SELECT u.id
         FROM "user" u
-        JOIN ledger_transactions lt ON lt.user_id = u.id
         WHERE u.role NOT IN ('admin','creator')
-          AND lt.status = 'completed'
-          AND lt.type = 'deposit'
           ${usersDateFilter}
-        GROUP BY u.id
-        HAVING COUNT(*) >= 2
-      ) sub
-    `),
-    // Monthly-active-wagerer = wager in last ${maWCutoff} days from the
-    // cohort. The last-activity filter is global (not period-scoped on the
-    // wager itself) because MAW is an intrinsically 30-day metric.
-    db.$queryRawUnsafe<{ count: string }[]>(`
-      SELECT COUNT(DISTINCT u.id)::text AS count
-      FROM "user" u
-      JOIN ledger_transactions lt ON lt.user_id = u.id
-      WHERE u.role NOT IN ('admin','creator')
-        AND lt.status = 'completed'
-        AND lt.type IN ('pack_opening','battle_bet','battle_sponsorship')
-        AND lt.created_at >= NOW() - INTERVAL '${maWCutoff} days'
-        ${usersDateFilter}
+      ),
+      activity AS (
+        SELECT
+          c.id AS user_id,
+          COUNT(*) FILTER (
+            WHERE lt.type = 'deposit' AND lt.status = 'completed'
+          ) AS deposit_count,
+          COUNT(*) FILTER (
+            WHERE lt.type IN ('pack_opening','battle_bet','battle_sponsorship')
+              AND lt.status = 'completed'
+          ) AS wager_count,
+          COUNT(*) FILTER (
+            WHERE lt.type IN ('pack_opening','battle_bet','battle_sponsorship')
+              AND lt.status = 'completed'
+              AND lt.created_at >= NOW() - INTERVAL '${maWCutoff} days'
+          ) AS wager_count_30d,
+          BOOL_OR(b.total_deposited::numeric > 0) AS has_deposit_balance
+        FROM cohort c
+        LEFT JOIN ledger_transactions lt ON lt.user_id = c.id
+        LEFT JOIN balances b ON b.user_id = c.id
+        GROUP BY c.id
+      )
+      SELECT
+        (SELECT COUNT(*)::text FROM cohort) AS signups,
+        COUNT(*) FILTER (WHERE has_deposit_balance)::text AS first_deposit,
+        COUNT(*) FILTER (WHERE wager_count > 0)::text AS first_wager,
+        COUNT(*) FILTER (WHERE deposit_count >= 2)::text AS repeat_deposit,
+        COUNT(*) FILTER (WHERE wager_count_30d > 0)::text AS maw
+      FROM activity
     `),
   ]);
 
   const clicks = Number(clicksRow[0]?.count ?? 0);
-  const signups = Number(signupsRow[0]?.count ?? 0);
-  const firstDeposit = Number(firstDepositRow[0]?.count ?? 0);
-  const firstWager = Number(firstWagerRow[0]?.count ?? 0);
-  const repeatDeposit = Number(repeatDepositRow[0]?.count ?? 0);
-  const maw = Number(mawRow[0]?.count ?? 0);
+  const cohort = cohortRow[0];
+  const signups = Number(cohort?.signups ?? 0);
+  const firstDeposit = Number(cohort?.first_deposit ?? 0);
+  const firstWager = Number(cohort?.first_wager ?? 0);
+  const repeatDeposit = Number(cohort?.repeat_deposit ?? 0);
+  const maw = Number(cohort?.maw ?? 0);
 
   const raw = [
     {
