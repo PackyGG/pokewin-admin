@@ -71,6 +71,9 @@ export async function getPacks(params: {
   // of cards per pack × 20 packs per page. `take: 10` keeps the preview
   // working without the overfetch; total card counts come from a scoped
   // groupBy on just the visible pack IDs below.
+  // The `pack_cards` parent rows themselves are unneeded — we only render
+  // the related `cards` fields — so narrow the select to skip pack_cards
+  // own columns from the wire payload.
   const [packs, total] = await Promise.all([
     db.packs.findMany({
       where,
@@ -79,7 +82,9 @@ export async function getPacks(params: {
       take: perPage,
       include: {
         pack_cards: {
-          include: { cards: { select: { id: true, name: true, image_url: true, rarity: true } } },
+          select: {
+            cards: { select: { id: true, name: true, image_url: true, rarity: true } },
+          },
           orderBy: { order: "asc" },
           take: 10,
         },
@@ -88,6 +93,8 @@ export async function getPacks(params: {
     db.packs.count({ where }),
   ]);
 
+  // Total card counts per visible pack — cheap groupBy, but it serializes
+  // after the main query because it needs the page's pack ids.
   const visiblePackIds = packs.map((p) => p.id);
   const cardCounts =
     visiblePackIds.length > 0
@@ -133,13 +140,26 @@ export async function getPacks(params: {
 
 export async function getPackDetail(id: string) {
   const db = await getDb();
+  // Narrow the select on cards/sets — the page only renders a handful of
+  // fields per card (name/image/rarity/price/setName) so pulling every
+  // column from `cards` (and every column from `sets`) is wasted bytes.
   const pack = await db.packs.findUnique({
     where: { id },
     include: {
       pack_cards: {
-        include: {
+        select: {
+          id: true,
+          card_id: true,
+          weight: true,
+          color: true,
+          animation: true,
+          order: true,
           cards: {
-            include: {
+            select: {
+              name: true,
+              image_url: true,
+              price: true,
+              rarity: true,
               sets: { select: { name: true } },
             },
           },
