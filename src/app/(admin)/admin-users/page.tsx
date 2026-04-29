@@ -3,6 +3,7 @@ import { Shield, CheckCircle2, XCircle, ShieldCheck, Wallet } from "lucide-react
 import { requirePageAccess } from "@/lib/dal";
 import { adminDb } from "@/lib/admin-db";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { formatDateTime } from "@/lib/utils/format";
 import { AdminUserActions } from "./admin-user-actions";
 import { CreateAdminDialog } from "./create-dialog";
@@ -73,7 +74,21 @@ export default async function AdminUsersPage() {
               </p>
             </div>
           </div>
-          <CreateAdminDialog />
+          <div className="flex items-center gap-2">
+            {isCurrentUserAdmin && (
+              <Button
+                variant="outline"
+                size="sm"
+                render={
+                  <Link href="/admin-users/balance-limits">
+                    <Wallet className="mr-1.5 size-4" />
+                    Balance Limits
+                  </Link>
+                }
+              />
+            )}
+            <CreateAdminDialog />
+          </div>
         </div>
       </PageHero>
 
@@ -109,12 +124,18 @@ export default async function AdminUsersPage() {
           accent="purple"
         />
         {isCurrentUserAdmin && (
-          <KpiTile
-            label="With Balance Limits"
-            value={String(adminsWithLimits)}
-            icon={Wallet}
-            accent="amber"
-          />
+          <Link
+            href="/admin-users/balance-limits"
+            className="block transition-transform hover:scale-[1.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded-xl"
+            aria-label="Open balance limits overview"
+          >
+            <KpiTile
+              label="With Balance Limits"
+              value={String(adminsWithLimits)}
+              icon={Wallet}
+              accent="amber"
+            />
+          </Link>
         )}
       </div>
 
@@ -182,13 +203,18 @@ export default async function AdminUsersPage() {
                   {isCurrentUserAdmin && (
                     <td className="px-4 py-3">
                       {limitsByAdmin.has(user.id) ? (
-                        <Badge
-                          variant="outline"
-                          className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30"
+                        <Link
+                          href={`/admin-users/${user.id}#balance-limits`}
+                          className="inline-block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded-md"
                         >
-                          {limitsByAdmin.get(user.id)} cap
-                          {limitsByAdmin.get(user.id) === 1 ? "" : "s"}
-                        </Badge>
+                          <Badge
+                            variant="outline"
+                            className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30 cursor-pointer hover:bg-amber-500/25"
+                          >
+                            {limitsByAdmin.get(user.id)} cap
+                            {limitsByAdmin.get(user.id) === 1 ? "" : "s"}
+                          </Badge>
+                        </Link>
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
                       )}

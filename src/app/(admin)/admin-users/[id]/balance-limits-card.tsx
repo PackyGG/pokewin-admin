@@ -83,7 +83,7 @@ export function BalanceLimitsCard({
   const activeLimitsCount = initialLimits.length;
 
   return (
-    <Card>
+    <Card id="balance-limits" className="scroll-mt-24">
       <CardHeader>
         <CardTitle className="text-base flex items-center gap-2">
           <Wallet className="size-4 text-muted-foreground" />
