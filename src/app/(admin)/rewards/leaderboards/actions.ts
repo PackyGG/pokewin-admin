@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
 import { requireAdmin } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import type { race_type } from "@/generated/prisma/enums";
 
@@ -32,6 +33,12 @@ export async function upsertRacePrizeTier(
   if (!Number.isFinite(prizeAmountUsd) || prizeAmountUsd < 0) {
     throw new Error("Prize amount must be a non-negative number");
   }
+
+  await requireCapability(
+    session,
+    "__can_upsert_race_prize_tier",
+    "upsert race prize tiers",
+  );
 
   const existing = await db.race_prize_tiers.findFirst({
     where: { race_type: raceType as race_type, position },
@@ -87,6 +94,12 @@ export async function deleteRacePrizeTier(id: string) {
   if (!existing) {
     throw new Error("Prize tier not found");
   }
+
+  await requireCapability(
+    session,
+    "__can_delete_race_prize_tier",
+    "delete race prize tiers",
+  );
 
   await db.race_prize_tiers.delete({ where: { id } });
 

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { requireAdmin } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { backendApi, BackendApiError } from "@/lib/backend-api";
 
@@ -45,6 +46,8 @@ export async function createReward(data: {
   if (!data.slug.trim() || !data.name.trim()) {
     throw new Error("Slug and name are required");
   }
+
+  await requireCapability(session, "__can_create_reward", "create rewards");
 
   let reward;
   try {
@@ -99,6 +102,8 @@ export async function updateReward(
     throw new Error("Slug and name are required");
   }
 
+  await requireCapability(session, "__can_update_reward", "update rewards");
+
   const reward = await db.rewards.update({
     where: { id },
     data: {
@@ -130,6 +135,7 @@ export async function updateReward(
 export async function deleteReward(rewardId: string) {
   const db = await getDb();
   const session = await requireAdmin();
+  await requireCapability(session, "__can_delete_reward", "delete rewards");
 
   await db.user_rewards.deleteMany({ where: { reward_id: rewardId } });
   await db.rewards.delete({ where: { id: rewardId } });
@@ -151,6 +157,7 @@ export async function updateRakebackConfig(
 ) {
   const db = await getDb();
   const session = await requireAdmin();
+  await requireCapability(session, "__can_update_rakeback", "update rakeback config");
 
   await db.rakeback_config.update({
     where: { id },

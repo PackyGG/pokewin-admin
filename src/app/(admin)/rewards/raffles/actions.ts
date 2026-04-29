@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getDb } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { reloadPacks } from "@/app/(admin)/rewards/actions";
 import { toNumber } from "@/lib/utils/decimal";
@@ -156,6 +157,8 @@ export async function createRaffle(data: {
     };
   }
 
+  await requireCapability(session, "__can_create_raffle", "create raffles");
+
   // 3. Call backend via the central client — picks env-specific URL+key
   // (BACKEND_API_URL_PROD/_DEV + BACKEND_ADMIN_KEY_PROD/_DEV) based on the
   // `admin_db_env` cookie, attaches CF Access service tokens, and adds the
@@ -276,6 +279,8 @@ export async function updateRaffle(
     return { success: false, error: "Only active raffles can be edited" };
   }
 
+  await requireCapability(session, "__can_update_raffle", "update raffles");
+
   try {
     await db.raffles.update({
       where: { id },
@@ -321,6 +326,8 @@ export async function cancelRaffle(
   if (raffle.status !== "active") {
     return { success: false, error: "Only active raffles can be cancelled" };
   }
+
+  await requireCapability(session, "__can_cancel_raffle", "cancel raffles");
 
   try {
     await db.raffles.update({
