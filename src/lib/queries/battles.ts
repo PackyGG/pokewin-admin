@@ -152,19 +152,37 @@ export async function getBattles(params: {
 
 export async function getBattleDetail(id: string) {
   const db = await getDb();
+  // Narrow `user_inventory` and `game_sessions` to only the columns the
+  // page actually consumes — `user_inventory` is a wide table (mints,
+  // metadata, listing data, etc.) that we only need 3 fields off of.
   const battle = await db.battles.findUnique({
     where: { id },
     include: {
       user: { select: { username: true } },
       battle_participants: {
-        include: {
+        select: {
+          id: true,
+          user_id: true,
+          team_number: true,
+          team_position: true,
+          client_seed: true,
           user: { select: { username: true } },
           bots: { select: { username: true } },
           game_sessions: {
-            include: {
+            select: {
+              result: true,
+              bet_amount: true,
               provably_fair_results: {
-                include: {
-                  user_inventory: true,
+                select: {
+                  id: true,
+                  result_metadata: true,
+                  user_inventory: {
+                    select: {
+                      id: true,
+                      card_id: true,
+                      value_at_obtained: true,
+                    },
+                  },
                 },
                 orderBy: { nonce: "asc" },
               },
@@ -174,6 +192,16 @@ export async function getBattleDetail(id: string) {
         orderBy: [{ team_number: "asc" }, { team_position: "asc" }],
       },
       provably_fair_results: {
+        select: {
+          id: true,
+          client_seed: true,
+          server_seed_hash: true,
+          server_seed: true,
+          nonce: true,
+          ticket: true,
+          result_hash: true,
+          result_metadata: true,
+        },
         orderBy: { created_at: "asc" },
       },
     },

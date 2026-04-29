@@ -365,11 +365,18 @@ export async function getTransactionDetail(id: string) {
   } | null = null;
 
   if (tx.game_session_id) {
+    // Narrow `provably_fair_results` columns to just what downstream uses.
+    // The PF table is wide (client_seed, server_seed, server_seed_hash,
+    // result_hash, ticket, result_metadata, etc.) but on this page we only
+    // join through it to grab the linked inventory item.
     const session = await db.game_sessions.findUnique({
       where: { id: tx.game_session_id },
-      include: {
+      select: {
+        game_type: true,
+        game_id: true,
+        bet_amount: true,
         provably_fair_results: {
-          include: {
+          select: {
             user_inventory: {
               select: { card_id: true, value_at_obtained: true },
             },

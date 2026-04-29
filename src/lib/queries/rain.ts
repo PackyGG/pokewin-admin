@@ -131,15 +131,21 @@ export async function getRainDetail(
   const { page = 1, perPage = 20 } = params;
 
   // Rain, admin-users (for team check) and paginated entries are independent —
-  // fetch them in parallel. Tipper-user lookup needs the rain first since it
-  // depends on rain.rain_tips[].user_id, so it stays on a second hop.
+  // fetch them in parallel. Tipper-user emails were a serial second hop in
+  // the previous version, but the rain.rain_tips relation already pulls
+  // each tipper's role. We can fold the email into the relation `select`
+  // to keep the second hop off the wire entirely — the tipper's email isn't
+  // returned to the client, it's only used here to cross-check against
+  // admin-DB team emails.
   const [rain, adminUsers, entries, totalEntries] = await Promise.all([
     db.rains.findUnique({
       where: { id },
       include: {
         user: { select: { username: true } },
         rain_tips: {
-          include: { user: { select: { username: true, role: true } } },
+          include: {
+            user: { select: { username: true, email: true, role: true } },
+          },
           orderBy: { created_at: "desc" },
         },
       },
@@ -147,7 +153,13 @@ export async function getRainDetail(
     adminDb.admin_users.findMany({ select: { email: true } }),
     db.rain_entries.findMany({
       where: { rain_id: id },
-      include: { user: { select: { username: true } } },
+      select: {
+        id: true,
+        user_id: true,
+        turnstile_verified_at: true,
+        created_at: true,
+        user: { select: { username: true } },
+      },
       orderBy: { created_at: "desc" },
       skip: (page - 1) * perPage,
       take: perPage,
@@ -158,16 +170,6 @@ export async function getRainDetail(
   if (!rain) return null;
 
   const adminEmails = new Set(adminUsers.map((a) => a.email));
-
-  // Get user emails for tippers to check team membership
-  const tipperIds = rain.rain_tips.map((t) => t.user_id);
-  const tipperUsers = tipperIds.length > 0
-    ? await db.user.findMany({
-        where: { id: { in: tipperIds } },
-        select: { id: true, email: true, role: true },
-      })
-    : [];
-  const tipperMap = new Map(tipperUsers.map((u) => [u.id, u]));
 
   return {
     id: rain.id,
@@ -182,11 +184,10 @@ export async function getRainDetail(
     winnerUserId: rain.winner_user_id,
     winnerUsername: rain.user?.username ?? null,
     tips: rain.rain_tips.map((t) => {
-      const tipperUser = tipperMap.get(t.user_id);
       const isTeam =
-        tipperUser?.role === "admin" ||
-        tipperUser?.role === "support" ||
-        (tipperUser?.email ? adminEmails.has(tipperUser.email) : false);
+        t.user?.role === "admin" ||
+        t.user?.role === "support" ||
+        (t.user?.email ? adminEmails.has(t.user.email) : false);
       return {
         id: t.id,
         userId: t.user_id,
