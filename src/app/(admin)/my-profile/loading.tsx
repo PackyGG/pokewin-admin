@@ -2,13 +2,16 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   PageHeroSkeleton,
   KpiStripSkeleton,
+  TabBarSkeleton,
   SectionHeadingSkeleton,
   TableSkeleton,
 } from "@/components/loading-skeletons";
 
 /**
- * Matches /my-profile: profile hero, stat tiles (8-up), socials/webhooks
- * cards, deals table.
+ * Matches /my-profile (creator self-view): hero with badges, 8 KPI tiles
+ * in a 4-up grid (rendered here as two 4-tile rows), SocialsCard,
+ * 4-tab bar (Webhooks / Referrals / Payouts / Deals), default Webhooks
+ * tab content (a card with the webhooks list).
  */
 export default function MyProfileLoading() {
   return (
@@ -16,12 +19,10 @@ export default function MyProfileLoading() {
       <PageHeroSkeleton />
       <KpiStripSkeleton count={4} />
       <KpiStripSkeleton count={4} />
-      <div className="grid gap-4 md:grid-cols-2">
-        <Skeleton className="h-64 rounded-2xl" />
-        <Skeleton className="h-64 rounded-2xl" />
-      </div>
+      <Skeleton className="h-48 rounded-2xl" />
       <div className="space-y-3">
-        <SectionHeadingSkeleton titleWidth={100} />
+        <TabBarSkeleton count={4} />
+        <SectionHeadingSkeleton titleWidth={120} />
         <TableSkeleton rows={6} columns={5} />
       </div>
     </div>

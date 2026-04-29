@@ -1,25 +1,24 @@
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   PageHeroSkeleton,
+  KpiStripSkeleton,
+  SectionHeadingSkeleton,
   TableSkeleton,
 } from "@/components/loading-skeletons";
 
 /**
- * The /admin-users/roles page doesn't use the modern PageHero yet — it
- * still renders a classic title + subtitle + create button. Skeleton
- * keeps that shape.
+ * Matches /admin-users/roles: hero with Create button, 4 KPI tiles
+ * (Total / System / Custom / Assigned), and a 5-column roles table
+ * (Name / Type / Capabilities / Users / Updated).
  */
 export default function AdminRolesLoading() {
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="space-y-2">
-          <Skeleton className="h-7 w-36" />
-          <Skeleton className="h-4 w-80" />
-        </div>
-        <Skeleton className="h-9 w-28 rounded-md" />
+    <div className="space-y-6">
+      <PageHeroSkeleton action />
+      <KpiStripSkeleton count={4} />
+      <div className="space-y-3">
+        <SectionHeadingSkeleton titleWidth={100} />
+        <TableSkeleton rows={6} columns={5} />
       </div>
-      <TableSkeleton rows={6} columns={5} />
     </div>
   );
 }

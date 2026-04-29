@@ -72,20 +72,23 @@ export function KpiStripSkeleton({
   className?: string;
 }) {
   // Common responsive breakpoints used across the app — 2 cols on mobile,
-  // then 3 / 4 / 5 / 6 / 8 depending on count. We extend up to 8 because
-  // the pack detail page renders an 8-tile KPI strip on lg+ screens.
+  // then 3 / 4 / 5 / 6 / 7 / 8 depending on count. We extend up to 8
+  // because the pack detail renders 8 tiles on lg+; 7 is also used by
+  // the code-detail KPI strip.
   const gridCols =
     count >= 8
       ? "grid-cols-2 md:grid-cols-4 lg:grid-cols-8"
-      : count >= 6
-        ? "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6"
-        : count === 5
-          ? "grid-cols-2 sm:grid-cols-3 lg:grid-cols-5"
-          : count === 4
-            ? "grid-cols-2 md:grid-cols-4"
-            : count === 3
-              ? "grid-cols-2 md:grid-cols-3"
-              : "grid-cols-2";
+      : count === 7
+        ? "grid-cols-2 md:grid-cols-3 lg:grid-cols-7"
+        : count >= 6
+          ? "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6"
+          : count === 5
+            ? "grid-cols-2 sm:grid-cols-3 lg:grid-cols-5"
+            : count === 4
+              ? "grid-cols-2 md:grid-cols-4"
+              : count === 3
+                ? "grid-cols-2 md:grid-cols-3"
+                : "grid-cols-2";
   return (
     <div className={cn("grid gap-3", gridCols, className)}>
       {Array.from({ length: count }).map((_, i) => (
