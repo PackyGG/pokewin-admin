@@ -13,7 +13,7 @@ export default function BattleTransactionsLoading() {
       <PageHeroSkeleton />
       <div className="space-y-4">
         <TabBarSkeleton count={4} />
-        <ToolbarSkeleton filters={1} />
+        <ToolbarSkeleton filters={0} />
         <TableSkeleton rows={15} columns={7} />
         <PaginationSkeleton />
       </div>

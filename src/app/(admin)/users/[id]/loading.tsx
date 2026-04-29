@@ -1,5 +1,14 @@
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  KpiStripSkeleton,
+  TabBarSkeleton,
+} from "@/components/loading-skeletons";
 
+/**
+ * Matches /users/[id]: simple back-link header (no full PageHero), large
+ * hero KPI strip from UserViewModern, segmented tab bar, and tabbed
+ * content (panels + tables). The hero KPIs are 6 wide on xl screens.
+ */
 export default function UserDetailLoading() {
   return (
     <div className="space-y-4">
@@ -10,13 +19,20 @@ export default function UserDetailLoading() {
           <Skeleton className="h-4 w-32" />
         </div>
       </div>
-      <Skeleton className="h-10 w-72" />
+
+      {/* Modern user view: identity hero with avatar + status pills + KPIs. */}
+      <Skeleton className="h-32 rounded-2xl" />
+
+      <KpiStripSkeleton count={6} />
+
+      <TabBarSkeleton count={7} />
+
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <Skeleton className="h-40 rounded-xl" />
-        <Skeleton className="h-40 rounded-xl" />
-        <Skeleton className="h-40 rounded-xl" />
+        <Skeleton className="h-48 rounded-2xl" />
+        <Skeleton className="h-48 rounded-2xl" />
+        <Skeleton className="h-48 rounded-2xl" />
       </div>
-      <Skeleton className="h-64 rounded-xl" />
+      <Skeleton className="h-64 rounded-2xl" />
     </div>
   );
 }

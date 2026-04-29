@@ -4,16 +4,20 @@ import {
   KpiStripSkeleton,
   SectionHeadingSkeleton,
   ChartRowSkeleton,
+  TabBarSkeleton,
 } from "@/components/loading-skeletons";
 
 /**
- * Matches /analytics: hero (with period filter), 6 stat cards, battle/pack
- * breakdown cards, acquisition + gameplay chart rows.
+ * Matches /analytics: hero (with period filter action), 9-tab nav, and
+ * the default Overview tab content (6 KPIs, 2 breakdown cards, charts).
+ * Other analytics tabs use Suspense + TabSkeleton internally — this
+ * top-level skeleton only fires on cold navigations to /analytics.
  */
 export default function AnalyticsLoading() {
   return (
     <div className="space-y-6">
       <PageHeroSkeleton action />
+      <TabBarSkeleton count={9} />
       <KpiStripSkeleton count={6} />
       <div className="grid gap-4 md:grid-cols-2">
         <Skeleton className="h-64 rounded-2xl" />
