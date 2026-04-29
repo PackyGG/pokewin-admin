@@ -8,6 +8,7 @@ import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { ValueRangeFilter } from "@/app/(admin)/withdrawals/value-range-filter";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TableSkeleton, PaginationSkeleton } from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
 import { PageHero } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
@@ -43,6 +44,54 @@ const TX_TYPES = [
   { label: "Shipping Fee", value: "withdrawal_shipping_fee" },
 ];
 
+/**
+ * Streaming server component for the transactions table. The expensive
+ * `getTransactions` query (which joins game_sessions + provably_fair_results
+ * + user_inventory) runs inside a Suspense boundary so the hero/tabs/toolbar
+ * can flush to the browser immediately while the table loads.
+ */
+async function TransactionsContent({
+  page,
+  perPage,
+  tab,
+  search,
+  type,
+  minAmount,
+  maxAmount,
+}: {
+  page: number;
+  perPage: number;
+  tab: string;
+  search?: string;
+  type?: string;
+  minAmount?: number;
+  maxAmount?: number;
+}) {
+  const result = await getTransactions({
+    page,
+    perPage,
+    search,
+    type,
+    status: tab === "all" ? undefined : tab,
+    minAmount: minAmount && !isNaN(minAmount) ? minAmount : undefined,
+    maxAmount: maxAmount && !isNaN(maxAmount) ? maxAmount : undefined,
+  });
+
+  return (
+    <>
+      <FadeIn>
+        <TransactionsDataTable data={result.data} />
+      </FadeIn>
+      <DataTablePagination
+        page={result.page}
+        totalPages={result.totalPages}
+        total={result.total}
+        perPage={result.perPage}
+      />
+    </>
+  );
+}
+
 export default async function TransactionsPage({
   searchParams,
 }: {
@@ -57,15 +106,10 @@ export default async function TransactionsPage({
   const minAmount = params.minValue ? Number(params.minValue) : undefined;
   const maxAmount = params.maxValue ? Number(params.maxValue) : undefined;
 
-  const result = await getTransactions({
-    page,
-    perPage,
-    search: params.search,
-    type: params.type,
-    status: tab === "all" ? undefined : tab,
-    minAmount: minAmount && !isNaN(minAmount) ? minAmount : undefined,
-    maxAmount: maxAmount && !isNaN(maxAmount) ? maxAmount : undefined,
-  });
+  // The Suspense key forces a fresh boundary whenever the inputs change,
+  // so navigating between tabs/pages re-shows the skeleton instead of
+  // freezing on the previous render.
+  const suspenseKey = `${tab}|${page}|${perPage}|${params.type ?? ""}|${params.search ?? ""}|${params.minValue ?? ""}|${params.maxValue ?? ""}`;
 
   return (
     <div className="space-y-6">
@@ -114,15 +158,25 @@ export default async function TransactionsPage({
             <ValueRangeFilter />
           </DataTableToolbar>
         </Suspense>
-        <FadeIn>
-          <TransactionsDataTable data={result.data} />
-        </FadeIn>
-        <DataTablePagination
-          page={result.page}
-          totalPages={result.totalPages}
-          total={result.total}
-          perPage={result.perPage}
-        />
+        <Suspense
+          key={suspenseKey}
+          fallback={
+            <>
+              <TableSkeleton rows={15} columns={7} />
+              <PaginationSkeleton />
+            </>
+          }
+        >
+          <TransactionsContent
+            page={page}
+            perPage={perPage}
+            tab={tab}
+            search={params.search}
+            type={params.type}
+            minAmount={minAmount}
+            maxAmount={maxAmount}
+          />
+        </Suspense>
       </div>
     </div>
   );
