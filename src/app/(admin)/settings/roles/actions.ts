@@ -4,14 +4,21 @@ import { revalidatePath } from "next/cache";
 import { adminDb } from "@/lib/admin-db";
 import { requireAdmin } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
-import { setLimit, deleteLimit } from "@/lib/balance-limits";
 import { ALL_PAGE_KEYS } from "@/lib/admin-pages";
 import {
   type CapabilityState,
   buildCapabilityKeys,
   extractCapabilityStates,
-  parseBalanceLimit,
 } from "./permissions-utils";
+
+// NOTE: Balance adjustment limits are deliberately NOT touched here.
+// Per-admin balance limits live in `admin_balance_limits` and are
+// configured per user on /admin-users/[id]. The role editor only
+// controls page access + capability flags. Earlier versions of this
+// action auto-cascaded a role-level balance limit to every user of
+// that role, which silently overwrote individually-set per-admin
+// limits. That cascade has been removed; admins manage balance
+// limits exclusively from the per-user "Adjust Balance Limit" card.
 
 const CONFIGURABLE_ROLES = ["support", "marketing", "creator"] as const;
 type ConfigurableRole = (typeof CONFIGURABLE_ROLES)[number];
@@ -67,7 +74,10 @@ export async function getRolePermissions(): Promise<
 
 /**
  * Update the allowed_pages for ALL admin_users of a given role.
- * Also syncs admin_balance_limits for each user.
+ *
+ * Only affects page access + capability flags stored in `allowed_pages`.
+ * Per-admin balance limits in `admin_balance_limits` are intentionally
+ * NOT touched — those are managed individually on /admin-users/[id].
  */
 export async function updateRolePermissions(
   role: string,
@@ -86,39 +96,13 @@ export async function updateRolePermissions(
   const capabilityKeys = buildCapabilityKeys(config.capabilities);
   const fullPages = [...validPages, ...capabilityKeys];
 
-  // Get all users of this role to sync limits
-  const roleUsers = await adminDb.admin_users.findMany({
-    where: { role },
-    select: { id: true },
-  });
+  // Count for audit context only — no per-user fan-out happens here anymore.
+  const usersAffected = await adminDb.admin_users.count({ where: { role } });
 
-  // Batch update allowed_pages
   await adminDb.admin_users.updateMany({
     where: { role },
     data: { allowed_pages: fullPages },
   });
-
-  // Sync admin_balance_limits for each user based on the balance adjust capability
-  const balanceState = config.capabilities["__can_adjust_balance"];
-  const balanceLimit = balanceState?.enabled
-    ? parseBalanceLimit(capabilityKeys)
-    : null;
-
-  for (const user of roleUsers) {
-    if (balanceLimit) {
-      await setLimit({
-        adminUserId: user.id,
-        periodType: balanceLimit.period,
-        maxAmount: balanceLimit.amount,
-        setBy: session.userId,
-      });
-    } else {
-      // Remove limits if balance adjust is off or no limit set
-      for (const period of ["daily", "weekly"] as const) {
-        try { await deleteLimit(user.id, period, session.userId); } catch { /* no limit to delete */ }
-      }
-    }
-  }
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -127,7 +111,7 @@ export async function updateRolePermissions(
       role,
       pages: validPages,
       capabilities: config.capabilities,
-      users_affected: roleUsers.length,
+      users_affected: usersAffected,
     },
   });
 

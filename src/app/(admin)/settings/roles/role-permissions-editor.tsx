@@ -1,22 +1,15 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { updateRolePermissions, type RoleConfig } from "./actions";
 import {
@@ -204,56 +197,25 @@ export function RolePermissionsEditor({
                           onCheckedChange={(checked) =>
                             updateCapability(cap.key, {
                               enabled: !!checked,
-                              ...(!checked && {
-                                limitAmount: null,
-                                limitPeriod: undefined,
-                              }),
                             })
                           }
                         />
                       </div>
-                      {cap.hasLimit && state.enabled && (
-                        <div className="ml-0 rounded-md border p-3 space-y-2">
-                          <Label className="text-xs">{cap.limitLabel}</Label>
-                          <div className="flex items-center gap-2">
-                            {cap.hasPeriod && (
-                              <Select
-                                value={state.limitPeriod ?? "daily"}
-                                onValueChange={(v) =>
-                                  updateCapability(cap.key, {
-                                    limitPeriod: v as "daily" | "weekly",
-                                  })
-                                }
-                              >
-                                <SelectTrigger className="h-8 w-24">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="daily">24h</SelectItem>
-                                  <SelectItem value="weekly">7 days</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            )}
-                            <Input
-                              type="number"
-                              step="1"
-                              min="0"
-                              placeholder="No limit"
-                              value={state.limitAmount ?? ""}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                updateCapability(cap.key, {
-                                  limitAmount: val ? Number(val) : null,
-                                });
-                              }}
-                              className="h-8 w-32"
-                            />
-                            <span className="text-xs text-muted-foreground shrink-0">
-                              {state.limitAmount
-                                ? `Max $${state.limitAmount.toLocaleString()} per ${state.limitPeriod === "weekly" ? "7 days" : "24h"}`
-                                : "Unlimited"}
-                            </span>
-                          </div>
+                      {cap.key === "__can_adjust_balance" && state.enabled && (
+                        <div className="rounded-md border border-dashed bg-muted/40 p-2.5 text-xs text-muted-foreground flex items-start gap-2">
+                          <Info className="size-3.5 shrink-0 mt-0.5" />
+                          <span>
+                            Per-admin daily/weekly/monthly caps are set
+                            individually on{" "}
+                            <Link
+                              href="/admin-users"
+                              className="font-medium underline decoration-dotted hover:text-foreground"
+                            >
+                              Admin Users
+                            </Link>{" "}
+                            → user → Adjust Balance Limit. Without a
+                            cap, this admin can adjust any amount.
+                          </span>
                         </div>
                       )}
                     </div>

@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Trash2, X } from "lucide-react";
+import { Trash2, X, Wallet } from "lucide-react";
 import { setAdminLimit, deleteAdminLimit } from "../limits-actions";
 import type { limit_period_type } from "@/generated/admin-prisma/client";
 
@@ -37,42 +37,62 @@ export function BalanceLimitsCard({
   initialLimits: BalanceLimit[];
 }) {
   const router = useRouter();
-  const [limits, setLimits] = useState(initialLimits);
   const [isPending, startTransition] = useTransition();
 
-  const limitMap = new Map(limits.map((l) => [l.period_type, l]));
+  // We rely on the server (via router.refresh) for the source of
+  // truth — `initialLimits` is the canonical view. Optimistic local
+  // state only existed previously to hide deleted rows; the refresh
+  // below handles that without the risk of UI/DB drift.
+  const limitMap = new Map(initialLimits.map((l) => [l.period_type, l]));
 
   function handleSet(periodType: limit_period_type, value: string) {
     const amount = parseFloat(value);
-    if (isNaN(amount) || amount <= 0) return;
+    if (Number.isNaN(amount) || amount <= 0) {
+      toast.error("Enter a positive amount");
+      return;
+    }
     startTransition(async () => {
-      try {
-        await setAdminLimit({ adminUserId, periodType, maxAmount: amount });
-        toast.success(`${PERIOD_LABELS[periodType]} limit set to $${amount.toFixed(2)}`);
-        router.refresh();
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Failed to set limit");
+      const result = await setAdminLimit({
+        adminUserId,
+        periodType,
+        maxAmount: amount,
+      });
+      if (!result.success) {
+        toast.error(result.error);
+        return;
       }
+      toast.success(
+        `${PERIOD_LABELS[periodType]} limit set to $${amount.toFixed(2)}`,
+      );
+      router.refresh();
     });
   }
 
   function handleDelete(periodType: limit_period_type) {
     startTransition(async () => {
-      try {
-        await deleteAdminLimit(adminUserId, periodType);
-        setLimits((prev) => prev.filter((l) => l.period_type !== periodType));
-        toast.success(`${PERIOD_LABELS[periodType]} limit removed`);
-        router.refresh();
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Failed to remove limit");
+      const result = await deleteAdminLimit(adminUserId, periodType);
+      if (!result.success) {
+        toast.error(result.error);
+        return;
       }
+      toast.success(`${PERIOD_LABELS[periodType]} limit removed`);
+      router.refresh();
     });
   }
+
+  const activeLimitsCount = initialLimits.length;
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Adjust Balance Limit</CardTitle>
+        <CardTitle className="text-base flex items-center gap-2">
+          <Wallet className="size-4 text-muted-foreground" />
+          Adjust Balance Limit
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Caps how much this admin can adjust user balances within each
+          period. {activeLimitsCount === 0 ? "Currently unlimited." : null}
+        </p>
       </CardHeader>
       <CardContent className="space-y-3">
         {PERIOD_TYPES.map((period) => {
