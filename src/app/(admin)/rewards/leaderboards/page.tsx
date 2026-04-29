@@ -18,6 +18,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
+import {
+  TableSkeleton,
+  PaginationSkeleton,
+} from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { PeriodPicker } from "./period-picker";
@@ -95,9 +99,37 @@ export default async function LeaderboardsPage({
           ))}
         </div>
 
-        {tab === "standings" && <StandingsTab params={params} />}
-        {tab === "tiers" && <TiersTab />}
-        {tab === "history" && <HistoryTab params={params} />}
+        {tab === "standings" && (
+          <Suspense
+            key={`standings|${params.raceType ?? ""}|${params.periodStart ?? ""}|${params.page ?? ""}|${params.perPage ?? ""}|${params.search ?? ""}`}
+            fallback={
+              <div className="space-y-4">
+                <TableSkeleton rows={10} columns={3} />
+                <PaginationSkeleton />
+              </div>
+            }
+          >
+            <StandingsTab params={params} />
+          </Suspense>
+        )}
+        {tab === "tiers" && (
+          <Suspense fallback={<TableSkeleton rows={6} columns={4} />}>
+            <TiersTab />
+          </Suspense>
+        )}
+        {tab === "history" && (
+          <Suspense
+            key={`history|${params.raceType ?? ""}|${params.page ?? ""}|${params.perPage ?? ""}`}
+            fallback={
+              <div className="space-y-4">
+                <TableSkeleton rows={10} columns={6} />
+                <PaginationSkeleton />
+              </div>
+            }
+          >
+            <HistoryTab params={params} />
+          </Suspense>
+        )}
       </div>
     </div>
   );
