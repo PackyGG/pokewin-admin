@@ -10,6 +10,7 @@ import {
   type UpdateDealInput,
 } from "@/lib/backend-api";
 import { requirePageAccess } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 
 /**
@@ -41,6 +42,7 @@ const toActionError = (err: unknown): Error => {
 
 export async function promoteUserToCreator(userId: string) {
   const session = await requirePageAccess("/creators");
+  await requireCapability(session, "__can_make_creator", "promote a user to creator");
   try {
     const result = await creatorsApi.promote(userId);
 
@@ -109,6 +111,7 @@ export async function createCreatorDeal(
 ) {
   const session = await requirePageAccess("/creators");
   const parsed = CreateDealSchema.parse(input);
+  await requireCapability(session, "__can_create_creator_deal", "create creator deals");
 
   try {
     const deal = await creatorsApi.createDeal(userId, parsed);
@@ -163,6 +166,7 @@ export async function updateCreatorDeal(
 ) {
   const session = await requirePageAccess("/creators");
   const parsedPatch = UpdateDealPatchSchema.parse(patch);
+  await requireCapability(session, "__can_update_creator_deal", "update creator deals");
 
   try {
     const deal = await creatorsApi.updateDeal(userId, dealId, {
@@ -195,6 +199,7 @@ export async function terminateCreatorDeal(
   options: { reason?: string; force_end_active_session?: boolean } = {},
 ) {
   const session = await requirePageAccess("/creators");
+  await requireCapability(session, "__can_delete_creator_deal", "delete creator deals");
 
   try {
     const deal = await creatorsApi.terminateDeal(userId, dealId, options);

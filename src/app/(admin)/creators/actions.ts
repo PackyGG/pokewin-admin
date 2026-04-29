@@ -7,6 +7,7 @@ import bcrypt from "bcryptjs";
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { requirePageAccess } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import { toNumber } from "@/lib/utils/decimal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { dispatchWebhook } from "@/lib/webhook-dispatcher";
@@ -16,6 +17,7 @@ import type { deal_type, deal_status } from "@/generated/admin-prisma/client";
 export async function makeCreator(userId: string) {
   const db = await getDb();
   const session = await requirePageAccess("/creators");
+  await requireCapability(session, "__can_make_creator", "promote a user to creator");
 
   const user = await db.user.findUnique({
     where: { id: userId },
@@ -92,6 +94,11 @@ export async function makeCreator(userId: string) {
 export async function updateAffiliateLevel(userId: string, level: number) {
   const db = await getDb();
   const session = await requirePageAccess("/creators");
+  await requireCapability(
+    session,
+    "__can_update_creator_affiliate_level",
+    "update creator affiliate level",
+  );
 
   if (level < 1 || level > 8) throw new Error("Invalid level");
 
@@ -114,6 +121,7 @@ export async function updateAffiliateLevel(userId: string, level: number) {
 export async function addAffiliateCode(userId: string, code: string) {
   const db = await getDb();
   const session = await requirePageAccess("/creators");
+  await requireCapability(session, "__can_assign_affiliate", "create affiliate codes");
 
   const trimmed = code.trim().toLowerCase();
   if (!trimmed || trimmed.length < 2) throw new Error("Code must be at least 2 characters");
@@ -141,6 +149,7 @@ export async function addAffiliateCode(userId: string, code: string) {
 export async function removeAffiliateCode(codeId: string) {
   const db = await getDb();
   const session = await requirePageAccess("/creators");
+  await requireCapability(session, "__can_assign_affiliate", "remove affiliate codes");
 
   const code = await db.affiliate_codes.findUnique({ where: { id: codeId } });
   if (!code) throw new Error("Code not found");
@@ -160,6 +169,7 @@ export async function removeAffiliateCode(codeId: string) {
 export async function toggleAffiliateCode(codeId: string, isActive: boolean) {
   const db = await getDb();
   const session = await requirePageAccess("/creators");
+  await requireCapability(session, "__can_toggle_creator_code", "toggle creator codes");
 
   const code = await db.affiliate_codes.findUnique({ where: { id: codeId } });
   if (!code) throw new Error("Code not found");
@@ -190,6 +200,7 @@ export async function updateCreatorLimits(
 ) {
   const db = await getDb();
   const session = await requirePageAccess("/creators");
+  await requireCapability(session, "__can_update_creator_limits", "update creator limits");
 
   await db.creator_withdrawal_limits.upsert({
     where: { user_id: userId },
@@ -232,6 +243,7 @@ export async function updateCreatorLimits(
 export async function processCreatorPayout(affiliateUserId: string) {
   const db = await getDb();
   const session = await requirePageAccess("/creators");
+  await requireCapability(session, "__can_approve_creator_payout", "approve creator payouts");
 
   // Run everything inside a single interactive transaction so we can:
   //   1. Lock the affiliate_accounts row (SELECT ... FOR UPDATE) to prevent
@@ -322,6 +334,11 @@ export async function updateLevelConfig(
 ) {
   const db = await getDb();
   const session = await requirePageAccess("/creators");
+  await requireCapability(
+    session,
+    "__can_update_creator_level_config",
+    "update creator level config",
+  );
 
   const updateData: Record<string, unknown> = {};
   if (data.label !== undefined) updateData.label = data.label;
@@ -363,6 +380,11 @@ export async function updateAffiliateCutExpiration(
 ): Promise<{ success: true } | { success: false; error: string }> {
   const db = await getDb();
   const session = await requirePageAccess("/creators");
+  await requireCapability(
+    session,
+    "__can_update_creator_cut_expiration",
+    "update creator cut expiration",
+  );
 
   if (days !== null && (!Number.isFinite(days) || days < 0)) {
     return { success: false, error: "Days must be a non-negative number" };
@@ -403,6 +425,7 @@ export async function updateAffiliateCutExpiration(
 export async function toggleCodeActive(userId: string, isActive: boolean) {
   const db = await getDb();
   const session = await requirePageAccess("/creators");
+  await requireCapability(session, "__can_toggle_creator_code", "toggle creator codes");
 
   await db.user.update({
     where: { id: userId },
@@ -427,6 +450,7 @@ export async function createWebhook(
   data: { url: string }
 ) {
   const session = await requirePageAccess("/creators");
+  await requireCapability(session, "__can_create_creator_webhook", "create creator webhooks");
 
   try {
     new URL(data.url);
@@ -465,6 +489,7 @@ export async function updateWebhook(
   data: { url?: string; enabled?: boolean }
 ) {
   const session = await requirePageAccess("/creators");
+  await requireCapability(session, "__can_update_creator_webhook", "update creator webhooks");
 
   if (data.url) {
     try {
@@ -499,6 +524,7 @@ export async function updateWebhook(
 
 export async function deleteWebhook(webhookId: string) {
   const session = await requirePageAccess("/creators");
+  await requireCapability(session, "__can_delete_creator_webhook", "delete creator webhooks");
 
   const webhook = await adminDb.creator_webhooks.findUnique({ where: { id: webhookId } });
   if (!webhook) throw new Error("Webhook not found");
@@ -516,7 +542,8 @@ export async function deleteWebhook(webhookId: string) {
 }
 
 export async function testWebhook(webhookId: string) {
-  await requirePageAccess("/creators");
+  const session = await requirePageAccess("/creators");
+  await requireCapability(session, "__can_test_creator_webhook", "test creator webhooks");
 
   const webhook = await adminDb.creator_webhooks.findUnique({ where: { id: webhookId } });
   if (!webhook) throw new Error("Webhook not found");
@@ -563,7 +590,8 @@ export async function adminLinkSocialByUsername(
   platform: string,
   username: string
 ) {
-  await requirePageAccess("/creators");
+  const session = await requirePageAccess("/creators");
+  await requireCapability(session, "__can_link_creator_social", "link creator socials");
 
   const trimmed = username.trim().replace(/^@/, "");
   if (!trimmed) throw new Error("Username is required");
@@ -606,7 +634,8 @@ export async function adminUnlinkSocial(
   targetUserId: string,
   socialId: string
 ) {
-  await requirePageAccess("/creators");
+  const session = await requirePageAccess("/creators");
+  await requireCapability(session, "__can_unlink_creator_social", "unlink creator socials");
 
   const social = await adminDb.creator_socials.findUnique({
     where: { id: socialId },
@@ -648,6 +677,7 @@ export async function createDeal(
   }
 ) {
   const session = await requirePageAccess("/creators");
+  await requireCapability(session, "__can_create_creator_deal", "create creator deals");
 
   // Calculate max financial exposure
   const maxExposure = calculateMaxExposure(data);
@@ -721,6 +751,7 @@ export async function updateDeal(
   }
 ) {
   const session = await requirePageAccess("/creators");
+  await requireCapability(session, "__can_update_creator_deal", "update creator deals");
 
   const deal = await adminDb.creator_deals.findUnique({ where: { id: dealId } });
   if (!deal) throw new Error("Deal not found");
@@ -787,6 +818,7 @@ export async function updateDeal(
 export async function manualFill(targetUserId: string, dealId: string) {
   const db = await getDb();
   const session = await requirePageAccess("/creators");
+  await requireCapability(session, "__can_manual_creator_fill", "trigger manual creator fills");
 
   const deal = await adminDb.creator_deals.findUnique({ where: { id: dealId } });
   if (!deal) throw new Error("Deal not found");
@@ -930,6 +962,7 @@ function calculateMaxExposure(data: {
 
 export async function deleteDeal(dealId: string) {
   const session = await requirePageAccess("/creators");
+  await requireCapability(session, "__can_delete_creator_deal", "delete creator deals");
 
   const deal = await adminDb.creator_deals.findUnique({ where: { id: dealId } });
   if (!deal) throw new Error("Deal not found");

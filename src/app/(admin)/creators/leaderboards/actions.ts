@@ -10,6 +10,7 @@ import {
 } from "@/lib/backend-api/affiliate-leaderboards";
 import { BackendApiError } from "@/lib/backend-api/errors";
 import { requirePageAccess } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { getDb } from "@/lib/db";
 
@@ -196,6 +197,7 @@ export async function approveLeaderboard(id: string): Promise<ActionResult> {
     if (!parsed.success) {
         return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid id" };
     }
+    await requireCapability(session, "__can_update_creator_deal", "approve creator leaderboards");
 
     try {
         await affiliateLeaderboardsApi.approve(parsed.data, session.userId);
@@ -230,6 +232,7 @@ export async function rejectLeaderboard(
     if (!parsed.success) {
         return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
     }
+    await requireCapability(session, "__can_update_creator_deal", "reject creator leaderboards");
 
     try {
         await affiliateLeaderboardsApi.reject(parsedId.data, parsed.data, session.userId);
@@ -267,6 +270,7 @@ export async function editLeaderboard(
     if (!parsed.success) {
         return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
     }
+    await requireCapability(session, "__can_update_creator_deal", "edit creator leaderboards");
 
     // Snapshot the current state *before* mutating so the audit metadata can
     // record an exact diff. If this read fails, we still proceed with the edit
@@ -318,6 +322,7 @@ export async function sponsorLeaderboard(
     if (!parsed.success) {
         return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
     }
+    await requireCapability(session, "__can_update_creator_deal", "sponsor creator leaderboards");
 
     // Snapshot pre-sponsor totals so the audit shows exactly which pool the
     // delta was added to (and what the resulting total became).
@@ -364,6 +369,7 @@ export async function cancelLeaderboard(id: string): Promise<ActionResult> {
     if (!parsedId.success) {
         return { success: false, error: parsedId.error.issues[0]?.message ?? "Invalid id" };
     }
+    await requireCapability(session, "__can_update_creator_deal", "cancel creator leaderboards");
 
     try {
         await affiliateLeaderboardsApi.cancel(parsedId.data, session.userId);
