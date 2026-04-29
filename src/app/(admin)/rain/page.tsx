@@ -17,6 +17,10 @@ import {
 } from "@/components/ui/table";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  TableSkeleton,
+  PaginationSkeleton,
+} from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
 import { RainRangeFilters } from "./range-filters";
 import { InlineBaseCell } from "./inline-base-cell";
@@ -86,33 +90,21 @@ export default async function RainPage({
           ))}
         </div>
 
-        {tab === "instances" && <InstancesTab params={params} />}
+        {tab === "instances" && (
+          <InstancesTab params={params} />
+        )}
         {tab === "config" && <ConfigTab />}
       </div>
     </div>
   );
 }
 
-async function InstancesTab({
+function InstancesTab({
   params,
 }: {
   params: Record<string, string | undefined>;
 }) {
-  const page = Number(params.page) || 1;
-  const perPage = Number(params.perPage) || 20;
-
-  const rains = await getRains({
-    page,
-    perPage,
-    search: params.search,
-    status: params.status,
-    minTips: params.minTips ? Number(params.minTips) : undefined,
-    maxTips: params.maxTips ? Number(params.maxTips) : undefined,
-    minPool: params.minPool ? Number(params.minPool) : undefined,
-    maxPool: params.maxPool ? Number(params.maxPool) : undefined,
-    minParticipants: params.minParticipants ? Number(params.minParticipants) : undefined,
-    maxParticipants: params.maxParticipants ? Number(params.maxParticipants) : undefined,
-  });
+  const suspenseKey = `${params.page ?? "1"}|${params.perPage ?? "20"}|${params.search ?? ""}|${params.status ?? ""}|${params.minTips ?? ""}|${params.maxTips ?? ""}|${params.minPool ?? ""}|${params.maxPool ?? ""}|${params.minParticipants ?? ""}|${params.maxParticipants ?? ""}`;
 
   return (
     <div className="space-y-4">
@@ -136,6 +128,44 @@ async function InstancesTab({
         </DataTableToolbar>
       </Suspense>
 
+      <Suspense
+        key={suspenseKey}
+        fallback={
+          <>
+            <TableSkeleton rows={12} columns={9} />
+            <PaginationSkeleton />
+          </>
+        }
+      >
+        <RainsTable params={params} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function RainsTable({
+  params,
+}: {
+  params: Record<string, string | undefined>;
+}) {
+  const page = Number(params.page) || 1;
+  const perPage = Number(params.perPage) || 20;
+
+  const rains = await getRains({
+    page,
+    perPage,
+    search: params.search,
+    status: params.status,
+    minTips: params.minTips ? Number(params.minTips) : undefined,
+    maxTips: params.maxTips ? Number(params.maxTips) : undefined,
+    minPool: params.minPool ? Number(params.minPool) : undefined,
+    maxPool: params.maxPool ? Number(params.maxPool) : undefined,
+    minParticipants: params.minParticipants ? Number(params.minParticipants) : undefined,
+    maxParticipants: params.maxParticipants ? Number(params.maxParticipants) : undefined,
+  });
+
+  return (
+    <>
       <FadeIn>
         <div className="rounded-md border">
           <Table>
@@ -192,7 +222,7 @@ async function InstancesTab({
         total={rains.total}
         perPage={rains.perPage}
       />
-    </div>
+    </>
   );
 }
 
