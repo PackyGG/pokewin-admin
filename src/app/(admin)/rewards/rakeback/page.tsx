@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { Percent } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
@@ -13,6 +14,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
+import {
+  TableSkeleton,
+  PaginationSkeleton,
+} from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
 import { RakebackConfigTable } from "./rakeback-config-table";
 import { PageHero } from "@/components/modern-panels";
@@ -70,8 +75,35 @@ export default async function RakebackPage({
           ))}
         </div>
 
-        {tab === "config" && <ConfigTab />}
-        {tab === "claims" && <ClaimsTab page={page} perPage={perPage} type={params.type} search={params.search} />}
+        {tab === "config" && (
+          <Suspense
+            fallback={
+              <div className="rounded-md border p-4">
+                <TableSkeleton rows={6} columns={4} />
+              </div>
+            }
+          >
+            <ConfigTab />
+          </Suspense>
+        )}
+        {tab === "claims" && (
+          <Suspense
+            key={`${page}|${perPage}|${params.type ?? ""}|${params.search ?? ""}`}
+            fallback={
+              <>
+                <div className="flex gap-1 rounded-lg bg-muted p-1">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <div key={i} className="h-7 w-20 rounded-md bg-muted-foreground/10 animate-pulse" />
+                  ))}
+                </div>
+                <TableSkeleton rows={12} columns={6} />
+                <PaginationSkeleton />
+              </>
+            }
+          >
+            <ClaimsTab page={page} perPage={perPage} type={params.type} search={params.search} />
+          </Suspense>
+        )}
       </div>
     </div>
   );
