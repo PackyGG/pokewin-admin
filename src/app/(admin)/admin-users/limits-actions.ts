@@ -4,6 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { adminDb } from "@/lib/admin-db";
 import { requireAdmin } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import {
   getAllLimits,
   getLimitsForAdmin,
@@ -73,6 +74,8 @@ export async function setAdminLimit(data: {
     return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
 
+  await requireCapability(session, "__can_set_admin_balance_limit", "set admin balance limits");
+
   try {
     await assertTargetExists(parsed.data.adminUserId);
   } catch (err) {
@@ -100,6 +103,8 @@ export async function deleteAdminLimit(
   if (!parsed.success) {
     return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
+
+  await requireCapability(session, "__can_set_admin_balance_limit", "set admin balance limits");
 
   try {
     await deleteLimit(parsed.data.adminUserId, parsed.data.periodType, session.userId);

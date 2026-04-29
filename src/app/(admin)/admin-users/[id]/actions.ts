@@ -4,11 +4,13 @@ import { revalidatePath } from "next/cache";
 import { adminDb } from "@/lib/admin-db";
 import { getDb } from "@/lib/db";
 import { requireAdmin } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { ALL_PAGE_KEYS } from "@/lib/admin-pages";
 
 export async function forceExpireAllSessions(adminUserId: string) {
   const session = await requireAdmin();
+  await requireCapability(session, "__can_force_expire_admin_sessions", "force-expire admin sessions");
 
   await adminDb.admin_sessions.updateMany({
     where: {
@@ -30,6 +32,7 @@ export async function forceExpireAllSessions(adminUserId: string) {
 
 export async function updateUserPermissions(userId: string, pages: string[]) {
   const session = await requireAdmin();
+  await requireCapability(session, "__can_update_admin_permissions", "update admin permissions");
 
   const targetUser = await adminDb.admin_users.findUnique({
     where: { id: userId },

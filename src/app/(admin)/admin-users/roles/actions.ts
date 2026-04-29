@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { adminDb } from "@/lib/admin-db";
 import { requireAdmin } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import {
   ALL_CAPABILITY_KEYS,
@@ -169,6 +170,8 @@ export async function createRole(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
 
+  await requireCapability(session, "__can_create_admin_role", "create admin roles");
+
   const { name, description, capabilities } = parsed.data;
 
   if (SYSTEM_NAMES.has(name.toLowerCase())) {
@@ -211,6 +214,8 @@ export async function updateRole(
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
+
+  await requireCapability(session, "__can_update_admin_role", "update admin roles");
 
   const { id, name, description, capabilities } = parsed.data;
 
@@ -265,6 +270,7 @@ export async function deleteRole(
   id: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const session = await requireAdmin();
+  await requireCapability(session, "__can_delete_admin_role", "delete admin roles");
 
   const existing = await getRole(id);
   if (!existing) return { ok: false, error: "Role not found" };
@@ -299,6 +305,7 @@ export async function assignRoleToAdminUser(
   roleId: string | null,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const session = await requireAdmin();
+  await requireCapability(session, "__can_assign_admin_role", "assign admin roles");
 
   if (roleId) {
     const exists = await adminDb.$queryRawUnsafe<{ id: string }[]>(

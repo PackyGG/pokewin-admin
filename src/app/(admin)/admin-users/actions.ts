@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import bcrypt from "bcryptjs";
 import { adminDb } from "@/lib/admin-db";
 import { requireAdmin } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { admin_role } from "@/generated/admin-prisma/client";
 import { require2FA } from "@/lib/require-2fa";
@@ -15,6 +16,7 @@ export async function createAdminUser(data: {
   role: string;
 }) {
   const session = await requireAdmin();
+  await requireCapability(session, "__can_create_admin_user", "create admin users");
 
   const passwordHash = await bcrypt.hash(data.password, 12);
 
@@ -56,6 +58,7 @@ export async function createAdminUser(data: {
 
 export async function toggleAdminActive(adminUserId: string, isActive: boolean) {
   const session = await requireAdmin();
+  await requireCapability(session, "__can_toggle_admin_active", "activate / deactivate admins");
 
   await adminDb.admin_users.update({
     where: { id: adminUserId },
@@ -74,6 +77,7 @@ export async function toggleAdminActive(adminUserId: string, isActive: boolean) 
 
 export async function resetAdmin2FA(adminUserId: string) {
   const session = await requireAdmin();
+  await requireCapability(session, "__can_reset_admin_2fa", "reset admin 2FA");
 
   await adminDb.admin_users.update({
     where: { id: adminUserId },
@@ -96,6 +100,7 @@ export async function resetAdmin2FA(adminUserId: string) {
 
 export async function changeAdminRole(adminUserId: string, newRole: string, totpCode: string) {
   const session = await requireAdmin();
+  await requireCapability(session, "__can_change_admin_role", "change admin roles");
 
   await require2FA(session.userId, totpCode);
 
@@ -122,6 +127,7 @@ export async function deleteAdminUser(
   adminUserId: string,
 ): Promise<{ success: true } | { success: false; error: string }> {
   const session = await requireAdmin();
+  await requireCapability(session, "__can_delete_admin_user", "delete admin users");
 
   // Can't delete yourself
   if (adminUserId === session.userId) {
