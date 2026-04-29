@@ -6,11 +6,56 @@ import { PacksGrid } from "./packs-grid";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PaginationSkeleton } from "@/components/loading-skeletons";
 import { CreatePackButton } from "./create-pack-button";
 import { PageHero } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Packs" };
+
+/**
+ * Streaming server component for the packs grid. The getPacks query
+ * (joins pack_cards × cards plus a groupBy for total counts) runs
+ * inside a Suspense boundary so the hero/toolbar can flush first.
+ */
+async function PacksContent({
+  page,
+  perPage,
+  search,
+  active,
+  sortBy,
+  sortOrder,
+}: {
+  page: number;
+  perPage: number;
+  search?: string;
+  active?: string;
+  sortBy?: string;
+  sortOrder?: string;
+}) {
+  const result = await getPacks({
+    page,
+    perPage,
+    search,
+    active,
+    sortBy,
+    sortOrder,
+  });
+
+  return (
+    <>
+      <FadeIn>
+        <PacksGrid data={result.data} />
+      </FadeIn>
+      <DataTablePagination
+        page={result.page}
+        totalPages={result.totalPages}
+        total={result.total}
+        perPage={result.perPage}
+      />
+    </>
+  );
+}
 
 export default async function PacksPage({
   searchParams,
@@ -22,14 +67,7 @@ export default async function PacksPage({
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
 
-  const result = await getPacks({
-    page,
-    perPage,
-    search: params.search,
-    active: params.active,
-    sortBy: params.sortBy,
-    sortOrder: params.sortOrder,
-  });
+  const suspenseKey = `${page}|${perPage}|${params.search ?? ""}|${params.active ?? ""}|${params.sortBy ?? ""}|${params.sortOrder ?? ""}`;
 
   return (
     <div className="space-y-6">
@@ -66,15 +104,32 @@ export default async function PacksPage({
             ]}
           />
         </Suspense>
-        <FadeIn>
-          <PacksGrid data={result.data} />
-        </FadeIn>
-        <DataTablePagination
-          page={result.page}
-          totalPages={result.totalPages}
-          total={result.total}
-          perPage={result.perPage}
-        />
+        <Suspense
+          key={suspenseKey}
+          fallback={
+            <>
+              <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+                {Array.from({ length: 18 }).map((_, i) => (
+                  <Skeleton
+                    key={i}
+                    className="rounded-xl"
+                    style={{ aspectRatio: "3/4" }}
+                  />
+                ))}
+              </div>
+              <PaginationSkeleton />
+            </>
+          }
+        >
+          <PacksContent
+            page={page}
+            perPage={perPage}
+            search={params.search}
+            active={params.active}
+            sortBy={params.sortBy}
+            sortOrder={params.sortOrder}
+          />
+        </Suspense>
       </div>
     </div>
   );
