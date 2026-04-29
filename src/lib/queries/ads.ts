@@ -121,10 +121,8 @@ export async function getAdCodes(houseUserId: string): Promise<AdCodeSummary[]> 
   // matches the always-uppercase clicks and the mixed-case usages rows.
   const [
     clickRowsRaw,
-    signupRows,
+    usageRows,
     activeRows,
-    usageAggByCode,
-    depositorRows,
     ledgerRows,
   ] = await Promise.all([
     safe(
@@ -137,25 +135,46 @@ export async function getAdCodes(houseUserId: string): Promise<AdCodeSummary[]> 
       ),
       [] as { code_upper: string; count: string }[],
     ),
-    // Signups — canonical from affiliate_code_usages. Distinct user
-    // count so a duplicated row never inflates.
+    // Single batched aggregate against affiliate_code_usages. Replaces
+    // three separate round-trips (signup count, deposit-volume sums,
+    // depositor count) — same outer filter and same index, so collapsing
+    // into one scan with FILTER clauses is strictly cheaper.
+    //  - signups        = DISTINCT users with usage_type='signup'
+    //  - deposit_total  = SUM(deposit_amount_usd) regardless of usage_type
+    //  - wager_total    = SUM(wager_amount_usd)   regardless of usage_type
+    //  - depositors_ftd = DISTINCT users with usage_type='deposit'
     safe(
-      db.$queryRawUnsafe<{ code_upper: string; count: string }[]>(
+      db.$queryRawUnsafe<{
+        code_upper: string;
+        signups: string;
+        deposit_total: string;
+        wager_total: string;
+        depositors_ftd: string;
+      }[]>(
         `SELECT UPPER(code) AS code_upper,
-                COUNT(DISTINCT referred_user_id)::text AS count
+                COUNT(DISTINCT referred_user_id) FILTER (WHERE usage_type = 'signup')::text   AS signups,
+                COALESCE(SUM(deposit_amount_usd::numeric), 0)::text                           AS deposit_total,
+                COALESCE(SUM(wager_amount_usd::numeric), 0)::text                             AS wager_total,
+                COUNT(DISTINCT referred_user_id) FILTER (WHERE usage_type = 'deposit')::text  AS depositors_ftd
            FROM affiliate_code_usages
           WHERE affiliate_user_id = $1
             AND UPPER(code) = ANY($2::text[])
-            AND usage_type = 'signup'
           GROUP BY UPPER(code)`,
         houseUserId,
         upperCodeList,
       ),
-      [] as { code_upper: string; count: string }[],
+      [] as {
+        code_upper: string;
+        signups: string;
+        deposit_total: string;
+        wager_total: string;
+        depositors_ftd: string;
+      }[],
     ),
     // Active referrals — signed-up users who also generated deposit or
-    // wager activity on the same code. Lets the list page surface the
-    // "X active" subtitle alongside total signups.
+    // wager activity on the same code. Kept separate because it requires
+    // a self-join / EXISTS that doesn't combine cleanly with the simple
+    // grouped aggregates above.
     safe(
       db.$queryRawUnsafe<{ code_upper: string; count: string }[]>(
         `SELECT UPPER(s.code) AS code_upper,
@@ -171,38 +190,6 @@ export async function getAdCodes(houseUserId: string): Promise<AdCodeSummary[]> 
                 AND a.usage_type IN ('deposit', 'wager')
             )
           GROUP BY UPPER(s.code)`,
-        houseUserId,
-        upperCodeList,
-      ),
-      [] as { code_upper: string; count: string }[],
-    ),
-    safe(
-      db.$queryRawUnsafe<{
-        code_upper: string;
-        deposit: string;
-        wager: string;
-      }[]>(
-        `SELECT UPPER(code) AS code_upper,
-                COALESCE(SUM(deposit_amount_usd::numeric), 0)::text AS deposit,
-                COALESCE(SUM(wager_amount_usd::numeric), 0)::text   AS wager
-           FROM affiliate_code_usages
-          WHERE affiliate_user_id = $1
-            AND UPPER(code) = ANY($2::text[])
-          GROUP BY UPPER(code)`,
-        houseUserId,
-        upperCodeList,
-      ),
-      [] as { code_upper: string; deposit: string; wager: string }[],
-    ),
-    safe(
-      db.$queryRawUnsafe<{ code_upper: string; count: string }[]>(
-        `SELECT UPPER(code) AS code_upper,
-                COUNT(DISTINCT referred_user_id)::text AS count
-           FROM affiliate_code_usages
-          WHERE affiliate_user_id = $1
-            AND UPPER(code) = ANY($2::text[])
-            AND usage_type = 'deposit'
-          GROUP BY UPPER(code)`,
         houseUserId,
         upperCodeList,
       ),
@@ -245,19 +232,19 @@ export async function getAdCodes(houseUserId: string): Promise<AdCodeSummary[]> 
     clickRowsRaw.map((r) => [r.code_upper, Number(r.count)]),
   );
   const signupMap = new Map(
-    signupRows.map((r) => [r.code_upper, Number(r.count)]),
+    usageRows.map((r) => [r.code_upper, Number(r.signups)]),
   );
   const activeMap = new Map(
     activeRows.map((r) => [r.code_upper, Number(r.count)]),
   );
   const usageMap = new Map(
-    usageAggByCode.map((r) => [
+    usageRows.map((r) => [
       r.code_upper,
-      { deposit: toNumber(r.deposit), wager: toNumber(r.wager) },
+      { deposit: toNumber(r.deposit_total), wager: toNumber(r.wager_total) },
     ]),
   );
   const ftdDepositorMap = new Map(
-    depositorRows.map((r) => [r.code_upper, Number(r.count)]),
+    usageRows.map((r) => [r.code_upper, Number(r.depositors_ftd)]),
   );
   const ledgerMap = new Map(
     ledgerRows.map((r) => [
@@ -331,7 +318,7 @@ export async function getAdCodesAggregate(
 
   const upperCodeList = codeList.map((c) => c.toUpperCase());
 
-  const [clicksRow, signupsRow, activeRow, depositorRow, sumsRow, ledgerRow] =
+  const [clicksRow, usageAggRow, activeRow, ledgerRow] =
     await Promise.all([
       safe(
         db.$queryRawUnsafe<{ count: string }[]>(
@@ -342,19 +329,35 @@ export async function getAdCodesAggregate(
         ),
         [] as { count: string }[],
       ),
-      // Signups from the canonical usages table — same source of truth
-      // used everywhere else, so totals stay aligned across pages.
+      // Single batched aggregate against affiliate_code_usages. Replaces
+      // 3 separate aggregate round-trips (signups distinct, FTD deposit
+      // distinct, deposit/wager sums) with one scan and FILTER clauses —
+      // same source of truth as the per-code list above so totals stay
+      // aligned across pages.
       safe(
-        db.$queryRawUnsafe<{ count: string }[]>(
-          `SELECT COUNT(DISTINCT referred_user_id)::text AS count
+        db.$queryRawUnsafe<{
+          signups: string;
+          depositors_ftd: string;
+          deposit: string;
+          wager: string;
+        }[]>(
+          `SELECT
+              COUNT(DISTINCT referred_user_id) FILTER (WHERE usage_type = 'signup')::text  AS signups,
+              COUNT(DISTINCT referred_user_id) FILTER (WHERE usage_type = 'deposit')::text AS depositors_ftd,
+              COALESCE(SUM(deposit_amount_usd::numeric), 0)::text                          AS deposit,
+              COALESCE(SUM(wager_amount_usd::numeric),   0)::text                          AS wager
              FROM affiliate_code_usages
             WHERE affiliate_user_id = $1
-              AND UPPER(code) = ANY($2::text[])
-              AND usage_type = 'signup'`,
+              AND UPPER(code) = ANY($2::text[])`,
           houseUserId,
           upperCodeList,
         ),
-        [] as { count: string }[],
+        [] as {
+          signups: string;
+          depositors_ftd: string;
+          deposit: string;
+          wager: string;
+        }[],
       ),
       safe(
         db.$queryRawUnsafe<{ count: string }[]>(
@@ -373,30 +376,6 @@ export async function getAdCodesAggregate(
           upperCodeList,
         ),
         [] as { count: string }[],
-      ),
-      safe(
-        db.$queryRawUnsafe<{ count: string }[]>(
-          `SELECT COUNT(DISTINCT referred_user_id)::text AS count
-             FROM affiliate_code_usages
-            WHERE affiliate_user_id = $1
-              AND UPPER(code) = ANY($2::text[])
-              AND usage_type = 'deposit'`,
-          houseUserId,
-          upperCodeList,
-        ),
-        [] as { count: string }[],
-      ),
-      safe(
-        db.$queryRawUnsafe<{ deposit: string; wager: string }[]>(
-          `SELECT COALESCE(SUM(deposit_amount_usd::numeric), 0)::text AS deposit,
-                  COALESCE(SUM(wager_amount_usd::numeric),   0)::text AS wager
-             FROM affiliate_code_usages
-            WHERE affiliate_user_id = $1
-              AND UPPER(code) = ANY($2::text[])`,
-          houseUserId,
-          upperCodeList,
-        ),
-        [] as { deposit: string; wager: string }[],
       ),
       // Real deposit volume + counts from ledger across every ad code
       // owned by the house user. Mirrors the per-code query above so
@@ -424,18 +403,18 @@ export async function getAdCodesAggregate(
   // every booked deposit, not just the FTD slice. Fall back to the
   // affiliate_code_usages number if ledger query failed.
   const ledgerDepositors = Number(ledgerRow[0]?.depositors ?? 0);
-  const ftdDepositors = Number(depositorRow[0]?.count ?? 0);
+  const ftdDepositors = Number(usageAggRow[0]?.depositors_ftd ?? 0);
 
   return {
     totalCodes,
     totalClicks: Number(clicksRow[0]?.count ?? 0),
-    totalSignups: Number(signupsRow[0]?.count ?? 0),
+    totalSignups: Number(usageAggRow[0]?.signups ?? 0),
     totalActiveReferrals: Number(activeRow[0]?.count ?? 0),
     totalDepositors: ledgerDepositors || ftdDepositors,
     totalDepositEventCount: Number(ledgerRow[0]?.events ?? 0),
     totalDepositVolumeUsd: toNumber(ledgerRow[0]?.volume ?? 0),
-    totalFtdVolumeUsd: toNumber(sumsRow[0]?.deposit ?? 0),
-    totalWagerVolumeUsd: toNumber(sumsRow[0]?.wager ?? 0),
+    totalFtdVolumeUsd: toNumber(usageAggRow[0]?.deposit ?? 0),
+    totalWagerVolumeUsd: toNumber(usageAggRow[0]?.wager ?? 0),
   };
 }
 
@@ -474,10 +453,8 @@ export async function getAdCodeDetail(
 
   const [
     clicksCount,
-    signupsCount,
+    usageAggRow,
     activeReferralsRow,
-    depositorRows,
-    usageSums,
     ledgerRow,
     clicksByDayRows,
     clicksByCountryRows,
@@ -492,18 +469,34 @@ export async function getAdCodeDetail(
       ),
       [] as { count: string }[],
     ),
-    // Canonical signup count from affiliate_code_usages.
+    // Single batched aggregate against affiliate_code_usages. Replaces 3
+    // separate aggregate round-trips (signups distinct, FTD deposit
+    // distinct, deposit/wager sums) with one scan + FILTER clauses. Same
+    // index, same filter, fewer plans.
     safe(
-      db.$queryRawUnsafe<{ count: string }[]>(
-        `SELECT COUNT(DISTINCT referred_user_id)::text AS count
+      db.$queryRawUnsafe<{
+        signups: string;
+        depositors_ftd: string;
+        deposit: string;
+        wager: string;
+      }[]>(
+        `SELECT
+            COUNT(DISTINCT referred_user_id) FILTER (WHERE usage_type = 'signup')::text  AS signups,
+            COUNT(DISTINCT referred_user_id) FILTER (WHERE usage_type = 'deposit')::text AS depositors_ftd,
+            COALESCE(SUM(deposit_amount_usd::numeric), 0)::text                          AS deposit,
+            COALESCE(SUM(wager_amount_usd::numeric),   0)::text                          AS wager
            FROM affiliate_code_usages
           WHERE affiliate_user_id = $1
-            AND UPPER(code) = $2
-            AND usage_type = 'signup'`,
+            AND UPPER(code) = $2`,
         houseUserId,
         upperCode,
       ),
-      [] as { count: string }[],
+      [] as {
+        signups: string;
+        depositors_ftd: string;
+        deposit: string;
+        wager: string;
+      }[],
     ),
     safe(
       db.$queryRawUnsafe<{ count: string }[]>(
@@ -522,30 +515,6 @@ export async function getAdCodeDetail(
         upperCode,
       ),
       [] as { count: string }[],
-    ),
-    safe(
-      db.$queryRawUnsafe<{ count: string }[]>(
-        `SELECT COUNT(DISTINCT referred_user_id)::text AS count
-           FROM affiliate_code_usages
-          WHERE affiliate_user_id = $1
-            AND UPPER(code) = $2
-            AND usage_type = 'deposit'`,
-        houseUserId,
-        upperCode,
-      ),
-      [] as { count: string }[],
-    ),
-    safe(
-      db.$queryRawUnsafe<{ deposit: string; wager: string }[]>(
-        `SELECT COALESCE(SUM(deposit_amount_usd::numeric), 0)::text AS deposit,
-                COALESCE(SUM(wager_amount_usd::numeric),   0)::text AS wager
-           FROM affiliate_code_usages
-          WHERE affiliate_user_id = $1
-            AND UPPER(code) = $2`,
-        houseUserId,
-        upperCode,
-      ),
-      [] as { deposit: string; wager: string }[],
     ),
     // Real deposit volume + counts from ledger.deposit_bonus events
     // pinned to this code via metadata.affiliate_code. Captures every
@@ -656,11 +625,11 @@ export async function getAdCodeDetail(
   }
 
   const clicksCountNum = Number(clicksCount[0]?.count ?? 0);
-  const signupsCountNum = Number(signupsCount[0]?.count ?? 0);
+  const signupsCountNum = Number(usageAggRow[0]?.signups ?? 0);
   const ledgerVolume = toNumber(ledgerRow[0]?.volume ?? 0);
   const ledgerDepositors = Number(ledgerRow[0]?.depositors ?? 0);
   const ledgerEvents = Number(ledgerRow[0]?.events ?? 0);
-  const ftdDepositors = Number(depositorRows[0]?.count ?? 0);
+  const ftdDepositors = Number(usageAggRow[0]?.depositors_ftd ?? 0);
   const summary: AdCodeSummary = {
     code: record.code,
     createdAt: record.created_at.toISOString(),
@@ -673,8 +642,8 @@ export async function getAdCodeDetail(
     depositors: ledgerDepositors || ftdDepositors,
     depositEventCount: ledgerEvents,
     depositVolumeUsd: ledgerVolume,
-    ftdVolumeUsd: toNumber(usageSums[0]?.deposit ?? 0),
-    wagerVolumeUsd: toNumber(usageSums[0]?.wager ?? 0),
+    ftdVolumeUsd: toNumber(usageAggRow[0]?.deposit ?? 0),
+    wagerVolumeUsd: toNumber(usageAggRow[0]?.wager ?? 0),
     conversionRate: clicksCountNum > 0 ? signupsCountNum / clicksCountNum : 0,
   };
 

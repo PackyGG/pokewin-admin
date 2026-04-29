@@ -1,6 +1,5 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
-import { MS_PER_DAY } from "@/lib/utils/time";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
 // SQL fragment for user_id filtering — injected via string concat (safe: hardcoded role name)
 const EXCL_STAFF_FRAG = `AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))`;
@@ -112,14 +111,8 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
       ? `WHERE ${battleStaffExclAliased}`
       : `WHERE b.created_at >= NOW() - INTERVAL '${parseDays(period)} days' AND ${battleStaffExclAliased}`;
 
-  const signupsDateFilter =
-    period !== "all"
-      ? { created_at: { gte: new Date(Date.now() - parseDays(period) * MS_PER_DAY) } }
-      : {};
-
   const [
     aggregates,
-    signups,
     visitors,
     dailyTx,
     dailySignups,
@@ -170,7 +163,6 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
         FROM ledger_transactions
         WHERE status = 'completed' ${dateFilter} ${EXCL_STAFF_FRAG}
       `),
-      db.user.count({ where: { ...signupsDateFilter, role: { notIn: ["admin", "creator"] } } }),
       db.$queryRawUnsafe<{ count: string }[]>(`
         SELECT COUNT(DISTINCT user_id)::text AS count
         FROM ledger_transactions
@@ -359,13 +351,17 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
   const ggr = totalWagers - totalPayouts;
   const ngr = ggr - totalBonuses;
 
-  // Merge daily transaction data with daily signups
+  // Merge daily transaction data with daily signups. The headline
+  // signups number is just the period sum of dailySignups — derived in
+  // JS to avoid a redundant `db.user.count` round-trip with the same
+  // filter that already drives this map.
   const signupsMap = new Map(
     dailySignups.map((d) => [
       new Date(d.date).toISOString().split("T")[0],
       Number(d.count),
     ])
   );
+  const signups = dailySignups.reduce((acc, d) => acc + Number(d.count), 0);
 
   const daily = dailyTx.map((d) => {
     const dateStr = new Date(d.date).toISOString().split("T")[0];
