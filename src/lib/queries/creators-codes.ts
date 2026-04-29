@@ -120,9 +120,7 @@ export async function getCodeAnalytics(code: string) {
 
   const [
     usages,
-    totalReferralsCount,
-    activeReferralsRow,
-    totalsRow,
+    usageAggRow,
     codeDepositTotalRow,
     clickCount,
     dailyUsages,
@@ -232,56 +230,43 @@ export async function getCodeAnalytics(code: string) {
         code_deposit_count: string;
       }[],
     ),
-    // Referrals KPI — signup events only, raw SQL for the same reason as
-    // the recent referrals query above (avoid Prisma enum mismatch).
+    // Single batched aggregate against affiliate_code_usages. Replaces
+    // 3 separate round-trips (signup count, active distinct, FTD/wager/
+    // commission sums) with one scan + FILTER clauses. Same outer
+    // filter (UPPER(code) = $1), same source of truth as before.
+    //  - total_signups        = all rows with usage_type='signup'
+    //  - active_referrals     = DISTINCT users with deposit/wager activity
+    //  - total_deposits       = SUM(deposit_amount_usd) across all rows
+    //                           (FTD-only by backend convention; the
+    //                           ledger query below carries the full
+    //                           deposit volume)
+    //  - total_wagers         = SUM(wager_amount_usd)
+    //  - total_commission     = SUM(referrer_cut_usd)
     safe(
-      db.$queryRawUnsafe<{ n: string }[]>(
-        `SELECT COUNT(*)::text AS n
-         FROM affiliate_code_usages
-         WHERE UPPER(code) = $1
-           AND usage_type = 'signup'`,
-        uppercaseCode,
-      ),
-      [] as { n: string }[],
-    ),
-    // Active referrals = every distinct user generating deposit/wager
-    // volume on this code right now, regardless of where they signed
-    // up. Covers two cohorts:
-    //   1. Users who signed up via this code and stuck with it.
-    //   2. Users who signed up via a different path and later entered
-    //      this code — they're actively playing under it now, so they
-    //      count as this code's active referrals.
-    // Per-code commission is a separate metric (Volume & Commission KPI
-    // tiles) — it shares the same underlying rows but expresses dollars
-    // earned rather than user counts.
-    safe(
-      db.$queryRawUnsafe<{ active: string }[]>(
-        `SELECT COUNT(DISTINCT referred_user_id)::text AS active
-           FROM affiliate_code_usages
-          WHERE UPPER(code) = $1
-            AND usage_type IN ('deposit', 'wager')`,
-        uppercaseCode,
-      ),
-      [] as { active: string }[],
-    ),
-    // FTD / wager / commission totals from affiliate_code_usages.
-    // total_deposits here is FTD-only because backend's
-    // trackFirstTimeDeposit gates on depositCount===1 — that's the
-    // intentional behaviour for the FTD metric. Real total deposit
-    // volume comes from the ledger query below.
-    safe(
-      db.$queryRawUnsafe<
-        { total_deposits: string; total_wagers: string; total_commission: string }[]
-      >(
+      db.$queryRawUnsafe<{
+        total_signups: string;
+        active_referrals: string;
+        total_deposits: string;
+        total_wagers: string;
+        total_commission: string;
+      }[]>(
         `SELECT
-           COALESCE(SUM(deposit_amount_usd::numeric), 0)::text AS total_deposits,
-           COALESCE(SUM(wager_amount_usd::numeric), 0)::text   AS total_wagers,
-           COALESCE(SUM(referrer_cut_usd::numeric), 0)::text   AS total_commission
+           COUNT(*) FILTER (WHERE usage_type = 'signup')::text                           AS total_signups,
+           COUNT(DISTINCT referred_user_id) FILTER (WHERE usage_type IN ('deposit', 'wager'))::text AS active_referrals,
+           COALESCE(SUM(deposit_amount_usd::numeric), 0)::text                            AS total_deposits,
+           COALESCE(SUM(wager_amount_usd::numeric), 0)::text                              AS total_wagers,
+           COALESCE(SUM(referrer_cut_usd::numeric), 0)::text                              AS total_commission
          FROM affiliate_code_usages
          WHERE UPPER(code) = $1`,
         uppercaseCode,
       ),
-      [] as { total_deposits: string; total_wagers: string; total_commission: string }[],
+      [] as {
+        total_signups: string;
+        active_referrals: string;
+        total_deposits: string;
+        total_wagers: string;
+        total_commission: string;
+      }[],
     ),
     // Real total deposit volume + counts on this code, derived from
     // ledger_transactions.deposit_bonus events whose metadata pins
@@ -485,10 +470,10 @@ export async function getCodeAnalytics(code: string) {
 
   const isActive = codeRecord.is_active;
 
-  const totalReferrals = Number(totalReferralsCount[0]?.n ?? 0);
-  const activeReferrals = Number(activeReferralsRow[0]?.active ?? 0);
-  const totalsAggregate = totalsRow[0];
-  const ftdDepositTotal = toNumber(totalsAggregate?.total_deposits ?? 0);
+  const usageAggregate = usageAggRow[0];
+  const totalReferrals = Number(usageAggregate?.total_signups ?? 0);
+  const activeReferrals = Number(usageAggregate?.active_referrals ?? 0);
+  const ftdDepositTotal = toNumber(usageAggregate?.total_deposits ?? 0);
   const codeDepositTotal = toNumber(codeDepositTotalRow[0]?.total ?? 0);
   const codeDepositEventCount = Number(
     codeDepositTotalRow[0]?.deposit_event_count ?? 0,
@@ -496,8 +481,8 @@ export async function getCodeAnalytics(code: string) {
   const codeUniqueDepositors = Number(
     codeDepositTotalRow[0]?.unique_depositors ?? 0,
   );
-  const totalWagers = toNumber(totalsAggregate?.total_wagers ?? 0);
-  const totalCommission = toNumber(totalsAggregate?.total_commission ?? 0);
+  const totalWagers = toNumber(usageAggregate?.total_wagers ?? 0);
+  const totalCommission = toNumber(usageAggregate?.total_commission ?? 0);
 
   // Merge daily data. `DATE(created_at)` comes back from Prisma as either
   // a Date object or an ISO string depending on the driver; guard the
