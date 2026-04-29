@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { Gift } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
@@ -13,6 +14,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
+import {
+  TableSkeleton,
+  PaginationSkeleton,
+  StatPanelSkeleton,
+} from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
 import { RewardsOverview } from "./rewards-overview";
 import { CreateRewardButton } from "./create-reward-button";
@@ -22,6 +28,96 @@ import { PageHero } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Rewards" };
+
+async function RewardsOverviewAsync() {
+  const stats = await getRakebackStats();
+  return <RewardsOverview stats={stats} />;
+}
+
+async function RewardsTable({
+  page,
+  perPage,
+  type,
+  search,
+}: {
+  page: number;
+  perPage: number;
+  type?: string;
+  search?: string;
+}) {
+  const rewards = await getRewards({ page, perPage, type, search });
+
+  return (
+    <>
+      <FadeIn>
+        <div className="rounded-md border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Slug</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Level Required</TableHead>
+                <TableHead>Cash Amount</TableHead>
+                <TableHead>Packs</TableHead>
+                <TableHead>Created</TableHead>
+                <TableHead className="w-[80px]" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rewards.data.map((r) => (
+                <TableRow key={r.id}>
+                  <TableCell className="font-medium">{r.name}</TableCell>
+                  <TableCell className="text-muted-foreground">{r.slug}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className="capitalize">{r.type.replace("_", " ")}</Badge>
+                  </TableCell>
+                  <TableCell>{r.levelRequired}</TableCell>
+                  <TableCell>{r.cashAmount != null ? formatCurrency(r.cashAmount) : "—"}</TableCell>
+                  <TableCell>
+                    {r.packs.length > 0 ? (
+                      <div className="flex flex-col gap-1">
+                        {r.packs.map((p) => (
+                          <div key={p.id} className="flex items-center gap-1.5">
+                            {p.imageUrl && (
+                              <img src={p.imageUrl} alt="" className="size-5 rounded object-contain" />
+                            )}
+                            <span className="text-xs">{p.name}</span>
+                            <span className="text-xs text-muted-foreground">{formatCurrency(p.priceUsd)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell>{formatDateTime(r.createdAt)}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1">
+                      <EditRewardButton reward={r} />
+                      <DeleteRewardButton rewardId={r.id} />
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {rewards.data.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">No rewards found.</TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </FadeIn>
+      <DataTablePagination
+        page={rewards.page}
+        totalPages={rewards.totalPages}
+        total={rewards.total}
+        perPage={rewards.perPage}
+      />
+    </>
+  );
+}
 
 export default async function RewardsPage({
   searchParams,
@@ -34,11 +130,6 @@ export default async function RewardsPage({
   const perPage = Number(params.perPage) || 20;
   const type = params.type;
   const search = params.search;
-
-  const [stats, rewards] = await Promise.all([
-    getRakebackStats(),
-    getRewards({ page, perPage, type, search }),
-  ]);
 
   return (
     <div className="space-y-6">
@@ -56,7 +147,20 @@ export default async function RewardsPage({
         </div>
       </PageHero>
 
-      <RewardsOverview stats={stats} />
+      {/* Rakeback overview and the rewards table are independent — render
+          each behind its own Suspense boundary so the table doesn't have
+          to wait on the rakeback aggregate, and vice versa. */}
+      <Suspense
+        fallback={
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <StatPanelSkeleton key={i} rows={2} />
+            ))}
+          </div>
+        }
+      >
+        <RewardsOverviewAsync />
+      </Suspense>
 
       <div className="space-y-4">
         <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -78,72 +182,17 @@ export default async function RewardsPage({
           </div>
           <CreateRewardButton />
         </div>
-        <FadeIn>
-          <div className="rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Slug</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Level Required</TableHead>
-                  <TableHead>Cash Amount</TableHead>
-                  <TableHead>Packs</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead className="w-[80px]" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rewards.data.map((r) => (
-                  <TableRow key={r.id}>
-                    <TableCell className="font-medium">{r.name}</TableCell>
-                    <TableCell className="text-muted-foreground">{r.slug}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="capitalize">{r.type.replace("_", " ")}</Badge>
-                    </TableCell>
-                    <TableCell>{r.levelRequired}</TableCell>
-                    <TableCell>{r.cashAmount != null ? formatCurrency(r.cashAmount) : "—"}</TableCell>
-                    <TableCell>
-                      {r.packs.length > 0 ? (
-                        <div className="flex flex-col gap-1">
-                          {r.packs.map((p) => (
-                            <div key={p.id} className="flex items-center gap-1.5">
-                              {p.imageUrl && (
-                                <img src={p.imageUrl} alt="" className="size-5 rounded object-contain" />
-                              )}
-                              <span className="text-xs">{p.name}</span>
-                              <span className="text-xs text-muted-foreground">{formatCurrency(p.priceUsd)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell>{formatDateTime(r.createdAt)}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        <EditRewardButton reward={r} />
-                        <DeleteRewardButton rewardId={r.id} />
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {rewards.data.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">No rewards found.</TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </FadeIn>
-        <DataTablePagination
-          page={rewards.page}
-          totalPages={rewards.totalPages}
-          total={rewards.total}
-          perPage={rewards.perPage}
-        />
+        <Suspense
+          key={`${page}|${perPage}|${type ?? ""}|${search ?? ""}`}
+          fallback={
+            <>
+              <TableSkeleton rows={10} columns={8} />
+              <PaginationSkeleton />
+            </>
+          }
+        >
+          <RewardsTable page={page} perPage={perPage} type={type} search={search} />
+        </Suspense>
       </div>
     </div>
   );
