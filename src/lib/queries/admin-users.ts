@@ -98,10 +98,11 @@ export async function getAdminUserAuditStats(adminUserId: string) {
   // per unique timestamp, not per day. For an active admin that pulled
   // back one row per event (thousands) and collapsed them in JS. Pushed
   // down into the DB via DATE() so we get exactly one row per day.
-  const [totalActions, eventsByType, lastEvent, dailyCounts] = await Promise.all([
-    adminDb.admin_audit_events.count({
-      where: { admin_user_id: adminUserId },
-    }),
+  //
+  // totalActions is derived from the eventsByType groupBy in JS — Prisma
+  // returns the per-type counts already, so a separate full-table count
+  // is redundant.
+  const [eventsByType, lastEvent, dailyCounts] = await Promise.all([
     adminDb.admin_audit_events.groupBy({
       by: ["event_type"],
       where: { admin_user_id: adminUserId },
@@ -122,6 +123,11 @@ export async function getAdminUserAuditStats(adminUserId: string) {
       GROUP BY DATE(created_at AT TIME ZONE 'UTC')
     `,
   ]);
+
+  const totalActions = eventsByType.reduce(
+    (sum, e) => sum + (typeof e._count === "number" ? e._count : 0),
+    0,
+  );
 
   const dailyMap = new Map<string, number>();
   for (const row of dailyCounts) {

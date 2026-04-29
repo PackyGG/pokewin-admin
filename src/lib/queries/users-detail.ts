@@ -46,8 +46,7 @@ export async function getUserDetail(id: string) {
     cardWithdrawals,
     activeSeed,
     depositAddresses,
-    depositCount,
-    depositTotalAgg,
+    depositAgg,
     withdrawalCount,
     userPnl,
     wagerBreakdownResolved,
@@ -96,21 +95,16 @@ export async function getUserDetail(id: string) {
     // Event counts surfaced at the top of the detail page header. Counts
     // are defined to mirror the existing "total withdrawn" aggregate in
     // balances so the header and the Balances card agree on what counts
-    // as a completed deposit / withdrawal.
-    db.ledger_transactions.count({
-      where: {
-        user_id: id,
-        type: "deposit",
-        status: "completed",
-      },
-    }),
-    // Sum of completed deposits (excluding deposit_bonus) for avg calculation
+    // as a completed deposit / withdrawal. Combined count + sum into one
+    // aggregate call so we hit the deposit ledger filter exactly once
+    // instead of twice — same plan, half the round-trips.
     db.ledger_transactions.aggregate({
       where: {
         user_id: id,
         type: "deposit",
         status: "completed",
       },
+      _count: { _all: true },
       _sum: { amount: true },
     }),
     db.card_withdrawal_requests.count({
@@ -122,6 +116,9 @@ export async function getUserDetail(id: string) {
     userPnlPromise,
     wagerBreakdownPromise,
   ]);
+
+  const depositCount = depositAgg._count._all;
+  const depositTotalAgg = depositAgg;
 
   wagerBreakdown = wagerBreakdownResolved as typeof wagerBreakdown;
 

@@ -94,21 +94,33 @@ export async function getUsers(params: {
   ]);
   const userSortFields = new Set(["created_at", "email", "username", "role", "country"]);
 
-  let users: Array<
-    Prisma.UserGetPayload<{
-      include: {
-        balances: {
-          select: {
-            available_balance: true;
-            locked_balance: true;
-            total_deposited: true;
-            total_withdrawn: true;
-            total_wagered: true;
-          };
-        };
-      };
-    }>
-  >;
+  // Narrow projection — only the columns the list view actually renders.
+  // The `user` table has 50+ columns; pulling them all back per page row
+  // adds non-trivial bytes on every list query. Keep select in sync with
+  // the fields read in the `data` mapping at the bottom of this file.
+  const userSelect = {
+    id: true,
+    username: true,
+    email: true,
+    image: true,
+    role: true,
+    is_banned: true,
+    is_locked: true,
+    country: true,
+    country_code: true,
+    created_at: true,
+    balances: {
+      select: {
+        available_balance: true,
+        locked_balance: true,
+        total_deposited: true,
+        total_withdrawn: true,
+        total_wagered: true,
+      },
+    },
+  } satisfies Prisma.UserSelect;
+
+  let users: Array<Prisma.UserGetPayload<{ select: typeof userSelect }>>;
   let total: number;
 
   // These computed sorts need raw SQL because the displayed value combines
@@ -179,19 +191,9 @@ export async function getUsers(params: {
       ids.length > 0
         ? db.user.findMany({
             where: { id: { in: ids } },
-            include: {
-              balances: {
-                select: {
-                  available_balance: true,
-                  locked_balance: true,
-                  total_deposited: true,
-                  total_withdrawn: true,
-                  total_wagered: true,
-                },
-              },
-            },
+            select: userSelect,
           })
-        : Promise.resolve([]),
+        : Promise.resolve([] as typeof users),
       db.user.count({ where }),
     ]);
     const byId = new Map(unordered.map((u) => [u.id, u]));
@@ -225,17 +227,7 @@ export async function getUsers(params: {
         orderBy,
         skip: (page - 1) * perPage,
         take: perPage,
-        include: {
-          balances: {
-            select: {
-              available_balance: true,
-              locked_balance: true,
-              total_deposited: true,
-              total_withdrawn: true,
-              total_wagered: true,
-            },
-          },
-        },
+        select: userSelect,
       }),
       db.user.count({ where }),
     ]);
