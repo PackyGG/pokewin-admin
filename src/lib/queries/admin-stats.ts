@@ -64,30 +64,41 @@ export type SessionHealth = {
  * over sessions that have actually terminated (either explicit logout or
  * expiry in the past) — in-flight sessions are excluded because their
  * duration isn't yet known.
+ *
+ * The two "active" counts (total active sessions + distinct admins with
+ * an active session) come from a single scan of `admin_sessions` filtered
+ * on the same predicate — collapsed into one raw query so we only hit
+ * the table once instead of twice.
  */
 export async function getSessionHealth(): Promise<SessionHealth> {
   const now = new Date();
   const startOfToday = startOfDay(now);
 
-  const [activeSessions, distinctActiveAdmins, avgRow, logoutsToday] =
-    await Promise.all([
-      getActiveSessionCount(),
-      getDistinctActiveAdmins(),
-      adminDb.$queryRaw<{ avg_minutes: string | null }[]>`
+  const [activeRow, avgRow, logoutsToday] = await Promise.all([
+    adminDb.$queryRaw<
+      { active_sessions: bigint; distinct_admins: bigint }[]
+    >`
+        SELECT
+          COUNT(*)::bigint AS active_sessions,
+          COUNT(DISTINCT admin_user_id)::bigint AS distinct_admins
+        FROM admin_sessions
+        WHERE expires_at > NOW() AND logged_out_at IS NULL
+      `,
+    adminDb.$queryRaw<{ avg_minutes: string | null }[]>`
         SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (
           COALESCE(logged_out_at, expires_at) - logged_in_at
         )) / 60), 0)::text AS avg_minutes
         FROM admin_sessions
         WHERE logged_out_at IS NOT NULL OR expires_at <= NOW()
       `,
-      adminDb.admin_sessions.count({
-        where: { logged_out_at: { gte: startOfToday } },
-      }),
-    ]);
+    adminDb.admin_sessions.count({
+      where: { logged_out_at: { gte: startOfToday } },
+    }),
+  ]);
 
   return {
-    activeSessions,
-    distinctActiveAdmins,
+    activeSessions: Number(activeRow[0]?.active_sessions ?? 0),
+    distinctActiveAdmins: Number(activeRow[0]?.distinct_admins ?? 0),
     avgSessionMinutes: Number(avgRow[0]?.avg_minutes ?? 0),
     logoutsToday,
   };
