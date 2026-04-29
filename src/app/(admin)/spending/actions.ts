@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { adminDb } from "@/lib/admin-db";
 import { requirePageAccess } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 
 const expenseSchema = z.object({
@@ -36,6 +37,7 @@ export async function createExpense(data: {
 }) {
   const session = await requirePageAccess("/spending");
   const parsed = expenseSchema.parse(data);
+  await requireCapability(session, "__can_create_expense", "create expenses");
 
   // Explicit select — Prisma's default RETURNING * references every column
   // the generated client knows about. If a new column is missing on prod,
@@ -78,6 +80,7 @@ export async function updateExpense(
 ) {
   const session = await requirePageAccess("/spending");
   const parsed = expenseSchema.parse(data);
+  await requireCapability(session, "__can_update_expense", "update expenses");
 
   await adminDb.expenses.update({
     where: { id },
@@ -106,6 +109,7 @@ export async function updateExpense(
 
 export async function deleteExpense(id: string) {
   const session = await requirePageAccess("/spending");
+  await requireCapability(session, "__can_delete_expense", "delete expenses");
 
   await adminDb.expenses.delete({ where: { id }, select: { id: true } });
 
@@ -126,6 +130,7 @@ export async function createRecurringExpense(data: {
 }) {
   const session = await requirePageAccess("/spending");
   const parsed = recurringSchema.parse(data);
+  await requireCapability(session, "__can_create_recurring_expense", "create recurring expenses");
 
   const item = await adminDb.recurring_expenses.create({
     data: {
@@ -158,6 +163,7 @@ export async function updateRecurringExpense(
 ) {
   const session = await requirePageAccess("/spending");
   const parsed = recurringSchema.parse(data);
+  await requireCapability(session, "__can_update_recurring_expense", "update recurring expenses");
 
   await adminDb.recurring_expenses.update({
     where: { id },
@@ -182,6 +188,7 @@ export async function updateRecurringExpense(
 
 export async function toggleRecurringExpense(id: string, isActive: boolean) {
   const session = await requirePageAccess("/spending");
+  await requireCapability(session, "__can_toggle_recurring_expense", "toggle recurring expenses");
 
   await adminDb.recurring_expenses.update({
     where: { id },
@@ -301,6 +308,7 @@ export async function updateRecurringExpenseField(
 
 export async function deleteRecurringExpense(id: string) {
   const session = await requirePageAccess("/spending");
+  await requireCapability(session, "__can_delete_recurring_expense", "delete recurring expenses");
 
   await adminDb.recurring_expenses.delete({ where: { id }, select: { id: true } });
 
