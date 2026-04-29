@@ -47,10 +47,7 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
   const [
     referrals,
-    signupsTotal,
-    signups24h,
-    signups7d,
-    signups30d,
+    signupCounts,
     payouts,
     allCodes,
     limits,
@@ -71,18 +68,26 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
       skip: ((refPage ?? 1) - 1) * (refPerPage ?? 20),
       take: refPerPage ?? 20,
     }),
-    db.user.count({
-      where: { referred_by: userId },
-    }),
-    db.user.count({
-      where: { referred_by: userId, created_at: { gte: oneDayAgo } },
-    }),
-    db.user.count({
-      where: { referred_by: userId, created_at: { gte: sevenDaysAgo } },
-    }),
-    db.user.count({
-      where: { referred_by: userId, created_at: { gte: thirtyDaysAgo } },
-    }),
+    // Single batched query replaces 4 separate user.count() round-trips
+    // (total + 24h + 7d + 30d). Same index scan, fewer plans + a single
+    // network round-trip. Preserves the exact return semantics of the
+    // four count() calls.
+    db.$queryRaw<
+      {
+        total: string;
+        last_24h: string;
+        last_7d: string;
+        last_30d: string;
+      }[]
+    >`
+      SELECT
+        COUNT(*)::text                                                                AS total,
+        COUNT(*) FILTER (WHERE created_at >= ${oneDayAgo})::text                      AS last_24h,
+        COUNT(*) FILTER (WHERE created_at >= ${sevenDaysAgo})::text                   AS last_7d,
+        COUNT(*) FILTER (WHERE created_at >= ${thirtyDaysAgo})::text                  AS last_30d
+      FROM "user"
+      WHERE referred_by = ${userId}
+    `,
     db.affiliate_payouts.findMany({
       where: { affiliate_user_id: userId },
       orderBy: { created_at: "desc" },
@@ -110,6 +115,11 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
     getCreatorPnl(userId),
   ]);
 
+  const signupsRow = signupCounts[0];
+  const signupsTotal = Number(signupsRow?.total ?? 0);
+  const signups24h = Number(signupsRow?.last_24h ?? 0);
+  const signups7d = Number(signupsRow?.last_7d ?? 0);
+  const signups30d = Number(signupsRow?.last_30d ?? 0);
   const referralsTotal = signupsTotal;
   // Primary = oldest row in affiliate_codes (the first code this creator
   // ever minted). `allCodes` is already ORDER BY created_at ASC above.
@@ -136,33 +146,35 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
   const hasClickCodes = clickCodes.length > 0;
 
   const [
-    clickCount,
-    clicks24h,
-    clicks7d,
-    clicks30d,
+    clickCounts,
     pendingSignups,
     acquisitionHourly,
     acquisitionDaily,
     countryBreakdown,
   ] = await Promise.all([
+    // Single batched aggregate replaces 4 separate affiliate_clicks.count()
+    // round-trips (total + 24h + 7d + 30d). One index scan with FILTER
+    // clauses, no extra plans.
     hasClickCodes
-      ? db.affiliate_clicks.count({ where: { code: { in: clickCodes } } })
-      : Promise.resolve(0),
-    hasClickCodes
-      ? db.affiliate_clicks.count({
-          where: { code: { in: clickCodes }, created_at: { gte: now_clicks_24h } },
-        })
-      : Promise.resolve(0),
-    hasClickCodes
-      ? db.affiliate_clicks.count({
-          where: { code: { in: clickCodes }, created_at: { gte: now_clicks_7d } },
-        })
-      : Promise.resolve(0),
-    hasClickCodes
-      ? db.affiliate_clicks.count({
-          where: { code: { in: clickCodes }, created_at: { gte: now_clicks_30d } },
-        })
-      : Promise.resolve(0),
+      ? db.$queryRaw<
+          {
+            total: string;
+            last_24h: string;
+            last_7d: string;
+            last_30d: string;
+          }[]
+        >`
+          SELECT
+            COUNT(*)::text                                                              AS total,
+            COUNT(*) FILTER (WHERE created_at >= ${now_clicks_24h})::text               AS last_24h,
+            COUNT(*) FILTER (WHERE created_at >= ${now_clicks_7d})::text                AS last_7d,
+            COUNT(*) FILTER (WHERE created_at >= ${now_clicks_30d})::text               AS last_30d
+          FROM affiliate_clicks
+          WHERE code = ANY(${clickCodes}::text[])
+        `
+      : Promise.resolve(
+          [] as { total: string; last_24h: string; last_7d: string; last_30d: string }[],
+        ),
     primaryCode
       ? db.affiliate_code_queue.count({ where: { code: primaryCode } })
       : Promise.resolve(0),
@@ -270,6 +282,13 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
       userId,
     ),
   ]);
+
+  // Unpack the consolidated click counts (4 buckets in 1 row).
+  const clicksRow = clickCounts[0];
+  const clickCount = Number(clicksRow?.total ?? 0);
+  const clicks24h = Number(clicksRow?.last_24h ?? 0);
+  const clicks7d = Number(clicksRow?.last_7d ?? 0);
+  const clicks30d = Number(clicksRow?.last_30d ?? 0);
 
   // For each signed-up user, look up their aggregated usage data +
   // balance. If the user hasn't deposited/wagered yet we still show
