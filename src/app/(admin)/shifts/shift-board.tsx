@@ -15,6 +15,8 @@ import {
   Check,
   X,
   CalendarDays,
+  ArrowRight,
+  ArrowDownLeft,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,7 +44,7 @@ import { cn } from "@/lib/utils";
 import { ROLE_COLORS } from "@/lib/constants";
 import { useTimezone } from "@/components/timezone-provider";
 import { timezoneLabel } from "@/lib/timezones";
-import { copyWeek, deleteShift, upsertShift } from "./actions";
+import { copyDay, copyWeek, deleteShift, upsertShift } from "./actions";
 import {
   DAY_NAMES,
   DAY_SHORT,
@@ -113,6 +115,67 @@ export function ShiftBoard({
   function goWeeks(delta: number) {
     const target = shiftWeek(firstWeekStart, delta);
     router.push(`/shifts?week=${weekStartToParam(target)}`);
+  }
+
+  // Shared loading guard so a double-tap on the per-day or per-week
+  // shortcuts can't fan out concurrent server actions.
+  const [bulkBusy, setBulkBusy] = React.useState(false);
+
+  async function handleCopyDay(args: {
+    fromWeekStart: string;
+    fromDayOfWeek: number;
+    toWeekStart: string;
+    toDayOfWeek: number;
+    router: ReturnType<typeof useRouter>;
+  }) {
+    if (bulkBusy) return;
+    setBulkBusy(true);
+    const result = await copyDay({
+      fromWeekStart: args.fromWeekStart,
+      fromDayOfWeek: args.fromDayOfWeek,
+      toWeekStart: args.toWeekStart,
+      toDayOfWeek: args.toDayOfWeek,
+    });
+    setBulkBusy(false);
+    if (!result.success) {
+      toast.error(result.error);
+      return;
+    }
+    if (result.copied === 0) {
+      toast.info("No shifts on that day — nothing to copy.");
+    } else {
+      const targetLabel = DAY_NAMES[args.toDayOfWeek];
+      toast.success(
+        `Copied ${result.copied} shift${result.copied === 1 ? "" : "s"} into ${targetLabel}`,
+      );
+    }
+    args.router.refresh();
+  }
+
+  async function handleCopyWeekToNext(args: {
+    weekStart: Date;
+    router: ReturnType<typeof useRouter>;
+  }) {
+    if (bulkBusy) return;
+    const next = shiftWeek(args.weekStart, 1);
+    setBulkBusy(true);
+    const result = await copyWeek({
+      fromWeekStart: args.weekStart.toISOString(),
+      toWeekStart: next.toISOString(),
+    });
+    setBulkBusy(false);
+    if (!result.success) {
+      toast.error(result.error);
+      return;
+    }
+    if (result.copied === 0) {
+      toast.info("No shifts in this week — nothing to copy.");
+    } else {
+      toast.success(
+        `Copied ${result.copied} shift${result.copied === 1 ? "" : "s"} to ${formatWeekRange(next)}`,
+      );
+    }
+    args.router.refresh();
   }
 
   return (
@@ -187,6 +250,23 @@ export function ShiftBoard({
                 })
               }
               onCopyInto={() => setCopyTarget(ws)}
+              onCopyDay={(targetDay) => {
+                // Source = the day immediately preceding `targetDay`. If
+                // targetDay is Monday (0), source is the previous week's
+                // Sunday — keeps "yesterday" intuitive on week boundaries.
+                const sourceWeek = targetDay === 0 ? shiftWeek(ws, -1) : ws;
+                const sourceDay = targetDay === 0 ? 6 : targetDay - 1;
+                handleCopyDay({
+                  fromWeekStart: sourceWeek.toISOString(),
+                  fromDayOfWeek: sourceDay,
+                  toWeekStart: ws.toISOString(),
+                  toDayOfWeek: targetDay,
+                  router,
+                });
+              }}
+              onCopyToNextWeek={() => {
+                handleCopyWeekToNext({ weekStart: ws, router });
+              }}
             />
           );
         })}
@@ -226,6 +306,8 @@ function WeekBoard({
   workersById,
   onCellClick,
   onCopyInto,
+  onCopyDay,
+  onCopyToNextWeek,
 }: {
   weekStart: Date;
   isCurrent: boolean;
@@ -233,6 +315,8 @@ function WeekBoard({
   workersById: Map<string, Worker>;
   onCellClick: (day: number, slot: number, shift: Shift | null) => void;
   onCopyInto: () => void;
+  onCopyDay: (targetDay: number) => void;
+  onCopyToNextWeek: () => void;
 }) {
   return (
     <section
@@ -269,15 +353,27 @@ function WeekBoard({
             </p>
           </div>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={onCopyInto}
-        >
-          <Copy className="size-4" />
-          Copy from…
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onCopyInto}
+          >
+            <Copy className="size-4" />
+            Copy from…
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onCopyToNextWeek}
+            title="Copy this entire week's shifts into next week"
+          >
+            <ArrowRight className="size-4" />
+            Copy → next week
+          </Button>
+        </div>
       </header>
 
       {/* Day header row */}
@@ -290,6 +386,7 @@ function WeekBoard({
             full={DAY_NAMES[i]}
             weekStart={weekStart}
             day={i}
+            onCopyFromYesterday={() => onCopyDay(i)}
           />
         ))}
       </div>
@@ -325,11 +422,13 @@ function DayHeader({
   full,
   weekStart,
   day,
+  onCopyFromYesterday,
 }: {
   short: string;
   full: string;
   weekStart: Date;
   day: number;
+  onCopyFromYesterday: () => void;
 }) {
   const dayDate = React.useMemo(() => {
     const d = new Date(weekStart);
@@ -340,14 +439,29 @@ function DayHeader({
     day: "numeric",
     timeZone: "UTC",
   });
+  // For Monday, "yesterday" is the previous week's Sunday — surface
+  // that in the tooltip so the action isn't surprising on week edges.
+  const yesterdayLabel =
+    day === 0 ? "previous week's Sunday" : DAY_NAMES[day - 1];
   return (
-    <div className="flex flex-col items-start gap-0.5 border-l p-3">
-      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-        {short}
-      </span>
-      <span className="text-sm font-bold tabular-nums" title={full}>
-        {dayNumFormatter.format(dayDate)}
-      </span>
+    <div className="group flex items-start justify-between gap-1 border-l p-3">
+      <div className="flex flex-col items-start gap-0.5">
+        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          {short}
+        </span>
+        <span className="text-sm font-bold tabular-nums" title={full}>
+          {dayNumFormatter.format(dayDate)}
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={onCopyFromYesterday}
+        title={`Copy shifts from ${yesterdayLabel} into ${full}`}
+        aria-label={`Copy shifts from ${yesterdayLabel} into ${full}`}
+        className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
+      >
+        <ArrowDownLeft className="size-3.5" />
+      </button>
     </div>
   );
 }
