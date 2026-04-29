@@ -46,13 +46,25 @@ export async function getRaffles(params: {
     where.name = { contains: search, mode: "insensitive" };
   }
 
+  // List view doesn't need the heavy JSON columns (description, prizes,
+  // metadata) — those are only loaded on the detail page. Skipping them
+  // keeps the wire payload small even when raffles have large prize
+  // configurations.
   const [raffles, total] = await Promise.all([
     db.raffles.findMany({
       where,
       orderBy: { created_at: "desc" },
       skip: (page - 1) * perPage,
       take: perPage,
-      include: {
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        total_entries: true,
+        participant_count: true,
+        starts_at: true,
+        ends_at: true,
+        created_at: true,
         user: { select: { username: true } },
       },
     }),

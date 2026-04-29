@@ -259,13 +259,27 @@ export async function getTransactions(params: {
     };
   }
 
+  // Narrow the ledger_transactions select for the list view: skip the
+  // wide JSON `metadata` column plus blockchain/fireblocks/source/dest
+  // columns that the table cells don't render. The page only renders the
+  // fields below; everything else is detail-page concerns.
   const [transactions, total] = await Promise.all([
     db.ledger_transactions.findMany({
       where,
       orderBy: { created_at: "desc" },
       skip: (page - 1) * perPage,
       take: perPage,
-      include: {
+      select: {
+        id: true,
+        user_id: true,
+        type: true,
+        balance_before: true,
+        balance_after: true,
+        status: true,
+        description: true,
+        created_at: true,
+        crypto_asset: true,
+        crypto_amount: true,
         user: { select: { username: true, image: true } },
         game_sessions_ledger_transactions_game_session_idTogame_sessions: {
           select: {
