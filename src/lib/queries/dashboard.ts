@@ -205,7 +205,7 @@ async function dashboardStatsInner() {
     db.ledger_transactions.count({
       where: { user: EXCLUDE_STAFF_USER_RELATION },
     }),
-    // Wagers last 60 days — split by packs vs battles for stacked bar chart
+    // Wagers last 30 days — split by packs vs battles for stacked bar chart
     db.$queryRaw<{ date: Date; packs: string; battles: string }[]>`
       SELECT
         DATE(created_at) as date,
@@ -213,26 +213,26 @@ async function dashboardStatsInner() {
         COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') THEN ABS(amount::numeric) ELSE 0 END), 0)::text as battles
       FROM ledger_transactions
       WHERE type IN ('pack_opening','battle_bet','battle_sponsorship') AND status = 'completed'
-        AND created_at >= NOW() - INTERVAL '60 days'
+        AND created_at >= NOW() - INTERVAL '30 days'
         AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))
       GROUP BY DATE(created_at)
       ORDER BY date
     `,
-    // Deposits last 60 days — pure deposits (excludes deposit_bonus)
+    // Deposits last 30 days — pure deposits (excludes deposit_bonus)
     db.$queryRaw<{ date: Date; amount: string }[]>`
       SELECT DATE(created_at) as date, COALESCE(SUM(amount::numeric), 0)::text as amount
       FROM ledger_transactions
       WHERE type = 'deposit' AND status = 'completed'
-        AND created_at >= NOW() - INTERVAL '60 days'
+        AND created_at >= NOW() - INTERVAL '30 days'
         AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))
       GROUP BY DATE(created_at)
       ORDER BY date
     `,
-    // Signups last 60 days
+    // Signups last 30 days
     db.$queryRaw<{ date: Date; count: string }[]>`
       SELECT DATE(created_at) as date, COUNT(*)::text as count
       FROM "user"
-      WHERE created_at >= NOW() - INTERVAL '60 days'
+      WHERE created_at >= NOW() - INTERVAL '30 days'
         AND role NOT IN ('admin','creator')
       GROUP BY DATE(created_at)
       ORDER BY date
