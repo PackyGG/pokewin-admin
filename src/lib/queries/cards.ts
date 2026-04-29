@@ -101,13 +101,16 @@ export async function getCards(params: {
 
 export async function getCardDetail(id: string) {
   const db = await getDb();
+  // pack_cards relation: we only need the related `packs` row per join, not
+  // the join-row's own columns (weight, color, animation, etc). Switching
+  // include->select drops them from the wire.
   const [card, inventoryCountRows] = await Promise.all([
     db.cards.findUnique({
       where: { id },
       include: {
         sets: { select: { id: true, name: true } },
         pack_cards: {
-          include: {
+          select: {
             packs: { select: { id: true, name: true, image_url: true } },
           },
         },
@@ -156,9 +159,10 @@ export async function getSets() {
 
 export async function getRarities() {
   const db = await getDb();
-  const result = await db.cards.findMany({
-    distinct: ["rarity"],
-    select: { rarity: true },
+  // groupBy on `rarity` lets Postgres do an index-only / hash-aggregate
+  // pass instead of the full row-scan-then-distinct that findMany does.
+  const result = await db.cards.groupBy({
+    by: ["rarity"],
     orderBy: { rarity: "asc" },
   });
   return result.map((r) => r.rarity);

@@ -20,21 +20,73 @@ export async function getMyProfileData(adminUserId: string) {
   // The target_user_id used in admin DB tables
   const targetUserId = mainUser?.id ?? adminUserId;
 
-  // Fetch admin DB data (always available)
-  const [webhooks, deals, socials] = await Promise.all([
-    adminDb.creator_webhooks.findMany({
-      where: { target_user_id: targetUserId },
-      orderBy: { created_at: "desc" },
-    }),
-    adminDb.creator_deals.findMany({
-      where: { target_user_id: targetUserId },
-      orderBy: { created_at: "desc" },
-    }),
-    adminDb.creator_socials.findMany({
-      where: { target_user_id: targetUserId },
-      orderBy: { platform: "asc" },
-    }),
-  ]);
+  // Fetch admin DB data (always available) AND, if a main user is linked,
+  // its affiliate/account data — both batches only depend on `targetUserId`,
+  // so they can run in one Promise.all instead of being staged.
+  const userId = mainUser?.id;
+  const [webhooks, deals, socials, account, referrals, payouts, clickCount] =
+    await Promise.all([
+      adminDb.creator_webhooks.findMany({
+        where: { target_user_id: targetUserId },
+        orderBy: { created_at: "desc" },
+      }),
+      adminDb.creator_deals.findMany({
+        where: { target_user_id: targetUserId },
+        orderBy: { created_at: "desc" },
+      }),
+      adminDb.creator_socials.findMany({
+        where: { target_user_id: targetUserId },
+        orderBy: { platform: "asc" },
+      }),
+      userId
+        ? db.affiliate_accounts.findUnique({ where: { user_id: userId } })
+        : Promise.resolve(null),
+      userId
+        ? db.affiliate_code_usages.findMany({
+            where: { affiliate_user_id: userId },
+            include: {
+              user_affiliate_code_usages_referred_user_idTouser: {
+                select: { username: true },
+              },
+            },
+            orderBy: { created_at: "desc" },
+            take: 50,
+          })
+        : Promise.resolve(
+            [] as Array<{
+              id: string;
+              referred_user_id: string;
+              user_affiliate_code_usages_referred_user_idTouser: {
+                username: string | null;
+              } | null;
+              usage_type: string;
+              deposit_amount_usd: unknown;
+              wager_amount_usd: unknown;
+              referrer_cut_usd: unknown;
+              user_bonus_usd: unknown;
+              created_at: Date;
+            }>,
+          ),
+      userId
+        ? db.affiliate_payouts.findMany({
+            where: { affiliate_user_id: userId },
+            orderBy: { created_at: "desc" },
+            take: 50,
+          })
+        : Promise.resolve(
+            [] as Array<{
+              id: string;
+              amount_usd: unknown;
+              status: string;
+              created_at: Date;
+            }>,
+          ),
+      mainUser?.affiliate_code
+        ? db.affiliate_clicks.count({
+            where: { code: mainUser.affiliate_code },
+          })
+        : Promise.resolve(0),
+    ]);
 
   // If no main site user, return partial data
   if (!mainUser) {
@@ -78,33 +130,10 @@ export async function getMyProfileData(adminUserId: string) {
     };
   }
 
-  // Full data with main site user
-  const userId = mainUser.id;
-
-  const [account, referrals, payouts, clickCount] = await Promise.all([
-    db.affiliate_accounts.findUnique({ where: { user_id: userId } }),
-    db.affiliate_code_usages.findMany({
-      where: { affiliate_user_id: userId },
-      include: {
-        user_affiliate_code_usages_referred_user_idTouser: {
-          select: { username: true },
-        },
-      },
-      orderBy: { created_at: "desc" },
-      take: 50,
-    }),
-    db.affiliate_payouts.findMany({
-      where: { affiliate_user_id: userId },
-      orderBy: { created_at: "desc" },
-      take: 50,
-    }),
-    mainUser.affiliate_code
-      ? db.affiliate_clicks.count({ where: { code: mainUser.affiliate_code } })
-      : Promise.resolve(0),
-  ]);
-
+  // Full data with main site user (account/referrals/payouts/clickCount
+  // already resolved in the parallel batch above).
   return {
-    userId,
+    userId: mainUser.id,
     username: mainUser.username,
     email: mainUser.email,
     code: mainUser.affiliate_code ?? "",
