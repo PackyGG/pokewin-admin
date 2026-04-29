@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { requirePageAccess } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 
 export async function searchUsers(query: string) {
@@ -38,6 +39,7 @@ export async function createVoucher(data: {
 }) {
   const db = await getDb();
   const session = await requirePageAccess("/vouchers");
+  await requireCapability(session, "__can_create_voucher", "create vouchers");
 
   const user = await db.user.findUnique({ where: { id: data.userId } });
   if (!user) throw new Error("User not found");

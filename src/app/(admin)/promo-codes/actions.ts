@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import { createHash } from "crypto";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 
@@ -20,6 +21,7 @@ export async function createPromoCode(data: {
 }) {
   const db = await getDb();
   const session = await requirePageAccess("/promo-codes");
+  await requireCapability(session, "__can_create_promo_code", "create promo codes");
 
   const codeHash = createHash("sha256").update(data.code.toUpperCase()).digest("hex");
 
@@ -56,7 +58,8 @@ export async function createPromoCode(data: {
 
 export async function getRedemptions(promoCodeId: string) {
   const db = await getDb();
-  await requirePageAccess("/promo-codes");
+  const session = await requirePageAccess("/promo-codes");
+  await requireCapability(session, "__can_view_promo_redemptions", "view promo redemptions");
   const redemptions = await db.promo_code_redemptions.findMany({
     where: { promo_code_id: promoCodeId },
     include: {
@@ -79,6 +82,7 @@ export async function getRedemptions(promoCodeId: string) {
 export async function deletePromoCode(promoCodeId: string) {
   const db = await getDb();
   const session = await requirePageAccess("/promo-codes");
+  await requireCapability(session, "__can_delete_promo_code", "delete promo codes");
 
   await db.promo_codes.delete({ where: { id: promoCodeId } });
 

@@ -5,6 +5,7 @@ import { createHash, randomBytes } from "crypto";
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { requirePageAccess } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 
 export async function createGiftCard(data: {
@@ -15,6 +16,7 @@ export async function createGiftCard(data: {
 }) {
   const db = await getDb();
   const session = await requirePageAccess("/gift-cards");
+  await requireCapability(session, "__can_create_gift_card", "create gift cards");
 
   const code = data.code?.trim() || randomBytes(8).toString("hex").toUpperCase();
   const codeHash = createHash("sha256").update(code).digest("hex");
@@ -50,6 +52,7 @@ export async function createGiftCard(data: {
 export async function cancelGiftCard(giftCardId: string) {
   const db = await getDb();
   const session = await requirePageAccess("/gift-cards");
+  await requireCapability(session, "__can_cancel_gift_card", "cancel gift cards");
 
   const card = await db.gift_cards.findUnique({ where: { id: giftCardId } });
   if (!card) throw new Error("Gift card not found");
