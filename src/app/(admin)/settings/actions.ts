@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
 import { requireAdmin } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { refreshSiteConfig } from "@/lib/refresh-site-config";
 
@@ -13,6 +14,7 @@ export async function upsertVaultLockTime(
 ) {
   const db = await getDb();
   const session = await requireAdmin();
+  await requireCapability(session, "__can_upsert_vault_lock", "upsert vault lock windows");
 
   if (hours <= 0) throw new Error("Hours must be positive");
   if (!label.trim()) throw new Error("Label is required");
@@ -40,6 +42,7 @@ export async function upsertVaultLockTime(
 export async function deleteVaultLockTime(id: string) {
   const db = await getDb();
   const session = await requireAdmin();
+  await requireCapability(session, "__can_delete_vault_lock", "delete vault lock windows");
 
   await db.vault_lock_times.delete({ where: { id } });
 
@@ -59,6 +62,7 @@ export async function updateCountryRestrictionArray(
 ) {
   const db = await getDb();
   const session = await requireAdmin();
+  await requireCapability(session, "__can_update_country_restriction", "update country restrictions");
 
   const validFields = [
     "locked_deposits_crypto",
@@ -89,6 +93,7 @@ export async function toggleCountryRestriction(
 ) {
   const db = await getDb();
   const session = await requireAdmin();
+  await requireCapability(session, "__can_toggle_country_restriction", "toggle country restrictions");
 
   const validFields = [
     "physical_withdrawal",

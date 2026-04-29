@@ -3,10 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
 import { requireAdmin } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 
 export async function toggleBotActive(botId: string, isActive: boolean) {
   const db = await getDb();
-  await requireAdmin();
+  const session = await requireAdmin();
+  await requireCapability(session, "__can_toggle_bot_active", "toggle bot active state");
 
   await db.bots.update({
     where: { id: botId },
@@ -18,7 +20,8 @@ export async function toggleBotActive(botId: string, isActive: boolean) {
 
 export async function createBot(data: { username: string; imageUrl: string | null }) {
   const db = await getDb();
-  await requireAdmin();
+  const session = await requireAdmin();
+  await requireCapability(session, "__can_create_bot", "create bots");
 
   await db.bots.create({
     data: {
@@ -36,7 +39,8 @@ export async function updateBot(
   data: { username: string; imageUrl: string | null }
 ) {
   const db = await getDb();
-  await requireAdmin();
+  const session = await requireAdmin();
+  await requireCapability(session, "__can_update_bot", "update bots");
 
   await db.bots.update({
     where: { id: botId },

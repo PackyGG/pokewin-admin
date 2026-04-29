@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
 import { requireAdmin } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 
 async function refreshSiteConfig() {
@@ -32,6 +33,7 @@ export async function upsertSiteConfig(
 ) {
   const db = await getDb();
   const session = await requireAdmin();
+  await requireCapability(session, "__can_upsert_site_config", "update site config");
 
   const trimmedKey = key.trim();
   if (!trimmedKey) throw new Error("Key is required");
@@ -56,6 +58,7 @@ export async function upsertSiteConfig(
 export async function deleteSiteConfig(key: string) {
   const db = await getDb();
   const session = await requireAdmin();
+  await requireCapability(session, "__can_delete_site_config", "delete site config");
 
   await db.site_config.delete({ where: { key } });
 
