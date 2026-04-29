@@ -44,7 +44,7 @@ export function WagerChart({
     <Card>
       <CardHeader>
         <CardTitle className="text-sm font-medium">
-          Wagers (60 days)
+          Wagers (30 days)
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -106,7 +106,7 @@ export function DepositsChart({
     <Card>
       <CardHeader>
         <CardTitle className="text-sm font-medium">
-          Deposits (60 days)
+          Deposits (30 days)
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -156,7 +156,7 @@ export function SignupsChart({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-sm font-medium">Signups (60 days)</CardTitle>
+        <CardTitle className="text-sm font-medium">Signups (30 days)</CardTitle>
       </CardHeader>
       <CardContent>
         <ChartContainer config={signupsConfig} className="h-[300px] w-full">
