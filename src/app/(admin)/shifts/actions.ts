@@ -31,6 +31,13 @@ const copySchema = z.object({
   toWeekStart: z.string().datetime({ offset: true }),
 });
 
+const copyDaySchema = z.object({
+  fromWeekStart: z.string().datetime({ offset: true }),
+  fromDayOfWeek: z.number().int().min(0).max(6),
+  toWeekStart: z.string().datetime({ offset: true }),
+  toDayOfWeek: z.number().int().min(0).max(6),
+});
+
 // ── Pre-migration ──────────────────────────────────────────────────
 
 function isMissingSchema(err: unknown): boolean {
@@ -328,6 +335,138 @@ export async function copyWeek(
     return {
       success: false,
       error: err instanceof Error ? err.message : "Failed to copy week",
+    };
+  }
+}
+
+/**
+ * Clone every shift on (fromWeekStart, fromDayOfWeek) into
+ * (toWeekStart, toDayOfWeek). Times shift by exactly the day-delta
+ * between source and target so a slot that ran 14:00–22:00 UTC on
+ * Monday lands at 14:00–22:00 UTC on Tuesday. Assignments copy as-is.
+ *
+ * Used by the "Copy from yesterday" per-day shortcut on the board.
+ * The same day in the same week is rejected; otherwise any source/
+ * target pair works (yesterday in this week, last week's Sunday
+ * when target is Monday, arbitrary cross-week, …).
+ *
+ * Overwrites existing shifts in target slots that the source has —
+ * does NOT touch unrelated slots, so a partial source is fine.
+ */
+export async function copyDay(
+  input: z.infer<typeof copyDaySchema>,
+): Promise<
+  | { success: true; copied: number }
+  | { success: false; error: string }
+> {
+  const session = await requirePageAccess("/shifts");
+
+  const parsed = copyDaySchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  const data = parsed.data;
+  const fromWeek = new Date(data.fromWeekStart);
+  const toWeek = new Date(data.toWeekStart);
+
+  // Day-delta in ms, computed at UTC midnight of each target day so
+  // wall-clock times are preserved across the copy. Same-day same-week
+  // is the no-op case the caller almost certainly didn't mean.
+  const fromDayUtc = new Date(fromWeek);
+  fromDayUtc.setUTCDate(fromDayUtc.getUTCDate() + data.fromDayOfWeek);
+  const toDayUtc = new Date(toWeek);
+  toDayUtc.setUTCDate(toDayUtc.getUTCDate() + data.toDayOfWeek);
+  const dayShiftMs = toDayUtc.getTime() - fromDayUtc.getTime();
+  if (dayShiftMs === 0) {
+    return { success: false, error: "Source and destination are the same day" };
+  }
+
+  try {
+    await ensureShiftsSchema().catch(() => {
+      /* the read below will surface a clearer error if needed */
+    });
+
+    const sourceShifts = await adminDb.admin_shifts.findMany({
+      where: { week_start: fromWeek, day_of_week: data.fromDayOfWeek },
+      select: {
+        shift_slot: true,
+        start_at: true,
+        end_at: true,
+        notes: true,
+        assignments: { select: { admin_user_id: true } },
+      },
+    });
+
+    if (sourceShifts.length === 0) {
+      return { success: true, copied: 0 };
+    }
+
+    let copied = 0;
+    for (const src of sourceShifts) {
+      const upserted = await adminDb.admin_shifts.upsert({
+        where: {
+          week_start_day_of_week_shift_slot: {
+            week_start: toWeek,
+            day_of_week: data.toDayOfWeek,
+            shift_slot: src.shift_slot,
+          },
+        },
+        create: {
+          week_start: toWeek,
+          day_of_week: data.toDayOfWeek,
+          shift_slot: src.shift_slot,
+          start_at: new Date(src.start_at.getTime() + dayShiftMs),
+          end_at: new Date(src.end_at.getTime() + dayShiftMs),
+          notes: src.notes,
+          created_by_id: session.userId,
+        },
+        update: {
+          start_at: new Date(src.start_at.getTime() + dayShiftMs),
+          end_at: new Date(src.end_at.getTime() + dayShiftMs),
+          notes: src.notes,
+        },
+        select: { id: true },
+      });
+
+      await adminDb.$transaction([
+        adminDb.admin_shift_assignments.deleteMany({
+          where: { shift_id: upserted.id },
+        }),
+        ...(src.assignments.length > 0
+          ? [
+              adminDb.admin_shift_assignments.createMany({
+                data: src.assignments.map((a) => ({
+                  shift_id: upserted.id,
+                  admin_user_id: a.admin_user_id,
+                })),
+                skipDuplicates: true,
+              }),
+            ]
+          : []),
+      ]);
+      copied += 1;
+    }
+
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "shift_day_copied",
+      metadata: {
+        from: { weekStart: data.fromWeekStart, dayOfWeek: data.fromDayOfWeek },
+        to: { weekStart: data.toWeekStart, dayOfWeek: data.toDayOfWeek },
+        count: copied,
+      },
+    });
+
+    revalidatePath("/shifts");
+    return { success: true, copied };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to copy day",
     };
   }
 }
