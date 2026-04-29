@@ -2,11 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { adminDb } from "@/lib/admin-db";
-import { requireAdmin } from "@/lib/dal";
+import { requirePageAccess } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 
 export async function createNote(targetUserId: string, content: string) {
-  const session = await requireAdmin();
+  const session = await requirePageAccess("/users");
+  await requireCapability(session, "__can_create_user_note", "create notes");
 
   if (!content.trim()) {
     throw new Error("Note content cannot be empty");
@@ -31,7 +33,8 @@ export async function createNote(targetUserId: string, content: string) {
 }
 
 export async function deleteNote(noteId: string) {
-  const session = await requireAdmin();
+  const session = await requirePageAccess("/users");
+  await requireCapability(session, "__can_delete_user_note", "delete notes");
 
   const note = await adminDb.admin_notes.findUnique({
     where: { id: noteId },

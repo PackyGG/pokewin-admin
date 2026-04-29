@@ -123,6 +123,7 @@ export async function unlockUser(userId: string) {
 export async function deleteUser(userId: string, totpCode: string) {
   const db = await getDb();
   const session = await requireAdmin();
+  await requireCapability(session, "__can_delete_user", "delete users");
   await require2FA(session.userId, totpCode);
 
   // Fetch username for audit log before deleting
@@ -152,6 +153,7 @@ export async function deleteUser(userId: string, totpCode: string) {
 export async function bulkDeleteUsers(userIds: string[], totpCode: string) {
   const db = await getDb();
   const session = await requireAdmin();
+  await requireCapability(session, "__can_bulk_delete_users", "bulk-delete users");
   await require2FA(session.userId, totpCode);
 
   if (userIds.length === 0) throw new Error("No users selected");

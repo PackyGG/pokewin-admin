@@ -445,6 +445,7 @@ export async function updateWithdrawalLimits(data: {
 }) {
   const db = await getDb();
   const session = await requireAdmin();
+  await requireCapability(session, "__can_update_user_withdrawal_limits", "update user withdrawal limits");
   const parsed = withdrawalLimitsSchema.parse(data);
 
   await db.creator_withdrawal_limits.upsert({
@@ -718,6 +719,7 @@ export async function wipeUserAccount(
 ): Promise<{ success: true } | { success: false; error: string }> {
   const db = await getDb();
   const session = await requireAdmin();
+  await requireCapability(session, "__can_wipe_accounts", "wipe user account data");
 
   // 2FA gate — verify the calling admin's TOTP code BEFORE doing anything
   // destructive. Mirrors the pattern used by deleteUser / changeRole.
