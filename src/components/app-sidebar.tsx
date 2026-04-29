@@ -38,6 +38,7 @@ import {
   Megaphone,
   CalendarClock,
   ChevronRight,
+  FlaskConical,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -95,6 +96,7 @@ const ICONS: Record<string, LucideIcon> = {
   Globe,
   Megaphone,
   CalendarClock,
+  FlaskConical,
 };
 
 type NavItem = {
@@ -107,6 +109,11 @@ type NavGroup = {
   label: string;
   items: NavItem[];
   creatorOnly?: boolean;
+  /**
+   * When true, the group is only rendered while the admin's main-DB
+   * cookie points at the dev environment. Production never sees it.
+   */
+  devEnvOnly?: boolean;
 };
 
 const NAV_GROUPS: NavGroup[] = [
@@ -184,6 +191,13 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    label: "Test Tools",
+    devEnvOnly: true,
+    items: [
+      { label: "Creator Testing", href: "/test/creator", icon: "FlaskConical" },
+    ],
+  },
+  {
     label: "Security",
     items: [
       { label: "Security", href: "/security", icon: "Shield" },
@@ -251,16 +265,26 @@ function useCollapsedGroups(activeGroupLabel: string | undefined) {
   return { openGroups, toggleGroup };
 }
 
-export function AppSidebar({ role, allowedPages }: { role: string; allowedPages: string[] }) {
+export function AppSidebar({
+  role,
+  allowedPages,
+  dbEnv,
+}: {
+  role: string;
+  allowedPages: string[];
+  dbEnv: "prod" | "dev";
+}) {
   const pathname = usePathname();
   const isAdmin = role === "admin";
 
   const groupsWithVisibility = useMemo(() =>
-    NAV_GROUPS.map((group) => ({
-      ...group,
-      visibleItems: group.items.filter((item) => isAdmin || allowedPages.includes(item.href)),
-    })),
-  [isAdmin, allowedPages]);
+    NAV_GROUPS
+      .filter((group) => !group.devEnvOnly || dbEnv === "dev")
+      .map((group) => ({
+        ...group,
+        visibleItems: group.items.filter((item) => isAdmin || allowedPages.includes(item.href)),
+      })),
+  [isAdmin, allowedPages, dbEnv]);
 
   const activeGroupLabel = useMemo(() =>
     groupsWithVisibility.find((group) =>
