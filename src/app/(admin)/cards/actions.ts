@@ -3,11 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
 import { requireAdmin } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { uploadImage } from "@/lib/imagekit";
 
 export async function uploadCardImage(formData: FormData): Promise<string> {
-  await requireAdmin();
+  const session = await requireAdmin();
+  await requireCapability(session, "__can_upload_card_image", "upload card images");
 
   const file = formData.get("file");
   if (!(file instanceof File)) throw new Error("No file provided");
@@ -37,6 +39,8 @@ export async function createCard(data: {
   if (!data.name.trim()) throw new Error("Name is required");
   if (!data.imageUrl) throw new Error("Image is required");
   if (data.price < 0) throw new Error("Price must be 0 or greater");
+
+  await requireCapability(session, "__can_create_card", "create cards");
 
   const card = await db.cards.create({
     data: {
@@ -86,6 +90,8 @@ export async function updateCard(
   if (!data.imageUrl) throw new Error("Image is required");
   if (data.price < 0) throw new Error("Price must be 0 or greater");
 
+  await requireCapability(session, "__can_update_card", "update cards");
+
   await db.cards.update({
     where: { id },
     data: {
@@ -117,6 +123,7 @@ export async function updateCard(
 export async function deleteCard(cardId: string): Promise<void> {
   const db = await getDb();
   const session = await requireAdmin();
+  await requireCapability(session, "__can_delete_card", "delete cards");
 
   const card = await db.cards.findUnique({
     where: { id: cardId },

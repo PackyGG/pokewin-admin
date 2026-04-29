@@ -3,11 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 
 export async function cancelBattle(battleId: string) {
   const db = await getDb();
   const session = await requirePageAccess("/battles");
+  await requireCapability(session, "__can_cancel_battle", "cancel battles");
 
   const battle = await db.battles.findUnique({
     where: { id: battleId },

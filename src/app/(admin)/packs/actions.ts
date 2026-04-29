@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import { getPackGames } from "@/lib/queries/packs";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { uploadImage } from "@/lib/imagekit";
@@ -67,6 +68,7 @@ export async function getCardPickerFilters() {
 export async function togglePackActive(packId: string, active: boolean) {
   const db = await getDb();
   const session = await requirePageAccess("/packs");
+  await requireCapability(session, "__can_toggle_pack_active", "toggle pack active state");
 
   await db.packs.update({
     where: { id: packId },
@@ -86,7 +88,8 @@ export async function togglePackActive(packId: string, active: boolean) {
 }
 
 export async function uploadPackImage(formData: FormData): Promise<string> {
-  await requirePageAccess("/packs");
+  const session = await requirePageAccess("/packs");
+  await requireCapability(session, "__can_upload_pack_image", "upload pack images");
 
   const file = formData.get("file");
   if (!(file instanceof File)) throw new Error("No file provided");
@@ -124,6 +127,8 @@ export async function createPack(data: {
   if (!data.name.trim()) throw new Error("Name is required");
   if (!data.slug.trim()) throw new Error("Slug is required");
   if (data.price <= 0) throw new Error("Price must be greater than 0");
+
+  await requireCapability(session, "__can_create_pack", "create packs");
 
   const pack = await db.$transaction(async (tx) => {
     const pack = await tx.packs.create({
@@ -191,6 +196,8 @@ export async function updatePack(
   if (!data.slug.trim()) throw new Error("Slug is required");
   if (data.price <= 0) throw new Error("Price must be greater than 0");
 
+  await requireCapability(session, "__can_update_pack", "update packs");
+
   await db.$transaction(async (tx) => {
     await tx.packs.update({
       where: { id },
@@ -239,6 +246,7 @@ export async function updatePack(
 export async function deletePack(packId: string): Promise<void> {
   const db = await getDb();
   const session = await requirePageAccess("/packs");
+  await requireCapability(session, "__can_delete_pack", "delete packs");
 
   const pack = await db.packs.findUnique({
     where: { id: packId },

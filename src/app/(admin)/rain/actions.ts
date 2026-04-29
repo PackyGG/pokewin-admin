@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { toNumber } from "@/lib/utils/decimal";
 import { refreshSiteConfig } from "@/lib/refresh-site-config";
@@ -11,6 +12,7 @@ import { RAIN_CONFIG_KEYS } from "./config-keys";
 export async function adjustRainBase(rainId: string, newBaseAmount: number) {
   const db = await getDb();
   const session = await requirePageAccess("/rain");
+  await requireCapability(session, "__can_adjust_rain_base", "adjust rain base");
 
   if (newBaseAmount < 0) throw new Error("Base amount cannot be negative");
 
@@ -57,6 +59,7 @@ export async function updateRainConfig(input: {
 }) {
   const db = await getDb();
   const session = await requirePageAccess("/rain");
+  await requireCapability(session, "__can_update_rain_config", "update rain config");
 
   const toUpsert: {
     key: string;
