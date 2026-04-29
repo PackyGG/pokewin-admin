@@ -1,9 +1,17 @@
 name: Auto-merge to main
 
-# Fast-forwards `main` to match every push on `claude/hungry-gould` so
-# Vercel auto-deploys production immediately without a manual Promote step.
-# Uses --ff-only — if the branches ever diverge this fails loudly instead
-# of making a silent merge commit, which is what we want.
+# Mirrors `claude/hungry-gould` onto `main` so Vercel auto-deploys
+# production immediately without a manual Promote step.
+#
+# Strategy:
+#   1. Try a fast-forward merge first (clean linear history, no merge
+#      commit). This is the happy path 99% of the time.
+#   2. If main has diverged from the branch (e.g. someone pushed a
+#      direct hotfix or merged a PR from another branch), fall back to
+#      a regular merge commit. Without this fallback the workflow
+#      fails with exit 128 every time main moves outside the branch's
+#      flow, blocking deploys.
+#   3. Conflicts still abort the workflow — those need a human.
 
 on:
   push:
@@ -25,12 +33,25 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Fast-forward main to ${{ github.ref_name }} @ ${{ github.sha }}
+      - name: Merge ${{ github.ref_name }} → main @ ${{ github.sha }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin main
           git checkout main
-          git merge --ff-only "${{ github.sha }}"
+
+          # Happy path: fast-forward when branch is strictly ahead.
+          if git merge --ff-only "${{ github.sha }}"; then
+            echo "Fast-forwarded main to ${{ github.sha }}"
+          else
+            echo "Branches diverged — falling back to merge commit."
+            # `--no-ff` forces a merge commit even if FF were possible
+            # (it isn't here, but being explicit). `-m` keeps the
+            # message deterministic so history stays scannable.
+            git merge --no-ff --no-edit \
+              -m "Auto-merge: ${{ github.ref_name }} → main (diverged)" \
+              "${{ github.sha }}"
+          fi
+
           git push origin main
