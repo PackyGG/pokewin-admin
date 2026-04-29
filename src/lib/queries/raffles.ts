@@ -119,7 +119,11 @@ export async function getRaffleDetail(id: string, params?: { page?: number; perP
       : Promise.resolve([] as Array<{ id: string; name: string; image_url: string | null; price: unknown }>),
     db.raffle_entries.findMany({
       where: { raffle_id: id },
-      include: {
+      select: {
+        id: true,
+        user_id: true,
+        points_spent: true,
+        created_at: true,
         user: { select: { username: true } },
       },
       orderBy: { created_at: "desc" },
