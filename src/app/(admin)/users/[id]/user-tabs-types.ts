@@ -153,6 +153,7 @@ export type UserDetail = {
     canAssignAffiliate: boolean;
     canWipeAccounts: boolean;
     canChangeUserRoles: boolean;
+    canRecordManualWithdrawal: boolean;
   };
 };
 

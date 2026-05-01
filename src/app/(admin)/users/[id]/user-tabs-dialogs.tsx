@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Pencil, ShieldAlert, ShieldCheck, Trash2 } from "lucide-react";
+import { ArrowDownToLine, Pencil, ShieldAlert, ShieldCheck, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -38,6 +38,7 @@ import {
   adjustBalance,
   adjustXp,
   changeRole,
+  recordManualWithdrawal,
   wipeUserAccount,
   updateUserIdentity,
 } from "./actions";
@@ -300,6 +301,191 @@ export function BalanceAdjustDialog({
             className="w-full"
           >
             {isPending ? "Adjusting..." : "Apply Adjustment"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Manual Withdrawal Dialog ──────────────────────────────────────
+//
+// Records an off-platform payout (admin paid the user via bank/crypto/etc.
+// outside the standard withdrawal flow). Deducts on-site balance + bumps
+// `total_withdrawn` so PnL stays correct.
+
+const MANUAL_WITHDRAWAL_REASONS = [
+  { value: "bank_transfer", label: "Bank transfer" },
+  { value: "crypto_send", label: "Crypto send" },
+  { value: "paypal", label: "PayPal" },
+  { value: "gift_card", label: "Gift card" },
+  { value: "cash", label: "Cash" },
+  { value: "other", label: "Other" },
+] as const;
+
+export function ManualWithdrawalDialog({
+  userId,
+  availableBalance,
+  open,
+  onOpenChange,
+}: {
+  userId: string;
+  availableBalance: number;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [amount, setAmount] = useState("");
+  const [reasonCategory, setReasonCategory] = useState<string>("");
+  const [customReason, setCustomReason] = useState("");
+  const [totpCode, setTotpCode] = useState("");
+  const [isPending, startTransition] = useTransition();
+  const router = useRouter();
+
+  function resolveReason(): string {
+    if (!reasonCategory) return "";
+    if (reasonCategory === "other") return customReason.trim();
+    const preset = MANUAL_WITHDRAWAL_REASONS.find(
+      (r) => r.value === reasonCategory,
+    );
+    return preset?.label ?? reasonCategory;
+  }
+
+  function handleSubmit() {
+    const numAmount = parseFloat(amount);
+    const resolvedReason = resolveReason();
+    if (isNaN(numAmount) || numAmount <= 0) {
+      toast.error("Enter a positive amount");
+      return;
+    }
+    if (numAmount > availableBalance) {
+      toast.error(
+        `Amount exceeds available balance ($${availableBalance.toFixed(2)})`,
+      );
+      return;
+    }
+    if (!resolvedReason) {
+      toast.error(
+        reasonCategory === "other"
+          ? "Please enter a custom reason"
+          : "Please pick a reason",
+      );
+      return;
+    }
+    if (!totpCode.trim()) {
+      toast.error("Please enter your 2FA code");
+      return;
+    }
+    startTransition(async () => {
+      try {
+        const result = await recordManualWithdrawal({
+          userId,
+          amountUsd: numAmount,
+          reason: resolvedReason,
+          totpCode: totpCode.trim(),
+        });
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
+        toast.success(`Recorded $${numAmount.toFixed(2)} manual withdrawal`);
+        setAmount("");
+        setReasonCategory("");
+        setCustomReason("");
+        setTotpCode("");
+        onOpenChange(false);
+        router.refresh();
+      } catch (e) {
+        toast.error(
+          e instanceof Error ? e.message : "Failed to record manual withdrawal",
+        );
+      }
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <ArrowDownToLine className="size-4 text-rose-500" />
+            Record Manual Withdrawal
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <p className="text-xs text-muted-foreground">
+            Use this when you paid the user out off-platform (bank, crypto,
+            etc.). It deducts their on-site balance and bumps total_withdrawn
+            so the P&amp;L calculation stays correct.
+          </p>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">
+              Amount (USD)
+            </Label>
+            <Input
+              type="number"
+              min={0}
+              step={0.01}
+              placeholder="0.00"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Available: ${availableBalance.toFixed(2)}
+            </p>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">
+              Payout method
+            </Label>
+            <Select
+              value={reasonCategory}
+              onValueChange={(v) => {
+                if (!v) return;
+                setReasonCategory(v);
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="How did you pay them out?" />
+              </SelectTrigger>
+              <SelectContent>
+                {MANUAL_WITHDRAWAL_REASONS.map((r) => (
+                  <SelectItem key={r.value} value={r.value}>
+                    {r.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {reasonCategory === "other" && (
+              <Textarea
+                placeholder="Describe the payout method"
+                value={customReason}
+                onChange={(e) => setCustomReason(e.target.value)}
+                rows={2}
+                className="mt-2"
+              />
+            )}
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">2FA Code</Label>
+            <Input
+              type="text"
+              inputMode="numeric"
+              placeholder="Enter your 6-digit code"
+              value={totpCode}
+              onChange={(e) => setTotpCode(e.target.value)}
+              maxLength={6}
+              autoComplete="one-time-code"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button
+            size="sm"
+            onClick={handleSubmit}
+            disabled={isPending || !totpCode.trim()}
+            className="w-full bg-rose-500 hover:bg-rose-500/90 text-white"
+          >
+            {isPending ? "Recording..." : "Record Withdrawal"}
           </Button>
         </DialogFooter>
       </DialogContent>

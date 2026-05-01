@@ -12,7 +12,10 @@ import { getUserInventory, getUserTransactions, getCreatorReferralClicks, getCre
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { require2FA } from "@/lib/require-2fa";
 import { checkBalanceAdjustmentLimit } from "@/lib/balance-limits";
-import { canUserAdjustBalance } from "@/app/(admin)/settings/roles/permissions-utils";
+import {
+  canUserAdjustBalance,
+  hasCapability,
+} from "@/app/(admin)/settings/roles/permissions-utils";
 
 const adjustBalanceSchema = z.object({
   userId: z.string(),
@@ -149,6 +152,158 @@ export async function adjustBalance(data: {
         err instanceof Error ? err.message : err
       );
     });
+
+  revalidatePath(`/users/${parsed.userId}`);
+  return { success: true };
+}
+
+// ---------------------------------------------------------------------------
+// Manual withdrawal — admin records an off-platform payout
+// ---------------------------------------------------------------------------
+//
+// Use case: admin paid a user out via crypto / bank / card / etc. outside the
+// normal `card_withdrawal_requests` flow. Without this action the on-site
+// balance still says the user has the money, so the P&L formula
+//
+//   pnl = deposits − withdrawals − onSiteBalance − inventoryValue − vouchers
+//
+// would treat that money as still-owed to the user → P&L undercounts house
+// gains and the dashboard "Liabilities" / per-user PnL tile is wrong.
+//
+// What this action does atomically:
+//   1. Decrements `available_balance` by the payout amount (the user no
+//      longer has it on-site — they got paid).
+//   2. Increments `total_withdrawn` by the payout amount (so the P&L
+//      `withdrawals` term picks it up via balances.total_withdrawn).
+//   3. Writes a `ledger_transactions` row with a negative amount + a
+//      "Manual withdrawal:" description prefix, so the user's transaction
+//      history shows it. We use the existing `admin_balance_adjustment`
+//      type so we don't need a schema migration; the description prefix
+//      + audit event are how we identify these later.
+//   4. Audit-logs `manual_withdrawal_recorded` with the amount + reason.
+//
+// Gates: requirePageAccess("/users") + (admin OR
+// __can_record_manual_withdrawal capability) + 2FA + the same per-admin
+// balance limit that gates adjustBalance (manual withdrawals count
+// against the cap because they move user money around just like a
+// balance adjustment does).
+const manualWithdrawalSchema = z.object({
+  userId: z.string(),
+  amountUsd: z.number().positive("Amount must be positive"),
+  reason: z.string().min(1, "Reason is required"),
+});
+
+export async function recordManualWithdrawal(data: {
+  userId: string;
+  amountUsd: number;
+  reason: string;
+  totpCode: string;
+}): Promise<{ success: true } | { success: false; error: string }> {
+  const db = await getDb();
+  const session = await requirePageAccess("/users");
+
+  const parseResult = manualWithdrawalSchema.safeParse(data);
+  if (!parseResult.success) {
+    return {
+      success: false,
+      error: parseResult.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+  const parsed = parseResult.data;
+
+  // Admins always pass; non-admins need the dedicated capability.
+  if (session.role !== "admin") {
+    const perms = await adminDb.admin_users.findUnique({
+      where: { id: session.userId },
+      select: { allowed_pages: true },
+    });
+    if (
+      !perms ||
+      !hasCapability(perms.allowed_pages, "__can_record_manual_withdrawal")
+    ) {
+      return {
+        success: false,
+        error: "You do not have permission to record manual withdrawals",
+      };
+    }
+  }
+
+  try {
+    await require2FA(session.userId, data.totpCode);
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "2FA verification failed",
+    };
+  }
+
+  // Same throttle as adjustBalance — a manual withdrawal moves the same
+  // dollars and shouldn't bypass the per-admin cap.
+  try {
+    await checkBalanceAdjustmentLimit(session.userId, parsed.amountUsd);
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Balance limit exceeded",
+    };
+  }
+
+  const balances = await db.balances.findUnique({
+    where: { user_id: parsed.userId },
+  });
+  if (!balances) return { success: false, error: "User balances not found" };
+
+  const currentBalance = Number(balances.available_balance);
+  if (currentBalance < parsed.amountUsd) {
+    return {
+      success: false,
+      error: `Insufficient balance — user has $${currentBalance.toFixed(2)} available, you tried to withdraw $${parsed.amountUsd.toFixed(2)}`,
+    };
+  }
+  const newBalance = currentBalance - parsed.amountUsd;
+  const newTotalWithdrawn =
+    Number(balances.total_withdrawn) + parsed.amountUsd;
+
+  try {
+    await db.$transaction([
+      db.balances.update({
+        where: { user_id: parsed.userId },
+        data: {
+          available_balance: newBalance,
+          total_withdrawn: newTotalWithdrawn,
+        },
+      }),
+      db.ledger_transactions.create({
+        data: {
+          id: crypto.randomUUID(),
+          user_id: parsed.userId,
+          // Reuse the existing type — we don't have schema-write access on
+          // the main DB, and the "Manual withdrawal:" description prefix
+          // + the audit event keep these distinguishable from regular
+          // adjust-balance ops.
+          type: "admin_balance_adjustment",
+          amount: -parsed.amountUsd,
+          balance_before: currentBalance,
+          balance_after: newBalance,
+          description: `Manual withdrawal: ${parsed.reason}`,
+          status: "completed",
+        },
+      }),
+    ]);
+  } catch (err) {
+    console.error("[recordManualWithdrawal] Transaction failed:", err);
+    return {
+      success: false,
+      error: "Failed to record manual withdrawal — please try again",
+    };
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "manual_withdrawal_recorded",
+    targetUserId: parsed.userId,
+    metadata: { amountUsd: parsed.amountUsd, reason: parsed.reason },
+  });
 
   revalidatePath(`/users/${parsed.userId}`);
   return { success: true };

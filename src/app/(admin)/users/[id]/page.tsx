@@ -85,6 +85,7 @@ export default async function UserDetailPage({
           canAssignAffiliate: true,
           canWipeAccounts: true,
           canChangeUserRoles: true,
+          canRecordManualWithdrawal: true,
         }
       : {
           canAdjustBalance: hasCapability(permissions ?? [], "__can_adjust_balance"),
@@ -96,6 +97,7 @@ export default async function UserDetailPage({
           canAssignAffiliate: hasCapability(permissions ?? [], "__can_assign_affiliate"),
           canWipeAccounts: hasCapability(permissions ?? [], "__can_wipe_accounts"),
           canChangeUserRoles: hasCapability(permissions ?? [], "__can_change_user_roles"),
+          canRecordManualWithdrawal: hasCapability(permissions ?? [], "__can_record_manual_withdrawal"),
         };
 
   return (
