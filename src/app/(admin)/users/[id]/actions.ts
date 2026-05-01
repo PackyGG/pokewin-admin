@@ -254,15 +254,35 @@ export async function recordManualWithdrawal(data: {
   if (!balances) return { success: false, error: "User balances not found" };
 
   const currentBalance = Number(balances.available_balance);
-  if (currentBalance < parsed.amountUsd) {
-    return {
-      success: false,
-      error: `Insufficient balance — user has $${currentBalance.toFixed(2)} available, you tried to withdraw $${parsed.amountUsd.toFixed(2)}`,
-    };
-  }
-  const newBalance = currentBalance - parsed.amountUsd;
+
+  // Two flavors of manual withdrawal, and we support both:
+  //
+  //   1. Live payout — user has the money on-site. We deduct from
+  //      `available_balance` AND bump `total_withdrawn`. The
+  //      `ledger_transactions` row reflects the actual balance delta
+  //      (so the invariant `amount = balance_after - balance_before`
+  //      holds). Mirrors a normal withdrawal, just outside the
+  //      card_withdrawal_requests flow.
+  //
+  //   2. Backfill / P&L correction — user already received the
+  //      money off-platform AND their on-site balance is gone (zero
+  //      or smaller than the payout). We deduct whatever is there
+  //      (could be 0) and bump `total_withdrawn` by the FULL recorded
+  //      amount so the canonical P&L formula
+  //          pnl = deposits − withdrawals − onSiteBalance − inv − vouch
+  //      counts the payout. The "phantom" portion (amount minus what
+  //      was actually deducted) is recorded in the audit event and
+  //      called out in the ledger description so the discrepancy is
+  //      auditable.
+  //
+  // We never let `available_balance` go negative — that would
+  // misrepresent the user's debt-vs-credit relationship with the
+  // platform and break wager-balance checks elsewhere.
+  const balanceDeducted = Math.min(currentBalance, parsed.amountUsd);
+  const newBalance = currentBalance - balanceDeducted;
   const newTotalWithdrawn =
     Number(balances.total_withdrawn) + parsed.amountUsd;
+  const phantomPortion = parsed.amountUsd - balanceDeducted;
 
   try {
     await db.$transaction([
@@ -273,22 +293,33 @@ export async function recordManualWithdrawal(data: {
           total_withdrawn: newTotalWithdrawn,
         },
       }),
-      db.ledger_transactions.create({
-        data: {
-          id: crypto.randomUUID(),
-          user_id: parsed.userId,
-          // Reuse the existing type — we don't have schema-write access on
-          // the main DB, and the "Manual withdrawal:" description prefix
-          // + the audit event keep these distinguishable from regular
-          // adjust-balance ops.
-          type: "admin_balance_adjustment",
-          amount: -parsed.amountUsd,
-          balance_before: currentBalance,
-          balance_after: newBalance,
-          description: `Manual withdrawal: ${parsed.reason}`,
-          status: "completed",
-        },
-      }),
+      // Only write a ledger row when something was actually deducted
+      // from on-site balance. A pure-record case (balance was 0,
+      // payout fully phantom) gets recorded via the audit event and
+      // total_withdrawn — writing a ledger row with amount=0 would
+      // pollute transaction listings without conveying anything.
+      ...(balanceDeducted > 0
+        ? [
+            db.ledger_transactions.create({
+              data: {
+                id: crypto.randomUUID(),
+                user_id: parsed.userId,
+                // Reuse the existing type — we don't have schema-write
+                // access on the main DB; the "Manual withdrawal:"
+                // prefix + audit event keep these distinguishable.
+                type: "admin_balance_adjustment",
+                amount: -balanceDeducted,
+                balance_before: currentBalance,
+                balance_after: newBalance,
+                description:
+                  phantomPortion > 0
+                    ? `Manual withdrawal: ${parsed.reason} (total $${parsed.amountUsd.toFixed(2)}, $${balanceDeducted.toFixed(2)} from on-site)`
+                    : `Manual withdrawal: ${parsed.reason}`,
+                status: "completed",
+              },
+            }),
+          ]
+        : []),
     ]);
   } catch (err) {
     console.error("[recordManualWithdrawal] Transaction failed:", err);
@@ -302,7 +333,13 @@ export async function recordManualWithdrawal(data: {
     adminUserId: session.userId,
     eventType: "manual_withdrawal_recorded",
     targetUserId: parsed.userId,
-    metadata: { amountUsd: parsed.amountUsd, reason: parsed.reason },
+    metadata: {
+      amountUsd: parsed.amountUsd,
+      reason: parsed.reason,
+      balanceDeducted,
+      phantomPortion,
+      onSiteBalanceBefore: currentBalance,
+    },
   });
 
   revalidatePath(`/users/${parsed.userId}`);
