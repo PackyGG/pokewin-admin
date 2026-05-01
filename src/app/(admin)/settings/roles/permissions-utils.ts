@@ -193,6 +193,13 @@ export const CAPABILITIES: CapabilityDef[] = [
     description: "Mark withdrawals as failed",
     group: "Withdrawals",
   },
+  {
+    key: "__can_record_manual_withdrawal",
+    label: "Record Manual Withdrawal",
+    description:
+      "Record an off-platform payout — deducts the user's on-site balance and bumps total_withdrawn so P&L stays correct (subject to the per-admin balance limit).",
+    group: "Withdrawals",
+  },
 
   // ── Packs ───────────────────────────────────────────────────────────
   {

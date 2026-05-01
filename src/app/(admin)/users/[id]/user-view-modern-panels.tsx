@@ -17,7 +17,11 @@ import {
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
 import { Button } from "@/components/ui/button";
-import { BalanceAdjustDialog, XpAdjustDialog } from "./user-tabs-dialogs";
+import {
+  BalanceAdjustDialog,
+  ManualWithdrawalDialog,
+  XpAdjustDialog,
+} from "./user-tabs-dialogs";
 import type {
   UserDetail,
   PnlBreakdown,
@@ -145,12 +149,15 @@ export function ModernBalancePanel({
   balances,
   userId,
   canAdjustBalance = false,
+  canRecordManualWithdrawal = false,
 }: {
   balances: UserDetail["balances"];
   userId?: string;
   canAdjustBalance?: boolean;
+  canRecordManualWithdrawal?: boolean;
 }) {
   const [adjustOpen, setAdjustOpen] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
 
   if (!balances) {
     return (
@@ -162,6 +169,11 @@ export function ModernBalancePanel({
   const total =
     balances.availableBalance + balances.inventoryValue + balances.vouchersValue;
   const showAdjust = canAdjustBalance && Boolean(userId);
+  // Disable the manual-withdrawal button when there's nothing to deduct from.
+  const showManual =
+    canRecordManualWithdrawal &&
+    Boolean(userId) &&
+    balances.availableBalance > 0;
   return (
     <StatPanel title="Balances" icon={Wallet} accent="emerald">
       <div className="space-y-0.5">
@@ -178,16 +190,29 @@ export function ModernBalancePanel({
         <PanelRow label="Inventory" value={formatCurrency(balances.inventoryValue)} />
         <PanelRow label="Vouchers" value={formatCurrency(balances.vouchersValue)} />
       </div>
-      {showAdjust && (
-        <div className="mt-3 pt-3 border-t">
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full"
-            onClick={() => setAdjustOpen(true)}
-          >
-            Adjust Balance
-          </Button>
+      {(showAdjust || showManual) && (
+        <div className="mt-3 pt-3 border-t space-y-2">
+          {showAdjust && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full"
+              onClick={() => setAdjustOpen(true)}
+            >
+              Adjust Balance
+            </Button>
+          )}
+          {showManual && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full text-rose-600 hover:text-rose-600 dark:text-rose-400 dark:hover:text-rose-400 border-rose-500/40 hover:bg-rose-500/10"
+              onClick={() => setManualOpen(true)}
+              title="Record an off-platform payout (deducts on-site balance + bumps total_withdrawn so PnL stays correct)"
+            >
+              Record Manual Withdrawal
+            </Button>
+          )}
         </div>
       )}
       {showAdjust && userId && (
@@ -195,6 +220,14 @@ export function ModernBalancePanel({
           userId={userId}
           open={adjustOpen}
           onOpenChange={setAdjustOpen}
+        />
+      )}
+      {showManual && userId && (
+        <ManualWithdrawalDialog
+          userId={userId}
+          availableBalance={balances.availableBalance}
+          open={manualOpen}
+          onOpenChange={setManualOpen}
         />
       )}
     </StatPanel>

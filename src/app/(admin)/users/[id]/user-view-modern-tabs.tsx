@@ -87,6 +87,7 @@ export function OverviewTab({
           balances={balances}
           userId={user.id}
           canAdjustBalance={capabilities.canAdjustBalance}
+          canRecordManualWithdrawal={capabilities.canRecordManualWithdrawal}
         />
         <ModernPnlPanel balances={balances} pnlBreakdown={pnlBreakdown} />
         <ModernActivityPanel
