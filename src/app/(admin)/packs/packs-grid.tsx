@@ -51,7 +51,15 @@ import { togglePackActive, deletePack } from "./actions";
  * Inactive packs fade to ~70% opacity and carry a small "Off" badge over
  * the image so the list visually distinguishes live vs paused packs.
  */
-export function PacksGrid({ data }: { data: PackListItem[] }) {
+export function PacksGrid({
+  data,
+  canToggle = false,
+  canDelete = false,
+}: {
+  data: PackListItem[];
+  canToggle?: boolean;
+  canDelete?: boolean;
+}) {
   if (data.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed bg-card/30 px-6 py-16 text-center">
@@ -74,13 +82,26 @@ export function PacksGrid({ data }: { data: PackListItem[] }) {
       )}
     >
       {data.map((pack) => (
-        <PackTile key={pack.id} pack={pack} />
+        <PackTile
+          key={pack.id}
+          pack={pack}
+          canToggle={canToggle}
+          canDelete={canDelete}
+        />
       ))}
     </div>
   );
 }
 
-function PackTile({ pack }: { pack: PackListItem }) {
+function PackTile({
+  pack,
+  canToggle,
+  canDelete,
+}: {
+  pack: PackListItem;
+  canToggle: boolean;
+  canDelete: boolean;
+}) {
   const edgeClass =
     pack.actualHouseEdge >= 0
       ? "text-emerald-600 dark:text-emerald-400"
@@ -96,10 +117,18 @@ function PackTile({ pack }: { pack: PackListItem }) {
       )}
     >
       {/* Hover-revealed action menu — absolute so it stays out of the Link
-          flow. motion-safe for reduce-motion users. */}
-      <div className="absolute right-2 top-2 z-10 opacity-0 transition-opacity motion-safe:duration-150 group-hover:opacity-100 focus-within:opacity-100">
-        <PackActions pack={pack} />
-      </div>
+          flow. motion-safe for reduce-motion users. Hidden entirely when
+          the viewer has no toggle/delete capability so e.g. pack_creator
+          gets a pure-read tile. */}
+      {(canToggle || canDelete) && (
+        <div className="absolute right-2 top-2 z-10 opacity-0 transition-opacity motion-safe:duration-150 group-hover:opacity-100 focus-within:opacity-100">
+          <PackActions
+            pack={pack}
+            canToggle={canToggle}
+            canDelete={canDelete}
+          />
+        </div>
+      )}
 
       <Link href={`/packs/${pack.id}`} className="block">
         {/* Header: image + name/price */}
@@ -205,7 +234,15 @@ function Metric({
  * Uses e.preventDefault() on the trigger to block the outer <Link />
  * navigation when opening the menu.
  */
-function PackActions({ pack }: { pack: PackListItem }) {
+function PackActions({
+  pack,
+  canToggle,
+  canDelete,
+}: {
+  pack: PackListItem;
+  canToggle: boolean;
+  canDelete: boolean;
+}) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -259,6 +296,11 @@ function PackActions({ pack }: { pack: PackListItem }) {
           <MoreHorizontal className="size-3.5" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" sideOffset={4} className="min-w-[160px]">
+          {/* "Edit pack" is just a router push to the detail page,
+              which gates editing internally. We still show it for the
+              toggle / delete capability holders since it's the only
+              way to drill in from the grid; for users with neither
+              capability the entire kebab is hidden upstream. */}
           <DropdownMenuItem
             onClick={(e) => {
               e.preventDefault();
@@ -269,29 +311,35 @@ function PackActions({ pack }: { pack: PackListItem }) {
             <Pencil className="size-3.5" />
             Edit pack
           </DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={handleToggle}
-            disabled={isPending}
-          >
-            {pack.active ? (
-              <PowerOff className="size-3.5" />
-            ) : (
-              <Power className="size-3.5" />
-            )}
-            {pack.active ? "Deactivate" : "Activate"}
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            variant="destructive"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              setDeleteOpen(true);
-            }}
-          >
-            <Trash2 className="size-3.5" />
+          {canToggle && (
+            <DropdownMenuItem
+              onClick={handleToggle}
+              disabled={isPending}
+            >
+              {pack.active ? (
+                <PowerOff className="size-3.5" />
+              ) : (
+                <Power className="size-3.5" />
+              )}
+              {pack.active ? "Deactivate" : "Activate"}
+            </DropdownMenuItem>
+          )}
+          {canDelete && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                variant="destructive"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setDeleteOpen(true);
+                }}
+              >
+                <Trash2 className="size-3.5" />
             Delete
-          </DropdownMenuItem>
+              </DropdownMenuItem>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
 

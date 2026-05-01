@@ -1,7 +1,8 @@
 import { Suspense } from "react";
 import { Package } from "lucide-react";
 import { getPacks } from "@/lib/queries/packs";
-import { requirePageAccess } from "@/lib/dal";
+import { getUserPermissions, requirePageAccess } from "@/lib/dal";
+import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { PacksGrid } from "./packs-grid";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
@@ -25,6 +26,8 @@ async function PacksContent({
   active,
   sortBy,
   sortOrder,
+  canToggle,
+  canDelete,
 }: {
   page: number;
   perPage: number;
@@ -32,6 +35,8 @@ async function PacksContent({
   active?: string;
   sortBy?: string;
   sortOrder?: string;
+  canToggle: boolean;
+  canDelete: boolean;
 }) {
   const result = await getPacks({
     page,
@@ -45,7 +50,11 @@ async function PacksContent({
   return (
     <>
       <FadeIn>
-        <PacksGrid data={result.data} />
+        <PacksGrid
+          data={result.data}
+          canToggle={canToggle}
+          canDelete={canDelete}
+        />
       </FadeIn>
       <DataTablePagination
         page={result.page}
@@ -62,12 +71,26 @@ export default async function PacksPage({
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  await requirePageAccess("/packs");
+  const session = await requirePageAccess("/packs");
   const params = await searchParams;
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
 
   const suspenseKey = `${page}|${perPage}|${params.search ?? ""}|${params.active ?? ""}|${params.sortBy ?? ""}|${params.sortOrder ?? ""}`;
+
+  // Per-capability gating: pack_creator only gets the create button —
+  // no toggle / delete on existing packs. Real admins always pass; the
+  // catalog of __can_* keys lives in permissions-utils.ts.
+  const isAdmin = session.role === "admin";
+  let canCreate = isAdmin;
+  let canToggle = isAdmin;
+  let canDelete = isAdmin;
+  if (!isAdmin) {
+    const perms = await getUserPermissions(session.userId);
+    canCreate = hasCapability(perms, "__can_create_pack");
+    canToggle = hasCapability(perms, "__can_toggle_pack_active");
+    canDelete = hasCapability(perms, "__can_delete_pack");
+  }
 
   return (
     <div className="space-y-6">
@@ -84,7 +107,7 @@ export default async function PacksPage({
               </p>
             </div>
           </div>
-          <CreatePackButton />
+          {canCreate && <CreatePackButton />}
         </div>
       </PageHero>
 
@@ -128,6 +151,8 @@ export default async function PacksPage({
             active={params.active}
             sortBy={params.sortBy}
             sortOrder={params.sortOrder}
+            canToggle={canToggle}
+            canDelete={canDelete}
           />
         </Suspense>
       </div>
