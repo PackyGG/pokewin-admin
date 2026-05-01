@@ -152,12 +152,19 @@ export function ManagementActions({
   );
 }
 
-const ALL_ADMIN_ROLES: AdminRole[] = ["admin", "support", "marketing", "creator"];
+const ALL_ADMIN_ROLES: AdminRole[] = [
+  "admin",
+  "support",
+  "marketing",
+  "creator",
+  "pack_creator",
+];
 const ROLE_LABELS: Record<AdminRole, string> = {
   admin: "Admin",
   support: "Support",
   marketing: "Marketing",
   creator: "Creator",
+  pack_creator: "Pack Creator",
 };
 
 export function ChangeRoleDialog({

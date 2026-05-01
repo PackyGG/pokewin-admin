@@ -20,7 +20,12 @@ import {
 // limits. That cascade has been removed; admins manage balance
 // limits exclusively from the per-user "Adjust Balance Limit" card.
 
-const CONFIGURABLE_ROLES = ["support", "marketing", "creator"] as const;
+const CONFIGURABLE_ROLES = [
+  "support",
+  "marketing",
+  "creator",
+  "pack_creator",
+] as const;
 type ConfigurableRole = (typeof CONFIGURABLE_ROLES)[number];
 
 function isConfigurableRole(role: string): role is ConfigurableRole {
@@ -55,6 +60,7 @@ export async function getRolePermissions(): Promise<
     support: emptyConfig(),
     marketing: emptyConfig(),
     creator: emptyConfig(),
+    pack_creator: emptyConfig(),
   };
 
   // Use the first user of each role as the canonical preset
