@@ -169,11 +169,10 @@ export function ModernBalancePanel({
   const total =
     balances.availableBalance + balances.inventoryValue + balances.vouchersValue;
   const showAdjust = canAdjustBalance && Boolean(userId);
-  // Disable the manual-withdrawal button when there's nothing to deduct from.
-  const showManual =
-    canRecordManualWithdrawal &&
-    Boolean(userId) &&
-    balances.availableBalance > 0;
+  // Show the manual-withdrawal button whenever the admin has the
+  // capability — it's also useful at $0 balance for backfilling
+  // historical off-platform payouts so P&L counts them.
+  const showManual = canRecordManualWithdrawal && Boolean(userId);
   return (
     <StatPanel title="Balances" icon={Wallet} accent="emerald">
       <div className="space-y-0.5">

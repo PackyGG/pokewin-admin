@@ -357,12 +357,10 @@ export function ManualWithdrawalDialog({
       toast.error("Enter a positive amount");
       return;
     }
-    if (numAmount > availableBalance) {
-      toast.error(
-        `Amount exceeds available balance ($${availableBalance.toFixed(2)})`,
-      );
-      return;
-    }
+    // Note: we deliberately allow numAmount > availableBalance — the
+    // server will deduct what exists and bump total_withdrawn by the
+    // full amount (backfill mode for fixing P&L on past off-platform
+    // payouts).
     if (!resolvedReason) {
       toast.error(
         reasonCategory === "other"
@@ -414,8 +412,10 @@ export function ManualWithdrawalDialog({
         <div className="space-y-3 py-2">
           <p className="text-xs text-muted-foreground">
             Use this when you paid the user out off-platform (bank, crypto,
-            etc.). It deducts their on-site balance and bumps total_withdrawn
-            so the P&amp;L calculation stays correct.
+            etc.). Bumps <span className="font-mono">total_withdrawn</span>{" "}
+            so P&amp;L stays correct. If they have on-site balance, it&apos;s
+            deducted from there too. Works for backfilling historical
+            payouts even when the user has $0 on-site.
           </p>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">
@@ -429,9 +429,27 @@ export function ManualWithdrawalDialog({
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
             />
-            <p className="text-[11px] text-muted-foreground">
-              Available: ${availableBalance.toFixed(2)}
-            </p>
+            {(() => {
+              const numAmount = parseFloat(amount);
+              const exceeds =
+                !isNaN(numAmount) && numAmount > availableBalance;
+              if (exceeds) {
+                const phantom = numAmount - availableBalance;
+                return (
+                  <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                    On-site balance is ${availableBalance.toFixed(2)}. $
+                    {availableBalance.toFixed(2)} will be deducted from
+                    balance; the remaining ${phantom.toFixed(2)} only
+                    bumps total_withdrawn (backfill / P&amp;L fix).
+                  </p>
+                );
+              }
+              return (
+                <p className="text-[11px] text-muted-foreground">
+                  Available: ${availableBalance.toFixed(2)}
+                </p>
+              );
+            })()}
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">
