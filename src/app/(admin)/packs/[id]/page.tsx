@@ -10,7 +10,8 @@ import {
 } from "lucide-react";
 import { BackButton } from "@/components/back-button";
 import { getPackDetail, getPackStats, getPackGames } from "@/lib/queries/packs";
-import { requirePageAccess } from "@/lib/dal";
+import { getUserPermissions, requirePageAccess } from "@/lib/dal";
+import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { Badge } from "@/components/ui/badge";
 import { CardImage } from "@/components/card-image";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
@@ -29,10 +30,24 @@ export default async function PackDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requirePageAccess("/packs");
+  const session = await requirePageAccess("/packs");
   const { id } = await params;
   const data = await getPackDetail(id);
   if (!data) notFound();
+
+  // Gate the action buttons by capability so restricted roles (e.g.
+  // pack_creator) don't see ghost buttons that error on click. Real
+  // admins always pass; non-admins need the explicit __can_* keys.
+  const isAdmin = session.role === "admin";
+  let canToggle = isAdmin;
+  let canEdit = isAdmin;
+  let canDelete = isAdmin;
+  if (!isAdmin) {
+    const perms = await getUserPermissions(session.userId);
+    canToggle = hasCapability(perms, "__can_toggle_pack_active");
+    canEdit = hasCapability(perms, "__can_update_pack");
+    canDelete = hasCapability(perms, "__can_delete_pack");
+  }
 
   const [packStats, initialGames] = await Promise.all([
     getPackStats(id, data.priceUsd, {
@@ -75,11 +90,17 @@ export default async function PackDetailPage({
             </div>
             <p className="font-mono text-xs text-muted-foreground mt-0.5">{data.slug}</p>
           </div>
-          <div className="flex items-center gap-2">
-            <TogglePackButton packId={data.id} active={data.active} />
-            <EditPackButton pack={data} />
-            <DeletePackButton packId={data.id} packName={data.name} />
-          </div>
+          {(canToggle || canEdit || canDelete) && (
+            <div className="flex items-center gap-2">
+              {canToggle && (
+                <TogglePackButton packId={data.id} active={data.active} />
+              )}
+              {canEdit && <EditPackButton pack={data} />}
+              {canDelete && (
+                <DeletePackButton packId={data.id} packName={data.name} />
+              )}
+            </div>
+          )}
         </div>
       </PageHero>
 
