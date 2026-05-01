@@ -22,14 +22,29 @@ export async function createAdminUser(data: {
 
   // Inherit allowed_pages from existing users of the same role (the "role preset").
   // If no users exist yet for this role, defaults to empty (admin can configure
-  // via /settings/roles after creation).
+  // via /settings/roles after creation) — except for pack_creator, where the
+  // role's whole purpose is fixed and the chicken-and-egg of "no preset users
+  // exist yet" would otherwise leave a freshly-hired employee with zero access.
   let allowedPages: string[] = [];
   if (data.role !== "admin") {
     const existingUser = await adminDb.admin_users.findFirst({
       where: { role: data.role as admin_role },
       select: { allowed_pages: true },
     });
-    allowedPages = existingUser?.allowed_pages ?? [];
+    if (existingUser) {
+      allowedPages = existingUser.allowed_pages;
+    } else if (data.role === "pack_creator") {
+      // Out-of-the-box pack-creator can hit /packs and create new
+      // packs (with cover image upload). Cannot toggle live, edit
+      // existing packs, or see anything else. The admin can still
+      // tweak this role's permissions in /settings/roles → Pack
+      // Creator afterward.
+      allowedPages = [
+        "/packs",
+        "__can_create_pack",
+        "__can_upload_pack_image",
+      ];
+    }
   }
 
   // Explicit select — Prisma's default create() RETURNS * which references

@@ -75,6 +75,7 @@ export function CreateAdminDialog() {
               <option value="support">Support</option>
               <option value="marketing">Marketing</option>
               <option value="creator">Creator</option>
+              <option value="pack_creator">Pack Creator</option>
             </select>
           </div>
           <Button type="submit" disabled={loading} className="w-full">

@@ -17,12 +17,14 @@ import {
   getCapabilityGroups,
 } from "./permissions-utils";
 
-const ROLES = ["support", "marketing", "creator"] as const;
+const ROLES = ["support", "marketing", "creator", "pack_creator"] as const;
 
 const ROLE_DESCRIPTIONS: Record<string, string> = {
   support: "Customer support — typically needs Users, Chat, Transactions",
   marketing: "Marketing team — typically needs Promo Codes, Gift Cards, Creators",
   creator: "Content creators — typically only needs My Profile",
+  pack_creator:
+    "Pack creator employee — only Packs page + Create Pack capability. Cannot toggle packs live or edit existing ones.",
 };
 
 type GroupedPages = {

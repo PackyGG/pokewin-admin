@@ -249,6 +249,11 @@ enum admin_role {
   support
   marketing
   creator
+  // Hired-employee role limited to creating new packs. Defaults to
+  // /packs only and gets the __can_create_pack +
+  // __can_upload_pack_image capabilities; cannot toggle packs live,
+  // edit existing packs, or see other admin pages.
+  pack_creator
 }
 
 enum webhook_type {
