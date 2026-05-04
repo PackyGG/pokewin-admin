@@ -54,3 +54,4 @@ bun.lock
 /playwright-report/
 /blob-report/
 /playwright/.cache/
+/src/generated

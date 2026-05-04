@@ -6,11 +6,7 @@ import { requirePageAccess } from "@/lib/dal";
 import { FadeIn } from "@/components/fade-in";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import {
-  PageHero,
-  KpiTile,
-  SectionHeading,
-} from "@/components/modern-panels";
+import { PageHero, KpiTile } from "@/components/modern-panels";
 import { creatorsApi, type CreatorSocialStatus } from "@/lib/backend-api";
 
 import { SocialsQueueTabs } from "./tabs";
@@ -95,6 +91,7 @@ export default async function CreatorSocialsPage({
             <KpiTile
               label="Total in queue"
               value={status === "pending" ? String(total) : "—"}
+              icon={Inbox}
             />
           </div>
         </div>
@@ -200,9 +197,9 @@ export default async function CreatorSocialsPage({
                     {row.status === "pending" ? (
                       <SocialReviewActions socialId={row.id} />
                     ) : (
-                      <SectionHeading className="text-xs text-muted-foreground">
+                      <span className="text-xs text-muted-foreground italic">
                         Already reviewed
-                      </SectionHeading>
+                      </span>
                     )}
                   </li>
                 );
