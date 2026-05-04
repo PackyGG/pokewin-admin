@@ -213,7 +213,7 @@ export function RolePermissionsEditor({
                               href="/admin-users"
                               className="font-medium underline decoration-dotted hover:text-foreground"
                             >
-                              Admin Users
+                              Users (System)
                             </Link>{" "}
                             → user → Adjust Balance Limit. Without a
                             cap, this admin can adjust any amount.

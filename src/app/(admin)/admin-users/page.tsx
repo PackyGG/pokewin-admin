@@ -14,7 +14,7 @@ import {
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
-export const metadata = { title: "Admin Users" };
+export const metadata = { title: "Users" };
 
 export default async function AdminUsersPage() {
   const session = await requirePageAccess("/admin-users");
@@ -68,7 +68,7 @@ export default async function AdminUsersPage() {
               <Shield className="size-5 text-primary" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold leading-tight">Admin Users</h1>
+              <h1 className="text-2xl font-bold leading-tight">Users</h1>
               <p className="text-sm text-muted-foreground">
                 Staff accounts — roles, 2FA status, and activation state.
               </p>
