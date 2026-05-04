@@ -1,11 +1,10 @@
-import Link from "next/link";
-import { ArrowLeft, Wallet, Coins, Users, Receipt } from "lucide-react";
+import { Wallet, Coins, Users, Receipt } from "lucide-react";
 import { adminDb } from "@/lib/admin-db";
 import { requireMotha } from "@/lib/salary/motha-gate";
+import { ensureSalarySchema } from "@/lib/salary/ensure-schema";
 import { deriveAddress, getWalletSnapshot } from "@/lib/salary/wallet";
 import { PageHero, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
-import { Button } from "@/components/ui/button";
 import { SalariesClient } from "./salaries-client";
 
 export const metadata = { title: "Employee Salaries" };
@@ -14,6 +13,13 @@ const WALLET_SINGLETON_ID = "singleton";
 
 export default async function SalariesPage() {
   await requireMotha();
+  // Defensive: create the salary tables on first access if the
+  // migration hasn't been applied yet. Same self-heal pattern as
+  // /shifts. If the DB call below ever throws P2021 ("relation does
+  // not exist") this is what's saving us.
+  await ensureSalarySchema().catch(() => {
+    /* swallow — the queries below will surface a clearer error */
+  });
 
   // Pull every piece in parallel — the on-chain balance call adds
   // ~1-2s; we don't want it serialized behind the DB reads.
@@ -68,30 +74,18 @@ export default async function SalariesPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-9"
-              render={
-                <Link href="/spending" aria-label="Back to spending">
-                  <ArrowLeft className="size-4" />
-                </Link>
-              }
-            />
-            <div className="flex size-10 items-center justify-center rounded-xl bg-amber-500/10">
-              <Coins className="size-5 text-amber-500" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold leading-tight">
-                Employee Salaries
-              </h1>
-              <p className="text-sm text-muted-foreground">
-                On-chain USDT (ERC-20) payouts to saved employee
-                addresses. Admin-only.
-              </p>
-            </div>
+        <div className="flex items-center gap-3">
+          <div className="flex size-10 items-center justify-center rounded-xl bg-amber-500/10">
+            <Coins className="size-5 text-amber-500" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold leading-tight">
+              Employee Salaries
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              On-chain USDT (ERC-20) payouts to saved employee
+              addresses. Admin-only.
+            </p>
           </div>
         </div>
       </PageHero>

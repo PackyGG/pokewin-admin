@@ -75,7 +75,11 @@ export default async function AdminLayout({
         <Suspense fallback={null}>
           <TopProgressBar />
         </Suspense>
-        <AppSidebar role={session.role} allowedPages={allowedPages} />
+        <AppSidebar
+          role={session.role}
+          allowedPages={allowedPages}
+          username={session.username}
+        />
         <div className="flex flex-1 flex-col">
           {dbEnv === "dev" && <DevDbBanner />}
           <AdminHeader

@@ -1,7 +1,5 @@
-import Link from "next/link";
-import { Coins, Wallet } from "lucide-react";
+import { Wallet } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
-import { isMotha } from "@/lib/salary/motha-gate";
 import {
   getExpenses,
   getRecurringExpenses,
@@ -13,7 +11,6 @@ import { SpendingTabs } from "./tab-content";
 import { DateRangeFilter } from "./date-range-filter";
 import { PageHero } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
-import { Button } from "@/components/ui/button";
 
 export const metadata = { title: "Spending" };
 
@@ -30,21 +27,18 @@ export default async function SpendingPage({
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  const session = await requirePageAccess("/spending");
+  await requirePageAccess("/spending");
   const params = await searchParams;
 
   const defaults = getDefaultRange();
   const from = params.from || defaults.from;
   const to = params.to || defaults.to;
 
-  const [expenses, recurring, summary, trend, mothaAccess] = await Promise.all([
+  const [expenses, recurring, summary, trend] = await Promise.all([
     getExpenses({ page: 1, perPage: 500, from, to }),
     getRecurringExpenses(),
     getSpendingSummary(from, to),
     getMonthlyTrend(6),
-    // Salaries entry-point only renders for the dedicated user. Other
-    // admins / support / etc. don't see the link at all.
-    isMotha(session.userId),
   ]);
 
   return (
@@ -64,21 +58,7 @@ export default async function SpendingPage({
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {mothaAccess && (
-              <Button
-                variant="outline"
-                size="sm"
-                render={
-                  <Link href="/spending/salaries">
-                    <Coins className="size-4" />
-                    Employee Salaries
-                  </Link>
-                }
-              />
-            )}
-            <DateRangeFilter from={from} to={to} />
-          </div>
+          <DateRangeFilter from={from} to={to} />
         </div>
       </PageHero>
 

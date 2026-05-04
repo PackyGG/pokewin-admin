@@ -37,6 +37,7 @@ import {
   Globe,
   Megaphone,
   CalendarClock,
+  Coins,
   ChevronRight,
   type LucideIcon,
 } from "lucide-react";
@@ -95,12 +96,18 @@ const ICONS: Record<string, LucideIcon> = {
   Globe,
   Megaphone,
   CalendarClock,
+  Coins,
 };
 
 type NavItem = {
   label: string;
   href: string;
   icon: string;
+  // Restrict an item to a specific username (case-sensitive). Used
+  // for the salaries link which is visible only to "motha". The
+  // route itself ALSO gates server-side via requireMotha — this
+  // flag is purely cosmetic / discoverability.
+  usernameOnly?: string;
 };
 
 type NavGroup = {
@@ -145,6 +152,12 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Shifts", href: "/shifts", icon: "CalendarClock" },
       { label: "Spending", href: "/spending", icon: "Wallet" },
+      {
+        label: "Salaries",
+        href: "/salaries",
+        icon: "Coins",
+        usernameOnly: "motha",
+      },
     ],
   },
   {
@@ -251,16 +264,30 @@ function useCollapsedGroups(activeGroupLabel: string | undefined) {
   return { openGroups, toggleGroup };
 }
 
-export function AppSidebar({ role, allowedPages }: { role: string; allowedPages: string[] }) {
+export function AppSidebar({
+  role,
+  allowedPages,
+  username,
+}: {
+  role: string;
+  allowedPages: string[];
+  username: string;
+}) {
   const pathname = usePathname();
   const isAdmin = role === "admin";
 
   const groupsWithVisibility = useMemo(() =>
     NAV_GROUPS.map((group) => ({
       ...group,
-      visibleItems: group.items.filter((item) => isAdmin || allowedPages.includes(item.href)),
+      visibleItems: group.items.filter((item) => {
+        // usernameOnly is the strictest — even real admins don't see
+        // it unless their username matches. Used for /salaries which
+        // is a per-individual entry-point, not a role-based one.
+        if (item.usernameOnly && item.usernameOnly !== username) return false;
+        return isAdmin || allowedPages.includes(item.href);
+      }),
     })),
-  [isAdmin, allowedPages]);
+  [isAdmin, allowedPages, username]);
 
   const activeGroupLabel = useMemo(() =>
     groupsWithVisibility.find((group) =>

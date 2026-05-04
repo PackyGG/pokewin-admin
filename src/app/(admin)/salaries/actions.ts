@@ -5,6 +5,7 @@ import { z } from "zod";
 import { adminDb } from "@/lib/admin-db";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { require2FA } from "@/lib/require-2fa";
+import { ensureSalarySchema } from "@/lib/salary/ensure-schema";
 import { requireMotha } from "@/lib/salary/motha-gate";
 import {
   deriveAddress,
@@ -16,6 +17,12 @@ import {
 } from "@/lib/salary/wallet";
 
 const WALLET_SINGLETON_ID = "singleton";
+
+// All write actions self-heal the schema so a missing migration
+// doesn't surface as a P2021 to the admin. The page does the same.
+async function ensure(): Promise<void> {
+  await ensureSalarySchema().catch(() => {});
+}
 
 // ── Schemas ─────────────────────────────────────────────────────────
 
@@ -56,6 +63,7 @@ export async function setSalaryWalletKey(
   data: z.infer<typeof setKeySchema>,
 ): Promise<{ success: true; address: string } | { success: false; error: string }> {
   const session = await requireMotha();
+  await ensure();
   const parsed = setKeySchema.safeParse(data);
   if (!parsed.success) {
     return {
@@ -114,6 +122,7 @@ export async function addSalaryEmployee(
   data: z.infer<typeof employeeSchema>,
 ): Promise<{ success: true; id: string } | { success: false; error: string }> {
   const session = await requireMotha();
+  await ensure();
   const parsed = employeeSchema.safeParse(data);
   if (!parsed.success) {
     return {
@@ -162,6 +171,7 @@ export async function updateSalaryEmployee(
   data: z.infer<typeof updateEmployeeSchema>,
 ): Promise<{ success: true } | { success: false; error: string }> {
   const session = await requireMotha();
+  await ensure();
   const parsed = updateEmployeeSchema.safeParse(data);
   if (!parsed.success) {
     return {
@@ -210,6 +220,7 @@ export async function deleteSalaryEmployee(
   employeeId: string,
 ): Promise<{ success: true } | { success: false; error: string }> {
   const session = await requireMotha();
+  await ensure();
   if (!z.string().uuid().safeParse(employeeId).success) {
     return { success: false, error: "Invalid id" };
   }
@@ -249,6 +260,7 @@ export async function paySalary(
   | { success: false; error: string }
 > {
   const session = await requireMotha();
+  await ensure();
   const parsed = paySchema.safeParse(data);
   if (!parsed.success) {
     return {
