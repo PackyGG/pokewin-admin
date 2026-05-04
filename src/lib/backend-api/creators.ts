@@ -242,4 +242,63 @@ export const creatorsApi = {
         { query }
       )
       .then((r) => r.data.data),
+
+  listSocials: (
+    query: {
+      status?: CreatorSocialStatus;
+      offset?: number;
+      limit?: number;
+    } = {}
+  ) =>
+    backendApi
+      .get<Success<{ items: AdminCreatorSocial[]; total: number }>>(
+        `/admin/creators/socials`,
+        { query }
+      )
+      .then((r) => r.data),
+
+  approveSocial: (id: string) =>
+    backendApi
+      .post<Success<CreatorSocialResponse>>(
+        `/admin/creators/socials/${encodeURIComponent(id)}/approve`,
+        {}
+      )
+      .then((r) => r.data),
+
+  rejectSocial: (id: string, reason?: string) =>
+    backendApi
+      .post<Success<CreatorSocialResponse>>(
+        `/admin/creators/socials/${encodeURIComponent(id)}/reject`,
+        reason ? { reason } : {}
+      )
+      .then((r) => r.data),
+};
+
+export type CreatorSocialPlatform =
+  | "twitch"
+  | "kick"
+  | "youtube"
+  | "x"
+  | "instagram"
+  | "tiktok"
+  | "discord";
+
+export type CreatorSocialStatus = "pending" | "approved" | "rejected";
+
+export type CreatorSocialResponse = {
+  id: string;
+  user_id: string;
+  platform: CreatorSocialPlatform;
+  username: string;
+  url: string | null;
+  status: CreatorSocialStatus;
+  submitted_at: string;
+  reviewed_at: string | null;
+  reviewed_by: string | null;
+  rejection_reason: string | null;
+};
+
+export type AdminCreatorSocial = CreatorSocialResponse & {
+  creator_username: string | null;
+  creator_image: string | null;
 };

@@ -259,3 +259,88 @@ export async function forceEndCreatorSession(
     throw toActionError(err);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Creator socials (review queue)
+// ---------------------------------------------------------------------------
+
+export async function listCreatorSocialQueue(
+  options: {
+    status?: "pending" | "approved" | "rejected";
+    offset?: number;
+    limit?: number;
+  } = {},
+) {
+  await requirePageAccess("/creators");
+  try {
+    return await creatorsApi.listSocials(options);
+  } catch (err) {
+    throw toActionError(err);
+  }
+}
+
+export async function approveCreatorSocial(socialId: string) {
+  const session = await requirePageAccess("/creators");
+  await requireCapability(
+    session,
+    "__can_review_creator_social",
+    "approve creator socials",
+  );
+
+  try {
+    const result = await creatorsApi.approveSocial(socialId);
+
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "creator_social_approved",
+      targetUserId: result.user_id,
+      metadata: {
+        via: "backend_api",
+        social_id: result.id,
+        platform: result.platform,
+        username: result.username,
+      },
+    });
+
+    revalidatePath(`/creators/${result.user_id}`);
+    revalidatePath(`/creators/socials`);
+    return result;
+  } catch (err) {
+    throw toActionError(err);
+  }
+}
+
+export async function rejectCreatorSocial(
+  socialId: string,
+  options: { reason?: string } = {},
+) {
+  const session = await requirePageAccess("/creators");
+  await requireCapability(
+    session,
+    "__can_review_creator_social",
+    "reject creator socials",
+  );
+
+  try {
+    const result = await creatorsApi.rejectSocial(socialId, options.reason);
+
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "creator_social_rejected",
+      targetUserId: result.user_id,
+      metadata: {
+        via: "backend_api",
+        social_id: result.id,
+        platform: result.platform,
+        username: result.username,
+        reason: options.reason ?? null,
+      },
+    });
+
+    revalidatePath(`/creators/${result.user_id}`);
+    revalidatePath(`/creators/socials`);
+    return result;
+  } catch (err) {
+    throw toActionError(err);
+  }
+}

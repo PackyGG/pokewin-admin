@@ -136,6 +136,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Ads", href: "/creators/ads", icon: "Megaphone" },
       { label: "Analytics", href: "/creators/analytics", icon: "BarChart3" },
       { label: "Leaderboards", href: "/creators/leaderboards", icon: "Trophy" },
+      { label: "Socials Review", href: "/creators/socials", icon: "ShieldCheck" },
       { label: "Settings", href: "/creators/settings", icon: "Settings" },
     ],
   },
