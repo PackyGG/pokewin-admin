@@ -505,48 +505,48 @@ export const CAPABILITIES: CapabilityDef[] = [
     group: "Creators",
   },
 
-  // ── Spending ────────────────────────────────────────────────────────
+  // ── Employees (expense tracking + shift planning) ──────────────────
   {
     key: "__can_create_expense",
     label: "Create Expense",
     description: "Log a one-off expense",
-    group: "Spending",
+    group: "Employees",
   },
   {
     key: "__can_update_expense",
     label: "Update Expense",
     description: "Edit an expense",
-    group: "Spending",
+    group: "Employees",
   },
   {
     key: "__can_delete_expense",
     label: "Delete Expense",
     description: "Remove an expense",
-    group: "Spending",
+    group: "Employees",
   },
   {
     key: "__can_create_recurring_expense",
     label: "Create Recurring Expense",
     description: "Add a recurring expense entry",
-    group: "Spending",
+    group: "Employees",
   },
   {
     key: "__can_update_recurring_expense",
     label: "Update Recurring Expense",
     description: "Edit a recurring expense",
-    group: "Spending",
+    group: "Employees",
   },
   {
     key: "__can_toggle_recurring_expense",
     label: "Toggle Recurring Expense",
     description: "Enable / disable a recurring expense",
-    group: "Spending",
+    group: "Employees",
   },
   {
     key: "__can_delete_recurring_expense",
     label: "Delete Recurring Expense",
     description: "Remove a recurring expense",
-    group: "Spending",
+    group: "Employees",
   },
 
   // ── Bots ────────────────────────────────────────────────────────────

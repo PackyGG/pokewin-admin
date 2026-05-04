@@ -347,7 +347,7 @@ export const CAPABILITIES = [
   // ── Spending / expenses ────────────────────────────────────────────────
   {
     domain: "spending",
-    label: "Spending",
+    label: "Employees",
     description: "Expense tracking.",
     capabilities: [
       { key: "spending.create_expense", label: "Create expense", description: "Log a one-off expense." },
