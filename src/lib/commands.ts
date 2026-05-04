@@ -638,6 +638,10 @@ export const DOCS_NAV_GROUPS: Array<{ label: string; pageKeys: string[] }> = [
     pageKeys: ["/promo-codes", "/gift-cards", "/vouchers"],
   },
   {
+    label: "Employees",
+    pageKeys: ["/shifts", "/spending"],
+  },
+  {
     label: "Content",
     pageKeys: ["/packs", "/cards", "/battles"],
   },
@@ -661,10 +665,6 @@ export const DOCS_NAV_GROUPS: Array<{ label: string; pageKeys: string[] }> = [
       "/rewards/level-up",
       "/rewards/settings",
     ],
-  },
-  {
-    label: "Finance",
-    pageKeys: ["/spending"],
   },
   {
     label: "Creator Portal",

@@ -7,7 +7,6 @@ export type AdminPage = {
 export const ADMIN_PAGES: AdminPage[] = [
   // Navigation
   { group: "Navigation", label: "Dashboard", key: "/dashboard" },
-  { group: "Navigation", label: "Shifts", key: "/shifts" },
   { group: "Navigation", label: "Analytics", key: "/analytics" },
   { group: "Navigation", label: "Map", key: "/map" },
   { group: "Navigation", label: "Users", key: "/users" },
@@ -34,8 +33,9 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Marketing", label: "Promo Codes", key: "/promo-codes" },
   { group: "Marketing", label: "Gift Cards", key: "/gift-cards" },
   { group: "Marketing", label: "Vouchers", key: "/vouchers" },
-  // Finance
-  { group: "Finance", label: "Spending", key: "/spending" },
+  // Employees — internal staff workflow (shift planning + expense tracking)
+  { group: "Employees", label: "Shifts", key: "/shifts" },
+  { group: "Employees", label: "Spending", key: "/spending" },
   // Creator Portal
   { group: "Creator Portal", label: "My Profile", key: "/my-profile" },
   // Creators

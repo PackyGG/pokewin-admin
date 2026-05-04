@@ -114,7 +114,6 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Overview",
     items: [
       { label: "Dashboard", href: "/dashboard", icon: "LayoutDashboard" },
-      { label: "Shifts", href: "/shifts", icon: "CalendarClock" },
       { label: "Analytics", href: "/analytics", icon: "BarChart3" },
       { label: "Map", href: "/map", icon: "Globe" },
       { label: "Users", href: "/users", icon: "Users" },
@@ -139,6 +138,13 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Promo Codes", href: "/promo-codes", icon: "Tag" },
       { label: "Gift Cards", href: "/gift-cards", icon: "Gift" },
       { label: "Vouchers", href: "/vouchers", icon: "Ticket" },
+    ],
+  },
+  {
+    label: "Employees",
+    items: [
+      { label: "Shifts", href: "/shifts", icon: "CalendarClock" },
+      { label: "Spending", href: "/spending", icon: "Wallet" },
     ],
   },
   {
@@ -168,12 +174,6 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Leaderboards", href: "/rewards/leaderboards", icon: "Trophy" },
       { label: "Level Up", href: "/rewards/level-up", icon: "TrendingUp" },
       { label: "Settings", href: "/rewards/settings", icon: "Settings" },
-    ],
-  },
-  {
-    label: "Finance",
-    items: [
-      { label: "Spending", href: "/spending", icon: "Wallet" },
     ],
   },
   {
