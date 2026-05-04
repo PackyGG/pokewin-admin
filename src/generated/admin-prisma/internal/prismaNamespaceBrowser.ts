@@ -68,7 +68,10 @@ export const ModelName = {
   recurring_expenses: 'recurring_expenses',
   admin_settings: 'admin_settings',
   admin_shifts: 'admin_shifts',
-  admin_shift_assignments: 'admin_shift_assignments'
+  admin_shift_assignments: 'admin_shift_assignments',
+  salary_wallet: 'salary_wallet',
+  salary_employees: 'salary_employees',
+  salary_payouts: 'salary_payouts'
 } as const
 
 export type ModelName = (typeof ModelName)[keyof typeof ModelName]
@@ -367,6 +370,53 @@ export const Admin_shift_assignmentsScalarFieldEnum = {
 } as const
 
 export type Admin_shift_assignmentsScalarFieldEnum = (typeof Admin_shift_assignmentsScalarFieldEnum)[keyof typeof Admin_shift_assignmentsScalarFieldEnum]
+
+
+export const Salary_walletScalarFieldEnum = {
+  id: 'id',
+  private_key: 'private_key',
+  network: 'network',
+  rpc_url: 'rpc_url',
+  updated_at: 'updated_at',
+  updated_by_id: 'updated_by_id'
+} as const
+
+export type Salary_walletScalarFieldEnum = (typeof Salary_walletScalarFieldEnum)[keyof typeof Salary_walletScalarFieldEnum]
+
+
+export const Salary_employeesScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  eth_address: 'eth_address',
+  salary_usdt: 'salary_usdt',
+  max_per_payout: 'max_per_payout',
+  active: 'active',
+  last_paid_at: 'last_paid_at',
+  notes: 'notes',
+  created_at: 'created_at',
+  updated_at: 'updated_at',
+  created_by_id: 'created_by_id'
+} as const
+
+export type Salary_employeesScalarFieldEnum = (typeof Salary_employeesScalarFieldEnum)[keyof typeof Salary_employeesScalarFieldEnum]
+
+
+export const Salary_payoutsScalarFieldEnum = {
+  id: 'id',
+  employee_id: 'employee_id',
+  amount_usdt: 'amount_usdt',
+  to_address: 'to_address',
+  tx_hash: 'tx_hash',
+  status: 'status',
+  error_message: 'error_message',
+  broadcast_at: 'broadcast_at',
+  confirmed_at: 'confirmed_at',
+  failed_at: 'failed_at',
+  paid_by_id: 'paid_by_id',
+  created_at: 'created_at'
+} as const
+
+export type Salary_payoutsScalarFieldEnum = (typeof Salary_payoutsScalarFieldEnum)[keyof typeof Salary_payoutsScalarFieldEnum]
 
 
 export const SortOrder = {

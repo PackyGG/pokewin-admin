@@ -276,6 +276,8 @@ export type admin_usersWhereInput = {
   recurring_expenses?: Prisma.Recurring_expensesListRelationFilter
   shifts_created?: Prisma.Admin_shiftsListRelationFilter
   shift_assignments?: Prisma.Admin_shift_assignmentsListRelationFilter
+  salary_employees?: Prisma.Salary_employeesListRelationFilter
+  salary_payouts?: Prisma.Salary_payoutsListRelationFilter
 }
 
 export type admin_usersOrderByWithRelationInput = {
@@ -306,6 +308,8 @@ export type admin_usersOrderByWithRelationInput = {
   recurring_expenses?: Prisma.recurring_expensesOrderByRelationAggregateInput
   shifts_created?: Prisma.admin_shiftsOrderByRelationAggregateInput
   shift_assignments?: Prisma.admin_shift_assignmentsOrderByRelationAggregateInput
+  salary_employees?: Prisma.salary_employeesOrderByRelationAggregateInput
+  salary_payouts?: Prisma.salary_payoutsOrderByRelationAggregateInput
 }
 
 export type admin_usersWhereUniqueInput = Prisma.AtLeast<{
@@ -339,6 +343,8 @@ export type admin_usersWhereUniqueInput = Prisma.AtLeast<{
   recurring_expenses?: Prisma.Recurring_expensesListRelationFilter
   shifts_created?: Prisma.Admin_shiftsListRelationFilter
   shift_assignments?: Prisma.Admin_shift_assignmentsListRelationFilter
+  salary_employees?: Prisma.Salary_employeesListRelationFilter
+  salary_payouts?: Prisma.Salary_payoutsListRelationFilter
 }, "id" | "email" | "username">
 
 export type admin_usersOrderByWithAggregationInput = {
@@ -414,6 +420,8 @@ export type admin_usersCreateInput = {
   recurring_expenses?: Prisma.recurring_expensesCreateNestedManyWithoutCreated_byInput
   shifts_created?: Prisma.admin_shiftsCreateNestedManyWithoutCreated_byInput
   shift_assignments?: Prisma.admin_shift_assignmentsCreateNestedManyWithoutAdmin_userInput
+  salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
+  salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
 }
 
 export type admin_usersUncheckedCreateInput = {
@@ -443,6 +451,8 @@ export type admin_usersUncheckedCreateInput = {
   recurring_expenses?: Prisma.recurring_expensesUncheckedCreateNestedManyWithoutCreated_byInput
   shifts_created?: Prisma.admin_shiftsUncheckedCreateNestedManyWithoutCreated_byInput
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedCreateNestedManyWithoutAdmin_userInput
+  salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
 }
 
 export type admin_usersUpdateInput = {
@@ -472,6 +482,8 @@ export type admin_usersUpdateInput = {
   recurring_expenses?: Prisma.recurring_expensesUpdateManyWithoutCreated_byNestedInput
   shifts_created?: Prisma.admin_shiftsUpdateManyWithoutCreated_byNestedInput
   shift_assignments?: Prisma.admin_shift_assignmentsUpdateManyWithoutAdmin_userNestedInput
+  salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
+  salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
 }
 
 export type admin_usersUncheckedUpdateInput = {
@@ -501,6 +513,8 @@ export type admin_usersUncheckedUpdateInput = {
   recurring_expenses?: Prisma.recurring_expensesUncheckedUpdateManyWithoutCreated_byNestedInput
   shifts_created?: Prisma.admin_shiftsUncheckedUpdateManyWithoutCreated_byNestedInput
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
 }
 
 export type admin_usersCreateManyInput = {
@@ -856,6 +870,34 @@ export type admin_usersUpdateOneRequiredWithoutShift_assignmentsNestedInput = {
   update?: Prisma.XOR<Prisma.XOR<Prisma.admin_usersUpdateToOneWithWhereWithoutShift_assignmentsInput, Prisma.admin_usersUpdateWithoutShift_assignmentsInput>, Prisma.admin_usersUncheckedUpdateWithoutShift_assignmentsInput>
 }
 
+export type admin_usersCreateNestedOneWithoutSalary_employeesInput = {
+  create?: Prisma.XOR<Prisma.admin_usersCreateWithoutSalary_employeesInput, Prisma.admin_usersUncheckedCreateWithoutSalary_employeesInput>
+  connectOrCreate?: Prisma.admin_usersCreateOrConnectWithoutSalary_employeesInput
+  connect?: Prisma.admin_usersWhereUniqueInput
+}
+
+export type admin_usersUpdateOneRequiredWithoutSalary_employeesNestedInput = {
+  create?: Prisma.XOR<Prisma.admin_usersCreateWithoutSalary_employeesInput, Prisma.admin_usersUncheckedCreateWithoutSalary_employeesInput>
+  connectOrCreate?: Prisma.admin_usersCreateOrConnectWithoutSalary_employeesInput
+  upsert?: Prisma.admin_usersUpsertWithoutSalary_employeesInput
+  connect?: Prisma.admin_usersWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.admin_usersUpdateToOneWithWhereWithoutSalary_employeesInput, Prisma.admin_usersUpdateWithoutSalary_employeesInput>, Prisma.admin_usersUncheckedUpdateWithoutSalary_employeesInput>
+}
+
+export type admin_usersCreateNestedOneWithoutSalary_payoutsInput = {
+  create?: Prisma.XOR<Prisma.admin_usersCreateWithoutSalary_payoutsInput, Prisma.admin_usersUncheckedCreateWithoutSalary_payoutsInput>
+  connectOrCreate?: Prisma.admin_usersCreateOrConnectWithoutSalary_payoutsInput
+  connect?: Prisma.admin_usersWhereUniqueInput
+}
+
+export type admin_usersUpdateOneRequiredWithoutSalary_payoutsNestedInput = {
+  create?: Prisma.XOR<Prisma.admin_usersCreateWithoutSalary_payoutsInput, Prisma.admin_usersUncheckedCreateWithoutSalary_payoutsInput>
+  connectOrCreate?: Prisma.admin_usersCreateOrConnectWithoutSalary_payoutsInput
+  upsert?: Prisma.admin_usersUpsertWithoutSalary_payoutsInput
+  connect?: Prisma.admin_usersWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.admin_usersUpdateToOneWithWhereWithoutSalary_payoutsInput, Prisma.admin_usersUpdateWithoutSalary_payoutsInput>, Prisma.admin_usersUncheckedUpdateWithoutSalary_payoutsInput>
+}
+
 export type admin_usersCreateWithoutCustom_roleInput = {
   id?: string
   email: string
@@ -882,6 +924,8 @@ export type admin_usersCreateWithoutCustom_roleInput = {
   recurring_expenses?: Prisma.recurring_expensesCreateNestedManyWithoutCreated_byInput
   shifts_created?: Prisma.admin_shiftsCreateNestedManyWithoutCreated_byInput
   shift_assignments?: Prisma.admin_shift_assignmentsCreateNestedManyWithoutAdmin_userInput
+  salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
+  salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
 }
 
 export type admin_usersUncheckedCreateWithoutCustom_roleInput = {
@@ -910,6 +954,8 @@ export type admin_usersUncheckedCreateWithoutCustom_roleInput = {
   recurring_expenses?: Prisma.recurring_expensesUncheckedCreateNestedManyWithoutCreated_byInput
   shifts_created?: Prisma.admin_shiftsUncheckedCreateNestedManyWithoutCreated_byInput
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedCreateNestedManyWithoutAdmin_userInput
+  salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
 }
 
 export type admin_usersCreateOrConnectWithoutCustom_roleInput = {
@@ -987,6 +1033,8 @@ export type admin_usersCreateWithoutSessionsInput = {
   recurring_expenses?: Prisma.recurring_expensesCreateNestedManyWithoutCreated_byInput
   shifts_created?: Prisma.admin_shiftsCreateNestedManyWithoutCreated_byInput
   shift_assignments?: Prisma.admin_shift_assignmentsCreateNestedManyWithoutAdmin_userInput
+  salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
+  salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
 }
 
 export type admin_usersUncheckedCreateWithoutSessionsInput = {
@@ -1015,6 +1063,8 @@ export type admin_usersUncheckedCreateWithoutSessionsInput = {
   recurring_expenses?: Prisma.recurring_expensesUncheckedCreateNestedManyWithoutCreated_byInput
   shifts_created?: Prisma.admin_shiftsUncheckedCreateNestedManyWithoutCreated_byInput
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedCreateNestedManyWithoutAdmin_userInput
+  salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
 }
 
 export type admin_usersCreateOrConnectWithoutSessionsInput = {
@@ -1059,6 +1109,8 @@ export type admin_usersUpdateWithoutSessionsInput = {
   recurring_expenses?: Prisma.recurring_expensesUpdateManyWithoutCreated_byNestedInput
   shifts_created?: Prisma.admin_shiftsUpdateManyWithoutCreated_byNestedInput
   shift_assignments?: Prisma.admin_shift_assignmentsUpdateManyWithoutAdmin_userNestedInput
+  salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
+  salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
 }
 
 export type admin_usersUncheckedUpdateWithoutSessionsInput = {
@@ -1087,6 +1139,8 @@ export type admin_usersUncheckedUpdateWithoutSessionsInput = {
   recurring_expenses?: Prisma.recurring_expensesUncheckedUpdateManyWithoutCreated_byNestedInput
   shifts_created?: Prisma.admin_shiftsUncheckedUpdateManyWithoutCreated_byNestedInput
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
 }
 
 export type admin_usersCreateWithoutNotesInput = {
@@ -1115,6 +1169,8 @@ export type admin_usersCreateWithoutNotesInput = {
   recurring_expenses?: Prisma.recurring_expensesCreateNestedManyWithoutCreated_byInput
   shifts_created?: Prisma.admin_shiftsCreateNestedManyWithoutCreated_byInput
   shift_assignments?: Prisma.admin_shift_assignmentsCreateNestedManyWithoutAdmin_userInput
+  salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
+  salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
 }
 
 export type admin_usersUncheckedCreateWithoutNotesInput = {
@@ -1143,6 +1199,8 @@ export type admin_usersUncheckedCreateWithoutNotesInput = {
   recurring_expenses?: Prisma.recurring_expensesUncheckedCreateNestedManyWithoutCreated_byInput
   shifts_created?: Prisma.admin_shiftsUncheckedCreateNestedManyWithoutCreated_byInput
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedCreateNestedManyWithoutAdmin_userInput
+  salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
 }
 
 export type admin_usersCreateOrConnectWithoutNotesInput = {
@@ -1187,6 +1245,8 @@ export type admin_usersUpdateWithoutNotesInput = {
   recurring_expenses?: Prisma.recurring_expensesUpdateManyWithoutCreated_byNestedInput
   shifts_created?: Prisma.admin_shiftsUpdateManyWithoutCreated_byNestedInput
   shift_assignments?: Prisma.admin_shift_assignmentsUpdateManyWithoutAdmin_userNestedInput
+  salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
+  salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
 }
 
 export type admin_usersUncheckedUpdateWithoutNotesInput = {
@@ -1215,6 +1275,8 @@ export type admin_usersUncheckedUpdateWithoutNotesInput = {
   recurring_expenses?: Prisma.recurring_expensesUncheckedUpdateManyWithoutCreated_byNestedInput
   shifts_created?: Prisma.admin_shiftsUncheckedUpdateManyWithoutCreated_byNestedInput
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
 }
 
 export type admin_usersCreateWithoutAudit_eventsInput = {
@@ -1243,6 +1305,8 @@ export type admin_usersCreateWithoutAudit_eventsInput = {
   recurring_expenses?: Prisma.recurring_expensesCreateNestedManyWithoutCreated_byInput
   shifts_created?: Prisma.admin_shiftsCreateNestedManyWithoutCreated_byInput
   shift_assignments?: Prisma.admin_shift_assignmentsCreateNestedManyWithoutAdmin_userInput
+  salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
+  salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
 }
 
 export type admin_usersUncheckedCreateWithoutAudit_eventsInput = {
@@ -1271,6 +1335,8 @@ export type admin_usersUncheckedCreateWithoutAudit_eventsInput = {
   recurring_expenses?: Prisma.recurring_expensesUncheckedCreateNestedManyWithoutCreated_byInput
   shifts_created?: Prisma.admin_shiftsUncheckedCreateNestedManyWithoutCreated_byInput
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedCreateNestedManyWithoutAdmin_userInput
+  salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
 }
 
 export type admin_usersCreateOrConnectWithoutAudit_eventsInput = {
@@ -1315,6 +1381,8 @@ export type admin_usersUpdateWithoutAudit_eventsInput = {
   recurring_expenses?: Prisma.recurring_expensesUpdateManyWithoutCreated_byNestedInput
   shifts_created?: Prisma.admin_shiftsUpdateManyWithoutCreated_byNestedInput
   shift_assignments?: Prisma.admin_shift_assignmentsUpdateManyWithoutAdmin_userNestedInput
+  salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
+  salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
 }
 
 export type admin_usersUncheckedUpdateWithoutAudit_eventsInput = {
@@ -1343,6 +1411,8 @@ export type admin_usersUncheckedUpdateWithoutAudit_eventsInput = {
   recurring_expenses?: Prisma.recurring_expensesUncheckedUpdateManyWithoutCreated_byNestedInput
   shifts_created?: Prisma.admin_shiftsUncheckedUpdateManyWithoutCreated_byNestedInput
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
 }
 
 export type admin_usersCreateWithoutGift_card_actionsInput = {
@@ -1371,6 +1441,8 @@ export type admin_usersCreateWithoutGift_card_actionsInput = {
   recurring_expenses?: Prisma.recurring_expensesCreateNestedManyWithoutCreated_byInput
   shifts_created?: Prisma.admin_shiftsCreateNestedManyWithoutCreated_byInput
   shift_assignments?: Prisma.admin_shift_assignmentsCreateNestedManyWithoutAdmin_userInput
+  salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
+  salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
 }
 
 export type admin_usersUncheckedCreateWithoutGift_card_actionsInput = {
@@ -1399,6 +1471,8 @@ export type admin_usersUncheckedCreateWithoutGift_card_actionsInput = {
   recurring_expenses?: Prisma.recurring_expensesUncheckedCreateNestedManyWithoutCreated_byInput
   shifts_created?: Prisma.admin_shiftsUncheckedCreateNestedManyWithoutCreated_byInput
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedCreateNestedManyWithoutAdmin_userInput
+  salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
 }
 
 export type admin_usersCreateOrConnectWithoutGift_card_actionsInput = {
@@ -1443,6 +1517,8 @@ export type admin_usersUpdateWithoutGift_card_actionsInput = {
   recurring_expenses?: Prisma.recurring_expensesUpdateManyWithoutCreated_byNestedInput
   shifts_created?: Prisma.admin_shiftsUpdateManyWithoutCreated_byNestedInput
   shift_assignments?: Prisma.admin_shift_assignmentsUpdateManyWithoutAdmin_userNestedInput
+  salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
+  salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
 }
 
 export type admin_usersUncheckedUpdateWithoutGift_card_actionsInput = {
@@ -1471,6 +1547,8 @@ export type admin_usersUncheckedUpdateWithoutGift_card_actionsInput = {
   recurring_expenses?: Prisma.recurring_expensesUncheckedUpdateManyWithoutCreated_byNestedInput
   shifts_created?: Prisma.admin_shiftsUncheckedUpdateManyWithoutCreated_byNestedInput
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
 }
 
 export type admin_usersCreateWithoutVoucher_actionsInput = {
@@ -1499,6 +1577,8 @@ export type admin_usersCreateWithoutVoucher_actionsInput = {
   recurring_expenses?: Prisma.recurring_expensesCreateNestedManyWithoutCreated_byInput
   shifts_created?: Prisma.admin_shiftsCreateNestedManyWithoutCreated_byInput
   shift_assignments?: Prisma.admin_shift_assignmentsCreateNestedManyWithoutAdmin_userInput
+  salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
+  salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
 }
 
 export type admin_usersUncheckedCreateWithoutVoucher_actionsInput = {
@@ -1527,6 +1607,8 @@ export type admin_usersUncheckedCreateWithoutVoucher_actionsInput = {
   recurring_expenses?: Prisma.recurring_expensesUncheckedCreateNestedManyWithoutCreated_byInput
   shifts_created?: Prisma.admin_shiftsUncheckedCreateNestedManyWithoutCreated_byInput
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedCreateNestedManyWithoutAdmin_userInput
+  salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
 }
 
 export type admin_usersCreateOrConnectWithoutVoucher_actionsInput = {
@@ -1571,6 +1653,8 @@ export type admin_usersUpdateWithoutVoucher_actionsInput = {
   recurring_expenses?: Prisma.recurring_expensesUpdateManyWithoutCreated_byNestedInput
   shifts_created?: Prisma.admin_shiftsUpdateManyWithoutCreated_byNestedInput
   shift_assignments?: Prisma.admin_shift_assignmentsUpdateManyWithoutAdmin_userNestedInput
+  salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
+  salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
 }
 
 export type admin_usersUncheckedUpdateWithoutVoucher_actionsInput = {
@@ -1599,6 +1683,8 @@ export type admin_usersUncheckedUpdateWithoutVoucher_actionsInput = {
   recurring_expenses?: Prisma.recurring_expensesUncheckedUpdateManyWithoutCreated_byNestedInput
   shifts_created?: Prisma.admin_shiftsUncheckedUpdateManyWithoutCreated_byNestedInput
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
 }
 
 export type admin_usersCreateWithoutExpensesInput = {
@@ -1627,6 +1713,8 @@ export type admin_usersCreateWithoutExpensesInput = {
   recurring_expenses?: Prisma.recurring_expensesCreateNestedManyWithoutCreated_byInput
   shifts_created?: Prisma.admin_shiftsCreateNestedManyWithoutCreated_byInput
   shift_assignments?: Prisma.admin_shift_assignmentsCreateNestedManyWithoutAdmin_userInput
+  salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
+  salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
 }
 
 export type admin_usersUncheckedCreateWithoutExpensesInput = {
@@ -1655,6 +1743,8 @@ export type admin_usersUncheckedCreateWithoutExpensesInput = {
   recurring_expenses?: Prisma.recurring_expensesUncheckedCreateNestedManyWithoutCreated_byInput
   shifts_created?: Prisma.admin_shiftsUncheckedCreateNestedManyWithoutCreated_byInput
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedCreateNestedManyWithoutAdmin_userInput
+  salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
 }
 
 export type admin_usersCreateOrConnectWithoutExpensesInput = {
@@ -1699,6 +1789,8 @@ export type admin_usersUpdateWithoutExpensesInput = {
   recurring_expenses?: Prisma.recurring_expensesUpdateManyWithoutCreated_byNestedInput
   shifts_created?: Prisma.admin_shiftsUpdateManyWithoutCreated_byNestedInput
   shift_assignments?: Prisma.admin_shift_assignmentsUpdateManyWithoutAdmin_userNestedInput
+  salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
+  salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
 }
 
 export type admin_usersUncheckedUpdateWithoutExpensesInput = {
@@ -1727,6 +1819,8 @@ export type admin_usersUncheckedUpdateWithoutExpensesInput = {
   recurring_expenses?: Prisma.recurring_expensesUncheckedUpdateManyWithoutCreated_byNestedInput
   shifts_created?: Prisma.admin_shiftsUncheckedUpdateManyWithoutCreated_byNestedInput
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
 }
 
 export type admin_usersCreateWithoutRecurring_expensesInput = {
@@ -1755,6 +1849,8 @@ export type admin_usersCreateWithoutRecurring_expensesInput = {
   expenses?: Prisma.expensesCreateNestedManyWithoutCreated_byInput
   shifts_created?: Prisma.admin_shiftsCreateNestedManyWithoutCreated_byInput
   shift_assignments?: Prisma.admin_shift_assignmentsCreateNestedManyWithoutAdmin_userInput
+  salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
+  salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
 }
 
 export type admin_usersUncheckedCreateWithoutRecurring_expensesInput = {
@@ -1783,6 +1879,8 @@ export type admin_usersUncheckedCreateWithoutRecurring_expensesInput = {
   expenses?: Prisma.expensesUncheckedCreateNestedManyWithoutCreated_byInput
   shifts_created?: Prisma.admin_shiftsUncheckedCreateNestedManyWithoutCreated_byInput
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedCreateNestedManyWithoutAdmin_userInput
+  salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
 }
 
 export type admin_usersCreateOrConnectWithoutRecurring_expensesInput = {
@@ -1827,6 +1925,8 @@ export type admin_usersUpdateWithoutRecurring_expensesInput = {
   expenses?: Prisma.expensesUpdateManyWithoutCreated_byNestedInput
   shifts_created?: Prisma.admin_shiftsUpdateManyWithoutCreated_byNestedInput
   shift_assignments?: Prisma.admin_shift_assignmentsUpdateManyWithoutAdmin_userNestedInput
+  salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
+  salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
 }
 
 export type admin_usersUncheckedUpdateWithoutRecurring_expensesInput = {
@@ -1855,6 +1955,8 @@ export type admin_usersUncheckedUpdateWithoutRecurring_expensesInput = {
   expenses?: Prisma.expensesUncheckedUpdateManyWithoutCreated_byNestedInput
   shifts_created?: Prisma.admin_shiftsUncheckedUpdateManyWithoutCreated_byNestedInput
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
 }
 
 export type admin_usersCreateWithoutShifts_createdInput = {
@@ -1883,6 +1985,8 @@ export type admin_usersCreateWithoutShifts_createdInput = {
   expenses?: Prisma.expensesCreateNestedManyWithoutCreated_byInput
   recurring_expenses?: Prisma.recurring_expensesCreateNestedManyWithoutCreated_byInput
   shift_assignments?: Prisma.admin_shift_assignmentsCreateNestedManyWithoutAdmin_userInput
+  salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
+  salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
 }
 
 export type admin_usersUncheckedCreateWithoutShifts_createdInput = {
@@ -1911,6 +2015,8 @@ export type admin_usersUncheckedCreateWithoutShifts_createdInput = {
   expenses?: Prisma.expensesUncheckedCreateNestedManyWithoutCreated_byInput
   recurring_expenses?: Prisma.recurring_expensesUncheckedCreateNestedManyWithoutCreated_byInput
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedCreateNestedManyWithoutAdmin_userInput
+  salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
 }
 
 export type admin_usersCreateOrConnectWithoutShifts_createdInput = {
@@ -1955,6 +2061,8 @@ export type admin_usersUpdateWithoutShifts_createdInput = {
   expenses?: Prisma.expensesUpdateManyWithoutCreated_byNestedInput
   recurring_expenses?: Prisma.recurring_expensesUpdateManyWithoutCreated_byNestedInput
   shift_assignments?: Prisma.admin_shift_assignmentsUpdateManyWithoutAdmin_userNestedInput
+  salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
+  salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
 }
 
 export type admin_usersUncheckedUpdateWithoutShifts_createdInput = {
@@ -1983,6 +2091,8 @@ export type admin_usersUncheckedUpdateWithoutShifts_createdInput = {
   expenses?: Prisma.expensesUncheckedUpdateManyWithoutCreated_byNestedInput
   recurring_expenses?: Prisma.recurring_expensesUncheckedUpdateManyWithoutCreated_byNestedInput
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
 }
 
 export type admin_usersCreateWithoutShift_assignmentsInput = {
@@ -2011,6 +2121,8 @@ export type admin_usersCreateWithoutShift_assignmentsInput = {
   expenses?: Prisma.expensesCreateNestedManyWithoutCreated_byInput
   recurring_expenses?: Prisma.recurring_expensesCreateNestedManyWithoutCreated_byInput
   shifts_created?: Prisma.admin_shiftsCreateNestedManyWithoutCreated_byInput
+  salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
+  salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
 }
 
 export type admin_usersUncheckedCreateWithoutShift_assignmentsInput = {
@@ -2039,6 +2151,8 @@ export type admin_usersUncheckedCreateWithoutShift_assignmentsInput = {
   expenses?: Prisma.expensesUncheckedCreateNestedManyWithoutCreated_byInput
   recurring_expenses?: Prisma.recurring_expensesUncheckedCreateNestedManyWithoutCreated_byInput
   shifts_created?: Prisma.admin_shiftsUncheckedCreateNestedManyWithoutCreated_byInput
+  salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
 }
 
 export type admin_usersCreateOrConnectWithoutShift_assignmentsInput = {
@@ -2083,6 +2197,8 @@ export type admin_usersUpdateWithoutShift_assignmentsInput = {
   expenses?: Prisma.expensesUpdateManyWithoutCreated_byNestedInput
   recurring_expenses?: Prisma.recurring_expensesUpdateManyWithoutCreated_byNestedInput
   shifts_created?: Prisma.admin_shiftsUpdateManyWithoutCreated_byNestedInput
+  salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
+  salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
 }
 
 export type admin_usersUncheckedUpdateWithoutShift_assignmentsInput = {
@@ -2111,6 +2227,280 @@ export type admin_usersUncheckedUpdateWithoutShift_assignmentsInput = {
   expenses?: Prisma.expensesUncheckedUpdateManyWithoutCreated_byNestedInput
   recurring_expenses?: Prisma.recurring_expensesUncheckedUpdateManyWithoutCreated_byNestedInput
   shifts_created?: Prisma.admin_shiftsUncheckedUpdateManyWithoutCreated_byNestedInput
+  salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
+}
+
+export type admin_usersCreateWithoutSalary_employeesInput = {
+  id?: string
+  email: string
+  username: string
+  password_hash: string
+  role?: $Enums.admin_role
+  totp_secret?: string | null
+  totp_enabled?: boolean
+  recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
+  is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  created_at?: Date | string
+  updated_at?: Date | string
+  allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
+  custom_role?: Prisma.admin_rolesCreateNestedOneWithoutAdmin_usersInput
+  audit_events?: Prisma.admin_audit_eventsCreateNestedManyWithoutAdmin_userInput
+  sessions?: Prisma.admin_sessionsCreateNestedManyWithoutAdmin_userInput
+  notes?: Prisma.admin_notesCreateNestedManyWithoutAdmin_userInput
+  gift_card_actions?: Prisma.admin_gift_card_actionsCreateNestedManyWithoutAdmin_userInput
+  voucher_actions?: Prisma.admin_voucher_actionsCreateNestedManyWithoutAdmin_userInput
+  expenses?: Prisma.expensesCreateNestedManyWithoutCreated_byInput
+  recurring_expenses?: Prisma.recurring_expensesCreateNestedManyWithoutCreated_byInput
+  shifts_created?: Prisma.admin_shiftsCreateNestedManyWithoutCreated_byInput
+  shift_assignments?: Prisma.admin_shift_assignmentsCreateNestedManyWithoutAdmin_userInput
+  salary_payouts?: Prisma.salary_payoutsCreateNestedManyWithoutPaid_byInput
+}
+
+export type admin_usersUncheckedCreateWithoutSalary_employeesInput = {
+  id?: string
+  email: string
+  username: string
+  password_hash: string
+  role?: $Enums.admin_role
+  role_id?: string | null
+  totp_secret?: string | null
+  totp_enabled?: boolean
+  recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
+  is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  created_at?: Date | string
+  updated_at?: Date | string
+  allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
+  audit_events?: Prisma.admin_audit_eventsUncheckedCreateNestedManyWithoutAdmin_userInput
+  sessions?: Prisma.admin_sessionsUncheckedCreateNestedManyWithoutAdmin_userInput
+  notes?: Prisma.admin_notesUncheckedCreateNestedManyWithoutAdmin_userInput
+  gift_card_actions?: Prisma.admin_gift_card_actionsUncheckedCreateNestedManyWithoutAdmin_userInput
+  voucher_actions?: Prisma.admin_voucher_actionsUncheckedCreateNestedManyWithoutAdmin_userInput
+  expenses?: Prisma.expensesUncheckedCreateNestedManyWithoutCreated_byInput
+  recurring_expenses?: Prisma.recurring_expensesUncheckedCreateNestedManyWithoutCreated_byInput
+  shifts_created?: Prisma.admin_shiftsUncheckedCreateNestedManyWithoutCreated_byInput
+  shift_assignments?: Prisma.admin_shift_assignmentsUncheckedCreateNestedManyWithoutAdmin_userInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutPaid_byInput
+}
+
+export type admin_usersCreateOrConnectWithoutSalary_employeesInput = {
+  where: Prisma.admin_usersWhereUniqueInput
+  create: Prisma.XOR<Prisma.admin_usersCreateWithoutSalary_employeesInput, Prisma.admin_usersUncheckedCreateWithoutSalary_employeesInput>
+}
+
+export type admin_usersUpsertWithoutSalary_employeesInput = {
+  update: Prisma.XOR<Prisma.admin_usersUpdateWithoutSalary_employeesInput, Prisma.admin_usersUncheckedUpdateWithoutSalary_employeesInput>
+  create: Prisma.XOR<Prisma.admin_usersCreateWithoutSalary_employeesInput, Prisma.admin_usersUncheckedCreateWithoutSalary_employeesInput>
+  where?: Prisma.admin_usersWhereInput
+}
+
+export type admin_usersUpdateToOneWithWhereWithoutSalary_employeesInput = {
+  where?: Prisma.admin_usersWhereInput
+  data: Prisma.XOR<Prisma.admin_usersUpdateWithoutSalary_employeesInput, Prisma.admin_usersUncheckedUpdateWithoutSalary_employeesInput>
+}
+
+export type admin_usersUpdateWithoutSalary_employeesInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  email?: Prisma.StringFieldUpdateOperationsInput | string
+  username?: Prisma.StringFieldUpdateOperationsInput | string
+  password_hash?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
+  is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
+  custom_role?: Prisma.admin_rolesUpdateOneWithoutAdmin_usersNestedInput
+  audit_events?: Prisma.admin_audit_eventsUpdateManyWithoutAdmin_userNestedInput
+  sessions?: Prisma.admin_sessionsUpdateManyWithoutAdmin_userNestedInput
+  notes?: Prisma.admin_notesUpdateManyWithoutAdmin_userNestedInput
+  gift_card_actions?: Prisma.admin_gift_card_actionsUpdateManyWithoutAdmin_userNestedInput
+  voucher_actions?: Prisma.admin_voucher_actionsUpdateManyWithoutAdmin_userNestedInput
+  expenses?: Prisma.expensesUpdateManyWithoutCreated_byNestedInput
+  recurring_expenses?: Prisma.recurring_expensesUpdateManyWithoutCreated_byNestedInput
+  shifts_created?: Prisma.admin_shiftsUpdateManyWithoutCreated_byNestedInput
+  shift_assignments?: Prisma.admin_shift_assignmentsUpdateManyWithoutAdmin_userNestedInput
+  salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
+}
+
+export type admin_usersUncheckedUpdateWithoutSalary_employeesInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  email?: Prisma.StringFieldUpdateOperationsInput | string
+  username?: Prisma.StringFieldUpdateOperationsInput | string
+  password_hash?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
+  is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
+  audit_events?: Prisma.admin_audit_eventsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  sessions?: Prisma.admin_sessionsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  notes?: Prisma.admin_notesUncheckedUpdateManyWithoutAdmin_userNestedInput
+  gift_card_actions?: Prisma.admin_gift_card_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  voucher_actions?: Prisma.admin_voucher_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  expenses?: Prisma.expensesUncheckedUpdateManyWithoutCreated_byNestedInput
+  recurring_expenses?: Prisma.recurring_expensesUncheckedUpdateManyWithoutCreated_byNestedInput
+  shifts_created?: Prisma.admin_shiftsUncheckedUpdateManyWithoutCreated_byNestedInput
+  shift_assignments?: Prisma.admin_shift_assignmentsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
+}
+
+export type admin_usersCreateWithoutSalary_payoutsInput = {
+  id?: string
+  email: string
+  username: string
+  password_hash: string
+  role?: $Enums.admin_role
+  totp_secret?: string | null
+  totp_enabled?: boolean
+  recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
+  is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  created_at?: Date | string
+  updated_at?: Date | string
+  allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
+  custom_role?: Prisma.admin_rolesCreateNestedOneWithoutAdmin_usersInput
+  audit_events?: Prisma.admin_audit_eventsCreateNestedManyWithoutAdmin_userInput
+  sessions?: Prisma.admin_sessionsCreateNestedManyWithoutAdmin_userInput
+  notes?: Prisma.admin_notesCreateNestedManyWithoutAdmin_userInput
+  gift_card_actions?: Prisma.admin_gift_card_actionsCreateNestedManyWithoutAdmin_userInput
+  voucher_actions?: Prisma.admin_voucher_actionsCreateNestedManyWithoutAdmin_userInput
+  expenses?: Prisma.expensesCreateNestedManyWithoutCreated_byInput
+  recurring_expenses?: Prisma.recurring_expensesCreateNestedManyWithoutCreated_byInput
+  shifts_created?: Prisma.admin_shiftsCreateNestedManyWithoutCreated_byInput
+  shift_assignments?: Prisma.admin_shift_assignmentsCreateNestedManyWithoutAdmin_userInput
+  salary_employees?: Prisma.salary_employeesCreateNestedManyWithoutCreated_byInput
+}
+
+export type admin_usersUncheckedCreateWithoutSalary_payoutsInput = {
+  id?: string
+  email: string
+  username: string
+  password_hash: string
+  role?: $Enums.admin_role
+  role_id?: string | null
+  totp_secret?: string | null
+  totp_enabled?: boolean
+  recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
+  is_active?: boolean
+  display_username?: string | null
+  profile_image?: runtime.Bytes | null
+  profile_image_mime?: string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  created_at?: Date | string
+  updated_at?: Date | string
+  allowed_pages?: Prisma.admin_usersCreateallowed_pagesInput | string[]
+  audit_events?: Prisma.admin_audit_eventsUncheckedCreateNestedManyWithoutAdmin_userInput
+  sessions?: Prisma.admin_sessionsUncheckedCreateNestedManyWithoutAdmin_userInput
+  notes?: Prisma.admin_notesUncheckedCreateNestedManyWithoutAdmin_userInput
+  gift_card_actions?: Prisma.admin_gift_card_actionsUncheckedCreateNestedManyWithoutAdmin_userInput
+  voucher_actions?: Prisma.admin_voucher_actionsUncheckedCreateNestedManyWithoutAdmin_userInput
+  expenses?: Prisma.expensesUncheckedCreateNestedManyWithoutCreated_byInput
+  recurring_expenses?: Prisma.recurring_expensesUncheckedCreateNestedManyWithoutCreated_byInput
+  shifts_created?: Prisma.admin_shiftsUncheckedCreateNestedManyWithoutCreated_byInput
+  shift_assignments?: Prisma.admin_shift_assignmentsUncheckedCreateNestedManyWithoutAdmin_userInput
+  salary_employees?: Prisma.salary_employeesUncheckedCreateNestedManyWithoutCreated_byInput
+}
+
+export type admin_usersCreateOrConnectWithoutSalary_payoutsInput = {
+  where: Prisma.admin_usersWhereUniqueInput
+  create: Prisma.XOR<Prisma.admin_usersCreateWithoutSalary_payoutsInput, Prisma.admin_usersUncheckedCreateWithoutSalary_payoutsInput>
+}
+
+export type admin_usersUpsertWithoutSalary_payoutsInput = {
+  update: Prisma.XOR<Prisma.admin_usersUpdateWithoutSalary_payoutsInput, Prisma.admin_usersUncheckedUpdateWithoutSalary_payoutsInput>
+  create: Prisma.XOR<Prisma.admin_usersCreateWithoutSalary_payoutsInput, Prisma.admin_usersUncheckedCreateWithoutSalary_payoutsInput>
+  where?: Prisma.admin_usersWhereInput
+}
+
+export type admin_usersUpdateToOneWithWhereWithoutSalary_payoutsInput = {
+  where?: Prisma.admin_usersWhereInput
+  data: Prisma.XOR<Prisma.admin_usersUpdateWithoutSalary_payoutsInput, Prisma.admin_usersUncheckedUpdateWithoutSalary_payoutsInput>
+}
+
+export type admin_usersUpdateWithoutSalary_payoutsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  email?: Prisma.StringFieldUpdateOperationsInput | string
+  username?: Prisma.StringFieldUpdateOperationsInput | string
+  password_hash?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
+  is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
+  custom_role?: Prisma.admin_rolesUpdateOneWithoutAdmin_usersNestedInput
+  audit_events?: Prisma.admin_audit_eventsUpdateManyWithoutAdmin_userNestedInput
+  sessions?: Prisma.admin_sessionsUpdateManyWithoutAdmin_userNestedInput
+  notes?: Prisma.admin_notesUpdateManyWithoutAdmin_userNestedInput
+  gift_card_actions?: Prisma.admin_gift_card_actionsUpdateManyWithoutAdmin_userNestedInput
+  voucher_actions?: Prisma.admin_voucher_actionsUpdateManyWithoutAdmin_userNestedInput
+  expenses?: Prisma.expensesUpdateManyWithoutCreated_byNestedInput
+  recurring_expenses?: Prisma.recurring_expensesUpdateManyWithoutCreated_byNestedInput
+  shifts_created?: Prisma.admin_shiftsUpdateManyWithoutCreated_byNestedInput
+  shift_assignments?: Prisma.admin_shift_assignmentsUpdateManyWithoutAdmin_userNestedInput
+  salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
+}
+
+export type admin_usersUncheckedUpdateWithoutSalary_payoutsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  email?: Prisma.StringFieldUpdateOperationsInput | string
+  username?: Prisma.StringFieldUpdateOperationsInput | string
+  password_hash?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
+  is_active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  display_username?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  profile_image?: Prisma.NullableBytesFieldUpdateOperationsInput | runtime.Bytes | null
+  profile_image_mime?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferences?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
+  audit_events?: Prisma.admin_audit_eventsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  sessions?: Prisma.admin_sessionsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  notes?: Prisma.admin_notesUncheckedUpdateManyWithoutAdmin_userNestedInput
+  gift_card_actions?: Prisma.admin_gift_card_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  voucher_actions?: Prisma.admin_voucher_actionsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  expenses?: Prisma.expensesUncheckedUpdateManyWithoutCreated_byNestedInput
+  recurring_expenses?: Prisma.recurring_expensesUncheckedUpdateManyWithoutCreated_byNestedInput
+  shifts_created?: Prisma.admin_shiftsUncheckedUpdateManyWithoutCreated_byNestedInput
+  shift_assignments?: Prisma.admin_shift_assignmentsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
 }
 
 export type admin_usersCreateManyCustom_roleInput = {
@@ -2158,6 +2548,8 @@ export type admin_usersUpdateWithoutCustom_roleInput = {
   recurring_expenses?: Prisma.recurring_expensesUpdateManyWithoutCreated_byNestedInput
   shifts_created?: Prisma.admin_shiftsUpdateManyWithoutCreated_byNestedInput
   shift_assignments?: Prisma.admin_shift_assignmentsUpdateManyWithoutAdmin_userNestedInput
+  salary_employees?: Prisma.salary_employeesUpdateManyWithoutCreated_byNestedInput
+  salary_payouts?: Prisma.salary_payoutsUpdateManyWithoutPaid_byNestedInput
 }
 
 export type admin_usersUncheckedUpdateWithoutCustom_roleInput = {
@@ -2186,6 +2578,8 @@ export type admin_usersUncheckedUpdateWithoutCustom_roleInput = {
   recurring_expenses?: Prisma.recurring_expensesUncheckedUpdateManyWithoutCreated_byNestedInput
   shifts_created?: Prisma.admin_shiftsUncheckedUpdateManyWithoutCreated_byNestedInput
   shift_assignments?: Prisma.admin_shift_assignmentsUncheckedUpdateManyWithoutAdmin_userNestedInput
+  salary_employees?: Prisma.salary_employeesUncheckedUpdateManyWithoutCreated_byNestedInput
+  salary_payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutPaid_byNestedInput
 }
 
 export type admin_usersUncheckedUpdateManyWithoutCustom_roleInput = {
@@ -2222,6 +2616,8 @@ export type Admin_usersCountOutputType = {
   recurring_expenses: number
   shifts_created: number
   shift_assignments: number
+  salary_employees: number
+  salary_payouts: number
 }
 
 export type Admin_usersCountOutputTypeSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
@@ -2234,6 +2630,8 @@ export type Admin_usersCountOutputTypeSelect<ExtArgs extends runtime.Types.Exten
   recurring_expenses?: boolean | Admin_usersCountOutputTypeCountRecurring_expensesArgs
   shifts_created?: boolean | Admin_usersCountOutputTypeCountShifts_createdArgs
   shift_assignments?: boolean | Admin_usersCountOutputTypeCountShift_assignmentsArgs
+  salary_employees?: boolean | Admin_usersCountOutputTypeCountSalary_employeesArgs
+  salary_payouts?: boolean | Admin_usersCountOutputTypeCountSalary_payoutsArgs
 }
 
 /**
@@ -2309,6 +2707,20 @@ export type Admin_usersCountOutputTypeCountShift_assignmentsArgs<ExtArgs extends
   where?: Prisma.admin_shift_assignmentsWhereInput
 }
 
+/**
+ * Admin_usersCountOutputType without action
+ */
+export type Admin_usersCountOutputTypeCountSalary_employeesArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.salary_employeesWhereInput
+}
+
+/**
+ * Admin_usersCountOutputType without action
+ */
+export type Admin_usersCountOutputTypeCountSalary_payoutsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.salary_payoutsWhereInput
+}
+
 
 export type admin_usersSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
@@ -2338,6 +2750,8 @@ export type admin_usersSelect<ExtArgs extends runtime.Types.Extensions.InternalA
   recurring_expenses?: boolean | Prisma.admin_users$recurring_expensesArgs<ExtArgs>
   shifts_created?: boolean | Prisma.admin_users$shifts_createdArgs<ExtArgs>
   shift_assignments?: boolean | Prisma.admin_users$shift_assignmentsArgs<ExtArgs>
+  salary_employees?: boolean | Prisma.admin_users$salary_employeesArgs<ExtArgs>
+  salary_payouts?: boolean | Prisma.admin_users$salary_payoutsArgs<ExtArgs>
   _count?: boolean | Prisma.Admin_usersCountOutputTypeDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["admin_users"]>
 
@@ -2415,6 +2829,8 @@ export type admin_usersInclude<ExtArgs extends runtime.Types.Extensions.Internal
   recurring_expenses?: boolean | Prisma.admin_users$recurring_expensesArgs<ExtArgs>
   shifts_created?: boolean | Prisma.admin_users$shifts_createdArgs<ExtArgs>
   shift_assignments?: boolean | Prisma.admin_users$shift_assignmentsArgs<ExtArgs>
+  salary_employees?: boolean | Prisma.admin_users$salary_employeesArgs<ExtArgs>
+  salary_payouts?: boolean | Prisma.admin_users$salary_payoutsArgs<ExtArgs>
   _count?: boolean | Prisma.Admin_usersCountOutputTypeDefaultArgs<ExtArgs>
 }
 export type admin_usersIncludeCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
@@ -2437,6 +2853,8 @@ export type $admin_usersPayload<ExtArgs extends runtime.Types.Extensions.Interna
     recurring_expenses: Prisma.$recurring_expensesPayload<ExtArgs>[]
     shifts_created: Prisma.$admin_shiftsPayload<ExtArgs>[]
     shift_assignments: Prisma.$admin_shift_assignmentsPayload<ExtArgs>[]
+    salary_employees: Prisma.$salary_employeesPayload<ExtArgs>[]
+    salary_payouts: Prisma.$salary_payoutsPayload<ExtArgs>[]
   }
   scalars: runtime.Types.Extensions.GetPayloadResult<{
     id: string
@@ -2860,6 +3278,8 @@ export interface Prisma__admin_usersClient<T, Null = never, ExtArgs extends runt
   recurring_expenses<T extends Prisma.admin_users$recurring_expensesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.admin_users$recurring_expensesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$recurring_expensesPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   shifts_created<T extends Prisma.admin_users$shifts_createdArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.admin_users$shifts_createdArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$admin_shiftsPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   shift_assignments<T extends Prisma.admin_users$shift_assignmentsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.admin_users$shift_assignmentsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$admin_shift_assignmentsPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  salary_employees<T extends Prisma.admin_users$salary_employeesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.admin_users$salary_employeesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$salary_employeesPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  salary_payouts<T extends Prisma.admin_users$salary_payoutsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.admin_users$salary_payoutsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$salary_payoutsPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   /**
    * Attaches callbacks for the resolution and/or rejection of the Promise.
    * @param onfulfilled The callback to execute when the Promise is resolved.
@@ -3539,6 +3959,54 @@ export type admin_users$shift_assignmentsArgs<ExtArgs extends runtime.Types.Exte
   take?: number
   skip?: number
   distinct?: Prisma.Admin_shift_assignmentsScalarFieldEnum | Prisma.Admin_shift_assignmentsScalarFieldEnum[]
+}
+
+/**
+ * admin_users.salary_employees
+ */
+export type admin_users$salary_employeesArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the salary_employees
+   */
+  select?: Prisma.salary_employeesSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the salary_employees
+   */
+  omit?: Prisma.salary_employeesOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.salary_employeesInclude<ExtArgs> | null
+  where?: Prisma.salary_employeesWhereInput
+  orderBy?: Prisma.salary_employeesOrderByWithRelationInput | Prisma.salary_employeesOrderByWithRelationInput[]
+  cursor?: Prisma.salary_employeesWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.Salary_employeesScalarFieldEnum | Prisma.Salary_employeesScalarFieldEnum[]
+}
+
+/**
+ * admin_users.salary_payouts
+ */
+export type admin_users$salary_payoutsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the salary_payouts
+   */
+  select?: Prisma.salary_payoutsSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the salary_payouts
+   */
+  omit?: Prisma.salary_payoutsOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.salary_payoutsInclude<ExtArgs> | null
+  where?: Prisma.salary_payoutsWhereInput
+  orderBy?: Prisma.salary_payoutsOrderByWithRelationInput | Prisma.salary_payoutsOrderByWithRelationInput[]
+  cursor?: Prisma.salary_payoutsWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.Salary_payoutsScalarFieldEnum | Prisma.Salary_payoutsScalarFieldEnum[]
 }
 
 /**

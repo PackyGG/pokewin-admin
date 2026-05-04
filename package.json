@@ -29,6 +29,7 @@
 		"cmdk": "^1.1.1",
 		"d3-geo": "^3.1.1",
 		"date-fns": "^4.1.0",
+		"ethers": "^6.16.0",
 		"i18n-iso-countries": "^7.14.0",
 		"imagekit": "^6.0.0",
 		"jose": "^6.2.1",

@@ -44,6 +44,8 @@ model admin_users {
   recurring_expenses    recurring_expenses[]
   shifts_created        admin_shifts[]              @relation("admin_shifts_created_by")
   shift_assignments     admin_shift_assignments[]
+  salary_employees      salary_employees[]
+  salary_payouts        salary_payouts[]
 }
 
 // Custom role definitions for the granular-permissions system. Four
@@ -377,4 +379,76 @@ model admin_shift_assignments {
 
   @@unique([shift_id, admin_user_id])
   @@index([admin_user_id])
+}
+
+
+// ─── Employee salaries (motha-only ETH USDT payouts) ───────────────
+// Single-row config holding the private key + RPC URL for the
+// payout wallet. There is exactly one row keyed on a literal
+// "singleton" id; the schema doesn't enforce that — server actions
+// always upsert by that id. Plaintext private key — gated by
+// username == "motha" at the action layer; DB-level access is
+// admin-only.
+model salary_wallet {
+  id              String   @id
+  private_key     String
+  network         String   @default("ethereum")
+  rpc_url         String?
+  updated_at      DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+  updated_by_id   String?  @db.Uuid
+}
+
+model salary_employees {
+  id               String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String
+  // 0x-prefixed lowercased Ethereum address. Validation happens at
+  // the server-action boundary (ethers.isAddress), the column itself
+  // is just a String so test addresses / future-other-chain cases
+  // don't require a migration.
+  eth_address      String
+  // The employee's recurring salary in USDT (6 decimals). Default
+  // amount when admin clicks "Pay now" — admin can override per pay.
+  salary_usdt      Decimal             @db.Decimal(20, 6)
+  // Optional safety cap — refuses any single payout exceeding this
+  // amount even if the admin types it explicitly. Catches typos.
+  max_per_payout   Decimal?            @db.Decimal(20, 6)
+  active           Boolean             @default(true)
+  last_paid_at     DateTime?           @db.Timestamptz(6)
+  notes            String?
+  created_at       DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime            @updatedAt @db.Timestamptz(6)
+  created_by_id    String              @db.Uuid
+  created_by       admin_users         @relation(fields: [created_by_id], references: [id])
+
+  payouts          salary_payouts[]
+
+  @@index([active])
+}
+
+model salary_payouts {
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id     String           @db.Uuid
+  amount_usdt     Decimal          @db.Decimal(20, 6)
+  // Captured at send time so a later employee.eth_address rename
+  // doesn't rewrite history. Always lowercased.
+  to_address      String
+  // Null until broadcast succeeds. Indexed unique so a retry can't
+  // accidentally double-insert the same on-chain transfer.
+  tx_hash         String?          @unique
+  // pending → broadcast → confirmed (or failed). Status moves
+  // forward only.
+  status          String           @default("pending")
+  error_message   String?
+  broadcast_at    DateTime?        @db.Timestamptz(6)
+  confirmed_at    DateTime?        @db.Timestamptz(6)
+  failed_at       DateTime?        @db.Timestamptz(6)
+  paid_by_id      String           @db.Uuid
+  paid_by         admin_users      @relation(fields: [paid_by_id], references: [id])
+  created_at      DateTime         @default(now()) @db.Timestamptz(6)
+
+  employee        salary_employees @relation(fields: [employee_id], references: [id])
+
+  @@index([employee_id])
+  @@index([status])
+  @@index([created_at(sort: Desc)])
 }
