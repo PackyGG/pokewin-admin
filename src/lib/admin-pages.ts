@@ -50,7 +50,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   // Security
   { group: "Security", label: "Security", key: "/security" },
   // System
-  { group: "System", label: "Admin Users", key: "/admin-users" },
+  { group: "System", label: "Users", key: "/admin-users" },
   { group: "System", label: "Admin Roles", key: "/admin-users/roles" },
   { group: "System", label: "Role Permissions", key: "/settings/roles" },
   { group: "System", label: "Bots", key: "/bots" },

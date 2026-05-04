@@ -163,7 +163,7 @@ export default async function SystemStatsPage() {
           accent="amber"
         />
         <KpiTile
-          label="Admin Users"
+          label="Users"
           value={formatNumber(totalAdminUsers)}
           sub="Total accounts"
           icon={Users}

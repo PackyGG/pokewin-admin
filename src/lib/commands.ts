@@ -425,7 +425,7 @@ export const NAV_COMMANDS: NavCommand[] = [
   {
     kind: "nav",
     id: "nav.admin-users",
-    label: "Admin Users",
+    label: "Users",
     description: "Admin panel users",
     icon: ShieldCheck,
     href: "/admin-users",
