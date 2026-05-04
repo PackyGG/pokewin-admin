@@ -9,6 +9,8 @@ import {
   CartesianGrid,
   Area,
   AreaChart,
+  Bar,
+  BarChart,
 } from "recharts";
 import {
   ChartContainer,
@@ -27,6 +29,7 @@ import {
   TrendingUp,
   PieChart as PieIcon,
   LineChart as LineIcon,
+  BarChart3,
 } from "lucide-react";
 import { MetricTile, SectionHeading } from "@/components/modern-panels";
 
@@ -69,6 +72,24 @@ export function SummaryCards({
     amount: item.amount,
     fill: CATEGORY_CHART_COLORS[item.category] ?? "hsl(0, 0%, 55%)",
   }));
+
+  // Top-spending bar chart — same data, sorted descending so the
+  // biggest expense category sits at the top of the horizontal bar
+  // list. We compute share-of-total here so the right-side panel can
+  // show "Salaries — $4,200 (38%)" beside each bar.
+  const totalCategorySpend = summary.byCategory.reduce(
+    (sum, item) => sum + item.amount,
+    0,
+  );
+  const rankedCategories = summary.byCategory
+    .slice()
+    .sort((a, b) => b.amount - a.amount)
+    .map((item) => ({
+      category: getCategoryLabel(item.category),
+      amount: item.amount,
+      share: totalCategorySpend > 0 ? item.amount / totalCategorySpend : 0,
+      fill: CATEGORY_CHART_COLORS[item.category] ?? "hsl(0, 0%, 55%)",
+    }));
 
   const chartConfig: ChartConfig = {};
   for (const item of summary.byCategory) {
@@ -138,60 +159,164 @@ export function SummaryCards({
       </div>
 
       {(chartData.length > 0 || trend.length > 0) && (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          {chartData.length > 0 && (
+        <>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            {chartData.length > 0 && (
+              <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute -right-12 -top-12 size-32 rounded-full bg-purple-500/[0.08] blur-2xl"
+                />
+                <div className="relative p-5">
+                  <SectionHeading
+                    icon={PieIcon}
+                    title={`Breakdown — ${periodLabel}`}
+                  />
+                  <ChartContainer
+                    config={chartConfig}
+                    className="aspect-auto h-[280px] w-full mt-3"
+                  >
+                    <PieChart>
+                      <Pie
+                        data={chartData}
+                        dataKey="amount"
+                        nameKey="category"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={50}
+                        outerRadius={90}
+                        paddingAngle={2}
+                        strokeWidth={0}
+                        label={({ category, percent }) =>
+                          `${category} ${(percent * 100).toFixed(0)}%`
+                        }
+                        labelLine={false}
+                        fontSize={11}
+                        animationDuration={700}
+                        animationEasing="ease-out"
+                      >
+                        {chartData.map((entry, index) => (
+                          <Cell key={index} fill={entry.fill} />
+                        ))}
+                      </Pie>
+                      <ChartTooltip
+                        content={
+                          <ChartTooltipContent
+                            formatter={(value) =>
+                              formatCurrency(Number(value))
+                            }
+                            hideIndicator
+                          />
+                        }
+                      />
+                    </PieChart>
+                  </ChartContainer>
+                </div>
+              </div>
+            )}
+
+            {/* Top spending categories — horizontal bars sorted by
+                absolute spend. Pie reads percentages well; bar chart
+                makes "where most $ go" visually obvious at a glance.
+                Empty state shown when there's no period spend so the
+                layout doesn't collapse asymmetrically. */}
             <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
               <div
                 aria-hidden
-                className="pointer-events-none absolute -right-12 -top-12 size-32 rounded-full bg-purple-500/[0.08] blur-2xl"
+                className="pointer-events-none absolute -right-12 -top-12 size-32 rounded-full bg-amber-500/[0.08] blur-2xl"
               />
               <div className="relative p-5">
                 <SectionHeading
-                  icon={PieIcon}
-                  title={`Breakdown — ${periodLabel}`}
+                  icon={BarChart3}
+                  title="Top Spending Categories"
                 />
-                <ChartContainer
-                  config={chartConfig}
-                  className="aspect-auto h-[250px] w-full mt-3"
-                >
-                  <PieChart>
-                    <Pie
-                      data={chartData}
-                      dataKey="amount"
-                      nameKey="category"
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={50}
-                      outerRadius={90}
-                      paddingAngle={2}
-                      strokeWidth={0}
-                      label={({ category, percent }) =>
-                        `${category} ${(percent * 100).toFixed(0)}%`
-                      }
-                      labelLine={false}
-                      fontSize={11}
-                      animationDuration={700}
-                      animationEasing="ease-out"
+                {rankedCategories.length > 0 ? (
+                  <>
+                    <ChartContainer
+                      config={chartConfig}
+                      className="aspect-auto h-[260px] w-full mt-3"
                     >
-                      {chartData.map((entry, index) => (
-                        <Cell key={index} fill={entry.fill} />
-                      ))}
-                    </Pie>
-                    <ChartTooltip
-                      content={
-                        <ChartTooltipContent
-                          formatter={(value) =>
-                            formatCurrency(Number(value))
-                          }
-                          hideIndicator
+                      <BarChart
+                        data={rankedCategories}
+                        layout="vertical"
+                        margin={{ left: 8, right: 24, top: 4, bottom: 4 }}
+                      >
+                        <CartesianGrid horizontal={false} />
+                        <XAxis
+                          type="number"
+                          tickFormatter={(v) => `$${v}`}
+                          fontSize={11}
+                          tickLine={false}
+                          axisLine={false}
                         />
-                      }
-                    />
-                  </PieChart>
-                </ChartContainer>
+                        <YAxis
+                          type="category"
+                          dataKey="category"
+                          fontSize={11}
+                          tickLine={false}
+                          axisLine={false}
+                          width={108}
+                        />
+                        <ChartTooltip
+                          cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }}
+                          content={
+                            <ChartTooltipContent
+                              formatter={(value) =>
+                                formatCurrency(Number(value))
+                              }
+                              hideIndicator
+                            />
+                          }
+                        />
+                        <Bar
+                          dataKey="amount"
+                          radius={[0, 6, 6, 0]}
+                          animationDuration={700}
+                          animationEasing="ease-out"
+                        >
+                          {rankedCategories.map((entry, index) => (
+                            <Cell key={index} fill={entry.fill} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ChartContainer>
+                    {/* Compact summary list under the chart — gives
+                        exact $ + share without needing to hover. */}
+                    <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                      {rankedCategories.slice(0, 6).map((c) => (
+                        <div
+                          key={c.category}
+                          className="flex items-center justify-between gap-2"
+                        >
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span
+                              className="size-2 rounded-full shrink-0"
+                              style={{ backgroundColor: c.fill }}
+                            />
+                            <span className="truncate text-muted-foreground">
+                              {c.category}
+                            </span>
+                          </div>
+                          <span className="tabular-nums font-medium shrink-0">
+                            {formatCurrency(c.amount)}
+                            <span className="ml-1 text-[10px] text-muted-foreground">
+                              ({(c.share * 100).toFixed(0)}%)
+                            </span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex h-[260px] flex-col items-center justify-center text-center text-sm text-muted-foreground">
+                    <BarChart3 className="size-8 text-muted-foreground/40 mb-2" />
+                    <p>No expenses in this period.</p>
+                    <p className="text-xs">Add expenses to see category breakdown.</p>
+                  </div>
+                )}
               </div>
             </div>
-          )}
+          </div>
 
           {trend.length > 0 && (
             <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
@@ -205,7 +330,7 @@ export function SummaryCards({
                   config={{
                     total: { label: "Total", color: "hsl(220, 70%, 55%)" },
                   }}
-                  className="aspect-auto h-[250px] w-full mt-3"
+                  className="aspect-auto h-[260px] w-full mt-3"
                 >
                   <AreaChart data={trend} margin={{ left: 10, right: 10 }}>
                     <CartesianGrid vertical={false} />
@@ -265,7 +390,7 @@ export function SummaryCards({
               </div>
             </div>
           )}
-        </div>
+        </>
       )}
 
     </div>
