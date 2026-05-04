@@ -77,7 +77,14 @@ const resolveBaseUrl = (env: DbEnv): string => {
       } in .env.local, then restart the dev server.\n\nCurrent env var state:\n${diagnoseConfig()}`,
     );
   }
-  return resolved.replace(/\/+$/, "");
+  // Strip trailing slash, then ensure the API version prefix is present.
+  // The backend mounts every route under `/v1`. Some Vercel deployments
+  // were configured with a host-only URL (e.g. `https://api.packy.gg`)
+  // which produced `/admin/creators` and 500'd at the not-found handler.
+  // Normalizing here makes the env var forgiving — `https://api.packy.gg`
+  // and `https://api.packy.gg/v1` both work.
+  const trimmed = resolved.replace(/\/+$/, "");
+  return /\/v\d+$/.test(trimmed) ? trimmed : `${trimmed}/v1`;
 };
 
 const resolveAdminKey = (env: DbEnv): string => {

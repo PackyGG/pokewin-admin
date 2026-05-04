@@ -18,4 +18,8 @@ export type {
   PendingConversionResponse,
   CreateDealInput,
   UpdateDealInput,
+  CreatorSocialPlatform,
+  CreatorSocialStatus,
+  CreatorSocialResponse,
+  AdminCreatorSocial,
 } from "./creators";

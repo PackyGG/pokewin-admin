@@ -7,6 +7,7 @@ import {
   UserPlus,
   Wallet,
   HandCoins,
+  Info,
 } from "lucide-react";
 
 import {
@@ -117,9 +118,13 @@ export default async function CreatorDetailPage({
               >
                 {profile.username ?? profile.email}
               </Link>
-              {profile.code && (
+              {profile.code ? (
                 <Badge variant="outline" className="font-mono text-[11px]">
                   {profile.code}
+                </Badge>
+              ) : (
+                <Badge variant="secondary" className="text-[11px]">
+                  No affiliate code
                 </Badge>
               )}
               <span className="text-muted-foreground/40">·</span>
@@ -138,6 +143,21 @@ export default async function CreatorDetailPage({
           </div>
         </div>
       </PageHero>
+
+      {!profile.hasAffiliateAccount && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
+          <Info className="size-4 mt-0.5 text-amber-500 shrink-0" />
+          <div>
+            <div className="font-medium text-amber-500">
+              Bu kullanıcının affiliate hesabı yok
+            </div>
+            <div className="mt-0.5 text-muted-foreground">
+              Henüz creator olarak provision edilmemiş — affiliate code, deal,
+              click ve signup metrikleri boş gözükecek.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* KPI strip — house-POV financial colors:
           - Total Earned: money paid TO creator → rose (house loss)

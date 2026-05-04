@@ -39,6 +39,7 @@ import {
   CalendarClock,
   Coins,
   ChevronRight,
+  FlaskConical,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -97,6 +98,7 @@ const ICONS: Record<string, LucideIcon> = {
   Megaphone,
   CalendarClock,
   Coins,
+  FlaskConical,
 };
 
 type NavItem = {
@@ -114,6 +116,11 @@ type NavGroup = {
   label: string;
   items: NavItem[];
   creatorOnly?: boolean;
+  /**
+   * When true, the group is only rendered while the admin's main-DB
+   * cookie points at the dev environment. Production never sees it.
+   */
+  devEnvOnly?: boolean;
 };
 
 const NAV_GROUPS: NavGroup[] = [
@@ -136,6 +143,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Ads", href: "/creators/ads", icon: "Megaphone" },
       { label: "Analytics", href: "/creators/analytics", icon: "BarChart3" },
       { label: "Leaderboards", href: "/creators/leaderboards", icon: "Trophy" },
+      { label: "Socials Review", href: "/creators/socials", icon: "ShieldCheck" },
       { label: "Settings", href: "/creators/settings", icon: "Settings" },
     ],
   },
@@ -194,6 +202,13 @@ const NAV_GROUPS: NavGroup[] = [
     creatorOnly: true,
     items: [
       { label: "My Profile", href: "/my-profile", icon: "UserCircle" },
+    ],
+  },
+  {
+    label: "Test Tools",
+    devEnvOnly: true,
+    items: [
+      { label: "Creator Testing", href: "/test/creator", icon: "FlaskConical" },
     ],
   },
   {
@@ -268,26 +283,32 @@ export function AppSidebar({
   role,
   allowedPages,
   username,
+  dbEnv,
 }: {
   role: string;
   allowedPages: string[];
   username: string;
+  dbEnv: "prod" | "dev";
 }) {
   const pathname = usePathname();
   const isAdmin = role === "admin";
 
   const groupsWithVisibility = useMemo(() =>
-    NAV_GROUPS.map((group) => ({
-      ...group,
-      visibleItems: group.items.filter((item) => {
-        // usernameOnly is the strictest — even real admins don't see
-        // it unless their username matches. Used for /salaries which
-        // is a per-individual entry-point, not a role-based one.
-        if (item.usernameOnly && item.usernameOnly !== username) return false;
-        return isAdmin || allowedPages.includes(item.href);
-      }),
-    })),
-  [isAdmin, allowedPages, username]);
+    NAV_GROUPS
+      // devEnvOnly groups (e.g. Test Tools) hide entirely on prod.
+      .filter((group) => !group.devEnvOnly || dbEnv === "dev")
+      .map((group) => ({
+        ...group,
+        visibleItems: group.items.filter((item) => {
+          // usernameOnly is the strictest — even real admins don't
+          // see it unless their username matches. Used for /salaries
+          // which is a per-individual entry-point, not a role-based
+          // one.
+          if (item.usernameOnly && item.usernameOnly !== username) return false;
+          return isAdmin || allowedPages.includes(item.href);
+        }),
+      })),
+  [isAdmin, allowedPages, username, dbEnv]);
 
   const activeGroupLabel = useMemo(() =>
     groupsWithVisibility.find((group) =>

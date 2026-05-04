@@ -469,6 +469,12 @@ export const CAPABILITIES: CapabilityDef[] = [
     group: "Creators",
   },
   {
+    key: "__can_review_creator_social",
+    label: "Review Creator Social",
+    description: "Approve or reject creator-submitted social account",
+    group: "Creators",
+  },
+  {
     key: "__can_create_creator_deal",
     label: "Create Creator Deal",
     description: "Create a creator deal (daily fills, leaderboard, sponsorship)",

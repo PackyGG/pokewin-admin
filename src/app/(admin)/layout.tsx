@@ -79,6 +79,7 @@ export default async function AdminLayout({
           role={session.role}
           allowedPages={allowedPages}
           username={session.username}
+          dbEnv={dbEnv}
         />
         <div className="flex flex-1 flex-col">
           {dbEnv === "dev" && <DevDbBanner />}

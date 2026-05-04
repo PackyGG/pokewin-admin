@@ -49,6 +49,30 @@ const safeJson = async (res: Response): Promise<unknown> => {
  * Server-only: callers must be in Server Components, Route Handlers, or
  * Server Actions. Never import from a client component.
  */
+const resolveServerOrigin = (): string | null => {
+  // Backend's CORS plugin rejects no-Origin requests outside an
+  // allowlist. Server-side fetch from Next.js never attaches Origin,
+  // so we send the admin dashboard's own URL — which the backend has
+  // configured as a trusted origin via ADMIN_DASHBOARD_URL. If nothing
+  // is configured we send no Origin and rely on the backend's path
+  // allowlist (`/v1/admin/`) instead.
+  const explicit = (
+    process.env.ADMIN_DASHBOARD_URL ||
+    process.env.NEXT_PUBLIC_APP_URL ||
+    process.env.VERCEL_PROJECT_PRODUCTION_URL ||
+    process.env.VERCEL_URL
+  )?.trim();
+  if (!explicit) return null;
+  const candidate = explicit.startsWith("http")
+    ? explicit
+    : `https://${explicit}`;
+  try {
+    return new URL(candidate).origin;
+  } catch {
+    return null;
+  }
+};
+
 export const backendApiRequest = async <T = unknown>(
   path: string,
   options: RequestOptions = {}
@@ -64,10 +88,13 @@ export const backendApiRequest = async <T = unknown>(
   const bypassSecret =
     process.env.CF_BYPASS_SECRET || process.env.BACKEND_BYPASS_SECRET;
 
+  const serverOrigin = resolveServerOrigin();
+
   const headers: Record<string, string> = {
     "x-api-key": config.adminKey,
     ...config.cfHeaders,
     ...(bypassSecret ? { "x-bypass-secret": bypassSecret } : {}),
+    ...(serverOrigin ? { Origin: serverOrigin } : {}),
     ...(options.body !== undefined ? { "Content-Type": "application/json" } : {}),
     ...options.headers,
   };

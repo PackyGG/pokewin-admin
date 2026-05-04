@@ -7,23 +7,44 @@ import type { CreatorTipItem } from "./creators-types";
 
 export async function getCreatorDetail(userId: string, refPage?: number, refPerPage?: number) {
   const db = await getDb();
-  const account = await db.affiliate_accounts.findUnique({
-    where: { user_id: userId },
-    select: {
-      user_id: true,
-      total_referred: true,
-      total_wager_volume_usd: true,
-      total_earned_usd: true,
-      available_usd: true,
-      total_paid_out_usd: true,
-      total_bonus_distributed_usd: true,
-      last_payout_at: true,
-      created_at: true,
-      user: { select: { username: true, email: true, image: true, role: true, affiliate_code: true, affiliate_code_active: true } },
-    },
-  });
+  // Fetch the affiliate account and the user record in parallel. A user can
+  // exist without ever being promoted to an affiliate (no affiliate_accounts
+  // row, no affiliate_codes). The detail page should still render for these
+  // users with an "no affiliate code yet" banner instead of a hard 404 — only
+  // truly unknown user IDs should 404.
+  const [account, userBasic] = await Promise.all([
+    db.affiliate_accounts.findUnique({
+      where: { user_id: userId },
+      select: {
+        user_id: true,
+        total_referred: true,
+        total_wager_volume_usd: true,
+        total_earned_usd: true,
+        available_usd: true,
+        total_paid_out_usd: true,
+        total_bonus_distributed_usd: true,
+        last_payout_at: true,
+        created_at: true,
+        user: { select: { username: true, email: true, image: true, role: true, affiliate_code: true, affiliate_code_active: true } },
+      },
+    }),
+    db.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        image: true,
+        role: true,
+        created_at: true,
+      },
+    }),
+  ]);
 
-  if (!account) return null;
+  if (!account && !userBasic) return null;
+
+  const hasAffiliateAccount = !!account;
+  const userInfo = account?.user ?? userBasic ?? null;
 
   // Referrals list now sources from signups (user.referred_by = creatorId) so
   // we show every user who registered via this creator's link — including
@@ -455,24 +476,25 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
   }));
 
   return {
-    userId: account.user_id,
-    username: account.user?.username ?? null,
-    email: account.user?.email ?? null,
-    image: account.user?.image ?? null,
-    role: account.user?.role ?? "user",
+    userId,
+    hasAffiliateAccount,
+    username: userInfo?.username ?? null,
+    email: userInfo?.email ?? null,
+    image: userInfo?.image ?? null,
+    role: userInfo?.role ?? "user",
     code: primaryCode,
     // Presence in affiliate_codes is the only authoritative "has a code"
     // signal. user.affiliate_code_active tracks the referral cookie on this
     // user (unrelated to whether they OWN any creator codes).
     codeActive: allCodes.length > 0,
     level: 1,
-    totalReferred: account.total_referred,
-    totalWagerVolumeUsd: toNumber(account.total_wager_volume_usd),
-    totalEarnedUsd: toNumber(account.total_earned_usd),
-    availableUsd: toNumber(account.available_usd),
-    totalPaidOutUsd: toNumber(account.total_paid_out_usd),
-    totalBonusDistributedUsd: toNumber(account.total_bonus_distributed_usd),
-    lastPayoutAt: account.last_payout_at?.toISOString() ?? null,
+    totalReferred: account?.total_referred ?? 0,
+    totalWagerVolumeUsd: toNumber(account?.total_wager_volume_usd ?? 0),
+    totalEarnedUsd: toNumber(account?.total_earned_usd ?? 0),
+    availableUsd: toNumber(account?.available_usd ?? 0),
+    totalPaidOutUsd: toNumber(account?.total_paid_out_usd ?? 0),
+    totalBonusDistributedUsd: toNumber(account?.total_bonus_distributed_usd ?? 0),
+    lastPayoutAt: account?.last_payout_at?.toISOString() ?? null,
     totalClicks: clickCount,
     clicks: {
       total: clickCount,
@@ -506,7 +528,7 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
     },
     ftdByPeriod,
     pnl,
-    createdAt: account.created_at.toISOString(),
+    createdAt: (account?.created_at ?? userBasic?.created_at ?? new Date()).toISOString(),
     additionalCodes: allCodes.map((c) => ({
       id: c.id,
       code: c.code,
