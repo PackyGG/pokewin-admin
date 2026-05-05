@@ -140,7 +140,7 @@ export const InventoryGrid = React.memo(function InventoryGrid({
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle className="text-sm font-medium">
             {total} items
             {inventoryValue > 0 ? (
@@ -198,7 +198,7 @@ export const InventoryGrid = React.memo(function InventoryGrid({
           )}
         </div>
         <div className="flex flex-wrap items-end gap-2 pt-2">
-          <div className="relative flex-1 min-w-[140px] max-w-[220px]">
+          <div className="relative flex-1 min-w-[140px] sm:max-w-[220px]">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
             <Input
               placeholder="Search cards..."
@@ -244,7 +244,7 @@ export const InventoryGrid = React.memo(function InventoryGrid({
               placeholder="Min $"
               value={priceMin}
               onChange={(e) => updateFilter("priceMin", e.target.value)}
-              className="h-8 w-[90px] text-xs"
+              className="h-8 w-[80px] sm:w-[90px] text-xs"
             />
             <span className="text-xs text-muted-foreground">-</span>
             <Input
@@ -252,7 +252,7 @@ export const InventoryGrid = React.memo(function InventoryGrid({
               placeholder="Max $"
               value={priceMax}
               onChange={(e) => updateFilter("priceMax", e.target.value)}
-              className="h-8 w-[90px] text-xs"
+              className="h-8 w-[80px] sm:w-[90px] text-xs"
             />
           </div>
           {hasFilters && (
@@ -309,7 +309,7 @@ export const InventoryGrid = React.memo(function InventoryGrid({
           );
 
           const gridClass =
-            "grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-1.5";
+            "grid grid-cols-3 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-1.5";
 
           return (
             <>

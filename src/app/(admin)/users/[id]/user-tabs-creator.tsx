@@ -498,12 +498,14 @@ export function SetAffiliateCodeDialog({
                 variant="ghost"
                 onClick={close}
                 disabled={isPending}
+                className="w-full sm:w-auto"
               >
                 Cancel
               </Button>
               <Button
                 onClick={handleSubmit}
                 disabled={isPending || !codeValue.trim()}
+                className="w-full sm:w-auto"
               >
                 {isPending ? (
                   <Loader2 className="size-4 animate-spin" />
@@ -518,13 +520,14 @@ export function SetAffiliateCodeDialog({
                 variant="ghost"
                 onClick={() => setConflict(null)}
                 disabled={isPending}
+                className="w-full sm:w-auto"
               >
                 Back
               </Button>
               <Button
                 onClick={handleTransfer}
                 disabled={isPending}
-                className="bg-amber-600 hover:bg-amber-600/90 text-white"
+                className="w-full sm:w-auto bg-amber-600 hover:bg-amber-600/90 text-white"
               >
                 {isPending ? (
                   <Loader2 className="size-4 animate-spin" />
@@ -971,7 +974,7 @@ function WithdrawalLimitsDialog({
             size="sm"
             onClick={handleSave}
             disabled={isPending}
-            className="w-full"
+            className="w-full sm:w-auto"
           >
             {isPending ? "Saving..." : "Save Limits"}
           </Button>

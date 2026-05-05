@@ -96,7 +96,7 @@ export function RoleSelect({
           <DialogFooter>
             <Button
               size="sm"
-              className="w-full"
+              className="w-full sm:w-auto"
               disabled={isPending || !totpCode.trim()}
               onClick={handleConfirm}
             >

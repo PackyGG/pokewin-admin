@@ -26,6 +26,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -117,7 +118,7 @@ function BulkDeleteDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) setTotpCode(""); }}>
-      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="text-rose-400">
             Delete {ids.length} user{ids.length !== 1 ? "s" : ""} permanently
@@ -147,9 +148,11 @@ function BulkDeleteDialog({
               autoComplete="one-time-code"
             />
           </div>
+        </div>
+        <DialogFooter>
           <Button
             variant="destructive"
-            className="w-full"
+            className="w-full sm:w-auto"
             disabled={!totpCode.trim() || isPending}
             onClick={() => {
               startTransition(async () => {
@@ -169,7 +172,7 @@ function BulkDeleteDialog({
               ? "Deleting..."
               : `Delete ${ids.length} user${ids.length !== 1 ? "s" : ""} permanently`}
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

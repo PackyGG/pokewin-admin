@@ -154,7 +154,7 @@ function ScoreHero({
         className="pointer-events-none absolute -left-24 -bottom-24 size-72 rounded-full bg-blue-500/[0.06] blur-3xl"
       />
 
-      <div className="relative grid gap-6 p-6 md:grid-cols-[auto_1fr]">
+      <div className="relative grid gap-4 sm:gap-6 p-4 sm:p-6 md:grid-cols-[auto_1fr]">
         {/* Left — gauge + score number */}
         <div className="flex flex-col items-center gap-3">
           <RiskGauge score={score} tier={tier} />
@@ -169,12 +169,12 @@ function ScoreHero({
         {/* Right — copy + sub-metrics */}
         <div className="flex flex-col justify-between gap-4">
           <div className="flex items-start justify-between gap-3">
-            <div>
+            <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <div className="flex size-8 items-center justify-center rounded-lg bg-primary/10">
+                <div className="flex size-8 items-center justify-center rounded-lg bg-primary/10 shrink-0">
                   <ShieldAlert className="size-4 text-primary" />
                 </div>
-                <h3 className="text-lg font-semibold">Trust assessment</h3>
+                <h3 className="text-base sm:text-lg font-semibold">Trust assessment</h3>
               </div>
               <p className="mt-1.5 max-w-prose text-sm text-muted-foreground">
                 {headlineFor(tier, triggered)}
@@ -187,12 +187,12 @@ function ScoreHero({
               disabled={isPending}
               className="shrink-0"
             >
-              <RefreshCw className={cn("size-3.5 mr-1.5", isPending && "animate-spin")} />
-              Refresh
+              <RefreshCw className={cn("size-3.5 sm:mr-1.5", isPending && "animate-spin")} />
+              <span className="hidden sm:inline">Refresh</span>
             </Button>
           </div>
 
-          <div className="grid gap-2 sm:grid-cols-4">
+          <div className="grid gap-2 grid-cols-2 sm:grid-cols-4">
             <SubMetric
               icon={AlertTriangle}
               label="Signals triggered"
@@ -337,7 +337,7 @@ const CATEGORY_ICONS: Record<RiskCategory, React.ElementType> = {
 function SignalBreakdown({ signals }: { signals: RiskSignal[] }) {
   const grouped = useMemoGrouped(signals);
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="grid gap-3 sm:gap-4 lg:grid-cols-2">
       {CATEGORY_ORDER.map((cat) => {
         const Icon = CATEGORY_ICONS[cat];
         const catSignals = grouped[cat] ?? [];
@@ -487,8 +487,8 @@ function SharedIdentityTable({
   return (
     <Card>
       <CardContent className="p-0">
-        <div className="overflow-hidden rounded-lg">
-          <table className="w-full text-sm">
+        <div className="overflow-x-auto rounded-lg">
+          <table className="w-full min-w-[640px] text-sm">
             <thead className="bg-muted/50 text-xs uppercase tracking-wider text-muted-foreground">
               <tr>
                 <th className="px-4 py-2 text-left font-semibold">User</th>
