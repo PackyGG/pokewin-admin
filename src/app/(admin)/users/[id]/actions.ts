@@ -845,16 +845,58 @@ export async function assignAffiliateCode(userId: string, affiliateCode: string 
   return { success: true };
 }
 
-export async function createAffiliateCode(userId: string, code: string) {
+/**
+ * Result shape for createAffiliateCode. Returns a structured "conflict"
+ * object when the code is already owned by someone else so the UI can
+ * offer a transfer flow instead of just showing an error toast.
+ */
+export type CreateAffiliateCodeResult =
+  | { success: true }
+  | { success: false; error: string }
+  | {
+      success: false;
+      conflict: {
+        currentOwnerId: string;
+        currentOwnerUsername: string | null;
+        currentOwnerEmail: string | null;
+        code: string;
+      };
+    };
+
+export async function createAffiliateCode(
+  userId: string,
+  code: string,
+): Promise<CreateAffiliateCodeResult> {
   const db = await getDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_assign_affiliate", "create affiliate codes");
   const trimmed = code.trim();
   if (!trimmed) return { success: false, error: "Code cannot be empty" };
 
-  // Check code uniqueness
-  const existingCode = await db.affiliate_codes.findUnique({ where: { code: trimmed } });
-  if (existingCode) return { success: false, error: "This code is already taken" };
+  // Check code uniqueness — if taken by ANOTHER user, return a
+  // structured conflict so the UI can prompt for a transfer.
+  const existingCode = await db.affiliate_codes.findUnique({
+    where: { code: trimmed },
+    select: { user_id: true },
+  });
+  if (existingCode) {
+    if (existingCode.user_id === userId) {
+      return { success: false, error: "This user already owns that code" };
+    }
+    const owner = await db.user.findUnique({
+      where: { id: existingCode.user_id },
+      select: { id: true, username: true, email: true },
+    });
+    return {
+      success: false,
+      conflict: {
+        currentOwnerId: existingCode.user_id,
+        currentOwnerUsername: owner?.username ?? null,
+        currentOwnerEmail: owner?.email ?? null,
+        code: trimmed,
+      },
+    };
+  }
 
   await db.$transaction([
     db.affiliate_accounts.upsert({
@@ -886,6 +928,144 @@ export async function createAffiliateCode(userId: string, code: string) {
 
   revalidatePath(`/users/${userId}`);
   return { success: true };
+}
+
+/**
+ * Generate a unique random replacement affiliate code. Used by
+ * `transferAffiliateCode` to give the previous owner a non-empty code
+ * so they're never left without one. Uses confusable-free alphabet
+ * (no I/L/O/0/1) and retries on the (extremely unlikely) collision.
+ */
+async function generateRandomAffiliateCode(
+  db: Awaited<ReturnType<typeof getDb>>,
+): Promise<string> {
+  const alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  const length = 10;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    let code = "";
+    for (let i = 0; i < length; i++) {
+      code += alphabet[crypto.randomInt(0, alphabet.length)];
+    }
+    const exists = await db.affiliate_codes.findUnique({
+      where: { code },
+      select: { user_id: true },
+    });
+    if (!exists) return code;
+  }
+  throw new Error("Could not generate a unique replacement affiliate code");
+}
+
+/**
+ * Transfer ownership of an affiliate code from its current owner to
+ * a target user. The previous owner gets a random replacement code
+ * (so they're never codeless), the target user adopts the code as
+ * their current `affiliate_code`.
+ *
+ * Per the user's spec: this transfers the CODE STRING only, not the
+ * historical earnings/usage data. `affiliate_code_usages` rows still
+ * point at the original `affiliate_user_id` so previous referrals stay
+ * attributed to the previous owner. `affiliate_clicks` rows are keyed
+ * by code string only, so click history WILL appear under the new
+ * owner — there's no per-click `user_id` snapshot to preserve.
+ *
+ * Operations (single transaction):
+ *   1. Re-point the existing affiliate_codes row's user_id to the new
+ *      target — preserves the row's `created_at` and history.
+ *   2. Create a fresh affiliate_codes row for the previous owner with
+ *      a random replacement code.
+ *   3. Ensure both users have an affiliate_accounts row.
+ *   4. Set new owner's user.affiliate_code = transferred code.
+ *   5. Set previous owner's user.affiliate_code = random replacement.
+ */
+export async function transferAffiliateCode(args: {
+  toUserId: string;
+  code: string;
+}): Promise<
+  | { success: true; replacementCode: string; previousOwnerId: string }
+  | { success: false; error: string }
+> {
+  const db = await getDb();
+  const session = await requirePageAccess("/users");
+  await requireCapability(session, "__can_assign_affiliate", "transfer affiliate codes");
+
+  const code = args.code.trim();
+  if (!code) return { success: false, error: "Code cannot be empty" };
+  if (!z.string().uuid().or(z.string().min(8)).safeParse(args.toUserId).success) {
+    return { success: false, error: "Invalid target user id" };
+  }
+
+  // Verify current ownership and target user exist + are different.
+  const codeRow = await db.affiliate_codes.findUnique({
+    where: { code },
+    select: { id: true, user_id: true },
+  });
+  if (!codeRow) {
+    return {
+      success: false,
+      error: "That code doesn't exist anymore — refresh and try again",
+    };
+  }
+  if (codeRow.user_id === args.toUserId) {
+    return { success: false, error: "Target user already owns that code" };
+  }
+  const target = await db.user.findUnique({
+    where: { id: args.toUserId },
+    select: { id: true },
+  });
+  if (!target) return { success: false, error: "Target user not found" };
+
+  const previousOwnerId = codeRow.user_id;
+  const replacementCode = await generateRandomAffiliateCode(db);
+
+  await db.$transaction(async (tx) => {
+    // Move the code row to the target user.
+    await tx.affiliate_codes.update({
+      where: { id: codeRow.id },
+      data: { user_id: args.toUserId, updated_at: new Date() },
+    });
+    // Give the previous owner a random replacement code.
+    await tx.affiliate_codes.create({
+      data: { user_id: previousOwnerId, code: replacementCode },
+    });
+    // Make sure both sides have an affiliate_accounts row.
+    await tx.affiliate_accounts.upsert({
+      where: { user_id: args.toUserId },
+      create: { user_id: args.toUserId },
+      update: {},
+    });
+    await tx.affiliate_accounts.upsert({
+      where: { user_id: previousOwnerId },
+      create: { user_id: previousOwnerId },
+      update: {},
+    });
+    // Flip the displayed `user.affiliate_code` on both sides.
+    await tx.user.update({
+      where: { id: args.toUserId },
+      data: { affiliate_code: code, affiliate_code_active: true },
+    });
+    await tx.user.update({
+      where: { id: previousOwnerId },
+      data: {
+        affiliate_code: replacementCode,
+        affiliate_code_active: true,
+      },
+    });
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "affiliate_code_transferred",
+    targetUserId: args.toUserId,
+    metadata: {
+      code,
+      previousOwnerId,
+      replacementCode,
+    },
+  });
+
+  revalidatePath(`/users/${args.toUserId}`);
+  revalidatePath(`/users/${previousOwnerId}`);
+  return { success: true, replacementCode, previousOwnerId };
 }
 
 const adjustXpSchema = z.object({
