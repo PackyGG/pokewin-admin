@@ -16,12 +16,12 @@ export default function CardDetailLoading() {
       <DetailHeroSkeleton action />
       <KpiStripSkeleton count={4} />
       <div className="rounded-2xl border bg-card p-5">
-        <div className="flex gap-8 items-start flex-wrap">
+        <div className="flex flex-col gap-6 items-start sm:flex-row sm:gap-8">
           <Skeleton
-            className="rounded-lg shrink-0"
-            style={{ width: 200, aspectRatio: "3/4" }}
+            className="rounded-lg shrink-0 w-[160px] sm:w-[200px]"
+            style={{ aspectRatio: "3/4" }}
           />
-          <div className="flex-1 grid grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-5 min-w-[240px]">
+          <div className="flex-1 min-w-0 grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-2 lg:grid-cols-3">
             {Array.from({ length: 5 }).map((_, i) => (
               <div key={i} className="space-y-2">
                 <Skeleton className="h-3 w-14" />

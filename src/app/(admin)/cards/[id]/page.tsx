@@ -101,11 +101,11 @@ export default async function CardDetailPage({
 
       <FadeIn>
         <div className="rounded-2xl border bg-card p-5">
-          <div className="flex gap-8 items-start">
-            <div className="shrink-0 w-[200px]">
+          <div className="flex flex-col gap-6 items-start sm:flex-row sm:gap-8">
+            <div className="shrink-0 w-[160px] sm:w-[200px]">
               <CardImage src={data.imageUrl} alt={data.name} className="w-full rounded-lg" />
             </div>
-            <div className="flex-1 grid grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-5">
+            <div className="flex-1 min-w-0 grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-2 lg:grid-cols-3">
               {detailRows.map((s) => (
                 <div key={s.label}>
                   <p className="text-xs uppercase tracking-wider text-muted-foreground">
