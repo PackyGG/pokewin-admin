@@ -105,11 +105,12 @@ type NavItem = {
   label: string;
   href: string;
   icon: string;
-  // Restrict an item to a specific username (case-sensitive). Used
-  // for the salaries link which is visible only to "motha". The
-  // route itself ALSO gates server-side via requireMotha — this
-  // flag is purely cosmetic / discoverability.
-  usernameOnly?: string;
+  // Restrict an item to a specific username allowlist (case-
+  // insensitive). Used for the salaries link which is visible only
+  // to founders (motha, void, kotha). The route itself ALSO gates
+  // server-side via requireMotha — this flag is purely cosmetic /
+  // discoverability.
+  usernameAllowlist?: string[];
 };
 
 type NavGroup = {
@@ -164,7 +165,7 @@ const NAV_GROUPS: NavGroup[] = [
         label: "Salaries",
         href: "/salaries",
         icon: "Coins",
-        usernameOnly: "motha",
+        usernameAllowlist: ["motha", "void", "kotha"],
       },
     ],
   },
@@ -300,11 +301,18 @@ export function AppSidebar({
       .map((group) => ({
         ...group,
         visibleItems: group.items.filter((item) => {
-          // usernameOnly is the strictest — even real admins don't
-          // see it unless their username matches. Used for /salaries
-          // which is a per-individual entry-point, not a role-based
-          // one.
-          if (item.usernameOnly && item.usernameOnly !== username) return false;
+          // usernameAllowlist is the strictest — even real admins
+          // don't see it unless their username is in the list.
+          // Used for /salaries which is a founder-only entry-point,
+          // not a role-based one. Comparison is case-insensitive.
+          if (
+            item.usernameAllowlist &&
+            !item.usernameAllowlist.some(
+              (u) => u.toLowerCase() === (username ?? "").toLowerCase(),
+            )
+          ) {
+            return false;
+          }
           return isAdmin || allowedPages.includes(item.href);
         }),
       })),
