@@ -49,6 +49,11 @@ type FormState = {
   fills_allowed: string;
   per_fill_amount_usd: string;
   conversion_rate_pct: string;
+  // Empty string = uncapped (sent as null). Any non-empty value parses as
+  // the lifetime payout limit for the deal — applies to both end-of-stream
+  // conversions and pending conversion claims, never to tip/sponsored
+  // battle spend (those don't generate vouchers).
+  total_withdraw_cap_usd: string;
   cooldown_minutes: string;
   max_tip_per_stream_usd: string;
   max_tip_per_user_usd: string;
@@ -73,6 +78,7 @@ const buildCreateDefaults = (): FormState => {
     fills_allowed: "7",
     per_fill_amount_usd: "100",
     conversion_rate_pct: "50",
+    total_withdraw_cap_usd: "",
     cooldown_minutes: "240",
     max_tip_per_stream_usd: "100",
     max_tip_per_user_usd: "20",
@@ -89,6 +95,7 @@ const buildEditDefaults = (deal: CreatorDealResponse): FormState => ({
   fills_allowed: String(deal.fills_allowed),
   per_fill_amount_usd: String(deal.per_fill_amount_usd),
   conversion_rate_pct: (deal.conversion_rate_bps / 100).toString(),
+  total_withdraw_cap_usd: deal.total_withdraw_cap_usd ?? "",
   cooldown_minutes: String(deal.cooldown_minutes),
   max_tip_per_stream_usd: String(deal.max_tip_per_stream_usd),
   max_tip_per_user_usd: String(deal.max_tip_per_user_usd),
@@ -137,6 +144,23 @@ function computePatch(
   const convBps = Math.round(parseFloat(form.conversion_rate_pct) * 100);
   if (Number.isFinite(convBps) && convBps !== deal.conversion_rate_bps) {
     patch.conversion_rate_bps = convBps;
+  }
+
+  // null transitions are meaningful — going from "$500 cap" to "uncapped"
+  // and vice-versa both need to hit the API. Compare the form's "" (null)
+  // against the deal's null cap explicitly.
+  const formCapTrim = form.total_withdraw_cap_usd.trim();
+  const formCap = formCapTrim === "" ? null : parseFloat(formCapTrim);
+  const dealCap =
+    deal.total_withdraw_cap_usd === null
+      ? null
+      : Number(deal.total_withdraw_cap_usd);
+  if (formCap === null && dealCap !== null) {
+    patch.total_withdraw_cap_usd = null;
+  } else if (formCap !== null && Number.isFinite(formCap)) {
+    if (dealCap === null || formCap !== dealCap) {
+      patch.total_withdraw_cap_usd = formCap;
+    }
   }
 
   const cooldown = parseInt(form.cooldown_minutes, 10);
@@ -291,6 +315,27 @@ export function DealFormDialog(props: Props) {
       toast.error("Conversion rate must be between 0 and 100");
       return;
     }
+
+    const capTrim = form.total_withdraw_cap_usd.trim();
+    const totalCapUsd: number | null =
+      capTrim === "" ? null : parseFloat(capTrim);
+    if (totalCapUsd !== null) {
+      if (!Number.isFinite(totalCapUsd) || totalCapUsd < 0) {
+        toast.error("Total withdraw cap must be 0 or greater (or empty for no cap)");
+        return;
+      }
+      if (
+        mode === "edit" &&
+        deal &&
+        totalCapUsd < Number(deal.withdraw_cap_used_usd)
+      ) {
+        toast.error(
+          `Total withdraw cap can't drop below already paid out ($${Number(deal.withdraw_cap_used_usd).toFixed(2)})`,
+        );
+        return;
+      }
+    }
+
     if (!Number.isFinite(cooldownMin) || cooldownMin < 0) {
       toast.error("Cooldown must be 0 or more minutes");
       return;
@@ -327,6 +372,7 @@ export function DealFormDialog(props: Props) {
             fills_allowed: fillsAllowed,
             per_fill_amount_usd: perFillUsd,
             conversion_rate_bps: Math.round(conversionPct * 100),
+            total_withdraw_cap_usd: totalCapUsd,
             cooldown_minutes: cooldownMin,
             max_tip_per_stream_usd: maxTipStream,
             max_tip_per_user_usd: maxTipUser,
@@ -490,6 +536,36 @@ export function DealFormDialog(props: Props) {
                 />
               </Field>
             </div>
+          </Section>
+
+          <Separator />
+
+          <Section
+            title="Total withdraw cap"
+            description="Lifetime ceiling on USD that can be paid out across this deal — applies to end-of-stream conversions and pending battle-win/refund claims. Tips and sponsored battles are unaffected. Leave empty for uncapped."
+          >
+            <Field
+              label="Cap"
+              htmlFor="total_withdraw_cap_usd"
+              suffix="USD"
+              hint={
+                mode === "edit" && deal
+                  ? `Already paid out under this deal: $${Number(deal.withdraw_cap_used_usd).toFixed(2)}. Cap can't be lowered below this.`
+                  : "After conversions reach this amount the creator stops accruing payout vouchers — excess is forfeited."
+              }
+            >
+              <Input
+                id="total_withdraw_cap_usd"
+                type="number"
+                min={0}
+                step="0.01"
+                placeholder="Uncapped"
+                value={form.total_withdraw_cap_usd}
+                onChange={(e) =>
+                  update("total_withdraw_cap_usd", e.target.value)
+                }
+              />
+            </Field>
           </Section>
 
           <Separator />
