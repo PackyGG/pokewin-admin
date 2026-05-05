@@ -17,6 +17,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -121,7 +122,7 @@ export function EditRewardButton({ reward }: { reward: RewardItem }) {
       <DialogTrigger render={<Button variant="ghost" size="sm" />}>
         <Pencil className="mr-1 size-3" /> Edit
       </DialogTrigger>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Edit Reward</DialogTitle>
         </DialogHeader>
@@ -190,11 +191,12 @@ export function EditRewardButton({ reward }: { reward: RewardItem }) {
               <p className="text-sm text-muted-foreground">No packs added yet.</p>
             )}
           </div>
-
-          <Button onClick={handleSubmit} disabled={isPending} className="w-full">
+        </div>
+        <DialogFooter>
+          <Button onClick={handleSubmit} disabled={isPending} className="w-full sm:w-auto">
             {isPending ? "Saving..." : "Save Changes"}
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

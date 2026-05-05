@@ -123,9 +123,11 @@ export function DeleteUserDialog({
               autoComplete="one-time-code"
             />
           </div>
+        </div>
+        <DialogFooter>
           <Button
             variant="destructive"
-            className="w-full"
+            className="w-full sm:w-auto"
             disabled={!isConfirmed || !totpCode.trim() || isPending}
             onClick={() => {
               startTransition(async () => {
@@ -143,7 +145,7 @@ export function DeleteUserDialog({
           >
             {isPending ? "Deleting..." : "Delete User Permanently"}
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
@@ -299,7 +301,7 @@ export function BalanceAdjustDialog({
             size="sm"
             onClick={handleAdjust}
             disabled={isPending || !totpCode.trim()}
-            className="w-full"
+            className="w-full sm:w-auto"
           >
             {isPending ? "Adjusting..." : "Apply Adjustment"}
           </Button>
@@ -502,7 +504,7 @@ export function ManualWithdrawalDialog({
             size="sm"
             onClick={handleSubmit}
             disabled={isPending || !totpCode.trim()}
-            className="w-full bg-rose-500 hover:bg-rose-500/90 text-white"
+            className="w-full sm:w-auto bg-rose-500 hover:bg-rose-500/90 text-white"
           >
             {isPending ? "Recording..." : "Record Withdrawal"}
           </Button>
@@ -577,7 +579,7 @@ export function XpAdjustDialog({
             size="sm"
             onClick={handleAdjust}
             disabled={isPending}
-            className="w-full"
+            className="w-full sm:w-auto"
           >
             {isPending ? "Adjusting..." : "Apply Adjustment"}
           </Button>
@@ -703,6 +705,7 @@ export function WipeAccountButton({
             variant="destructive"
             onClick={handleWipe}
             disabled={!canSubmit}
+            className="w-full sm:w-auto"
           >
             <Trash2 className="mr-1.5 size-3.5" />
             {isPending ? "Wiping..." : "Wipe Account Data"}
@@ -817,6 +820,7 @@ export function ChangeRoleDialog({
             size="sm"
             onClick={() => setOpen(false)}
             disabled={isPending}
+            className="w-full sm:w-auto"
           >
             Cancel
           </Button>
@@ -826,6 +830,7 @@ export function ChangeRoleDialog({
             disabled={
               isPending || !totpCode.trim() || newRole === currentRole
             }
+            className="w-full sm:w-auto"
           >
             {isPending ? "Updating..." : "Change role"}
           </Button>
@@ -967,6 +972,7 @@ export function ResetRoleToUserButton({
             size="sm"
             onClick={() => setOpen(false)}
             disabled={isPending}
+            className="w-full sm:w-auto"
           >
             Cancel
           </Button>
@@ -974,7 +980,7 @@ export function ResetRoleToUserButton({
             size="sm"
             onClick={handleSubmit}
             disabled={isPending || !totpCode.trim()}
-            className="bg-amber-500 text-white hover:bg-amber-500/90"
+            className="w-full sm:w-auto bg-amber-500 text-white hover:bg-amber-500/90"
           >
             {isPending ? "Resetting..." : "Reset Role"}
           </Button>
@@ -1099,14 +1105,16 @@ export function EditIdentityButton({ user }: { user: UserDetail["user"] }) {
               Shown instead of username. Leave empty to use username.
             </p>
           </div>
+        </div>
+        <DialogFooter>
           <Button
             onClick={handleSave}
             disabled={isPending}
-            className="w-full"
+            className="w-full sm:w-auto"
           >
             {isPending ? "Saving..." : "Save Changes"}
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

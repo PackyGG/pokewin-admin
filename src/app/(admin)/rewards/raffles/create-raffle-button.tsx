@@ -17,6 +17,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -143,7 +144,7 @@ export function CreateRaffleButton() {
       <DialogTrigger render={<Button />}>
         Create Raffle
       </DialogTrigger>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Create Raffle</DialogTitle>
         </DialogHeader>
@@ -200,11 +201,11 @@ export function CreateRaffleButton() {
                     <Trash2 className="size-3.5" />
                   </Button>
                 </div>
-                <div className="flex items-end gap-2">
-                  <div className="w-24 space-y-1">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                  <div className="space-y-1 sm:w-24">
                     <Label className="text-xs">Type</Label>
                     <Select value={prize.type} onValueChange={(v) => v && updatePrizeType(i, v as "pack" | "card")}>
-                      <SelectTrigger className="h-9">
+                      <SelectTrigger className="h-9 w-full">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -221,7 +222,7 @@ export function CreateRaffleButton() {
                       onSelect={(item) => updatePrizeItem(i, item)}
                     />
                   </div>
-                  <div className="w-20 space-y-1">
+                  <div className="space-y-1 sm:w-20">
                     <Label className="text-xs">Qty</Label>
                     <Input
                       type="number"
@@ -236,11 +237,12 @@ export function CreateRaffleButton() {
               </div>
             ))}
           </div>
-
-          <Button onClick={handleSubmit} disabled={isPending} className="w-full">
+        </div>
+        <DialogFooter>
+          <Button onClick={handleSubmit} disabled={isPending} className="w-full sm:w-auto">
             {isPending ? "Creating..." : "Create"}
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

@@ -133,7 +133,7 @@ export function ExportUsersButton({
           </Button>
         }
       />
-      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Download className="size-4 text-primary" />
@@ -318,10 +318,16 @@ export function ExportUsersButton({
             variant="ghost"
             onClick={() => setOpen(false)}
             disabled={downloading}
+            className="w-full sm:w-auto"
           >
             Cancel
           </Button>
-          <Button type="button" onClick={submit} disabled={downloading}>
+          <Button
+            type="button"
+            onClick={submit}
+            disabled={downloading}
+            className="w-full sm:w-auto"
+          >
             {downloading ? "Preparing…" : "Download CSV"}
           </Button>
         </DialogFooter>

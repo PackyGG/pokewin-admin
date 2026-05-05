@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -89,7 +90,7 @@ export function CreatePromoCodeButton() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger render={<Button />}>Create Promo Code</DialogTrigger>
-      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Create Promo Code</DialogTitle>
         </DialogHeader>
@@ -220,11 +221,12 @@ export function CreatePromoCodeButton() {
               onChange={(e) => setExpiresAt(e.target.value)}
             />
           </div>
-
-          <Button onClick={handleSubmit} disabled={isPending} className="w-full">
+        </div>
+        <DialogFooter>
+          <Button onClick={handleSubmit} disabled={isPending} className="w-full sm:w-auto">
             {isPending ? "Creating..." : "Create"}
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

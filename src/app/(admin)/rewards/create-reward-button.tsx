@@ -17,6 +17,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -109,7 +110,7 @@ export function CreateRewardButton({ defaultType }: { defaultType?: "one_time" |
       <DialogTrigger render={<Button />}>
         Create Reward
       </DialogTrigger>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Create Reward</DialogTitle>
         </DialogHeader>
@@ -178,11 +179,12 @@ export function CreateRewardButton({ defaultType }: { defaultType?: "one_time" |
               <p className="text-sm text-muted-foreground">No packs added yet.</p>
             )}
           </div>
-
-          <Button onClick={handleSubmit} disabled={isPending} className="w-full">
+        </div>
+        <DialogFooter>
+          <Button onClick={handleSubmit} disabled={isPending} className="w-full sm:w-auto">
             {isPending ? "Creating..." : "Create"}
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

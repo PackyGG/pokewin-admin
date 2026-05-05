@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -150,7 +151,7 @@ export function CreateVoucherDialog() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger render={<Button />}>Create Voucher</DialogTrigger>
-      <DialogContent className="max-h-[90vh] overflow-y-auto">
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>Create Voucher</DialogTitle>
         </DialogHeader>
@@ -184,10 +185,12 @@ export function CreateVoucherDialog() {
               placeholder="Reason for voucher..."
             />
           </div>
-          <Button onClick={handleCreate} disabled={isPending} className="w-full">
+        </div>
+        <DialogFooter>
+          <Button onClick={handleCreate} disabled={isPending} className="w-full sm:w-auto">
             {isPending ? "Creating..." : "Create"}
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

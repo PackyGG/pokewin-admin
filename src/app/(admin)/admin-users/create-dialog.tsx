@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -50,7 +51,11 @@ export function CreateAdminDialog() {
         <DialogHeader>
           <DialogTitle>Create Admin User</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form
+          id="create-admin-form"
+          onSubmit={handleSubmit}
+          className="space-y-4"
+        >
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>
             <Input id="email" name="email" type="email" required />
@@ -68,7 +73,7 @@ export function CreateAdminDialog() {
             <select
               id="role"
               name="role"
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-base sm:text-sm"
               defaultValue="support"
             >
               <option value="admin">Admin</option>
@@ -78,10 +83,17 @@ export function CreateAdminDialog() {
               <option value="pack_creator">Pack Creator</option>
             </select>
           </div>
-          <Button type="submit" disabled={loading} className="w-full">
+        </form>
+        <DialogFooter>
+          <Button
+            type="submit"
+            form="create-admin-form"
+            disabled={loading}
+            className="w-full sm:w-auto"
+          >
             {loading ? "Creating..." : "Create"}
           </Button>
-        </form>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
