@@ -8,7 +8,26 @@
  */
 
 import * as React from "react";
-import { useMemo } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+import { useMemo, useState, useTransition } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { assignAffiliateCode } from "./actions";
+import { SetAffiliateCodeDialog } from "./user-tabs-creator";
 import {
   Wallet,
   TrendingUp,
@@ -232,84 +251,306 @@ export function InventoryTab({
 //  CREATOR TAB
 // ───────────────────────────────────────────────────────────────────
 
-export function CreatorTab({ data }: { data: UserDetail }) {
+export function AffiliateTab({ data }: { data: UserDetail }) {
   const { user, affiliate } = data;
-  // For creators, send admins to the dedicated /creators/[userId] page
-  // which has the full affiliate panel (deals, webhooks, payouts, code
-  // analytics, clicks, signups, etc.). Replicating all that inline on
-  // the user page would be duplication — one source of truth is cleaner.
   return (
-    <div className="space-y-4">
-      <Card className="overflow-hidden">
-        <CardContent className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-lg bg-purple-500/15">
-              <Sparkles className="size-5 text-purple-500" />
+    <div className="space-y-6">
+      {/* Creator deep-link — only for users actually flagged creator.
+          The /creators/[userId] page has the full panel: deals,
+          webhooks, payouts, code analytics, clicks, signup tracking.
+          Inline-duplicating that here would be a maintenance nightmare. */}
+      {user.role === "creator" && (
+        <Card className="overflow-hidden">
+          <CardContent className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex size-10 items-center justify-center rounded-lg bg-purple-500/15">
+                <Sparkles className="size-5 text-purple-500" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold">Creator Dashboard</p>
+                <p className="text-xs text-muted-foreground">
+                  Deals, webhooks, payouts, click + signup analytics
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="text-sm font-semibold">Creator / Affiliate</p>
-              <p className="text-xs text-muted-foreground">
-                {user.affiliateCode
-                  ? `Code ${user.affiliateCode}`
-                  : "No affiliate code"}
-                {affiliate ? ` · ${affiliate.totalReferred} referred` : ""}
-              </p>
-            </div>
-          </div>
-          <a
-            href={`/creators/${user.id}`}
-            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-          >
-            Open Creator Dashboard
-            <span aria-hidden>→</span>
-          </a>
-        </CardContent>
-      </Card>
+            <a
+              href={`/creators/${user.id}`}
+              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            >
+              Open Creator Dashboard
+              <span aria-hidden>→</span>
+            </a>
+          </CardContent>
+        </Card>
+      )}
 
+      {/* Section 1: Who referred THIS user (sets user.referred_by) */}
+      <SectionHeading icon={ArrowDownToLine} title="Referral Code Used" />
+      <ReferrerCard user={user} />
+
+      {/* Section 2: This user's OWN affiliate code (sets user.affiliate_code) */}
+      <SectionHeading icon={Sparkles} title="Own Affiliate Code" />
+      <OwnCodeCard user={user} affiliate={affiliate} />
+
+      {/* Section 3: Stats — only render if the affiliate_accounts row exists */}
       {affiliate && (
-        <div className="grid gap-4 md:grid-cols-3">
-          <ModernMetricTile
-            label="Total Referred"
-            value={affiliate.totalReferred.toLocaleString()}
-            accent="purple"
-            icon={Sparkles}
-          />
-          <ModernMetricTile
-            label="Wager Volume"
-            value={formatCurrency(affiliate.totalWagerVolumeUsd)}
-            accent="cyan"
-            icon={Coins}
-          />
-          {/* All four tiles below describe money the HOUSE paid (or
-              will pay) this creator and their users → house-loss side
-              of the ledger → rose per CLAUDE.md. */}
-          <ModernMetricTile
-            label="Total Earned"
-            value={formatCurrency(affiliate.totalEarnedUsd)}
-            accent="rose"
-            icon={TrendingUp}
-          />
-          <ModernMetricTile
-            label="Available"
-            value={formatCurrency(affiliate.availableUsd)}
-            accent="rose"
-            icon={Wallet}
-          />
-          <ModernMetricTile
-            label="Paid Out"
-            value={formatCurrency(affiliate.totalPaidOutUsd)}
-            accent="rose"
-            icon={ArrowUpFromLine}
-          />
-          <ModernMetricTile
-            label="Bonus Distributed"
-            value={formatCurrency(affiliate.totalBonusDistributedUsd)}
-            accent="rose"
-            icon={Gift}
-          />
-        </div>
+        <>
+          <SectionHeading icon={TrendingUp} title="Affiliate Stats" />
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+            <ModernMetricTile
+              label="Total Referred"
+              value={affiliate.totalReferred.toLocaleString()}
+              accent="purple"
+              icon={Sparkles}
+            />
+            <ModernMetricTile
+              label="Wager Volume"
+              value={formatCurrency(affiliate.totalWagerVolumeUsd)}
+              accent="cyan"
+              icon={Coins}
+            />
+            {/* The four tiles below describe money the HOUSE has paid
+                (or will pay) → house-loss side of the ledger → rose
+                per CLAUDE.md. */}
+            <ModernMetricTile
+              label="Total Earned"
+              value={formatCurrency(affiliate.totalEarnedUsd)}
+              accent="rose"
+              icon={TrendingUp}
+            />
+            <ModernMetricTile
+              label="Available"
+              value={formatCurrency(affiliate.availableUsd)}
+              accent="rose"
+              icon={Wallet}
+            />
+            <ModernMetricTile
+              label="Paid Out"
+              value={formatCurrency(affiliate.totalPaidOutUsd)}
+              accent="rose"
+              icon={ArrowUpFromLine}
+            />
+            <ModernMetricTile
+              label="Bonus Distributed"
+              value={formatCurrency(affiliate.totalBonusDistributedUsd)}
+              accent="rose"
+              icon={Gift}
+            />
+          </div>
+        </>
       )}
     </div>
+  );
+}
+
+// ── Referrer card — sets user.referred_by via a code lookup ────────
+//
+// Admins enter a code (someone else's affiliate code), the action
+// looks up the owner and writes user.referred_by = owner.id, plus
+// bumps that owner's affiliate_accounts.total_referred. Exists for
+// the case where a referral signup got dropped and needs to be
+// reattributed manually.
+function ReferrerCard({ user }: { user: UserDetail["user"] }) {
+  const router = useRouter();
+  const [codeInput, setCodeInput] = useState("");
+  const [confirmClearOpen, setConfirmClearOpen] = useState(false);
+  const [isPending, startTransition] = useTransition();
+
+  function handleAssign() {
+    const trimmed = codeInput.trim();
+    if (!trimmed) {
+      toast.error("Enter a code");
+      return;
+    }
+    startTransition(async () => {
+      try {
+        await assignAffiliateCode(user.id, trimmed);
+        toast.success(`Referrer set via code "${trimmed}"`);
+        setCodeInput("");
+        router.refresh();
+      } catch (e) {
+        toast.error(
+          e instanceof Error ? e.message : "Failed to set referrer",
+        );
+      }
+    });
+  }
+
+  function handleClear() {
+    startTransition(async () => {
+      try {
+        await assignAffiliateCode(user.id, null);
+        toast.success("Referrer cleared");
+        setConfirmClearOpen(false);
+        router.refresh();
+      } catch (e) {
+        toast.error(
+          e instanceof Error ? e.message : "Failed to clear referrer",
+        );
+      }
+    });
+  }
+
+  return (
+    <Card>
+      <CardContent className="space-y-4 pt-6">
+        <div className="space-y-1">
+          <p className="text-xs text-muted-foreground">
+            Currently referred by
+          </p>
+          {user.referredBy ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Link
+                href={`/users/${user.referredBy}`}
+                className="text-sm font-medium text-blue-500 hover:underline"
+              >
+                @{user.referredByUsername ?? user.referredBy.slice(0, 8)}
+              </Link>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 gap-1.5 text-xs text-rose-500 border-rose-500/40 hover:bg-rose-500/10"
+                onClick={() => setConfirmClearOpen(true)}
+                disabled={isPending}
+              >
+                Clear
+              </Button>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">Not referred</p>
+          )}
+        </div>
+
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">
+            {user.referredBy ? "Change to a different code" : "Set referrer code"}
+          </Label>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              placeholder="Enter affiliate code"
+              value={codeInput}
+              onChange={(e) => setCodeInput(e.target.value)}
+              className="h-9 w-full sm:w-56 font-mono text-sm"
+              disabled={isPending}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && codeInput.trim() && !isPending) {
+                  handleAssign();
+                }
+              }}
+            />
+            <Button
+              size="sm"
+              disabled={isPending || !codeInput.trim()}
+              onClick={handleAssign}
+            >
+              {isPending ? "Saving…" : user.referredBy ? "Change" : "Set referrer"}
+            </Button>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            The code must already exist (it&apos;s someone else&apos;s
+            affiliate code). The referrer becomes whoever owns the code.
+          </p>
+        </div>
+      </CardContent>
+
+      <AlertDialog open={confirmClearOpen} onOpenChange={setConfirmClearOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear referrer?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Removes this user&apos;s{" "}
+              <span className="font-mono">referred_by</span> link and
+              decrements the previous referrer&apos;s{" "}
+              <span className="font-mono">total_referred</span>{" "}
+              counter. Historical{" "}
+              <span className="font-mono">affiliate_code_usages</span>{" "}
+              rows are not touched (those are a permanent audit trail).
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleClear}
+              disabled={isPending}
+              className="bg-rose-500 hover:bg-rose-500/90"
+            >
+              {isPending ? "Clearing…" : "Clear referrer"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Card>
+  );
+}
+
+// ── Own affiliate code card — manages user.affiliate_code ──────────
+//
+// Wraps the existing SetAffiliateCodeDialog from user-tabs-creator
+// which handles both the create and the take-over-collision-with-
+// transfer paths. The card itself just shows the current code state
+// and the trigger button.
+function OwnCodeCard({
+  user,
+  affiliate,
+}: {
+  user: UserDetail["user"];
+  affiliate: UserDetail["affiliate"];
+}) {
+  const [setCodeOpen, setSetCodeOpen] = useState(false);
+  const effectiveCode = user.affiliateCode ?? affiliate?.code ?? null;
+
+  return (
+    <Card>
+      <CardContent className="space-y-4 pt-6">
+        {effectiveCode ? (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground">Current code</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-md bg-muted px-2 py-1 font-mono text-sm font-medium">
+                  {effectiveCode}
+                </span>
+                <Badge
+                  variant="outline"
+                  className={
+                    user.affiliateCodeActive
+                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                      : "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400"
+                  }
+                >
+                  {user.affiliateCodeActive ? "Active" : "Inactive"}
+                </Badge>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setSetCodeOpen(true)}
+            >
+              Change Code
+            </Button>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">No affiliate code yet</p>
+            <Button size="sm" onClick={() => setSetCodeOpen(true)}>
+              Set Affiliate Code
+            </Button>
+          </div>
+        )}
+        <p className="text-[11px] text-muted-foreground">
+          If the code you enter is taken, you&apos;ll be shown who has
+          it and offered a transfer (the previous owner gets a random
+          replacement code so they&apos;re never codeless).
+        </p>
+      </CardContent>
+      <SetAffiliateCodeDialog
+        open={setCodeOpen}
+        onOpenChange={setSetCodeOpen}
+        userId={user.id}
+        currentUsername={user.username ?? user.email ?? null}
+      />
+    </Card>
   );
 }
 

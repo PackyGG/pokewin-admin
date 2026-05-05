@@ -324,7 +324,7 @@ export const CreatorSection = React.memo(function CreatorSection({
 //  replacement code so they're never codeless).
 // ─────────────────────────────────────────────────────────────────────
 
-function SetAffiliateCodeDialog({
+export function SetAffiliateCodeDialog({
   open,
   onOpenChange,
   userId,

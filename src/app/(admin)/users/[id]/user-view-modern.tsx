@@ -59,7 +59,7 @@ import {
   RewardsTab,
   GamingTab,
   InventoryTab,
-  CreatorTab,
+  AffiliateTab,
   AccountTab,
 } from "./user-view-modern-tabs";
 import {
@@ -88,7 +88,7 @@ export {
   RewardsTab,
   GamingTab,
   InventoryTab,
-  CreatorTab,
+  AffiliateTab,
   AccountTab,
 } from "./user-view-modern-tabs";
 export {
@@ -109,7 +109,7 @@ type TabKey =
   | "gaming"
   | "inventory"
   | "trust"
-  | "creator"
+  | "affiliate"
   | "account";
 
 type TabDef = {
@@ -127,12 +127,10 @@ const TABS: TabDef[] = [
   { key: "rewards", label: "Rewards", icon: Gift },
   { key: "inventory", label: "Inventory", icon: Gem },
   { key: "trust", label: "Trust", icon: ShieldAlert },
-  {
-    key: "creator",
-    label: "Creator",
-    icon: Sparkles,
-    show: (d) => Boolean(d.user.affiliateCode),
-  },
+  // Affiliate tab is ALWAYS visible — admins need to be able to give
+  // a user a referral code (set their `referred_by`) regardless of
+  // whether the user has their own code yet.
+  { key: "affiliate", label: "Affiliate", icon: Sparkles },
   { key: "account", label: "Account", icon: ShieldCheck },
 ];
 
@@ -490,7 +488,7 @@ export function UserViewModern({
           />
         )}
 
-        {activeTab === "creator" && <CreatorTab data={data} />}
+        {activeTab === "affiliate" && <AffiliateTab data={data} />}
 
         {activeTab === "account" && (
           <AccountTab data={data} notes={notes} isAdmin={isAdmin} />
