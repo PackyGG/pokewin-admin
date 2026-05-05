@@ -44,16 +44,20 @@ export default async function SpendingPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
+        {/* Identity + date-range filter stack on phones — the filter
+            includes 2 date pickers + 5 preset chips and won't fit
+            beside the title at 360px. At md+ they go side-by-side
+            with the original layout. */}
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between md:gap-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
               <Wallet className="size-5 text-primary" />
             </div>
-            <div>
-              <h1 className="text-2xl font-bold leading-tight">
+            <div className="min-w-0">
+              <h1 className="text-xl font-bold leading-tight sm:text-2xl">
                 Spending Sheet
               </h1>
-              <p className="text-sm text-muted-foreground">
+              <p className="text-xs text-muted-foreground sm:text-sm">
                 Track operational expenses, recurring costs, and month-over-month trends.
               </p>
             </div>

@@ -62,21 +62,25 @@ export function DateRangeFilter({ from, to }: { from: string; to: string }) {
     [update]
   );
 
+  // Two-row layout on phones: dates on top, preset chips below.
+  // The native <input type="date"> doesn't shrink under a hard min-
+  // width on iOS Safari so we give the inputs `flex-1` so they share
+  // available width instead of pushing each other off-screen.
   return (
-    <div className="flex items-center gap-2 flex-wrap">
+    <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
       <div className="flex items-center gap-1.5">
         <input
           type="date"
           value={from}
           onChange={(e) => update(e.target.value, to)}
-          className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground"
+          className="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm text-foreground sm:flex-none"
         />
         <span className="text-sm text-muted-foreground">→</span>
         <input
           type="date"
           value={to}
           onChange={(e) => update(from, e.target.value)}
-          className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground"
+          className="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm text-foreground sm:flex-none"
         />
       </div>
       <div className="flex flex-wrap items-center gap-1">

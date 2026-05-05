@@ -109,7 +109,9 @@ export function SummaryCards({
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* KPI tiles: 2-up phone (better than 1-up — phones can fit two
+          tiles side-by-side comfortably), 4-up at lg+. */}
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <MetricTile
           label={`Total — ${periodLabel}`}
           value={formatCurrency(grandTotal)}
@@ -128,25 +130,28 @@ export function SummaryCards({
           icon={Repeat}
           accent="purple"
         />
-        <div className={cn("rounded-xl border p-4", {
-          "bg-rose-500/10 border-rose-500/20": changeAccent === "rose",
-          "bg-emerald-500/10 border-emerald-500/20": changeAccent === "emerald",
-          "bg-blue-500/10 border-blue-500/20": changeAccent === "blue",
-        })}>
-          <div className="flex items-center gap-2">
+        <div
+          className={cn("rounded-xl border p-3 sm:p-4", {
+            "bg-rose-500/10 border-rose-500/20": changeAccent === "rose",
+            "bg-emerald-500/10 border-emerald-500/20":
+              changeAccent === "emerald",
+            "bg-blue-500/10 border-blue-500/20": changeAccent === "blue",
+          })}
+        >
+          <div className="flex items-center gap-1.5 sm:gap-2">
             <TrendingUp
-              className={cn("size-4", {
+              className={cn("size-3.5 shrink-0 sm:size-4", {
                 "text-rose-500": changeAccent === "rose",
                 "text-emerald-500": changeAccent === "emerald",
                 "text-blue-500": changeAccent === "blue",
               })}
             />
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <span className="truncate text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[11px]">
               vs Previous Period
             </span>
           </div>
           <p
-            className={cn("mt-1 text-2xl font-bold tabular-nums", {
+            className={cn("mt-1 truncate text-xl font-bold tabular-nums sm:text-2xl", {
               "text-rose-600 dark:text-rose-400": changeAccent === "rose",
               "text-emerald-600 dark:text-emerald-400":
                 changeAccent === "emerald",
@@ -163,14 +168,15 @@ export function SummaryCards({
           {/* Top row: Top Spending Categories + Monthly Spending Trend
               side-by-side — the two charts an admin actually scans
               while planning next month's spend. Pie chart with the
-              percentage breakdown moves below as supplementary detail. */}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              percentage breakdown moves below as supplementary detail.
+              Stacks 1-up on phone/tablet, side-by-side at lg+. */}
+          <div className="grid grid-cols-1 gap-3 sm:gap-4 lg:grid-cols-2">
             <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
               <div
                 aria-hidden
                 className="pointer-events-none absolute -right-12 -top-12 size-32 rounded-full bg-amber-500/[0.08] blur-2xl"
               />
-              <div className="relative p-5">
+              <div className="relative p-4 sm:p-5">
                 <SectionHeading
                   icon={BarChart3}
                   title="Top Spending Categories"
@@ -179,7 +185,7 @@ export function SummaryCards({
                   <>
                     <ChartContainer
                       config={chartConfig}
-                      className="aspect-auto h-[260px] w-full mt-3"
+                      className="aspect-auto mt-3 h-[260px] w-full md:h-[300px]"
                     >
                       <BarChart
                         data={rankedCategories}
@@ -200,7 +206,7 @@ export function SummaryCards({
                           fontSize={11}
                           tickLine={false}
                           axisLine={false}
-                          width={108}
+                          width={92}
                         />
                         <ChartTooltip
                           cursor={{ fill: "hsl(var(--muted))", opacity: 0.4 }}
@@ -226,8 +232,10 @@ export function SummaryCards({
                       </BarChart>
                     </ChartContainer>
                     {/* Compact summary list under the chart — gives
-                        exact $ + share without needing to hover. */}
-                    <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                        exact $ + share without needing to hover. Stacks
+                        single-column on phones so each row keeps its
+                        truncation budget for long category names. */}
+                    <div className="mt-3 grid grid-cols-1 gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
                       {rankedCategories.slice(0, 6).map((c) => (
                         <div
                           key={c.category}
@@ -271,14 +279,14 @@ export function SummaryCards({
                 aria-hidden
                 className="pointer-events-none absolute -right-12 -top-12 size-32 rounded-full bg-blue-500/[0.08] blur-2xl"
               />
-              <div className="relative p-5">
+              <div className="relative p-4 sm:p-5">
                 <SectionHeading icon={LineIcon} title="Monthly Spending Trend" />
                 {trend.length > 0 ? (
                   <ChartContainer
                     config={{
                       total: { label: "Total", color: "hsl(220, 70%, 55%)" },
                     }}
-                    className="aspect-auto h-[260px] w-full mt-3"
+                    className="aspect-auto mt-3 h-[260px] w-full md:h-[300px]"
                   >
                     <AreaChart data={trend} margin={{ left: 10, right: 10 }}>
                       <CartesianGrid vertical={false} />
@@ -348,21 +356,23 @@ export function SummaryCards({
 
           {/* Pie chart — supplementary percentage view, full-width row
               below the actionable charts. Renders only when there's
-              category data to show. */}
+              category data to show. Bumped to 320px at md+ so the
+              donut + outer labels don't crowd at lg widths; phones
+              keep the 260px height so the chart remains screen-sized. */}
           {chartData.length > 0 && (
             <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
               <div
                 aria-hidden
                 className="pointer-events-none absolute -right-12 -top-12 size-32 rounded-full bg-purple-500/[0.08] blur-2xl"
               />
-              <div className="relative p-5">
+              <div className="relative p-4 sm:p-5">
                 <SectionHeading
                   icon={PieIcon}
                   title={`Percentage Breakdown — ${periodLabel}`}
                 />
                 <ChartContainer
                   config={chartConfig}
-                  className="aspect-auto h-[260px] w-full mt-3"
+                  className="aspect-auto mt-3 h-[260px] w-full md:h-[320px]"
                 >
                   <PieChart>
                     <Pie
@@ -371,8 +381,8 @@ export function SummaryCards({
                       nameKey="category"
                       cx="50%"
                       cy="50%"
-                      innerRadius={55}
-                      outerRadius={95}
+                      innerRadius="40%"
+                      outerRadius="70%"
                       paddingAngle={2}
                       strokeWidth={0}
                       label={({ category, percent }) =>
