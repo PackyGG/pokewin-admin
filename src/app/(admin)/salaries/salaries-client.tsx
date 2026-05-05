@@ -49,20 +49,38 @@ import {
   updateSalaryEmployee,
 } from "./actions";
 
+type Cadence = "weekly" | "biweekly" | "monthly";
+
 type Employee = {
   id: string;
-  name: string;
+  discordName: string;
   ethAddress: string;
+  cadence: Cadence;
   salaryUsdt: number;
   active: boolean;
   lastPaidAt: string | null;
   notes: string | null;
 };
 
+const CADENCE_LABELS: Record<Cadence, string> = {
+  weekly: "Weekly",
+  biweekly: "Bi-weekly",
+  monthly: "Monthly",
+};
+
+const CADENCE_COLORS: Record<Cadence, string> = {
+  weekly:
+    "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-cyan-500/30",
+  biweekly:
+    "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
+  monthly:
+    "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
+};
+
 type Payout = {
   id: string;
   employeeId: string;
-  employeeName: string;
+  employeeDiscordName: string;
   amountUsdt: number;
   toAddress: string;
   txHash: string | null;
@@ -122,10 +140,13 @@ function EmployeesCard({ employees }: { employees: Employee[] }) {
               <thead>
                 <tr className="border-b bg-muted/50">
                   <th className="px-3 py-2 text-left text-xs font-medium">
-                    Name
+                    Discord
                   </th>
                   <th className="px-3 py-2 text-left text-xs font-medium">
                     Address (click for QR)
+                  </th>
+                  <th className="px-3 py-2 text-left text-xs font-medium">
+                    Cadence
                   </th>
                   <th className="px-3 py-2 text-right text-xs font-medium">
                     Salary
@@ -166,7 +187,7 @@ function EmployeeRow({ employee }: { employee: Employee }) {
         className={`border-b last:border-b-0 ${employee.active ? "" : "opacity-60"}`}
       >
         <td className="px-3 py-2 text-sm font-medium">
-          {employee.name}
+          <span className="font-mono">{employee.discordName}</span>
           {!employee.active && (
             <Badge variant="outline" className="ml-1.5 text-[10px]">
               inactive
@@ -184,8 +205,19 @@ function EmployeeRow({ employee }: { employee: Employee }) {
             {employee.ethAddress.slice(0, 6)}…{employee.ethAddress.slice(-4)}
           </button>
         </td>
+        <td className="px-3 py-2">
+          <Badge
+            variant="outline"
+            className={`text-[10px] ${CADENCE_COLORS[employee.cadence]}`}
+          >
+            {CADENCE_LABELS[employee.cadence]}
+          </Badge>
+        </td>
         <td className="px-3 py-2 text-right text-sm tabular-nums">
           ${employee.salaryUsdt.toFixed(2)}
+          <span className="ml-1 text-[10px] text-muted-foreground">
+            /{employee.cadence === "monthly" ? "mo" : employee.cadence === "weekly" ? "wk" : "2wk"}
+          </span>
         </td>
         <td className="px-3 py-2 text-xs text-muted-foreground">
           {employee.lastPaidAt ? formatRelative(employee.lastPaidAt) : "never"}
@@ -295,7 +327,7 @@ function AddressQrDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <QrCode className="size-4 text-amber-500" />
-            {employee.name} — USDT Address
+            {employee.discordName} — USDT Address
           </DialogTitle>
           <DialogDescription>
             Scan with any Ethereum wallet to send USDT (ERC-20) on
@@ -408,7 +440,7 @@ function RecordPayoutDialog({
         toast.error(result.error);
         return;
       }
-      toast.success(`Logged $${amt.toFixed(2)} payout to ${employee.name}`);
+      toast.success(`Logged $${amt.toFixed(2)} payout to ${employee.discordName}`);
       onClose();
       router.refresh();
     });
@@ -425,7 +457,7 @@ function RecordPayoutDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Receipt className="size-4 text-emerald-500" />
-            Log payment to {employee.name}
+            Log payment to {employee.discordName}
           </DialogTitle>
           <DialogDescription>
             Record a USDT salary payment you already sent from your
@@ -505,8 +537,9 @@ function EmployeeFormDialog({
   employee: Employee | null;
 }) {
   const router = useRouter();
-  const [name, setName] = useState(employee?.name ?? "");
+  const [discordName, setDiscordName] = useState(employee?.discordName ?? "");
   const [address, setAddress] = useState(employee?.ethAddress ?? "");
+  const [cadence, setCadence] = useState<Cadence>(employee?.cadence ?? "monthly");
   const [salary, setSalary] = useState(
     employee ? String(employee.salaryUsdt) : "",
   );
@@ -516,16 +549,17 @@ function EmployeeFormDialog({
   const isEdit = Boolean(employee);
 
   function reset() {
-    setName(employee?.name ?? "");
+    setDiscordName(employee?.discordName ?? "");
     setAddress(employee?.ethAddress ?? "");
+    setCadence(employee?.cadence ?? "monthly");
     setSalary(employee ? String(employee.salaryUsdt) : "");
     setActive(employee?.active ?? true);
     setNotes(employee?.notes ?? "");
   }
 
   function handleSubmit() {
-    if (!name.trim()) {
-      toast.error("Name is required");
+    if (!discordName.trim()) {
+      toast.error("Discord name is required");
       return;
     }
     if (!address.trim()) {
@@ -541,15 +575,17 @@ function EmployeeFormDialog({
       const result = isEdit
         ? await updateSalaryEmployee({
             id: employee!.id,
-            name: name.trim(),
+            discordName: discordName.trim(),
             ethAddress: address.trim(),
+            cadence,
             salaryUsdt: sal,
             active,
             notes: notes.trim() || null,
           })
         : await addSalaryEmployee({
-            name: name.trim(),
+            discordName: discordName.trim(),
             ethAddress: address.trim(),
+            cadence,
             salaryUsdt: sal,
             active,
             notes: notes.trim() || null,
@@ -583,11 +619,13 @@ function EmployeeFormDialog({
         </DialogHeader>
         <div className="space-y-3">
           <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Name</Label>
+            <Label className="text-xs text-muted-foreground">
+              Discord Name
+            </Label>
             <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Alice"
+              value={discordName}
+              onChange={(e) => setDiscordName(e.target.value)}
+              placeholder="alice or alice#1234"
               maxLength={80}
             />
           </div>
@@ -603,8 +641,29 @@ function EmployeeFormDialog({
             />
           </div>
           <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Cadence</Label>
+            <select
+              value={cadence}
+              onChange={(e) => setCadence(e.target.value as Cadence)}
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            >
+              <option value="weekly">Weekly</option>
+              <option value="biweekly">Bi-weekly</option>
+              <option value="monthly">Monthly</option>
+            </select>
+            <p className="text-[10px] text-muted-foreground">
+              Salary below is the amount per pay period (per
+              {cadence === "weekly"
+                ? " week"
+                : cadence === "biweekly"
+                  ? " 2 weeks"
+                  : " month"}
+              ).
+            </p>
+          </div>
+          <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">
-              Default Salary (USDT)
+              Salary per Period (USDT)
             </Label>
             <Input
               type="number"
@@ -621,7 +680,7 @@ function EmployeeFormDialog({
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               rows={2}
-              placeholder="Role, payment cadence, etc."
+              placeholder="Role, special arrangements, etc."
               maxLength={500}
             />
           </div>
@@ -678,10 +737,10 @@ function DeleteEmployeeButton({ employee }: { employee: Employee }) {
       </Button>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Remove {employee.name}?</AlertDialogTitle>
+          <AlertDialogTitle>Remove {employee.discordName}?</AlertDialogTitle>
           <AlertDialogDescription>
             Removes the saved salary record for{" "}
-            <span className="font-medium">{employee.name}</span>. If
+            <span className="font-medium">{employee.discordName}</span>. If
             they have any payouts on file, this will be blocked —
             deactivate instead.
           </AlertDialogDescription>
@@ -816,7 +875,7 @@ function PayoutRow({ payout }: { payout: Payout }) {
 
   return (
     <tr className="border-b last:border-b-0">
-      <td className="px-3 py-2 text-sm">{payout.employeeName}</td>
+      <td className="px-3 py-2 text-sm">{payout.employeeDiscordName}</td>
       <td className="px-3 py-2 text-right text-sm tabular-nums">
         ${payout.amountUsdt.toFixed(2)}
       </td>
@@ -860,7 +919,7 @@ function PayoutRow({ payout }: { payout: Payout }) {
               <AlertDialogDescription>
                 Drops the $
                 {payout.amountUsdt.toFixed(2)} payment to{" "}
-                <span className="font-medium">{payout.employeeName}</span>{" "}
+                <span className="font-medium">{payout.employeeDiscordName}</span>{" "}
                 from the log. The on-chain transaction (if any)
                 isn&apos;t affected — this is bookkeeping only. Use
                 if you logged it twice or by mistake.
@@ -934,7 +993,7 @@ function StandalonePayoutDialog({
         return;
       }
       const empName =
-        employees.find((e) => e.id === employeeId)?.name ?? "employee";
+        employees.find((e) => e.id === employeeId)?.discordName ?? "employee";
       toast.success(`Logged $${amt.toFixed(2)} payout to ${empName}`);
       onClose();
       router.refresh();
@@ -975,7 +1034,7 @@ function StandalonePayoutDialog({
               <option value="">Pick an employee…</option>
               {employees.map((e) => (
                 <option key={e.id} value={e.id}>
-                  {e.name} — ${e.salaryUsdt.toFixed(2)}
+                  {e.discordName} — ${e.salaryUsdt.toFixed(2)}
                 </option>
               ))}
             </select>

@@ -33,8 +33,9 @@ export async function ensureSalarySchema(): Promise<void> {
     await adminDb.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS "salary_employees" (
         "id"             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        "name"           TEXT NOT NULL,
+        "discord_name"   TEXT NOT NULL,
         "eth_address"    TEXT NOT NULL,
+        "cadence"        TEXT NOT NULL DEFAULT 'monthly',
         "salary_usdt"    NUMERIC(20, 6) NOT NULL,
         "max_per_payout" NUMERIC(20, 6),
         "active"         BOOLEAN NOT NULL DEFAULT true,
@@ -44,6 +45,34 @@ export async function ensureSalarySchema(): Promise<void> {
         "updated_at"     TIMESTAMPTZ(6) NOT NULL DEFAULT now(),
         "created_by_id"  UUID NOT NULL REFERENCES "admin_users"("id")
       )
+    `);
+    // Upgrade partial-env tables that were created before the
+    // discord_name + cadence columns existed. ADD COLUMN IF NOT EXISTS
+    // is idempotent; the rename is gated on column-existence so
+    // re-runs are no-ops.
+    await adminDb.$executeRawUnsafe(`
+      ALTER TABLE "salary_employees"
+        ADD COLUMN IF NOT EXISTS "cadence" TEXT NOT NULL DEFAULT 'monthly'
+    `);
+    await adminDb.$executeRawUnsafe(`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'salary_employees'
+            AND column_name = 'name'
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'salary_employees'
+            AND column_name = 'discord_name'
+        )
+        THEN
+          ALTER TABLE "salary_employees" RENAME COLUMN "name" TO "discord_name";
+        END IF;
+      END $$
     `);
     await adminDb.$executeRawUnsafe(`
       CREATE INDEX IF NOT EXISTS "salary_employees_active_idx"

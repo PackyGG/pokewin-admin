@@ -25,13 +25,13 @@ export default async function SalariesPage() {
 
   const [employees, recentPayouts, paidThisMonth, paidYtd] = await Promise.all([
     adminDb.salary_employees.findMany({
-      orderBy: [{ active: "desc" }, { name: "asc" }],
+      orderBy: [{ active: "desc" }, { discord_name: "asc" }],
     }),
     adminDb.salary_payouts.findMany({
       orderBy: { created_at: "desc" },
       take: 50,
       include: {
-        employee: { select: { name: true, eth_address: true } },
+        employee: { select: { discord_name: true, eth_address: true } },
       },
     }),
     // Sum what motha has already logged as paid this calendar month
@@ -47,12 +47,25 @@ export default async function SalariesPage() {
   ]);
 
   const activeEmployees = employees.filter((e) => e.active).length;
-  // Monthly budget = what we'd owe if we paid every active employee
-  // their default salary once this month. Compare with paidThisMonth
-  // to see "still to pay".
+  // Monthly budget = sum of (salary × periods-per-month) across all
+  // active employees, normalized to a calendar month. Per-period
+  // salary stays as the input; cadence converts it to monthly:
+  //   weekly   → ×52/12 (≈4.33)
+  //   biweekly → ×26/12 (≈2.17)
+  //   monthly  → ×1
+  // Fallback: anything else (or stale rows from before the cadence
+  // column existed) is treated as monthly.
+  const periodsPerMonth = (cadence: string): number => {
+    if (cadence === "weekly") return 52 / 12;
+    if (cadence === "biweekly") return 26 / 12;
+    return 1;
+  };
   const monthlyBudget = employees
     .filter((e) => e.active)
-    .reduce((sum, e) => sum + Number(e.salary_usdt), 0);
+    .reduce(
+      (sum, e) => sum + Number(e.salary_usdt) * periodsPerMonth(e.cadence),
+      0,
+    );
   const paidThisMonthUsd = Number(paidThisMonth._sum.amount_usdt ?? 0);
   const paidYtdUsd = Number(paidYtd._sum.amount_usdt ?? 0);
 
@@ -112,8 +125,13 @@ export default async function SalariesPage() {
         <SalariesClient
           employees={employees.map((e) => ({
             id: e.id,
-            name: e.name,
+            discordName: e.discord_name,
             ethAddress: e.eth_address,
+            cadence: (e.cadence === "weekly" ||
+            e.cadence === "biweekly" ||
+            e.cadence === "monthly"
+              ? e.cadence
+              : "monthly") as "weekly" | "biweekly" | "monthly",
             salaryUsdt: Number(e.salary_usdt),
             active: e.active,
             lastPaidAt: e.last_paid_at?.toISOString() ?? null,
@@ -122,7 +140,7 @@ export default async function SalariesPage() {
           payouts={recentPayouts.map((p) => ({
             id: p.id,
             employeeId: p.employee_id,
-            employeeName: p.employee.name,
+            employeeDiscordName: p.employee.discord_name,
             amountUsdt: Number(p.amount_usdt),
             toAddress: p.to_address,
             txHash: p.tx_hash,

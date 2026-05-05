@@ -390,14 +390,22 @@ model admin_shift_assignments {
 // recorded after the fact (with optional etherscan tx link).
 model salary_employees {
   id               String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name             String
+  // Discord username (`.unique` style or legacy `User#1234`). Stored
+  // as plain text — we only use it for display + audit metadata, not
+  // for any Discord API auth.
+  discord_name     String
   // 0x-prefixed lowercased Ethereum address. Validation happens at
   // the server-action boundary (ethers.isAddress), the column itself
   // is just a String so test addresses / future-other-chain cases
   // don't require a migration.
   eth_address      String
-  // The employee's recurring salary in USDT (6 decimals). Default
-  // amount when admin clicks "Pay now" — admin can override per pay.
+  // Pay frequency. One of "weekly" | "biweekly" | "monthly".
+  // Stored as TEXT (no enum) so changing the set of values doesn't
+  // require a migration; validated at the action boundary.
+  cadence          String              @default("monthly")
+  // The employee's recurring salary in USDT (6 decimals). This is the
+  // amount paid PER PERIOD (matches the cadence above), not monthly.
+  // Monthly equivalent computed at render time.
   salary_usdt      Decimal             @db.Decimal(20, 6)
   // Optional safety cap — refuses any single payout exceeding this
   // amount even if the admin types it explicitly. Catches typos.

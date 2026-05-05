@@ -10,9 +10,16 @@ import { isAddress, normalizeAddress } from "@/lib/salary/wallet";
 
 // ── Schemas ─────────────────────────────────────────────────────────
 
+const CADENCES = ["weekly", "biweekly", "monthly"] as const;
+
 const employeeSchema = z.object({
-  name: z.string().trim().min(1, "Name is required").max(80),
+  discordName: z
+    .string()
+    .trim()
+    .min(1, "Discord name is required")
+    .max(80),
   ethAddress: z.string().trim().min(1, "Address is required"),
+  cadence: z.enum(CADENCES).optional(),
   salaryUsdt: z
     .number()
     .finite()
@@ -77,8 +84,9 @@ export async function addSalaryEmployee(
 
   const created = await adminDb.salary_employees.create({
     data: {
-      name: parsed.data.name,
+      discord_name: parsed.data.discordName,
       eth_address: normalizeAddress(address),
+      cadence: parsed.data.cadence ?? "monthly",
       salary_usdt: parsed.data.salaryUsdt,
       max_per_payout: null,
       notes: parsed.data.notes?.trim() || null,
@@ -93,8 +101,9 @@ export async function addSalaryEmployee(
     eventType: "salary_employee_added",
     metadata: {
       employeeId: created.id,
-      name: parsed.data.name,
+      discordName: parsed.data.discordName,
       ethAddress: normalizeAddress(address),
+      cadence: parsed.data.cadence ?? "monthly",
       salaryUsdt: parsed.data.salaryUsdt,
     },
   });
@@ -116,13 +125,15 @@ export async function updateSalaryEmployee(
     };
   }
   const updateData: Record<string, unknown> = {};
-  if (parsed.data.name !== undefined) updateData.name = parsed.data.name;
+  if (parsed.data.discordName !== undefined)
+    updateData.discord_name = parsed.data.discordName;
   if (parsed.data.ethAddress !== undefined) {
     if (!isAddress(parsed.data.ethAddress.trim())) {
       return { success: false, error: "Invalid Ethereum address" };
     }
     updateData.eth_address = normalizeAddress(parsed.data.ethAddress);
   }
+  if (parsed.data.cadence !== undefined) updateData.cadence = parsed.data.cadence;
   if (parsed.data.salaryUsdt !== undefined)
     updateData.salary_usdt = parsed.data.salaryUsdt;
   if (parsed.data.notes !== undefined) {
@@ -260,7 +271,7 @@ export async function recordSalaryPayout(
     metadata: {
       payoutId: payout.id,
       employeeId: employee.id,
-      employeeName: employee.name,
+      employeeDiscordName: employee.discord_name,
       amountUsdt: parsed.data.amountUsdt,
       txHash: parsed.data.txHash ?? null,
       paidAt: paidAt.toISOString(),
