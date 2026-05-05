@@ -37,7 +37,7 @@ export function RetentionChart({
   }));
 
   return (
-    <ChartContainer config={chartConfig} className="h-[320px] w-full">
+    <ChartContainer config={chartConfig} className="h-[260px] w-full md:h-[320px] lg:h-[360px]">
       <AreaChart data={data} accessibilityLayer>
         <defs>
           <linearGradient id="retention-gradient" x1="0" y1="0" x2="0" y2="1">

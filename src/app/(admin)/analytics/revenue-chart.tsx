@@ -66,7 +66,7 @@ export function RevenueStackedCharts({
         <h4 className="mb-2 text-xs font-semibold uppercase text-muted-foreground">
           Inflows (house revenue)
         </h4>
-        <ChartContainer config={inflowConfig} className="h-[300px] w-full">
+        <ChartContainer config={inflowConfig} className="h-[260px] w-full md:h-[320px] lg:h-[360px]">
           <AreaChart data={daily} accessibilityLayer>
             <CartesianGrid vertical={false} />
             <XAxis
@@ -115,7 +115,7 @@ export function RevenueStackedCharts({
         <h4 className="mb-2 text-xs font-semibold uppercase text-muted-foreground">
           Outflows (paid to users)
         </h4>
-        <ChartContainer config={outflowConfig} className="h-[300px] w-full">
+        <ChartContainer config={outflowConfig} className="h-[260px] w-full md:h-[320px] lg:h-[360px]">
           <AreaChart data={daily} accessibilityLayer>
             <CartesianGrid vertical={false} />
             <XAxis

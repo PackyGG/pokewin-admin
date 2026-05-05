@@ -17,8 +17,11 @@ export function PeriodFilter() {
   const searchParams = useSearchParams();
   const current = searchParams.get("period") ?? "30d";
 
+  // 5 chips × ~50px ≈ 250px — fits a 360px viewport, but if a longer
+  // label is added later the row should wrap rather than overflow.
+  // `flex-wrap gap-1` is the safe default.
   return (
-    <div className="flex gap-1 rounded-lg border bg-muted/50 p-1">
+    <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/50 p-1">
       {PERIODS.map(({ label, value }) => (
         <Link
           key={value}

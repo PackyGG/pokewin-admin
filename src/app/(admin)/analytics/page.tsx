@@ -58,14 +58,18 @@ export default async function AnalyticsPage({
     <div className="space-y-6">
       <AutoRefresh />
       <PageHero>
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
+        {/* Identity + period filter stack vertically on phones — the
+            5-chip filter would otherwise wrap awkwardly under the
+            icon. At sm+ they go side-by-side so the hero scans cleanly
+            on tablets and desktops. */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
               <BarChart3 className="size-5 text-primary" />
             </div>
-            <div>
-              <h1 className="text-2xl font-bold leading-tight">Analytics</h1>
-              <p className="text-sm text-muted-foreground">
+            <div className="min-w-0">
+              <h1 className="text-xl font-bold leading-tight sm:text-2xl">Analytics</h1>
+              <p className="text-xs text-muted-foreground sm:text-sm">
                 Revenue, acquisition, and gameplay metrics over time.
               </p>
             </div>

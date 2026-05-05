@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { getAnalyticsData } from "@/lib/queries/analytics";
 import { formatCurrency } from "@/lib/utils/format";
+import { cn } from "@/lib/utils";
 import { StatCard } from "../dashboard/stat-card";
 import { AnalyticsCharts } from "./charts";
 import { FadeIn } from "@/components/fade-in";
@@ -45,7 +46,7 @@ export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-3 grid-cols-2 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
         <StatCard
           title="Realized Profit"
           animatedValue={data.realizedProfit}
@@ -212,9 +213,12 @@ function PnlBreakdown({
   const isProfit = total >= 0;
 
   return (
-    <div className="rounded-2xl border bg-gradient-to-br from-card via-card to-card/80 p-5">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div>
+    <div className="rounded-2xl border bg-gradient-to-br from-card via-card to-card/80 p-4 sm:p-5">
+      {/* Header: title + description. On phones, the total sits in its
+          own dedicated row above the rows so the title doesn't have to
+          fight for horizontal space with a 24px-bold currency value. */}
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <h3 className="text-base font-semibold leading-tight">
             Where the P&amp;L comes from
           </h3>
@@ -223,14 +227,22 @@ function PnlBreakdown({
             drill into the underlying users / transactions.
           </p>
         </div>
-        <div className="text-right">
+        <div
+          className={cn(
+            "flex items-center justify-between gap-3 rounded-xl border px-3 py-2 sm:block sm:border-0 sm:p-0 sm:text-right",
+            isProfit
+              ? "border-emerald-500/30 bg-emerald-500/10 sm:bg-transparent"
+              : "border-rose-500/30 bg-rose-500/10 sm:bg-transparent",
+          )}
+        >
           <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
             Realized P&amp;L
           </p>
           <p
-            className={`text-2xl font-bold tabular-nums ${
-              isProfit ? "text-emerald-500" : "text-rose-500"
-            }`}
+            className={cn(
+              "text-xl font-bold tabular-nums sm:text-2xl",
+              isProfit ? "text-emerald-500" : "text-rose-500",
+            )}
           >
             {isProfit ? "+" : "−"}
             {formatCurrency(Math.abs(total))}
@@ -255,23 +267,31 @@ function PnlRow({ row }: { row: Row }) {
   const bg = isPositive ? "bg-emerald-500/10" : "bg-rose-500/10";
   const Icon = row.icon;
 
+  // Mobile layout: the description gets clipped to a single line beside
+  // the label. At sm+ it stays as the muted descriptor under the label,
+  // matching the original visual hierarchy. The amount + arrow stay
+  // right-aligned at every breakpoint so admins can scan numbers.
   const inner = (
     <>
-      <div className="flex min-w-0 items-center gap-3">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
         <div
           className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${bg}`}
         >
           <Icon className={`size-4 ${color}`} />
         </div>
-        <div className="min-w-0">
-          <p className="text-sm font-medium leading-tight">{row.label}</p>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium leading-tight">
+            {row.label}
+          </p>
           <p className="truncate text-xs text-muted-foreground">
             {row.description}
           </p>
         </div>
       </div>
-      <div className="flex items-center gap-2 shrink-0">
-        <p className={`text-base font-semibold tabular-nums ${color}`}>
+      <div className="flex shrink-0 items-center gap-2">
+        <p
+          className={`text-sm font-semibold tabular-nums sm:text-base ${color}`}
+        >
           {row.sign}
           {formatCurrency(row.value)}
         </p>
@@ -286,14 +306,14 @@ function PnlRow({ row }: { row: Row }) {
     return (
       <Link
         href={row.href}
-        className="group flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-muted/40"
+        className="group flex items-center justify-between gap-3 px-3 py-3 transition-colors hover:bg-muted/40 sm:px-4"
       >
         {inner}
       </Link>
     );
   }
   return (
-    <div className="flex items-center justify-between gap-3 px-4 py-3">
+    <div className="flex items-center justify-between gap-3 px-3 py-3 sm:px-4">
       {inner}
     </div>
   );

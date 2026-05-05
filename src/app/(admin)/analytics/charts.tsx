@@ -156,8 +156,12 @@ function labeledCurrencyRow(
 }
 
 export function AnalyticsCharts({ data }: { data: DailyData[] }) {
+  // 1-up on phones gives every chart a usable plot height; 2-up at md
+  // (chart cards still readable side-by-side on tablets); 3-up only at
+  // lg+ where the YAxis labels and 30-day x-axis ticks have room to
+  // breathe.
   return (
-    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+    <div className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
       {/* Revenue Chart */}
       <Card>
         <CardHeader>
@@ -166,7 +170,7 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <ChartContainer config={revenueConfig} className="h-[300px] w-full">
+          <ChartContainer config={revenueConfig} className="h-[240px] w-full md:h-[300px] lg:h-[340px]">
             <LineChart data={data} accessibilityLayer>
               <CartesianGrid vertical={false} />
               <XAxis
@@ -221,7 +225,7 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <ChartContainer config={wagersConfig} className="h-[300px] w-full">
+          <ChartContainer config={wagersConfig} className="h-[240px] w-full md:h-[300px] lg:h-[340px]">
             <BarChart data={data} accessibilityLayer>
               <CartesianGrid vertical={false} />
               <XAxis
@@ -274,7 +278,7 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <ChartContainer config={avgDepositConfig} className="h-[300px] w-full">
+          <ChartContainer config={avgDepositConfig} className="h-[240px] w-full md:h-[300px] lg:h-[340px]">
             <LineChart data={data} accessibilityLayer>
               <CartesianGrid vertical={false} />
               <XAxis
@@ -314,7 +318,7 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <ChartContainer config={avgBetConfig} className="h-[300px] w-full">
+          <ChartContainer config={avgBetConfig} className="h-[240px] w-full md:h-[300px] lg:h-[340px]">
             <LineChart data={data} accessibilityLayer>
               <CartesianGrid vertical={false} />
               <XAxis
@@ -356,7 +360,7 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
         <CardContent>
           <ChartContainer
             config={rewardPayoutsConfig}
-            className="h-[300px] w-full"
+            className="h-[240px] w-full md:h-[300px] lg:h-[340px]"
           >
             <BarChart data={data} accessibilityLayer>
               <CartesianGrid vertical={false} />
@@ -434,7 +438,7 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
         <CardContent>
           <ChartContainer
             config={affiliateConfig}
-            className="h-[300px] w-full"
+            className="h-[240px] w-full md:h-[300px] lg:h-[340px]"
           >
             <BarChart data={data} accessibilityLayer>
               <CartesianGrid vertical={false} />
@@ -481,7 +485,7 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <ChartContainer config={usersConfig} className="h-[300px] w-full">
+          <ChartContainer config={usersConfig} className="h-[240px] w-full md:h-[300px] lg:h-[340px]">
             <LineChart data={data} accessibilityLayer>
               <CartesianGrid vertical={false} />
               <XAxis

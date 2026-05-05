@@ -96,53 +96,63 @@ function HeatmapTable({
     );
   }
 
+  // The cohort table can be 8+ period columns wide on a 30/90-day
+  // window — too wide for any phone. Wrap in horizontal scroll and pin
+  // the cohort label column so the user always knows which cohort row
+  // the cells belong to as they pan.
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs border-separate border-spacing-1">
-        <thead>
-          <tr className="text-muted-foreground">
-            <th className="text-left font-medium">Cohort</th>
-            <th className="text-right font-medium">Size</th>
-            {Array.from({ length: maxPeriods }).map((_, i) => (
-              <th key={i} className="text-center font-medium">
-                {periodLabel}
-                {i === maxPeriods - 1 ? `${i}+` : i}
+    <div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs border-separate border-spacing-1">
+          <thead>
+            <tr className="text-muted-foreground">
+              <th className="sticky left-0 z-10 bg-card text-left font-medium">
+                Cohort
               </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => {
-            return (
-              <tr key={row.cohort}>
-                <td className="truncate pr-2 font-medium">{row.label}</td>
-                <td className="pr-2 text-right tabular-nums text-muted-foreground">
-                  {formatNumber(row.size)}
-                </td>
-                {row.retained.map((retained, i) => {
-                  const revenue = row.revenue[i] ?? 0;
-                  return mode === "retention" ? (
-                    <RetentionCell
-                      key={i}
-                      retained={retained}
-                      revenue={revenue}
-                      size={row.size}
-                    />
-                  ) : (
-                    <RevenueCell
-                      key={i}
-                      revenue={revenue}
-                      retained={retained}
-                      size={row.size}
-                      maxValue={maxValue}
-                    />
-                  );
-                })}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+              <th className="text-right font-medium">Size</th>
+              {Array.from({ length: maxPeriods }).map((_, i) => (
+                <th key={i} className="text-center font-medium">
+                  {periodLabel}
+                  {i === maxPeriods - 1 ? `${i}+` : i}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              return (
+                <tr key={row.cohort}>
+                  <td className="sticky left-0 z-10 truncate bg-card pr-2 font-medium">
+                    {row.label}
+                  </td>
+                  <td className="pr-2 text-right tabular-nums text-muted-foreground">
+                    {formatNumber(row.size)}
+                  </td>
+                  {row.retained.map((retained, i) => {
+                    const revenue = row.revenue[i] ?? 0;
+                    return mode === "retention" ? (
+                      <RetentionCell
+                        key={i}
+                        retained={retained}
+                        revenue={revenue}
+                        size={row.size}
+                      />
+                    ) : (
+                      <RevenueCell
+                        key={i}
+                        revenue={revenue}
+                        retained={retained}
+                        size={row.size}
+                        maxValue={maxValue}
+                      />
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
       <CohortsToggle granularity={granularity} />
     </div>
   );

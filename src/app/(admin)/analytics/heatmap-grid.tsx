@@ -31,8 +31,8 @@ export function HeatmapGrid({ data }: { data: HeatmapData }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex gap-1 rounded-md border bg-muted/40 p-0.5">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex gap-1 rounded-md border bg-muted/40 p-0.5 self-start">
           {(["wager", "deposits"] as const).map((m) => (
             <Link
               key={m}
@@ -55,8 +55,11 @@ export function HeatmapGrid({ data }: { data: HeatmapData }) {
         </div>
       </div>
 
+      {/* Heatmap grid is 7×24 cells × 28px each ≈ 720px wide. Phones
+          can't fit it, so wrap in a horizontal scroller with an explicit
+          min-w so cell sizes stay readable when the user pans. */}
       <div className="overflow-x-auto">
-        <div className="inline-block min-w-full">
+        <div className="inline-block min-w-[720px]">
           {/* Header row: hour labels */}
           <div className="flex">
             <div className="w-10 shrink-0" />
@@ -103,18 +106,22 @@ export function HeatmapGrid({ data }: { data: HeatmapData }) {
         </div>
       </div>
 
-      {/* Intensity legend */}
-      <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-        <span>Less</span>
-        {[0.1, 0.3, 0.5, 0.7, 0.9].map((o, i) => (
-          <span
-            key={i}
-            className="h-3 w-4 rounded-sm"
-            style={{ backgroundColor: `rgb(${rgb} / ${o})` }}
-          />
-        ))}
-        <span>More</span>
-        <span className="ml-auto">
+      {/* Intensity legend — gradient ramp on the left, total on the
+          right. Wraps to two rows on a 360px viewport so the total
+          isn't pushed off-screen by the swatches. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+        <div className="flex items-center gap-1">
+          <span>Less</span>
+          {[0.1, 0.3, 0.5, 0.7, 0.9].map((o, i) => (
+            <span
+              key={i}
+              className="h-3 w-4 rounded-sm"
+              style={{ backgroundColor: `rgb(${rgb} / ${o})` }}
+            />
+          ))}
+          <span>More</span>
+        </div>
+        <span className="sm:ml-auto">
           Total:{" "}
           <span className="tabular-nums text-foreground">
             {metric === "wager"
