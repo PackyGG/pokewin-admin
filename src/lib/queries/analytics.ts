@@ -2,7 +2,7 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
 // SQL fragment for user_id filtering — injected via string concat (safe: hardcoded role name)
-const EXCL_STAFF_FRAG = `AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))`;
+const EXCL_STAFF_FRAG = `AND user_id IN (SELECT id FROM "user" WHERE role != 'admin')`;
 
 type Period = "today" | "7d" | "30d" | "90d" | "all";
 
@@ -99,8 +99,8 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
   const dateFilter = periodToDateFilter(period);
   // Same filter, but without the leading "AND " because it'll be the only WHERE condition
   // Exclude battles created by admin/creator (support counts as normal user)
-  const battleStaffExcl = `user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))`;
-  const battleStaffExclAliased = `b.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))`;
+  const battleStaffExcl = `user_id IN (SELECT id FROM "user" WHERE role != 'admin')`;
+  const battleStaffExclAliased = `b.user_id IN (SELECT id FROM "user" WHERE role != 'admin')`;
 
   const battleDateWhere =
     period === "all"
@@ -266,7 +266,7 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
       db.$queryRawUnsafe<{ date: Date; count: string }[]>(`
         SELECT DATE(created_at) AS date, COUNT(*)::text AS count
         FROM "user"
-        WHERE role NOT IN ('admin','creator') ${dateFilter}
+        WHERE role != 'admin' ${dateFilter}
         GROUP BY DATE(created_at)
         ORDER BY date
       `),
@@ -334,7 +334,7 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
         JOIN game_sessions gs ON lt.game_session_id = gs.id AND gs.game_type = 'pack'
         JOIN packs p ON gs.game_id = p.id
         WHERE lt.type = 'pack_opening' AND lt.status = 'completed' ${dateFilter.replace(/created_at/g, "lt.created_at")}
-          AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))
+          AND lt.user_id IN (SELECT id FROM "user" WHERE role != 'admin')
         GROUP BY p.id, p.name
         ORDER BY COUNT(*) DESC
         LIMIT 20

@@ -50,7 +50,7 @@ export async function getRetentionCurve(): Promise<RetentionData> {
     WITH eligible AS (
       SELECT id AS user_id, created_at
       FROM "user"
-      WHERE role NOT IN ('admin','creator')
+      WHERE role != 'admin'
         AND created_at >= NOW() - INTERVAL '${COHORT_WINDOW_DAYS} days'
     ),
     days AS (

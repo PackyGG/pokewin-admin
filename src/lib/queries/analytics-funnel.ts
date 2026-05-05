@@ -77,7 +77,7 @@ export async function getFunnelData(period: FunnelPeriod): Promise<FunnelData> {
       WITH cohort AS (
         SELECT u.id
         FROM "user" u
-        WHERE u.role NOT IN ('admin','creator')
+        WHERE u.role != 'admin'
           ${usersDateFilter}
       ),
       activity AS (

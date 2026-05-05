@@ -16,7 +16,9 @@ import { computeHousePnl } from "./pnl";
  * users-detail) sticks to the canonical five terms so the User Detail page
  * stays in sync with what the user themselves would see.
  *
- * All aggregates exclude staff (admin/creator) — role NOT IN ('admin','creator').
+ * All aggregates exclude only the `admin` role. Creators are real
+ * users — their wagers/deposits/payouts count in P&L like everyone
+ * else (consistent with src/lib/queries/_exclude-staff.ts).
  */
 export type RealizedPnlSnapshot = {
   pnl: number;
@@ -47,7 +49,7 @@ async function realizedPnlSnapshotInner(): Promise<RealizedPnlSnapshot> {
     }[]
   >`
     WITH real_users AS (
-      SELECT id FROM "user" WHERE role NOT IN ('admin','creator')
+      SELECT id FROM "user" WHERE role != 'admin'
     )
     SELECT
       COALESCE((SELECT SUM(total_deposited::numeric)     FROM balances                 WHERE user_id IN (SELECT id FROM real_users)), 0)::text AS deposited,

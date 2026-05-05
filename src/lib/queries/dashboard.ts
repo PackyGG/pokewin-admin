@@ -44,7 +44,7 @@ function getPeriodAggregates(db: PrismaClient, startOfDay: Date, threeDaysAgo: D
     }[]
   >`
     WITH real_users AS (
-      SELECT id FROM "user" WHERE role NOT IN ('admin','creator')
+      SELECT id FROM "user" WHERE role != 'admin'
     ),
     base AS (
       SELECT type, amount::numeric AS amount, created_at
@@ -166,12 +166,12 @@ async function dashboardStatsInner() {
     totalInventoryValue,
     pendingConfirmationWithdrawals,
   ] = await Promise.all([
-    db.user.count({ where: { role: { notIn: ["admin", "creator"] } } }),
-    db.user.count({ where: { role: { notIn: ["admin", "creator"] }, created_at: { gte: startOfDay } } }),
-    db.user.count({ where: { role: { notIn: ["admin", "creator"] }, created_at: { gte: startOfWeek } } }),
-    db.user.count({ where: { role: { notIn: ["admin", "creator"] }, created_at: { gte: startOfMonth } } }),
-    db.user.count({ where: { role: { notIn: ["admin", "creator"] }, is_banned: true } }),
-    db.user.count({ where: { role: { notIn: ["admin", "creator"] }, is_locked: true } }),
+    db.user.count({ where: { role: { not: "admin" } } }),
+    db.user.count({ where: { role: { not: "admin" }, created_at: { gte: startOfDay } } }),
+    db.user.count({ where: { role: { not: "admin" }, created_at: { gte: startOfWeek } } }),
+    db.user.count({ where: { role: { not: "admin" }, created_at: { gte: startOfMonth } } }),
+    db.user.count({ where: { role: { not: "admin" }, is_banned: true } }),
+    db.user.count({ where: { role: { not: "admin" }, is_locked: true } }),
     db.balances.aggregate({
       where: { user: EXCLUDE_STAFF_USER_RELATION },
       _sum: {
@@ -214,7 +214,7 @@ async function dashboardStatsInner() {
       FROM ledger_transactions
       WHERE type IN ('pack_opening','battle_bet','battle_sponsorship') AND status = 'completed'
         AND created_at >= NOW() - INTERVAL '30 days'
-        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))
+        AND user_id IN (SELECT id FROM "user" WHERE role != 'admin')
       GROUP BY DATE(created_at)
       ORDER BY date
     `,
@@ -224,7 +224,7 @@ async function dashboardStatsInner() {
       FROM ledger_transactions
       WHERE type = 'deposit' AND status = 'completed'
         AND created_at >= NOW() - INTERVAL '30 days'
-        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))
+        AND user_id IN (SELECT id FROM "user" WHERE role != 'admin')
       GROUP BY DATE(created_at)
       ORDER BY date
     `,
@@ -233,7 +233,7 @@ async function dashboardStatsInner() {
       SELECT DATE(created_at) as date, COUNT(*)::text as count
       FROM "user"
       WHERE created_at >= NOW() - INTERVAL '30 days'
-        AND role NOT IN ('admin','creator')
+        AND role != 'admin'
       GROUP BY DATE(created_at)
       ORDER BY date
     `,
@@ -260,12 +260,12 @@ async function dashboardStatsInner() {
       SELECT COUNT(DISTINCT user_id)::text AS count
       FROM ledger_transactions
       WHERE type = 'deposit' AND status = 'completed'
-        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','creator'))
+        AND user_id IN (SELECT id FROM "user" WHERE role != 'admin')
     `,
     getRealizedPnlSnapshot(),
     db.$queryRaw<{ avg_session_value: string }[]>`
       WITH real_users AS (
-        SELECT id FROM "user" WHERE role NOT IN ('admin','creator')
+        SELECT id FROM "user" WHERE role != 'admin'
       ),
       withdrawal_events AS (
         SELECT user_id, created_at, 'withdrawal' as event_type

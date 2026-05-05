@@ -236,7 +236,7 @@ export async function getLiveActivity(params: {
     }),
     db.user.findMany({
       where: {
-        role: { notIn: ["admin", "creator"] },
+        role: { not: "admin" },
         ...(since ? { created_at: { gt: since } } : {}),
       },
       orderBy: { created_at: "desc" },
