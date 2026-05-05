@@ -102,8 +102,13 @@ export function CreatorRowActions({
           <DropdownMenuSeparator />
           <DropdownMenuItem
             disabled={demoteBlocked || isPending}
-            onSelect={(e) => {
-              e.preventDefault();
+            // No `e.preventDefault()` — letting the dropdown close
+            // its portal first, THEN opening the AlertDialog, is what
+            // makes the dialog actually visible. Keeping the dropdown
+            // open (preventDefault) traps focus + z-index above the
+            // dialog so clicks "do nothing" from the user's POV.
+            // Matches the working pattern in withdrawals/row-actions.
+            onSelect={() => {
               if (!demoteBlocked) setConfirmOpen(true);
             }}
             className="text-rose-600 focus:text-rose-600"
