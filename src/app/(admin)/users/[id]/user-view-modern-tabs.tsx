@@ -100,11 +100,11 @@ export function OverviewTab({
   const { user, balances, statistics, counts, capabilities } = data;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {/* Modern stat panels — purpose-built to match the hero aesthetic:
           rounded-2xl, subtle colored corner glow, color-accented icon
           chip + hero number + breakdown rows below. */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 md:grid-cols-3">
         <ModernBalancePanel
           balances={balances}
           userId={user.id}
@@ -261,21 +261,21 @@ export function AffiliateTab({ data }: { data: UserDetail }) {
           Inline-duplicating that here would be a maintenance nightmare. */}
       {user.role === "creator" && (
         <Card className="overflow-hidden">
-          <CardContent className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-3">
-              <div className="flex size-10 items-center justify-center rounded-lg bg-purple-500/15">
+          <CardContent className="flex flex-col gap-3 sm:gap-4 p-4 sm:p-6 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="flex size-10 items-center justify-center rounded-lg bg-purple-500/15 shrink-0">
                 <Sparkles className="size-5 text-purple-500" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <p className="text-sm font-semibold">Creator Dashboard</p>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-xs text-muted-foreground truncate">
                   Deals, webhooks, payouts, click + signup analytics
                 </p>
               </div>
             </div>
             <a
               href={`/creators/${user.id}`}
-              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 min-h-[44px] shrink-0"
             >
               Open Creator Dashboard
               <span aria-hidden>→</span>
@@ -296,7 +296,7 @@ export function AffiliateTab({ data }: { data: UserDetail }) {
       {affiliate && (
         <>
           <SectionHeading icon={TrendingUp} title="Affiliate Stats" />
-          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-3 sm:gap-4 grid-cols-2 lg:grid-cols-3">
             <ModernMetricTile
               label="Total Referred"
               value={affiliate.totalReferred.toLocaleString()}
@@ -629,7 +629,7 @@ function WageringStatsCard({
       : 0;
   const isHouseUp = wagerLoss >= 0;
   return (
-    <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
       <ModernMetricTile
         label="Wager Loss"
         value={

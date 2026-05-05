@@ -113,12 +113,12 @@ export function StatPanel({
           colors.bg,
         )}
       />
-      <div className="relative p-5">
+      <div className="relative p-4 sm:p-5">
         <div className="mb-3 flex items-center gap-2">
-          <div className={cn("flex size-7 items-center justify-center rounded-lg", colors.bg)}>
+          <div className={cn("flex size-7 items-center justify-center rounded-lg shrink-0", colors.bg)}>
             <Icon className={cn("size-3.5", colors.icon)} />
           </div>
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground truncate">
             {title}
           </h3>
         </div>
@@ -179,7 +179,7 @@ export function ModernBalancePanel({
         <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
           Total Value
         </p>
-        <p className="text-3xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+        <p className="text-2xl sm:text-3xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400 truncate">
           {formatCurrency(total)}
         </p>
       </div>
@@ -262,12 +262,12 @@ export function ModernPnlPanel({
   return (
     <StatPanel title="Platform P&L" icon={Icon} accent={isProfit ? "emerald" : "rose"}>
       <div className="space-y-0.5">
-        <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
+        <p className="text-[11px] uppercase tracking-wider text-muted-foreground truncate">
           Deposits − Withdrawals − Balance − Inventory
         </p>
         <p
           className={cn(
-            "text-3xl font-bold tabular-nums",
+            "text-2xl sm:text-3xl font-bold tabular-nums truncate",
             isProfit ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400",
           )}
         >
@@ -320,20 +320,20 @@ export function ModernActivityPanel({
   const showXpAdjust = canAdjustXp && Boolean(userId);
   return (
     <StatPanel title="Activity" icon={Activity} accent="blue">
-      <div className="flex items-baseline gap-4">
-        <div>
+      <div className="flex flex-wrap items-baseline gap-4">
+        <div className="min-w-0">
           <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
             Level
           </p>
-          <p className="text-3xl font-bold tabular-nums text-blue-600 dark:text-blue-400">
+          <p className="text-2xl sm:text-3xl font-bold tabular-nums text-blue-600 dark:text-blue-400">
             {statistics?.level ?? 0}
           </p>
         </div>
-        <div>
+        <div className="min-w-0">
           <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
             XP
           </p>
-          <p className="text-lg font-semibold tabular-nums text-muted-foreground">
+          <p className="text-base sm:text-lg font-semibold tabular-nums text-muted-foreground truncate">
             {(statistics?.xp ?? 0).toLocaleString()}
           </p>
         </div>
@@ -393,14 +393,14 @@ export function ModernMetricTile({
 }) {
   const colors = TILE_COLORS[accent] ?? TILE_COLORS.blue;
   return (
-    <div className={cn("rounded-xl border p-4", colors.bg)}>
+    <div className={cn("rounded-xl border p-3 sm:p-4 min-w-0", colors.bg)}>
       <div className="flex items-center gap-2">
-        <Icon className={cn("size-4", colors.icon)} />
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <Icon className={cn("size-4 shrink-0", colors.icon)} />
+        <span className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-wider text-muted-foreground truncate">
           {label}
         </span>
       </div>
-      <p className={cn("mt-1 text-2xl font-bold tabular-nums", colors.text)}>
+      <p className={cn("mt-1 text-xl sm:text-2xl font-bold tabular-nums truncate", colors.text)}>
         {value}
       </p>
     </div>

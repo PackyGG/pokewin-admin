@@ -30,7 +30,7 @@ function AlertDialogOverlay({
     <AlertDialogPrimitive.Backdrop
       data-slot="alert-dialog-overlay"
       className={cn(
-        "fixed inset-0 isolate z-50 bg-black/10 duration-100 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "fixed inset-0 isolate z-50 bg-black/40 duration-150 supports-backdrop-filter:backdrop-blur-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 sm:bg-black/10",
         className
       )}
       {...props}
@@ -41,6 +41,7 @@ function AlertDialogOverlay({
 function AlertDialogContent({
   className,
   size = "default",
+  children,
   ...props
 }: AlertDialogPrimitive.Popup.Props & {
   size?: "default" | "sm"
@@ -52,11 +53,28 @@ function AlertDialogContent({
         data-slot="alert-dialog-content"
         data-size={size}
         className={cn(
-          "group/alert-dialog-content fixed top-1/2 left-1/2 z-50 grid w-full -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-background p-4 ring-1 ring-foreground/10 duration-100 outline-none data-[size=default]:max-w-xs data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          // Base: positioned vertical flex container, scrollable
+          "group/alert-dialog-content fixed z-50 flex flex-col gap-4 bg-background text-sm ring-1 ring-foreground/10 duration-200 outline-none overflow-y-auto overscroll-contain",
+          // Mobile (<640px): bottom-anchored sheet
+          "inset-x-0 bottom-0 top-auto w-full max-w-none max-h-[90vh] rounded-b-none rounded-t-2xl px-4 pt-4 pb-[max(env(safe-area-inset-bottom),1rem)]",
+          // Desktop (sm+): centered floating modal
+          "sm:inset-auto sm:top-1/2 sm:left-1/2 sm:bottom-auto sm:-translate-x-1/2 sm:-translate-y-1/2 sm:max-h-[85vh] sm:w-[calc(100%-2rem)] sm:rounded-xl sm:p-4",
+          "data-[size=default]:sm:max-w-sm data-[size=sm]:sm:max-w-xs",
+          // Animations
+          "data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+          "data-open:slide-in-from-bottom-8 data-closed:slide-out-to-bottom-8",
+          "sm:data-open:slide-in-from-bottom-0 sm:data-closed:slide-out-to-bottom-0 sm:data-open:zoom-in-95 sm:data-closed:zoom-out-95",
           className
         )}
         {...props}
-      />
+      >
+        {/* Mobile grabber bar */}
+        <div
+          aria-hidden="true"
+          className="sticky top-0 -mt-2 mb-0 mx-auto h-1 w-9 shrink-0 rounded-full bg-muted-foreground/30 sm:hidden"
+        />
+        {children}
+      </AlertDialogPrimitive.Popup>
     </AlertDialogPortal>
   )
 }
@@ -69,7 +87,7 @@ function AlertDialogHeader({
     <div
       data-slot="alert-dialog-header"
       className={cn(
-        "grid grid-rows-[auto_1fr] place-items-center gap-1.5 text-center has-data-[slot=alert-dialog-media]:grid-rows-[auto_auto_1fr] has-data-[slot=alert-dialog-media]:gap-x-4 sm:group-data-[size=default]/alert-dialog-content:place-items-start sm:group-data-[size=default]/alert-dialog-content:text-left sm:group-data-[size=default]/alert-dialog-content:has-data-[slot=alert-dialog-media]:grid-rows-[auto_1fr]",
+        "grid shrink-0 grid-rows-[auto_1fr] place-items-center gap-1.5 text-center has-data-[slot=alert-dialog-media]:grid-rows-[auto_auto_1fr] has-data-[slot=alert-dialog-media]:gap-x-4 sm:group-data-[size=default]/alert-dialog-content:place-items-start sm:group-data-[size=default]/alert-dialog-content:text-left sm:group-data-[size=default]/alert-dialog-content:has-data-[slot=alert-dialog-media]:grid-rows-[auto_1fr]",
         className
       )}
       {...props}
@@ -85,7 +103,12 @@ function AlertDialogFooter({
     <div
       data-slot="alert-dialog-footer"
       className={cn(
-        "-mx-4 -mb-4 flex flex-col-reverse gap-2 rounded-b-xl border-t bg-muted/50 p-4 group-data-[size=sm]/alert-dialog-content:grid group-data-[size=sm]/alert-dialog-content:grid-cols-2 sm:flex-row sm:justify-end",
+        // Mobile: sticky stacked footer (Cancel below primary), full-bleed border
+        "sticky bottom-[calc(-1*max(env(safe-area-inset-bottom),1rem))] -mx-4 -mb-[max(env(safe-area-inset-bottom),1rem)] mt-auto flex shrink-0 flex-col-reverse gap-2 border-t bg-muted/50 px-4 pt-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] backdrop-blur-sm",
+        // Desktop: side-by-side, justified end
+        "sm:bottom-[-1rem] sm:-mb-4 sm:flex-row sm:justify-end sm:rounded-b-xl sm:px-4 sm:py-3",
+        // sm-size keeps the 2-col grid layout on desktop
+        "group-data-[size=sm]/alert-dialog-content:sm:grid group-data-[size=sm]/alert-dialog-content:sm:grid-cols-2",
         className
       )}
       {...props}
@@ -148,7 +171,7 @@ function AlertDialogAction({
   return (
     <Button
       data-slot="alert-dialog-action"
-      className={cn(className)}
+      className={cn("w-full sm:w-auto", className)}
       {...props}
     />
   )
@@ -164,7 +187,7 @@ function AlertDialogCancel({
   return (
     <AlertDialogPrimitive.Close
       data-slot="alert-dialog-cancel"
-      className={cn(className)}
+      className={cn("w-full sm:w-auto", className)}
       render={<Button variant={variant} size={size} />}
       {...props}
     />

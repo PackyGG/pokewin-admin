@@ -225,12 +225,12 @@ export function UserViewModern({
           className="pointer-events-none absolute -left-24 -bottom-24 size-72 rounded-full bg-purple-500/[0.06] blur-3xl"
         />
 
-        <div className="relative p-5 md:p-6">
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+        <div className="relative p-3 sm:p-5 md:p-6">
+          <div className="flex flex-col gap-4 sm:gap-6 lg:flex-row lg:items-center lg:justify-between">
             {/* Identity */}
-            <div className="flex items-start gap-4 min-w-0">
+            <div className="flex items-start gap-3 sm:gap-4 min-w-0">
               <div className="relative shrink-0">
-                <Avatar className="size-14 ring-2 ring-background shadow-lg">
+                <Avatar className="size-12 sm:size-14 ring-2 ring-background shadow-lg">
                   {user.image && <AvatarImage src={user.image} alt="" />}
                   <AvatarFallback className="text-sm font-semibold">
                     {(user.username ?? user.email ?? "?")
@@ -249,20 +249,23 @@ export function UserViewModern({
                 />
               </div>
 
-              <div className="min-w-0 space-y-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="text-xl font-bold leading-tight truncate">
+              <div className="min-w-0 space-y-1 flex-1">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <h2 className="text-lg sm:text-xl font-bold leading-tight truncate min-w-0">
                     {displayName}
                   </h2>
                   {user.username && user.displayUsername &&
                     user.displayUsername !== user.username && (
-                      <span className="text-sm text-muted-foreground">
+                      <span className="text-xs sm:text-sm text-muted-foreground truncate">
                         @{user.username}
                       </span>
                     )}
-                  {/* Admin toolbar lives inline next to the username so the
-                      hero box doesn't grow a dedicated action row. Edit
-                      identity sits LEFT of Change Role per user request. */}
+                </div>
+                {/* Admin toolbar — separate row on phone so name doesn't
+                    have to share its row with 4+ action buttons that wrap
+                    awkwardly. Wraps as needed; on wider screens it sits
+                    naturally close to the name without taking extra space. */}
+                <div className="flex flex-wrap items-center gap-1.5">
                   <EditIdentityButton user={user} />
                   {canChangeUserRoles && (
                     <ChangeRoleDialog userId={user.id} currentRole={user.role} />
@@ -375,8 +378,9 @@ export function UserViewModern({
                 wraps below on narrow. Tighter tiles than before so the hero
                 stays compact. Wagering metrics (Wager Loss + total
                 Wagered/Won) live on the Account tab instead of cluttering
-                the hero. */}
-            <div className="grid grid-cols-3 gap-2 shrink-0 lg:grid-cols-6">
+                the hero. Phone: 2 cols (3 cols was too tight at 375px),
+                tablet: 3 cols, desktop: 6 cols. */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 shrink-0">
               <KpiTile
                 label="Total Value"
                 value={formatCurrency(totalValue)}
@@ -420,30 +424,16 @@ export function UserViewModern({
         </div>
       </div>
 
-      {/* ── TAB BAR ────────────────────────────────────────────────── */}
-      <div className="sticky top-2 z-20 rounded-xl border bg-card/80 p-1 backdrop-blur-md">
-        <div className="flex flex-wrap gap-1">
-          {visibleTabs.map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.key;
-            return (
-              <button
-                key={tab.key}
-                onClick={() => setActiveTab(tab.key)}
-                className={cn(
-                  "inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all",
-                  isActive
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                )}
-              >
-                <Icon className="size-4" />
-                {tab.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      {/* ── TAB BAR ──────────────────────────────────────────────────
+          On phone the pills horizontal-scroll instead of wrapping into
+          two rows; the active tab scrolls itself into view when changed.
+          Edge-fade gradients hint at scrollable content. On lg+ screens
+          all 8 tabs fit naturally so no scroll needed. */}
+      <ScrollableTabBar
+        visibleTabs={visibleTabs}
+        activeTab={activeTab}
+        onChange={setActiveTab}
+      />
 
       {/* ── TAB CONTENT ──────────────────────────────────────────────
           Wrapped in FadeIn keyed on the active tab so switching panels
@@ -503,6 +493,80 @@ export function UserViewModern({
 }
 
 // ───────────────────────────────────────────────────────────────────
+//  TAB BAR — horizontal-scroll on phone, fits naturally on lg+
+// ───────────────────────────────────────────────────────────────────
+
+function ScrollableTabBar({
+  visibleTabs,
+  activeTab,
+  onChange,
+}: {
+  visibleTabs: TabDef[];
+  activeTab: TabKey;
+  onChange: (k: TabKey) => void;
+}) {
+  const scrollerRef = React.useRef<HTMLDivElement | null>(null);
+  const tabRefs = React.useRef<Map<TabKey, HTMLButtonElement>>(new Map());
+
+  // Scroll active pill into view on phone — keeps the user oriented when
+  // they tap a tab that was previously off-screen.
+  useEffect(() => {
+    const el = tabRefs.current.get(activeTab);
+    if (!el) return;
+    el.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
+      inline: "center",
+    });
+  }, [activeTab]);
+
+  return (
+    <div className="sticky top-2 z-20 rounded-xl border bg-card/80 p-1 backdrop-blur-md">
+      <div className="relative">
+        {/* Edge fade hints — only visible while scrollable, but cheaper to
+            always render than to compute scroll position with a ResizeObserver. */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute left-0 top-0 bottom-0 w-6 bg-gradient-to-r from-card/80 to-transparent rounded-l-xl lg:hidden"
+        />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute right-0 top-0 bottom-0 w-6 bg-gradient-to-l from-card/80 to-transparent rounded-r-xl lg:hidden"
+        />
+        <div
+          ref={scrollerRef}
+          className="flex gap-1 overflow-x-auto lg:flex-wrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          {visibleTabs.map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.key;
+            return (
+              <button
+                key={tab.key}
+                ref={(el) => {
+                  if (el) tabRefs.current.set(tab.key, el);
+                  else tabRefs.current.delete(tab.key);
+                }}
+                onClick={() => onChange(tab.key)}
+                className={cn(
+                  "inline-flex shrink-0 items-center gap-1.5 sm:gap-2 rounded-lg px-3 sm:px-4 py-2 text-sm font-medium transition-all min-h-[44px]",
+                  isActive
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                )}
+              >
+                <Icon className="size-4" />
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────
 //  KPI TILE — hero-only; tabs use ModernMetricTile from the panels file.
 // ───────────────────────────────────────────────────────────────────
 
@@ -523,26 +587,26 @@ function KpiTile({
   return (
     <div
       className={cn(
-        "group relative overflow-hidden rounded-xl border px-5 py-4 transition-all hover:shadow-md min-w-[200px]",
+        "group relative overflow-hidden rounded-xl border p-2.5 sm:p-3 md:p-4 transition-all hover:shadow-md min-w-0",
         colors.bg,
       )}
     >
-      <div className="flex items-center gap-2">
-        <Icon className={cn("size-5", colors.icon)} />
-        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+      <div className="flex items-center gap-1.5 sm:gap-2">
+        <Icon className={cn("size-3.5 sm:size-4 md:size-5 shrink-0", colors.icon)} />
+        <span className="text-[10px] sm:text-[11px] md:text-xs font-semibold uppercase tracking-wider text-muted-foreground truncate">
           {label}
         </span>
       </div>
       <p
         className={cn(
-          "mt-1.5 text-2xl font-bold tabular-nums leading-tight",
+          "mt-1 sm:mt-1.5 text-base sm:text-lg lg:text-xl font-bold tabular-nums leading-tight truncate",
           colors.text,
         )}
       >
         {value}
       </p>
       {sub && (
-        <p className="mt-1 text-xs text-muted-foreground truncate">
+        <p className="mt-0.5 sm:mt-1 text-[10px] sm:text-[11px] text-muted-foreground truncate">
           {sub}
         </p>
       )}
