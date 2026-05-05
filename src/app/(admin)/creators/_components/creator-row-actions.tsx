@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { MoreHorizontal, ExternalLink, UserMinus } from "lucide-react";
 
@@ -37,8 +38,16 @@ export function CreatorRowActions({
   hasActiveSession,
   hasActiveDeal,
 }: Props) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // Optimistic flag — once the demote succeeds we hide the row's
+  // actions immediately, even before router.refresh() pulls the
+  // re-rendered list. Without this the user sees the same row
+  // sitting there for the duration of the backend RPC and starts
+  // clicking again, double-firing the action.
+  const [optimisticallyRemoved, setOptimisticallyRemoved] =
+    useState(false);
 
   const demoteBlocked = hasActiveSession || hasActiveDeal;
   const blockedReason = hasActiveSession
@@ -51,8 +60,17 @@ export function CreatorRowActions({
     startTransition(async () => {
       try {
         await demoteCreator(userId);
+        // Mark removed first so the UI dims instantly — the
+        // dialog closes, the kebab is hidden, no double-click.
+        setOptimisticallyRemoved(true);
         toast.success("Creator role revoked");
         setConfirmOpen(false);
+        // revalidatePath in the server action invalidated the
+        // cache; this pull re-renders the page with the user
+        // gone. Without this call the user only sees the change
+        // on next manual reload, which is what makes it feel
+        // "didn't actually remove".
+        router.refresh();
       } catch (err) {
         toast.error(
           err instanceof Error ? err.message : "Failed to demote creator",
@@ -60,6 +78,12 @@ export function CreatorRowActions({
       }
     });
   }
+
+  // Optimistic-removed rows render nothing — the next router.refresh()
+  // will rebuild the list without this user and the component will
+  // unmount cleanly. We do this in addition to (not instead of)
+  // setOptimisticallyRemoved so even slow backends feel snappy.
+  if (optimisticallyRemoved) return null;
 
   return (
     <>
