@@ -66,12 +66,11 @@ type FormState = {
 /**
  * All times on the backend are UTC. The datetime-local input has no
  * timezone, so we label everything UTC and treat entered values as UTC
- * when building the ISO string. Defaults point at the next full Mon–Mon
- * week (UTC) so admins don't have to pick dates by hand for the common
- * case.
+ * when building the ISO string. Defaults: start = now (UTC, minute
+ * resolution), end = +7 days. Admin can override either side by hand.
  */
 const buildCreateDefaults = (): FormState => {
-  const { start, end } = nextMondayWeekUtc();
+  const { start, end } = nowPlusSevenDaysUtc();
   return {
     week_start_utc: toLocalInputValue(start),
     week_end_utc: toLocalInputValue(end),
@@ -210,17 +209,18 @@ function computePatch(
   return patch;
 }
 
-function nextMondayWeekUtc(): { start: Date; end: Date } {
+function nowPlusSevenDaysUtc(): { start: Date; end: Date } {
+  // Truncate to minute so the datetime-local input doesn't show seconds.
   const now = new Date();
-  const utcNow = Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate(),
+  const start = new Date(
+    Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+      now.getUTCHours(),
+      now.getUTCMinutes(),
+    ),
   );
-  const dow = new Date(utcNow).getUTCDay(); // 0 Sun .. 6 Sat
-  // Days until next Monday (exclusive if today is Monday → +7)
-  const daysToMonday = dow === 1 ? 7 : (8 - dow) % 7 || 7;
-  const start = new Date(utcNow + daysToMonday * 86400_000);
   const end = new Date(start.getTime() + 7 * 86400_000);
   return { start, end };
 }
