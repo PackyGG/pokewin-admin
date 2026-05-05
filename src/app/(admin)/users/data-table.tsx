@@ -21,6 +21,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Dialog,
   DialogContent,
@@ -30,6 +32,9 @@ import {
 import { columns, type UserRow } from "./columns";
 import { UsersSortProvider } from "./sort-context";
 import { bulkDeleteUsers } from "./actions";
+import { ROLE_COLORS, USER_STATUS_COLORS } from "@/lib/constants";
+import { formatCurrency } from "@/lib/utils/format";
+import { cn } from "@/lib/utils";
 
 // ── Persistent selection store ────────────────────────────────────────
 // Lives OUTSIDE React render so it survives re-renders from search/filter/sort.
@@ -170,6 +175,101 @@ function BulkDeleteDialog({
   );
 }
 
+// ── Mobile card row ───────────────────────────────────────────────────
+
+function initialsFor(name: string | null, email: string | null): string {
+  const src = name ?? email ?? "?";
+  return src.slice(0, 2).toUpperCase();
+}
+
+function UserMobileCard({
+  row,
+  selected,
+  onToggle,
+  onNavigate,
+}: {
+  row: UserRow;
+  selected: boolean;
+  onToggle: () => void;
+  onNavigate: () => void;
+}) {
+  // House-POV: positive pnl = user winning = bad for us = rose; negative = green.
+  const pnlIsUserProfit = row.pnl > 0;
+  const pnlIsUserLoss = row.pnl < 0;
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-3 border-b border-border/60 px-3 py-3 last:border-b-0 transition-colors",
+        selected && "bg-accent/30",
+      )}
+    >
+      <Checkbox
+        checked={selected}
+        onCheckedChange={onToggle}
+        onClick={(e) => e.stopPropagation()}
+        aria-label={`Select ${row.username ?? row.email ?? "user"}`}
+      />
+      <button
+        type="button"
+        onClick={onNavigate}
+        className="flex flex-1 items-center gap-3 text-left min-w-0"
+      >
+        <Avatar className="size-9 shrink-0">
+          {row.image && <AvatarImage src={row.image} alt="" />}
+          <AvatarFallback className="text-xs">
+            {initialsFor(row.username, row.email)}
+          </AvatarFallback>
+        </Avatar>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <span className="truncate text-sm font-medium">
+              {row.username ?? row.email ?? "—"}
+            </span>
+            <Badge
+              variant="outline"
+              className={cn("h-4 px-1 text-[9px] uppercase", ROLE_COLORS[row.role])}
+            >
+              {row.role}
+            </Badge>
+          </div>
+          <div className="flex items-center gap-1.5 mt-0.5">
+            <Badge
+              variant="outline"
+              className={cn(
+                "h-4 px-1 text-[9px] capitalize",
+                USER_STATUS_COLORS[row.status],
+              )}
+            >
+              {row.status}
+            </Badge>
+            {row.country && (
+              <span className="text-[10px] text-muted-foreground truncate">
+                {row.country}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="shrink-0 text-right">
+          <div className="text-sm font-medium tabular-nums">
+            {formatCurrency(row.availableBalance)}
+          </div>
+          <div
+            className={cn(
+              "text-[10px] tabular-nums",
+              pnlIsUserProfit && "text-rose-400",
+              pnlIsUserLoss && "text-emerald-400",
+              !pnlIsUserProfit && !pnlIsUserLoss && "text-muted-foreground",
+            )}
+          >
+            {row.pnl >= 0 ? "+" : ""}
+            {formatCurrency(row.pnl)} P&L
+          </div>
+        </div>
+      </button>
+    </div>
+  );
+}
+
 // ── Table ─────────────────────────────────────────────────────────────
 
 function Inner({ rows }: { rows: UserRow[] }) {
@@ -191,7 +291,7 @@ function Inner({ rows }: { rows: UserRow[] }) {
     <div className="space-y-2">
       {/* Toolbar — shows when selection active */}
       {sel.count > 0 && (
-        <div className="flex items-center gap-3 rounded-md border bg-muted/30 px-3 py-2">
+        <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2">
           <span className="text-sm font-medium">
             {sel.count} user{sel.count !== 1 ? "s" : ""} selected
           </span>
@@ -215,74 +315,108 @@ function Inner({ rows }: { rows: UserRow[] }) {
         </div>
       )}
 
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            {table.getHeaderGroups().map((hg) => (
-              <TableRow key={hg.id}>
-                <TableHead className="w-10 px-2">
-                  <Checkbox
-                    checked={allOnPageSelected}
-                    onCheckedChange={(checked) =>
-                      sel.toggleAll(rows, !!checked)
-                    }
-                  />
-                </TableHead>
-                {hg.headers.map((header) => (
-                  <TableHead key={header.id}>
-                    {header.isPlaceholder
-                      ? null
-                      : flexRender(
-                          header.column.columnDef.header,
-                          header.getContext(),
-                        )}
-                  </TableHead>
-                ))}
-              </TableRow>
+      {/* Mobile card list (<lg) */}
+      <div className="lg:hidden">
+        {rows.length === 0 ? (
+          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
+            No users found.
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-md border">
+            <div className="flex items-center gap-3 border-b bg-muted/30 px-3 py-2">
+              <Checkbox
+                checked={allOnPageSelected}
+                onCheckedChange={(checked) => sel.toggleAll(rows, !!checked)}
+                aria-label="Select all on page"
+              />
+              <span className="text-xs text-muted-foreground">
+                Select all on page
+              </span>
+            </div>
+            {rows.map((row) => (
+              <UserMobileCard
+                key={row.id}
+                row={row}
+                selected={sel.isSelected(row.id)}
+                onToggle={() => sel.toggle(row)}
+                onNavigate={() => router.push(`/users/${row.id}`)}
+              />
             ))}
-          </TableHeader>
-          <TableBody>
-            {table.getRowModel().rows.length ? (
-              table.getRowModel().rows.map((row) => (
-                <TableRow
-                  key={row.id}
-                  data-row-id={row.id}
-                  className={`cursor-pointer hover:bg-accent/40 ${
-                    sel.isSelected(row.id) ? "bg-accent/20" : ""
-                  }`}
-                  onClick={() => router.push(`/users/${row.original.id}`)}
-                >
-                  <TableCell
-                    className="w-10 px-2"
-                    onClick={(e) => e.stopPropagation()}
-                  >
+          </div>
+        )}
+      </div>
+
+      {/* Desktop table (>=lg) */}
+      <div className="hidden lg:block">
+        <div className="rounded-md border overflow-x-auto">
+          <Table>
+            <TableHeader>
+              {table.getHeaderGroups().map((hg) => (
+                <TableRow key={hg.id}>
+                  <TableHead className="w-10 px-2">
                     <Checkbox
-                      checked={sel.isSelected(row.id)}
-                      onCheckedChange={() => sel.toggle(row.original)}
+                      checked={allOnPageSelected}
+                      onCheckedChange={(checked) =>
+                        sel.toggleAll(rows, !!checked)
+                      }
                     />
-                  </TableCell>
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id} className="overflow-hidden">
-                      {flexRender(
-                        cell.column.columnDef.cell,
-                        cell.getContext(),
-                      )}
-                    </TableCell>
+                  </TableHead>
+                  {hg.headers.map((header) => (
+                    <TableHead key={header.id}>
+                      {header.isPlaceholder
+                        ? null
+                        : flexRender(
+                            header.column.columnDef.header,
+                            header.getContext(),
+                          )}
+                    </TableHead>
                   ))}
                 </TableRow>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell
-                  colSpan={columns.length + 1}
-                  className="h-24 text-center"
-                >
-                  No users found.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
+              ))}
+            </TableHeader>
+            <TableBody>
+              {table.getRowModel().rows.length ? (
+                table.getRowModel().rows.map((row) => (
+                  <TableRow
+                    key={row.id}
+                    data-row-id={row.id}
+                    className={`cursor-pointer hover:bg-accent/40 ${
+                      sel.isSelected(row.id) ? "bg-accent/20" : ""
+                    }`}
+                    onClick={() => router.push(`/users/${row.original.id}`)}
+                  >
+                    <TableCell
+                      className="w-10 px-2"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Checkbox
+                        checked={sel.isSelected(row.id)}
+                        onCheckedChange={() => sel.toggle(row.original)}
+                      />
+                    </TableCell>
+                    {row.getVisibleCells().map((cell) => (
+                      <TableCell key={cell.id} className="overflow-hidden">
+                        {flexRender(
+                          cell.column.columnDef.cell,
+                          cell.getContext(),
+                        )}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell
+                    colSpan={columns.length + 1}
+                    className="h-24 text-center"
+                  >
+                    No users found.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
       </div>
 
       <BulkDeleteDialog

@@ -77,8 +77,10 @@ export function DataTableToolbar({
   }, []);
 
   return (
-    <div className="flex flex-wrap items-center gap-3 pb-4">
-      <div className="relative flex-1 min-w-[200px] max-w-sm">
+    // Mobile-first: search takes the full row, filter pills wrap below.
+    // At sm+ everything lines up in one row again.
+    <div className="flex flex-col gap-2 pb-4 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
+      <div className="relative w-full sm:flex-1 sm:min-w-[200px] sm:max-w-sm">
         {isPending ? (
           <Loader2 className="absolute left-2.5 top-2.5 size-4 text-muted-foreground animate-spin" />
         ) : (
@@ -91,39 +93,41 @@ export function DataTableToolbar({
           className="pl-8"
         />
       </div>
-      {filters?.map((filter) => {
-        const currentValue = searchParams.get(filter.paramKey) ?? "all";
-        const currentLabel =
-          currentValue === "all"
-            ? `All ${filter.name}`
-            : filter.options.find((o) => o.value === currentValue)?.label ?? `All ${filter.name}`;
-        return (
-          <Select
-            key={filter.paramKey}
-            value={currentValue}
-            onValueChange={(v) => updateParam(filter.paramKey, v ?? "all")}
-          >
-            <SelectTrigger className="w-[150px]">
-              <span className="truncate">{currentLabel}</span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All {filter.name}</SelectItem>
-              {filter.options.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        );
-      })}
-      {children}
-      {hasActiveFilters && (
-        <Button variant="ghost" size="sm" onClick={clearFilters} className="h-9 px-2 lg:px-3">
-          Clear
-          <X className="ml-1 size-4" />
-        </Button>
-      )}
+      <div className="flex flex-wrap items-center gap-2 sm:contents">
+        {filters?.map((filter) => {
+          const currentValue = searchParams.get(filter.paramKey) ?? "all";
+          const currentLabel =
+            currentValue === "all"
+              ? `All ${filter.name}`
+              : filter.options.find((o) => o.value === currentValue)?.label ?? `All ${filter.name}`;
+          return (
+            <Select
+              key={filter.paramKey}
+              value={currentValue}
+              onValueChange={(v) => updateParam(filter.paramKey, v ?? "all")}
+            >
+              <SelectTrigger className="w-[150px]">
+                <span className="truncate">{currentLabel}</span>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All {filter.name}</SelectItem>
+                {filter.options.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          );
+        })}
+        {children}
+        {hasActiveFilters && (
+          <Button variant="ghost" size="sm" onClick={clearFilters} className="h-9 px-2 lg:px-3">
+            Clear
+            <X className="ml-1 size-4" />
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
