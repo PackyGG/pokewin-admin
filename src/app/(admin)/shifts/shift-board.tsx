@@ -376,43 +376,52 @@ function WeekBoard({
         </div>
       </header>
 
-      {/* Day header row */}
-      <div className="grid grid-cols-[96px_repeat(7,1fr)] border-b bg-muted/20">
-        <div className="p-3" />
-        {DAY_SHORT.map((d, i) => (
-          <DayHeader
-            key={d}
-            short={d}
-            full={DAY_NAMES[i]}
-            weekStart={weekStart}
-            day={i}
-            onCopyFromYesterday={() => onCopyDay(i)}
-          />
-        ))}
-      </div>
-
-      {/* Body — 3 slot rows */}
-      {Array.from({ length: SHIFTS_PER_DAY }).map((_, slot) => (
-        <div
-          key={slot}
-          className="grid grid-cols-[96px_repeat(7,1fr)] border-b last:border-b-0"
-        >
-          <div className="flex items-center justify-center border-r bg-muted/10 p-2 text-xs font-semibold text-muted-foreground">
-            {SLOT_LABELS[slot]}
-          </div>
-          {Array.from({ length: 7 }).map((_, day) => {
-            const shift = grid.get(`${day}|${slot}`) ?? null;
-            return (
-              <ShiftCell
-                key={day}
-                shift={shift}
-                workersById={workersById}
-                onClick={() => onCellClick(day, slot, shift)}
+      {/* The 7-day grid uses fixed-ratio columns. On narrow viewports
+          (<800px) cells become unreadable, so wrap the whole table in
+          a horizontal-scroll container with a min-width that keeps cell
+          widths comfortable. Header row + body rows share the same
+          min-width so they stay aligned during scroll. */}
+      <div className="overflow-x-auto">
+        <div className="min-w-[760px]">
+          {/* Day header row */}
+          <div className="grid grid-cols-[96px_repeat(7,1fr)] border-b bg-muted/20">
+            <div className="p-3" />
+            {DAY_SHORT.map((d, i) => (
+              <DayHeader
+                key={d}
+                short={d}
+                full={DAY_NAMES[i]}
+                weekStart={weekStart}
+                day={i}
+                onCopyFromYesterday={() => onCopyDay(i)}
               />
-            );
-          })}
+            ))}
+          </div>
+
+          {/* Body — 3 slot rows */}
+          {Array.from({ length: SHIFTS_PER_DAY }).map((_, slot) => (
+            <div
+              key={slot}
+              className="grid grid-cols-[96px_repeat(7,1fr)] border-b last:border-b-0"
+            >
+              <div className="flex items-center justify-center border-r bg-muted/10 p-2 text-xs font-semibold text-muted-foreground">
+                {SLOT_LABELS[slot]}
+              </div>
+              {Array.from({ length: 7 }).map((_, day) => {
+                const shift = grid.get(`${day}|${slot}`) ?? null;
+                return (
+                  <ShiftCell
+                    key={day}
+                    shift={shift}
+                    workersById={workersById}
+                    onClick={() => onCellClick(day, slot, shift)}
+                  />
+                );
+              })}
+            </div>
+          ))}
         </div>
-      ))}
+      </div>
     </section>
   );
 }
