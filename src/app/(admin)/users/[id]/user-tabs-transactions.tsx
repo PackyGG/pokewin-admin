@@ -251,6 +251,9 @@ export const CategoryTransactionsTable = React.memo(
               <Loader2 className="size-4 animate-spin text-muted-foreground" />
             )}
           </div>
+          {/* Wide multi-column transaction table — let it horizontal-scroll
+              inside the card on phone instead of forcing the page to scroll. */}
+          <div className="overflow-x-auto -mx-6 px-6 sm:mx-0 sm:px-0">
           <Table>
             <TableHeader>
               <TableRow>
@@ -402,17 +405,18 @@ export const CategoryTransactionsTable = React.memo(
               )}
             </TableBody>
           </Table>
+          </div>
 
           <TransactionDetailModal
             transaction={selectedTx}
             onClose={() => setSelectedTx(null)}
           />
           {txData.totalPages > 0 && (
-            <div className="flex items-center justify-between py-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 py-4">
               <p className="text-sm text-muted-foreground">
                 {txData.total} transaction{txData.total !== 1 ? "s" : ""}
               </p>
-              <div className="flex items-center gap-4">
+              <div className="flex flex-wrap items-center gap-3 sm:gap-4">
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-muted-foreground">Rows</span>
                   <Select
