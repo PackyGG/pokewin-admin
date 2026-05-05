@@ -181,7 +181,7 @@ export function EditDialog({ open, onOpenChange, leaderboard }: Props) {
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-2xl">
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                     <DialogTitle>Edit leaderboard</DialogTitle>
                     <DialogDescription>
@@ -210,7 +210,7 @@ export function EditDialog({ open, onOpenChange, leaderboard }: Props) {
                         />
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <div className="space-y-2">
                             <Label htmlFor="start_date">Start (whole hour only)</Label>
                             <Input

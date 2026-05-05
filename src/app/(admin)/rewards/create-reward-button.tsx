@@ -122,7 +122,7 @@ export function CreateRewardButton({ defaultType }: { defaultType?: "one_time" |
             <Label>Slug</Label>
             <Input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="daily-login-bonus" />
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label>Type</Label>
               <Select value={type} onValueChange={(v) => v && setType(v as typeof type)}>

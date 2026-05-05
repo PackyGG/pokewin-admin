@@ -91,7 +91,7 @@ export default async function PackDetailPage({
             <p className="font-mono text-xs text-muted-foreground mt-0.5">{data.slug}</p>
           </div>
           {(canToggle || canEdit || canDelete) && (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {canToggle && (
                 <TogglePackButton packId={data.id} active={data.active} />
               )}

@@ -271,7 +271,7 @@ export function CreatePackButton() {
           <div className="space-y-4">
             <h3 className="text-sm font-medium text-muted-foreground">Pack Info</h3>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>Name</Label>
                 <Input value={name} onChange={(e) => handleNameChange(e.target.value)} placeholder="Pack name" />
@@ -294,7 +294,7 @@ export function CreatePackButton() {
               <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional description" />
             </div>
 
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div className="space-y-1.5">
                 <Label>Price (USD)</Label>
                 <Input type="number" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="0.00" min="0" step="0.01" />
@@ -319,7 +319,7 @@ export function CreatePackButton() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>Tags</Label>
                 <div className="flex flex-wrap gap-2">

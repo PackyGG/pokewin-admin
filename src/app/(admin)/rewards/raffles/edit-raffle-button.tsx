@@ -188,7 +188,7 @@ export function EditRaffleButton({ raffleId, ...initial }: Props) {
             <Label>Description (optional)</Label>
             <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Enter to win..." />
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label>Starts At</Label>
               <Input type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
@@ -198,7 +198,7 @@ export function EditRaffleButton({ raffleId, ...initial }: Props) {
               <Input type="datetime-local" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label>Min Points per Entry (optional)</Label>
               <Input type="number" value={minPoints} onChange={(e) => setMinPoints(e.target.value)} placeholder="0" min={0} />
