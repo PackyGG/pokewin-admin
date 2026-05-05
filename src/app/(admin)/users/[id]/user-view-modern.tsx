@@ -39,7 +39,6 @@ import {
   Calendar,
   MapPin,
   Link2,
-  Dices,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -206,14 +205,6 @@ export function UserViewModern({
       ? ((balances.totalWagered - balances.totalWon) / balances.totalWagered) *
         100
       : 0;
-  // Wager Loss = how much the user has lost net from wagering
-  // (totalWagered − totalWon). House POV:
-  //   > 0  user in the red on bets, we won that money → GREEN
-  //   < 0  user up on bets, we lost that money       → RED
-  // Distinct from P&L: ignores deposits/withdrawals/balances and
-  // reflects only the gambling outcome.
-  const wagerLoss =
-    balances ? balances.totalWagered - balances.totalWon : 0;
 
   const displayName =
     user.displayUsername ?? user.username ?? user.name ?? "—";
@@ -380,8 +371,10 @@ export function UserViewModern({
 
             {/* KPI strip — sits to the right of the identity on wide screens,
                 wraps below on narrow. Tighter tiles than before so the hero
-                stays compact. */}
-            <div className="grid grid-cols-3 gap-2 shrink-0 lg:grid-cols-7">
+                stays compact. Wagering metrics (Wager Loss + total
+                Wagered/Won) live on the Account tab instead of cluttering
+                the hero. */}
+            <div className="grid grid-cols-3 gap-2 shrink-0 lg:grid-cols-6">
               <KpiTile
                 label="Total Value"
                 value={formatCurrency(totalValue)}
@@ -393,17 +386,6 @@ export function UserViewModern({
                 value={`${pnl >= 0 ? "+" : ""}${formatCurrency(pnl)}`}
                 icon={pnl >= 0 ? TrendingUp : TrendingDown}
                 accent={pnl >= 0 ? "emerald" : "rose"}
-              />
-              <KpiTile
-                label="Wager Loss"
-                value={
-                  balances && balances.totalWagered > 0
-                    ? `${wagerLoss >= 0 ? "+" : ""}${formatCurrency(wagerLoss)}`
-                    : "—"
-                }
-                sub="wagered − won"
-                icon={Dices}
-                accent={wagerLoss >= 0 ? "emerald" : "rose"}
               />
               <KpiTile
                 label="Deposits"

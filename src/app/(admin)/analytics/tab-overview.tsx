@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   DollarSign,
   TrendingUp,
@@ -5,6 +6,13 @@ import {
   UserPlus,
   Package,
   Swords,
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  Wallet,
+  Box,
+  Ticket,
+  Coins,
+  ArrowRight,
 } from "lucide-react";
 import { getAnalyticsData } from "@/lib/queries/analytics";
 import { formatCurrency } from "@/lib/utils/format";
@@ -42,7 +50,7 @@ export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
           title="Realized Profit"
           animatedValue={data.realizedProfit}
           formatKind="currency"
-          subtitle={`Dep ${formatCurrency(data.realizedProfitBreakdown.totalDeposits)} − WD ${formatCurrency(data.realizedProfitBreakdown.totalWithdrawals)} − Bal ${formatCurrency(data.realizedProfitBreakdown.userBalance)} − Inv ${formatCurrency(data.realizedProfitBreakdown.inventory)} − Vouchers ${formatCurrency(data.realizedProfitBreakdown.vouchers)} − Rakeback ${formatCurrency(data.realizedProfitBreakdown.unclaimedRakeback)}`}
+          subtitle="See breakdown below"
           icon={TrendingUp}
           color="green"
         />
@@ -98,8 +106,195 @@ export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
       </div>
 
       <FadeIn>
+        <PnlBreakdown
+          total={data.realizedProfit}
+          breakdown={data.realizedProfitBreakdown}
+        />
+      </FadeIn>
+
+      <FadeIn>
         <AnalyticsCharts data={data.daily} />
       </FadeIn>
+    </div>
+  );
+}
+
+// ── P&L Breakdown panel ─────────────────────────────────────────────
+//
+// Shows every component that feeds into Realized P&L so the user can
+// see exactly where the number comes from. Formula (house POV):
+//
+//   pnl = +deposits − withdrawals − userBalance − inventory
+//         − vouchers − unclaimedRakeback
+//
+// Sign-coded color:
+//   "+" rows are emerald (money flowing into the house, drives P&L up)
+//   "−" rows are rose    (house liabilities, drag P&L down)
+//
+// Each row links to the relevant page so admins can drill into the
+// users / transactions driving each component.
+
+type Row = {
+  label: string;
+  description: string;
+  value: number;
+  /** Whether this term ADDS to P&L (deposits) or subtracts (everything else). */
+  sign: "+" | "−";
+  icon: React.ElementType;
+  href?: string;
+};
+
+function PnlBreakdown({
+  total,
+  breakdown,
+}: {
+  total: number;
+  breakdown: {
+    totalDeposits: number;
+    totalWithdrawals: number;
+    userBalance: number;
+    inventory: number;
+    vouchers: number;
+    unclaimedRakeback: number;
+  };
+}) {
+  const rows: Row[] = [
+    {
+      label: "Deposits",
+      description: "Completed real-money deposits credited to balances",
+      value: breakdown.totalDeposits,
+      sign: "+",
+      icon: ArrowDownToLine,
+      href: "/transactions/deposits",
+    },
+    {
+      label: "Withdrawals",
+      description: "Card withdrawals shipped or completed",
+      value: breakdown.totalWithdrawals,
+      sign: "−",
+      icon: ArrowUpFromLine,
+      href: "/withdrawals",
+    },
+    {
+      label: "User Balances",
+      description: "Available + locked balances on real-user accounts",
+      value: breakdown.userBalance,
+      sign: "−",
+      icon: Wallet,
+      href: "/users?sortBy=balance&sortOrder=desc",
+    },
+    {
+      label: "Open Inventory",
+      description: "Cards still on user accounts at value_at_obtained",
+      value: breakdown.inventory,
+      sign: "−",
+      icon: Box,
+      href: "/users?sortBy=inventoryValue&sortOrder=desc",
+    },
+    {
+      label: "Unclaimed Vouchers",
+      description: "Vouchers issued to users but not yet claimed",
+      value: breakdown.vouchers,
+      sign: "−",
+      icon: Ticket,
+      href: "/vouchers",
+    },
+    {
+      label: "Unclaimed Rakeback",
+      description: "Rakeback owed to users but not yet redeemed",
+      value: breakdown.unclaimedRakeback,
+      sign: "−",
+      icon: Coins,
+      href: "/rewards/rakeback",
+    },
+  ];
+
+  const isProfit = total >= 0;
+
+  return (
+    <div className="rounded-2xl border bg-gradient-to-br from-card via-card to-card/80 p-5">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-base font-semibold leading-tight">
+            Where the P&amp;L comes from
+          </h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Each row contributes to the total below. Click any row to
+            drill into the underlying users / transactions.
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Realized P&amp;L
+          </p>
+          <p
+            className={`text-2xl font-bold tabular-nums ${
+              isProfit ? "text-emerald-500" : "text-rose-500"
+            }`}
+          >
+            {isProfit ? "+" : "−"}
+            {formatCurrency(Math.abs(total))}
+          </p>
+        </div>
+      </div>
+
+      <div className="divide-y rounded-xl border">
+        {rows.map((r) => (
+          <PnlRow key={r.label} row={r} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PnlRow({ row }: { row: Row }) {
+  const isPositive = row.sign === "+";
+  const color = isPositive
+    ? "text-emerald-600 dark:text-emerald-400"
+    : "text-rose-600 dark:text-rose-400";
+  const bg = isPositive ? "bg-emerald-500/10" : "bg-rose-500/10";
+  const Icon = row.icon;
+
+  const inner = (
+    <>
+      <div className="flex min-w-0 items-center gap-3">
+        <div
+          className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${bg}`}
+        >
+          <Icon className={`size-4 ${color}`} />
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-medium leading-tight">{row.label}</p>
+          <p className="truncate text-xs text-muted-foreground">
+            {row.description}
+          </p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <p className={`text-base font-semibold tabular-nums ${color}`}>
+          {row.sign}
+          {formatCurrency(row.value)}
+        </p>
+        {row.href && (
+          <ArrowRight className="size-4 text-muted-foreground opacity-50 transition-opacity group-hover:opacity-100" />
+        )}
+      </div>
+    </>
+  );
+
+  if (row.href) {
+    return (
+      <Link
+        href={row.href}
+        className="group flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-muted/40"
+      >
+        {inner}
+      </Link>
+    );
+  }
+  return (
+    <div className="flex items-center justify-between gap-3 px-4 py-3">
+      {inner}
     </div>
   );
 }
