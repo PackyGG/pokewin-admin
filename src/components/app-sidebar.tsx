@@ -372,7 +372,12 @@ export function AppSidebar({
                       isActive={isActive}
                       tooltip={item.label}
                       render={<Link href={item.href} />}
-                      className={undefined}
+                      // 44px tap target inside the mobile drawer; falls
+                      // back to the compact 36px height on md+ where
+                      // density matters more than tap area. group-data
+                      // attribute keeps icon-mode (collapsed desktop) at
+                      // its forced 32px square.
+                      className="h-11 md:h-9 group-data-[collapsible=icon]:h-8!"
                     >
                       <Icon className={cn("size-4", isActive ? "text-primary" : "text-muted-foreground")} />
                       <span>{item.label}</span>
@@ -401,12 +406,22 @@ export function AppSidebar({
               onOpenChange={() => toggleGroup(group.label)}
             >
               <SidebarGroup className="px-2 py-1">
-                <CollapsibleTrigger className={cn("flex h-9 w-full shrink-0 cursor-pointer select-none items-center justify-between rounded-md px-2 text-xs font-semibold uppercase tracking-wider transition-colors hover:text-sidebar-foreground", group.label === activeGroupLabel ? "bg-sidebar-accent text-sidebar-foreground" : "text-sidebar-foreground/50")}>
-                  <span>{group.label}</span>
+                {/* Group header: 44px tap target on mobile (drawer mode)
+                    so a thumb can comfortably hit it; compacts back to
+                    h-9 on md+ where the cursor handles it. */}
+                <CollapsibleTrigger
+                  className={cn(
+                    "flex h-11 w-full shrink-0 cursor-pointer select-none items-center justify-between rounded-md px-2 text-xs font-semibold uppercase tracking-wider transition-colors hover:text-sidebar-foreground md:h-9",
+                    group.label === activeGroupLabel
+                      ? "bg-sidebar-accent text-sidebar-foreground"
+                      : "text-sidebar-foreground/50",
+                  )}
+                >
+                  <span className="truncate">{group.label}</span>
                   <ChevronRight
                     className={cn(
-                      "size-3 transition-transform duration-200",
-                      isOpen && "rotate-90"
+                      "size-3 shrink-0 transition-transform duration-200",
+                      isOpen && "rotate-90",
                     )}
                   />
                 </CollapsibleTrigger>
