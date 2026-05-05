@@ -79,7 +79,7 @@ export function DateRangeFilter({ from, to }: { from: string; to: string }) {
           className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground"
         />
       </div>
-      <div className="flex items-center gap-1">
+      <div className="flex flex-wrap items-center gap-1">
         {[
           { key: "this-month", label: "This month" },
           { key: "last-month", label: "Last month" },
