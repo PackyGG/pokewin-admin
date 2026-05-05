@@ -58,7 +58,7 @@ export async function FunnelTab({
         </div>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-2">
+          <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <CardTitle className="text-sm font-medium">
               Funnel — {periodLabel(funnelPeriod)}
             </CardTitle>
@@ -96,7 +96,7 @@ function FunnelPeriodFilter({ current }: { current: FunnelPeriod }) {
     { value: "all", label: "All" },
   ];
   return (
-    <div className="flex gap-1 rounded-md border bg-muted/40 p-0.5">
+    <div className="flex flex-wrap gap-1 rounded-md border bg-muted/40 p-0.5">
       {periods.map(({ value, label }) => (
         <Link
           key={value}
@@ -150,12 +150,16 @@ function FunnelBars({ data }: { data: Awaited<ReturnType<typeof getFunnelData>> 
           step.dropoffFromPrev === null ? null : step.dropoffFromPrev * 100;
         return (
           <div key={step.key} className="space-y-1">
-            <div className="flex items-center justify-between gap-4 text-xs">
-              <div className="flex flex-col">
+            {/* Label + counter row. On phones the right-side cluster
+                (drop-off, % of top, count) wraps below the label so a
+                long step description doesn't push the count column
+                off-screen. */}
+            <div className="flex flex-col gap-x-4 gap-y-1 text-xs sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 flex-col">
                 <span className="font-medium text-foreground">{step.label}</span>
                 <span className="text-muted-foreground">{step.description}</span>
               </div>
-              <div className="flex items-center gap-3 text-right">
+              <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 sm:text-right">
                 {dropoffPct !== null && dropoffPct > 0 && (
                   <span className="flex items-center gap-1 text-rose-500 dark:text-rose-400">
                     <TrendingDown className="size-3" />
@@ -165,12 +169,12 @@ function FunnelBars({ data }: { data: Awaited<ReturnType<typeof getFunnelData>> 
                 <span className="text-muted-foreground tabular-nums">
                   {(step.conversionFromTop * 100).toFixed(1)}% of top
                 </span>
-                <span className="min-w-16 font-semibold tabular-nums">
+                <span className="min-w-12 font-semibold tabular-nums sm:min-w-16">
                   {formatNumber(step.count)}
                 </span>
               </div>
             </div>
-            <div className="relative h-8 overflow-hidden rounded-md bg-muted/40">
+            <div className="relative h-7 overflow-hidden rounded-md bg-muted/40 sm:h-8">
               <div
                 className={cn(
                   "h-full rounded-md transition-all",

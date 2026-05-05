@@ -190,8 +190,12 @@ const SUB_TABS: { value: SubTab; label: string }[] = [
 ];
 
 function TopSubTabs({ active }: { active: SubTab }) {
+  // 6 sub-tabs; on phones these wrap to two rows for tap-target
+  // friendliness instead of scrolling under fades like the main
+  // analytics tab nav. Sub-tab rows are short enough that wrapping
+  // works visually, unlike the 9-chip parent nav.
   return (
-    <div className="flex gap-1 overflow-x-auto rounded-lg border bg-muted/40 p-1">
+    <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/40 p-1">
       {SUB_TABS.map(({ value, label }) => (
         <Link
           key={value}

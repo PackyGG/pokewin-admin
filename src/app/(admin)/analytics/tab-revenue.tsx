@@ -159,7 +159,7 @@ function RevenuePeriodFilter({ current }: { current: RevenuePeriod }) {
     { value: "all", label: "All" },
   ];
   return (
-    <div className="flex gap-1 rounded-md border bg-muted/40 p-0.5">
+    <div className="flex flex-wrap gap-1 rounded-md border bg-muted/40 p-0.5">
       {periods.map(({ value, label }) => (
         <Link
           key={value}

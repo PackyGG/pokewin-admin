@@ -167,7 +167,7 @@ function SortControl({ active }: { active: SortKey }) {
     { value: "opens", label: "Volume" },
   ];
   return (
-    <div className="flex gap-1 rounded-md border bg-muted/40 p-0.5">
+    <div className="flex flex-wrap gap-1 rounded-md border bg-muted/40 p-0.5">
       <span className="px-2 py-0.5 text-xs text-muted-foreground">Sort by:</span>
       {opts.map(({ value, label }) => (
         <Link

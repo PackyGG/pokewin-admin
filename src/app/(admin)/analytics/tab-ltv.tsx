@@ -95,7 +95,7 @@ export async function LtvTab({
         </div>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-2">
+          <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <CardTitle className="text-sm font-medium">
               Creator LTV ranking — {periodLabel(ltvPeriod)}
             </CardTitle>
@@ -131,7 +131,7 @@ function LtvPeriodFilter({ current }: { current: LtvPeriod }) {
     { value: "all", label: "All" },
   ];
   return (
-    <div className="flex gap-1 rounded-md border bg-muted/40 p-0.5">
+    <div className="flex flex-wrap gap-1 rounded-md border bg-muted/40 p-0.5">
       {periods.map(({ value, label }) => (
         <Link
           key={value}
