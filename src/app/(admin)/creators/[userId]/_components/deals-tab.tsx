@@ -383,6 +383,7 @@ function TerminateDealButton({
               onClick={() =>
                 handleConfirm({ force_end_active_session: true })
               }
+              className="w-full sm:w-auto"
             >
               {isPending ? (
                 <Loader2 className="mr-2 size-3.5 animate-spin" />
