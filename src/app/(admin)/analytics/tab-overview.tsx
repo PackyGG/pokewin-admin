@@ -181,7 +181,7 @@ function PnlBreakdown({
       value: breakdown.userBalance,
       sign: "−",
       icon: Wallet,
-      href: "/users?sort=balance",
+      href: "/users?sortBy=balance&sortOrder=desc",
     },
     {
       label: "Open Inventory",
@@ -189,7 +189,7 @@ function PnlBreakdown({
       value: breakdown.inventory,
       sign: "−",
       icon: Box,
-      href: "/users?sort=inventory",
+      href: "/users?sortBy=inventoryValue&sortOrder=desc",
     },
     {
       label: "Unclaimed Vouchers",
