@@ -86,9 +86,13 @@ export function UsersSortProvider({
       // 2) In the background, ask the server for the *correct* sorted page
       //    (different users may belong on this page now). When the new data
       //    arrives, the FLIP animation in the table smooths the transition.
+      //    Reset to page 1 — otherwise clicking "Balance" on page 5 keeps
+      //    you on page 5 of the new sort, which made it look like the sort
+      //    wasn't working (the highest-balance users show on page 1).
       const params = new URLSearchParams(searchParams.toString());
       params.set("sortBy", key);
       params.set("sortOrder", order);
+      params.delete("page");
       router.replace(`?${params.toString()}`, { scroll: false });
     },
     [router, searchParams],
