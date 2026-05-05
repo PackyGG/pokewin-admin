@@ -38,6 +38,7 @@ import {
   adjustBalance,
   adjustXp,
   changeRole,
+  forceResetCreatorToUser,
   recordManualWithdrawal,
   wipeUserAccount,
   updateUserIdentity,
@@ -836,10 +837,16 @@ export function ChangeRoleDialog({
 
 // ---------------------------------------------------------------------------
 // Reset Role to User — escape hatch when the /creators backend demote
-// gets stuck (returns success but doesn't actually flip role back). This
-// is a direct main-DB write via changeRole(userId, "user", totp), which
-// bypasses the creatorsApi.demote() microservice entirely. Only renders
-// when the user's current role is "creator".
+// gets stuck (returns success but doesn't actually flip role back).
+// Calls `forceResetCreatorToUser` which:
+//   1) tries `creatorsApi.demote()` first so the backend can roll back
+//      promote-time side effects (creator-deal balance fills, cached
+//      aggregations, session state) — this is the part that was
+//      missing before; without it, the user's pre-creator P&L numbers
+//      never come back to the dashboard
+//   2) always writes `user.role = 'user'` directly so the role flip
+//      is guaranteed even if the backend silently no-ops
+// Only renders when the user's current role is "creator".
 // ---------------------------------------------------------------------------
 export function ResetRoleToUserButton({
   userId,
@@ -867,12 +874,31 @@ export function ResetRoleToUserButton({
     }
     startTransition(async () => {
       try {
-        // Reuses the existing changeRole action which writes directly
-        // to db.user.update — same path as the "Change Role" dialog,
-        // just pre-targeted to "user" so it's a single-click flow for
-        // the stuck-creator case.
-        await changeRole(userId, "user", totpCode.trim());
-        toast.success("Role reset to user — they're back in P&L");
+        // Combined action: backend demote (best-effort) + local role
+        // flip (always). Tells us in the toast whether the backend
+        // cleanup ran or was skipped — if skipped, the dashboard P&L
+        // may still be off because backend-managed side effects (e.g.
+        // creator balance fills) were never reverted.
+        const result = await forceResetCreatorToUser(
+          userId,
+          totpCode.trim(),
+        );
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
+        if (result.backendDemoted) {
+          toast.success(
+            "Role reset to user — backend cleaned up + role flipped",
+          );
+        } else {
+          toast.warning(
+            `Role flipped locally, but backend demote failed${
+              result.backendError ? `: ${result.backendError}` : ""
+            }. P&L side effects may still need manual fix.`,
+            { duration: 8000 },
+          );
+        }
         setOpen(false);
         setTotpCode("");
         router.refresh();
@@ -892,7 +918,7 @@ export function ResetRoleToUserButton({
             variant="outline"
             size="sm"
             className="h-8 gap-1.5 border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10"
-            title="Force role back to 'user' (bypasses the creators backend demote)"
+            title="Force role back to 'user' (calls backend demote + direct DB write)"
           />
         }
       >
@@ -905,20 +931,22 @@ export function ResetRoleToUserButton({
         </DialogHeader>
         <div className="space-y-3 py-2">
           <p className="text-sm text-muted-foreground">
-            Forces this user&apos;s role from{" "}
+            Force-demotes this user from{" "}
             <span className="font-mono font-medium text-foreground">
               creator
             </span>{" "}
             back to{" "}
-            <span className="font-mono font-medium text-foreground">user</span>{" "}
-            via a direct DB write — bypasses the{" "}
-            <code className="font-mono">/creators</code> backend demote.
+            <span className="font-mono font-medium text-foreground">user</span>.
           </p>
           <p className="text-xs text-muted-foreground">
-            Use when the &quot;Revoke creator role&quot; on the /creators
-            list silently no-ops (returns success but the role stays as
-            creator). Once flipped, the user is immediately back in
-            dashboard P&amp;L and analytics.
+            Runs <strong>backend demote</strong> first so promote-time
+            side effects (creator-deal balance fills, cached
+            aggregations, session state) are rolled back, then writes
+            the role flip directly so it&apos;s guaranteed even if the
+            backend silently no-ops. Use when the &quot;Revoke creator
+            role&quot; button on /creators is unresponsive or the
+            user&apos;s pre-creator numbers haven&apos;t come back to
+            P&amp;L.
           </p>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">2FA Code</Label>

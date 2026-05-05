@@ -12,6 +12,7 @@ import { getUserInventory, getUserTransactions, getCreatorReferralClicks, getCre
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { require2FA } from "@/lib/require-2fa";
 import { checkBalanceAdjustmentLimit } from "@/lib/balance-limits";
+import { creatorsApi, BackendApiError } from "@/lib/backend-api";
 import {
   canUserAdjustBalance,
   hasCapability,
@@ -373,6 +374,79 @@ export async function changeRole(userId: string, newRole: string, totpCode: stri
   });
 
   revalidatePath(`/users/${userId}`);
+}
+
+/**
+ * Force-demote a creator back to "user" via BOTH the backend's demote
+ * endpoint AND a direct DB write. Solves the bug where the /users/[id]
+ * "Reset to User Role" escape hatch only flipped `user.role` locally —
+ * leaving every backend-managed side effect of the original promote
+ * (creator-deal balance fills, cached aggregations, creator session
+ * state, etc.) intact. The result was: user shows up as "user" again,
+ * but their previous creator-period numbers never came back to the
+ * dashboard P&L because the promote-time mutations were never undone.
+ *
+ * Order:
+ *   1) Best-effort `creatorsApi.demote()` — backend cleans up its
+ *      state. Errors are caught + logged but do not abort the flow,
+ *      because the whole reason this escape hatch exists is for the
+ *      case where the backend silently no-ops.
+ *   2) Always run the direct `user.role = 'user'` write so the role
+ *      is GUARANTEED flipped even if the backend was unreachable.
+ *   3) Audit-log both attempts so the trail is honest about what
+ *      ran vs failed.
+ */
+export async function forceResetCreatorToUser(
+  userId: string,
+  totpCode: string,
+): Promise<
+  | { success: true; backendDemoted: boolean; backendError: string | null }
+  | { success: false; error: string }
+> {
+  const db = await getDb();
+  const session = await requireAdmin();
+  await requireCapability(session, "__can_change_user_roles", "change user roles");
+  await require2FA(session.userId, totpCode);
+
+  // Step 1: best-effort backend demote. Capture the error but don't
+  // surface it as a hard failure — the local role flip below is the
+  // user-visible "did the role change" signal, and it always runs.
+  let backendDemoted = false;
+  let backendError: string | null = null;
+  try {
+    await creatorsApi.demote(userId);
+    backendDemoted = true;
+  } catch (err) {
+    if (err instanceof BackendApiError) {
+      backendError = err.code ? `${err.message} (${err.code})` : err.message;
+    } else if (err instanceof Error) {
+      backendError = err.message;
+    } else {
+      backendError = "Unknown backend error";
+    }
+  }
+
+  // Step 2: local role flip. Always runs.
+  await db.user.update({
+    where: { id: userId },
+    data: { role: "user" as user_role },
+  });
+
+  // Step 3: single audit row capturing both attempts.
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "creator_force_reset_to_user",
+    targetUserId: userId,
+    metadata: {
+      backend_demoted: backendDemoted,
+      backend_error: backendError,
+      via: "users_detail_escape_hatch",
+    },
+  });
+
+  revalidatePath(`/users/${userId}`);
+  revalidatePath("/creators");
+  return { success: true, backendDemoted, backendError };
 }
 
 export async function updateUserIdentity(
