@@ -22,6 +22,11 @@ import { cn } from "@/lib/utils";
  * Mirrors <PageHero> — gradient shell with soft corner glows, icon chip,
  * title line, subtitle line. Set `action` to reserve room for the trailing
  * button/filter that lives on the right side of the hero.
+ *
+ * Responsive shape matches PageHero exactly: smaller corner glows on
+ * phones, softer rounded-xl on phones, padding p-4 → p-6 across
+ * breakpoints, and the action slot stacks under the identity block at
+ * <sm so it doesn't compete with the title on a 360px viewport.
  */
 export function PageHeroSkeleton({
   subtitle = true,
@@ -33,25 +38,27 @@ export function PageHeroSkeleton({
   action?: boolean;
 }) {
   return (
-    <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/60">
+    <div className="relative overflow-hidden rounded-xl border bg-gradient-to-br from-card via-card to-card/60 sm:rounded-2xl">
       <div
         aria-hidden
-        className="pointer-events-none absolute -right-24 -top-24 size-72 rounded-full bg-blue-500/[0.06] blur-3xl"
+        className="pointer-events-none absolute -right-24 -top-24 size-48 rounded-full bg-blue-500/[0.06] blur-3xl sm:size-72"
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute -left-24 -bottom-24 size-72 rounded-full bg-purple-500/[0.06] blur-3xl"
+        className="pointer-events-none absolute -left-24 -bottom-24 size-48 rounded-full bg-purple-500/[0.06] blur-3xl sm:size-72"
       />
-      <div className="relative p-5 md:p-6">
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3">
-            <Skeleton className="size-10 rounded-xl" />
-            <div className="space-y-2">
-              <Skeleton className="h-6 w-40" />
-              {subtitle && <Skeleton className="h-4 w-64" />}
+      <div className="relative p-4 sm:p-5 md:p-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <Skeleton className="size-9 shrink-0 rounded-xl sm:size-10" />
+            <div className="min-w-0 space-y-2">
+              <Skeleton className="h-5 w-32 sm:h-6 sm:w-40" />
+              {subtitle && <Skeleton className="h-3 w-48 sm:h-4 sm:w-64" />}
             </div>
           </div>
-          {action && <Skeleton className="h-9 w-32 rounded-md" />}
+          {action && (
+            <Skeleton className="h-9 w-full max-w-[160px] rounded-md sm:w-32" />
+          )}
         </div>
       </div>
     </div>
@@ -92,12 +99,15 @@ export function KpiStripSkeleton({
   return (
     <div className={cn("grid gap-3", gridCols, className)}>
       {Array.from({ length: count }).map((_, i) => (
-        <div key={i} className="rounded-xl border bg-card px-4 py-3">
-          <div className="flex items-center gap-2">
-            <Skeleton className="size-4 rounded" />
-            <Skeleton className="h-3 w-16" />
+        <div
+          key={i}
+          className="rounded-xl border bg-card px-3 py-2.5 sm:px-4 sm:py-3"
+        >
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            <Skeleton className="size-3.5 rounded sm:size-4" />
+            <Skeleton className="h-3 w-12 sm:w-16" />
           </div>
-          <Skeleton className="mt-2 h-6 w-20" />
+          <Skeleton className="mt-1.5 h-5 w-16 sm:mt-2 sm:h-6 sm:w-20" />
         </div>
       ))}
     </div>
@@ -114,10 +124,12 @@ export function SectionHeadingSkeleton({
   action?: boolean;
   titleWidth?: number;
 }) {
+  // Stack mirrors the real SectionHeading: action wraps under the title
+  // at <sm so it never pushes the title off-screen on phones.
   return (
-    <div className="flex items-center justify-between">
-      <div className="flex items-center gap-2">
-        <Skeleton className="size-7 rounded-md" />
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex min-w-0 items-center gap-2">
+        <Skeleton className="size-7 shrink-0 rounded-md" />
         <Skeleton className="h-5" style={{ width: titleWidth }} />
       </div>
       {action && <Skeleton className="h-8 w-24 rounded-md" />}
@@ -142,31 +154,33 @@ export function DetailHeroSkeleton({
   action?: boolean;
 }) {
   return (
-    <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/60">
+    <div className="relative overflow-hidden rounded-xl border bg-gradient-to-br from-card via-card to-card/60 sm:rounded-2xl">
       <div
         aria-hidden
-        className="pointer-events-none absolute -right-24 -top-24 size-72 rounded-full bg-blue-500/[0.06] blur-3xl"
+        className="pointer-events-none absolute -right-24 -top-24 size-48 rounded-full bg-blue-500/[0.06] blur-3xl sm:size-72"
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute -left-24 -bottom-24 size-72 rounded-full bg-purple-500/[0.06] blur-3xl"
+        className="pointer-events-none absolute -left-24 -bottom-24 size-48 rounded-full bg-purple-500/[0.06] blur-3xl sm:size-72"
       />
-      <div className="relative p-5 md:p-6">
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3">
-            <Skeleton className="size-9 rounded-md" />
-            <Skeleton className="size-10 rounded-xl" />
-            <div className="space-y-2">
-              <Skeleton className="h-6 w-56" />
-              <Skeleton className="h-4 w-40" />
+      <div className="relative p-4 sm:p-5 md:p-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+            <Skeleton className="size-8 shrink-0 rounded-md sm:size-9" />
+            <Skeleton className="size-9 shrink-0 rounded-xl sm:size-10" />
+            <div className="min-w-0 space-y-2">
+              <Skeleton className="h-5 w-40 sm:h-6 sm:w-56" />
+              <Skeleton className="h-3 w-28 sm:h-4 sm:w-40" />
             </div>
           </div>
-          {action && <Skeleton className="h-9 w-28 rounded-md" />}
+          {action && (
+            <Skeleton className="h-9 w-full max-w-[140px] rounded-md sm:w-28" />
+          )}
         </div>
         {kpis > 0 && (
-          <div className="mt-4 grid gap-3 grid-cols-2 md:grid-cols-4">
+          <div className="mt-4 grid grid-cols-2 gap-2.5 sm:gap-3 md:grid-cols-4">
             {Array.from({ length: kpis }).map((_, i) => (
-              <Skeleton key={i} className="h-16 rounded-xl" />
+              <Skeleton key={i} className="h-14 rounded-xl sm:h-16" />
             ))}
           </div>
         )}
@@ -195,13 +209,22 @@ export function ToolbarSkeleton({
 
 // ─── Tabs (muted pill bar) ────────────────────────────────────────────────
 
-/** Mirrors the inline tab pills (e.g. /battles status tabs, /rewards type tabs). */
+/**
+ * Mirrors the inline tab pills (e.g. /battles status tabs, /rewards type
+ * tabs). Phones get a horizontal scroll container so a 6-tab strip never
+ * wraps to two lines; sm+ keeps the natural fit-content row.
+ */
 export function TabBarSkeleton({ count = 4 }: { count?: number }) {
   return (
-    <div className="flex gap-1 rounded-lg bg-muted p-1 w-fit">
-      {Array.from({ length: count }).map((_, i) => (
-        <Skeleton key={i} className="h-7 w-20 rounded-md" />
-      ))}
+    <div className="-mx-1 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className="inline-flex gap-1 rounded-lg bg-muted p-1">
+        {Array.from({ length: count }).map((_, i) => (
+          <Skeleton
+            key={i}
+            className="h-7 w-16 shrink-0 rounded-md sm:w-20"
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -402,21 +425,21 @@ export function PaginationSkeleton() {
 /** Mirrors <StatPanel> — larger card with corner glow, icon chip, rows. */
 export function StatPanelSkeleton({ rows = 3 }: { rows?: number }) {
   return (
-    <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80 p-5">
+    <div className="relative overflow-hidden rounded-xl border bg-gradient-to-br from-card via-card to-card/80 p-4 sm:rounded-2xl sm:p-5">
       <div
         aria-hidden
-        className="pointer-events-none absolute -right-12 -top-12 size-32 rounded-full bg-blue-500/[0.06] blur-2xl"
+        className="pointer-events-none absolute -right-12 -top-12 size-24 rounded-full bg-blue-500/[0.06] blur-2xl sm:size-32"
       />
       <div className="relative mb-3 flex items-center gap-2">
-        <Skeleton className="size-7 rounded-lg" />
-        <Skeleton className="h-3 w-28" />
+        <Skeleton className="size-7 shrink-0 rounded-lg" />
+        <Skeleton className="h-3 w-24 sm:w-28" />
       </div>
-      <Skeleton className="h-8 w-32 mb-3" />
+      <Skeleton className="mb-3 h-7 w-28 sm:h-8 sm:w-32" />
       <div className="space-y-2">
         {Array.from({ length: rows }).map((_, i) => (
-          <div key={i} className="flex items-center justify-between">
-            <Skeleton className="h-3 w-20" />
-            <Skeleton className="h-3 w-16" />
+          <div key={i} className="flex items-center justify-between gap-3">
+            <Skeleton className="h-3 w-16 sm:w-20" />
+            <Skeleton className="h-3 w-12 sm:w-16" />
           </div>
         ))}
       </div>
