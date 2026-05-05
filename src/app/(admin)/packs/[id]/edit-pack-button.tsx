@@ -312,6 +312,7 @@ export function EditPackButton({ pack }: { pack: PackData }) {
                     <SelectItem value="official">Official</SelectItem>
                     <SelectItem value="custom">Custom</SelectItem>
                     <SelectItem value="promo">Promo</SelectItem>
+                    <SelectItem value="reward">Reward</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

@@ -55,3 +55,4 @@ bun.lock
 /blob-report/
 /playwright/.cache/
 /src/generated
+/.claude
