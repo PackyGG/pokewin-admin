@@ -8,16 +8,6 @@ import {
   getRaceClaims,
 } from "@/lib/queries/races";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
-import { Badge } from "@/components/ui/badge";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import {
   TableSkeleton,
   PaginationSkeleton,
@@ -26,6 +16,8 @@ import { cn } from "@/lib/utils";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { PeriodPicker } from "./period-picker";
 import { RaceTiersTable } from "./race-tiers-table";
+import { StandingsTable } from "./standings-table";
+import { HistoryTable } from "./history-table";
 import { PageHero } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
@@ -188,45 +180,7 @@ async function StandingsTab({
         <DataTableToolbar searchPlaceholder="Search by username, email, or ID..." />
       </Suspense>
       <FadeIn>
-        <div className="rounded-md border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Position</TableHead>
-                <TableHead>User</TableHead>
-                <TableHead>Wagered</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {result.data.map((e) => (
-                <TableRow key={e.id}>
-                  <TableCell>
-                    <Badge variant="outline">#{e.position}</Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Link
-                      href={`/users/${e.userId}`}
-                      className="hover:underline"
-                    >
-                      {e.username ?? e.userId.slice(0, 8)}
-                    </Link>
-                  </TableCell>
-                  <TableCell>{formatCurrency(e.wageredUsd)}</TableCell>
-                </TableRow>
-              ))}
-              {result.data.length === 0 && (
-                <TableRow>
-                  <TableCell
-                    colSpan={3}
-                    className="h-24 text-center text-muted-foreground"
-                  >
-                    No leaderboard data.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
+        <StandingsTable data={result.data} />
       </FadeIn>
       <DataTablePagination
         page={result.page}
@@ -276,53 +230,7 @@ async function HistoryTab({
         ))}
       </div>
       <FadeIn>
-        <div className="rounded-md border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>User</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Position</TableHead>
-                <TableHead>Prize</TableHead>
-                <TableHead>Period</TableHead>
-                <TableHead>Claimed</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {claims.data.map((c) => (
-                <TableRow key={c.id}>
-                  <TableCell>
-                    <Link
-                      href={`/users/${c.userId}`}
-                      className="hover:underline"
-                    >
-                      {c.username ?? c.userId.slice(0, 8)}
-                    </Link>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className="capitalize">
-                      {c.raceType}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>#{c.position}</TableCell>
-                  <TableCell>{formatCurrency(c.prizeAmountUsd)}</TableCell>
-                  <TableCell>{formatDateTime(c.racePeriodStart)}</TableCell>
-                  <TableCell>{formatDateTime(c.claimedAt)}</TableCell>
-                </TableRow>
-              ))}
-              {claims.data.length === 0 && (
-                <TableRow>
-                  <TableCell
-                    colSpan={6}
-                    className="h-24 text-center text-muted-foreground"
-                  >
-                    No claims found.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
+        <HistoryTable data={claims.data} />
       </FadeIn>
       <DataTablePagination
         page={claims.page}

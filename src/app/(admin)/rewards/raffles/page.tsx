@@ -4,33 +4,17 @@ import { Ticket } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { getRaffles } from "@/lib/queries/raffles";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
-import { Badge } from "@/components/ui/badge";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { formatDateTime, formatNumber } from "@/lib/utils/format";
 import {
   TableSkeleton,
   PaginationSkeleton,
 } from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
 import { CreateRaffleButton } from "./create-raffle-button";
-import { CancelRaffleButton } from "./cancel-raffle-button";
+import { RafflesTable } from "./raffles-table";
 import { PageHero } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Raffles" };
-
-const STATUS_COLORS: Record<string, string> = {
-  active: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
-  completed: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
-  cancelled: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
-};
 
 async function RafflesContent({
   page,
@@ -48,51 +32,7 @@ async function RafflesContent({
   return (
     <>
       <FadeIn>
-        <div className="rounded-md border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Entries</TableHead>
-                <TableHead>Participants</TableHead>
-                <TableHead>Winner</TableHead>
-                <TableHead>Starts</TableHead>
-                <TableHead>Ends</TableHead>
-                <TableHead className="w-[50px]" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {raffles.data.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell>
-                    <Link href={`/rewards/raffles/${r.id}`} className="font-medium hover:underline">
-                      {r.name}
-                    </Link>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className={STATUS_COLORS[r.status] ?? ""}>
-                      {r.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>{formatNumber(r.totalEntries)}</TableCell>
-                  <TableCell>{formatNumber(r.participantCount)}</TableCell>
-                  <TableCell>{r.winnerUsername ?? "-"}</TableCell>
-                  <TableCell>{formatDateTime(r.startsAt)}</TableCell>
-                  <TableCell>{formatDateTime(r.endsAt)}</TableCell>
-                  <TableCell>
-                    {r.status === "active" && <CancelRaffleButton raffleId={r.id} />}
-                  </TableCell>
-                </TableRow>
-              ))}
-              {raffles.data.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">No raffles found.</TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
+        <RafflesTable data={raffles.data} />
       </FadeIn>
 
       <DataTablePagination
