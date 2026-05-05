@@ -62,7 +62,11 @@ import {
   CreatorTab,
   AccountTab,
 } from "./user-view-modern-tabs";
-import { ChangeRoleDialog, EditIdentityButton } from "./user-tabs-dialogs";
+import {
+  ChangeRoleDialog,
+  EditIdentityButton,
+  ResetRoleToUserButton,
+} from "./user-tabs-dialogs";
 import { UserAdminActions } from "./user-tabs-moderation";
 import type { PaginatedInventory } from "./user-tabs-types";
 import { TrustTab } from "./user-tabs-trust";
@@ -260,6 +264,14 @@ export function UserViewModern({
                   <EditIdentityButton user={user} />
                   {canChangeUserRoles && (
                     <ChangeRoleDialog userId={user.id} currentRole={user.role} />
+                  )}
+                  {/* Quick escape hatch when /creators backend demote
+                      gets stuck — only renders for current creators. */}
+                  {canChangeUserRoles && (
+                    <ResetRoleToUserButton
+                      userId={user.id}
+                      currentRole={user.role}
+                    />
                   )}
                   <UserAdminActions user={user} />
                 </div>

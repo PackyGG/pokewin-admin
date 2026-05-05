@@ -835,6 +835,128 @@ export function ChangeRoleDialog({
 }
 
 // ---------------------------------------------------------------------------
+// Reset Role to User — escape hatch when the /creators backend demote
+// gets stuck (returns success but doesn't actually flip role back). This
+// is a direct main-DB write via changeRole(userId, "user", totp), which
+// bypasses the creatorsApi.demote() microservice entirely. Only renders
+// when the user's current role is "creator".
+// ---------------------------------------------------------------------------
+export function ResetRoleToUserButton({
+  userId,
+  currentRole,
+}: {
+  userId: string;
+  currentRole: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [totpCode, setTotpCode] = useState("");
+  const [isPending, startTransition] = useTransition();
+  const router = useRouter();
+
+  if (currentRole !== "creator") return null;
+
+  function handleOpenChange(v: boolean) {
+    setOpen(v);
+    if (!v) setTotpCode("");
+  }
+
+  function handleSubmit() {
+    if (!totpCode.trim()) {
+      toast.error("Enter your 2FA code");
+      return;
+    }
+    startTransition(async () => {
+      try {
+        // Reuses the existing changeRole action which writes directly
+        // to db.user.update — same path as the "Change Role" dialog,
+        // just pre-targeted to "user" so it's a single-click flow for
+        // the stuck-creator case.
+        await changeRole(userId, "user", totpCode.trim());
+        toast.success("Role reset to user — they're back in P&L");
+        setOpen(false);
+        setTotpCode("");
+        router.refresh();
+      } catch (e) {
+        toast.error(
+          e instanceof Error ? e.message : "Failed to reset role",
+        );
+      }
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogTrigger
+        render={
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10"
+            title="Force role back to 'user' (bypasses the creators backend demote)"
+          />
+        }
+      >
+        <ShieldAlert className="size-3.5" />
+        Reset to User
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Reset Role to User</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <p className="text-sm text-muted-foreground">
+            Forces this user&apos;s role from{" "}
+            <span className="font-mono font-medium text-foreground">
+              creator
+            </span>{" "}
+            back to{" "}
+            <span className="font-mono font-medium text-foreground">user</span>{" "}
+            via a direct DB write — bypasses the{" "}
+            <code className="font-mono">/creators</code> backend demote.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Use when the &quot;Revoke creator role&quot; on the /creators
+            list silently no-ops (returns success but the role stays as
+            creator). Once flipped, the user is immediately back in
+            dashboard P&amp;L and analytics.
+          </p>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">2FA Code</Label>
+            <Input
+              type="text"
+              inputMode="numeric"
+              placeholder="Enter your 6-digit code"
+              value={totpCode}
+              onChange={(e) => setTotpCode(e.target.value)}
+              maxLength={6}
+              autoComplete="one-time-code"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setOpen(false)}
+            disabled={isPending}
+          >
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            onClick={handleSubmit}
+            disabled={isPending || !totpCode.trim()}
+            className="bg-amber-500 text-white hover:bg-amber-500/90"
+          >
+            {isPending ? "Resetting..." : "Reset Role"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Edit Identity Dialog (Admin Only) — Email / Username / Display Name
 // ---------------------------------------------------------------------------
 export function EditIdentityButton({ user }: { user: UserDetail["user"] }) {
