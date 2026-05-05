@@ -6,16 +6,6 @@ import { getSiteConfigValues } from "@/lib/queries/site-config";
 import { requirePageAccess } from "@/lib/dal";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
-import { Badge } from "@/components/ui/badge";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   TableSkeleton,
@@ -23,20 +13,13 @@ import {
 } from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
 import { RainRangeFilters } from "./range-filters";
-import { InlineBaseCell } from "./inline-base-cell";
+import { RainsTable } from "./rains-table";
 import { RAIN_CONFIG_KEYS } from "./config-keys";
 import { RainConfigCard } from "./rain-config-card";
 import { PageHero } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Rain" };
-
-const RAIN_STATUS_COLORS: Record<string, string> = {
-  active: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
-  drawing: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
-  completed: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
-  cancelled: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
-};
 
 const TABS = [
   { value: "instances", label: "Instances" },
@@ -137,13 +120,13 @@ function InstancesTab({
           </>
         }
       >
-        <RainsTable params={params} />
+        <RainsTableAsync params={params} />
       </Suspense>
     </div>
   );
 }
 
-async function RainsTable({
+async function RainsTableAsync({
   params,
 }: {
   params: Record<string, string | undefined>;
@@ -167,53 +150,7 @@ async function RainsTable({
   return (
     <>
       <FadeIn>
-        <div className="rounded-md border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>ID</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Base</TableHead>
-                <TableHead>Tips</TableHead>
-                <TableHead>Total Pool</TableHead>
-                <TableHead>Participants</TableHead>
-                <TableHead>Winner</TableHead>
-                <TableHead>Starts</TableHead>
-                <TableHead>Ends</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rains.data.map((r) => (
-                <TableRow key={r.id} className="cursor-pointer hover:bg-muted/50">
-                  <TableCell className="font-mono text-xs">
-                    <Link href={`/rain/${r.id}`} className="hover:underline">
-                      {r.id.slice(0, 8)}...
-                    </Link>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className={RAIN_STATUS_COLORS[r.status] ?? ""}>
-                      {r.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <InlineBaseCell rainId={r.id} value={r.baseAmountUsd} isActive={r.status === "active"} />
-                  </TableCell>
-                  <TableCell>{formatCurrency(r.tipAmountUsd)}</TableCell>
-                  <TableCell>{formatCurrency(r.totalPoolUsd)}</TableCell>
-                  <TableCell>{r.participantCount}</TableCell>
-                  <TableCell>{r.winnerUsername ?? "-"}</TableCell>
-                  <TableCell>{formatDateTime(r.startsAt)}</TableCell>
-                  <TableCell>{formatDateTime(r.endsAt)}</TableCell>
-                </TableRow>
-              ))}
-              {rains.data.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={9} className="h-24 text-center">No rains found.</TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
+        <RainsTable data={rains.data} />
       </FadeIn>
 
       <DataTablePagination

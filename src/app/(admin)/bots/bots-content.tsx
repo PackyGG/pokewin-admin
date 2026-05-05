@@ -251,7 +251,94 @@ export function BotsContent({ data }: { data: BotListItem[] }) {
         </DialogContent>
       </Dialog>
 
-      <div className="rounded-md border">
+      {/* Mobile card list (<lg) */}
+      <div className="lg:hidden">
+        {data.length === 0 ? (
+          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
+            No bots found.
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-md border">
+            {data.map((bot) => {
+              const pnl = bot.totalWonUsd - bot.totalLostUsd;
+              const pnlPositive = pnl >= 0;
+              return (
+                <div
+                  key={bot.id}
+                  className="border-b border-border/60 last:border-b-0 px-3 py-3"
+                >
+                  <div className="flex items-start gap-3">
+                    {bot.imageUrl ? (
+                      <img
+                        src={bot.imageUrl}
+                        alt={bot.username}
+                        className="size-9 rounded-full object-cover shrink-0"
+                      />
+                    ) : (
+                      <div className="size-9 rounded-full bg-muted shrink-0" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-medium truncate">
+                          {bot.username}
+                        </span>
+                        <Switch
+                          checked={bot.isActive}
+                          onCheckedChange={() => handleToggle(bot.id, bot.isActive)}
+                          disabled={isPending}
+                        />
+                      </div>
+                      <div className="mt-1 grid grid-cols-2 gap-x-3 text-[11px] text-muted-foreground">
+                        <div>
+                          <span className="text-[9px] uppercase tracking-wide">
+                            Battles
+                          </span>
+                          <div className="tabular-nums">
+                            {formatNumber(bot.battlesPlayed)} ({formatNumber(bot.battlesWon)} won)
+                          </div>
+                        </div>
+                        <div>
+                          <span className="text-[9px] uppercase tracking-wide">
+                            Wagered
+                          </span>
+                          <div className="tabular-nums">
+                            {formatCurrency(bot.totalWageredUsd)}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="mt-1 flex items-center justify-between">
+                        <span className="text-[10px] text-muted-foreground">
+                          P&L:{" "}
+                          <span
+                            className={
+                              "tabular-nums font-medium " +
+                              (pnlPositive
+                                ? "text-emerald-600 dark:text-emerald-400"
+                                : "text-rose-600 dark:text-rose-400")
+                            }
+                          >
+                            {formatCurrency(pnl)}
+                          </span>
+                          {bot.totalWageredUsd > 0 && (
+                            <>
+                              {" · "}
+                              {((pnl / bot.totalWageredUsd) * 100).toFixed(2)}%
+                            </>
+                          )}
+                        </span>
+                        <EditBotButton bot={bot} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Desktop table (>=lg) */}
+      <div className="hidden rounded-md border overflow-x-auto lg:block">
         <Table>
           <TableHeader>
             <TableRow>
