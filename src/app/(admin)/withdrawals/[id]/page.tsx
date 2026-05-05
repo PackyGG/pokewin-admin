@@ -60,7 +60,7 @@ export default async function WithdrawalDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4 flex-wrap">
           <Link
             href="/withdrawals"
             className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground shrink-0"
@@ -76,7 +76,7 @@ export default async function WithdrawalDetailPage({
               <Badge variant="outline" className={STATUS_COLORS[data.status]}>{data.status}</Badge>
               <Badge variant="outline">{data.method}</Badge>
             </div>
-            <p className="font-mono text-xs text-muted-foreground mt-0.5">{data.id}</p>
+            <p className="font-mono text-xs text-muted-foreground mt-0.5 truncate">{data.id}</p>
           </div>
           <WithdrawalActionButtons
             withdrawalId={data.id}
