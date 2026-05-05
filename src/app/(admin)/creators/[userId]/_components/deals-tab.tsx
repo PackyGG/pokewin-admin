@@ -64,6 +64,9 @@ export function DealsTab({ userId, deals }: Props) {
 
   return (
     <div>
+      {/* Wide multi-col table — let it horizontal-scroll on phone instead
+          of forcing the page to scroll horizontally. */}
+      <div className="overflow-x-auto">
       <Table>
         <TableHeader>
           <TableRow className="hover:bg-transparent">
@@ -99,6 +102,7 @@ export function DealsTab({ userId, deals }: Props) {
           ))}
         </TableBody>
       </Table>
+      </div>
 
       {deals.totalPages > 1 && (
         <div className="border-t px-4">

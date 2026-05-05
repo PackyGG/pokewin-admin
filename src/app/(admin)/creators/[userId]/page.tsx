@@ -92,14 +92,14 @@ export default async function CreatorDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-start gap-2.5 sm:gap-3 flex-wrap">
           <Link
             href="/creators"
             className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground shrink-0"
           >
             <ArrowLeft className="size-4" />
           </Link>
-          <Avatar className="size-11">
+          <Avatar className="size-10 sm:size-11 shrink-0">
             {profile.image && <AvatarImage src={profile.image} alt="" />}
             <AvatarFallback className="text-xs font-semibold">
               {(profile.username ?? profile.email ?? "?")
@@ -107,14 +107,14 @@ export default async function CreatorDetailPage({
                 .toUpperCase()}
             </AvatarFallback>
           </Avatar>
-          <div className="flex size-10 items-center justify-center rounded-xl bg-pink-500/10">
+          <div className="hidden sm:flex size-10 items-center justify-center rounded-xl bg-pink-500/10 shrink-0">
             <Star className="size-5 text-pink-500" />
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <Link
                 href={`/users/${profile.userId}`}
-                className="text-2xl font-bold leading-tight hover:underline"
+                className="text-xl sm:text-2xl font-bold leading-tight hover:underline truncate"
               >
                 {profile.username ?? profile.email}
               </Link>
@@ -127,7 +127,7 @@ export default async function CreatorDetailPage({
                   No affiliate code
                 </Badge>
               )}
-              <span className="text-muted-foreground/40">·</span>
+              <span className="hidden sm:inline text-muted-foreground/40">·</span>
               <RoleSelect
                 userId={profile.userId}
                 currentRole={profile.role}
@@ -162,8 +162,9 @@ export default async function CreatorDetailPage({
       {/* KPI strip — house-POV financial colors:
           - Total Earned: money paid TO creator → rose (house loss)
           - Wager Volume: money flowing FROM users TO us → emerald
-          - Clicks / Signups: neutral funnel events → blue */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          - Clicks / Signups: neutral funnel events → blue
+          Phone: 2 cols, tablet+: 4 cols. */}
+      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 md:grid-cols-4">
         <KpiTile
           label="Clicks"
           value={formatNumber(profile.clicks.total)}
@@ -191,11 +192,12 @@ export default async function CreatorDetailPage({
         />
       </div>
 
-      <FadeIn className="space-y-6">
+      <FadeIn className="space-y-4 sm:space-y-6">
         {/* Top band: deal management on the left (3/5), the acquisition
             chart on the right (2/5). Both in matching Card chrome so the
-            row reads as one visual system with the analytics below. */}
-        <div className="grid gap-4 lg:grid-cols-5">
+            row reads as one visual system with the analytics below. On
+            phone they stack full-width. */}
+        <div className="grid gap-3 sm:gap-4 lg:grid-cols-5">
           <Card size="sm" className="lg:col-span-3">
             <DealTabs
               value={sp.tab}
@@ -230,8 +232,9 @@ export default async function CreatorDetailPage({
           </aside>
         </div>
 
-        {/* Bottom band: three equal-width analytics cards. */}
-        <div className="grid gap-4 lg:grid-cols-3">
+        {/* Bottom band: three equal-width analytics cards. On phone they
+            stack full-width; tablet shows two-up wherever possible. */}
+        <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <FunnelTable
             clicks={profile.clicks}
             signups={profile.signups}

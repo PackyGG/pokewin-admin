@@ -81,6 +81,7 @@ export function PendingTab({ pending, currentStatus }: Props) {
         </p>
       </div>
 
+      <div className="overflow-x-auto">
       <Table>
         <TableHeader>
           <TableRow className="hover:bg-transparent">
@@ -127,6 +128,7 @@ export function PendingTab({ pending, currentStatus }: Props) {
           ))}
         </TableBody>
       </Table>
+      </div>
     </div>
   );
 }

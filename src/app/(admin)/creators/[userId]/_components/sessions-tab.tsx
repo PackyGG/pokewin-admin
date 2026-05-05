@@ -85,6 +85,7 @@ export function SessionsTab({ userId, sessions, currentStatus }: Props) {
     <div>
       {filterRow}
 
+      <div className="overflow-x-auto">
       <Table>
         <TableHeader>
           <TableRow className="hover:bg-transparent">
@@ -107,6 +108,7 @@ export function SessionsTab({ userId, sessions, currentStatus }: Props) {
           ))}
         </TableBody>
       </Table>
+      </div>
 
       {sessions.totalPages > 1 && (
         <div className="border-t px-4">

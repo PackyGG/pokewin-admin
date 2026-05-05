@@ -92,17 +92,17 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
 
     return (
         <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
+            <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <CardTitle className="text-sm font-medium flex items-center gap-2">
-                    <Trophy className="size-4 text-primary" />
-                    Affiliate Leaderboards
+                    <Trophy className="size-4 text-primary shrink-0" />
+                    <span className="truncate">Affiliate Leaderboards</span>
                     {total > 0 && (
                         <Badge variant="outline" className="text-xs ml-1">
                             {total}
                         </Badge>
                     )}
                 </CardTitle>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 self-start sm:self-auto">
                     <CreateDialog
                         fixedCreatorUserId={userId}
                         trigger={
@@ -131,9 +131,9 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
                             <Link
                                 key={r.id}
                                 href={`/creators/leaderboards/${r.id}`}
-                                className="flex items-center justify-between gap-3 rounded-md border p-3 hover:bg-muted/50 transition-colors"
+                                className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3 rounded-md border p-3 hover:bg-muted/50 transition-colors"
                             >
-                                <div className="min-w-0 flex-1">
+                                <div className="min-w-0 sm:flex-1">
                                     <div className="flex items-center gap-2 flex-wrap">
                                         <span className="font-medium text-sm truncate">{r.title}</span>
                                         {r.is_sponsored && (
@@ -143,12 +143,12 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
                                         )}
                                     </div>
                                     <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                                        <span>
+                                        <span className="truncate">
                                             {formatDateTime(r.start_date)} → {formatDateTime(r.end_date)}
                                         </span>
                                     </div>
                                 </div>
-                                <div className="flex items-center gap-2 shrink-0">
+                                <div className="flex items-center flex-wrap gap-1.5 sm:gap-2 sm:shrink-0">
                                     <span className="text-sm tabular-nums font-semibold">${r.total_prize_usd}</span>
                                     <Badge variant="outline" className={`text-[10px] ${APPROVAL_COLORS[r.approval_status]}`}>
                                         {r.approval_status}
