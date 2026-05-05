@@ -41,6 +41,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -590,8 +591,10 @@ function MuteDialog({
               onChange={(e) => setExpires(e.target.value)}
             />
           </div>
+        </div>
+        <DialogFooter>
           <Button
-            className="w-full"
+            className="w-full sm:w-auto"
             disabled={pending}
             onClick={() => {
               start(async () => {
@@ -618,7 +621,7 @@ function MuteDialog({
               "Mute"
             )}
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

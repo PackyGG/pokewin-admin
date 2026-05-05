@@ -92,10 +92,19 @@ export function CreateRoleButton() {
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => setOpen(false)} disabled={isPending}>
+          <Button
+            variant="outline"
+            onClick={() => setOpen(false)}
+            disabled={isPending}
+            className="w-full sm:w-auto"
+          >
             Cancel
           </Button>
-          <Button onClick={handleSubmit} disabled={isPending || !name.trim()}>
+          <Button
+            onClick={handleSubmit}
+            disabled={isPending || !name.trim()}
+            className="w-full sm:w-auto"
+          >
             {isPending ? "Creating..." : "Create"}
           </Button>
         </DialogFooter>

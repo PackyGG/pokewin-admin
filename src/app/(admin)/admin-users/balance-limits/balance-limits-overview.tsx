@@ -487,10 +487,15 @@ function AddLimitDialog({ allAdmins }: { allAdmins: AdminOption[] }) {
             variant="outline"
             onClick={() => setOpen(false)}
             disabled={pending}
+            className="w-full sm:w-auto"
           >
             Cancel
           </Button>
-          <Button onClick={handleSave} disabled={pending}>
+          <Button
+            onClick={handleSave}
+            disabled={pending}
+            className="w-full sm:w-auto"
+          >
             {pending ? "Saving…" : "Add cap"}
           </Button>
         </DialogFooter>
