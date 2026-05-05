@@ -347,7 +347,7 @@ export function AuditEventsTable({
 
   return (
     <>
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-semibold">Audit Events</h2>
         <div className="flex items-center gap-2 text-sm">
           <span className="text-muted-foreground">Rows per page</span>
@@ -458,7 +458,7 @@ export function AuditEventsTable({
           </TableBody>
         </Table>
       </div>
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <span className="text-sm text-muted-foreground">
           {auditEvents.total} total event{auditEvents.total !== 1 ? "s" : ""}
         </span>
