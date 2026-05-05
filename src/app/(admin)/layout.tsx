@@ -81,7 +81,7 @@ export default async function AdminLayout({
           username={session.username}
           dbEnv={dbEnv}
         />
-        <div className="flex flex-1 flex-col">
+        <div className="flex flex-1 flex-col min-w-0">
           {dbEnv === "dev" && <DevDbBanner />}
           <AdminHeader
             adminId={session.userId}
@@ -92,7 +92,16 @@ export default async function AdminLayout({
             dbEnv={dbEnv}
             canSwitchDbEnv={canSwitchDbEnv}
           />
-          <main className="flex-1 overflow-auto p-4 md:p-6">{children}</main>
+          {/* `min-w-0` is required so flex children can shrink below their
+              intrinsic content width — without it, a wide table or chart
+              forces the entire shell to scroll horizontally instead of
+              just the offending element. `pb-[env(safe-area-inset-bottom)]`
+              gives iOS notched devices breathing room above the home bar. */}
+          <main
+            className="flex-1 overflow-auto min-w-0 p-3 sm:p-4 md:p-6 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-[max(1rem,env(safe-area-inset-bottom))] md:pb-[max(1.5rem,env(safe-area-inset-bottom))]"
+          >
+            {children}
+          </main>
         </div>
         <CommandPalette role={session.role} allowedPages={allowedPages} />
         {canOpenChatPanel && <ChatPanel role={session.role} />}

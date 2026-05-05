@@ -40,11 +40,28 @@ import { ROLE_COLORS } from "@/lib/constants";
 import { TIMEZONE_GROUPS } from "@/lib/timezones";
 import { updatePreferences } from "@/app/(admin)/profile/preferences-actions";
 import { useTimezoneContext } from "@/components/timezone-provider";
+import { cn } from "@/lib/utils";
 import type { DbEnv } from "@/lib/db-env";
 
 function getBreadcrumbs(pathname: string) {
   const segments = pathname.split("/").filter(Boolean);
   return segments.map((seg) => seg.charAt(0).toUpperCase() + seg.slice(1));
+}
+
+/**
+ * Phone-sized breadcrumb fallback: keep only the last two segments and
+ * prefix with `…` so the user still sees the current page + parent
+ * without overflowing. Drops everything above two segments so the chain
+ * never wraps to a second line on a 360px viewport.
+ */
+function truncateBreadcrumbs(crumbs: string[]): {
+  truncated: boolean;
+  visible: string[];
+} {
+  if (crumbs.length <= 2) {
+    return { truncated: false, visible: crumbs };
+  }
+  return { truncated: true, visible: crumbs.slice(-2) };
 }
 
 function initials(source: string): string {
@@ -241,6 +258,7 @@ export function AdminHeader({
   const pathname = usePathname();
   const router = useRouter();
   const breadcrumbs = getBreadcrumbs(pathname);
+  const phoneCrumbs = truncateBreadcrumbs(breadcrumbs);
   // Hidden-form ref so the dropdown's "Log out" menu item can submit the
   // existing server action without a visible icon button.
   const logoutFormRef = React.useRef<HTMLFormElement>(null);
@@ -248,50 +266,85 @@ export function AdminHeader({
   const label = displayUsername ?? username;
 
   return (
-    <header className="flex h-14 items-center gap-2 border-b border-border px-3 sm:gap-3 sm:px-4">
-      <SidebarTrigger />
+    <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-1.5 border-b border-border bg-background/95 px-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:gap-3 sm:px-4">
+      {/* SidebarTrigger renders a 44×44 hit-target on mobile (full
+          touch-target spec) but stays visually compact via the inner
+          icon. Margin -ml-1 lets it hug the left edge while keeping the
+          tap target large. */}
+      <SidebarTrigger className="size-11 sm:size-8 -ml-1 sm:ml-0 shrink-0" />
       <Separator orientation="vertical" className="!self-auto h-5 hidden sm:block" />
-      {/* Breadcrumbs: shrink aggressively on narrow screens and horizontally
-          scroll if the crumb chain is longer than the remaining space.
-          min-w-0 is required so flex children don't overflow their parent. */}
-      <nav className="flex min-w-0 items-center gap-1 overflow-x-auto text-sm text-muted-foreground [scrollbar-width:none]">
-        {breadcrumbs.map((crumb, i) => (
-          <span key={i} className="flex shrink-0 items-center gap-1">
-            {i > 0 && <span>/</span>}
-            <span className={i === breadcrumbs.length - 1 ? "text-foreground" : ""}>
-              {crumb}
+      {/* Breadcrumbs:
+            - <sm: collapse to last two segments with leading "…" so a
+              long path like /creators/123/codes/abc renders as
+              "… / Codes / abc" without wrapping or overflowing.
+            - sm+:  show the full chain with horizontal scroll if needed.
+          min-w-0 lets the flex item shrink below its content's natural
+          width — without it, a long crumb forces the whole header to
+          overflow horizontally. */}
+      <nav className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden text-sm text-muted-foreground sm:overflow-x-auto sm:[scrollbar-width:none] sm:[&::-webkit-scrollbar]:hidden">
+        {/* Phone view (<sm): truncated chain, no scroll. */}
+        <div className="flex min-w-0 items-center gap-1 sm:hidden">
+          {phoneCrumbs.truncated && (
+            <>
+              <span className="shrink-0">…</span>
+              <span className="shrink-0">/</span>
+            </>
+          )}
+          {phoneCrumbs.visible.map((crumb, i, arr) => (
+            <span key={i} className="flex min-w-0 items-center gap-1">
+              {i > 0 && <span className="shrink-0">/</span>}
+              <span
+                className={cn(
+                  "truncate",
+                  i === arr.length - 1 && "text-foreground",
+                )}
+              >
+                {crumb}
+              </span>
             </span>
-          </span>
-        ))}
+          ))}
+        </div>
+        {/* Desktop view (sm+): full chain, horizontal scroll if huge. */}
+        <div className="hidden sm:flex sm:min-w-0 sm:items-center sm:gap-1">
+          {breadcrumbs.map((crumb, i) => (
+            <span key={i} className="flex shrink-0 items-center gap-1">
+              {i > 0 && <span>/</span>}
+              <span className={i === breadcrumbs.length - 1 ? "text-foreground" : ""}>
+                {crumb}
+              </span>
+            </span>
+          ))}
+        </div>
       </nav>
       <Button
         variant="ghost"
         size="icon"
-        className="size-7 shrink-0"
+        className="size-9 sm:size-7 shrink-0"
         onClick={() => router.refresh()}
         aria-label="Reload page"
         title="Reload page"
       >
-        <RotateCw className="size-3.5" />
+        <RotateCw className="size-4 sm:size-3.5" />
       </Button>
-      <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-3">
-        {/* Global live-users indicator. Polls on its own 15s cadence and
-            pauses when the tab is hidden. Sits LEFT of the avatar with a
-            thin vertical divider so it reads as a sibling status chip,
-            not part of the profile cluster. */}
-        <LiveIndicator />
-        <Separator orientation="vertical" className="!self-auto h-5" />
+      <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-3">
+        {/* Live-users indicator collapses to icon-only on phones (the
+            number wraps the chip past 360px). The full chip with count
+            returns at sm+. */}
+        <div className="hidden sm:contents">
+          <LiveIndicator />
+          <Separator orientation="vertical" className="!self-auto h-5" />
+        </div>
         {/* Avatar + name now opens a dropdown with quick-access theme +
             timezone pickers alongside the profile link and logout. The
             whole cluster is the trigger so the click target stays as
             large as the pre-dropdown Link was. */}
         <DropdownMenu>
           <DropdownMenuTrigger
-            className="flex items-center gap-2.5 rounded-full p-1 pr-3 outline-none hover:bg-accent transition-colors focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex items-center gap-2 rounded-full p-0.5 outline-none hover:bg-accent transition-colors focus-visible:ring-2 focus-visible:ring-ring sm:gap-2.5 sm:p-1 sm:pr-3"
             aria-label="Open profile menu"
             title={label}
           >
-            <Avatar className="size-9">
+            <Avatar className="size-10 sm:size-9">
               {hasAvatar && (
                 <AvatarImage src={`/api/admin/avatar/${adminId}`} alt={label} />
               )}
@@ -299,7 +352,9 @@ export function AdminHeader({
                 {initials(label)}
               </AvatarFallback>
             </Avatar>
-            <span className="hidden text-sm font-medium sm:inline">{label}</span>
+            <span className="hidden max-w-[10rem] truncate text-sm font-medium sm:inline">
+              {label}
+            </span>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-[220px]">
             <DropdownMenuGroup>
@@ -332,7 +387,14 @@ export function AdminHeader({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <Badge variant="outline" className={ROLE_COLORS[role]}>
+        {/* Role badge sits next to the avatar at sm+. On phones the role
+            already lives inside the dropdown menu (and the badge would
+            push the avatar off-screen on a 360px viewport), so we hide
+            it here. */}
+        <Badge
+          variant="outline"
+          className={cn("hidden sm:inline-flex", ROLE_COLORS[role])}
+        >
           {role}
         </Badge>
         {/* Hidden form so the menu item above can trigger the server
