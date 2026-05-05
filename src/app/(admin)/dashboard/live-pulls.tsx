@@ -164,15 +164,17 @@ export function LivePulls() {
         aria-hidden
         className="pointer-events-none absolute -right-24 -top-24 size-60 rounded-full bg-purple-500/10 blur-3xl"
       />
-      <div className="relative flex items-center justify-between border-b border-border/60 px-5 py-3">
-        <div className="flex items-center gap-2">
-          <div className="rounded-md bg-primary/10 p-1.5">
+      <div className="relative flex items-center justify-between gap-2 border-b border-border/60 px-3 py-3 sm:px-5">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="shrink-0 rounded-md bg-primary/10 p-1.5">
             <Sparkles className="size-4 text-primary" />
           </div>
-          <div>
-            <h3 className="text-sm font-semibold leading-none">Live Pulls</h3>
-            <p className="mt-0.5 text-[11px] text-muted-foreground">
-              Newest card pulls across packs, battles & rewards
+          <div className="min-w-0">
+            <h3 className="truncate text-sm font-semibold leading-none">
+              Live Pulls
+            </h3>
+            <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+              Newest card pulls across packs, battles &amp; rewards
             </p>
           </div>
         </div>
@@ -210,7 +212,7 @@ function PullRow({ pull: p, isNew }: { pull: Pull; isNew: boolean }) {
   return (
     <li
       className={cn(
-        "flex items-center gap-3 px-5 py-3 transition-colors hover:bg-muted/30",
+        "flex items-center gap-3 px-3 py-3 transition-colors hover:bg-muted/30 sm:px-5",
         isNew &&
           "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-2 motion-safe:duration-300 motion-reduce:animate-in motion-reduce:fade-in motion-reduce:duration-200",
       )}
@@ -240,7 +242,9 @@ function PullRow({ pull: p, isNew }: { pull: Pull; isNew: boolean }) {
       </div>
 
       {/* Card name + metadata. Name is the dominant line; rarity chip
-          + pack name + time sit underneath as secondary metadata. */}
+          + pack name + time sit underneath as secondary metadata. The
+          metadata row uses `flex-wrap` so a long pack name doesn't
+          collide with the relative-time label on phones. */}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate text-sm font-semibold text-foreground">
@@ -255,11 +259,13 @@ function PullRow({ pull: p, isNew }: { pull: Pull; isNew: boolean }) {
             {p.card.rarity || "common"}
           </span>
         </div>
-        <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-          <SourceIcon className={cn("size-3 shrink-0", source.tint)} />
-          <span>{source.label}</span>
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
+          <span className="inline-flex items-center gap-1">
+            <SourceIcon className={cn("size-3 shrink-0", source.tint)} />
+            {source.label}
+          </span>
           <span className="text-muted-foreground/50">·</span>
-          <span className="truncate">{p.card.pack_name}</span>
+          <span className="min-w-0 truncate">{p.card.pack_name}</span>
           <span className="text-muted-foreground/50">·</span>
           <span className="shrink-0">{formatRelative(p.timestamp)}</span>
         </div>

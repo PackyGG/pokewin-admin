@@ -257,7 +257,7 @@ function ActivityRow({
   return (
     <li
       className={cn(
-        "flex items-center gap-3 px-5 py-3 transition-colors hover:bg-muted/30",
+        "flex items-center gap-3 px-3 py-3 transition-colors hover:bg-muted/30 sm:px-5",
         isNew &&
           "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-2 motion-safe:duration-300 motion-reduce:animate-in motion-reduce:fade-in motion-reduce:duration-200",
       )}
