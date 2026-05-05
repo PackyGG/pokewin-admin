@@ -24,21 +24,23 @@ export function PnlStatCard({ pnl }: { pnl: number }) {
 
   return (
     <Card className={cn(isProfit ? "bg-emerald-500/10" : "bg-rose-500/10")}>
-      <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <div className="flex items-center gap-2">
+      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+        <div className="flex min-w-0 items-center gap-2">
           <CardTitle className="text-card-title text-muted-foreground">
             PnL
           </CardTitle>
-          <span className="text-tiny text-muted-foreground">lifetime</span>
+          <span className="hidden text-tiny text-muted-foreground sm:inline">
+            lifetime
+          </span>
         </div>
         {isProfit ? (
-          <TrendingUp className="size-4 text-emerald-400" />
+          <TrendingUp className="size-4 shrink-0 text-emerald-400" />
         ) : (
-          <TrendingDown className="size-4 text-rose-400" />
+          <TrendingDown className="size-4 shrink-0 text-rose-400" />
         )}
       </CardHeader>
       <CardContent>
-        <div className="text-stat-value">
+        <div className="text-stat-value truncate">
           <span className={isProfit ? "text-emerald-400" : "text-rose-400"}>
             {isProfit ? "+" : ""}
             <AnimatedNumber value={pnl} format="currency" />
@@ -56,6 +58,10 @@ export function PnlStatCard({ pnl }: { pnl: number }) {
 // Card identity color is cyan so this card is visually distinct from the
 // other period-aware cards. The NUMBER itself still flips emerald/rose by
 // sign so direction is readable at a glance.
+//
+// Mobile layout: title + icon on row 1, period chips wrap onto their own
+// row (`flex-wrap gap-1`) so 5 chips never bleed off the right edge of
+// a 360px-wide card. At sm+ the original side-by-side layout returns.
 export function GgrStatCard({ ggr }: { ggr: Record<string, number> }) {
   const [selected, setSelected] = useState<string>("24h");
   const value = ggr[selected] ?? 0;
@@ -63,12 +69,12 @@ export function GgrStatCard({ ggr }: { ggr: Record<string, number> }) {
 
   return (
     <Card className="bg-cyan-500/10">
-      <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <div className="flex items-center gap-2">
+      <CardHeader className="flex flex-col gap-2 pb-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <CardTitle className="text-card-title text-muted-foreground">
             GGR
           </CardTitle>
-          <div className="flex gap-0.5">
+          <div className="flex flex-wrap gap-0.5">
             {ranges.map((r) => (
               <button
                 key={r}
@@ -86,13 +92,13 @@ export function GgrStatCard({ ggr }: { ggr: Record<string, number> }) {
           </div>
         </div>
         {isProfit ? (
-          <TrendingUp className="size-4 text-emerald-400" />
+          <TrendingUp className="size-4 shrink-0 text-emerald-400" />
         ) : (
-          <TrendingDown className="size-4 text-rose-400" />
+          <TrendingDown className="size-4 shrink-0 text-rose-400" />
         )}
       </CardHeader>
       <CardContent>
-        <div className="text-stat-value">
+        <div className="text-stat-value truncate">
           <span className={isProfit ? "text-emerald-400" : "text-rose-400"}>
             {isProfit ? "+" : ""}
             <AnimatedNumber value={value} format="currency" />
@@ -115,12 +121,12 @@ export function WagerStatCard({
 
   return (
     <Card className="bg-purple-500/10">
-      <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <div className="flex items-center gap-2">
+      <CardHeader className="flex flex-col gap-2 pb-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <CardTitle className="text-card-title text-muted-foreground">
             Total Wager
           </CardTitle>
-          <div className="flex gap-0.5">
+          <div className="flex flex-wrap gap-0.5">
             {ranges.map((r) => (
               <button
                 key={r}
@@ -139,7 +145,7 @@ export function WagerStatCard({
         </div>
       </CardHeader>
       <CardContent>
-        <div className="text-stat-value">
+        <div className="text-stat-value truncate">
           <AnimatedNumber
             value={wagers[selected] ?? 0}
             format="currency"
@@ -160,12 +166,12 @@ export function DepositsStatCard({
 
   return (
     <Card className="bg-emerald-500/10">
-      <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <div className="flex items-center gap-2">
+      <CardHeader className="flex flex-col gap-2 pb-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <CardTitle className="text-card-title text-muted-foreground">
             Deposits
           </CardTitle>
-          <div className="flex gap-0.5">
+          <div className="flex flex-wrap gap-0.5">
             {ranges.map((r) => (
               <button
                 key={r}
@@ -184,7 +190,7 @@ export function DepositsStatCard({
         </div>
       </CardHeader>
       <CardContent>
-        <div className="text-stat-value">
+        <div className="text-stat-value truncate">
           <AnimatedNumber
             value={deposits[selected] ?? 0}
             format="currency"
@@ -208,12 +214,12 @@ export function WithdrawalsStatCard({
 
   return (
     <Card className="bg-pink-500/10">
-      <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <div className="flex items-center gap-2">
+      <CardHeader className="flex flex-col gap-2 pb-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <CardTitle className="text-card-title text-muted-foreground">
             Withdrawals
           </CardTitle>
-          <div className="flex gap-0.5">
+          <div className="flex flex-wrap gap-0.5">
             {ranges.map((r) => (
               <button
                 key={r}
@@ -232,7 +238,7 @@ export function WithdrawalsStatCard({
         </div>
       </CardHeader>
       <CardContent>
-        <div className="text-stat-value">
+        <div className="text-stat-value truncate">
           <AnimatedNumber
             value={withdrawals[selected] ?? 0}
             format="currency"

@@ -48,7 +48,7 @@ export function WagerChart({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <ChartContainer config={wagerConfig} className="h-[300px] w-full">
+        <ChartContainer config={wagerConfig} className="h-[220px] w-full md:h-[260px] lg:h-[300px]">
           <BarChart data={data} accessibilityLayer>
             <CartesianGrid vertical={false} />
             <XAxis
@@ -110,7 +110,7 @@ export function DepositsChart({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <ChartContainer config={depositsConfig} className="h-[300px] w-full">
+        <ChartContainer config={depositsConfig} className="h-[220px] w-full md:h-[260px] lg:h-[300px]">
           <BarChart data={data} accessibilityLayer>
             <CartesianGrid vertical={false} />
             <XAxis
@@ -159,7 +159,7 @@ export function SignupsChart({
         <CardTitle className="text-sm font-medium">Signups (30 days)</CardTitle>
       </CardHeader>
       <CardContent>
-        <ChartContainer config={signupsConfig} className="h-[300px] w-full">
+        <ChartContainer config={signupsConfig} className="h-[220px] w-full md:h-[260px] lg:h-[300px]">
           <BarChart data={data} accessibilityLayer>
             <CartesianGrid vertical={false} />
             <XAxis

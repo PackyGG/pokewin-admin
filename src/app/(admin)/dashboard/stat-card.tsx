@@ -52,23 +52,26 @@ export function StatCard({
 
   return (
     <Card className={cn(colors?.bg)}>
-      <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <CardTitle className="text-card-title text-muted-foreground">
+      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+        <CardTitle className="truncate text-card-title text-muted-foreground">
           {title}
         </CardTitle>
-        <Icon className={cn("size-4", colors?.icon ?? "text-muted-foreground")} />
+        <Icon
+          className={cn(
+            "size-4 shrink-0",
+            colors?.icon ?? "text-muted-foreground",
+          )}
+        />
       </CardHeader>
       <CardContent>
-        <div className="text-stat-value">
+        <div className="truncate text-stat-value">
           {useAnimated ? (
             <AnimatedNumber value={animatedValue!} format={formatKind!} />
           ) : (
             value
           )}
         </div>
-        {subtitle && (
-          <p className="text-stat-label">{subtitle}</p>
-        )}
+        {subtitle && <p className="text-stat-label">{subtitle}</p>}
         {children}
       </CardContent>
     </Card>

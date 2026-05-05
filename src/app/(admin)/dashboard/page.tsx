@@ -56,8 +56,11 @@ export default async function DashboardPage() {
         </div>
       </PageHero>
 
-      {/* Primary stats — period-aware cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      {/* Primary stats — period-aware cards.
+          Mobile-first grid: 2 columns at the smallest size keeps each
+          tile usable instead of squeezing 5 across; widens to 3 at sm,
+          4 at md, full 5 at lg+. */}
+      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 sm:gap-4">
         <PnlStatCard pnl={stats.realizedPnl} />
         <GgrStatCard ggr={stats.ggr} />
         <WagerStatCard wagers={stats.wagers} />
@@ -66,7 +69,7 @@ export default async function DashboardPage() {
       </div>
 
       {/* Secondary stats — all-time / snapshot */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 sm:gap-4">
         <StatCard
           title="Total Users"
           animatedValue={stats.users.total}
@@ -134,10 +137,13 @@ export default async function DashboardPage() {
         />
       </div>
 
-      {/* Charts */}
+      {/* Charts. Three-up at lg+ but stacks to a single column on
+          phones so each chart keeps a readable height (Recharts crushes
+          when forced into a tight grid cell). At md we go 2-up so the
+          row stays balanced before we have room for the third. */}
       <div className="space-y-3">
         <SectionHeading icon={LineChart} title="Trends" />
-        <FadeIn className="grid gap-4 lg:grid-cols-3">
+        <FadeIn className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
           <WagerChart data={stats.dailyWagers} />
           <DepositsChart data={stats.dailyDeposits} />
           <SignupsChart data={stats.dailySignups} />
@@ -149,7 +155,7 @@ export default async function DashboardPage() {
           single column on smaller screens so the pulls card keeps a
           usable width. Both cards manage their own height cap via
           internal scroll so the grid stays symmetric. */}
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid gap-3 sm:gap-4 xl:grid-cols-2">
         <div className="space-y-3">
           <SectionHeading
             icon={Activity}
