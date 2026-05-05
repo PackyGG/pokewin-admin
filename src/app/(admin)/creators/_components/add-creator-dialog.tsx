@@ -116,7 +116,7 @@ export function AddCreatorDialog() {
         <UserPlus className="mr-2 size-4" />
         Add Creator
       </DialogTrigger>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="size-5 text-primary" />

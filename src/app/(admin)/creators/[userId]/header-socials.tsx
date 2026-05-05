@@ -137,7 +137,7 @@ export function HeaderSocials({
         </DialogTrigger>
       </div>
 
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-sm font-semibold">
             Social connections

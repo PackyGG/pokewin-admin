@@ -112,7 +112,7 @@ function BulkDeleteDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) setTotpCode(""); }}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-rose-400">
             Delete {ids.length} user{ids.length !== 1 ? "s" : ""} permanently

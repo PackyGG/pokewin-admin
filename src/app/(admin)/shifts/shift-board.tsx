@@ -679,7 +679,7 @@ function ShiftEditDialog({
           if (!v) onClose();
         }}
       >
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Calendar className="size-4 text-primary" />
@@ -689,7 +689,7 @@ function ShiftEditDialog({
 
           <div className="space-y-4 py-2">
             {/* Times — always in the admin's own timezone. */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="shift-start" className="text-xs font-medium">
                   Start
