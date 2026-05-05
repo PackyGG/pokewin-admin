@@ -180,8 +180,10 @@ export function ShiftBoard({
 
   return (
     <div className="space-y-6">
-      {/* Toolbar — global navigator, applies to the whole stack. */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      {/* Toolbar — global navigator, applies to the whole stack. The
+          timezone chip moves under the week-nav on phones so neither
+          element gets squeezed. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <div className="flex items-center gap-2">
           <Button
             type="button"
@@ -192,15 +194,15 @@ export function ShiftBoard({
           >
             <ChevronLeft className="size-4" />
           </Button>
-          <div className="flex flex-col px-1 text-left">
-            <span className="text-sm font-semibold">
+          <div className="flex min-w-0 flex-1 flex-col px-1 text-left">
+            <span className="truncate text-sm font-semibold">
               Showing {weekStartsIso.length} week
               {weekStartsIso.length === 1 ? "" : "s"}
             </span>
             <button
               type="button"
               onClick={() => router.push(`/shifts?week=${currentWeekParam}`)}
-              className="self-start text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              className="self-start truncate text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
               disabled={weekStartsIso[0] === currentWeekStartIso}
             >
               {weekStartsIso[0] === currentWeekStartIso
@@ -219,11 +221,13 @@ export function ShiftBoard({
           </Button>
         </div>
 
-        <div className="flex items-center gap-2 rounded-full border border-border bg-muted/40 px-3 py-1 text-xs text-muted-foreground">
-          <Clock className="size-3.5" />
-          Your timezone:{" "}
-          <span className="font-medium text-foreground">
-            {timezoneLabel(tz)}
+        <div className="flex items-center gap-2 self-start rounded-full border border-border bg-muted/40 px-3 py-1 text-xs text-muted-foreground sm:self-auto">
+          <Clock className="size-3.5 shrink-0" />
+          <span className="truncate">
+            Your timezone:{" "}
+            <span className="font-medium text-foreground">
+              {timezoneLabel(tz)}
+            </span>
           </span>
         </div>
       </div>
@@ -327,21 +331,23 @@ function WeekBoard({
     >
       {/* Prominent week header — the "top-left week/date label" the user
           asked to make bigger. Rendered above each grid, not inside it,
-          so it reads as a section title. */}
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/30 px-5 py-4">
-        <div className="flex items-center gap-3">
+          so it reads as a section title. Stacks vertically on phones
+          so the week label and the action buttons each get their own
+          row instead of trampling each other. */}
+      <header className="flex flex-col gap-3 border-b bg-muted/30 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:px-5 sm:py-4">
+        <div className="flex min-w-0 items-center gap-3">
           <div
             className={cn(
-              "flex size-10 items-center justify-center rounded-xl",
+              "flex size-9 shrink-0 items-center justify-center rounded-xl sm:size-10",
               isCurrent
                 ? "bg-primary/15 text-primary"
                 : "bg-muted text-muted-foreground",
             )}
           >
-            <CalendarDays className="size-5" />
+            <CalendarDays className="size-4 sm:size-5" />
           </div>
-          <div>
-            <h2 className="text-lg font-bold leading-tight">
+          <div className="min-w-0">
+            <h2 className="truncate text-base font-bold leading-tight sm:text-lg">
               {formatWeekRange(weekStart)}
             </h2>
             <p className="text-xs text-muted-foreground">
@@ -371,17 +377,19 @@ function WeekBoard({
             title="Copy this entire week's shifts into next week"
           >
             <ArrowRight className="size-4" />
-            Copy → next week
+            <span className="hidden sm:inline">Copy → next week</span>
+            <span className="sm:hidden">Next week</span>
           </Button>
         </div>
       </header>
 
-      {/* The 7-day grid uses fixed-ratio columns. On narrow viewports
-          (<800px) cells become unreadable, so wrap the whole table in
-          a horizontal-scroll container with a min-width that keeps cell
-          widths comfortable. Header row + body rows share the same
-          min-width so they stay aligned during scroll. */}
-      <div className="overflow-x-auto">
+      {/* DESKTOP / TABLET layout — the original 7-day grid.
+          On narrow viewports (<800px) cells become unreadable, so wrap
+          the whole table in a horizontal-scroll container with a min-
+          width that keeps cell widths comfortable. Header row + body
+          rows share the same min-width so they stay aligned during
+          scroll. Hidden on phones in favor of the day-stack below. */}
+      <div className="hidden overflow-x-auto md:block">
         <div className="min-w-[760px]">
           {/* Day header row */}
           <div className="grid grid-cols-[96px_repeat(7,1fr)] border-b bg-muted/20">
@@ -422,7 +430,211 @@ function WeekBoard({
           ))}
         </div>
       </div>
+
+      {/* MOBILE layout — vertical stack of 7 day cards. Each card
+          shows the day's three shift slots top-to-bottom so the
+          admin can scan a whole week by scrolling. Reuses the same
+          ShiftCell renderer for the actual content so the cell-level
+          interactions (click → edit, empty → add) stay identical. */}
+      <div className="divide-y md:hidden">
+        {DAY_SHORT.map((short, day) => (
+          <MobileDayCard
+            key={short}
+            weekStart={weekStart}
+            day={day}
+            short={short}
+            full={DAY_NAMES[day]}
+            grid={grid}
+            workersById={workersById}
+            onCellClick={onCellClick}
+            onCopyDay={() => onCopyDay(day)}
+          />
+        ))}
+      </div>
     </section>
+  );
+}
+
+// ─── Mobile per-day card ─────────────────────────────────────────
+
+function MobileDayCard({
+  weekStart,
+  day,
+  short,
+  full,
+  grid,
+  workersById,
+  onCellClick,
+  onCopyDay,
+}: {
+  weekStart: Date;
+  day: number;
+  short: string;
+  full: string;
+  grid: Map<string, Shift>;
+  workersById: Map<string, Worker>;
+  onCellClick: (day: number, slot: number, shift: Shift | null) => void;
+  onCopyDay: () => void;
+}) {
+  const dayDate = React.useMemo(() => {
+    const d = new Date(weekStart);
+    d.setUTCDate(d.getUTCDate() + day);
+    return d;
+  }, [weekStart, day]);
+  const dayNumFormatter = new Intl.DateTimeFormat("en-US", {
+    day: "numeric",
+    timeZone: "UTC",
+  });
+  // For Monday, "yesterday" is the previous week's Sunday — same as
+  // the desktop DayHeader. Tooltip text intentionally mirrors that.
+  const yesterdayLabel =
+    day === 0 ? "previous week's Sunday" : DAY_NAMES[day - 1];
+  // Count assigned shifts in the day so we can show "0 / 3" style
+  // sub-text in the header — gives the user a quick fill signal at a
+  // glance without expanding the card.
+  const filledCount = Array.from({ length: SHIFTS_PER_DAY }).filter(
+    (_, slot) => grid.has(`${day}|${slot}`),
+  ).length;
+
+  return (
+    <div className="bg-card">
+      <div className="flex items-center justify-between gap-2 border-b bg-muted/20 px-4 py-2.5">
+        <div className="flex items-baseline gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            {short}
+          </span>
+          <span
+            className="text-base font-bold tabular-nums leading-none"
+            title={full}
+          >
+            {dayNumFormatter.format(dayDate)}
+          </span>
+          <span className="text-[11px] text-muted-foreground">
+            {filledCount} / {SHIFTS_PER_DAY} filled
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onCopyDay}
+          title={`Copy shifts from ${yesterdayLabel} into ${full}`}
+          aria-label={`Copy shifts from ${yesterdayLabel} into ${full}`}
+          className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <ArrowDownLeft className="size-3.5" />
+        </button>
+      </div>
+      <div className="divide-y">
+        {Array.from({ length: SHIFTS_PER_DAY }).map((_, slot) => {
+          const shift = grid.get(`${day}|${slot}`) ?? null;
+          return (
+            <MobileShiftRow
+              key={slot}
+              slotLabel={SLOT_LABELS[slot]}
+              shift={shift}
+              workersById={workersById}
+              onClick={() => onCellClick(day, slot, shift)}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function MobileShiftRow({
+  slotLabel,
+  shift,
+  workersById,
+  onClick,
+}: {
+  slotLabel: string;
+  shift: Shift | null;
+  workersById: Map<string, Worker>;
+  onClick: () => void;
+}) {
+  const tz = useTimezone();
+
+  if (!shift) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-xs text-muted-foreground transition-colors hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <span className="font-semibold uppercase tracking-wider">{slotLabel}</span>
+        <span className="inline-flex items-center gap-1 text-[11px]">
+          <Plus className="size-3" />
+          Add shift
+        </span>
+      </button>
+    );
+  }
+
+  const startHHmm = toZonedHhMm(shift.startAt, tz);
+  const endHHmm = toZonedHhMm(shift.endAt, tz);
+  const assignedWorkers = shift.assignedIds
+    .map((id) => workersById.get(id))
+    .filter((w): w is Worker => w != null);
+  const extraCount = shift.assignedIds.length - assignedWorkers.length;
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full flex-col items-start gap-1.5 px-4 py-3 text-left transition-colors hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <div className="flex w-full items-center justify-between gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          {slotLabel}
+        </span>
+        <div className="flex items-center gap-1 text-xs font-semibold tabular-nums">
+          <Clock className="size-3 text-muted-foreground" />
+          <span>{startHHmm}</span>
+          <span className="text-muted-foreground">–</span>
+          <span>{endHHmm}</span>
+        </div>
+      </div>
+      {assignedWorkers.length === 0 ? (
+        <span className="text-[11px] text-muted-foreground">Unassigned</span>
+      ) : (
+        <div className="flex flex-wrap gap-1">
+          {assignedWorkers.slice(0, 4).map((w) => (
+            <Badge
+              key={w.id}
+              variant="outline"
+              className={cn(
+                "text-[10px] font-medium leading-none px-1.5 py-0.5",
+                ROLE_COLORS[w.role] ?? "",
+              )}
+            >
+              {w.displayUsername ?? w.username}
+            </Badge>
+          ))}
+          {assignedWorkers.length > 4 && (
+            <Badge
+              variant="outline"
+              className="text-[10px] font-medium leading-none px-1.5 py-0.5"
+            >
+              +{assignedWorkers.length - 4}
+            </Badge>
+          )}
+          {extraCount > 0 && (
+            <Badge
+              variant="outline"
+              className="text-[10px] font-medium leading-none px-1.5 py-0.5 text-muted-foreground"
+              title="Assigned users no longer in the active admins list"
+            >
+              +{extraCount} ex
+            </Badge>
+          )}
+        </div>
+      )}
+      {shift.notes && (
+        <p className="line-clamp-2 text-[10px] text-muted-foreground/80">
+          {shift.notes}
+        </p>
+      )}
+    </button>
   );
 }
 
