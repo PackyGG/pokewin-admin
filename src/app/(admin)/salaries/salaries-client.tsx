@@ -218,6 +218,16 @@ function EmployeeRow({ employee }: { employee: Employee }) {
           <span className="ml-1 text-[10px] text-muted-foreground">
             /{employee.cadence === "monthly" ? "mo" : employee.cadence === "weekly" ? "wk" : "2wk"}
           </span>
+          {employee.cadence !== "monthly" && (
+            <div className="text-[10px] text-muted-foreground">
+              ≈ $
+              {(
+                employee.salaryUsdt *
+                (employee.cadence === "weekly" ? 52 / 12 : 26 / 12)
+              ).toLocaleString(undefined, { maximumFractionDigits: 2 })}{" "}
+              /mo
+            </div>
+          )}
         </td>
         <td className="px-3 py-2 text-xs text-muted-foreground">
           {employee.lastPaidAt ? formatRelative(employee.lastPaidAt) : "never"}
@@ -673,6 +683,25 @@ function EmployeeFormDialog({
               onChange={(e) => setSalary(e.target.value)}
               placeholder="500"
             />
+            {/* For weekly/biweekly cadences show the calendar-month
+                equivalent so it's obvious what the actual monthly
+                cost is. Same factor used in page.tsx for the
+                Monthly Budget KPI: weekly ×52/12, biweekly ×26/12. */}
+            {(() => {
+              const sal = parseFloat(salary);
+              if (!Number.isFinite(sal) || sal <= 0) return null;
+              if (cadence === "monthly") return null;
+              const factor = cadence === "weekly" ? 52 / 12 : 26 / 12;
+              const perMonth = sal * factor;
+              return (
+                <p className="text-[10px] text-muted-foreground">
+                  ≈ ${perMonth.toLocaleString(undefined, {
+                    maximumFractionDigits: 2,
+                  })}{" "}
+                  per month
+                </p>
+              );
+            })()}
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Notes</Label>

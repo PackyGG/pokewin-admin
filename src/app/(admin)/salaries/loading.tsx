@@ -5,20 +5,20 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 
 /**
- * Matches /spending/salaries: hero with back arrow, 4 KPI tiles,
- * 400px wallet panel + employees table + recent payouts table.
+ * Matches /salaries: hero, 4 KPI tiles (Active Employees, Monthly
+ * Budget, Paid This Month, Paid YTD), then a stacked Employees card
+ * and Payment Log card. Auto-payment wallet was removed when the
+ * page pivoted to manual register + QR codes, so no 400px sidebar
+ * panel anymore.
  */
 export default function SalariesLoading() {
   return (
     <div className="space-y-6">
       <PageHeroSkeleton />
       <KpiStripSkeleton count={4} />
-      <div className="grid gap-4 lg:grid-cols-[400px_1fr]">
-        <Skeleton className="h-[420px] rounded-xl" />
-        <div className="space-y-4">
-          <Skeleton className="h-64 rounded-xl" />
-          <Skeleton className="h-72 rounded-xl" />
-        </div>
+      <div className="space-y-4">
+        <Skeleton className="h-72 rounded-xl" />
+        <Skeleton className="h-80 rounded-xl" />
       </div>
     </div>
   );
