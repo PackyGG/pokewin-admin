@@ -42,6 +42,8 @@ export type CreatorDealResponse = {
   fills_used: number;
   per_fill_amount_usd: string;
   conversion_rate_bps: number;
+  total_withdraw_cap_usd: string | null;
+  withdraw_cap_used_usd: string;
   cooldown_minutes: number;
   max_tip_per_stream_usd: string;
   max_tip_per_user_usd: string;
@@ -100,6 +102,7 @@ export type CreateDealInput = {
   fills_allowed: number;
   per_fill_amount_usd: number;
   conversion_rate_bps: number;
+  total_withdraw_cap_usd?: number | null;
   cooldown_minutes?: number;
   max_tip_per_stream_usd: number;
   max_tip_per_user_usd: number;
@@ -118,6 +121,7 @@ export type UpdateDealInput = {
     fills_allowed: number;
     per_fill_amount_usd: number;
     conversion_rate_bps: number;
+    total_withdraw_cap_usd: number | null;
     cooldown_minutes: number;
     max_tip_per_stream_usd: number;
     max_tip_per_user_usd: number;

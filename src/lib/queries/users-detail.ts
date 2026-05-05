@@ -40,6 +40,7 @@ export async function getUserDetail(id: string) {
     featureLocks,
     inventoryCount,
     affiliateAccount,
+    affiliateCodeRecord,
     shippingAddress,
     vault,
     mutes,
@@ -74,6 +75,11 @@ export async function getUserDetail(id: string) {
         total_bonus_distributed_usd: true,
         last_payout_at: true,
       },
+    }),
+    db.affiliate_codes.findFirst({
+      where: { user_id: id },
+      select: { code: true },
+      orderBy: { created_at: "desc" },
     }),
     db.shipping_addresses.findUnique({ where: { user_id: id } }),
     db.vaults.findUnique({ where: { user_id: id } }),
@@ -231,7 +237,7 @@ export async function getUserDetail(id: string) {
     inventoryCount,
     affiliate: affiliateAccount
       ? {
-          code: user?.affiliate_code ?? "",
+          code: user?.affiliate_code ?? affiliateCodeRecord?.code ?? "",
           totalReferred: affiliateAccount.total_referred,
           totalWagerVolumeUsd: toNumber(affiliateAccount.total_wager_volume_usd),
           totalEarnedUsd: toNumber(affiliateAccount.total_earned_usd),

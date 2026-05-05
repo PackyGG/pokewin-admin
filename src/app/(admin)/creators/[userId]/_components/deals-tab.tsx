@@ -73,6 +73,12 @@ export function DealsTab({ userId, deals }: Props) {
             <TableHead className="text-right">Per Fill</TableHead>
             <TableHead className="text-right">Convert</TableHead>
             <TableHead className="text-right">
+              Withdraw cap
+              <div className="text-[10px] font-normal normal-case text-muted-foreground/70">
+                used / total
+              </div>
+            </TableHead>
+            <TableHead className="text-right">
               Tip max
               <div className="text-[10px] font-normal normal-case text-muted-foreground/70">
                 user / stream
@@ -160,6 +166,9 @@ function DealRow({
       <TableCell className="text-right tabular-nums">
         {(deal.conversion_rate_bps / 100).toFixed(1)}%
       </TableCell>
+      <TableCell className="text-right tabular-nums">
+        <CapCell deal={deal} />
+      </TableCell>
       <TableCell className="text-right tabular-nums text-muted-foreground">
         <span className="font-medium text-foreground">
           ${deal.max_tip_per_user_usd}
@@ -181,6 +190,43 @@ function DealRow({
         )}
       </TableCell>
     </TableRow>
+  );
+}
+
+function CapCell({ deal }: { deal: CreatorDealResponse }) {
+  const used = Number(deal.withdraw_cap_used_usd);
+  if (deal.total_withdraw_cap_usd === null) {
+    return (
+      <div className="flex flex-col items-end">
+        <span className="text-muted-foreground">Uncapped</span>
+        {used > 0 && (
+          <span className="text-[10px] text-muted-foreground/70">
+            paid ${used.toFixed(2)}
+          </span>
+        )}
+      </div>
+    );
+  }
+  const total = Number(deal.total_withdraw_cap_usd);
+  const remaining = Math.max(0, total - used);
+  const exhausted = remaining <= 0 && total > 0;
+  return (
+    <div className="flex flex-col items-end">
+      <span>
+        <span
+          className={cn(
+            "font-medium",
+            exhausted ? "text-rose-600 dark:text-rose-400" : undefined,
+          )}
+        >
+          ${used.toFixed(2)}
+        </span>
+        <span className="text-muted-foreground">/${total.toFixed(2)}</span>
+      </span>
+      <span className="text-[10px] text-muted-foreground/70">
+        {exhausted ? "cap reached" : `$${remaining.toFixed(2)} left`}
+      </span>
+    </div>
   );
 }
 

@@ -129,7 +129,11 @@ const TABS: TabDef[] = [
   { key: "trust", label: "Trust", icon: ShieldAlert },
   // Affiliate tab is ALWAYS visible — admins need to be able to give
   // a user a referral code (set their `referred_by`) regardless of
-  // whether the user has their own code yet.
+  // whether the user has their own code yet. This supersedes the
+  // earlier visibility check `Boolean(user.affiliateCode) || affiliate !== null`
+  // because that still hid the tab from regular users with no
+  // referral activity yet, which is exactly when admins need to
+  // assign one.
   { key: "affiliate", label: "Affiliate", icon: Sparkles },
   { key: "account", label: "Account", icon: ShieldCheck },
 ];
