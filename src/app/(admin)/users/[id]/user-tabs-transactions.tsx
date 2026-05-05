@@ -976,7 +976,7 @@ function TransactionDetailModal({
                       <p className="text-xs text-muted-foreground mb-3">
                         Cards Obtained ({gameSession.items.length})
                       </p>
-                      <div className="grid grid-cols-4 gap-4">
+                      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
                         {gameSession.items.map((item) => (
                           <div
                             key={item.id}
