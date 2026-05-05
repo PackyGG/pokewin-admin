@@ -131,7 +131,7 @@ const TABS: TabDef[] = [
     key: "creator",
     label: "Creator",
     icon: Sparkles,
-    show: (d) => Boolean(d.user.affiliateCode),
+    show: (d) => Boolean(d.user.affiliateCode) || d.affiliate !== null,
   },
   { key: "account", label: "Account", icon: ShieldCheck },
 ];
