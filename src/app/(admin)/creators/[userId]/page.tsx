@@ -92,10 +92,10 @@ export default async function CreatorDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <Link
             href="/creators"
-            className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground"
+            className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground shrink-0"
           >
             <ArrowLeft className="size-4" />
           </Link>
