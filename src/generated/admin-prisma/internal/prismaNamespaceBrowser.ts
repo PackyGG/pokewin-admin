@@ -69,7 +69,6 @@ export const ModelName = {
   admin_settings: 'admin_settings',
   admin_shifts: 'admin_shifts',
   admin_shift_assignments: 'admin_shift_assignments',
-  salary_wallet: 'salary_wallet',
   salary_employees: 'salary_employees',
   salary_payouts: 'salary_payouts'
 } as const
@@ -370,18 +369,6 @@ export const Admin_shift_assignmentsScalarFieldEnum = {
 } as const
 
 export type Admin_shift_assignmentsScalarFieldEnum = (typeof Admin_shift_assignmentsScalarFieldEnum)[keyof typeof Admin_shift_assignmentsScalarFieldEnum]
-
-
-export const Salary_walletScalarFieldEnum = {
-  id: 'id',
-  private_key: 'private_key',
-  network: 'network',
-  rpc_url: 'rpc_url',
-  updated_at: 'updated_at',
-  updated_by_id: 'updated_by_id'
-} as const
-
-export type Salary_walletScalarFieldEnum = (typeof Salary_walletScalarFieldEnum)[keyof typeof Salary_walletScalarFieldEnum]
 
 
 export const Salary_employeesScalarFieldEnum = {

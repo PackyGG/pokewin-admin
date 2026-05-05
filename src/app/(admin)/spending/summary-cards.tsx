@@ -160,66 +160,11 @@ export function SummaryCards({
 
       {(chartData.length > 0 || trend.length > 0) && (
         <>
+          {/* Top row: Top Spending Categories + Monthly Spending Trend
+              side-by-side — the two charts an admin actually scans
+              while planning next month's spend. Pie chart with the
+              percentage breakdown moves below as supplementary detail. */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            {chartData.length > 0 && (
-              <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
-                <div
-                  aria-hidden
-                  className="pointer-events-none absolute -right-12 -top-12 size-32 rounded-full bg-purple-500/[0.08] blur-2xl"
-                />
-                <div className="relative p-5">
-                  <SectionHeading
-                    icon={PieIcon}
-                    title={`Breakdown — ${periodLabel}`}
-                  />
-                  <ChartContainer
-                    config={chartConfig}
-                    className="aspect-auto h-[280px] w-full mt-3"
-                  >
-                    <PieChart>
-                      <Pie
-                        data={chartData}
-                        dataKey="amount"
-                        nameKey="category"
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={50}
-                        outerRadius={90}
-                        paddingAngle={2}
-                        strokeWidth={0}
-                        label={({ category, percent }) =>
-                          `${category} ${(percent * 100).toFixed(0)}%`
-                        }
-                        labelLine={false}
-                        fontSize={11}
-                        animationDuration={700}
-                        animationEasing="ease-out"
-                      >
-                        {chartData.map((entry, index) => (
-                          <Cell key={index} fill={entry.fill} />
-                        ))}
-                      </Pie>
-                      <ChartTooltip
-                        content={
-                          <ChartTooltipContent
-                            formatter={(value) =>
-                              formatCurrency(Number(value))
-                            }
-                            hideIndicator
-                          />
-                        }
-                      />
-                    </PieChart>
-                  </ChartContainer>
-                </div>
-              </div>
-            )}
-
-            {/* Top spending categories — horizontal bars sorted by
-                absolute spend. Pie reads percentages well; bar chart
-                makes "where most $ go" visually obvious at a glance.
-                Empty state shown when there's no period spend so the
-                layout doesn't collapse asymmetrically. */}
             <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
               <div
                 aria-hidden
@@ -316,9 +261,11 @@ export function SummaryCards({
                 )}
               </div>
             </div>
-          </div>
 
-          {trend.length > 0 && (
+            {/* Monthly trend — paired with the categories chart so
+                admins see "what we spend on" + "how it changes over
+                time" in one visual sweep. Empty state when there's
+                only one month of data so the row stays balanced. */}
             <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
               <div
                 aria-hidden
@@ -326,26 +273,120 @@ export function SummaryCards({
               />
               <div className="relative p-5">
                 <SectionHeading icon={LineIcon} title="Monthly Spending Trend" />
+                {trend.length > 0 ? (
+                  <ChartContainer
+                    config={{
+                      total: { label: "Total", color: "hsl(220, 70%, 55%)" },
+                    }}
+                    className="aspect-auto h-[260px] w-full mt-3"
+                  >
+                    <AreaChart data={trend} margin={{ left: 10, right: 10 }}>
+                      <CartesianGrid vertical={false} />
+                      <XAxis
+                        dataKey="label"
+                        tickLine={false}
+                        axisLine={false}
+                        fontSize={12}
+                      />
+                      <YAxis
+                        tickFormatter={(v) => `$${v}`}
+                        fontSize={12}
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <ChartTooltip
+                        content={
+                          <ChartTooltipContent
+                            formatter={(value) =>
+                              formatCurrency(Number(value))
+                            }
+                            hideIndicator
+                          />
+                        }
+                      />
+                      <defs>
+                        <linearGradient
+                          id="trendGradient"
+                          x1="0"
+                          y1="0"
+                          x2="0"
+                          y2="1"
+                        >
+                          <stop
+                            offset="0%"
+                            stopColor="hsl(220, 70%, 55%)"
+                            stopOpacity={0.3}
+                          />
+                          <stop
+                            offset="100%"
+                            stopColor="hsl(220, 70%, 55%)"
+                            stopOpacity={0.05}
+                          />
+                        </linearGradient>
+                      </defs>
+                      <Area
+                        type="monotone"
+                        dataKey="total"
+                        stroke="hsl(220, 70%, 55%)"
+                        fill="url(#trendGradient)"
+                        strokeWidth={2}
+                        animationDuration={700}
+                        animationEasing="ease-out"
+                      />
+                    </AreaChart>
+                  </ChartContainer>
+                ) : (
+                  <div className="flex h-[260px] flex-col items-center justify-center text-center text-sm text-muted-foreground">
+                    <LineIcon className="size-8 text-muted-foreground/40 mb-2" />
+                    <p>Not enough history for a trend yet.</p>
+                    <p className="text-xs">Logged expenses build the curve over months.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Pie chart — supplementary percentage view, full-width row
+              below the actionable charts. Renders only when there's
+              category data to show. */}
+          {chartData.length > 0 && (
+            <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
+              <div
+                aria-hidden
+                className="pointer-events-none absolute -right-12 -top-12 size-32 rounded-full bg-purple-500/[0.08] blur-2xl"
+              />
+              <div className="relative p-5">
+                <SectionHeading
+                  icon={PieIcon}
+                  title={`Percentage Breakdown — ${periodLabel}`}
+                />
                 <ChartContainer
-                  config={{
-                    total: { label: "Total", color: "hsl(220, 70%, 55%)" },
-                  }}
+                  config={chartConfig}
                   className="aspect-auto h-[260px] w-full mt-3"
                 >
-                  <AreaChart data={trend} margin={{ left: 10, right: 10 }}>
-                    <CartesianGrid vertical={false} />
-                    <XAxis
-                      dataKey="label"
-                      tickLine={false}
-                      axisLine={false}
-                      fontSize={12}
-                    />
-                    <YAxis
-                      tickFormatter={(v) => `$${v}`}
-                      fontSize={12}
-                      tickLine={false}
-                      axisLine={false}
-                    />
+                  <PieChart>
+                    <Pie
+                      data={chartData}
+                      dataKey="amount"
+                      nameKey="category"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={55}
+                      outerRadius={95}
+                      paddingAngle={2}
+                      strokeWidth={0}
+                      label={({ category, percent }) =>
+                        `${category} ${(percent * 100).toFixed(0)}%`
+                      }
+                      labelLine={false}
+                      fontSize={11}
+                      animationDuration={700}
+                      animationEasing="ease-out"
+                    >
+                      {chartData.map((entry, index) => (
+                        <Cell key={index} fill={entry.fill} />
+                      ))}
+                    </Pie>
                     <ChartTooltip
                       content={
                         <ChartTooltipContent
@@ -356,36 +397,7 @@ export function SummaryCards({
                         />
                       }
                     />
-                    <defs>
-                      <linearGradient
-                        id="trendGradient"
-                        x1="0"
-                        y1="0"
-                        x2="0"
-                        y2="1"
-                      >
-                        <stop
-                          offset="0%"
-                          stopColor="hsl(220, 70%, 55%)"
-                          stopOpacity={0.3}
-                        />
-                        <stop
-                          offset="100%"
-                          stopColor="hsl(220, 70%, 55%)"
-                          stopOpacity={0.05}
-                        />
-                      </linearGradient>
-                    </defs>
-                    <Area
-                      type="monotone"
-                      dataKey="total"
-                      stroke="hsl(220, 70%, 55%)"
-                      fill="url(#trendGradient)"
-                      strokeWidth={2}
-                      animationDuration={700}
-                      animationEasing="ease-out"
-                    />
-                  </AreaChart>
+                  </PieChart>
                 </ChartContainer>
               </div>
             </div>

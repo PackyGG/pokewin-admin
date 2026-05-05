@@ -132,11 +132,6 @@ export type admin_shifts = Prisma.admin_shiftsModel
  */
 export type admin_shift_assignments = Prisma.admin_shift_assignmentsModel
 /**
- * Model salary_wallet
- * 
- */
-export type salary_wallet = Prisma.salary_walletModel
-/**
  * Model salary_employees
  * 
  */

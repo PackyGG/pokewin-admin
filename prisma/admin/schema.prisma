@@ -382,22 +382,12 @@ model admin_shift_assignments {
 }
 
 
-// ─── Employee salaries (motha-only ETH USDT payouts) ───────────────
-// Single-row config holding the private key + RPC URL for the
-// payout wallet. There is exactly one row keyed on a literal
-// "singleton" id; the schema doesn't enforce that — server actions
-// always upsert by that id. Plaintext private key — gated by
-// username == "motha" at the action layer; DB-level access is
-// admin-only.
-model salary_wallet {
-  id              String   @id
-  private_key     String
-  network         String   @default("ethereum")
-  rpc_url         String?
-  updated_at      DateTime @default(now()) @updatedAt @db.Timestamptz(6)
-  updated_by_id   String?  @db.Uuid
-}
-
+// ─── Employee salaries (motha-only manual payout register) ────────
+// We dropped the on-chain auto-payment system — motha sends USDT
+// from their own wallet manually (clicks an employee → QR code of
+// the address → scans with their wallet of choice). The DB is now
+// just a registry of recipients + a manual log of payments
+// recorded after the fact (with optional etherscan tx link).
 model salary_employees {
   id               String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name             String

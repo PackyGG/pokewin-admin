@@ -1,75 +1,60 @@
-import { Wallet, Coins, Users, Receipt } from "lucide-react";
+import { Coins, Users, Receipt, CalendarDays } from "lucide-react";
 import { adminDb } from "@/lib/admin-db";
 import { requireMotha } from "@/lib/salary/motha-gate";
 import { ensureSalarySchema } from "@/lib/salary/ensure-schema";
-import { deriveAddress, getWalletSnapshot } from "@/lib/salary/wallet";
 import { PageHero, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { SalariesClient } from "./salaries-client";
 
 export const metadata = { title: "Employee Salaries" };
 
-const WALLET_SINGLETON_ID = "singleton";
-
 export default async function SalariesPage() {
   await requireMotha();
-  // Defensive: create the salary tables on first access if the
-  // migration hasn't been applied yet. Same self-heal pattern as
-  // /shifts. If the DB call below ever throws P2021 ("relation does
-  // not exist") this is what's saving us.
+  // Defensive — the original migration created salary_wallet which
+  // the latest schema drops. ensureSalarySchema runs the DROP +
+  // CREATE-IF-NOT-EXISTS sequence so a stale env self-converges.
   await ensureSalarySchema().catch(() => {
     /* swallow — the queries below will surface a clearer error */
   });
 
-  // Pull every piece in parallel — the on-chain balance call adds
-  // ~1-2s; we don't want it serialized behind the DB reads.
-  const [wallet, employees, recentPayouts] = await Promise.all([
-    adminDb.salary_wallet.findUnique({ where: { id: WALLET_SINGLETON_ID } }),
+  const now = new Date();
+  const startOfMonth = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0),
+  );
+  const startOfYear = new Date(Date.UTC(now.getUTCFullYear(), 0, 1, 0, 0, 0));
+
+  const [employees, recentPayouts, paidThisMonth, paidYtd] = await Promise.all([
     adminDb.salary_employees.findMany({
       orderBy: [{ active: "desc" }, { name: "asc" }],
     }),
     adminDb.salary_payouts.findMany({
       orderBy: { created_at: "desc" },
-      take: 25,
+      take: 50,
       include: {
         employee: { select: { name: true, eth_address: true } },
       },
     }),
+    // Sum what motha has already logged as paid this calendar month
+    // (UTC-anchored — same as startOfMonth above).
+    adminDb.salary_payouts.aggregate({
+      where: { created_at: { gte: startOfMonth } },
+      _sum: { amount_usdt: true },
+    }),
+    adminDb.salary_payouts.aggregate({
+      where: { created_at: { gte: startOfYear } },
+      _sum: { amount_usdt: true },
+    }),
   ]);
 
-  // Wallet snapshot — try chain calls only when a key is set.
-  let snapshot:
-    | {
-        address: string;
-        ethBalance: string;
-        usdtBalance: string;
-      }
-    | null = null;
-  let snapshotError: string | null = null;
-  if (wallet) {
-    try {
-      const s = await getWalletSnapshot(wallet.private_key, wallet.rpc_url);
-      snapshot = {
-        address: s.address,
-        ethBalance: s.ethBalance,
-        usdtBalance: s.usdtBalance,
-      };
-    } catch (err) {
-      // If RPC is unreachable still expose the derived address so
-      // the admin can fund the wallet. Balance shows "—".
-      snapshot = {
-        address: deriveAddress(wallet.private_key),
-        ethBalance: "—",
-        usdtBalance: "—",
-      };
-      snapshotError = err instanceof Error ? err.message : "RPC error";
-    }
-  }
-
   const activeEmployees = employees.filter((e) => e.active).length;
-  const totalMonthlyBudget = employees
+  // Monthly budget = what we'd owe if we paid every active employee
+  // their default salary once this month. Compare with paidThisMonth
+  // to see "still to pay".
+  const monthlyBudget = employees
     .filter((e) => e.active)
     .reduce((sum, e) => sum + Number(e.salary_usdt), 0);
+  const paidThisMonthUsd = Number(paidThisMonth._sum.amount_usdt ?? 0);
+  const paidYtdUsd = Number(paidYtd._sum.amount_usdt ?? 0);
 
   return (
     <div className="space-y-6">
@@ -83,8 +68,9 @@ export default async function SalariesPage() {
               Employee Salaries
             </h1>
             <p className="text-sm text-muted-foreground">
-              On-chain USDT (ERC-20) payouts to saved employee
-              addresses. Admin-only.
+              Saved recipient registry. Click an employee&apos;s
+              address to scan it as a QR code, send USDT manually
+              from your wallet, then log the payment here.
             </p>
           </div>
         </div>
@@ -98,65 +84,50 @@ export default async function SalariesPage() {
           accent="cyan"
         />
         <KpiTile
-          label="Wallet USDT"
-          value={snapshot ? snapshot.usdtBalance : "—"}
-          icon={Wallet}
+          label="Monthly Budget"
+          value={`$${monthlyBudget.toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
+          icon={Receipt}
+          accent="amber"
+        />
+        <KpiTile
+          label="Paid This Month"
+          value={`$${paidThisMonthUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
+          sub={
+            monthlyBudget > 0
+              ? `${Math.min(100, (paidThisMonthUsd / monthlyBudget) * 100).toFixed(0)}% of budget`
+              : undefined
+          }
+          icon={CalendarDays}
           accent="emerald"
         />
         <KpiTile
-          label="Wallet ETH (gas)"
-          value={snapshot ? snapshot.ethBalance : "—"}
-          icon={Wallet}
+          label="Paid YTD"
+          value={`$${paidYtdUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
+          icon={Coins}
           accent="purple"
-        />
-        <KpiTile
-          label="Monthly Budget"
-          value={`$${totalMonthlyBudget.toFixed(2)}`}
-          icon={Receipt}
-          accent="amber"
         />
       </div>
 
       <FadeIn>
         <SalariesClient
-          wallet={
-            wallet
-              ? {
-                  hasKey: true,
-                  address: snapshot?.address ?? deriveAddress(wallet.private_key),
-                  privateKey: wallet.private_key,
-                  rpcUrl: wallet.rpc_url,
-                  usdtBalance: snapshot?.usdtBalance ?? "—",
-                  ethBalance: snapshot?.ethBalance ?? "—",
-                  snapshotError,
-                  updatedAt: wallet.updated_at.toISOString(),
-                }
-              : { hasKey: false }
-          }
           employees={employees.map((e) => ({
             id: e.id,
             name: e.name,
             ethAddress: e.eth_address,
             salaryUsdt: Number(e.salary_usdt),
-            maxPerPayout: e.max_per_payout ? Number(e.max_per_payout) : null,
             active: e.active,
             lastPaidAt: e.last_paid_at?.toISOString() ?? null,
             notes: e.notes,
           }))}
           payouts={recentPayouts.map((p) => ({
             id: p.id,
+            employeeId: p.employee_id,
             employeeName: p.employee.name,
             amountUsdt: Number(p.amount_usdt),
             toAddress: p.to_address,
             txHash: p.tx_hash,
-            status: p.status as
-              | "pending"
-              | "broadcast"
-              | "confirmed"
-              | "failed",
-            errorMessage: p.error_message,
-            broadcastAt: p.broadcast_at?.toISOString() ?? null,
-            confirmedAt: p.confirmed_at?.toISOString() ?? null,
+            notes: p.error_message,
+            paidAt: (p.confirmed_at ?? p.broadcast_at ?? p.created_at).toISOString(),
             createdAt: p.created_at.toISOString(),
           }))}
         />

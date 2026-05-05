@@ -402,7 +402,6 @@ export const ModelName = {
   admin_settings: 'admin_settings',
   admin_shifts: 'admin_shifts',
   admin_shift_assignments: 'admin_shift_assignments',
-  salary_wallet: 'salary_wallet',
   salary_employees: 'salary_employees',
   salary_payouts: 'salary_payouts'
 } as const
@@ -420,7 +419,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "admin_users" | "admin_roles" | "admin_sessions" | "admin_notes" | "admin_audit_events" | "admin_gift_card_actions" | "admin_voucher_actions" | "creator_webhooks" | "creator_deals" | "creator_socials" | "webhook_deliveries" | "creator_balance_fills" | "admin_balance_limits" | "expenses" | "recurring_expenses" | "admin_settings" | "admin_shifts" | "admin_shift_assignments" | "salary_wallet" | "salary_employees" | "salary_payouts"
+    modelProps: "admin_users" | "admin_roles" | "admin_sessions" | "admin_notes" | "admin_audit_events" | "admin_gift_card_actions" | "admin_voucher_actions" | "creator_webhooks" | "creator_deals" | "creator_socials" | "webhook_deliveries" | "creator_balance_fills" | "admin_balance_limits" | "expenses" | "recurring_expenses" | "admin_settings" | "admin_shifts" | "admin_shift_assignments" | "salary_employees" | "salary_payouts"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -1756,80 +1755,6 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         }
       }
     }
-    salary_wallet: {
-      payload: Prisma.$salary_walletPayload<ExtArgs>
-      fields: Prisma.salary_walletFieldRefs
-      operations: {
-        findUnique: {
-          args: Prisma.salary_walletFindUniqueArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$salary_walletPayload> | null
-        }
-        findUniqueOrThrow: {
-          args: Prisma.salary_walletFindUniqueOrThrowArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$salary_walletPayload>
-        }
-        findFirst: {
-          args: Prisma.salary_walletFindFirstArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$salary_walletPayload> | null
-        }
-        findFirstOrThrow: {
-          args: Prisma.salary_walletFindFirstOrThrowArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$salary_walletPayload>
-        }
-        findMany: {
-          args: Prisma.salary_walletFindManyArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$salary_walletPayload>[]
-        }
-        create: {
-          args: Prisma.salary_walletCreateArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$salary_walletPayload>
-        }
-        createMany: {
-          args: Prisma.salary_walletCreateManyArgs<ExtArgs>
-          result: BatchPayload
-        }
-        createManyAndReturn: {
-          args: Prisma.salary_walletCreateManyAndReturnArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$salary_walletPayload>[]
-        }
-        delete: {
-          args: Prisma.salary_walletDeleteArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$salary_walletPayload>
-        }
-        update: {
-          args: Prisma.salary_walletUpdateArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$salary_walletPayload>
-        }
-        deleteMany: {
-          args: Prisma.salary_walletDeleteManyArgs<ExtArgs>
-          result: BatchPayload
-        }
-        updateMany: {
-          args: Prisma.salary_walletUpdateManyArgs<ExtArgs>
-          result: BatchPayload
-        }
-        updateManyAndReturn: {
-          args: Prisma.salary_walletUpdateManyAndReturnArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$salary_walletPayload>[]
-        }
-        upsert: {
-          args: Prisma.salary_walletUpsertArgs<ExtArgs>
-          result: runtime.Types.Utils.PayloadToResult<Prisma.$salary_walletPayload>
-        }
-        aggregate: {
-          args: Prisma.Salary_walletAggregateArgs<ExtArgs>
-          result: runtime.Types.Utils.Optional<Prisma.AggregateSalary_wallet>
-        }
-        groupBy: {
-          args: Prisma.salary_walletGroupByArgs<ExtArgs>
-          result: runtime.Types.Utils.Optional<Prisma.Salary_walletGroupByOutputType>[]
-        }
-        count: {
-          args: Prisma.salary_walletCountArgs<ExtArgs>
-          result: runtime.Types.Utils.Optional<Prisma.Salary_walletCountAggregateOutputType> | number
-        }
-      }
-    }
     salary_employees: {
       payload: Prisma.$salary_employeesPayload<ExtArgs>
       fields: Prisma.salary_employeesFieldRefs
@@ -2299,18 +2224,6 @@ export const Admin_shift_assignmentsScalarFieldEnum = {
 export type Admin_shift_assignmentsScalarFieldEnum = (typeof Admin_shift_assignmentsScalarFieldEnum)[keyof typeof Admin_shift_assignmentsScalarFieldEnum]
 
 
-export const Salary_walletScalarFieldEnum = {
-  id: 'id',
-  private_key: 'private_key',
-  network: 'network',
-  rpc_url: 'rpc_url',
-  updated_at: 'updated_at',
-  updated_by_id: 'updated_by_id'
-} as const
-
-export type Salary_walletScalarFieldEnum = (typeof Salary_walletScalarFieldEnum)[keyof typeof Salary_walletScalarFieldEnum]
-
-
 export const Salary_employeesScalarFieldEnum = {
   id: 'id',
   name: 'name',
@@ -2715,7 +2628,6 @@ export type GlobalOmitConfig = {
   admin_settings?: Prisma.admin_settingsOmit
   admin_shifts?: Prisma.admin_shiftsOmit
   admin_shift_assignments?: Prisma.admin_shift_assignmentsOmit
-  salary_wallet?: Prisma.salary_walletOmit
   salary_employees?: Prisma.salary_employeesOmit
   salary_payouts?: Prisma.salary_payoutsOmit
 }

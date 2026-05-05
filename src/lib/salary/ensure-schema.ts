@@ -24,15 +24,11 @@ let ensured = false;
 export async function ensureSalarySchema(): Promise<void> {
   if (ensured) return;
   try {
+    // salary_wallet was for the now-removed auto-payment system;
+    // we DROP it here so an env where the original migration ran
+    // self-cleans, then create the registry tables.
     await adminDb.$executeRawUnsafe(`
-      CREATE TABLE IF NOT EXISTS "salary_wallet" (
-        "id"            TEXT PRIMARY KEY,
-        "private_key"   TEXT NOT NULL,
-        "network"       TEXT NOT NULL DEFAULT 'ethereum',
-        "rpc_url"       TEXT,
-        "updated_at"    TIMESTAMPTZ(6) NOT NULL DEFAULT now(),
-        "updated_by_id" UUID
-      )
+      DROP TABLE IF EXISTS "salary_wallet"
     `);
     await adminDb.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS "salary_employees" (
