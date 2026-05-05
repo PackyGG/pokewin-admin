@@ -33,9 +33,9 @@ const updateEmployeeSchema = employeeSchema.partial().extend({
   id: z.string().uuid(),
 });
 
-// Manual payout entry — motha sent USDT from their own wallet and
-// is recording it after the fact. tx_hash is optional but the UI
-// strongly encourages pasting the etherscan link.
+// Manual payout entry — a founder sent USDT from their own wallet
+// and is recording it after the fact. tx_hash is optional but the
+// UI strongly encourages pasting the etherscan link.
 const recordPayoutSchema = z.object({
   employeeId: z.string().uuid(),
   amountUsdt: z.number().finite().positive().max(10_000_000),
@@ -199,12 +199,14 @@ export async function deleteSalaryEmployee(
 // ── Manual payout log ───────────────────────────────────────────────
 
 /**
- * Record a payment that was sent off-system (motha scanned the QR,
- * sent USDT from their personal wallet). Optionally store the
- * etherscan tx hash so future motha (or audit) can verify on chain.
+ * Record a payment that was sent off-system (a founder scanned the
+ * QR, sent USDT from their personal wallet). Optionally store the
+ * etherscan tx hash so future founders (or audit) can verify on
+ * chain.
  *
  * No 2FA gate — recording history is informational, not a money-
- * moving operation. The motha username gate is the access boundary.
+ * moving operation. The founder username gate is the access
+ * boundary.
  */
 export async function recordSalaryPayout(
   data: z.infer<typeof recordPayoutSchema>,
@@ -246,7 +248,7 @@ export async function recordSalaryPayout(
       amount_usdt: parsed.data.amountUsdt,
       to_address: employee.eth_address,
       tx_hash: parsed.data.txHash ?? null,
-      // We reuse the existing schema; "confirmed" means motha
+      // We reuse the existing schema; "confirmed" means a founder
       // logged the payment. There's no on-chain polling anymore.
       status: "confirmed",
       broadcast_at: paidAt,

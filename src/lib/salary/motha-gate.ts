@@ -4,25 +4,30 @@ import { verifySession } from "@/lib/dal";
 import type { SessionPayload } from "@/lib/session";
 
 /**
- * Username of the single admin allowed to touch employee salaries.
+ * Founder allowlist — usernames that are allowed to touch employee
+ * salaries.
  *
  * The salary system holds an Ethereum private key in plaintext +
- * broadcasts on-chain USDT transfers. Restricting to a specific
- * username is intentionally stricter than "any admin" — even other
- * admin-role users won't see the page or be able to call the actions.
+ * broadcasts on-chain USDT transfers. Restricting to a specific set
+ * of usernames is intentionally stricter than "any admin" — even
+ * other admin-role users won't see the page or be able to call the
+ * actions. Match is case-insensitive against admin_users.username.
  *
  * Hard-coded by the user; if ownership ever changes, change this
  * single constant + audit who has the same admin_users.username.
  */
-export const SALARY_ADMIN_USERNAME = "motha" as const;
+export const SALARY_ADMIN_USERNAMES = ["motha", "void", "kotha"] as const;
 
 /**
  * Server-side gate. Resolves the current admin user, fetches their
  * username from the DB (verifySession only carries id + role), and
- * redirects out if it isn't `motha`.
+ * redirects out if it isn't in the founder allowlist.
  *
  * Returns the session augmented with the verified username so call
  * sites don't have to re-query.
+ *
+ * Function name kept as `requireMotha` for historical stability —
+ * internally it now checks the wider founder allowlist.
  */
 export async function requireMotha(): Promise<
   SessionPayload & { username: string }
@@ -38,7 +43,7 @@ export async function requireMotha(): Promise<
     select: { username: true, is_active: true },
   });
 
-  if (!user?.is_active || user.username !== SALARY_ADMIN_USERNAME) {
+  if (!user?.is_active || !isAllowedUsername(user.username)) {
     redirect("/dashboard");
   }
 
@@ -51,5 +56,14 @@ export async function isMotha(userId: string): Promise<boolean> {
     where: { id: userId },
     select: { username: true, is_active: true },
   });
-  return Boolean(user?.is_active && user.username === SALARY_ADMIN_USERNAME);
+  return Boolean(user?.is_active && isAllowedUsername(user.username));
+}
+
+/**
+ * Case-insensitive membership check against the founder allowlist.
+ * Centralized so the gate + the isMotha() helper stay in sync.
+ */
+function isAllowedUsername(username: string): boolean {
+  const lower = username.toLowerCase();
+  return SALARY_ADMIN_USERNAMES.some((u) => u === lower);
 }

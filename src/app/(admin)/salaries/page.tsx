@@ -34,8 +34,8 @@ export default async function SalariesPage() {
         employee: { select: { discord_name: true, eth_address: true } },
       },
     }),
-    // Sum what motha has already logged as paid this calendar month
-    // (UTC-anchored — same as startOfMonth above).
+    // Sum what founders have already logged as paid this calendar
+    // month (UTC-anchored — same as startOfMonth above).
     adminDb.salary_payouts.aggregate({
       where: { created_at: { gte: startOfMonth } },
       _sum: { amount_usdt: true },
