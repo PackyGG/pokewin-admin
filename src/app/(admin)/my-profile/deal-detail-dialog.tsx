@@ -126,7 +126,7 @@ export function DealsTable({ deals }: { deals: Deal[] }) {
       </Card>
 
       <Dialog open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               {selected?.dealName || TYPE_LABELS[selected?.dealType ?? ""] || selected?.dealType}
