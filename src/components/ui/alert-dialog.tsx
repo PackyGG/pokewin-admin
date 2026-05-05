@@ -54,7 +54,7 @@ function AlertDialogContent({
         data-size={size}
         className={cn(
           // Base: positioned vertical flex container, scrollable
-          "group/alert-dialog-content fixed z-50 flex flex-col gap-4 bg-background text-sm ring-1 ring-foreground/10 duration-200 outline-none overflow-y-auto overscroll-contain",
+          "group/alert-dialog-content fixed z-50 flex flex-col gap-4 bg-background text-sm ring-1 ring-foreground/10 duration-200 outline-none overflow-y-auto overflow-x-hidden overscroll-contain",
           // Mobile (<640px): bottom-anchored sheet
           "inset-x-0 bottom-0 top-auto w-full max-w-none max-h-[90vh] rounded-b-none rounded-t-2xl px-4 pt-4 pb-[max(env(safe-area-inset-bottom),1rem)]",
           // Desktop (sm+): centered floating modal
