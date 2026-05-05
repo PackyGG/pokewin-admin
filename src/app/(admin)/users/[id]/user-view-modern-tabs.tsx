@@ -12,6 +12,7 @@ import { useMemo } from "react";
 import {
   Wallet,
   TrendingUp,
+  TrendingDown,
   Package,
   Swords,
   Gem,
@@ -24,6 +25,8 @@ import {
   ArrowDownToLine,
   ArrowUpFromLine,
   Sparkles,
+  Dices,
+  Percent,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -323,10 +326,12 @@ export function AccountTab({
   notes: AdminNote[];
   isAdmin: boolean;
 }) {
-  const { user, shippingAddress, vault, depositAddresses, featureLocks, mutes, capabilities } = data;
+  const { user, balances, shippingAddress, vault, depositAddresses, featureLocks, mutes, capabilities } = data;
   void isAdmin; // currently only consumed by downstream components
   return (
     <div className="space-y-6">
+      <SectionHeading icon={Dices} title="Wagering Stats" />
+      <WageringStatsCard balances={balances} />
       <SectionHeading icon={ShieldCheck} title="Account Details" />
       <Card>
         <CardContent className="pt-6">
@@ -352,6 +357,68 @@ export function AccountTab({
       </Card>
       <SectionHeading icon={FileText} title="Admin Notes" />
       <NotesSection userId={user.id} notes={notes} />
+    </div>
+  );
+}
+
+// Wagering stats — moved out of the hero KPI strip to keep the hero
+// compact. Headline number is Wager Loss (totalWagered − totalWon)
+// from the HOUSE perspective: positive means we won that money, so
+// emerald; negative means the user is up on bets, so rose. The three
+// supporting tiles (wagered, won, house edge) give context.
+function WageringStatsCard({
+  balances,
+}: {
+  balances: UserDetail["balances"];
+}) {
+  if (!balances) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center text-sm text-muted-foreground">
+          No wagering data yet.
+        </CardContent>
+      </Card>
+    );
+  }
+  const wagerLoss = balances.totalWagered - balances.totalWon;
+  const houseEdge =
+    balances.totalWagered > 0
+      ? ((balances.totalWagered - balances.totalWon) / balances.totalWagered) *
+        100
+      : 0;
+  const isHouseUp = wagerLoss >= 0;
+  return (
+    <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+      <ModernMetricTile
+        label="Wager Loss"
+        value={
+          balances.totalWagered > 0
+            ? `${isHouseUp ? "+" : ""}${formatCurrency(wagerLoss)}`
+            : "—"
+        }
+        accent={isHouseUp ? "emerald" : "rose"}
+        icon={isHouseUp ? TrendingUp : TrendingDown}
+      />
+      <ModernMetricTile
+        label="Total Wagered"
+        value={formatCurrency(balances.totalWagered)}
+        accent="amber"
+        icon={Coins}
+      />
+      <ModernMetricTile
+        label="Total Won"
+        value={formatCurrency(balances.totalWon)}
+        accent="rose"
+        icon={Trophy}
+      />
+      <ModernMetricTile
+        label="House Edge"
+        value={
+          balances.totalWagered > 0 ? `${houseEdge.toFixed(2)}%` : "—"
+        }
+        accent="purple"
+        icon={Percent}
+      />
     </div>
   );
 }

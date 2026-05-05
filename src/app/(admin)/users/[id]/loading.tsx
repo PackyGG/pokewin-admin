@@ -7,7 +7,7 @@ import {
 /**
  * Matches /users/[id]: simple back-link header (no full PageHero), large
  * hero KPI strip from UserViewModern, segmented tab bar, and tabbed
- * content (panels + tables). The hero KPIs are 7 wide on xl screens.
+ * content (panels + tables). The hero KPIs are 6 wide on xl screens.
  */
 export default function UserDetailLoading() {
   return (
@@ -23,7 +23,7 @@ export default function UserDetailLoading() {
       {/* Modern user view: identity hero with avatar + status pills + KPIs. */}
       <Skeleton className="h-32 rounded-2xl" />
 
-      <KpiStripSkeleton count={7} />
+      <KpiStripSkeleton count={6} />
 
       <TabBarSkeleton count={7} />
 
