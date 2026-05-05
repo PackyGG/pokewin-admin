@@ -94,7 +94,7 @@ export function PackStatsSection({ stats }: { stats: PackStats }) {
       {/* Period stats tiles */}
       <Card>
         <CardContent className="pt-5">
-          <div className="grid grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             {PERIOD_KEYS.map((k) => {
               const rev = stats.revenue[k];
               const pay = stats.payout[k];

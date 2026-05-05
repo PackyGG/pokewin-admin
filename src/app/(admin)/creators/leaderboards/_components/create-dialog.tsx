@@ -236,7 +236,7 @@ export function CreateDialog({ trigger, fixedCreatorUserId }: Props) {
             }}
         >
             <DialogTrigger render={trigger} />
-            <DialogContent className="max-w-2xl">
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                     <DialogTitle>Create a creator leaderboard</DialogTitle>
                     <DialogDescription>
@@ -356,7 +356,7 @@ export function CreateDialog({ trigger, fixedCreatorUserId }: Props) {
                         />
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <div className="space-y-2">
                             <Label htmlFor="start_date">Start</Label>
                             <Input

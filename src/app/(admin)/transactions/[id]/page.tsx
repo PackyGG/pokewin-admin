@@ -272,7 +272,7 @@ export default async function TransactionDetailPage({
                           ? `Pack${data.gameSession.packs[0].quantity > 1 ? ` (×${data.gameSession.packs[0].quantity})` : ""}`
                           : "Packs"}
                       </p>
-                      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
                         {data.gameSession.packs.map((pack, i) => (
                           <div key={i} className="rounded-lg border bg-card overflow-hidden">
                             <div className="aspect-[2/3] relative bg-muted">
@@ -298,7 +298,7 @@ export default async function TransactionDetailPage({
                       <p className="text-xs text-muted-foreground font-medium">
                         Cards Obtained ({data.gameSession.cardsObtained.length})
                       </p>
-                      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
                         {data.gameSession.cardsObtained.map((card, i) => (
                           <div key={i} className="rounded-lg border bg-card overflow-hidden">
                             <div className="aspect-[2/3] relative bg-muted">

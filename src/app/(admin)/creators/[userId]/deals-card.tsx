@@ -276,7 +276,7 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
                   onChange={(e) => setForm({ ...form, dealName: e.target.value })}
                 />
               </div>
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div className="space-y-2">
                   <Label>Type</Label>
                   <Select value={form.dealType} onValueChange={(v) => v && setForm({ ...form, dealType: v })}>
@@ -309,7 +309,7 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label>Start Date</Label>
                   <Input
@@ -335,7 +335,7 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
                 <DollarSign className="size-4" />
                 Balance Fill
               </div>
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div className="space-y-2">
                   <Label>Daily Fill ($)</Label>
                   <Input
@@ -362,7 +362,7 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
                   <Label className="text-sm">Enabled</Label>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label>Keep Percentage (%)</Label>
                   <Input
@@ -382,7 +382,7 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
                 <Clock className="size-4" />
                 Withdrawal Limits
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label>Currency Limit ($)</Label>
                   <Input
@@ -444,7 +444,7 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
                 <Trophy className="size-4" />
                 Leaderboard
               </div>
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div className="space-y-2">
                   <Label>Prize Pool ($)</Label>
                   <Input

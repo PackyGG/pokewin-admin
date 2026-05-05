@@ -89,13 +89,13 @@ export function CreatePromoCodeButton() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger render={<Button />}>Create Promo Code</DialogTrigger>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Create Promo Code</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           {/* Code + Value */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1">
               <Label className="text-xs">Code</Label>
               <Input
@@ -116,7 +116,7 @@ export function CreatePromoCodeButton() {
           </div>
 
           {/* Region + Max Uses */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1">
               <Label className="text-xs">Region</Label>
               <Select value={region} onValueChange={(v) => setRegion(v as "NA" | "EU")}>
@@ -146,7 +146,7 @@ export function CreatePromoCodeButton() {
             </p>
 
             {/* Discord + Min Level */}
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-xs">Discord Linked</Label>
                 <Select
@@ -173,7 +173,7 @@ export function CreatePromoCodeButton() {
             </div>
 
             {/* Min Wager + Wager Period */}
-            <div className="grid grid-cols-2 gap-4 mt-3">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mt-3">
               <div className="space-y-1">
                 <Label className="text-xs">Min Wager (USD)</Label>
                 <Input
@@ -198,7 +198,7 @@ export function CreatePromoCodeButton() {
             </div>
 
             {/* Min Account Age */}
-            <div className="grid grid-cols-2 gap-4 mt-3">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mt-3">
               <div className="space-y-1">
                 <Label className="text-xs">Min Account Age (days)</Label>
                 <Input
