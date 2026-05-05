@@ -94,85 +94,183 @@ export function RakebackConfigTable({ configs }: { configs: RakebackConfig[] }) 
   }
 
   return (
-    <div className="rounded-md border">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Type</TableHead>
-            <TableHead>Display Name</TableHead>
-            <TableHead>Percentage</TableHead>
-            <TableHead>Expiration (days)</TableHead>
-            <TableHead>Enabled</TableHead>
-            <TableHead className="w-[100px]" />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {configs.map((config) => (
-            <TableRow key={config.id}>
-              <TableCell>
-                <Badge variant="outline">{config.type}</Badge>
-              </TableCell>
-              <TableCell>{config.displayName}</TableCell>
-              <TableCell>
-                {editingId === config.id ? (
-                  <Input
-                    type="number"
-                    value={editValues.percentage}
-                    onChange={(e) => setEditValues((v) => ({ ...v, percentage: e.target.value }))}
-                    className="h-8 w-28"
-                    onKeyDown={(e) => handleKeyDown(e, config)}
-                  />
-                ) : (
-                  <>{(config.percentage * 100).toFixed(4)}%</>
-                )}
-              </TableCell>
-              <TableCell>
-                {editingId === config.id ? (
-                  <Input
-                    type="number"
-                    value={editValues.expirationDays}
-                    onChange={(e) => setEditValues((v) => ({ ...v, expirationDays: e.target.value }))}
-                    className="h-8 w-24"
-                    onKeyDown={(e) => handleKeyDown(e, config)}
-                  />
-                ) : (
-                  config.expirationDays
-                )}
-              </TableCell>
-              <TableCell>
-                <Switch
-                  checked={config.enabled}
-                  onCheckedChange={() => handleToggle(config)}
-                  disabled={isPending}
-                />
-              </TableCell>
-              <TableCell>
-                {editingId === config.id ? (
-                  <div className="flex gap-1">
-                    <Button size="sm" variant="outline" onClick={() => saveEdit(config)} disabled={isPending}>
-                      Save
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={cancelEdit} disabled={isPending}>
-                      Cancel
-                    </Button>
+    <>
+      {/* Mobile card list (<lg) */}
+      <div className="lg:hidden">
+        {configs.length === 0 ? (
+          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
+            No rakeback configs found.
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-md border divide-y divide-border/60">
+            {configs.map((config) => (
+              <div key={config.id} className="px-3 py-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline">{config.type}</Badge>
+                    <span className="text-sm font-medium">{config.displayName}</span>
                   </div>
-                ) : (
-                  <Button size="sm" variant="ghost" onClick={() => startEdit(config)}>
-                    Edit
-                  </Button>
-                )}
-              </TableCell>
-            </TableRow>
-          ))}
-          {configs.length === 0 && (
+                  <Switch
+                    checked={config.enabled}
+                    onCheckedChange={() => handleToggle(config)}
+                    disabled={isPending}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Rate
+                    </div>
+                    {editingId === config.id ? (
+                      <Input
+                        type="number"
+                        value={editValues.percentage}
+                        onChange={(e) =>
+                          setEditValues((v) => ({ ...v, percentage: e.target.value }))
+                        }
+                        className="h-8 w-full mt-1"
+                        onKeyDown={(e) => handleKeyDown(e, config)}
+                      />
+                    ) : (
+                      <div className="tabular-nums">{(config.percentage * 100).toFixed(4)}%</div>
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Expires (days)
+                    </div>
+                    {editingId === config.id ? (
+                      <Input
+                        type="number"
+                        value={editValues.expirationDays}
+                        onChange={(e) =>
+                          setEditValues((v) => ({ ...v, expirationDays: e.target.value }))
+                        }
+                        className="h-8 w-full mt-1"
+                        onKeyDown={(e) => handleKeyDown(e, config)}
+                      />
+                    ) : (
+                      <div className="tabular-nums">{config.expirationDays}</div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex justify-end gap-1">
+                  {editingId === config.id ? (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => saveEdit(config)}
+                        disabled={isPending}
+                      >
+                        Save
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={cancelEdit}
+                        disabled={isPending}
+                      >
+                        Cancel
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => startEdit(config)}
+                    >
+                      Edit
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Desktop table (>=lg) */}
+      <div className="hidden rounded-md border overflow-x-auto lg:block">
+        <Table>
+          <TableHeader>
             <TableRow>
-              <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
-                No rakeback configs found.
-              </TableCell>
+              <TableHead>Type</TableHead>
+              <TableHead>Display Name</TableHead>
+              <TableHead>Percentage</TableHead>
+              <TableHead>Expiration (days)</TableHead>
+              <TableHead>Enabled</TableHead>
+              <TableHead className="w-[100px]" />
             </TableRow>
-          )}
-        </TableBody>
-      </Table>
-    </div>
+          </TableHeader>
+          <TableBody>
+            {configs.map((config) => (
+              <TableRow key={config.id}>
+                <TableCell>
+                  <Badge variant="outline">{config.type}</Badge>
+                </TableCell>
+                <TableCell>{config.displayName}</TableCell>
+                <TableCell>
+                  {editingId === config.id ? (
+                    <Input
+                      type="number"
+                      value={editValues.percentage}
+                      onChange={(e) => setEditValues((v) => ({ ...v, percentage: e.target.value }))}
+                      className="h-8 w-28"
+                      onKeyDown={(e) => handleKeyDown(e, config)}
+                    />
+                  ) : (
+                    <>{(config.percentage * 100).toFixed(4)}%</>
+                  )}
+                </TableCell>
+                <TableCell>
+                  {editingId === config.id ? (
+                    <Input
+                      type="number"
+                      value={editValues.expirationDays}
+                      onChange={(e) => setEditValues((v) => ({ ...v, expirationDays: e.target.value }))}
+                      className="h-8 w-24"
+                      onKeyDown={(e) => handleKeyDown(e, config)}
+                    />
+                  ) : (
+                    config.expirationDays
+                  )}
+                </TableCell>
+                <TableCell>
+                  <Switch
+                    checked={config.enabled}
+                    onCheckedChange={() => handleToggle(config)}
+                    disabled={isPending}
+                  />
+                </TableCell>
+                <TableCell>
+                  {editingId === config.id ? (
+                    <div className="flex gap-1">
+                      <Button size="sm" variant="outline" onClick={() => saveEdit(config)} disabled={isPending}>
+                        Save
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={cancelEdit} disabled={isPending}>
+                        Cancel
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button size="sm" variant="ghost" onClick={() => startEdit(config)}>
+                      Edit
+                    </Button>
+                  )}
+                </TableCell>
+              </TableRow>
+            ))}
+            {configs.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                  No rakeback configs found.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
+    </>
   );
 }

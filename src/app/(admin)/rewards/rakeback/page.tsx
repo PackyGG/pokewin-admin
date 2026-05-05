@@ -4,22 +4,13 @@ import { Percent } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { getRakebackConfigs, getRakebackClaims } from "@/lib/queries/rewards";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
-import { Badge } from "@/components/ui/badge";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import {
   TableSkeleton,
   PaginationSkeleton,
 } from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
 import { RakebackConfigTable } from "./rakeback-config-table";
+import { RakebackClaimsTable } from "./rakeback-claims-table";
 import { PageHero } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
@@ -140,58 +131,7 @@ async function ClaimsTab({ page, perPage, type, search }: { page: number; perPag
         ))}
       </div>
       <FadeIn>
-        <div className="rounded-md border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>User</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Period</TableHead>
-                <TableHead>Wagered</TableHead>
-                <TableHead>Rakeback</TableHead>
-                <TableHead>Claimed</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {claims.data.map((c) => (
-                <TableRow key={c.id}>
-                  <TableCell>
-                    <Link href={`/users/${c.userId}`} className="hover:underline">
-                      {c.username ?? c.userId.slice(0, 8)}
-                    </Link>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className="capitalize">{c.rakebackType}</Badge>
-                  </TableCell>
-                  <TableCell>{formatDateTime(c.periodStart)}</TableCell>
-                  <TableCell>{formatCurrency(c.wageredAmountUsd)}</TableCell>
-                  {/* Rakeback we'll pay (or paid) the user → house loss
-                      → rose per CLAUDE.md house-POV rule. */}
-                  <TableCell className="text-rose-600 dark:text-rose-400 tabular-nums">
-                    {formatCurrency(c.rakebackAmountUsd)}
-                  </TableCell>
-                  <TableCell>
-                    {c.claimedAt ? (
-                      // House-POV: claim happened = user got paid → rose (matches the amount column above).
-                      <Badge variant="outline" className="bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30">
-                        {formatDateTime(c.claimedAt)}
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline" className="bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30">
-                        Pending
-                      </Badge>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-              {claims.data.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">No claims found.</TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
+        <RakebackClaimsTable data={claims.data} />
       </FadeIn>
       <DataTablePagination
         page={claims.page}

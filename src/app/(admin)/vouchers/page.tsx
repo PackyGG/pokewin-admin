@@ -5,19 +5,11 @@ import { getVouchers, getVoucherCreators } from "@/lib/queries/vouchers";
 import { requirePageAccess } from "@/lib/dal";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils/format";
+import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { ValueRangeFilter } from "./value-range-filter";
+import { VouchersTable } from "./vouchers-table";
 import {
   PageHero,
   SectionHeading,
@@ -148,85 +140,7 @@ export default async function VouchersPage({
             </DataTableToolbar>
           </Suspense>
 
-          <div className="rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>User</TableHead>
-                  <TableHead>Value</TableHead>
-                  <TableHead>Origin</TableHead>
-                  <TableHead>Created By</TableHead>
-                  <TableHead>Description</TableHead>
-                  {claimed && <TableHead>FTD</TableHead>}
-                  {claimed && <TableHead>Claimed At</TableHead>}
-                  <TableHead>Created At</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {result.data.map((v) => (
-                  <TableRow key={v.id}>
-                    <TableCell>
-                      <Link
-                        href={`/users/${v.userId}`}
-                        className="hover:underline"
-                      >
-                        {v.username ?? v.userId.slice(0, 8)}
-                      </Link>
-                    </TableCell>
-                    <TableCell>{formatCurrency(v.value)}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{v.originLabel}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      {v.createdByAdminId ? (
-                        <Link
-                          href={`/admin-users/${v.createdByAdminId}`}
-                          className="hover:underline"
-                        >
-                          {v.createdByUsername}
-                        </Link>
-                      ) : (
-                        "System"
-                      )}
-                    </TableCell>
-                    <TableCell className="max-w-xs truncate">
-                      {v.description ?? "-"}
-                    </TableCell>
-                    {claimed && (
-                      <TableCell>
-                        <Badge
-                          variant="outline"
-                          className={
-                            v.isFtd
-                              ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
-                              : "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"
-                          }
-                        >
-                          {v.isFtd ? "Yes" : "No"}
-                        </Badge>
-                      </TableCell>
-                    )}
-                    {claimed && (
-                      <TableCell>
-                        {v.claimedAt ? formatDateTime(v.claimedAt) : "-"}
-                      </TableCell>
-                    )}
-                    <TableCell>{formatDate(v.createdAt)}</TableCell>
-                  </TableRow>
-                ))}
-                {result.data.length === 0 && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={claimed ? 8 : 6}
-                      className="h-24 text-center"
-                    >
-                      No vouchers found.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
+          <VouchersTable data={result.data} claimed={claimed} />
 
           <DataTablePagination
             page={result.page}

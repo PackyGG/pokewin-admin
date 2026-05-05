@@ -1,3 +1,4 @@
+import * as React from "react";
 import Link from "next/link";
 import {
   Table,
@@ -10,6 +11,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { formatRelative, formatCurrency } from "@/lib/utils/format";
 import type { AuditListItem } from "@/lib/queries/audit";
+import { cn } from "@/lib/utils";
 
 const EVENT_COLORS: Record<string, string> = {
   admin_login: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
@@ -35,6 +37,13 @@ const EVENT_COLORS: Record<string, string> = {
   admin_user_created: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
   promo_code_created: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
 };
+
+function eventBadgeClass(eventType: string): string {
+  return (
+    EVENT_COLORS[eventType] ??
+    "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"
+  );
+}
 
 function MetadataCell({
   eventType,
@@ -355,84 +364,167 @@ function MetadataCell({
   return <div className="flex flex-wrap items-center gap-1.5">{items}</div>;
 }
 
+function AuditMobileCard({ item }: { item: AuditListItem }) {
+  return (
+    <div className="border-b border-border/60 last:border-b-0 px-3 py-3 hover:bg-muted/40 transition-colors">
+      <div className="flex items-start justify-between gap-2">
+        <Badge
+          variant="outline"
+          className={cn("h-5 px-1.5 text-[10px]", eventBadgeClass(item.eventType))}
+        >
+          {item.eventType.replace(/_/g, " ")}
+        </Badge>
+        <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+          {formatRelative(item.createdAt)}
+        </span>
+      </div>
+      <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+        <div className="space-y-0.5">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Admin
+          </div>
+          <div>
+            {item.adminUserId ? (
+              <Link
+                href={`/admin-users/${item.adminUserId}`}
+                className="text-blue-400 hover:underline truncate inline-block max-w-full"
+              >
+                {item.adminUsername ?? item.adminUserId.slice(0, 8)}
+              </Link>
+            ) : (
+              <span className="text-muted-foreground">—</span>
+            )}
+          </div>
+        </div>
+        <div className="space-y-0.5">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Target
+          </div>
+          <div>
+            {item.targetUserId ? (
+              <Link
+                href={`/users/${item.targetUserId}`}
+                className="text-blue-400 hover:underline truncate inline-block max-w-full"
+              >
+                {item.targetUsername ?? item.targetUserId.slice(0, 8)}
+              </Link>
+            ) : (
+              <span className="text-muted-foreground">—</span>
+            )}
+          </div>
+        </div>
+      </div>
+      {item.ip && (
+        <div className="mt-1 font-mono text-[10px] text-muted-foreground">
+          IP {item.ip}
+        </div>
+      )}
+      <div className="mt-2">
+        <MetadataCell
+          eventType={item.eventType}
+          metadata={item.metadata}
+          messageContent={item.messageContent}
+          messageDeleted={item.messageDeleted}
+          promoCodeId={item.promoCodeId}
+        />
+      </div>
+    </div>
+  );
+}
+
 export function AuditActivityTable({ data }: { data: AuditListItem[] }) {
   return (
-    <div className="rounded-md border">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Event</TableHead>
-            <TableHead>Admin</TableHead>
-            <TableHead>Target User</TableHead>
-            <TableHead>IP</TableHead>
-            <TableHead>Details</TableHead>
-            <TableHead>Time</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {data.map((item) => (
-            <TableRow key={item.id}>
-              <TableCell>
-                <Badge
-                  variant="outline"
-                  className={
-                    EVENT_COLORS[item.eventType] ??
-                    "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"
-                  }
-                >
-                  {item.eventType.replace(/_/g, " ")}
-                </Badge>
-              </TableCell>
-              <TableCell className="text-sm font-medium">
-                {item.adminUserId ? (
-                  <Link
-                    href={`/admin-users/${item.adminUserId}`}
-                    className="text-blue-400 hover:underline"
-                  >
-                    {item.adminUsername ?? item.adminUserId.slice(0, 8)}
-                  </Link>
-                ) : (
-                  <span className="text-muted-foreground">-</span>
-                )}
-              </TableCell>
-              <TableCell className="text-sm">
-                {item.targetUserId ? (
-                  <Link
-                    href={`/users/${item.targetUserId}`}
-                    className="text-blue-400 hover:underline"
-                  >
-                    {item.targetUsername ?? item.targetUserId.slice(0, 8)}
-                  </Link>
-                ) : (
-                  <span className="text-muted-foreground">-</span>
-                )}
-              </TableCell>
-              <TableCell>
-                <span className="font-mono text-xs">{item.ip ?? "-"}</span>
-              </TableCell>
-              <TableCell>
-                <MetadataCell
-                  eventType={item.eventType}
-                  metadata={item.metadata}
-                  messageContent={item.messageContent}
-                  messageDeleted={item.messageDeleted}
-                  promoCodeId={item.promoCodeId}
-                />
-              </TableCell>
-              <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                {formatRelative(item.createdAt)}
-              </TableCell>
-            </TableRow>
-          ))}
-          {data.length === 0 && (
+    <>
+      {/* Mobile card list (<lg) */}
+      <div className="lg:hidden">
+        {data.length === 0 ? (
+          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
+            No audit events found.
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-md border">
+            {data.map((item) => (
+              <AuditMobileCard key={item.id} item={item} />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Desktop table (>=lg) */}
+      <div className="hidden rounded-md border overflow-x-auto lg:block">
+        <Table>
+          <TableHeader>
             <TableRow>
-              <TableCell colSpan={6} className="h-24 text-center">
-                No audit events found.
-              </TableCell>
+              <TableHead>Event</TableHead>
+              <TableHead>Admin</TableHead>
+              <TableHead>Target User</TableHead>
+              <TableHead>IP</TableHead>
+              <TableHead>Details</TableHead>
+              <TableHead>Time</TableHead>
             </TableRow>
-          )}
-        </TableBody>
-      </Table>
-    </div>
+          </TableHeader>
+          <TableBody>
+            {data.map((item) => (
+              <TableRow key={item.id}>
+                <TableCell>
+                  <Badge
+                    variant="outline"
+                    className={eventBadgeClass(item.eventType)}
+                  >
+                    {item.eventType.replace(/_/g, " ")}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-sm font-medium">
+                  {item.adminUserId ? (
+                    <Link
+                      href={`/admin-users/${item.adminUserId}`}
+                      className="text-blue-400 hover:underline"
+                    >
+                      {item.adminUsername ?? item.adminUserId.slice(0, 8)}
+                    </Link>
+                  ) : (
+                    <span className="text-muted-foreground">-</span>
+                  )}
+                </TableCell>
+                <TableCell className="text-sm">
+                  {item.targetUserId ? (
+                    <Link
+                      href={`/users/${item.targetUserId}`}
+                      className="text-blue-400 hover:underline"
+                    >
+                      {item.targetUsername ?? item.targetUserId.slice(0, 8)}
+                    </Link>
+                  ) : (
+                    <span className="text-muted-foreground">-</span>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <span className="font-mono text-xs">{item.ip ?? "-"}</span>
+                </TableCell>
+                <TableCell>
+                  <MetadataCell
+                    eventType={item.eventType}
+                    metadata={item.metadata}
+                    messageContent={item.messageContent}
+                    messageDeleted={item.messageDeleted}
+                    promoCodeId={item.promoCodeId}
+                  />
+                </TableCell>
+                <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                  {formatRelative(item.createdAt)}
+                </TableCell>
+              </TableRow>
+            ))}
+            {data.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={6} className="h-24 text-center">
+                  No audit events found.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
+    </>
   );
 }
