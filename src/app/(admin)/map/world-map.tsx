@@ -324,9 +324,11 @@ export function WorldMap({
           <TooltipOverlay hover={hover} container={containerRef.current} />
         )}
 
-        {/* Legend — reflects the active metric's ramp. */}
-        <div className="mt-4 flex items-center justify-between gap-3 text-xs text-muted-foreground">
-          <div className="flex items-center gap-2">
+        {/* Legend — reflects the active metric's ramp. Stacks
+            vertically on phones so the gradient ramp doesn't push the
+            metric label off-screen. */}
+        <div className="mt-4 flex flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span
               className="inline-block size-2 rounded-full"
               style={{
@@ -344,7 +346,7 @@ export function WorldMap({
           <div className="flex items-center gap-2">
             <span>Low</span>
             <div
-              className="h-2 w-32 rounded"
+              className="h-2 w-24 rounded sm:w-32"
               style={{
                 background: `linear-gradient(to right, color-mix(in oklch, ${metricColor.base} 18%, transparent), ${metricColor.base})`,
               }}

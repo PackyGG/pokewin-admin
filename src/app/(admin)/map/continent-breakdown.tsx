@@ -64,8 +64,10 @@ export function ContinentBreakdown({
             No data for this metric.
           </p>
         ) : (
-          <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-[180px_1fr] md:items-center">
-            <div className="h-[180px] w-full">
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:gap-4 md:grid-cols-[180px_1fr] md:items-center">
+            {/* Pie height bumped a touch on phones so the donut doesn't
+                feel cramped above the legend list. */}
+            <div className="h-[200px] w-full md:h-[180px]">
               <ResponsiveContainer>
                 <PieChart>
                   <Pie

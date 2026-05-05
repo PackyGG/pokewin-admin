@@ -31,7 +31,7 @@ export function MetricToggle() {
   }
 
   return (
-    <div className="flex gap-1 rounded-lg border bg-muted/50 p-1">
+    <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/50 p-1">
       {MAP_METRICS.map((metric) => {
         const Icon = METRIC_ICON[metric];
         const active = current === metric;

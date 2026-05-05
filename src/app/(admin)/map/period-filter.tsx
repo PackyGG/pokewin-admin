@@ -18,7 +18,7 @@ export function PeriodFilter() {
   const current = searchParams.get("period") ?? "30d";
 
   return (
-    <div className="flex gap-1 rounded-lg border bg-muted/50 p-1">
+    <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/50 p-1">
       {PERIODS.map(({ label, value }) => (
         <Link
           key={value}

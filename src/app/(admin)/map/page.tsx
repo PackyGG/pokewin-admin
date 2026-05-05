@@ -62,27 +62,31 @@ export default async function MapPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
+        {/* Identity stacks above the controls on phones — both
+            metric toggle (4 chips) and period filter (5 chips) need
+            their own breathing room and won't fit beside the title
+            at 360px. */}
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between md:gap-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
               <MapIcon className="size-5 text-primary" />
             </div>
-            <div>
-              <h1 className="text-2xl font-bold leading-tight">Map</h1>
-              <p className="text-sm text-muted-foreground">
+            <div className="min-w-0">
+              <h1 className="text-xl font-bold leading-tight sm:text-2xl">Map</h1>
+              <p className="text-xs text-muted-foreground sm:text-sm">
                 Where users live, deposit, and wager — across {data.byCountry.length}{" "}
                 countr{data.byCountry.length === 1 ? "y" : "ies"}.
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex flex-wrap items-center gap-2">
             <MetricToggle />
             <PeriodFilter />
           </div>
         </div>
       </PageHero>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <KpiTile
           label="Total Users"
           value={formatNumber(data.totalUsers)}
