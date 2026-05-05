@@ -333,13 +333,27 @@ export function AppSidebar({
   // Collapsible wrapper and render items flat. Otherwise the user has
   // nowhere to click the group header (it's hidden in icon mode) so items
   // in a closed group would be unreachable.
-  const { state } = useSidebar();
+  const { state, isMobile, setOpenMobile } = useSidebar();
   const isIconMode = state === "collapsed";
+
+  // On mobile the sidebar lives inside a Sheet drawer that doesn't
+  // auto-close when a Link inside it navigates — the page changes
+  // underneath the still-open drawer, which felt like "clicking does
+  // nothing" because the new page is hidden behind the overlay. This
+  // closes the drawer on every navigation tap inside the mobile
+  // sidebar; on desktop it's a no-op.
+  const handleNavTap = useCallback(() => {
+    if (isMobile) setOpenMobile(false);
+  }, [isMobile, setOpenMobile]);
 
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader className="border-b border-border px-4 h-14 flex items-center justify-center group-data-[collapsible=icon]:px-0">
-        <Link href={getDefaultRoute(role, allowedPages)} className="flex justify-center">
+        <Link
+          href={getDefaultRoute(role, allowedPages)}
+          onClick={handleNavTap}
+          className="flex justify-center"
+        >
           {/* Expanded mode: wordmark (same logo for both light and dark theme) */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo.png" alt="Pokewin" className="h-6 group-data-[collapsible=icon]:hidden" />
@@ -372,6 +386,7 @@ export function AppSidebar({
                       isActive={isActive}
                       tooltip={item.label}
                       render={<Link href={item.href} />}
+                      onClick={handleNavTap}
                       // 44px tap target inside the mobile drawer; falls
                       // back to the compact 36px height on md+ where
                       // density matters more than tap area. group-data

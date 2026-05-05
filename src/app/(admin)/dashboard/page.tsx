@@ -57,10 +57,12 @@ export default async function DashboardPage() {
       </PageHero>
 
       {/* Primary stats — period-aware cards.
-          Mobile-first grid: 2 columns at the smallest size keeps each
-          tile usable instead of squeezing 5 across; widens to 3 at sm,
-          4 at md, full 5 at lg+. */}
-      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 sm:gap-4">
+          Mobile-first grid: ONE column at <sm so each card is full-
+          width and the dollar value never truncates (these cards
+          contain a 5-chip period selector + a hero currency value;
+          squeezing 2-up at 380px crushed both). 2-up at sm, 3 at md,
+          5 at lg. */}
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-5">
         <PnlStatCard pnl={stats.realizedPnl} />
         <GgrStatCard ggr={stats.ggr} />
         <WagerStatCard wagers={stats.wagers} />
@@ -68,8 +70,10 @@ export default async function DashboardPage() {
         <WithdrawalsStatCard withdrawals={stats.withdrawals} />
       </div>
 
-      {/* Secondary stats — all-time / snapshot */}
-      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 sm:gap-4">
+      {/* Secondary stats — all-time / snapshot. These are simpler
+          (no period chips) so they tolerate 2-up on phone, then
+          widen up to 5 across. */}
+      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-5">
         <StatCard
           title="Total Users"
           animatedValue={stats.users.total}

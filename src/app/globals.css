@@ -161,12 +161,19 @@
   }
 }
 
-/* Typography utility classes */
+/* Typography utility classes
+ *
+ * Mobile-first sizing: stat values shrink to text-xl on phones so that
+ * 6-character currency strings ($1,234.56, +$5,037.50) fit in narrow
+ * 2-col grid cells without truncating to "+$5,0…". Card titles also
+ * shrink because they sit next to icons and period chips inside cards
+ * around 160-180px wide on phones.
+ */
 @layer utilities {
-  .text-page-title { @apply text-2xl font-bold; }
-  .text-card-title { @apply text-sm font-medium; }
-  .text-stat-value { @apply text-2xl font-bold; }
-  .text-stat-label { @apply text-xs text-muted-foreground; }
+  .text-page-title { @apply text-xl font-bold sm:text-2xl; }
+  .text-card-title { @apply text-xs font-medium sm:text-sm; }
+  .text-stat-value { @apply text-lg font-bold sm:text-xl md:text-2xl; }
+  .text-stat-label { @apply text-[11px] text-muted-foreground sm:text-xs; }
   .text-description { @apply text-sm text-muted-foreground; }
   .text-meta { @apply text-xs text-muted-foreground; }
   .text-tiny { @apply text-[10px] text-muted-foreground; }
