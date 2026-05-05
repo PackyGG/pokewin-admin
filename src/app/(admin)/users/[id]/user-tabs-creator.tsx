@@ -5,11 +5,13 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
 import {
+  AlertTriangle,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
   Loader2,
+  Pencil,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -37,6 +39,7 @@ import {
   createAffiliateCode,
   fetchCreatorClicks,
   fetchCreatorCodeUsages,
+  transferAffiliateCode,
   updateWithdrawalLimits,
 } from "./actions";
 import type {
@@ -60,7 +63,7 @@ export const CreatorSection = React.memo(function CreatorSection({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [codeInput, setCodeInput] = useState("");
-  const [newCodeInput, setNewCodeInput] = useState("");
+  const [setCodeOpen, setSetCodeOpen] = useState(false);
 
   // affiliate_code on user table may be null even when affiliate_accounts exists
   const effectiveCode = user.affiliateCode ?? affiliate?.code ?? null;
@@ -90,25 +93,6 @@ export const CreatorSection = React.memo(function CreatorSection({
       } catch (e) {
         toast.error(
           e instanceof Error ? e.message : "Failed to clear affiliate code",
-        );
-      }
-    });
-  };
-
-  const handleCreateCode = () => {
-    startTransition(async () => {
-      try {
-        const result = await createAffiliateCode(user.id, newCodeInput.trim());
-        if (!result.success) {
-          toast.error(result.error ?? "Failed to create affiliate code");
-          return;
-        }
-        toast.success("Affiliate code created");
-        setNewCodeInput("");
-        router.refresh();
-      } catch (e) {
-        toast.error(
-          e instanceof Error ? e.message : "Failed to create affiliate code",
         );
       }
     });
@@ -186,9 +170,20 @@ export const CreatorSection = React.memo(function CreatorSection({
           {/* Column 2: Affiliate Code */}
           {effectiveCode ? (
             <div className="space-y-2.5">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                Affiliate Code
-              </p>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Affiliate Code
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 gap-1.5 text-xs"
+                  onClick={() => setSetCodeOpen(true)}
+                >
+                  <Pencil className="size-3" />
+                  Change
+                </Button>
+              </div>
               <InfoRow label="Code" value={effectiveCode} mono />
               <InfoRow
                 label="Status"
@@ -219,31 +214,18 @@ export const CreatorSection = React.memo(function CreatorSection({
           ) : (
             <div className="space-y-2.5">
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                Create Affiliate Code
+                Affiliate Code
               </p>
               <p className="text-sm text-muted-foreground">
                 No affiliate code yet
               </p>
-              <div className="flex items-center gap-2">
-                <Input
-                  placeholder="Enter code"
-                  value={newCodeInput}
-                  onChange={(e) => setNewCodeInput(e.target.value)}
-                  className="h-8 w-40 text-sm"
-                  disabled={isPending}
-                />
-                <Button
-                  size="sm"
-                  disabled={isPending || !newCodeInput.trim()}
-                  onClick={handleCreateCode}
-                >
-                  {isPending ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    "Create"
-                  )}
-                </Button>
-              </div>
+              <Button
+                size="sm"
+                onClick={() => setSetCodeOpen(true)}
+                disabled={isPending}
+              >
+                Set Affiliate Code
+              </Button>
             </div>
           )}
 
@@ -324,9 +306,239 @@ export const CreatorSection = React.memo(function CreatorSection({
           </div>
         )}
       </CardContent>
+      <SetAffiliateCodeDialog
+        open={setCodeOpen}
+        onOpenChange={setSetCodeOpen}
+        userId={user.id}
+        currentUsername={user.username ?? user.email ?? null}
+      />
     </Card>
   );
 });
+
+// ─────────────────────────────────────────────────────────────────────
+//  Set Affiliate Code Dialog — handles the create flow with conflict
+//  detection. If the entered code is already owned by another user,
+//  the dialog flips into "transfer mode": shows the current owner and
+//  lets the admin transfer the code (the previous owner gets a random
+//  replacement code so they're never codeless).
+// ─────────────────────────────────────────────────────────────────────
+
+function SetAffiliateCodeDialog({
+  open,
+  onOpenChange,
+  userId,
+  currentUsername,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  userId: string;
+  currentUsername: string | null;
+}) {
+  const router = useRouter();
+  const [codeValue, setCodeValue] = useState("");
+  const [conflict, setConflict] = useState<{
+    code: string;
+    currentOwnerId: string;
+    currentOwnerUsername: string | null;
+    currentOwnerEmail: string | null;
+  } | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  // Reset on (re-)open so a stale conflict from a previous attempt
+  // doesn't persist into the next dialog session.
+  useEffect(() => {
+    if (open) {
+      setCodeValue("");
+      setConflict(null);
+    }
+  }, [open]);
+
+  function close() {
+    onOpenChange(false);
+  }
+
+  function handleSubmit() {
+    const trimmed = codeValue.trim();
+    if (!trimmed) {
+      toast.error("Enter a code");
+      return;
+    }
+    startTransition(async () => {
+      try {
+        const result = await createAffiliateCode(userId, trimmed);
+        if ("conflict" in result && result.conflict) {
+          setConflict(result.conflict);
+          return;
+        }
+        if (!result.success) {
+          const msg =
+            "error" in result ? result.error : "Failed to set affiliate code";
+          toast.error(msg);
+          return;
+        }
+        toast.success(`Affiliate code "${trimmed}" set`);
+        close();
+        router.refresh();
+      } catch (e) {
+        toast.error(
+          e instanceof Error ? e.message : "Failed to set affiliate code",
+        );
+      }
+    });
+  }
+
+  function handleTransfer() {
+    if (!conflict) return;
+    startTransition(async () => {
+      const result = await transferAffiliateCode({
+        toUserId: userId,
+        code: conflict.code,
+      });
+      if (!result.success) {
+        toast.error(result.error);
+        return;
+      }
+      const fromLabel =
+        conflict.currentOwnerUsername ??
+        conflict.currentOwnerEmail ??
+        conflict.currentOwnerId.slice(0, 8);
+      toast.success(
+        `Transferred "${conflict.code}" from @${fromLabel} → @${
+          currentUsername ?? userId.slice(0, 8)
+        }. Their replacement code: ${result.replacementCode}`,
+        { duration: 8000 },
+      );
+      close();
+      router.refresh();
+    });
+  }
+
+  const ownerLabel = conflict
+    ? conflict.currentOwnerUsername ??
+      conflict.currentOwnerEmail ??
+      conflict.currentOwnerId.slice(0, 8)
+    : null;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>
+            {conflict ? "Code is already taken" : "Set affiliate code"}
+          </DialogTitle>
+        </DialogHeader>
+        {!conflict ? (
+          <div className="space-y-3 py-2">
+            <p className="text-xs text-muted-foreground">
+              Sets this user&apos;s personal affiliate / referral code.
+              If the code is already owned by another user we&apos;ll
+              show you who has it and offer a transfer.
+            </p>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Code</Label>
+              <Input
+                placeholder="e.g. POKEMASTER"
+                value={codeValue}
+                onChange={(e) => setCodeValue(e.target.value)}
+                className="font-mono"
+                autoFocus
+                disabled={isPending}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && codeValue.trim() && !isPending) {
+                    handleSubmit();
+                  }
+                }}
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3 py-2">
+            <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
+              <div className="space-y-1 text-sm">
+                <p>
+                  <span className="font-mono font-medium">
+                    {conflict.code}
+                  </span>{" "}
+                  is currently owned by{" "}
+                  <Link
+                    href={`/users/${conflict.currentOwnerId}`}
+                    className="font-medium text-blue-500 hover:underline"
+                  >
+                    @{ownerLabel}
+                  </Link>
+                  .
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Transferring moves the CODE STRING only. Their
+                  historical referrals + earnings stay attributed to
+                  them. They&apos;ll get a random replacement code so
+                  they&apos;re never codeless.
+                </p>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Transfer{" "}
+              <span className="font-mono font-medium text-foreground">
+                {conflict.code}
+              </span>{" "}
+              to{" "}
+              <span className="font-medium text-foreground">
+                @{currentUsername ?? userId.slice(0, 8)}
+              </span>
+              ?
+            </p>
+          </div>
+        )}
+        <DialogFooter>
+          {!conflict ? (
+            <>
+              <Button
+                variant="ghost"
+                onClick={close}
+                disabled={isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSubmit}
+                disabled={isPending || !codeValue.trim()}
+              >
+                {isPending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  "Set code"
+                )}
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                variant="ghost"
+                onClick={() => setConflict(null)}
+                disabled={isPending}
+              >
+                Back
+              </Button>
+              <Button
+                onClick={handleTransfer}
+                disabled={isPending}
+                className="bg-amber-600 hover:bg-amber-600/90 text-white"
+              >
+                {isPending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  "Transfer to this user"
+                )}
+              </Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function ReferralClicksTable({
   affiliateCode,
