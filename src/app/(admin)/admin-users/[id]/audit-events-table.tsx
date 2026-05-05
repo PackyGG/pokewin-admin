@@ -407,7 +407,54 @@ export function AuditEventsTable({
           </Button>
         )}
       </div>
-      <div className="rounded-md border">
+      {/* Mobile card list (<lg) */}
+      <div className="lg:hidden">
+        {auditEvents.data.length === 0 ? (
+          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
+            No audit events
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-md border">
+            {auditEvents.data.map((e) => (
+              <div
+                key={e.id}
+                className="border-b border-border/60 last:border-b-0 px-3 py-3"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <Badge
+                    variant="outline"
+                    className={`text-[10px] h-5 px-1.5 ${EVENT_TYPE_COLORS[e.eventType] ?? "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"}`}
+                  >
+                    {EVENT_TYPE_LABELS[e.eventType] ?? e.eventType}
+                  </Badge>
+                  <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                    {formatDateTime(e.createdAt)}
+                  </span>
+                </div>
+                {e.targetUserId && (
+                  <div className="mt-1 text-xs">
+                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-2">
+                      Target:
+                    </span>
+                    <Link
+                      href={`/users/${e.targetUserId}`}
+                      className="text-blue-400 hover:underline"
+                    >
+                      {e.targetUsername ?? e.targetUserId.slice(0, 8)}
+                    </Link>
+                  </div>
+                )}
+                <div className="mt-2">
+                  <EventDetails event={e} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Desktop table (>=lg) */}
+      <div className="hidden rounded-md border overflow-x-auto lg:block">
         <Table>
           <TableHeader>
             <TableRow>

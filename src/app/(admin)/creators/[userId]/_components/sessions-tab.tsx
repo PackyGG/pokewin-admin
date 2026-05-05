@@ -85,7 +85,19 @@ export function SessionsTab({ userId, sessions, currentStatus }: Props) {
     <div>
       {filterRow}
 
-      <div className="overflow-x-auto">
+      {/* Mobile card list (<lg) */}
+      <div className="lg:hidden divide-y divide-border/60">
+        {sessions.data.map((session) => (
+          <SessionMobileCard
+            key={session.id}
+            userId={userId}
+            session={session}
+          />
+        ))}
+      </div>
+
+      {/* Desktop table (>=lg) */}
+      <div className="hidden overflow-x-auto lg:block">
       <Table>
         <TableHeader>
           <TableRow className="hover:bg-transparent">
@@ -166,6 +178,70 @@ function SessionRow({
         )}
       </TableCell>
     </TableRow>
+  );
+}
+
+function SessionMobileCard({
+  userId,
+  session,
+}: {
+  userId: string;
+  session: CreatorSessionResponse;
+}) {
+  return (
+    <div className="px-3 py-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2">
+          {session.status === "active" && <LivePulse />}
+          <Badge
+            variant="outline"
+            className={STATUS_STYLE[session.status]}
+          >
+            {session.status}
+          </Badge>
+        </div>
+        <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+          {formatDateTime(new Date(session.activated_at))}
+        </span>
+      </div>
+      <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Loaded
+          </div>
+          <div className="tabular-nums">${session.fill_loaded_usd}</div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Spent
+          </div>
+          <div className="tabular-nums text-muted-foreground">
+            ${session.fill_spent_usd}
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Remaining
+          </div>
+          <div className="tabular-nums">${session.fill_remaining_usd}</div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Converted
+          </div>
+          <div className="tabular-nums">
+            {session.converted_to_raw_usd != null
+              ? `$${session.converted_to_raw_usd}`
+              : "—"}
+          </div>
+        </div>
+      </div>
+      {session.status === "active" && (
+        <div className="mt-2 flex justify-end">
+          <ForceEndButton userId={userId} sessionId={session.id} />
+        </div>
+      )}
+    </div>
   );
 }
 

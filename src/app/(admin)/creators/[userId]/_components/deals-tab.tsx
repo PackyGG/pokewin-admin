@@ -64,9 +64,15 @@ export function DealsTab({ userId, deals }: Props) {
 
   return (
     <div>
-      {/* Wide multi-col table — let it horizontal-scroll on phone instead
-          of forcing the page to scroll horizontally. */}
-      <div className="overflow-x-auto">
+      {/* Mobile card list (<lg) */}
+      <div className="lg:hidden divide-y divide-border/60">
+        {deals.data.map((deal) => (
+          <DealMobileCard key={deal.id} userId={userId} deal={deal} />
+        ))}
+      </div>
+
+      {/* Desktop wide multi-col table */}
+      <div className="hidden overflow-x-auto lg:block">
       <Table>
         <TableHeader>
           <TableRow className="hover:bg-transparent">
@@ -194,6 +200,91 @@ function DealRow({
         )}
       </TableCell>
     </TableRow>
+  );
+}
+
+function DealMobileCard({
+  userId,
+  deal,
+}: {
+  userId: string;
+  deal: CreatorDealResponse;
+}) {
+  const canTerminate =
+    deal.status === "scheduled" || deal.status === "active";
+  const start = new Date(deal.week_start_utc);
+  const end = new Date(deal.week_end_utc);
+  const hint = weekHint(deal.status, start, end);
+
+  return (
+    <div className="px-3 py-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium truncate">
+            {formatDate(start)} → {formatDate(end)}
+          </div>
+          <div className="text-[11px] text-muted-foreground">{hint}</div>
+        </div>
+        <Badge variant="outline" className={STATUS_STYLE[deal.status]}>
+          {deal.status}
+        </Badge>
+      </div>
+      <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Fills
+          </div>
+          <div className="tabular-nums">
+            <span className="font-medium">{deal.fills_used}</span>
+            <span className="text-muted-foreground">/{deal.fills_allowed}</span>
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Per fill
+          </div>
+          <div className="tabular-nums">${deal.per_fill_amount_usd}</div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Convert
+          </div>
+          <div className="tabular-nums">
+            {(deal.conversion_rate_bps / 100).toFixed(1)}%
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Withdraw cap
+          </div>
+          <div className="tabular-nums text-[11px]">
+            <CapCell deal={deal} />
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Tip max (user / stream)
+          </div>
+          <div className="tabular-nums text-[11px]">
+            ${deal.max_tip_per_user_usd} / ${deal.max_tip_per_stream_usd}
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Sponsor max (battle / stream)
+          </div>
+          <div className="tabular-nums text-[11px]">
+            ${deal.max_sponsored_battle_usd} / ${deal.max_sponsorship_per_stream_usd}
+          </div>
+        </div>
+      </div>
+      {canTerminate && (
+        <div className="mt-2 flex items-center justify-end gap-1">
+          <DealFormDialog userId={userId} mode="edit" deal={deal} />
+          <TerminateDealButton userId={userId} deal={deal} />
+        </div>
+      )}
+    </div>
   );
 }
 
