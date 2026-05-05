@@ -73,10 +73,21 @@ export function RejectDialog({ open, onOpenChange, leaderboardId, leaderboardTit
                         />
                     </div>
                     <DialogFooter>
-                        <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => onOpenChange(false)}
+                            disabled={isPending}
+                            className="w-full sm:w-auto"
+                        >
                             Cancel
                         </Button>
-                        <Button type="submit" variant="destructive" disabled={isPending}>
+                        <Button
+                            type="submit"
+                            variant="destructive"
+                            disabled={isPending}
+                            className="w-full sm:w-auto"
+                        >
                             {isPending ? "Rejecting..." : "Reject and refund"}
                         </Button>
                     </DialogFooter>

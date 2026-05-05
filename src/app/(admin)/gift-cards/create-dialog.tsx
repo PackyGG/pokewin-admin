@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -84,10 +85,12 @@ export function CreateGiftCardDialog() {
               onChange={(e) => setExpiresAt(e.target.value)}
             />
           </div>
-          <Button onClick={handleCreate} disabled={isPending} className="w-full">
+        </div>
+        <DialogFooter>
+          <Button onClick={handleCreate} disabled={isPending} className="w-full sm:w-auto">
             {isPending ? "Creating..." : "Create"}
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

@@ -236,7 +236,7 @@ export function CreateDialog({ trigger, fixedCreatorUserId }: Props) {
             }}
         >
             <DialogTrigger render={trigger} />
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogContent className="sm:max-w-2xl">
                 <DialogHeader>
                     <DialogTitle>Create a creator leaderboard</DialogTitle>
                     <DialogDescription>
@@ -244,7 +244,7 @@ export function CreateDialog({ trigger, fixedCreatorUserId }: Props) {
                         The leaderboard is created in approved state.
                     </DialogDescription>
                 </DialogHeader>
-                <form onSubmit={handleSubmit} className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+                <form onSubmit={handleSubmit} className="space-y-4">
                     <div className="space-y-2">
                         <Label htmlFor="creator_search">Creator</Label>
                         {fixedCreatorUserId ? (
@@ -397,10 +397,10 @@ export function CreateDialog({ trigger, fixedCreatorUserId }: Props) {
                                         type="number"
                                         min={1}
                                         step={1}
-                                        placeholder="Position"
+                                        placeholder="Pos"
                                         value={t.position}
                                         onChange={(e) => updateTier(idx, "position", e.target.value)}
-                                        className="w-24"
+                                        className="w-16 sm:w-24"
                                     />
                                     <Input
                                         type="number"
@@ -409,12 +409,14 @@ export function CreateDialog({ trigger, fixedCreatorUserId }: Props) {
                                         placeholder="Amount USD"
                                         value={t.amount}
                                         onChange={(e) => updateTier(idx, "amount", e.target.value)}
+                                        className="flex-1"
                                     />
                                     <Button
                                         type="button"
                                         variant="ghost"
                                         size="icon"
                                         onClick={() => removeTier(idx)}
+                                        className="shrink-0"
                                     >
                                         <Trash2 className="size-4" />
                                     </Button>
@@ -432,10 +434,15 @@ export function CreateDialog({ trigger, fixedCreatorUserId }: Props) {
                             variant="outline"
                             onClick={() => setOpen(false)}
                             disabled={isPending}
+                            className="w-full sm:w-auto"
                         >
                             Cancel
                         </Button>
-                        <Button type="submit" disabled={isPending || tierSumExceeds}>
+                        <Button
+                            type="submit"
+                            disabled={isPending || tierSumExceeds}
+                            className="w-full sm:w-auto"
+                        >
                             {isPending ? "Creating..." : "Create"}
                         </Button>
                     </DialogFooter>

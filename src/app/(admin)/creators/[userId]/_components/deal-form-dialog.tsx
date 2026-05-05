@@ -431,7 +431,7 @@ export function DealFormDialog(props: Props) {
           ))}
       </DialogTrigger>
 
-      <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
@@ -682,11 +682,22 @@ export function DealFormDialog(props: Props) {
 
         <DialogFooter>
           <DialogClose
-            render={<Button variant="outline" disabled={isPending} />}
+            render={
+              <Button
+                variant="outline"
+                disabled={isPending}
+                className="w-full sm:w-auto"
+              />
+            }
           >
             Cancel
           </DialogClose>
-          <Button type="submit" form={formId} disabled={isPending}>
+          <Button
+            type="submit"
+            form={formId}
+            disabled={isPending}
+            className="w-full sm:w-auto"
+          >
             {isPending ? (
               <>
                 <Loader2 className="mr-2 size-4 animate-spin" />

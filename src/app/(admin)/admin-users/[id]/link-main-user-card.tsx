@@ -74,19 +74,20 @@ export function LinkMainUserCard({ detail }: { detail: AdminUserDetail }) {
         {results.length > 0 && (
           <div className="rounded-md border divide-y">
             {results.map((user) => (
-              <div key={user.id} className="flex items-center justify-between px-3 py-2 text-sm">
-                <div>
-                  <span className="font-medium">{user.username ?? user.email ?? user.id.slice(0, 8)}</span>
+              <div key={user.id} className="flex flex-col gap-2 px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0 flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="font-medium truncate">{user.username ?? user.email ?? user.id.slice(0, 8)}</span>
                   {user.username && user.email && (
-                    <span className="text-muted-foreground ml-2">({user.email})</span>
+                    <span className="text-muted-foreground truncate">({user.email})</span>
                   )}
-                  <Badge variant="outline" className="ml-2 text-xs">{user.role}</Badge>
+                  <Badge variant="outline" className="text-xs shrink-0">{user.role}</Badge>
                 </div>
                 <Button
                   size="sm"
                   variant="outline"
                   disabled={isPending}
                   onClick={() => handleLink(user.id)}
+                  className="self-start sm:self-auto"
                 >
                   <LinkIcon className="size-3 mr-1" />
                   Link

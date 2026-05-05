@@ -64,7 +64,7 @@ export default async function PackDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-4 flex-wrap">
+        <div className="flex items-start gap-3 sm:gap-4 flex-wrap">
           <BackButton />
           <div className="shrink-0 hidden md:block">
             <CardImage
@@ -75,7 +75,7 @@ export default async function PackDetailPage({
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-2xl font-bold leading-tight">{data.name}</h1>
+              <h1 className="text-xl sm:text-2xl font-bold leading-tight truncate">{data.name}</h1>
               <Badge
                 variant="outline"
                 className={
@@ -88,10 +88,10 @@ export default async function PackDetailPage({
               </Badge>
               <Badge variant="outline">{data.packType}</Badge>
             </div>
-            <p className="font-mono text-xs text-muted-foreground mt-0.5">{data.slug}</p>
+            <p className="font-mono text-xs text-muted-foreground mt-0.5 truncate">{data.slug}</p>
           </div>
           {(canToggle || canEdit || canDelete) && (
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 w-full sm:w-auto">
               {canToggle && (
                 <TogglePackButton packId={data.id} active={data.active} />
               )}
@@ -104,8 +104,8 @@ export default async function PackDetailPage({
         </div>
       </PageHero>
 
-      {/* KPI strip */}
-      <div className="grid gap-4 grid-cols-2 md:grid-cols-4 lg:grid-cols-8">
+      {/* KPI strip — 8 stats so we go 2/4/8 across the breakpoints. */}
+      <div className="grid gap-2.5 sm:gap-4 grid-cols-2 md:grid-cols-4 lg:grid-cols-8">
         <KpiTile
           label="Price"
           value={formatCurrency(data.priceUsd)}

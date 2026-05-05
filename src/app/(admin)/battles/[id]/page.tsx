@@ -72,7 +72,7 @@ export default async function BattleDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-4 flex-wrap">
+        <div className="flex items-start gap-3 sm:gap-4 flex-wrap">
           <Link
             href="/battles"
             className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground shrink-0"
@@ -84,13 +84,13 @@ export default async function BattleDetailPage({
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-2xl font-bold leading-tight">Battle</h1>
+              <h1 className="text-xl sm:text-2xl font-bold leading-tight">Battle</h1>
               <Badge variant="outline" className={BATTLE_STATUS_COLORS[data.status] ?? ""}>
                 {data.status.replace(/_/g, " ")}
               </Badge>
               <Badge variant="outline">{data.mode}</Badge>
             </div>
-            <p className="font-mono text-xs text-muted-foreground">{data.id}</p>
+            <p className="font-mono text-xs text-muted-foreground truncate">{data.id}</p>
           </div>
           {data.status === "waiting" && <CancelBattleButton battleId={data.id} />}
         </div>
@@ -98,7 +98,7 @@ export default async function BattleDetailPage({
 
       {/* KPI strip - completed battles only */}
       {data.status === "completed" && (
-        <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+        <div className="grid gap-2.5 sm:gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
           <KpiTile
             label="Packs Opened"
             value={String(totalPacksOpened)}
@@ -137,9 +137,9 @@ export default async function BattleDetailPage({
         <SectionHeading icon={Swords} title="Details" />
         <FadeIn>
           <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
-            <div className="relative p-5 md:p-6 flex gap-6 flex-wrap">
+            <div className="relative p-4 sm:p-5 md:p-6 flex gap-4 sm:gap-6 flex-wrap">
               {data.packs.length > 0 && (
-                <div className="flex gap-4 shrink-0">
+                <div className="flex flex-wrap gap-3 sm:gap-4 shrink-0">
                   {data.packs.map((pack) => (
                     <Link
                       key={pack.id}
@@ -149,15 +149,15 @@ export default async function BattleDetailPage({
                       <CardImage
                         src={pack.imageUrl}
                         alt={pack.name}
-                        className="h-48 w-auto rounded"
+                        className="h-36 sm:h-48 w-auto rounded"
                       />
-                      <p className="text-sm font-medium mt-1.5">{pack.name}</p>
+                      <p className="text-sm font-medium mt-1.5 truncate max-w-[120px] sm:max-w-none">{pack.name}</p>
                       <p className="text-xs text-muted-foreground">{formatCurrency(pack.priceUsd)}</p>
                     </Link>
                   ))}
                 </div>
               )}
-              <div className="space-y-3 flex-1 min-w-[240px]">
+              <div className="space-y-3 flex-1 min-w-0 sm:min-w-[240px]">
                 <InfoRow label="Creator">
                   <Link href={`/users/${data.userId}`} className="hover:underline">
                     {data.username ?? data.userId}
@@ -186,7 +186,7 @@ export default async function BattleDetailPage({
         <div className="space-y-3">
           <SectionHeading icon={UsersIcon} title="Teams" />
           <FadeIn>
-            <div className="grid gap-4 lg:grid-cols-2">
+            <div className="grid gap-3 sm:gap-4 lg:grid-cols-2">
               {data.teamsData.map((team) => (
                 <div
                   key={team.teamNumber}
@@ -194,7 +194,7 @@ export default async function BattleDetailPage({
                     team.isWinner ? "border-rose-500/30" : ""
                   }`}
                 >
-                  <div className="relative p-5">
+                  <div className="relative p-4 sm:p-5">
                     <div className="mb-4 flex items-center gap-2">
                       <h3 className="text-sm font-medium">Team {team.teamNumber}</h3>
                       {team.isWinner && (
@@ -301,9 +301,9 @@ export default async function BattleDetailPage({
 
 function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
       <span className="text-sm text-muted-foreground shrink-0">{label}</span>
-      <span className="text-sm">{children}</span>
+      <span className="text-sm min-w-0 break-words">{children}</span>
     </div>
   );
 }

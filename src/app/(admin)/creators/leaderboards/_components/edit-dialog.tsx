@@ -181,7 +181,7 @@ export function EditDialog({ open, onOpenChange, leaderboard }: Props) {
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogContent className="sm:max-w-2xl">
                 <DialogHeader>
                     <DialogTitle>Edit leaderboard</DialogTitle>
                     <DialogDescription>
@@ -189,7 +189,7 @@ export function EditDialog({ open, onOpenChange, leaderboard }: Props) {
                         the total prize pool of ${totalPool.toFixed(2)} (creator funded + site bonus).
                     </DialogDescription>
                 </DialogHeader>
-                <form onSubmit={handleSubmit} className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+                <form onSubmit={handleSubmit} className="space-y-4">
                     <div className="space-y-2">
                         <Label htmlFor="title">Title</Label>
                         <Input
@@ -257,10 +257,10 @@ export function EditDialog({ open, onOpenChange, leaderboard }: Props) {
                                         type="number"
                                         min={1}
                                         step={1}
-                                        placeholder="Position"
+                                        placeholder="Pos"
                                         value={t.position}
                                         onChange={(e) => updateTier(idx, "position", e.target.value)}
-                                        className="w-24"
+                                        className="w-16 sm:w-24"
                                     />
                                     <Input
                                         type="number"
@@ -269,8 +269,15 @@ export function EditDialog({ open, onOpenChange, leaderboard }: Props) {
                                         placeholder="Amount USD"
                                         value={t.amount}
                                         onChange={(e) => updateTier(idx, "amount", e.target.value)}
+                                        className="flex-1"
                                     />
-                                    <Button type="button" variant="ghost" size="icon" onClick={() => removeTier(idx)}>
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        onClick={() => removeTier(idx)}
+                                        className="shrink-0"
+                                    >
                                         <Trash2 className="size-4" />
                                     </Button>
                                 </div>
@@ -282,10 +289,20 @@ export function EditDialog({ open, onOpenChange, leaderboard }: Props) {
                     </div>
 
                     <DialogFooter>
-                        <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => onOpenChange(false)}
+                            disabled={isPending}
+                            className="w-full sm:w-auto"
+                        >
                             Cancel
                         </Button>
-                        <Button type="submit" disabled={isPending || tierSumExceeds}>
+                        <Button
+                            type="submit"
+                            disabled={isPending || tierSumExceeds}
+                            className="w-full sm:w-auto"
+                        >
                             {isPending ? "Saving..." : "Save"}
                         </Button>
                     </DialogFooter>

@@ -267,7 +267,7 @@ export function EditPackButton({ pack }: { pack: PackData }) {
         <Pencil className="mr-1 size-3.5" />
         Edit
       </DialogTrigger>
-      <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Edit Pack</DialogTitle>
         </DialogHeader>
@@ -417,7 +417,11 @@ export function EditPackButton({ pack }: { pack: PackData }) {
         </div>
 
         <DialogFooter>
-          <Button onClick={handleSubmit} disabled={saving || !name || !price}>
+          <Button
+            onClick={handleSubmit}
+            disabled={saving || !name || !price}
+            className="w-full sm:w-auto"
+          >
             {saving ? "Saving..." : "Save Changes"}
           </Button>
         </DialogFooter>

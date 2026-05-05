@@ -233,7 +233,7 @@ function GamesTable({ packId, initialGames }: { packId: string; initialGames: Pa
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle className="text-sm font-medium">Games ({total})</CardTitle>
           {totalPages > 1 && (
             <div className="flex items-center gap-1">
@@ -254,7 +254,7 @@ function GamesTable({ packId, initialGames }: { packId: string; initialGames: Pa
           )}
         </div>
         <div className="flex flex-wrap items-end gap-2 pt-2">
-          <div className="relative flex-1 min-w-[140px] max-w-[200px]">
+          <div className="relative flex-1 min-w-[140px] sm:max-w-[200px]">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
             <Input
               placeholder="Search user..."
@@ -264,7 +264,7 @@ function GamesTable({ packId, initialGames }: { packId: string; initialGames: Pa
               className="h-8 pl-7 text-xs"
             />
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1">
             {TYPE_OPTIONS.map((t) => (
               <Button
                 key={t.value}
@@ -277,7 +277,7 @@ function GamesTable({ packId, initialGames }: { packId: string; initialGames: Pa
               </Button>
             ))}
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1">
             {SORT_OPTIONS.map((s) => (
               <Button
                 key={s.value}
@@ -290,9 +290,11 @@ function GamesTable({ packId, initialGames }: { packId: string; initialGames: Pa
               </Button>
             ))}
           </div>
-          <Input type="date" value={dateFrom} onChange={(e) => updateFilter("dateFrom", e.target.value)} className="h-8 w-[120px] text-xs" />
-          <span className="text-xs text-muted-foreground">–</span>
-          <Input type="date" value={dateTo} onChange={(e) => updateFilter("dateTo", e.target.value)} className="h-8 w-[120px] text-xs" />
+          <div className="flex items-center gap-1">
+            <Input type="date" value={dateFrom} onChange={(e) => updateFilter("dateFrom", e.target.value)} className="h-8 w-[120px] text-xs" />
+            <span className="text-xs text-muted-foreground">–</span>
+            <Input type="date" value={dateTo} onChange={(e) => updateFilter("dateTo", e.target.value)} className="h-8 w-[120px] text-xs" />
+          </div>
           {hasFilters && (
             <Button variant="ghost" size="sm" className="h-8 text-xs px-2" onClick={clearFilters}>
               <X className="size-3 mr-1" /> Clear
@@ -311,6 +313,7 @@ function GamesTable({ packId, initialGames }: { packId: string; initialGames: Pa
             {hasFilters ? "No games match your filters" : "No games played yet"}
           </p>
         ) : (
+          <div className="overflow-x-auto -mx-6 px-6 sm:mx-0 sm:px-0">
           <Table>
             <TableHeader>
               <TableRow>
@@ -387,6 +390,7 @@ function GamesTable({ packId, initialGames }: { packId: string; initialGames: Pa
               ))}
             </TableBody>
           </Table>
+          </div>
         )}
       </CardContent>
     </Card>

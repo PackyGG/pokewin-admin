@@ -47,7 +47,7 @@ export function AdminUserTabs({ detail, auditStats, auditEvents, balanceLimits, 
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
         <ProfileCard detail={detail} />
         <StatsCards auditStats={auditStats} />
         {isCurrentUserAdmin && (

@@ -61,7 +61,7 @@ export default async function TransactionDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-4 flex-wrap">
+        <div className="flex items-start gap-3 sm:gap-4 flex-wrap">
           <Link
             href="/transactions"
             className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground shrink-0"
@@ -73,13 +73,13 @@ export default async function TransactionDetailPage({
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-2xl font-bold leading-tight">Transaction</h1>
+              <h1 className="text-xl sm:text-2xl font-bold leading-tight">Transaction</h1>
               <Badge variant="outline" className={STATUS_COLORS[data.status] ?? ""}>
                 {data.status}
               </Badge>
               <Badge variant="outline">{data.type.replace(/_/g, " ")}</Badge>
             </div>
-            <p className="font-mono text-xs text-muted-foreground">{data.id}</p>
+            <p className="font-mono text-xs text-muted-foreground truncate">{data.id}</p>
           </div>
         </div>
       </PageHero>
@@ -89,7 +89,7 @@ export default async function TransactionDetailPage({
           balance (negative delta) but is a HOUSE loss, so it has to read
           as rose; a wager also decreases the balance but is a HOUSE gain,
           so emerald — the sign of the delta alone is the wrong signal. */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-2.5 sm:gap-4 grid-cols-1 sm:grid-cols-3">
         <KpiTile
           label="Amount"
           value={`${amountSign}${formatCurrency(absAmount)}`}
@@ -113,9 +113,9 @@ export default async function TransactionDetailPage({
       <div className="space-y-3">
         <SectionHeading icon={Info} title="Details" />
         <FadeIn>
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid gap-3 sm:gap-4 lg:grid-cols-2">
             <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
-              <div className="relative p-5 space-y-3">
+              <div className="relative p-4 sm:p-5 space-y-3">
                 <InfoRow label="User">
                   <Link href={`/users/${data.userId}`} className="hover:underline">
                     {data.username ?? data.email ?? data.userId}
@@ -261,7 +261,7 @@ export default async function TransactionDetailPage({
 
             {data.gameSession && (
               <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
-                <div className="relative p-5 space-y-4">
+                <div className="relative p-4 sm:p-5 space-y-4">
                   <h3 className="text-sm font-medium">
                     {data.gameSession.gameType === "pack" ? "Pack Opening" : "Battle"} Details
                   </h3>
@@ -345,7 +345,7 @@ export default async function TransactionDetailPage({
 
             {(data.cryptoAsset || data.blockchainTxHash) && (
               <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
-                <div className="relative p-5 space-y-3">
+                <div className="relative p-4 sm:p-5 space-y-3">
                   <div className="flex items-center gap-2">
                     <Bitcoin className="size-4 text-amber-500" />
                     <h3 className="text-sm font-medium">Crypto Details</h3>
@@ -397,9 +397,9 @@ export default async function TransactionDetailPage({
 
 function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
       <span className="text-sm text-muted-foreground shrink-0">{label}</span>
-      <span className="text-sm">{children}</span>
+      <span className="text-sm min-w-0 break-words">{children}</span>
     </div>
   );
 }

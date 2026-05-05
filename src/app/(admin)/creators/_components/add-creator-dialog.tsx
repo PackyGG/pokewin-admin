@@ -116,7 +116,7 @@ export function AddCreatorDialog() {
         <UserPlus className="mr-2 size-4" />
         Add Creator
       </DialogTrigger>
-      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="size-5 text-primary" />
@@ -170,6 +170,7 @@ export function AddCreatorDialog() {
             variant="outline"
             onClick={() => setOpen(false)}
             disabled={isPromoting}
+            className="w-full sm:w-auto"
           >
             Close
           </Button>

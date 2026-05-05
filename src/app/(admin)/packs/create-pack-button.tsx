@@ -261,7 +261,7 @@ export function CreatePackButton() {
         <Plus className="mr-1 size-4" />
         Create Pack
       </DialogTrigger>
-      <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Create Pack</DialogTitle>
         </DialogHeader>
@@ -418,7 +418,11 @@ export function CreatePackButton() {
         </div>
 
         <DialogFooter>
-          <Button onClick={handleSubmit} disabled={isPending || !name || !price}>
+          <Button
+            onClick={handleSubmit}
+            disabled={isPending || !name || !price}
+            className="w-full sm:w-auto"
+          >
             {isPending ? "Creating..." : "Create Pack"}
           </Button>
         </DialogFooter>

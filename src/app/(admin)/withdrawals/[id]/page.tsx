@@ -60,7 +60,7 @@ export default async function WithdrawalDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-4 flex-wrap">
+        <div className="flex items-start gap-3 sm:gap-4 flex-wrap">
           <Link
             href="/withdrawals"
             className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground shrink-0"
@@ -72,19 +72,21 @@ export default async function WithdrawalDetailPage({
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-2xl font-bold leading-tight">Withdrawal</h1>
+              <h1 className="text-xl sm:text-2xl font-bold leading-tight">Withdrawal</h1>
               <Badge variant="outline" className={STATUS_COLORS[data.status]}>{data.status}</Badge>
               <Badge variant="outline">{data.method}</Badge>
             </div>
             <p className="font-mono text-xs text-muted-foreground mt-0.5 truncate">{data.id}</p>
           </div>
-          <WithdrawalActionButtons
-            withdrawalId={data.id}
-            status={data.status}
-            method={data.method}
-          />
+          <div className="w-full sm:w-auto">
+            <WithdrawalActionButtons
+              withdrawalId={data.id}
+              status={data.status}
+              method={data.method}
+            />
+          </div>
         </div>
-        <div className="mt-6 flex justify-center overflow-x-auto">
+        <div className="mt-4 sm:mt-6 -mx-3 sm:-mx-0 px-3 sm:px-0 flex justify-start sm:justify-center overflow-x-auto">
           <StatusTimeline steps={timelineSteps} />
         </div>
       </PageHero>
@@ -93,7 +95,7 @@ export default async function WithdrawalDetailPage({
           Total Value KPI is accented rose (house loss) per CLAUDE.md.
           Shipping Fee is paid BY the user to cover shipping → house
           gain → emerald. */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-2.5 sm:gap-4 grid-cols-2 lg:grid-cols-4">
         <KpiTile
           label="Total Value"
           value={formatCurrency(data.totalValueUsd)}
@@ -127,7 +129,7 @@ export default async function WithdrawalDetailPage({
       {/* Details panel */}
       <FadeIn>
         <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
-          <div className="relative p-5 md:p-6 grid gap-6 md:grid-cols-2">
+          <div className="relative p-4 sm:p-5 md:p-6 grid gap-4 sm:gap-6 md:grid-cols-2">
             <div className="space-y-3">
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Details
@@ -224,11 +226,11 @@ export default async function WithdrawalDetailPage({
           title={`Items (${data.items.length})`}
         />
         <FadeIn>
-          <div className="rounded-2xl border bg-card/60 p-4">
+          <div className="rounded-2xl border bg-card/60 p-3 sm:p-4">
             {data.items.length === 0 ? (
               <p className="text-center text-sm text-muted-foreground py-8">No items</p>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2.5 sm:gap-3">
                 {data.items.map((item) => (
                   <div
                     key={item.id}
@@ -269,9 +271,9 @@ export default async function WithdrawalDetailPage({
 
 function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
       <span className="text-sm text-muted-foreground shrink-0">{label}</span>
-      <span className="text-sm">{children}</span>
+      <span className="text-sm min-w-0 break-words">{children}</span>
     </div>
   );
 }

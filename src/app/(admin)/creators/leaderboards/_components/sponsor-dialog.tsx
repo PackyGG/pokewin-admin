@@ -79,10 +79,20 @@ export function SponsorDialog({ open, onOpenChange, leaderboardId, leaderboardTi
                         />
                     </div>
                     <DialogFooter>
-                        <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => onOpenChange(false)}
+                            disabled={isPending}
+                            className="w-full sm:w-auto"
+                        >
                             Cancel
                         </Button>
-                        <Button type="submit" disabled={isPending}>
+                        <Button
+                            type="submit"
+                            disabled={isPending}
+                            className="w-full sm:w-auto"
+                        >
                             {isPending ? "Adding..." : "Add bonus"}
                         </Button>
                     </DialogFooter>

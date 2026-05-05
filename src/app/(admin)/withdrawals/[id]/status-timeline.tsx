@@ -10,17 +10,17 @@ type TimelineStep = {
 
 export function StatusTimeline({ steps }: { steps: TimelineStep[] }) {
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
       {steps.map((step, i) => (
-        <div key={step.label} className="flex items-center gap-2">
+        <div key={step.label} className="flex items-center gap-1.5 sm:gap-2">
           {i > 0 && (
             <div
-              className={`h-0.5 w-8 ${
+              className={`h-0.5 w-6 sm:w-8 ${
                 step.active || step.date ? "bg-primary" : "bg-muted"
               }`}
             />
           )}
-          <div className="flex flex-col items-center gap-1">
+          <div className="flex flex-col items-center gap-1 min-w-[68px] sm:min-w-[80px]">
             {step.failed ? (
               <XCircle className="size-5 text-rose-400" />
             ) : step.date ? (
@@ -32,7 +32,7 @@ export function StatusTimeline({ steps }: { steps: TimelineStep[] }) {
             )}
             <span className="text-xs font-medium">{step.label}</span>
             {step.date && (
-              <span className="text-[10px] text-muted-foreground">
+              <span className="text-[10px] text-muted-foreground whitespace-nowrap">
                 {formatDateTime(step.date)}
               </span>
             )}

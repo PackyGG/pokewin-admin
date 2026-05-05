@@ -117,7 +117,7 @@ export function CardPickerDialog({
         </span>
         <Plus className="ml-1 size-3 shrink-0 opacity-50" />
       </DialogTrigger>
-      <DialogContent className="sm:max-w-4xl max-h-[85vh] flex flex-col">
+      <DialogContent className="sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>Add Cards</DialogTitle>
         </DialogHeader>

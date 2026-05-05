@@ -50,20 +50,20 @@ export default async function PromoCodeDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
+        <div className="flex flex-col gap-3 sm:gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
             <Link
               href="/promo-codes"
-              className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground"
+              className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground shrink-0"
             >
               <ArrowLeft className="size-4" />
             </Link>
-            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
+            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 shrink-0">
               <Ticket className="size-5 text-primary" />
             </div>
-            <div>
+            <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-2xl font-bold leading-tight">
+                <h1 className="text-xl sm:text-2xl font-bold leading-tight truncate">
                   {data.code ?? "Promo Code"}
                 </h1>
                 <Badge variant="outline">{data.region}</Badge>
@@ -76,7 +76,7 @@ export default async function PromoCodeDetailPage({
                   </Badge>
                 )}
               </div>
-              <p className="text-xs font-mono text-muted-foreground mt-0.5">
+              <p className="text-xs font-mono text-muted-foreground mt-0.5 truncate">
                 {data.codeHash}
               </p>
             </div>
@@ -85,7 +85,7 @@ export default async function PromoCodeDetailPage({
         </div>
       </PageHero>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 md:grid-cols-4">
         {/* Promo codes give users credit → house pays out → rose per
             CLAUDE.md house-POV rule. */}
         <KpiTile
@@ -184,7 +184,7 @@ export default async function PromoCodeDetailPage({
           icon={Activity}
           title={`Redemptions (${data.redemptions.length})`}
         />
-        <FadeIn className="rounded-2xl border bg-card/60">
+        <FadeIn className="rounded-2xl border bg-card/60 overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
