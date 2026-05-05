@@ -77,7 +77,123 @@ export function AdsList({ codes }: { codes: AdCodeSummary[] }) {
         </p>
       </div>
 
-      <div className="rounded-2xl border overflow-hidden">
+      {/* Mobile card list (<lg) */}
+      <div className="lg:hidden">
+        {filtered.length === 0 ? (
+          <div className="flex h-32 flex-col items-center justify-center gap-2 rounded-2xl border text-sm text-muted-foreground">
+            {codes.length === 0 ? (
+              <>
+                <MousePointerClick className="size-6 text-muted-foreground/60" />
+                <p>No ad codes yet. Create one to get started.</p>
+              </>
+            ) : (
+              "No codes match your search."
+            )}
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-2xl border">
+            {filtered.map((c) => (
+              <div
+                key={c.code}
+                className="border-b border-border/60 last:border-b-0 px-3 py-3 hover:bg-muted/40 transition-colors"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      router.push(`/creators/ads/${encodeURIComponent(c.code)}`)
+                    }
+                    className="flex flex-1 items-center gap-2 text-left min-w-0"
+                  >
+                    <Badge variant="outline" className="font-mono">
+                      {c.code}
+                    </Badge>
+                    <span className="text-[10px] text-muted-foreground">
+                      {formatRelative(c.createdAt)}
+                    </span>
+                  </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <CopyLinkButton code={c.code} />
+                    <DeleteCodeButton code={c.code} />
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    router.push(`/creators/ads/${encodeURIComponent(c.code)}`)
+                  }
+                  className="mt-2 grid w-full grid-cols-2 gap-x-3 gap-y-1.5 text-left text-xs"
+                >
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Clicks
+                    </div>
+                    <div className="tabular-nums">{formatNumber(c.clicks)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Signups
+                    </div>
+                    <div className="tabular-nums">
+                      {formatNumber(c.signups)}
+                      <span className="ml-1 text-[10px] text-muted-foreground">
+                        ({formatNumber(c.activeReferrals)} act)
+                      </span>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Depositors
+                    </div>
+                    <div className="tabular-nums">
+                      {formatNumber(c.depositors)}
+                      <span className="ml-1 text-[10px] text-muted-foreground">
+                        ({formatNumber(c.depositEventCount)} dep)
+                      </span>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Conv
+                    </div>
+                    <div className="tabular-nums text-muted-foreground">
+                      {c.clicks > 0
+                        ? `${(c.conversionRate * 100).toFixed(1)}%`
+                        : "—"}
+                    </div>
+                  </div>
+                  {/* Deposit volume = money IN to house → emerald. */}
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Deposits
+                    </div>
+                    <div className="tabular-nums text-emerald-600 dark:text-emerald-400">
+                      {formatCurrency(c.depositVolumeUsd)}
+                      {c.ftdVolumeUsd > 0 && (
+                        <span className="ml-1 text-[10px] text-muted-foreground">
+                          FTD {formatCurrency(c.ftdVolumeUsd)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {/* Wager volume = money risked → emerald (house gains). */}
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Wagers
+                    </div>
+                    <div className="tabular-nums text-emerald-600 dark:text-emerald-400">
+                      {formatCurrency(c.wagerVolumeUsd)}
+                    </div>
+                  </div>
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Desktop table (>=lg) */}
+      <div className="hidden rounded-2xl border overflow-hidden lg:block">
         <Table>
           <TableHeader>
             <TableRow>
