@@ -279,8 +279,10 @@ function PackBar({
 }) {
   const cashPct = maxValue > 0 ? (cash / maxValue) * 100 : 0;
   const borrowedPct = maxValue > 0 ? (borrowed / maxValue) * 100 : 0;
+  // 140px label column was too generous at 360px viewports. Drop to
+  // 100px on phones so the bars + counts get the rest of the row.
   return (
-    <div className="grid grid-cols-[140px_1fr] items-center gap-3 py-1.5">
+    <div className="grid grid-cols-[100px_1fr] items-center gap-3 py-1.5 sm:grid-cols-[140px_1fr]">
       <span className="truncate text-xs" title={name}>
         {name}
       </span>
@@ -292,7 +294,7 @@ function PackBar({
               style={{ width: `${cashPct}%` }}
             />
           </div>
-          <span className="w-14 text-right text-[11px] tabular-nums text-muted-foreground">
+          <span className="w-12 text-right text-[11px] tabular-nums text-muted-foreground sm:w-14">
             {formatNumber(cash)}
           </span>
         </div>
@@ -303,7 +305,7 @@ function PackBar({
               style={{ width: `${borrowedPct}%` }}
             />
           </div>
-          <span className="w-14 text-right text-[11px] tabular-nums text-muted-foreground">
+          <span className="w-12 text-right text-[11px] tabular-nums text-muted-foreground sm:w-14">
             {formatNumber(borrowed)}
           </span>
         </div>
