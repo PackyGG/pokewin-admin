@@ -285,12 +285,20 @@ export function AffiliateTab({ data }: { data: UserDetail }) {
         </Card>
       )}
 
-      {/* Section 1: Who referred THIS user (sets user.referred_by) */}
-      <SectionHeading icon={ArrowDownToLine} title="Referral Code Used" />
+      {/* Two visually distinct sections — each manages a DIFFERENT
+          column on the user table:
+            • ReferrerCard ↓ writes user.referred_by  (who referred them in)
+            • OwnCodeCard  → writes user.affiliate_code (what code they own)
+          The labels and panel styling are deliberately different so
+          admins can't confuse the two — the previous "Referral Code
+          Used" / "Own Affiliate Code" naming was too symmetric. */}
+      <SectionHeading
+        icon={ArrowDownToLine}
+        title="Joined Under (Referrer)"
+      />
       <ReferrerCard user={user} />
 
-      {/* Section 2: This user's OWN affiliate code (sets user.affiliate_code) */}
-      <SectionHeading icon={Sparkles} title="Own Affiliate Code" />
+      <SectionHeading icon={Sparkles} title="Their Own Affiliate Code" />
       <OwnCodeCard user={user} affiliate={affiliate} />
 
       {/* Section 3: Stats — only render if the affiliate_accounts row exists */}
@@ -393,45 +401,74 @@ function ReferrerCard({ user }: { user: UserDetail["user"] }) {
   }
 
   return (
-    <Card>
+    // Subtle blue accent on this card so it visually distinguishes
+    // from the Sparkles/purple "Own Affiliate Code" card below.
+    // Same Card primitive — different left-border tint.
+    <Card className="border-l-4 border-l-blue-500/40">
       <CardContent className="space-y-4 pt-6">
-        <div className="space-y-1">
-          <p className="text-xs text-muted-foreground">
-            Currently referred by
-          </p>
+        <div className="space-y-2">
           {user.referredBy ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <Link
-                href={`/users/${user.referredBy}`}
-                className="text-sm font-medium text-blue-500 hover:underline"
-              >
-                @{user.referredByUsername ?? user.referredBy.slice(0, 8)}
-              </Link>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 gap-1.5 text-xs text-rose-500 border-rose-500/40 hover:bg-rose-500/10"
-                onClick={() => setConfirmClearOpen(true)}
-                disabled={isPending}
-              >
-                Clear
-              </Button>
+            <div className="space-y-2">
+              <p className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground">
+                Joined under code
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                {/* The actual code string is the headline — it's what
+                    admins are usually asked about. Mono font, tinted
+                    background so it reads as a token, not body text. */}
+                {user.referredByCode ? (
+                  <span className="rounded-md bg-blue-500/15 px-2 py-1 font-mono text-sm font-semibold text-blue-700 dark:text-blue-300">
+                    {user.referredByCode}
+                  </span>
+                ) : (
+                  <span className="text-sm italic text-muted-foreground">
+                    code unknown
+                  </span>
+                )}
+                <span className="text-xs text-muted-foreground">
+                  owned by
+                </span>
+                <Link
+                  href={`/users/${user.referredBy}`}
+                  className="text-sm font-medium text-blue-500 hover:underline"
+                >
+                  @{user.referredByUsername ?? user.referredBy.slice(0, 8)}
+                </Link>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="ml-auto h-7 gap-1.5 text-xs text-rose-500 border-rose-500/40 hover:bg-rose-500/10"
+                  onClick={() => setConfirmClearOpen(true)}
+                  disabled={isPending}
+                >
+                  Clear
+                </Button>
+              </div>
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">Not referred</p>
+            <>
+              <p className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground">
+                Joined under code
+              </p>
+              <p className="text-sm text-muted-foreground">
+                This user wasn&apos;t referred by anyone.
+              </p>
+            </>
           )}
         </div>
 
         <div className="space-y-1.5">
           <Label className="text-xs text-muted-foreground">
-            {user.referredBy ? "Change to a different code" : "Set referrer code"}
+            {user.referredBy
+              ? "Change which code they joined under"
+              : "Set the code they joined under"}
           </Label>
           <div className="flex flex-wrap items-center gap-2">
             <Input
-              placeholder="Enter affiliate code"
+              placeholder="Enter someone else's code (e.g. POKEMASTER)"
               value={codeInput}
               onChange={(e) => setCodeInput(e.target.value)}
-              className="h-9 w-full sm:w-56 font-mono text-sm"
+              className="h-9 w-full sm:w-64 font-mono text-sm"
               disabled={isPending}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && codeInput.trim() && !isPending) {
@@ -444,12 +481,14 @@ function ReferrerCard({ user }: { user: UserDetail["user"] }) {
               disabled={isPending || !codeInput.trim()}
               onClick={handleAssign}
             >
-              {isPending ? "Saving…" : user.referredBy ? "Change" : "Set referrer"}
+              {isPending ? "Saving…" : user.referredBy ? "Change referrer" : "Set referrer"}
             </Button>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            The code must already exist (it&apos;s someone else&apos;s
-            affiliate code). The referrer becomes whoever owns the code.
+            ⚠ This sets <span className="font-mono">user.referred_by</span>{" "}
+            — i.e. WHO referred THIS user in. The code must already be
+            owned by another user. To give THIS user their own code to
+            hand out instead, use the section below.
           </p>
         </div>
       </CardContent>
@@ -518,24 +557,29 @@ function OwnCodeCard({
       : "Open code stats";
 
   return (
-    <Card>
+    // Purple left-border + matching code-chip tint on this card so
+    // it's visually distinct from the blue ReferrerCard above. They
+    // do completely different things — the styling reinforces that.
+    <Card className="border-l-4 border-l-purple-500/40">
       <CardContent className="space-y-4 pt-6">
         {effectiveCode ? (
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="space-y-1">
-              <p className="text-xs text-muted-foreground">Current code</p>
+            <div className="space-y-2">
+              <p className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground">
+                Their code (they hand this out)
+              </p>
               <div className="flex flex-wrap items-center gap-2">
                 {codeHref ? (
                   <Link
                     href={codeHref}
                     title={codeLinkTitle}
-                    className="group inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 font-mono text-sm font-medium transition-colors hover:bg-blue-500/15 hover:text-blue-700 dark:hover:text-blue-300"
+                    className="group inline-flex items-center gap-1 rounded-md bg-purple-500/15 px-2 py-1 font-mono text-sm font-semibold text-purple-700 transition-colors hover:bg-purple-500/25 dark:text-purple-300"
                   >
                     {effectiveCode}
                     <ArrowUpRight className="size-3 opacity-50 transition-opacity group-hover:opacity-100" />
                   </Link>
                 ) : (
-                  <span className="rounded-md bg-muted px-2 py-1 font-mono text-sm font-medium">
+                  <span className="rounded-md bg-purple-500/15 px-2 py-1 font-mono text-sm font-semibold text-purple-700 dark:text-purple-300">
                     {effectiveCode}
                   </span>
                 )}
@@ -560,17 +604,27 @@ function OwnCodeCard({
             </Button>
           </div>
         ) : (
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm text-muted-foreground">No affiliate code yet</p>
-            <Button size="sm" onClick={() => setSetCodeOpen(true)}>
-              Set Affiliate Code
-            </Button>
+          <div className="space-y-2">
+            <p className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground">
+              Their code (they hand this out)
+            </p>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">
+                This user doesn&apos;t own a code yet.
+              </p>
+              <Button size="sm" onClick={() => setSetCodeOpen(true)}>
+                Set Affiliate Code
+              </Button>
+            </div>
           </div>
         )}
         <p className="text-[11px] text-muted-foreground">
-          If the code you enter is taken, you&apos;ll be shown who has
-          it and offered a transfer (the previous owner gets a random
-          replacement code so they&apos;re never codeless).
+          ⚠ This sets <span className="font-mono">user.affiliate_code</span>
+          {" "}— i.e. the code THIS user owns and shares with their
+          referrals. If you type a code that someone else already
+          owns, you&apos;ll be shown who has it and offered a
+          transfer (the previous owner gets a random replacement
+          code so they&apos;re never codeless).
         </p>
       </CardContent>
       <SetAffiliateCodeDialog
