@@ -207,61 +207,92 @@ export default async function AdCodeDetailPage({
           </div>
         </div>
 
+        {/* Signups & Activity — answers "where is the wager / deposit
+            volume coming from?" The list is sorted by wagered desc,
+            then deposited desc, so the users actually moving the
+            numbers surface at the top instead of being buried under
+            tire-kickers who never bet. House-POV colors: deposits
+            and wagers are emerald (money flowing IN to the house). */}
         <div className="space-y-3">
           <SectionHeading
             icon={UserPlus}
-            title={`Signups (${formatNumber(signupsList.length)})`}
+            title={`Signups & Activity (${formatNumber(signupsList.length)})`}
           />
-          <div className="rounded-2xl border overflow-hidden">
+          <div className="rounded-2xl border overflow-hidden overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>User</TableHead>
                   <TableHead className="text-right">Deposited</TableHead>
+                  <TableHead className="text-right">Wagered</TableHead>
                   <TableHead>FTD</TableHead>
                   <TableHead>Joined</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {signupsList.map((s) => (
-                  <TableRow key={s.userId}>
-                    <TableCell>
-                      <Link
-                        href={`/users/${s.userId}`}
-                        className="font-medium hover:underline"
-                      >
-                        {s.username ?? s.email ?? s.userId.slice(0, 8)}
-                      </Link>
-                      {s.email && s.username && (
-                        <p className="text-xs text-muted-foreground truncate">
-                          {s.email}
-                        </p>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatCurrency(s.totalDepositedUsd)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="outline"
-                        className={
-                          s.isFtd
-                            ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
-                            : "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"
-                        }
-                      >
-                        {s.isFtd ? "Yes" : "No"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {formatRelative(s.createdAt)}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {signupsList.map((s) => {
+                  const isActive =
+                    s.totalDepositedUsd > 0 || s.totalWageredUsd > 0;
+                  return (
+                    <TableRow key={s.userId}>
+                      <TableCell>
+                        <Link
+                          href={`/users/${s.userId}`}
+                          className="font-medium hover:underline"
+                        >
+                          {s.username ?? s.email ?? s.userId.slice(0, 8)}
+                        </Link>
+                        {s.email && s.username && (
+                          <p className="text-xs text-muted-foreground truncate">
+                            {s.email}
+                          </p>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {s.totalDepositedUsd > 0 ? (
+                          <span className="text-emerald-600 dark:text-emerald-400">
+                            {formatCurrency(s.totalDepositedUsd)}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground/60">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {s.totalWageredUsd > 0 ? (
+                          <span className="text-emerald-600 dark:text-emerald-400">
+                            {formatCurrency(s.totalWageredUsd)}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground/60">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="outline"
+                          className={
+                            s.isFtd
+                              ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                              : "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"
+                          }
+                        >
+                          {s.isFtd ? "Yes" : "No"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {formatRelative(s.createdAt)}
+                        {!isActive && (
+                          <p className="text-[10px] text-muted-foreground/60">
+                            no activity
+                          </p>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
                 {signupsList.length === 0 && (
                   <TableRow>
                     <TableCell
-                      colSpan={4}
+                      colSpan={5}
                       className="h-24 text-center text-sm text-muted-foreground"
                     >
                       No signups yet.
@@ -273,7 +304,8 @@ export default async function AdCodeDetailPage({
           </div>
           {signupsList.length >= 100 && (
             <p className="text-xs text-muted-foreground">
-              Showing the 100 most recent signups.
+              Showing 100 most active signups (sorted by wagered, then
+              deposited).
             </p>
           )}
         </div>
