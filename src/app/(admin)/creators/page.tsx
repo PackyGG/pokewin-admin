@@ -174,6 +174,8 @@ export default async function CreatorsPage({
                 socials: socialsByUser.get(c.id) ?? [],
                 code: cw?.code ?? null,
                 wagerVolumeUsd: cw?.wagerVolumeUsd ?? 0,
+                signups: cw?.signups ?? 0,
+                ftds: cw?.ftds ?? 0,
               };
             })}
           />

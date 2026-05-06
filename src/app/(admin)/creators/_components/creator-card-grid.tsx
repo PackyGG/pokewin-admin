@@ -7,6 +7,8 @@ import {
   Coins,
   Tag,
   Dices,
+  UserPlus,
+  BadgeDollarSign,
   Twitch,
   Youtube,
   Instagram,
@@ -93,6 +95,13 @@ export type CreatorWithSocials = CreatorListItem & {
    * personal wagering.
    */
   wagerVolumeUsd: number;
+  /** Total signups attributed to this creator (user.referred_by = creator). */
+  signups: number;
+  /**
+   * Lifetime first-time depositors — distinct referred users who have
+   * deposited at least once. Same as /creators/[id]'s ftdByPeriod.all.
+   */
+  ftds: number;
 };
 
 /**
@@ -201,6 +210,9 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
           code={creator.code}
           wagerVolumeUsd={creator.wagerVolumeUsd}
         />
+
+        {/* SIGNUPS + FTDs (referral funnel, matches /creators/[id]) */}
+        <SignupsAndFtdsRow signups={creator.signups} ftds={creator.ftds} />
 
         {/* SOCIALS ROW */}
         <SocialsRow socials={creator.socials} />
@@ -312,6 +324,50 @@ function DealSummary({
             {deal.fills_used}/{deal.fills_allowed}
           </span>{" "}
           fills used · ${perFill.toFixed(0)} per fill
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// Signups + FTDs — funnel counters from the creator's referral code.
+// Same definitions /creators/[id] uses, just rendered side-by-side
+// instead of in a 4-tile KPI strip. Conversion ratio (FTD/Signups)
+// shown as a small caption when there's data.
+function SignupsAndFtdsRow({
+  signups,
+  ftds,
+}: {
+  signups: number;
+  ftds: number;
+}) {
+  const conv =
+    signups > 0 ? Math.min(100, (ftds / signups) * 100).toFixed(0) : null;
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      <div className="rounded-lg border bg-background/50 px-3 py-2">
+        <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <UserPlus className="size-3" />
+          Signups
+        </div>
+        <p className="mt-0.5 truncate text-sm font-semibold tabular-nums">
+          {signups > 0 ? formatNumber(signups) : "—"}
+        </p>
+      </div>
+      <div className="rounded-lg border bg-background/50 px-3 py-2">
+        <div className="flex items-center justify-between gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5">
+            <BadgeDollarSign className="size-3" />
+            FTDs
+          </span>
+          {conv !== null && (
+            <span className="font-mono normal-case text-[10px] text-muted-foreground/70">
+              {conv}%
+            </span>
+          )}
+        </div>
+        <p className="mt-0.5 truncate text-sm font-semibold tabular-nums">
+          {ftds > 0 ? formatNumber(ftds) : "—"}
         </p>
       </div>
     </div>
