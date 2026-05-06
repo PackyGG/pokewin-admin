@@ -129,21 +129,31 @@ export async function addAffiliateCode(userId: string, code: string) {
   const existing = await db.affiliate_codes.findUnique({ where: { code: trimmed } });
   if (existing) throw new Error("Code already exists");
 
-  await db.affiliate_codes.create({
-    data: {
-      user_id: userId,
-      code: trimmed,
-    },
-  });
+  // Add the row AND promote it to primary on the user table in the
+  // same transaction. Previously this only inserted the row and left
+  // user.affiliate_code stale — admins running "add code wynn" on a
+  // user whose user.affiliate_code was already "twitter" ended up
+  // with /users/[id] showing twitter while /creators/[id] showed
+  // wynn. Always-make-primary keeps the two surfaces in sync.
+  await db.$transaction([
+    db.affiliate_codes.create({
+      data: { user_id: userId, code: trimmed },
+    }),
+    db.user.update({
+      where: { id: userId },
+      data: { affiliate_code: trimmed, affiliate_code_active: true },
+    }),
+  ]);
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "affiliate_code_added",
     targetUserId: userId,
-    metadata: { code: trimmed },
+    metadata: { code: trimmed, set_as_primary: true },
   });
 
   revalidatePath(`/creators/${userId}`);
+  revalidatePath(`/users/${userId}`);
 }
 
 export async function removeAffiliateCode(codeId: string) {
