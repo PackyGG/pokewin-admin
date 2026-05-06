@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db";
+import { affiliate_usage_type } from "@/generated/prisma/enums";
 import { toNumber } from "@/lib/utils/decimal";
 import { calculateUserPnl } from "./pnl";
 
@@ -130,16 +131,37 @@ export async function getUserDetail(id: string) {
 
   if (!user) return null;
 
-  // Resolve referred_by username. One extra round-trip — cheap, single row
-  // lookup on a PK — but doing it after the main Promise.all keeps the
-  // page shell above the fold unaffected while we wait on this.
+  // Resolve referred_by username + the EXACT code that was used at
+  // signup time (from affiliate_code_usages). The code string is what
+  // admins ask for ("which code did this user use?") — having it on
+  // the page next to the referrer link removes the ambiguity between
+  // the user's OWN code (user.affiliate_code) and the code they
+  // joined under. The signup-time row is the source of truth: even
+  // if the owner has since rotated their code, that row preserves
+  // the original string.
   let referredByUsername: string | null = null;
+  let referredByCode: string | null = null;
   if (user.referred_by) {
-    const referrer = await db.user.findUnique({
-      where: { id: user.referred_by },
-      select: { username: true, email: true },
-    });
-    referredByUsername = referrer?.username ?? referrer?.email ?? user.referred_by;
+    const [referrer, signupUsage] = await Promise.all([
+      db.user.findUnique({
+        where: { id: user.referred_by },
+        select: { username: true, email: true, affiliate_code: true },
+      }),
+      db.affiliate_code_usages.findFirst({
+        where: {
+          referred_user_id: user.id,
+          usage_type: affiliate_usage_type.signup,
+        },
+        orderBy: { created_at: "desc" },
+        select: { code: true },
+      }),
+    ]);
+    referredByUsername =
+      referrer?.username ?? referrer?.email ?? user.referred_by;
+    // Prefer the historical signup row; fall back to the referrer's
+    // current code if there's no signup row recorded (admin-assigned
+    // referrer paths used to skip writing the signup usage).
+    referredByCode = signupUsage?.code ?? referrer?.affiliate_code ?? null;
   }
 
   return {
@@ -170,6 +192,7 @@ export async function getUserDetail(id: string) {
       signupIp: user.signup_ip,
       referredBy: user.referred_by,
       referredByUsername,
+      referredByCode,
       affiliateCode: user.affiliate_code,
       affiliateCodeActive: user.affiliate_code_active ?? false,
       affiliateCodeExpiresAt: user.affiliate_code_expires_at?.toISOString() ?? null,

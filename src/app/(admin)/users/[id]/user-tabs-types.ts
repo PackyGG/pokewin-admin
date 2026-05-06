@@ -26,6 +26,13 @@ export type UserDetail = {
     signupIp: string | null;
     referredBy: string | null;
     referredByUsername: string | null;
+    /**
+     * The actual code string used at signup (from
+     * affiliate_code_usages). Falls back to the referrer's CURRENT
+     * affiliate_code if the historical signup row isn't recorded.
+     * Distinct from `affiliateCode` which is the code THIS user owns.
+     */
+    referredByCode: string | null;
     affiliateCode: string | null;
     affiliateCodeActive: boolean;
     affiliateCodeExpiresAt: string | null;
