@@ -48,6 +48,12 @@ export default async function PackDetailPage({
     canEdit = hasCapability(perms, "__can_update_pack");
     canDelete = hasCapability(perms, "__can_delete_pack");
   }
+  // Pack creators only get to edit packs while they're still in the
+  // demo (inactive) state. Once a pack is live, only full admins can
+  // edit it. Mirrors the server-side gate in updatePack so the UI
+  // doesn't dangle a button that 500s on click.
+  const showEditButton =
+    canEdit && (isAdmin || session.role !== "pack_creator" || !data.active);
 
   const [packStats, initialGames] = await Promise.all([
     getPackStats(id, data.priceUsd, {
@@ -90,12 +96,12 @@ export default async function PackDetailPage({
             </div>
             <p className="font-mono text-xs text-muted-foreground mt-0.5 truncate">{data.slug}</p>
           </div>
-          {(canToggle || canEdit || canDelete) && (
+          {(canToggle || showEditButton || canDelete) && (
             <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 w-full sm:w-auto">
               {canToggle && (
                 <TogglePackButton packId={data.id} active={data.active} />
               )}
-              {canEdit && <EditPackButton pack={data} />}
+              {showEditButton && <EditPackButton pack={data} />}
               {canDelete && (
                 <DeletePackButton packId={data.id} packName={data.name} />
               )}
