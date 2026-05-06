@@ -79,6 +79,12 @@ export type AdCodeSignup = {
   email: string | null;
   createdAt: string;
   totalDepositedUsd: number;
+  /**
+   * balances.total_wagered for this user — surfaces how much each
+   * referred user has bet, so admins can answer "where did the
+   * code's wager volume come from?" by reading the signups table.
+   */
+  totalWageredUsd: number;
   isFtd: boolean;
 };
 
@@ -605,13 +611,27 @@ export async function getAdCodeDetail(
     ? await safe(
         db.balances.findMany({
           where: { user_id: { in: signupUserIds } },
-          select: { user_id: true, total_deposited: true },
+          select: {
+            user_id: true,
+            total_deposited: true,
+            total_wagered: true,
+          },
         }),
-        [] as { user_id: string; total_deposited: unknown }[],
+        [] as {
+          user_id: string;
+          total_deposited: unknown;
+          total_wagered: unknown;
+        }[],
       )
     : [];
   const balanceMap = new Map(
-    balances.map((b) => [b.user_id, toNumber(b.total_deposited)]),
+    balances.map((b) => [
+      b.user_id,
+      {
+        deposited: toNumber(b.total_deposited),
+        wagered: toNumber(b.total_wagered),
+      },
+    ]),
   );
 
   // Build a contiguous 30-day series so the chart doesn't render gaps
@@ -656,17 +676,30 @@ export async function getAdCodeDetail(
       country: r.country,
       clicks: Number(r.clicks),
     })),
-    signupsList: signupsRaw.map((s) => {
-      const deposited = balanceMap.get(s.user_id) ?? 0;
-      return {
-        userId: s.user_id,
-        username: s.username,
-        email: s.email,
-        createdAt: s.created_at.toISOString(),
-        totalDepositedUsd: deposited,
-        isFtd: deposited > 0,
-      };
-    }),
+    // Re-sort the signups by activity (wager DESC, then deposit DESC,
+    // then signup date DESC) so the users actually moving the code's
+    // wager/deposit numbers surface at the top. The raw query orders
+    // by signup time which buries active users behind tire-kickers.
+    signupsList: signupsRaw
+      .map((s) => {
+        const b = balanceMap.get(s.user_id) ?? { deposited: 0, wagered: 0 };
+        return {
+          userId: s.user_id,
+          username: s.username,
+          email: s.email,
+          createdAt: s.created_at.toISOString(),
+          totalDepositedUsd: b.deposited,
+          totalWageredUsd: b.wagered,
+          isFtd: b.deposited > 0,
+        };
+      })
+      .sort((a, b) => {
+        if (b.totalWageredUsd !== a.totalWageredUsd)
+          return b.totalWageredUsd - a.totalWageredUsd;
+        if (b.totalDepositedUsd !== a.totalDepositedUsd)
+          return b.totalDepositedUsd - a.totalDepositedUsd;
+        return b.createdAt.localeCompare(a.createdAt);
+      }),
   };
 }
 
