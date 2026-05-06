@@ -164,6 +164,25 @@ export async function getUserDetail(id: string) {
     referredByCode = signupUsage?.code ?? referrer?.affiliate_code ?? null;
   }
 
+  // Every code this user owns (rows in affiliate_codes). A user can
+  // legitimately own more than one (creators with multiple campaign
+  // codes; users who got codes transferred to them). The "primary"
+  // is whichever string equals user.affiliate_code; the rest are
+  // historical / extras. Surfacing the full list on /users/[id]
+  // lets admins see drift between user.affiliate_code and what's
+  // actually in the affiliate_codes table — and switch the primary
+  // without touching the DB.
+  const ownedCodeRows = await db.affiliate_codes.findMany({
+    where: { user_id: user.id },
+    orderBy: { created_at: "asc" },
+    select: { code: true, created_at: true },
+  });
+  const ownedCodes = ownedCodeRows.map((c) => ({
+    code: c.code,
+    createdAt: c.created_at.toISOString(),
+    isPrimary: c.code === user.affiliate_code,
+  }));
+
   return {
     user: {
       id: user.id,
@@ -193,6 +212,7 @@ export async function getUserDetail(id: string) {
       referredBy: user.referred_by,
       referredByUsername,
       referredByCode,
+      ownedCodes,
       affiliateCode: user.affiliate_code,
       affiliateCodeActive: user.affiliate_code_active ?? false,
       affiliateCodeExpiresAt: user.affiliate_code_expires_at?.toISOString() ?? null,

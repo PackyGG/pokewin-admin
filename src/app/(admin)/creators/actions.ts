@@ -129,27 +129,22 @@ export async function addAffiliateCode(userId: string, code: string) {
   const existing = await db.affiliate_codes.findUnique({ where: { code: trimmed } });
   if (existing) throw new Error("Code already exists");
 
-  // Add the row AND promote it to primary on the user table in the
-  // same transaction. Previously this only inserted the row and left
-  // user.affiliate_code stale — admins running "add code wynn" on a
-  // user whose user.affiliate_code was already "twitter" ended up
-  // with /users/[id] showing twitter while /creators/[id] showed
-  // wynn. Always-make-primary keeps the two surfaces in sync.
-  await db.$transaction([
-    db.affiliate_codes.create({
-      data: { user_id: userId, code: trimmed },
-    }),
-    db.user.update({
-      where: { id: userId },
-      data: { affiliate_code: trimmed, affiliate_code_active: true },
-    }),
-  ]);
+  // Code ownership lives in affiliate_codes only. user.affiliate_code
+  // is the referral cookie this user CARRIES (the code they used at
+  // signup), not an "owned-code" pointer — see the schema note in
+  // src/lib/queries/creators-detail.ts:58. A previous version of this
+  // action also wrote user.affiliate_code = trimmed; that confused the
+  // two and caused /users/[id] to show the cookie labeled as the
+  // user's own code. Reverted to ONLY insert the affiliate_codes row.
+  await db.affiliate_codes.create({
+    data: { user_id: userId, code: trimmed },
+  });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "affiliate_code_added",
     targetUserId: userId,
-    metadata: { code: trimmed, set_as_primary: true },
+    metadata: { code: trimmed },
   });
 
   revalidatePath(`/creators/${userId}`);
