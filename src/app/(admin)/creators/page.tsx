@@ -18,6 +18,10 @@ import {
   type CreatorSocialSummary,
 } from "./_queries/socials-by-user";
 import {
+  getCodeAndWagerByUser,
+  type CreatorCodeAndWager,
+} from "./_queries/code-and-wager-by-user";
+import {
   CreatorCardGrid,
   type CreatorWithSocials,
 } from "./_components/creator-card-grid";
@@ -42,11 +46,11 @@ export default async function CreatorsPage({
   // (header + empty table) and the operator can see WHY data is missing.
   let result: CreatorsListPage | null = null;
   let socialsByUser: Map<string, CreatorSocialSummary[]> = new Map();
+  let codeAndWagerByUser: Map<string, CreatorCodeAndWager> = new Map();
   let loadError: { title: string; detail: string } | null = null;
   try {
-    // Both fetches in parallel. Socials is "best effort" — if it
-    // throws we render the page with empty socials per creator
-    // rather than blocking the whole list.
+    // Wave 1 — creators list + socials (independent). Socials is
+    // best-effort; backend hiccup falls back to empty.
     const [creators, socials] = await Promise.all([
       listCreatorsForPage(params),
       getApprovedSocialsByUser().catch((e) => {
@@ -59,6 +63,20 @@ export default async function CreatorsPage({
     ]);
     result = creators;
     socialsByUser = socials;
+
+    // Wave 2 — code + lifetime wager from the main DB, keyed on the
+    // user IDs we just got from the backend list. Best-effort too —
+    // if main DB blows up the cards still render with the rest of
+    // the data and just show "—" for code/wager.
+    codeAndWagerByUser = await getCodeAndWagerByUser(
+      creators.data.map((c) => c.id),
+    ).catch((e) => {
+      console.error(
+        "[creators] code+wager fetch failed (rendering without):",
+        e,
+      );
+      return new Map<string, CreatorCodeAndWager>();
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (err instanceof BackendNetworkError) {
@@ -149,10 +167,15 @@ export default async function CreatorsPage({
         <FadeIn className="space-y-4">
           <DataTableToolbar searchPlaceholder="Search by username or email..." />
           <CreatorCardGrid
-            creators={(result?.data ?? []).map<CreatorWithSocials>((c) => ({
-              ...c,
-              socials: socialsByUser.get(c.id) ?? [],
-            }))}
+            creators={(result?.data ?? []).map<CreatorWithSocials>((c) => {
+              const cw = codeAndWagerByUser.get(c.id);
+              return {
+                ...c,
+                socials: socialsByUser.get(c.id) ?? [],
+                code: cw?.code ?? null,
+                totalWagered: cw?.totalWagered ?? 0,
+              };
+            })}
           />
           {result && (
             <DataTablePagination
