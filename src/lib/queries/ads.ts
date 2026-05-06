@@ -110,6 +110,9 @@ export type AdCodeUsageEntry = {
   attributedDepositUsd: number;
   /** balances.total_wagered for the user — lifetime, all sources. */
   lifetimeWageredUsd: number;
+  /** balances.total_won for the user — what the platform paid them
+   *  back in winnings (lifetime). House paid this out → rose. */
+  lifetimeWonUsd: number;
   /** balances.total_deposited for the user — lifetime, all sources. */
   lifetimeDepositedUsd: number;
   firstUsedAt: string;
@@ -714,12 +717,14 @@ export async function getAdCodeDetail(
             user_id: true,
             total_deposited: true,
             total_wagered: true,
+            total_won: true,
           },
         }),
         [] as {
           user_id: string;
           total_deposited: unknown;
           total_wagered: unknown;
+          total_won: unknown;
         }[],
       )
     : [];
@@ -729,6 +734,7 @@ export async function getAdCodeDetail(
       {
         deposited: toNumber(b.total_deposited),
         wagered: toNumber(b.total_wagered),
+        won: toNumber(b.total_won),
       },
     ]),
   );
@@ -781,7 +787,8 @@ export async function getAdCodeDetail(
     // by signup time which buries active users behind tire-kickers.
     signupsList: signupsRaw
       .map((s) => {
-        const b = balanceMap.get(s.user_id) ?? { deposited: 0, wagered: 0 };
+        const b =
+          balanceMap.get(s.user_id) ?? { deposited: 0, wagered: 0, won: 0 };
         return {
           userId: s.user_id,
           username: s.username,
@@ -803,7 +810,8 @@ export async function getAdCodeDetail(
     // attribution (acu sums) AND lifetime context (balances). Already
     // sorted by SUM(wager_amount_usd) DESC in SQL.
     usageHistory: usagesRaw.map((u) => {
-      const b = balanceMap.get(u.user_id) ?? { deposited: 0, wagered: 0 };
+      const b =
+        balanceMap.get(u.user_id) ?? { deposited: 0, wagered: 0, won: 0 };
       return {
         userId: u.user_id,
         username: u.username,
@@ -813,6 +821,7 @@ export async function getAdCodeDetail(
         attributedWagerUsd: Number(u.attributed_wager),
         attributedDepositUsd: Number(u.attributed_deposit),
         lifetimeWageredUsd: b.wagered,
+        lifetimeWonUsd: b.won,
         lifetimeDepositedUsd: b.deposited,
         firstUsedAt: u.first_used_at.toISOString(),
         lastUsedAt: u.last_used_at.toISOString(),

@@ -34,7 +34,10 @@ import {
   SETTINGS_KEYS,
   getAdminSetting,
 } from "@/lib/admin-settings";
-import { getAdCodeDetail } from "@/lib/queries/ads";
+import {
+  getAdCodeDetail,
+  type AdCodeUsageEntry,
+} from "@/lib/queries/ads";
 import { ClicksByDayChart } from "./charts";
 import { CopyShareLink } from "./copy-link";
 
@@ -156,6 +159,14 @@ export default async function AdCodeDetailPage({
           accent="pink"
         />
       </div>
+
+      {/* Wager Source — moved to the top of the body so admins answering
+          "where did this $X wager come from?" don't have to scroll past
+          a chart and a country breakdown to find the answer. Each row
+          is a user who has touched the code (any usage_type) with the
+          per-row attribution + their lifetime numbers + the house P&L
+          on their wagering. */}
+      <WagerSourceSection usageHistory={usageHistory} />
 
       {/* Clicks over time */}
       <ClicksByDayChart data={clicksByDay} />
@@ -313,39 +324,58 @@ export default async function AdCodeDetailPage({
         </div>
       </div>
 
-      {/* Code Usage History — every user who has used this code in
-          any usage_type (signup, deposit, wager, etc.), aggregated
-          per (code, user). Sorted by attributed wager DESC so the
-          users actually moving the code's wager-volume KPI surface
-          first. Answers "where did the $X wager come from?"
-          unambiguously: the rows at the top are the ones with the
-          attribution. */}
-      <div className="space-y-3">
-        <SectionHeading
-          icon={History}
-          title={`Code Usage History (${formatNumber(usageHistory.length)})`}
-        />
-        <p className="text-xs text-muted-foreground">
-          Every user who&apos;s touched this code — including users
-          whose backend-attributed wager / deposit shows up in the
-          KPI strip even though they never appeared as a signup.
-          Sorted by attributed wager (highest first).
-        </p>
-        <div className="rounded-2xl border overflow-hidden overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>User</TableHead>
-                <TableHead>Used as</TableHead>
-                <TableHead className="text-right">Attr. Wager</TableHead>
-                <TableHead className="text-right">Attr. Deposit</TableHead>
-                <TableHead className="text-right">Lifetime Wager</TableHead>
-                <TableHead className="text-right">Uses</TableHead>
-                <TableHead>Last Used</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {usageHistory.map((u) => (
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Wager Source — moved out of inline JSX so the page reads top-to-
+// bottom: header, KPIs, "where did the volume come from?", chart,
+// geography + signups. The user only ever lands here to answer
+// "the KPI strip says $X wager — who caused it?", so this section
+// is now first in the body and styled prominently.
+// ─────────────────────────────────────────────────────────────────────
+
+function WagerSourceSection({
+  usageHistory,
+}: {
+  usageHistory: AdCodeUsageEntry[];
+}) {
+  return (
+    <div className="space-y-3">
+      <SectionHeading
+        icon={History}
+        title={`Wager Source · ${formatNumber(usageHistory.length)} users`}
+      />
+      <p className="text-xs text-muted-foreground">
+        Every user the backend has attributed activity (wager,
+        deposit, signup) on this code to. Sorted by attributed wager
+        DESC, so the rows at the top are the ones contributing to the
+        Wagers KPI above. Includes users who never appeared as a
+        signup — e.g. someone who used the code on a deposit row.
+      </p>
+      <div className="rounded-2xl border overflow-hidden overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>User</TableHead>
+              <TableHead>Used as</TableHead>
+              <TableHead className="text-right">Attr. Wager</TableHead>
+              <TableHead className="text-right">Attr. Deposit</TableHead>
+              <TableHead className="text-right">Won</TableHead>
+              <TableHead className="text-right">House P&amp;L</TableHead>
+              <TableHead className="text-right">Uses</TableHead>
+              <TableHead>Last Used</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {usageHistory.map((u) => {
+              // House P&L from this user's wagering is wager − won
+              // (lifetime, all sources). Positive = house keeps that
+              // money → emerald per CLAUDE.md. Negative = user is up
+              // → rose.
+              const housePnl = u.lifetimeWageredUsd - u.lifetimeWonUsd;
+              return (
                 <TableRow key={u.userId}>
                   <TableCell>
                     <Link
@@ -381,7 +411,7 @@ export default async function AdCodeDetailPage({
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {u.attributedWagerUsd > 0 ? (
-                      <span className="text-emerald-600 dark:text-emerald-400">
+                      <span className="font-semibold text-emerald-600 dark:text-emerald-400">
                         {formatCurrency(u.attributedWagerUsd)}
                       </span>
                     ) : (
@@ -397,13 +427,43 @@ export default async function AdCodeDetailPage({
                       <span className="text-muted-foreground/60">—</span>
                     )}
                   </TableCell>
-                  {/* Lifetime wager (from balances) gives context: a
-                      user with $50 attributed wager but $5,000 lifetime
-                      wager is wagering elsewhere too. */}
-                  <TableCell className="text-right tabular-nums text-muted-foreground">
-                    {u.lifetimeWageredUsd > 0
-                      ? formatCurrency(u.lifetimeWageredUsd)
-                      : "—"}
+                  {/* Lifetime won (balances.total_won) — what the
+                      house has paid this user back. Rose because it's
+                      a house outflow. Captioned with lifetime
+                      wagered for context (so admins can read "user
+                      wagered $X, won $Y" in one row). */}
+                  <TableCell className="text-right tabular-nums">
+                    {u.lifetimeWonUsd > 0 ? (
+                      <div className="flex flex-col items-end leading-tight">
+                        <span className="text-rose-600 dark:text-rose-400">
+                          {formatCurrency(u.lifetimeWonUsd)}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">
+                          on{" "}
+                          {formatCurrency(u.lifetimeWageredUsd)} wagered
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground/60">—</span>
+                    )}
+                  </TableCell>
+                  {/* House P&L (wagered − won, lifetime). +N → we
+                      kept N from this user's bets. -N → they're up. */}
+                  <TableCell className="text-right tabular-nums">
+                    {u.lifetimeWageredUsd > 0 ? (
+                      <span
+                        className={
+                          housePnl >= 0
+                            ? "font-semibold text-emerald-600 dark:text-emerald-400"
+                            : "font-semibold text-rose-600 dark:text-rose-400"
+                        }
+                      >
+                        {housePnl >= 0 ? "+" : ""}
+                        {formatCurrency(housePnl)}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground/60">—</span>
+                    )}
                   </TableCell>
                   <TableCell className="text-right tabular-nums text-muted-foreground">
                     {formatNumber(u.usageCount)}
@@ -412,27 +472,28 @@ export default async function AdCodeDetailPage({
                     {formatRelative(u.lastUsedAt)}
                   </TableCell>
                 </TableRow>
-              ))}
-              {usageHistory.length === 0 && (
-                <TableRow>
-                  <TableCell
-                    colSpan={7}
-                    className="h-24 text-center text-sm text-muted-foreground"
-                  >
-                    No usage history yet — no clicks have converted into
-                    a recorded usage row.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
-        {usageHistory.length >= 100 && (
-          <p className="text-xs text-muted-foreground">
-            Showing 100 users with the highest attributed wager.
-          </p>
-        )}
+              );
+            })}
+            {usageHistory.length === 0 && (
+              <TableRow>
+                <TableCell
+                  colSpan={8}
+                  className="h-24 text-center text-sm text-muted-foreground"
+                >
+                  No attributed activity yet — when a user signs up,
+                  deposits, or wagers via this code the row will
+                  appear here.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
       </div>
+      {usageHistory.length >= 100 && (
+        <p className="text-xs text-muted-foreground">
+          Showing 100 users with the highest attributed wager.
+        </p>
+      )}
     </div>
   );
 }
