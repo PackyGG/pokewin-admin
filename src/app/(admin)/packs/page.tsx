@@ -3,6 +3,7 @@ import { Package } from "lucide-react";
 import { getPacks } from "@/lib/queries/packs";
 import { getUserPermissions, requirePageAccess } from "@/lib/dal";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
+import { ensurePackCreatorCapabilities } from "@/lib/pack-creator/ensure-capabilities";
 import { PacksGrid } from "./packs-grid";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
@@ -78,9 +79,18 @@ export default async function PacksPage({
 
   const suspenseKey = `${page}|${perPage}|${params.search ?? ""}|${params.active ?? ""}|${params.sortBy ?? ""}|${params.sortOrder ?? ""}`;
 
-  // Per-capability gating: pack_creator only gets the create button —
-  // no toggle / delete on existing packs. Real admins always pass; the
-  // catalog of __can_* keys lives in permissions-utils.ts.
+  // Idempotent runtime back-fill: existing pack_creator users were
+  // created before __can_update_pack landed in the role's default
+  // allowed_pages, so they couldn't edit demo packs after saving.
+  // This grants the capability to anyone with role 'pack_creator'
+  // who's missing it. No-op after the first run per process.
+  // Runs BEFORE getUserPermissions so the freshly-granted capability
+  // appears in this same request's permission read.
+  await ensurePackCreatorCapabilities();
+
+  // Per-capability gating: pack_creator gets create + edit-on-demo;
+  // no toggle / delete. Real admins always pass; the catalog of
+  // __can_* keys lives in permissions-utils.ts.
   const isAdmin = session.role === "admin";
   let canCreate = isAdmin;
   let canToggle = isAdmin;

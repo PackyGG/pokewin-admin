@@ -12,6 +12,7 @@ import { BackButton } from "@/components/back-button";
 import { getPackDetail, getPackStats, getPackGames } from "@/lib/queries/packs";
 import { getUserPermissions, requirePageAccess } from "@/lib/dal";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
+import { ensurePackCreatorCapabilities } from "@/lib/pack-creator/ensure-capabilities";
 import { Badge } from "@/components/ui/badge";
 import { CardImage } from "@/components/card-image";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
@@ -34,6 +35,13 @@ export default async function PackDetailPage({
   const { id } = await params;
   const data = await getPackDetail(id);
   if (!data) notFound();
+
+  // Idempotent back-fill (no-op after the first run per process):
+  // ensures existing pack_creator users have __can_update_pack so
+  // they can iterate on demo packs after saving. Mirrors the call
+  // from /packs/page.tsx — pack_creators sometimes land directly on
+  // a detail page via the post-create redirect.
+  await ensurePackCreatorCapabilities();
 
   // Gate the action buttons by capability so restricted roles (e.g.
   // pack_creator) don't see ghost buttons that error on click. Real
