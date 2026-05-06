@@ -12,7 +12,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useMemo, useState, useTransition } from "react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -537,94 +536,59 @@ function OwnCodeCard({
   affiliate: UserDetail["affiliate"];
 }) {
   const [setCodeOpen, setSetCodeOpen] = useState(false);
-  const effectiveCode = user.affiliateCode ?? affiliate?.code ?? null;
-  // Where the code chip should link to:
-  //   - creator role → /creators/[id] (the full creator dashboard
-  //     with deals, sessions, payouts, click + signup analytics)
-  //   - everyone else → /creators/codes/[code] (the per-code stat
-  //     page: clicks, signups, depositors, deposit/wager volume)
-  // Both surfaces already exist; this just makes the chip a portal
-  // into the right one based on role.
-  const codeHref =
-    effectiveCode == null
-      ? null
-      : user.role === "creator"
-        ? `/creators/${user.id}`
-        : `/creators/codes/${encodeURIComponent(effectiveCode)}`;
-  const codeLinkTitle =
-    user.role === "creator"
-      ? "Open creator dashboard"
-      : "Open code stats";
+  void affiliate; // intentionally unused — owned codes come from user.ownedCodes
+  // SCHEMA NOTE: ownership lives EXCLUSIVELY in the affiliate_codes
+  // table (= user.ownedCodes here). user.affiliate_code is the
+  // backend's referral-cookie field — the code this user is CARRYING
+  // because someone referred them — and is surfaced in ReferrerCard
+  // above, not here. Mixing the two was the source of the
+  // "owns code twitter / actually owns wynn" report.
+  const owned = user.ownedCodes;
+  const hasAny = owned.length > 0;
 
   return (
-    // Purple left-border + matching code-chip tint on this card so
-    // it's visually distinct from the blue ReferrerCard above. They
-    // do completely different things — the styling reinforces that.
+    // Purple left-border so it's visually distinct from the blue
+    // ReferrerCard above. Two completely different DB sources.
     <Card className="border-l-4 border-l-purple-500/40">
       <CardContent className="space-y-4 pt-6">
-        {effectiveCode ? (
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="space-y-2">
-              <p className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground">
-                Their code (they hand this out)
-              </p>
-              <div className="flex flex-wrap items-center gap-2">
-                {codeHref ? (
-                  <Link
-                    href={codeHref}
-                    title={codeLinkTitle}
-                    className="group inline-flex items-center gap-1 rounded-md bg-purple-500/15 px-2 py-1 font-mono text-sm font-semibold text-purple-700 transition-colors hover:bg-purple-500/25 dark:text-purple-300"
-                  >
-                    {effectiveCode}
-                    <ArrowUpRight className="size-3 opacity-50 transition-opacity group-hover:opacity-100" />
-                  </Link>
-                ) : (
-                  <span className="rounded-md bg-purple-500/15 px-2 py-1 font-mono text-sm font-semibold text-purple-700 dark:text-purple-300">
-                    {effectiveCode}
-                  </span>
-                )}
-                <Badge
-                  variant="outline"
-                  className={
-                    user.affiliateCodeActive
-                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-                      : "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400"
-                  }
-                >
-                  {user.affiliateCodeActive ? "Active" : "Inactive"}
-                </Badge>
-              </div>
-            </div>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setSetCodeOpen(true)}
-            >
-              Change Code
-            </Button>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground">
+            Codes they own ({owned.length})
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setSetCodeOpen(true)}
+          >
+            {hasAny ? "Add another code" : "Set affiliate code"}
+          </Button>
+        </div>
+
+        {hasAny ? (
+          <div className="space-y-1.5">
+            {owned.map((c) => (
+              <OwnedCodeRow
+                key={c.code}
+                code={c.code}
+                createdAt={c.createdAt}
+                userRole={user.role}
+                userId={user.id}
+              />
+            ))}
           </div>
         ) : (
-          <div className="space-y-2">
-            <p className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground">
-              Their code (they hand this out)
-            </p>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-muted-foreground">
-                This user doesn&apos;t own a code yet.
-              </p>
-              <Button size="sm" onClick={() => setSetCodeOpen(true)}>
-                Set Affiliate Code
-              </Button>
-            </div>
-          </div>
+          <p className="text-sm text-muted-foreground">
+            This user doesn&apos;t own any codes yet.
+          </p>
         )}
+
         <p className="text-[11px] text-muted-foreground">
-          ⚠ This sets <span className="font-mono">user.affiliate_code</span>
-          {" "}— i.e. the code THIS user owns and shares with their
-          referrals. If you type a code that someone else already
-          owns, you&apos;ll be shown who has it and offered a
-          transfer (the previous owner gets a random replacement
-          code so they&apos;re never codeless).
+          Source of truth:{" "}
+          <span className="font-mono">affiliate_codes</span> table. Each
+          row above is a code this user owns and can hand out to refer
+          others. Codes are added via &quot;Add another code&quot; or
+          on /creators/[id]. To remove or transfer a code, use the
+          /creators dashboard.
         </p>
       </CardContent>
       <SetAffiliateCodeDialog
@@ -634,6 +598,42 @@ function OwnCodeCard({
         currentUsername={user.username ?? user.email ?? null}
       />
     </Card>
+  );
+}
+
+// One row in the owned-codes list. Each row is a tappable link to
+// the code's stat page (or, for users with role=creator, the
+// creator dashboard which has the full deep-dive).
+function OwnedCodeRow({
+  code,
+  createdAt,
+  userRole,
+  userId,
+}: {
+  code: string;
+  createdAt: string;
+  userRole: string;
+  userId: string;
+}) {
+  const codeHref =
+    userRole === "creator"
+      ? `/creators/${userId}`
+      : `/creators/codes/${encodeURIComponent(code)}`;
+  return (
+    <Link
+      href={codeHref}
+      className="group flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 transition-colors hover:border-purple-500/30 hover:bg-purple-500/5"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="inline-flex items-center gap-1 rounded-md bg-purple-500/15 px-2 py-1 font-mono text-sm font-semibold text-purple-700 dark:text-purple-300">
+          {code}
+          <ArrowUpRight className="size-3 opacity-50 transition-opacity group-hover:opacity-100" />
+        </span>
+      </div>
+      <span className="text-[11px] text-muted-foreground">
+        added {formatRelative(createdAt)}
+      </span>
+    </Link>
   );
 }
 

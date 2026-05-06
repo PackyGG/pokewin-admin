@@ -34,6 +34,16 @@ export type UserDetail = {
      */
     referredByCode: string | null;
     affiliateCode: string | null;
+    /**
+     * Every row in affiliate_codes for this user — the full list of
+     * codes they own. `isPrimary` flags whichever one matches
+     * user.affiliate_code. Sorted by created_at ASC (oldest first).
+     */
+    ownedCodes: Array<{
+      code: string;
+      createdAt: string;
+      isPrimary: boolean;
+    }>;
     affiliateCodeActive: boolean;
     affiliateCodeExpiresAt: string | null;
     affiliateBonusOptedIn: boolean;

@@ -873,36 +873,29 @@ export async function createAffiliateCode(
   const trimmed = code.trim();
   if (!trimmed) return { success: false, error: "Code cannot be empty" };
 
-  // Check code uniqueness:
+  // SCHEMA NOTE (per src/lib/queries/creators-detail.ts:58):
+  //   user.affiliate_code = the referral cookie this user is CARRYING
+  //                          (i.e. the code they USED, set when they
+  //                          clicked someone else's referral link)
+  //   affiliate_codes      = the codes this user OWNS
+  // Earlier versions of this action wrote `user.affiliate_code = trimmed`
+  // when creating a new owned code — confusing the cookie field with
+  // ownership. The result was /users/[id] showing the cookie ("twitter")
+  // labeled as the user's own code while /creators/[id] correctly
+  // showed the owned code from affiliate_codes ("wynn"). This action
+  // now ONLY writes to affiliate_codes; user.affiliate_code stays
+  // untouched (it belongs to the backend's referral-cookie machinery).
+  //
   //   - taken by ANOTHER user → return a structured conflict so the
   //     UI can prompt for a transfer
-  //   - already owned by THIS user → just promote it to primary
-  //     (user.affiliate_code) and call it success. This handles the
-  //     real-world drift case where a user has multiple rows in
-  //     affiliate_codes (e.g. via creators/actions.addAffiliateCode)
-  //     but user.affiliate_code points at a different one. Without
-  //     this branch admins would be stuck — they couldn't pick the
-  //     code they wanted as primary because the action errored
-  //     "already owns that code."
+  //   - already owned by THIS user → no-op success (the row already
+  //     exists; nothing to do)
   const existingCode = await db.affiliate_codes.findUnique({
     where: { code: trimmed },
     select: { user_id: true },
   });
   if (existingCode) {
     if (existingCode.user_id === userId) {
-      // Already owned by this user — promote to primary.
-      await db.user.update({
-        where: { id: userId },
-        data: { affiliate_code: trimmed, affiliate_code_active: true },
-      });
-      await createAdminAuditEvent({
-        adminUserId: session.userId,
-        eventType: "affiliate_code_set_primary",
-        targetUserId: userId,
-        metadata: { code: trimmed },
-      });
-      revalidatePath(`/users/${userId}`);
-      revalidatePath(`/creators/${userId}`);
       return { success: true };
     }
     const owner = await db.user.findUnique({
@@ -932,13 +925,6 @@ export async function createAffiliateCode(
         code: trimmed,
       },
     }),
-    db.user.update({
-      where: { id: userId },
-      data: {
-        affiliate_code: trimmed,
-        affiliate_code_active: true,
-      },
-    }),
   ]);
 
   await createAdminAuditEvent({
@@ -949,6 +935,7 @@ export async function createAffiliateCode(
   });
 
   revalidatePath(`/users/${userId}`);
+  revalidatePath(`/creators/${userId}`);
   return { success: true };
 }
 
@@ -1060,18 +1047,12 @@ export async function transferAffiliateCode(args: {
       create: { user_id: previousOwnerId },
       update: {},
     });
-    // Flip the displayed `user.affiliate_code` on both sides.
-    await tx.user.update({
-      where: { id: args.toUserId },
-      data: { affiliate_code: code, affiliate_code_active: true },
-    });
-    await tx.user.update({
-      where: { id: previousOwnerId },
-      data: {
-        affiliate_code: replacementCode,
-        affiliate_code_active: true,
-      },
-    });
+    // Note: deliberately NOT touching user.affiliate_code on either
+    // side. user.affiliate_code is the referral cookie this user is
+    // CARRYING (set by the backend when they click someone's link),
+    // not an indicator of which code they own. Code ownership lives
+    // entirely in affiliate_codes — moving the row + creating the
+    // replacement is the full transfer.
   });
 
   await createAdminAuditEvent({
