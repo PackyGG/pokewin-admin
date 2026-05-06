@@ -873,15 +873,37 @@ export async function createAffiliateCode(
   const trimmed = code.trim();
   if (!trimmed) return { success: false, error: "Code cannot be empty" };
 
-  // Check code uniqueness — if taken by ANOTHER user, return a
-  // structured conflict so the UI can prompt for a transfer.
+  // Check code uniqueness:
+  //   - taken by ANOTHER user → return a structured conflict so the
+  //     UI can prompt for a transfer
+  //   - already owned by THIS user → just promote it to primary
+  //     (user.affiliate_code) and call it success. This handles the
+  //     real-world drift case where a user has multiple rows in
+  //     affiliate_codes (e.g. via creators/actions.addAffiliateCode)
+  //     but user.affiliate_code points at a different one. Without
+  //     this branch admins would be stuck — they couldn't pick the
+  //     code they wanted as primary because the action errored
+  //     "already owns that code."
   const existingCode = await db.affiliate_codes.findUnique({
     where: { code: trimmed },
     select: { user_id: true },
   });
   if (existingCode) {
     if (existingCode.user_id === userId) {
-      return { success: false, error: "This user already owns that code" };
+      // Already owned by this user — promote to primary.
+      await db.user.update({
+        where: { id: userId },
+        data: { affiliate_code: trimmed, affiliate_code_active: true },
+      });
+      await createAdminAuditEvent({
+        adminUserId: session.userId,
+        eventType: "affiliate_code_set_primary",
+        targetUserId: userId,
+        metadata: { code: trimmed },
+      });
+      revalidatePath(`/users/${userId}`);
+      revalidatePath(`/creators/${userId}`);
+      return { success: true };
     }
     const owner = await db.user.findUnique({
       where: { id: existingCode.user_id },
