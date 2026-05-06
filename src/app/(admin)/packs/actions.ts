@@ -198,6 +198,25 @@ export async function updatePack(
 
   await requireCapability(session, "__can_update_pack", "update packs");
 
+  // Pack creators can iterate on their demo packs (active=false) but
+  // must not be able to edit a pack the platform has already
+  // promoted to live. They also can't toggle active themselves
+  // (no __can_toggle_pack_active), so this gate plus the missing
+  // toggle capability together pin them inside the demo workflow.
+  // Admin / support / etc with __can_update_pack still edit anything.
+  if (session.role === "pack_creator") {
+    const target = await db.packs.findUnique({
+      where: { id },
+      select: { active: true },
+    });
+    if (!target) throw new Error("Pack not found");
+    if (target.active) {
+      throw new Error(
+        "Live packs can only be edited by full admins. Ask an admin to deactivate the pack first if it needs changes.",
+      );
+    }
+  }
+
   await db.$transaction(async (tx) => {
     await tx.packs.update({
       where: { id },
