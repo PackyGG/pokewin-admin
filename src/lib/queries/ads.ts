@@ -88,6 +88,34 @@ export type AdCodeSignup = {
   isFtd: boolean;
 };
 
+/**
+ * One row per user who has ever interacted with the code in any way
+ * (signup, deposit, wager, etc.), aggregated across every
+ * `affiliate_code_usages` row for that (code, user) pair. Surfaces
+ * the per-row attribution (what the BACKEND credits to this code)
+ * alongside the user's lifetime numbers (so admins can spot
+ * mismatches and see who's actually moving the wager volume).
+ */
+export type AdCodeUsageEntry = {
+  userId: string;
+  username: string | null;
+  email: string | null;
+  /** Number of affiliate_code_usages rows for this (code, user). */
+  usageCount: number;
+  /** Distinct usage_type values observed on this (code, user). */
+  usageTypes: string[];
+  /** SUM(acu.wager_amount_usd) — wager attributed by the backend. */
+  attributedWagerUsd: number;
+  /** SUM(acu.deposit_amount_usd) — deposit attributed by the backend. */
+  attributedDepositUsd: number;
+  /** balances.total_wagered for the user — lifetime, all sources. */
+  lifetimeWageredUsd: number;
+  /** balances.total_deposited for the user — lifetime, all sources. */
+  lifetimeDepositedUsd: number;
+  firstUsedAt: string;
+  lastUsedAt: string;
+};
+
 export type AdCodeDetail = {
   code: string;
   createdAt: string;
@@ -95,6 +123,14 @@ export type AdCodeDetail = {
   clicksByDay: AdCodeClicksByDay[];
   clicksByCountry: AdCodeClicksByCountry[];
   signupsList: AdCodeSignup[];
+  /**
+   * Every user who has ever used this code, in any usage_type,
+   * sorted by attributed wager DESC. Answers "where is the code's
+   * wager volume coming from?" — a row with $250 attributed wager
+   * shows up at the top with the user's id, name, and lifetime
+   * numbers for context.
+   */
+  usageHistory: AdCodeUsageEntry[];
 };
 
 // ---------------------------------------------------------------------------
@@ -465,6 +501,7 @@ export async function getAdCodeDetail(
     clicksByDayRows,
     clicksByCountryRows,
     signupsRaw,
+    usagesRaw,
   ] = await Promise.all([
     safe(
       db.$queryRawUnsafe<{ count: string }[]>(
@@ -604,13 +641,75 @@ export async function getAdCodeDetail(
         created_at: Date;
       }[],
     ),
+    // Code Usage History — every user who has touched this code in
+    // ANY usage_type (signup, deposit, wager...). Aggregates per-
+    // (code, user) so a user with 5 deposit usages collapses to one
+    // row with usage_count=5. SUM(wager_amount_usd) is the precise
+    // answer to "which user contributed to this code's wager
+    // volume?" — same field that feeds summary.wagerVolumeUsd.
+    safe(
+      db.$queryRawUnsafe<
+        {
+          user_id: string;
+          username: string | null;
+          email: string | null;
+          usage_count: string;
+          usage_types: string[] | null;
+          attributed_wager: string;
+          attributed_deposit: string;
+          first_used_at: Date;
+          last_used_at: Date;
+        }[]
+      >(
+        `SELECT acu.referred_user_id                                                      AS user_id,
+                u.username,
+                u.email,
+                COUNT(*)::text                                                             AS usage_count,
+                ARRAY_AGG(DISTINCT acu.usage_type::text)                                   AS usage_types,
+                COALESCE(SUM(acu.wager_amount_usd::numeric),   0)::text                    AS attributed_wager,
+                COALESCE(SUM(acu.deposit_amount_usd::numeric), 0)::text                    AS attributed_deposit,
+                MIN(acu.created_at)                                                        AS first_used_at,
+                MAX(acu.created_at)                                                        AS last_used_at
+           FROM affiliate_code_usages acu
+           LEFT JOIN "user" u ON u.id = acu.referred_user_id
+          WHERE acu.affiliate_user_id = $1
+            AND UPPER(acu.code) = $2
+          GROUP BY acu.referred_user_id, u.username, u.email
+          ORDER BY COALESCE(SUM(acu.wager_amount_usd::numeric), 0) DESC,
+                   MAX(acu.created_at) DESC
+          LIMIT 100`,
+        houseUserId,
+        upperCode,
+      ),
+      [] as {
+        user_id: string;
+        username: string | null;
+        email: string | null;
+        usage_count: string;
+        usage_types: string[] | null;
+        attributed_wager: string;
+        attributed_deposit: string;
+        first_used_at: Date;
+        last_used_at: Date;
+      }[],
+    ),
   ]);
 
-  const signupUserIds = signupsRaw.map((s) => s.user_id);
-  const balances = signupUserIds.length
+  // Combine user IDs from both lists so the lifetime-balances fetch
+  // covers everyone we'll render (signups + usage-history rarely
+  // overlap 100%; a user can wager via the code without showing up
+  // as a signup, e.g. when the backend recorded only a deposit
+  // usage row).
+  const allUserIds = Array.from(
+    new Set([
+      ...signupsRaw.map((s) => s.user_id),
+      ...usagesRaw.map((u) => u.user_id),
+    ]),
+  );
+  const balances = allUserIds.length
     ? await safe(
         db.balances.findMany({
-          where: { user_id: { in: signupUserIds } },
+          where: { user_id: { in: allUserIds } },
           select: {
             user_id: true,
             total_deposited: true,
@@ -700,6 +799,25 @@ export async function getAdCodeDetail(
           return b.totalDepositedUsd - a.totalDepositedUsd;
         return b.createdAt.localeCompare(a.createdAt);
       }),
+    // Usage history — every user who's ever touched the code, with
+    // attribution (acu sums) AND lifetime context (balances). Already
+    // sorted by SUM(wager_amount_usd) DESC in SQL.
+    usageHistory: usagesRaw.map((u) => {
+      const b = balanceMap.get(u.user_id) ?? { deposited: 0, wagered: 0 };
+      return {
+        userId: u.user_id,
+        username: u.username,
+        email: u.email,
+        usageCount: Number(u.usage_count),
+        usageTypes: u.usage_types ?? [],
+        attributedWagerUsd: Number(u.attributed_wager),
+        attributedDepositUsd: Number(u.attributed_deposit),
+        lifetimeWageredUsd: b.wagered,
+        lifetimeDepositedUsd: b.deposited,
+        firstUsedAt: u.first_used_at.toISOString(),
+        lastUsedAt: u.last_used_at.toISOString(),
+      };
+    }),
   };
 }
 

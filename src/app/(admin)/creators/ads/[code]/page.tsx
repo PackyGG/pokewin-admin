@@ -6,6 +6,7 @@ import {
   Coins,
   Flag,
   Globe,
+  History,
   Megaphone,
   MousePointerClick,
   Percent,
@@ -54,7 +55,8 @@ export default async function AdCodeDetailPage({
   const detail = await getAdCodeDetail(houseUserId, decoded);
   if (!detail) notFound();
 
-  const { summary, clicksByDay, clicksByCountry, signupsList } = detail;
+  const { summary, clicksByDay, clicksByCountry, signupsList, usageHistory } =
+    detail;
 
   return (
     <div className="space-y-6">
@@ -309,6 +311,127 @@ export default async function AdCodeDetailPage({
             </p>
           )}
         </div>
+      </div>
+
+      {/* Code Usage History — every user who has used this code in
+          any usage_type (signup, deposit, wager, etc.), aggregated
+          per (code, user). Sorted by attributed wager DESC so the
+          users actually moving the code's wager-volume KPI surface
+          first. Answers "where did the $X wager come from?"
+          unambiguously: the rows at the top are the ones with the
+          attribution. */}
+      <div className="space-y-3">
+        <SectionHeading
+          icon={History}
+          title={`Code Usage History (${formatNumber(usageHistory.length)})`}
+        />
+        <p className="text-xs text-muted-foreground">
+          Every user who&apos;s touched this code — including users
+          whose backend-attributed wager / deposit shows up in the
+          KPI strip even though they never appeared as a signup.
+          Sorted by attributed wager (highest first).
+        </p>
+        <div className="rounded-2xl border overflow-hidden overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>User</TableHead>
+                <TableHead>Used as</TableHead>
+                <TableHead className="text-right">Attr. Wager</TableHead>
+                <TableHead className="text-right">Attr. Deposit</TableHead>
+                <TableHead className="text-right">Lifetime Wager</TableHead>
+                <TableHead className="text-right">Uses</TableHead>
+                <TableHead>Last Used</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {usageHistory.map((u) => (
+                <TableRow key={u.userId}>
+                  <TableCell>
+                    <Link
+                      href={`/users/${u.userId}`}
+                      className="font-medium hover:underline"
+                    >
+                      {u.username ?? u.email ?? u.userId.slice(0, 8)}
+                    </Link>
+                    {u.email && u.username && (
+                      <p className="text-xs text-muted-foreground truncate">
+                        {u.email}
+                      </p>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap gap-1">
+                      {u.usageTypes.length === 0 ? (
+                        <span className="text-xs text-muted-foreground">
+                          —
+                        </span>
+                      ) : (
+                        u.usageTypes.map((t) => (
+                          <Badge
+                            key={t}
+                            variant="outline"
+                            className="text-[10px] capitalize"
+                          >
+                            {t.replace(/_/g, " ")}
+                          </Badge>
+                        ))
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {u.attributedWagerUsd > 0 ? (
+                      <span className="text-emerald-600 dark:text-emerald-400">
+                        {formatCurrency(u.attributedWagerUsd)}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground/60">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {u.attributedDepositUsd > 0 ? (
+                      <span className="text-emerald-600 dark:text-emerald-400">
+                        {formatCurrency(u.attributedDepositUsd)}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground/60">—</span>
+                    )}
+                  </TableCell>
+                  {/* Lifetime wager (from balances) gives context: a
+                      user with $50 attributed wager but $5,000 lifetime
+                      wager is wagering elsewhere too. */}
+                  <TableCell className="text-right tabular-nums text-muted-foreground">
+                    {u.lifetimeWageredUsd > 0
+                      ? formatCurrency(u.lifetimeWageredUsd)
+                      : "—"}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-muted-foreground">
+                    {formatNumber(u.usageCount)}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {formatRelative(u.lastUsedAt)}
+                  </TableCell>
+                </TableRow>
+              ))}
+              {usageHistory.length === 0 && (
+                <TableRow>
+                  <TableCell
+                    colSpan={7}
+                    className="h-24 text-center text-sm text-muted-foreground"
+                  >
+                    No usage history yet — no clicks have converted into
+                    a recorded usage row.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+        {usageHistory.length >= 100 && (
+          <p className="text-xs text-muted-foreground">
+            Showing 100 users with the highest attributed wager.
+          </p>
+        )}
       </div>
     </div>
   );
