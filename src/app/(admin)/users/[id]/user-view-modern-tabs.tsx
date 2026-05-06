@@ -43,6 +43,7 @@ import {
   Activity,
   ArrowDownToLine,
   ArrowUpFromLine,
+  ArrowUpRight,
   Sparkles,
   Dices,
   Percent,
@@ -498,6 +499,23 @@ function OwnCodeCard({
 }) {
   const [setCodeOpen, setSetCodeOpen] = useState(false);
   const effectiveCode = user.affiliateCode ?? affiliate?.code ?? null;
+  // Where the code chip should link to:
+  //   - creator role → /creators/[id] (the full creator dashboard
+  //     with deals, sessions, payouts, click + signup analytics)
+  //   - everyone else → /creators/codes/[code] (the per-code stat
+  //     page: clicks, signups, depositors, deposit/wager volume)
+  // Both surfaces already exist; this just makes the chip a portal
+  // into the right one based on role.
+  const codeHref =
+    effectiveCode == null
+      ? null
+      : user.role === "creator"
+        ? `/creators/${user.id}`
+        : `/creators/codes/${encodeURIComponent(effectiveCode)}`;
+  const codeLinkTitle =
+    user.role === "creator"
+      ? "Open creator dashboard"
+      : "Open code stats";
 
   return (
     <Card>
@@ -507,9 +525,20 @@ function OwnCodeCard({
             <div className="space-y-1">
               <p className="text-xs text-muted-foreground">Current code</p>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-md bg-muted px-2 py-1 font-mono text-sm font-medium">
-                  {effectiveCode}
-                </span>
+                {codeHref ? (
+                  <Link
+                    href={codeHref}
+                    title={codeLinkTitle}
+                    className="group inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 font-mono text-sm font-medium transition-colors hover:bg-blue-500/15 hover:text-blue-700 dark:hover:text-blue-300"
+                  >
+                    {effectiveCode}
+                    <ArrowUpRight className="size-3 opacity-50 transition-opacity group-hover:opacity-100" />
+                  </Link>
+                ) : (
+                  <span className="rounded-md bg-muted px-2 py-1 font-mono text-sm font-medium">
+                    {effectiveCode}
+                  </span>
+                )}
                 <Badge
                   variant="outline"
                   className={
