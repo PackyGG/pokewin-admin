@@ -13,7 +13,14 @@ import {
   listCreatorsForPage,
   type CreatorsListPage,
 } from "./_queries/list-creators";
-import { CreatorsTable } from "./_components/creators-table";
+import {
+  getApprovedSocialsByUser,
+  type CreatorSocialSummary,
+} from "./_queries/socials-by-user";
+import {
+  CreatorCardGrid,
+  type CreatorWithSocials,
+} from "./_components/creator-card-grid";
 import { AddCreatorDialog } from "./_components/add-creator-dialog";
 
 export const metadata = { title: "Creators" };
@@ -34,9 +41,24 @@ export default async function CreatorsPage({
   // Catch + render a friendly state instead so the page still loads
   // (header + empty table) and the operator can see WHY data is missing.
   let result: CreatorsListPage | null = null;
+  let socialsByUser: Map<string, CreatorSocialSummary[]> = new Map();
   let loadError: { title: string; detail: string } | null = null;
   try {
-    result = await listCreatorsForPage(params);
+    // Both fetches in parallel. Socials is "best effort" — if it
+    // throws we render the page with empty socials per creator
+    // rather than blocking the whole list.
+    const [creators, socials] = await Promise.all([
+      listCreatorsForPage(params),
+      getApprovedSocialsByUser().catch((e) => {
+        console.error(
+          "[creators] socials fetch failed (rendering without):",
+          e,
+        );
+        return new Map<string, CreatorSocialSummary[]>();
+      }),
+    ]);
+    result = creators;
+    socialsByUser = socials;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (err instanceof BackendNetworkError) {
@@ -126,7 +148,12 @@ export default async function CreatorsPage({
         <SectionHeading icon={Users} title="All Creators" />
         <FadeIn className="space-y-4">
           <DataTableToolbar searchPlaceholder="Search by username or email..." />
-          <CreatorsTable data={result?.data ?? []} />
+          <CreatorCardGrid
+            creators={(result?.data ?? []).map<CreatorWithSocials>((c) => ({
+              ...c,
+              socials: socialsByUser.get(c.id) ?? [],
+            }))}
+          />
           {result && (
             <DataTablePagination
               page={result.page}

@@ -139,10 +139,13 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "Creators",
     items: [
+      // Analytics sits at the top — it's the "what's happening across
+      // creators right now" overview, so admins land on it first when
+      // expanding the group.
+      { label: "Analytics", href: "/creators/analytics", icon: "BarChart3" },
       { label: "Creators", href: "/creators", icon: "Users" },
       { label: "Codes", href: "/creators/codes", icon: "Share2" },
       { label: "Ads", href: "/creators/ads", icon: "Megaphone" },
-      { label: "Analytics", href: "/creators/analytics", icon: "BarChart3" },
       { label: "Leaderboards", href: "/creators/leaderboards", icon: "Trophy" },
       { label: "Socials Review", href: "/creators/socials", icon: "ShieldCheck" },
       { label: "Settings", href: "/creators/settings", icon: "Settings" },
