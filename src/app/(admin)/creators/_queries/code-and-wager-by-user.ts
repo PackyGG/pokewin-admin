@@ -4,7 +4,16 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 
 export type CreatorCodeAndWager = {
-  /** user.affiliate_code — the referral code this creator owns. */
+  /**
+   * Code this creator OWNS. Sourced from the affiliate_codes table
+   * (the canonical home for code ownership), NOT user.affiliate_code
+   * — that field is the referral COOKIE the user is carrying (the
+   * code they USED at signup), per the schema note in
+   * src/lib/queries/creators-detail.ts:58. The /creators/[id]
+   * detail page already uses the oldest affiliate_codes row as the
+   * creator's primary code; this helper now matches so the list
+   * card and the detail page agree.
+   */
   code: string | null;
   /**
    * affiliate_accounts.total_wager_volume_usd — total wager volume
@@ -32,7 +41,7 @@ export type CreatorCodeAndWager = {
  * zero/null record so callers can `.get(id) ?? EMPTY` without guards.
  *
  * Sources, all main DB:
- *   - user.affiliate_code        → code
+ *   - affiliate_codes (oldest row per user_id) → code
  *   - affiliate_accounts.total_wager_volume_usd → wagerVolumeUsd
  *   - COUNT(user WHERE referred_by = creator.id) → signups
  *   - COUNT(DISTINCT acu.referred_user_id WHERE balances.total_deposited > 0)
@@ -47,11 +56,18 @@ export async function getCodeAndWagerByUser(
   if (userIds.length === 0) return result;
 
   const db = await getDb();
-  const [users, affiliateAccounts, signupRows, ftdRows] = await Promise.all([
-    db.user.findMany({
-      where: { id: { in: userIds } },
-      select: { id: true, affiliate_code: true },
-    }),
+  const [codeRows, affiliateAccounts, signupRows, ftdRows] = await Promise.all([
+    // Oldest affiliate_codes row per user_id — the same convention
+    // /creators/[id]'s primaryCode uses. DISTINCT ON keeps a single
+    // row per user_id with the earliest created_at (= the first code
+    // they ever minted).
+    db.$queryRawUnsafe<{ user_id: string; code: string }[]>(
+      `SELECT DISTINCT ON (user_id) user_id, code
+         FROM affiliate_codes
+        WHERE user_id = ANY($1::text[])
+        ORDER BY user_id, created_at ASC`,
+      userIds,
+    ),
     db.affiliate_accounts.findMany({
       where: { user_id: { in: userIds } },
       select: { user_id: true, total_wager_volume_usd: true },
@@ -81,7 +97,7 @@ export async function getCodeAndWagerByUser(
     ),
   ]);
 
-  const codeById = new Map(users.map((u) => [u.id, u.affiliate_code]));
+  const codeById = new Map(codeRows.map((r) => [r.user_id, r.code]));
   const wagerById = new Map(
     affiliateAccounts.map((a) => [
       a.user_id,

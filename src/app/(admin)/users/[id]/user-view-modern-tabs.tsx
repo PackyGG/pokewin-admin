@@ -12,6 +12,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useMemo, useState, useTransition } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -399,6 +400,26 @@ function ReferrerCard({ user }: { user: UserDetail["user"] }) {
     });
   }
 
+  // Three states this section can be in:
+  //   1. referred_by set                — formal attribution; show
+  //                                       owner + code, offer Clear.
+  //   2. referred_by null, cookie set   — backend wrote the cookie
+  //                                       (affiliate_code) when the
+  //                                       user clicked a link, but
+  //                                       no formal referral was
+  //                                       attributed yet (typically
+  //                                       happens on first deposit).
+  //                                       Show the cookie so admins
+  //                                       can SEE which code the
+  //                                       user is carrying — that
+  //                                       answers "why does it say
+  //                                       no referrer when he used
+  //                                       twitter".
+  //   3. neither set                    — genuinely organic signup.
+  const carriedCookie = user.affiliateCode;
+  const hasFormalReferrer = Boolean(user.referredBy);
+  const hasCarriedCookie = Boolean(carriedCookie);
+
   return (
     // Subtle blue accent on this card so it visually distinguishes
     // from the Sparkles/purple "Own Affiliate Code" card below.
@@ -406,7 +427,7 @@ function ReferrerCard({ user }: { user: UserDetail["user"] }) {
     <Card className="border-l-4 border-l-blue-500/40">
       <CardContent className="space-y-4 pt-6">
         <div className="space-y-2">
-          {user.referredBy ? (
+          {hasFormalReferrer ? (
             <div className="space-y-2">
               <p className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground">
                 Joined under code
@@ -431,7 +452,7 @@ function ReferrerCard({ user }: { user: UserDetail["user"] }) {
                   href={`/users/${user.referredBy}`}
                   className="text-sm font-medium text-blue-500 hover:underline"
                 >
-                  @{user.referredByUsername ?? user.referredBy.slice(0, 8)}
+                  @{user.referredByUsername ?? user.referredBy?.slice(0, 8)}
                 </Link>
                 <Button
                   size="sm"
@@ -443,6 +464,29 @@ function ReferrerCard({ user }: { user: UserDetail["user"] }) {
                   Clear
                 </Button>
               </div>
+            </div>
+          ) : hasCarriedCookie ? (
+            <div className="space-y-2">
+              <p className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground">
+                Carrying referral cookie
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-md bg-blue-500/15 px-2 py-1 font-mono text-sm font-semibold text-blue-700 dark:text-blue-300">
+                  {carriedCookie}
+                </span>
+                <Badge
+                  variant="outline"
+                  className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30"
+                >
+                  Not yet attributed
+                </Badge>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                This user clicked a referral link but isn&apos;t yet
+                formally attributed to the code&apos;s owner — that
+                normally happens on their first deposit. Use the
+                input below to attribute manually if you need to.
+              </p>
             </div>
           ) : (
             <>
