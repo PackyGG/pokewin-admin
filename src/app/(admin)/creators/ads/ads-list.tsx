@@ -4,13 +4,18 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
-  ArrowRight,
   Check,
   Copy,
+  Megaphone,
   MousePointerClick,
   Plus,
   Search,
   Trash2,
+  UserPlus,
+  ArrowDownToLine,
+  Coins,
+  Percent,
+  Calendar,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,14 +37,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import {
   formatCurrency,
@@ -51,7 +48,6 @@ import { createAdCode, deleteAdCode } from "./actions";
 import { getAdLink } from "./ad-link";
 
 export function AdsList({ codes }: { codes: AdCodeSummary[] }) {
-  const router = useRouter();
   const [query, setQuery] = useState("");
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -77,225 +73,181 @@ export function AdsList({ codes }: { codes: AdCodeSummary[] }) {
         </p>
       </div>
 
-      {/* Mobile card list (<lg) */}
-      <div className="lg:hidden">
-        {filtered.length === 0 ? (
-          <div className="flex h-32 flex-col items-center justify-center gap-2 rounded-2xl border text-sm text-muted-foreground">
-            {codes.length === 0 ? (
-              <>
-                <MousePointerClick className="size-6 text-muted-foreground/60" />
-                <p>No ad codes yet. Create one to get started.</p>
-              </>
-            ) : (
-              "No codes match your search."
-            )}
-          </div>
-        ) : (
-          <div className="overflow-hidden rounded-2xl border">
-            {filtered.map((c) => (
-              <div
-                key={c.code}
-                className="border-b border-border/60 last:border-b-0 px-3 py-3 hover:bg-muted/40 transition-colors"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      router.push(`/creators/ads/${encodeURIComponent(c.code)}`)
-                    }
-                    className="flex flex-1 items-center gap-2 text-left min-w-0"
-                  >
-                    <Badge variant="outline" className="font-mono">
-                      {c.code}
-                    </Badge>
-                    <span className="text-[10px] text-muted-foreground">
-                      {formatRelative(c.createdAt)}
-                    </span>
-                  </button>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <CopyLinkButton code={c.code} />
-                    <DeleteCodeButton code={c.code} />
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    router.push(`/creators/ads/${encodeURIComponent(c.code)}`)
-                  }
-                  className="mt-2 grid w-full grid-cols-2 gap-x-3 gap-y-1.5 text-left text-xs"
-                >
-                  <div>
-                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                      Clicks
-                    </div>
-                    <div className="tabular-nums">{formatNumber(c.clicks)}</div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                      Signups
-                    </div>
-                    <div className="tabular-nums">
-                      {formatNumber(c.signups)}
-                      <span className="ml-1 text-[10px] text-muted-foreground">
-                        ({formatNumber(c.activeReferrals)} act)
-                      </span>
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                      Depositors
-                    </div>
-                    <div className="tabular-nums">
-                      {formatNumber(c.depositors)}
-                      <span className="ml-1 text-[10px] text-muted-foreground">
-                        ({formatNumber(c.depositEventCount)} dep)
-                      </span>
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                      Conv
-                    </div>
-                    <div className="tabular-nums text-muted-foreground">
-                      {c.clicks > 0
-                        ? `${(c.conversionRate * 100).toFixed(1)}%`
-                        : "—"}
-                    </div>
-                  </div>
-                  {/* Deposit volume = money IN to house → emerald. */}
-                  <div>
-                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                      Deposits
-                    </div>
-                    <div className="tabular-nums text-emerald-600 dark:text-emerald-400">
-                      {formatCurrency(c.depositVolumeUsd)}
-                      {c.ftdVolumeUsd > 0 && (
-                        <span className="ml-1 text-[10px] text-muted-foreground">
-                          FTD {formatCurrency(c.ftdVolumeUsd)}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  {/* Wager volume = money risked → emerald (house gains). */}
-                  <div>
-                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                      Wagers
-                    </div>
-                    <div className="tabular-nums text-emerald-600 dark:text-emerald-400">
-                      {formatCurrency(c.wagerVolumeUsd)}
-                    </div>
-                  </div>
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      {filtered.length === 0 ? (
+        <div className="flex h-40 flex-col items-center justify-center gap-2 rounded-2xl border bg-muted/20 text-sm text-muted-foreground">
+          {codes.length === 0 ? (
+            <>
+              <MousePointerClick className="size-6 text-muted-foreground/60" />
+              <p>No ad codes yet. Create one to get started.</p>
+            </>
+          ) : (
+            "No codes match your search."
+          )}
+        </div>
+      ) : (
+        // Card grid — 1 / 2 / 3 / 4 cols matching the /creators page
+        // aesthetic. Each card is self-contained: header row with the
+        // code badge + actions, then four metric cells (Clicks, Signups,
+        // Deposits, Wagers), then a footer with conversion + created.
+        <div className="grid gap-3 grid-cols-1 sm:gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {filtered.map((c) => (
+            <AdCodeCard key={c.code} code={c} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
-      {/* Desktop table (>=lg) */}
-      <div className="hidden rounded-2xl border overflow-hidden lg:block">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Code</TableHead>
-              <TableHead className="text-right">Clicks</TableHead>
-              <TableHead className="text-right">Signups</TableHead>
-              <TableHead className="text-right">Depositors</TableHead>
-              <TableHead className="text-right">Conv.</TableHead>
-              <TableHead className="text-right">Deposits</TableHead>
-              <TableHead className="text-right">Wagers</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead className="w-[92px] text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((c) => (
-              // Whole row is clickable — navigates to the code detail.
-              // Action buttons at the end stop propagation so their
-              // clicks don't trigger navigation too.
-              <TableRow
-                key={c.code}
-                className="group cursor-pointer transition-colors hover:bg-muted/40"
-                onClick={() =>
-                  router.push(`/creators/ads/${encodeURIComponent(c.code)}`)
-                }
+function AdCodeCard({ code: c }: { code: AdCodeSummary }) {
+  const router = useRouter();
+  const detailHref = `/creators/ads/${encodeURIComponent(c.code)}`;
+  const convPct =
+    c.clicks > 0 ? `${(c.conversionRate * 100).toFixed(1)}%` : "—";
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => router.push(detailHref)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          router.push(detailHref);
+        }
+      }}
+      className="group relative cursor-pointer overflow-hidden rounded-xl border bg-gradient-to-br from-card via-card to-card/70 p-4 transition-colors hover:border-purple-500/30 sm:p-5"
+    >
+      {/* corner glow */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -right-12 -top-12 size-32 rounded-full bg-purple-500/[0.08] blur-2xl"
+      />
+
+      <div className="relative space-y-4">
+        {/* HEADER */}
+        <div className="flex items-start gap-2">
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-purple-500/15">
+            <Megaphone className="size-5 text-purple-500" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Badge
+                variant="outline"
+                className="bg-purple-500/15 border-purple-500/30 text-purple-700 dark:text-purple-300 font-mono"
               >
-                <TableCell>
-                  <div className="inline-flex items-center gap-2 font-mono text-sm">
-                    <Badge variant="outline" className="font-mono">
-                      {c.code}
-                    </Badge>
-                    <ArrowRight className="size-3 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-                  </div>
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {formatNumber(c.clicks)}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  <div className="flex flex-col items-end leading-tight">
-                    <span>{formatNumber(c.signups)}</span>
-                    <span className="text-[10px] text-muted-foreground">
-                      {formatNumber(c.activeReferrals)} active
-                    </span>
-                  </div>
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  <div className="flex flex-col items-end leading-tight">
-                    <span>{formatNumber(c.depositors)}</span>
-                    <span className="text-[10px] text-muted-foreground">
-                      {formatNumber(c.depositEventCount)} deposits
-                    </span>
-                  </div>
-                </TableCell>
-                <TableCell className="text-right tabular-nums text-muted-foreground">
-                  {c.clicks > 0
-                    ? `${(c.conversionRate * 100).toFixed(1)}%`
-                    : "—"}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  <div className="flex flex-col items-end leading-tight">
-                    <span>{formatCurrency(c.depositVolumeUsd)}</span>
-                    {c.ftdVolumeUsd > 0 && (
-                      <span className="text-[10px] text-muted-foreground">
-                        FTD {formatCurrency(c.ftdVolumeUsd)}
-                      </span>
-                    )}
-                  </div>
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {formatCurrency(c.wagerVolumeUsd)}
-                </TableCell>
-                <TableCell className="text-sm text-muted-foreground">
-                  {formatRelative(c.createdAt)}
-                </TableCell>
-                <TableCell className="text-right">
-                  <div className="flex items-center justify-end gap-1">
-                    <CopyLinkButton code={c.code} />
-                    <DeleteCodeButton code={c.code} />
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-            {filtered.length === 0 && (
-              <TableRow>
-                <TableCell
-                  colSpan={9}
-                  className="h-32 text-center text-sm text-muted-foreground"
-                >
-                  {codes.length === 0 ? (
-                    <div className="flex flex-col items-center gap-2 py-4">
-                      <MousePointerClick className="size-6 text-muted-foreground/60" />
-                      <p>No ad codes yet. Create one to get started.</p>
-                    </div>
-                  ) : (
-                    "No codes match your search."
-                  )}
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
+                {c.code}
+              </Badge>
+            </div>
+            <p className="mt-0.5 flex items-center gap-1 truncate text-[11px] text-muted-foreground">
+              <Calendar className="size-2.5 shrink-0" />
+              Created {formatRelative(c.createdAt)}
+            </p>
+          </div>
+          <div
+            className="flex shrink-0 items-center gap-1"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <CopyLinkButton code={c.code} />
+            <DeleteCodeButton code={c.code} />
+          </div>
+        </div>
+
+        {/* METRICS — 2x2 grid of compact tiles */}
+        <div className="grid grid-cols-2 gap-2">
+          <MetricCell
+            icon={MousePointerClick}
+            label="Clicks"
+            value={formatNumber(c.clicks)}
+          />
+          <MetricCell
+            icon={UserPlus}
+            label="Signups"
+            value={formatNumber(c.signups)}
+            sub={
+              c.activeReferrals > 0
+                ? `${formatNumber(c.activeReferrals)} active`
+                : undefined
+            }
+          />
+          {/* Deposits: money INTO the house → emerald (house gain). */}
+          <MetricCell
+            icon={ArrowDownToLine}
+            label="Deposits"
+            value={formatCurrency(c.depositVolumeUsd)}
+            valueClass="text-emerald-600 dark:text-emerald-400"
+            sub={
+              c.depositors > 0
+                ? `${formatNumber(c.depositors)} depositor${
+                    c.depositors === 1 ? "" : "s"
+                  }`
+                : undefined
+            }
+          />
+          <MetricCell
+            icon={Coins}
+            label="Wagers"
+            value={formatCurrency(c.wagerVolumeUsd)}
+            valueClass="text-emerald-600 dark:text-emerald-400"
+          />
+        </div>
+
+        {/* FOOTER — conversion + FTD line */}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
+          <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <Percent className="size-3" />
+            <span>
+              <span className="font-mono font-semibold tabular-nums text-foreground">
+                {convPct}
+              </span>{" "}
+              click → signup
+            </span>
+          </div>
+          {c.ftdVolumeUsd > 0 && (
+            <div className="text-[11px] text-muted-foreground">
+              FTD{" "}
+              <span className="font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
+                {formatCurrency(c.ftdVolumeUsd)}
+              </span>
+            </div>
+          )}
+        </div>
       </div>
+    </div>
+  );
+}
+
+function MetricCell({
+  icon: Icon,
+  label,
+  value,
+  sub,
+  valueClass,
+}: {
+  icon: React.ElementType;
+  label: string;
+  value: string;
+  sub?: string;
+  valueClass?: string;
+}) {
+  return (
+    <div className="rounded-lg border bg-background/50 px-3 py-2">
+      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <Icon className="size-3" />
+        {label}
+      </div>
+      <p
+        className={
+          "mt-0.5 truncate text-sm font-semibold tabular-nums " +
+          (valueClass ?? "")
+        }
+      >
+        {value}
+      </p>
+      {sub && (
+        <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
+          {sub}
+        </p>
+      )}
     </div>
   );
 }

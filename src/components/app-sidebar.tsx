@@ -144,8 +144,11 @@ const NAV_GROUPS: NavGroup[] = [
       // expanding the group.
       { label: "Analytics", href: "/creators/analytics", icon: "BarChart3" },
       { label: "Creators", href: "/creators", icon: "Users" },
-      { label: "Codes", href: "/creators/codes", icon: "Share2" },
+      // Ads is the more frequently-used surface (third-party promo
+      // codes attached to specific campaigns) so it sits above Codes
+      // (which is the raw code list).
       { label: "Ads", href: "/creators/ads", icon: "Megaphone" },
+      { label: "Codes", href: "/creators/codes", icon: "Share2" },
       { label: "Leaderboards", href: "/creators/leaderboards", icon: "Trophy" },
       { label: "Socials Review", href: "/creators/socials", icon: "ShieldCheck" },
       { label: "Settings", href: "/creators/settings", icon: "Settings" },
