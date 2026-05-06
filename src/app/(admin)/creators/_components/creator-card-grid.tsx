@@ -5,6 +5,8 @@ import {
   Crown,
   Calendar,
   Coins,
+  Tag,
+  Dices,
   Twitch,
   Youtube,
   Instagram,
@@ -16,7 +18,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
-import { formatDate, formatNumber } from "@/lib/utils/format";
+import { formatCurrency, formatDate, formatNumber } from "@/lib/utils/format";
 import type {
   CreatorListItem,
   CreatorDealStatus,
@@ -83,6 +85,10 @@ const PLATFORM_META: Record<
 
 export type CreatorWithSocials = CreatorListItem & {
   socials: CreatorSocialSummary[];
+  /** user.affiliate_code — null if the creator doesn't own a code yet. */
+  code: string | null;
+  /** balances.total_wagered — lifetime wager in USD. */
+  totalWagered: number;
 };
 
 /**
@@ -186,8 +192,61 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
         {/* DEAL ROW */}
         <DealSummary deal={deal} />
 
+        {/* CODE + LIFETIME WAGER */}
+        <CodeAndWagerRow
+          code={creator.code}
+          totalWagered={creator.totalWagered}
+        />
+
         {/* SOCIALS ROW */}
         <SocialsRow socials={creator.socials} />
+      </div>
+    </div>
+  );
+}
+
+// Code + lifetime wager — two compact tiles side by side. Code chip is
+// monospaced and tap-to-copy-friendly via title attr; wager number is
+// emerald (the user's wager IS the house's gross gaming revenue, so
+// from the house POV this is positive — emerald per CLAUDE.md).
+function CodeAndWagerRow({
+  code,
+  totalWagered,
+}: {
+  code: string | null;
+  totalWagered: number;
+}) {
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      <div className="rounded-lg border bg-background/50 px-3 py-2">
+        <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <Tag className="size-3" />
+          Code
+        </div>
+        {code ? (
+          <p
+            className="mt-0.5 truncate font-mono text-sm font-semibold"
+            title={code}
+          >
+            {code}
+          </p>
+        ) : (
+          <p className="mt-0.5 text-sm italic text-muted-foreground">
+            none
+          </p>
+        )}
+      </div>
+      <div className="rounded-lg border bg-background/50 px-3 py-2">
+        <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <Dices className="size-3" />
+          Total Wager
+        </div>
+        <p
+          className="mt-0.5 truncate text-sm font-semibold tabular-nums text-emerald-600 dark:text-emerald-400"
+          title={`${totalWagered} USD lifetime`}
+        >
+          {totalWagered > 0 ? formatCurrency(totalWagered) : "—"}
+        </p>
       </div>
     </div>
   );
