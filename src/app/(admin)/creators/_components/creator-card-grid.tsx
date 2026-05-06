@@ -3,12 +3,7 @@
 import Link from "next/link";
 import {
   Crown,
-  Calendar,
   Coins,
-  Tag,
-  Dices,
-  UserPlus,
-  BadgeDollarSign,
   Twitch,
   Youtube,
   Instagram,
@@ -142,38 +137,39 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
   const initials = display.slice(0, 2).toUpperCase();
 
   return (
-    <div className="group relative overflow-hidden rounded-xl border bg-gradient-to-br from-card via-card to-card/70 p-4 transition-colors hover:border-pink-500/30 sm:p-5">
-      {/* corner glow */}
+    <div className="group relative overflow-hidden rounded-2xl border border-border/60 bg-card p-5 transition-all hover:-translate-y-px hover:border-border hover:shadow-lg sm:p-6">
+      {/* Subtle pink glow — only visible on hover for a quieter
+          default look. */}
       <div
         aria-hidden
-        className="pointer-events-none absolute -right-12 -top-12 size-32 rounded-full bg-pink-500/[0.08] blur-2xl"
+        className="pointer-events-none absolute -right-16 -top-16 size-40 rounded-full bg-pink-500/0 blur-3xl transition-colors duration-500 group-hover:bg-pink-500/[0.08]"
       />
 
-      <div className="relative space-y-4">
-        {/* IDENTITY ROW */}
+      <div className="relative space-y-5">
+        {/* IDENTITY */}
         <div className="flex items-start gap-3">
           <Link
             href={`/creators/${creator.id}`}
             className="shrink-0"
             aria-label={`Open ${display}`}
           >
-            <Avatar className="size-11 ring-2 ring-background">
+            <Avatar className="size-12 ring-2 ring-background">
               {creator.image && <AvatarImage src={creator.image} alt="" />}
-              <AvatarFallback className="bg-pink-500/15 text-xs font-semibold text-pink-700 dark:text-pink-300">
+              <AvatarFallback className="bg-pink-500/15 text-sm font-semibold text-pink-700 dark:text-pink-300">
                 {initials}
               </AvatarFallback>
             </Avatar>
           </Link>
           <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-2">
               <Link
                 href={`/creators/${creator.id}`}
-                className="truncate text-sm font-semibold leading-tight hover:underline sm:text-base"
+                className="truncate text-base font-semibold leading-tight hover:underline"
               >
                 {display}
               </Link>
               {live && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
                   <span className="relative flex size-1.5">
                     <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-500 opacity-75" />
                     <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
@@ -182,16 +178,13 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
                 </span>
               )}
             </div>
-            <p className="mt-0.5 flex items-center gap-1 truncate text-[11px] text-muted-foreground">
-              <Calendar className="size-2.5 shrink-0" />
-              Since {formatDate(new Date(creator.created_at))}
-              <span aria-hidden>·</span>
-              <span className="font-mono">
-                {formatNumber(creator.total_deals_count)} deals
-              </span>
+            <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+              {formatDate(new Date(creator.created_at))}
+              {" · "}
+              {formatNumber(creator.total_deals_count)} deals
             </p>
           </div>
-          <div className="shrink-0">
+          <div className="-mr-1 -mt-1 shrink-0">
             <CreatorRowActions
               userId={creator.id}
               hasActiveSession={live}
@@ -202,73 +195,110 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
           </div>
         </div>
 
-        {/* DEAL ROW */}
+        {/* DEAL — borderless, just type + a clean progress bar */}
         <DealSummary deal={deal} />
 
-        {/* CODE + WAGER VOLUME (referral-driven, matches /creators/[id]) */}
-        <CodeAndWagerRow
+        {/* STATS — single 4-up row, divider-separated, no inner borders */}
+        <StatsStrip
           code={creator.code}
           wagerVolumeUsd={creator.wagerVolumeUsd}
+          signups={creator.signups}
+          ftds={creator.ftds}
         />
 
-        {/* SIGNUPS + FTDs (referral funnel, matches /creators/[id]) */}
-        <SignupsAndFtdsRow signups={creator.signups} ftds={creator.ftds} />
-
-        {/* SOCIALS ROW */}
+        {/* SOCIALS */}
         <SocialsRow socials={creator.socials} />
       </div>
     </div>
   );
 }
 
-// Code + Wager Volume — two compact tiles side by side. Wager Volume
-// is the referral-driven number (affiliate_accounts.total_wager_volume_usd)
-// to match the "Wager Volume" KPI on /creators/[id], NOT the creator's
-// personal wagering. Emerald per CLAUDE.md house POV: their referrals'
-// wagers ARE our gross gaming revenue.
-function CodeAndWagerRow({
+// Single 4-up stats strip replacing the old 2x2-bordered-tile layout.
+// Borderless — just type + spacing + subtle vertical hairlines on
+// desktop. Cleaner, more scannable, and reads as a single row of
+// information rather than four separate boxes.
+function StatsStrip({
   code,
   wagerVolumeUsd,
+  signups,
+  ftds,
 }: {
   code: string | null;
   wagerVolumeUsd: number;
+  signups: number;
+  ftds: number;
 }) {
+  const conv =
+    signups > 0 ? Math.min(100, (ftds / signups) * 100).toFixed(0) : null;
   return (
-    <div className="grid grid-cols-2 gap-2">
-      <div className="rounded-lg border bg-background/50 px-3 py-2">
-        <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          <Tag className="size-3" />
-          Code
-        </div>
+    <div className="grid grid-cols-2 gap-x-3 gap-y-3 sm:grid-cols-4 sm:divide-x sm:divide-border/60">
+      <Stat label="Code">
         {code ? (
-          <p
-            className="mt-0.5 truncate font-mono text-sm font-semibold"
+          <span
+            className="block truncate font-mono text-sm font-semibold"
             title={code}
           >
             {code}
-          </p>
+          </span>
         ) : (
-          <p className="mt-0.5 text-sm italic text-muted-foreground">
-            none
-          </p>
+          <span className="block text-sm text-muted-foreground/60">—</span>
         )}
-      </div>
-      <div className="rounded-lg border bg-background/50 px-3 py-2">
-        <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          <Dices className="size-3" />
-          Wager Volume
-        </div>
-        <p
-          className="mt-0.5 truncate text-sm font-semibold tabular-nums text-emerald-600 dark:text-emerald-400"
+      </Stat>
+      <Stat label="Wager Volume">
+        <span
+          className="block truncate text-sm font-semibold tabular-nums text-emerald-600 dark:text-emerald-400"
           title={`${wagerVolumeUsd} USD — wagers from referred users`}
         >
           {wagerVolumeUsd > 0 ? formatCurrency(wagerVolumeUsd) : "—"}
-        </p>
-      </div>
+        </span>
+      </Stat>
+      <Stat label="Signups">
+        <span className="block truncate text-sm font-semibold tabular-nums">
+          {signups > 0 ? formatNumber(signups) : "—"}
+        </span>
+      </Stat>
+      <Stat
+        label="FTDs"
+        trailing={
+          conv !== null ? (
+            <span className="font-mono normal-case text-[10px] text-muted-foreground/70">
+              {conv}%
+            </span>
+          ) : null
+        }
+      >
+        <span className="block truncate text-sm font-semibold tabular-nums">
+          {ftds > 0 ? formatNumber(ftds) : "—"}
+        </span>
+      </Stat>
     </div>
   );
 }
 
+function Stat({
+  label,
+  children,
+  trailing,
+}: {
+  label: string;
+  children: React.ReactNode;
+  trailing?: React.ReactNode;
+}) {
+  return (
+    <div className="min-w-0 sm:px-3 sm:first:pl-0 sm:last:pr-0">
+      <div className="flex items-center justify-between gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <span>{label}</span>
+        {trailing}
+      </div>
+      <div className="mt-0.5">{children}</div>
+    </div>
+  );
+}
+
+// Deal summary — borderless, type-driven. Status pill + week range on
+// the left, total used / cap on the right; thin progress bar full-
+// width below. The "no deal" state is just a one-line muted note —
+// no need for a dashed-border placeholder taking up real estate.
 function DealSummary({
   deal,
 }: {
@@ -276,12 +306,10 @@ function DealSummary({
 }) {
   if (!deal) {
     return (
-      <div className="flex items-center justify-between rounded-lg border border-dashed border-border/60 bg-muted/20 px-3 py-2">
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Coins className="size-3.5" />
-          <span>No active deal</span>
-        </div>
-      </div>
+      <p className="flex items-center gap-2 text-[11px] text-muted-foreground/70">
+        <Coins className="size-3" />
+        No active deal
+      </p>
     );
   }
 
@@ -294,12 +322,14 @@ function DealSummary({
   const totalUsed = perFill * deal.fills_used;
 
   return (
-    <div className="space-y-2 rounded-lg border bg-background/50 px-3 py-2.5">
-      {/* Header line: status + week range + total cap */}
+    <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <Badge
           variant="outline"
-          className={cn("h-5 px-1.5 text-[10px]", DEAL_STATUS_STYLE[deal.status])}
+          className={cn(
+            "h-5 px-1.5 text-[10px] font-medium",
+            DEAL_STATUS_STYLE[deal.status],
+          )}
         >
           {deal.status}
         </Badge>
@@ -308,68 +338,25 @@ function DealSummary({
           {formatDate(new Date(deal.week_end_utc))}
         </span>
         <span className="ml-auto text-xs font-mono font-medium tabular-nums">
-          ${totalUsed.toFixed(0)} / ${totalCap.toFixed(0)}
+          <span className="text-foreground">${totalUsed.toFixed(0)}</span>
+          <span className="text-muted-foreground">
+            {" / $"}
+            {totalCap.toFixed(0)}
+          </span>
         </span>
       </div>
-      {/* Progress: fills bar */}
-      <div className="space-y-1">
-        <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-          <div
-            className="h-full rounded-full bg-pink-500 transition-all"
-            style={{ width: `${fillsPct}%` }}
-          />
-        </div>
-        <p className="text-[10px] text-muted-foreground">
-          <span className="font-mono">
-            {deal.fills_used}/{deal.fills_allowed}
-          </span>{" "}
-          fills used · ${perFill.toFixed(0)} per fill
-        </p>
+      <div className="h-1 overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full rounded-full bg-pink-500 transition-all duration-500"
+          style={{ width: `${fillsPct}%` }}
+        />
       </div>
-    </div>
-  );
-}
-
-// Signups + FTDs — funnel counters from the creator's referral code.
-// Same definitions /creators/[id] uses, just rendered side-by-side
-// instead of in a 4-tile KPI strip. Conversion ratio (FTD/Signups)
-// shown as a small caption when there's data.
-function SignupsAndFtdsRow({
-  signups,
-  ftds,
-}: {
-  signups: number;
-  ftds: number;
-}) {
-  const conv =
-    signups > 0 ? Math.min(100, (ftds / signups) * 100).toFixed(0) : null;
-  return (
-    <div className="grid grid-cols-2 gap-2">
-      <div className="rounded-lg border bg-background/50 px-3 py-2">
-        <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          <UserPlus className="size-3" />
-          Signups
-        </div>
-        <p className="mt-0.5 truncate text-sm font-semibold tabular-nums">
-          {signups > 0 ? formatNumber(signups) : "—"}
-        </p>
-      </div>
-      <div className="rounded-lg border bg-background/50 px-3 py-2">
-        <div className="flex items-center justify-between gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          <span className="inline-flex items-center gap-1.5">
-            <BadgeDollarSign className="size-3" />
-            FTDs
-          </span>
-          {conv !== null && (
-            <span className="font-mono normal-case text-[10px] text-muted-foreground/70">
-              {conv}%
-            </span>
-          )}
-        </div>
-        <p className="mt-0.5 truncate text-sm font-semibold tabular-nums">
-          {ftds > 0 ? formatNumber(ftds) : "—"}
-        </p>
-      </div>
+      <p className="text-[10px] text-muted-foreground">
+        <span className="font-mono">
+          {deal.fills_used}/{deal.fills_allowed}
+        </span>{" "}
+        fills · ${perFill.toFixed(0)} each · {fillsPct.toFixed(0)}% used
+      </p>
     </div>
   );
 }

@@ -11,11 +11,6 @@ import {
   Plus,
   Search,
   Trash2,
-  UserPlus,
-  ArrowDownToLine,
-  Coins,
-  Percent,
-  Calendar,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,7 +32,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import {
   formatCurrency,
   formatNumber,
@@ -115,36 +109,33 @@ function AdCodeCard({ code: c }: { code: AdCodeSummary }) {
           router.push(detailHref);
         }
       }}
-      className="group relative cursor-pointer overflow-hidden rounded-xl border bg-gradient-to-br from-card via-card to-card/70 p-4 transition-colors hover:border-purple-500/30 sm:p-5"
+      className="group relative cursor-pointer overflow-hidden rounded-2xl border border-border/60 bg-card p-5 transition-all hover:-translate-y-px hover:border-border hover:shadow-lg sm:p-6"
     >
-      {/* corner glow */}
+      {/* Subtle purple glow only on hover — quieter resting state. */}
       <div
         aria-hidden
-        className="pointer-events-none absolute -right-12 -top-12 size-32 rounded-full bg-purple-500/[0.08] blur-2xl"
+        className="pointer-events-none absolute -right-16 -top-16 size-40 rounded-full bg-purple-500/0 blur-3xl transition-colors duration-500 group-hover:bg-purple-500/[0.10]"
       />
 
-      <div className="relative space-y-4">
-        {/* HEADER */}
-        <div className="flex items-start gap-2">
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-purple-500/15">
-            <Megaphone className="size-5 text-purple-500" />
+      <div className="relative space-y-5">
+        {/* HEADER — icon-chip + code + relative-created in one row */}
+        <div className="flex items-start gap-3">
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-purple-500/10 text-purple-500 transition-colors group-hover:bg-purple-500/15">
+            <Megaphone className="size-5" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <Badge
-                variant="outline"
-                className="bg-purple-500/15 border-purple-500/30 text-purple-700 dark:text-purple-300 font-mono"
-              >
-                {c.code}
-              </Badge>
-            </div>
-            <p className="mt-0.5 flex items-center gap-1 truncate text-[11px] text-muted-foreground">
-              <Calendar className="size-2.5 shrink-0" />
+            <p
+              className="truncate font-mono text-base font-semibold tracking-wide"
+              title={c.code}
+            >
+              {c.code}
+            </p>
+            <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
               Created {formatRelative(c.createdAt)}
             </p>
           </div>
           <div
-            className="flex shrink-0 items-center gap-1"
+            className="-mr-1 -mt-1 flex shrink-0 items-center gap-1"
             onClick={(e) => e.stopPropagation()}
           >
             <CopyLinkButton code={c.code} />
@@ -152,60 +143,65 @@ function AdCodeCard({ code: c }: { code: AdCodeSummary }) {
           </div>
         </div>
 
-        {/* METRICS — 2x2 grid of compact tiles */}
-        <div className="grid grid-cols-2 gap-2">
-          <MetricCell
-            icon={MousePointerClick}
-            label="Clicks"
-            value={formatNumber(c.clicks)}
-          />
-          <MetricCell
-            icon={UserPlus}
+        {/* STATS — single 4-up borderless strip, divider-separated on
+            desktop. Same pattern as the creator card so the two pages
+            feel like part of one design language. */}
+        <div className="grid grid-cols-2 gap-x-3 gap-y-3 sm:grid-cols-4 sm:divide-x sm:divide-border/60">
+          <AdStat label="Clicks">
+            <span className="block truncate text-sm font-semibold tabular-nums">
+              {c.clicks > 0 ? formatNumber(c.clicks) : "—"}
+            </span>
+          </AdStat>
+          <AdStat
             label="Signups"
-            value={formatNumber(c.signups)}
-            sub={
-              c.activeReferrals > 0
-                ? `${formatNumber(c.activeReferrals)} active`
-                : undefined
+            trailing={
+              c.activeReferrals > 0 ? (
+                <span className="font-mono normal-case text-[10px] text-muted-foreground/70">
+                  {formatNumber(c.activeReferrals)} act
+                </span>
+              ) : null
             }
-          />
-          {/* Deposits: money INTO the house → emerald (house gain). */}
-          <MetricCell
-            icon={ArrowDownToLine}
+          >
+            <span className="block truncate text-sm font-semibold tabular-nums">
+              {c.signups > 0 ? formatNumber(c.signups) : "—"}
+            </span>
+          </AdStat>
+          {/* Deposits: money INTO the house → emerald. */}
+          <AdStat
             label="Deposits"
-            value={formatCurrency(c.depositVolumeUsd)}
-            valueClass="text-emerald-600 dark:text-emerald-400"
-            sub={
-              c.depositors > 0
-                ? `${formatNumber(c.depositors)} depositor${
-                    c.depositors === 1 ? "" : "s"
-                  }`
-                : undefined
+            trailing={
+              c.depositors > 0 ? (
+                <span className="font-mono normal-case text-[10px] text-muted-foreground/70">
+                  {formatNumber(c.depositors)} u
+                </span>
+              ) : null
             }
-          />
-          <MetricCell
-            icon={Coins}
-            label="Wagers"
-            value={formatCurrency(c.wagerVolumeUsd)}
-            valueClass="text-emerald-600 dark:text-emerald-400"
-          />
+          >
+            <span className="block truncate text-sm font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+              {c.depositVolumeUsd > 0
+                ? formatCurrency(c.depositVolumeUsd)
+                : "—"}
+            </span>
+          </AdStat>
+          <AdStat label="Wagers">
+            <span className="block truncate text-sm font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+              {c.wagerVolumeUsd > 0 ? formatCurrency(c.wagerVolumeUsd) : "—"}
+            </span>
+          </AdStat>
         </div>
 
-        {/* FOOTER — conversion + FTD line */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
-          <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-            <Percent className="size-3" />
-            <span>
-              <span className="font-mono font-semibold tabular-nums text-foreground">
-                {convPct}
-              </span>{" "}
-              click → signup
-            </span>
+        {/* FOOTER — conversion + FTD, hairline divider above */}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-4 text-[11px]">
+          <div className="text-muted-foreground">
+            <span className="font-mono font-semibold tabular-nums text-foreground">
+              {convPct}
+            </span>{" "}
+            click → signup
           </div>
           {c.ftdVolumeUsd > 0 && (
-            <div className="text-[11px] text-muted-foreground">
+            <div className="text-muted-foreground">
               FTD{" "}
-              <span className="font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
+              <span className="font-mono font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
                 {formatCurrency(c.ftdVolumeUsd)}
               </span>
             </div>
@@ -216,38 +212,22 @@ function AdCodeCard({ code: c }: { code: AdCodeSummary }) {
   );
 }
 
-function MetricCell({
-  icon: Icon,
+function AdStat({
   label,
-  value,
-  sub,
-  valueClass,
+  children,
+  trailing,
 }: {
-  icon: React.ElementType;
   label: string;
-  value: string;
-  sub?: string;
-  valueClass?: string;
+  children: React.ReactNode;
+  trailing?: React.ReactNode;
 }) {
   return (
-    <div className="rounded-lg border bg-background/50 px-3 py-2">
-      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        <Icon className="size-3" />
-        {label}
+    <div className="min-w-0 sm:px-3 sm:first:pl-0 sm:last:pr-0">
+      <div className="flex items-center justify-between gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <span>{label}</span>
+        {trailing}
       </div>
-      <p
-        className={
-          "mt-0.5 truncate text-sm font-semibold tabular-nums " +
-          (valueClass ?? "")
-        }
-      >
-        {value}
-      </p>
-      {sub && (
-        <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
-          {sub}
-        </p>
-      )}
+      <div className="mt-0.5">{children}</div>
     </div>
   );
 }
