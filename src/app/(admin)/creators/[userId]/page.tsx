@@ -45,6 +45,7 @@ import { DealsTab } from "./_components/deals-tab";
 import { SessionsTab } from "./_components/sessions-tab";
 import { PendingTab } from "./_components/pending-tab";
 import { DealFormDialog } from "./_components/deal-form-dialog";
+import { ApiKeyDialog } from "./_components/api-key-dialog";
 
 export const metadata = { title: "Creator Detail" };
 
@@ -145,6 +146,11 @@ export default async function CreatorDetailPage({
               <HeaderSocials socials={profile.socials} />
             </div>
           </div>
+          {profile.role === "creator" && (
+            <div className="ml-auto shrink-0">
+              <ApiKeyDialog userId={profile.userId} />
+            </div>
+          )}
         </div>
       </PageHero>
 

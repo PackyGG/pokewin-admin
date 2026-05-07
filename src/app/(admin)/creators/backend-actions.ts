@@ -326,6 +326,45 @@ export async function approveCreatorSocial(socialId: string) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// API key — external creator endpoints (affiliate stats, leaderboards)
+// ---------------------------------------------------------------------------
+
+export async function getCreatorApiKeyStatus(userId: string) {
+  await requirePageAccess("/creators");
+  try {
+    return await creatorsApi.getApiKeyStatus(userId);
+  } catch (err) {
+    throw toActionError(err);
+  }
+}
+
+export async function rotateCreatorApiKey(userId: string) {
+  const session = await requirePageAccess("/creators");
+  await requireCapability(
+    session,
+    "__can_rotate_creator_api_key",
+    "rotate creator API keys",
+  );
+
+  try {
+    const result = await creatorsApi.rotateApiKey(userId);
+
+    // Plain key only exists in the response — do NOT log it. Audit row
+    // records the act of rotation only.
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "creator_api_key_rotated",
+      targetUserId: userId,
+      metadata: { via: "backend_api" },
+    });
+
+    return result;
+  } catch (err) {
+    throw toActionError(err);
+  }
+}
+
 export async function rejectCreatorSocial(
   socialId: string,
   options: { reason?: string } = {},

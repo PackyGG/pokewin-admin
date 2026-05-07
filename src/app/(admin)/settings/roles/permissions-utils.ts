@@ -517,6 +517,13 @@ export const CAPABILITIES: CapabilityDef[] = [
       "Approve, reject, or cancel a creator-submitted affiliate leaderboard",
     group: "Creators",
   },
+  {
+    key: "__can_rotate_creator_api_key",
+    label: "Rotate Creator API Key",
+    description:
+      "Generate or regenerate a creator's external API key (affiliate stats, leaderboards)",
+    group: "Creators",
+  },
 
   // ── Employees (expense tracking + shift planning) ──────────────────
   {
