@@ -584,3 +584,86 @@ export async function getCodeAnalytics(code: string) {
     })),
   };
 }
+
+// Recent wager events from users tied to this affiliate code. Used by
+// the creator detail page to surface a chronological feed of activity
+// happening on the code right now (the per-user totals already live on
+// `recentReferrals`; this complements that with an event-level view).
+//
+// Source set: every user with at least one row in affiliate_code_usages
+// for this code (signup, deposit, or wager event). That matches the
+// referrals table on the same page so the wager feed and the referral
+// list agree on the population.
+//
+// We pull the standard wager types — pack_opening, battle_bet,
+// battle_sponsorship — exactly as analytics-cohorts/analytics-top do,
+// gated to status='completed' so failed/pending bets don't spam the
+// feed. amount is stored as a negative number (debit from the user's
+// balance), so we ABS it for display — the table reads as
+// "user X bet $Y" not "user X bet -$Y".
+export async function getRecentWagersOnCode(
+  code: string,
+  limit: number = 25,
+) {
+  const db = await getDb();
+  const uppercaseCode = code.toUpperCase();
+  // Cap and floor the limit so a buggy caller can't fetch the world.
+  const safeLimit = Math.max(1, Math.min(Math.floor(limit), 100));
+
+  const rows = await safe(
+    db.$queryRawUnsafe<
+      {
+        id: string;
+        user_id: string;
+        username: string | null;
+        email: string | null;
+        type: string;
+        amount: string;
+        created_at: Date;
+      }[]
+    >(
+      `WITH code_users AS (
+         SELECT DISTINCT referred_user_id
+         FROM affiliate_code_usages
+         WHERE UPPER(code) = $1
+       )
+       SELECT
+         lt.id,
+         lt.user_id,
+         u.username,
+         u.email,
+         lt.type::text AS type,
+         lt.amount::text AS amount,
+         lt.created_at
+       FROM ledger_transactions lt
+       JOIN code_users cu ON cu.referred_user_id = lt.user_id
+       LEFT JOIN "user" u ON u.id = lt.user_id
+       WHERE lt.type IN ('pack_opening','battle_bet','battle_sponsorship')
+         AND lt.status = 'completed'
+       ORDER BY lt.created_at DESC
+       LIMIT ${safeLimit}`,
+      uppercaseCode,
+    ),
+    [] as {
+      id: string;
+      user_id: string;
+      username: string | null;
+      email: string | null;
+      type: string;
+      amount: string;
+      created_at: Date;
+    }[],
+  );
+
+  return rows.map((r) => ({
+    id: r.id,
+    userId: r.user_id,
+    username: r.username,
+    email: r.email,
+    type: r.type as "pack_opening" | "battle_bet" | "battle_sponsorship",
+    // amount is negative on the user's ledger (money leaving their
+    // balance); display as a positive bet figure.
+    amountUsd: Math.abs(toNumber(r.amount)),
+    createdAt: r.created_at.toISOString(),
+  }));
+}
