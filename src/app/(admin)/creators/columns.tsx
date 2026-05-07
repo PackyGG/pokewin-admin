@@ -4,6 +4,7 @@ import { ColumnDef } from "@tanstack/react-table";
 import Link from "next/link";
 import { formatCurrency } from "@/lib/utils/format";
 import type { CreatorListItem } from "@/lib/queries/creators";
+import { InlineCodes } from "./inline-codes";
 import { InlineLevelSelect } from "./inline-level-select";
 import { InlinePayoutButton } from "./inline-payout-button";
 import { InlineLimits } from "./inline-limits";
@@ -48,6 +49,20 @@ export const columns: ColumnDef<CreatorListItem>[] = [
     accessorKey: "totalEarnedUsd",
     header: "Earned",
     cell: ({ row }) => formatCurrency(row.original.totalEarnedUsd),
+  },
+  {
+    // Affiliate codes the creator owns. Trigger shows "{primary} +{N}"
+    // when there are extras, the popover lets the admin add or remove
+    // individual codes inline. Sits next to Earned per user direction
+    // so the column reads as part of the creator-economics cluster.
+    id: "codes",
+    header: "Codes",
+    cell: ({ row }) => (
+      <InlineCodes
+        userId={row.original.userId}
+        codes={row.original.codes}
+      />
+    ),
   },
   {
     accessorKey: "availableUsd",
