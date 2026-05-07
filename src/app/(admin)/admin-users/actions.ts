@@ -77,9 +77,22 @@ export async function createAdminUser(data: {
   revalidatePath("/admin-users");
 }
 
-export async function toggleAdminActive(adminUserId: string, isActive: boolean) {
+export async function toggleAdminActive(
+  adminUserId: string,
+  isActive: boolean,
+  totpCode: string,
+) {
   const session = await requireAdmin();
   await requireCapability(session, "__can_toggle_admin_active", "activate / deactivate admins");
+
+  // Self-protection: deactivating yourself locks you out instantly. Mirror
+  // the check already in `deleteAdminUser` so the same accident can't be
+  // made on the toggle path.
+  if (adminUserId === session.userId && !isActive) {
+    throw new Error("You cannot deactivate yourself");
+  }
+
+  await require2FA(session.userId, totpCode);
 
   await adminDb.admin_users.update({
     where: { id: adminUserId },
@@ -96,9 +109,10 @@ export async function toggleAdminActive(adminUserId: string, isActive: boolean) 
   revalidatePath("/admin-users");
 }
 
-export async function resetAdmin2FA(adminUserId: string) {
+export async function resetAdmin2FA(adminUserId: string, totpCode: string) {
   const session = await requireAdmin();
   await requireCapability(session, "__can_reset_admin_2fa", "reset admin 2FA");
+  await require2FA(session.userId, totpCode);
 
   await adminDb.admin_users.update({
     where: { id: adminUserId },
@@ -146,6 +160,7 @@ export async function changeAdminRole(adminUserId: string, newRole: string, totp
 
 export async function deleteAdminUser(
   adminUserId: string,
+  totpCode: string,
 ): Promise<{ success: true } | { success: false; error: string }> {
   const session = await requireAdmin();
   await requireCapability(session, "__can_delete_admin_user", "delete admin users");
@@ -154,6 +169,11 @@ export async function deleteAdminUser(
   if (adminUserId === session.userId) {
     return { success: false, error: "You cannot delete your own account" };
   }
+
+  // 2FA gate AFTER the self-deletion guard so the user-facing "you cannot
+  // delete yourself" error doesn't depend on TOTP being valid first.
+  // require2FA throws on invalid; the caller surfaces it via toast.
+  await require2FA(session.userId, totpCode);
 
   const target = await adminDb.admin_users.findUnique({
     where: { id: adminUserId },
