@@ -10,7 +10,6 @@ import {
   Server,
   Timer,
   Layers,
-  AlertTriangle,
 } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import {
@@ -21,7 +20,6 @@ import {
   getTopAdminsByActions,
   getEventTypeBreakdown,
   getTableRowCounts,
-  getCronHealth,
 } from "@/lib/queries/admin-stats";
 import { adminDb } from "@/lib/admin-db";
 import { getQueryTimingStats } from "@/lib/observability/query-timings";
@@ -69,7 +67,6 @@ export default async function SystemStatsPage() {
     topAdmins,
     eventTypeBreakdown,
     tableCounts,
-    cronHealth,
     totalAdminUsers,
   ] = await Promise.all([
     getSessionHealth(),
@@ -79,7 +76,6 @@ export default async function SystemStatsPage() {
     getTopAdminsByActions(10, startOfMonth),
     getEventTypeBreakdown(startOfMonth),
     getTableRowCounts(),
-    getCronHealth(),
     adminDb.admin_users.count(),
   ]);
 
@@ -436,71 +432,6 @@ export default async function SystemStatsPage() {
         </FadeIn>
       </div>
 
-      {/* Data freshness — cron health */}
-      <div className="space-y-3">
-        <SectionHeading icon={Clock} title="Data freshness" />
-        <FadeIn>
-          <StatPanel title="Scheduled jobs" icon={Clock} accent="emerald">
-            {cronHealth.length === 0 ? (
-              <p className="py-4 text-sm text-muted-foreground">
-                No cron jobs configured.
-              </p>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Job</TableHead>
-                    <TableHead>Endpoint</TableHead>
-                    <TableHead>Last run</TableHead>
-                    <TableHead className="text-right">Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {cronHealth.map((job) => {
-                    const stale =
-                      job.minutesSinceRun !== null && job.minutesSinceRun > 60 * 36;
-                    const never = job.lastRunAt === null;
-                    return (
-                      <TableRow key={job.name}>
-                        <TableCell className="font-medium">{job.label}</TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">
-                          /api/cron/{job.name}
-                        </TableCell>
-                        <TableCell>
-                          {job.lastRunAt ? (
-                            <span className="text-xs">
-                              {formatRelative(job.lastRunAt)}
-                            </span>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">
-                              Never
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {never ? (
-                            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                              <AlertTriangle className="size-3" /> unseen
-                            </span>
-                          ) : stale ? (
-                            <span className="inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
-                              <AlertTriangle className="size-3" /> stale
-                            </span>
-                          ) : (
-                            <span className="text-xs text-emerald-600 dark:text-emerald-400">
-                              ok
-                            </span>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            )}
-          </StatPanel>
-        </FadeIn>
-      </div>
 
       {/* Database sizes */}
       <div className="space-y-3">

@@ -345,7 +345,7 @@ Das Projekt nutzt **zwei vollständig getrennte PostgreSQL-Datenbanken** mit jew
 - **Client:** `adminDb` aus `src/lib/admin-db.ts`
 - **Schema:** `prisma/admin/schema.prisma` (eigene `prisma.config.ts`)
 - **Env-Var:** `ADMIN_DATABASE_URL`
-- **Inhalt:** nur Daten, die das Admin-Panel selbst betreffen — `admin_users`, `admin_sessions`, `admin_audit_events`, `admin_notes`, `admin_gift_card_actions`, `admin_voucher_actions`, `admin_balance_limits`, `creator_deals`, `creator_balance_fills`, `creator_webhooks`, `expenses`, `recurring_expenses`.
+- **Inhalt:** nur Daten, die das Admin-Panel selbst betreffen — `admin_users`, `admin_sessions`, `admin_audit_events`, `admin_notes`, `admin_gift_card_actions`, `admin_voucher_actions`, `admin_balance_limits`, `creator_deals`, `creator_webhooks`, `expenses`, `recurring_expenses`.
 - **Keine Game- oder User-Daten.** Hier liegen nur Informationen darüber, wer sich wann als Admin eingeloggt hat, welcher Admin was getan hat, welche Creator-Deals existieren, welche Ausgaben getrackt werden, etc.
 
 #### Strikte Trennungs-Regeln

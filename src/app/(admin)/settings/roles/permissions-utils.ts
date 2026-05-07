@@ -493,12 +493,6 @@ export const CAPABILITIES: CapabilityDef[] = [
     group: "Creators",
   },
   {
-    key: "__can_manual_creator_fill",
-    label: "Manual Balance Fill",
-    description: "Trigger a manual balance fill on a creator deal",
-    group: "Creators",
-  },
-  {
     key: "__can_link_creator_main_user",
     label: "Link Creator to Main User",
     description: "Link a creator admin user to their main-site user",

@@ -9,7 +9,6 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import {
   Dialog,
@@ -19,7 +18,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { formatCurrency } from "@/lib/utils/format";
-import { createDeal, updateDeal, deleteDeal, manualFill } from "../actions";
+import { createDeal, updateDeal, deleteDeal } from "../actions";
 
 type Deal = {
   id: string;
@@ -31,9 +30,6 @@ type Deal = {
   endDate: string | null;
   status: string;
   notes: string | null;
-  dailyFillAmount: number | null;
-  dailyFillTime: string | null;
-  dailyFillEnabled: boolean;
   keepPercentage: number | null;
   currencyLimitAmount: number | null;
   currencyLimitResetDays: number | null;
@@ -64,9 +60,6 @@ type DealFormData = {
   startDate: string;
   endDate: string;
   notes: string;
-  dailyFillAmount: string;
-  dailyFillTime: string;
-  dailyFillEnabled: boolean;
   keepPercentage: string;
   currencyLimitAmount: string;
   currencyLimitResetDays: string;
@@ -87,9 +80,6 @@ const emptyForm: DealFormData = {
   startDate: "",
   endDate: "",
   notes: "",
-  dailyFillAmount: "",
-  dailyFillTime: "13:00",
-  dailyFillEnabled: false,
   keepPercentage: "",
   currencyLimitAmount: "",
   currencyLimitResetDays: "",
@@ -113,8 +103,6 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
   const [editingDeal, setEditingDeal] = useState<Deal | null>(null);
   const [form, setForm] = useState<DealFormData>(emptyForm);
   const [isPending, startTransition] = useTransition();
-  const [fillingDealId, setFillingDealId] = useState<string | null>(null);
-  const [fillConfirmDeal, setFillConfirmDeal] = useState<Deal | null>(null);
 
   function openCreate() {
     setEditingDeal(null);
@@ -132,9 +120,6 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
       startDate: deal.startDate.split("T")[0],
       endDate: deal.endDate ? deal.endDate.split("T")[0] : "",
       notes: deal.notes ?? "",
-      dailyFillAmount: deal.dailyFillAmount != null ? String(deal.dailyFillAmount) : "",
-      dailyFillTime: deal.dailyFillTime ?? "13:00",
-      dailyFillEnabled: deal.dailyFillEnabled,
       keepPercentage: deal.keepPercentage != null ? String(deal.keepPercentage * 100) : "",
       currencyLimitAmount: deal.currencyLimitAmount != null ? String(deal.currencyLimitAmount) : "",
       currencyLimitResetDays: deal.currencyLimitResetDays != null ? String(deal.currencyLimitResetDays) : "",
@@ -173,9 +158,6 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
           startDate: form.startDate,
           endDate: form.endDate || undefined,
           notes: form.notes || undefined,
-          dailyFillAmount: optionalNumber(form.dailyFillAmount),
-          dailyFillTime: form.dailyFillTime || null,
-          dailyFillEnabled: form.dailyFillEnabled,
           keepPercentage: keepPct != null ? keepPct / 100 : null,
           currencyLimitAmount: optionalNumber(form.currencyLimitAmount),
           currencyLimitResetDays: optionalNumber(form.currencyLimitResetDays) != null ? Math.round(optionalNumber(form.currencyLimitResetDays)!) : null,
@@ -218,28 +200,6 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
     });
   }
 
-  function handleManualFill(dealId: string) {
-    const deal = deals.find((d) => d.id === dealId);
-    if (deal) setFillConfirmDeal(deal);
-  }
-
-  function confirmFill() {
-    if (!fillConfirmDeal) return;
-    const dealId = fillConfirmDeal.id;
-    setFillConfirmDeal(null);
-    setFillingDealId(dealId);
-    startTransition(async () => {
-      try {
-        await manualFill(userId, dealId);
-        toast.success("Balance filled successfully");
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Failed to fill balance");
-      } finally {
-        setFillingDealId(null);
-      }
-    });
-  }
-
   return (
     <>
       <Card>
@@ -252,7 +212,7 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
         </CardHeader>
         <CardContent className="space-y-4">
           {deals.map((d) => (
-            <DealCard key={d.id} deal={d} onEdit={openEdit} onDelete={handleDelete} onFill={handleManualFill} isPending={isPending} fillingDealId={fillingDealId} />
+            <DealCard key={d.id} deal={d} onEdit={openEdit} onDelete={handleDelete} isPending={isPending} />
           ))}
           {deals.length === 0 && (
             <p className="py-4 text-center text-sm text-muted-foreground">No deals yet.</p>
@@ -329,38 +289,11 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
               </div>
             </div>
 
-            {/* Balance Fill */}
+            {/* Revenue Share */}
             <div className="space-y-3 rounded-lg border p-4">
               <div className="flex items-center gap-2 text-sm font-medium">
                 <DollarSign className="size-4" />
-                Balance Fill
-              </div>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <div className="space-y-2">
-                  <Label>Daily Fill ($)</Label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    placeholder="500.00"
-                    value={form.dailyFillAmount}
-                    onChange={(e) => setForm({ ...form, dailyFillAmount: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Fill Time (UTC)</Label>
-                  <Input
-                    type="time"
-                    value={form.dailyFillTime}
-                    onChange={(e) => setForm({ ...form, dailyFillTime: e.target.value })}
-                  />
-                </div>
-                <div className="flex items-end gap-2 pb-1">
-                  <Switch
-                    checked={form.dailyFillEnabled}
-                    onCheckedChange={(v) => setForm({ ...form, dailyFillEnabled: v })}
-                  />
-                  <Label className="text-sm">Enabled</Label>
-                </div>
+                Revenue Share
               </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
@@ -520,34 +453,6 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
         </DialogContent>
       </Dialog>
 
-      {/* Fill Now confirmation */}
-      <Dialog open={!!fillConfirmDeal} onOpenChange={(open) => !open && setFillConfirmDeal(null)}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Confirm Manual Fill</DialogTitle>
-          </DialogHeader>
-          {fillConfirmDeal && (
-            <div className="space-y-3 text-sm">
-              <p className="text-muted-foreground">You are about to manually fill the balance for this deal:</p>
-              <div className="rounded-lg border p-3 space-y-1.5">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Deal</span>
-                  <span className="font-medium">{fillConfirmDeal.dealName || TYPE_LABELS[fillConfirmDeal.dealType] || fillConfirmDeal.dealType}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Fill Amount</span>
-                  <span className="font-medium">{formatCurrency(fillConfirmDeal.dailyFillAmount ?? 0)}</span>
-                </div>
-              </div>
-              <p className="text-xs text-muted-foreground">This will immediately credit the fill amount to the creator&apos;s balance.</p>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setFillConfirmDeal(null)}>Cancel</Button>
-            <Button onClick={confirmFill}>Confirm Fill</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </>
   );
 }
@@ -556,16 +461,12 @@ function DealCard({
   deal,
   onEdit,
   onDelete,
-  onFill,
   isPending,
-  fillingDealId,
 }: {
   deal: Deal;
   onEdit: (deal: Deal) => void;
   onDelete: (id: string) => void;
-  onFill: (id: string) => void;
   isPending: boolean;
-  fillingDealId: string | null;
 }) {
   return (
     <Card>
@@ -577,18 +478,6 @@ function DealCard({
           <Badge variant="outline">{TYPE_LABELS[deal.dealType] ?? deal.dealType}</Badge>
         </div>
         <div className="flex items-center gap-1">
-          {deal.dailyFillAmount != null && deal.dailyFillAmount > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="mr-1 h-7 text-xs"
-              onClick={() => onFill(deal.id)}
-              disabled={isPending || fillingDealId === deal.id}
-            >
-              <DollarSign className="mr-1 size-3" />
-              {fillingDealId === deal.id ? "Filling..." : "Fill Now"}
-            </Button>
-          )}
           <Button variant="ghost" size="icon" className="size-7" onClick={() => onEdit(deal)} disabled={isPending}>
             <Pencil className="size-3.5" />
           </Button>
@@ -613,16 +502,6 @@ function DealCard({
             label="Duration"
             value={`${deal.startDate.split("T")[0]} — ${deal.endDate ? deal.endDate.split("T")[0] : "ongoing"}`}
           />
-
-          {/* Daily Fill */}
-          {deal.dailyFillAmount != null && deal.dailyFillAmount > 0 && (
-            <InfoBlock
-              label="Daily Fill"
-              value={`${formatCurrency(deal.dailyFillAmount)} @ ${deal.dailyFillTime ?? "13:00"} UTC`}
-              sub={deal.dailyFillEnabled ? "Active" : "Disabled"}
-              subColor={deal.dailyFillEnabled ? "text-green-500" : "text-muted-foreground"}
-            />
-          )}
 
           {/* Keep Percentage */}
           {deal.keepPercentage != null && deal.keepPercentage > 0 && (

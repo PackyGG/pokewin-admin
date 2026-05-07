@@ -666,9 +666,6 @@ export async function createDeal(
     startDate: string;
     endDate?: string;
     notes?: string;
-    dailyFillAmount?: number | null;
-    dailyFillTime?: string | null;
-    dailyFillEnabled?: boolean;
     keepPercentage?: number | null;
     currencyLimitAmount?: number | null;
     currencyLimitResetDays?: number | null;
@@ -697,9 +694,6 @@ export async function createDeal(
       start_date: new Date(data.startDate),
       end_date: data.endDate ? new Date(data.endDate) : null,
       notes: data.notes ?? null,
-      daily_fill_amount: data.dailyFillAmount ?? null,
-      daily_fill_time: data.dailyFillTime ?? null,
-      daily_fill_enabled: data.dailyFillEnabled ?? false,
       keep_percentage: data.keepPercentage ?? null,
       currency_limit_amount: data.currencyLimitAmount ?? null,
       currency_limit_reset_days: data.currencyLimitResetDays ?? null,
@@ -740,9 +734,6 @@ export async function updateDeal(
     endDate?: string | null;
     status?: deal_status;
     notes?: string | null;
-    dailyFillAmount?: number | null;
-    dailyFillTime?: string | null;
-    dailyFillEnabled?: boolean;
     keepPercentage?: number | null;
     currencyLimitAmount?: number | null;
     currencyLimitResetDays?: number | null;
@@ -782,9 +773,6 @@ export async function updateDeal(
       ...(data.endDate !== undefined && { end_date: data.endDate ? new Date(data.endDate) : null }),
       ...(data.status !== undefined && { status: data.status }),
       ...(data.notes !== undefined && { notes: data.notes }),
-      ...(data.dailyFillAmount !== undefined && { daily_fill_amount: data.dailyFillAmount }),
-      ...(data.dailyFillTime !== undefined && { daily_fill_time: data.dailyFillTime }),
-      ...(data.dailyFillEnabled !== undefined && { daily_fill_enabled: data.dailyFillEnabled }),
       ...(data.keepPercentage !== undefined && { keep_percentage: data.keepPercentage }),
       ...(data.currencyLimitAmount !== undefined && { currency_limit_amount: data.currencyLimitAmount }),
       ...(data.currencyLimitResetDays !== undefined && { currency_limit_reset_days: data.currencyLimitResetDays }),
@@ -818,88 +806,6 @@ export async function updateDeal(
   });
 
   revalidatePath(`/creators/${deal.target_user_id}`);
-}
-
-export async function manualFill(targetUserId: string, dealId: string) {
-  const db = await getDb();
-  const session = await requirePageAccess("/creators");
-  await requireCapability(session, "__can_manual_creator_fill", "trigger manual creator fills");
-
-  const deal = await adminDb.creator_deals.findUnique({ where: { id: dealId } });
-  if (!deal) throw new Error("Deal not found");
-  if (!deal.daily_fill_amount) throw new Error("No fill amount configured for this deal");
-
-  const amount = toNumber(deal.daily_fill_amount);
-  if (amount <= 0) throw new Error("Invalid fill amount");
-
-  // Main DB writes are wrapped in an interactive transaction so the balance
-  // update and its paired ledger entry land atomically. creator_balance_fills
-  // lives in admin DB — cross-DB transactions aren't supported by Prisma,
-  // so that write happens after the main DB commit. If the admin-side write
-  // fails the user still has the money + a ledger entry; an admin just has
-  // to re-run the fill to produce the tracking row (logged via audit event
-  // regardless).
-  await db.$transaction(async (tx) => {
-    const balance = await tx.balances.findUnique({
-      where: { user_id: targetUserId },
-      select: { available_balance: true },
-    });
-    if (!balance) {
-      throw new Error("User balance not found");
-    }
-    const balanceBefore = toNumber(balance.available_balance);
-    const balanceAfter = balanceBefore + amount;
-
-    await tx.balances.update({
-      where: { user_id: targetUserId },
-      data: { available_balance: balanceAfter },
-    });
-
-    await tx.ledger_transactions.create({
-      data: {
-        user_id: targetUserId,
-        type: "admin_balance_adjustment",
-        amount,
-        balance_before: balanceBefore,
-        balance_after: balanceAfter,
-        description: `Manual creator fill — deal ${deal.deal_name}`,
-        status: "completed",
-      },
-    });
-  });
-
-  // Record the fill in the admin DB (separate database, see comment above).
-  await adminDb.creator_balance_fills.create({
-    data: {
-      target_user_id: targetUserId,
-      deal_id: dealId,
-      amount,
-      status: "completed",
-      triggered_by: "manual",
-    },
-    select: { id: true },
-  });
-
-  // Dispatch webhook fire-and-forget so the action can return promptly.
-  const dealName = deal.deal_name;
-  after(() => {
-    dispatchWebhook(targetUserId, "balance_fill", {
-      userId: targetUserId,
-      amount,
-      dealId,
-      dealName,
-      triggeredBy: "manual",
-    }).catch(() => {});
-  });
-
-  await createAdminAuditEvent({
-    adminUserId: session.userId,
-    eventType: "creator_manual_fill",
-    targetUserId,
-    metadata: { dealId, amount },
-  });
-
-  revalidatePath(`/creators/${targetUserId}`);
 }
 
 async function syncWithdrawalLimits(
