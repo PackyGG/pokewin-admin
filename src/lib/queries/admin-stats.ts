@@ -15,7 +15,7 @@
 
 import { adminDb } from "@/lib/admin-db";
 import { getDb } from "@/lib/db";
-import { MS_PER_MINUTE, MS_PER_DAY } from "@/lib/utils/time";
+import { MS_PER_DAY } from "@/lib/utils/time";
 
 // ---------------------------------------------------------------------------
 // Sessions
@@ -258,7 +258,6 @@ const ADMIN_TABLES = [
   "admin_notes",
   "admin_roles",
   "creator_deals",
-  "creator_balance_fills",
   "webhook_deliveries",
 ] as const;
 
@@ -313,54 +312,6 @@ export async function getTableRowCounts(): Promise<TableRowCounts> {
     countsFromPgClass(db, MAIN_TABLES),
   ]);
   return { admin, main };
-}
-
-// ---------------------------------------------------------------------------
-// Cron health
-// ---------------------------------------------------------------------------
-//
-// The only cron endpoint in the app today is /api/cron/creator-fills which
-// writes a `creator_balance_fills` row with triggered_by = 'cron' on each
-// successful fill. We surface the latest cron fill as the freshness signal
-// for that job. If other cron jobs appear later, extend CRON_JOBS below.
-
-export type CronJobHealth = {
-  /** Stable identifier matching the endpoint path. */
-  name: string;
-  /** Human label for the UI. */
-  label: string;
-  /** When the job last ran successfully, if ever. */
-  lastRunAt: string | null;
-  /** Minutes since last run. null if never run. */
-  minutesSinceRun: number | null;
-};
-
-/**
- * Look up the most recent cron-triggered event for each known job. Kept
- * extensible via CRON_JOBS — add new entries as cron endpoints land.
- */
-export async function getCronHealth(): Promise<CronJobHealth[]> {
-  const latestFill = await adminDb.creator_balance_fills.findFirst({
-    where: { triggered_by: "cron" },
-    orderBy: { created_at: "desc" },
-    select: { created_at: true },
-  });
-
-  const now = Date.now();
-
-  const creatorFillsLastRun = latestFill?.created_at ?? null;
-  const creatorFillsMinutes = creatorFillsLastRun
-    ? Math.round((now - creatorFillsLastRun.getTime()) / MS_PER_MINUTE)
-    : null;
-
-  return [
-    {
-      name: "creator-fills",
-      label: "Creator balance fills",
-      lastRunAt: creatorFillsLastRun ? creatorFillsLastRun.toISOString() : null,
-      minutesSinceRun: creatorFillsMinutes,
-    },
-  ];
 }
 
 // ---------------------------------------------------------------------------

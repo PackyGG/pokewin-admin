@@ -8,8 +8,6 @@ type Deal = {
   dealName: string | null;
   dealType: string;
   status: string;
-  dailyFillAmount: number | null;
-  dailyFillEnabled: boolean;
   keepPercentage: number | null;
   currencyLimitAmount: number | null;
   currencyLimitResetDays: number | null;
@@ -74,32 +72,8 @@ export function OverviewCard({ deals }: OverviewProps) {
                 <Badge variant="outline" className="text-[10px] font-medium">
                   {activeDeal.dealType}
                 </Badge>
-                {activeDeal.dailyFillEnabled ? (
-                  <Badge
-                    variant="outline"
-                    className="text-[10px] font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
-                  >
-                    Auto-fill on
-                  </Badge>
-                ) : activeDeal.dailyFillAmount != null ? (
-                  <Badge
-                    variant="outline"
-                    className="text-[10px] font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
-                  >
-                    Auto-fill off
-                  </Badge>
-                ) : null}
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1.5">
-                <Chip
-                  label="Daily"
-                  value={
-                    activeDeal.dailyFillAmount != null &&
-                    activeDeal.dailyFillAmount > 0
-                      ? `${formatCurrency(activeDeal.dailyFillAmount)}/d`
-                      : null
-                  }
-                />
                 <Chip
                   label="Keep"
                   value={

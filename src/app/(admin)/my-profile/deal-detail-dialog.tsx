@@ -43,9 +43,6 @@ type Deal = {
   endDate: string | null;
   status: string;
   notes: string | null;
-  dailyFillAmount: number | null;
-  dailyFillTime: string | null;
-  dailyFillEnabled: boolean;
   keepPercentage: number | null;
   currencyLimitAmount: number | null;
   currencyLimitResetDays: number | null;
@@ -146,15 +143,6 @@ export function DealsTable({ deals }: { deals: Deal[] }) {
                   label="Duration"
                   value={`${selected.startDate.split("T")[0]} — ${selected.endDate ? selected.endDate.split("T")[0] : "ongoing"}`}
                 />
-
-                {selected.dailyFillAmount != null && selected.dailyFillAmount > 0 && (
-                  <InfoBlock
-                    label="Daily Fill"
-                    value={`${formatCurrency(selected.dailyFillAmount)} @ ${selected.dailyFillTime ?? "13:00"} UTC`}
-                    sub={selected.dailyFillEnabled ? "Active" : "Disabled"}
-                    subColor={selected.dailyFillEnabled ? "text-green-500" : "text-muted-foreground"}
-                  />
-                )}
 
                 {selected.keepPercentage != null && selected.keepPercentage > 0 && (
                   <InfoBlock label="Keep %" value={`${(selected.keepPercentage * 100).toFixed(0)}%`} />
