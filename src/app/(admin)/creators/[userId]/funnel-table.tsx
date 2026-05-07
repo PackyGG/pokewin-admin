@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import {
   flexRender,
   getCoreRowModel,
@@ -101,37 +102,43 @@ type Props = {
 };
 
 export function FunnelTable({ clicks, signups, ftdByPeriod }: Props) {
-  const data: FunnelRow[] = [
-    {
-      key: "24h",
-      period: "24h",
-      clicks: clicks.last24h,
-      signups: signups.last24h,
-      ftds: ftdByPeriod["1d"] ?? 0,
-      pendingSignups: signups.pending,
-    },
-    {
-      key: "7d",
-      period: "7d",
-      clicks: clicks.last7d,
-      signups: signups.last7d,
-      ftds: ftdByPeriod["7d"] ?? 0,
-    },
-    {
-      key: "30d",
-      period: "30d",
-      clicks: clicks.last30d,
-      signups: signups.last30d,
-      ftds: ftdByPeriod["30d"] ?? 0,
-    },
-    {
-      key: "all",
-      period: "All-time",
-      clicks: clicks.total,
-      signups: signups.total,
-      ftds: ftdByPeriod.all ?? 0,
-    },
-  ];
+  // Stable identity across re-renders so React Table doesn't rebuild its
+  // internal row model on every parent state change (sibling cards toggle,
+  // dialogs open, etc.).
+  const data = useMemo<FunnelRow[]>(
+    () => [
+      {
+        key: "24h",
+        period: "24h",
+        clicks: clicks.last24h,
+        signups: signups.last24h,
+        ftds: ftdByPeriod["1d"] ?? 0,
+        pendingSignups: signups.pending,
+      },
+      {
+        key: "7d",
+        period: "7d",
+        clicks: clicks.last7d,
+        signups: signups.last7d,
+        ftds: ftdByPeriod["7d"] ?? 0,
+      },
+      {
+        key: "30d",
+        period: "30d",
+        clicks: clicks.last30d,
+        signups: signups.last30d,
+        ftds: ftdByPeriod["30d"] ?? 0,
+      },
+      {
+        key: "all",
+        period: "All-time",
+        clicks: clicks.total,
+        signups: signups.total,
+        ftds: ftdByPeriod.all ?? 0,
+      },
+    ],
+    [clicks, signups, ftdByPeriod],
+  );
 
   const table = useReactTable({
     data,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { memo, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Activity, Loader2, OctagonX } from "lucide-react";
 
@@ -138,13 +138,22 @@ export function SessionsTab({ userId, sessions, currentStatus }: Props) {
   );
 }
 
-function SessionRow({
+// React.memo so a row doesn't re-render every time the parent's state
+// (filter, pagination, sibling tables) changes — the row's own props are
+// stable across renders since `session` references the same object from
+// the server-rendered list. The formatted date is also memoized to avoid
+// rebuilding the Date + locale string on every paint.
+const SessionRow = memo(function SessionRow({
   userId,
   session,
 }: {
   userId: string;
   session: CreatorSessionResponse;
 }) {
+  const activatedAt = useMemo(
+    () => formatDateTime(new Date(session.activated_at)),
+    [session.activated_at],
+  );
   return (
     <TableRow>
       <TableCell className="pl-4">
@@ -156,7 +165,7 @@ function SessionRow({
         </div>
       </TableCell>
       <TableCell className="text-xs text-muted-foreground">
-        {formatDateTime(new Date(session.activated_at))}
+        {activatedAt}
       </TableCell>
       <TableCell className="text-right tabular-nums">
         ${session.fill_loaded_usd}
@@ -179,15 +188,19 @@ function SessionRow({
       </TableCell>
     </TableRow>
   );
-}
+});
 
-function SessionMobileCard({
+const SessionMobileCard = memo(function SessionMobileCard({
   userId,
   session,
 }: {
   userId: string;
   session: CreatorSessionResponse;
 }) {
+  const activatedAt = useMemo(
+    () => formatDateTime(new Date(session.activated_at)),
+    [session.activated_at],
+  );
   return (
     <div className="px-3 py-3">
       <div className="flex items-start justify-between gap-2">
@@ -201,7 +214,7 @@ function SessionMobileCard({
           </Badge>
         </div>
         <span className="text-[10px] text-muted-foreground whitespace-nowrap">
-          {formatDateTime(new Date(session.activated_at))}
+          {activatedAt}
         </span>
       </div>
       <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
@@ -243,7 +256,7 @@ function SessionMobileCard({
       )}
     </div>
   );
-}
+});
 
 function ForceEndButton({
   userId,
@@ -318,9 +331,12 @@ function ForceEndButton({
 }
 
 function LivePulse() {
+  // Honour prefers-reduced-motion: the outer pulse only animates on
+  // motion-safe; reduce-motion users still see the solid amber dot but
+  // without the constantly looping ping.
   return (
     <span className="relative flex size-2">
-      <span className="absolute inline-flex size-full animate-ping rounded-full bg-amber-500 opacity-75" />
+      <span className="absolute inline-flex size-full motion-safe:animate-ping rounded-full bg-amber-500 opacity-75" />
       <span className="relative inline-flex size-2 rounded-full bg-amber-500" />
     </span>
   );
