@@ -150,15 +150,42 @@ export async function getCreatorDetail(
     // fields are kept up-to-date by the backend but include EVERY
     // referral including staff, which is why void was inflating the
     // wager-volume tile.
+    //
+    // Also computes the two header KPIs that sit next to Signups:
+    //   • ftd_count — distinct referred users who actually deposited
+    //     (gates on both `usage_type='deposit'` for THIS creator AND
+    //     a balances row with `total_deposited > 0`, matching the
+    //     existing ftdByPeriod query exactly so the FunnelTable + KPI
+    //     tile agree). Uses an EXISTS subquery to avoid joining
+    //     balances directly — that join would multiply rows per user
+    //     and inflate the SUM aggregates above.
+    //   • active_7d — distinct referrals with any deposit/wager
+    //     activity in the last 7 days. Drives the "Active affi"
+    //     tile so the admin can see who's still engaged inside the
+    //     attribution window.
     db.$queryRawUnsafe<
       {
         wager_volume: string;
         commission: string;
+        ftd_count: string;
+        active_7d: string;
       }[]
     >(
       `SELECT
          COALESCE(SUM(acu.wager_amount_usd::numeric),   0)::text AS wager_volume,
-         COALESCE(SUM(acu.referrer_cut_usd::numeric),   0)::text AS commission
+         COALESCE(SUM(acu.referrer_cut_usd::numeric),   0)::text AS commission,
+         COUNT(DISTINCT acu.referred_user_id) FILTER (
+           WHERE acu.usage_type = 'deposit'
+             AND EXISTS (
+               SELECT 1 FROM balances b
+               WHERE b.user_id = acu.referred_user_id
+                 AND b.total_deposited > 0
+             )
+         )::text AS ftd_count,
+         COUNT(DISTINCT acu.referred_user_id) FILTER (
+           WHERE acu.usage_type IN ('deposit', 'wager')
+             AND acu.created_at >= NOW() - INTERVAL '7 days'
+         )::text AS active_7d
        FROM affiliate_code_usages acu
        JOIN "user" u ON u.id = acu.referred_user_id
        WHERE acu.affiliate_user_id = $1
@@ -394,6 +421,11 @@ export async function getCreatorDetail(
     // which mis-states what real customer activity looks like.
     totalWagerVolumeUsd: toNumber(realAffiliateAgg[0]?.wager_volume ?? "0"),
     totalEarnedUsd: toNumber(realAffiliateAgg[0]?.commission ?? "0"),
+    // FTDs (all-time, this creator's code) + active referrals in the
+    // last 7d — fed into KPI tiles next to Signups. Both staff-
+    // excluded by the same JOIN as the wager/commission aggregates.
+    ftdCount: Number(realAffiliateAgg[0]?.ftd_count ?? 0),
+    activeReferrals7d: Number(realAffiliateAgg[0]?.active_7d ?? 0),
     availableUsd: toNumber(account?.available_usd ?? 0),
     totalPaidOutUsd: toNumber(account?.total_paid_out_usd ?? 0),
     totalBonusDistributedUsd: toNumber(account?.total_bonus_distributed_usd ?? 0),

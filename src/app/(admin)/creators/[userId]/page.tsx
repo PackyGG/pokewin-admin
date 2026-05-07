@@ -5,13 +5,15 @@ import {
   Activity,
   ArrowLeft,
   ArrowRight,
-  Star,
+  BadgeDollarSign,
+  Flame,
+  HandCoins,
+  Info,
   MousePointerClick,
+  Star,
   UserPlus,
   Users,
   Wallet,
-  HandCoins,
-  Info,
 } from "lucide-react";
 
 import {
@@ -170,9 +172,10 @@ export default async function CreatorDetailPage({
       {/* KPI strip — house-POV financial colors:
           - Total Earned: money paid TO creator → rose (house loss)
           - Wager Volume: money flowing FROM users TO us → emerald
-          - Clicks / Signups: neutral funnel events → blue
-          Phone: 2 cols, tablet+: 4 cols. */}
-      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 md:grid-cols-4">
+          - Clicks / Signups / FTDs: funnel events → blue family
+          - Active affi: currently-engaged referrals → amber
+          Phone: 2 cols, tablet: 3 cols, desktop: 6 cols (1 row). */}
+      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <KpiTile
           label="Clicks"
           value={formatNumber(profile.clicks.total)}
@@ -184,6 +187,27 @@ export default async function CreatorDetailPage({
           value={formatNumber(profile.signups.total)}
           icon={UserPlus}
           accent="cyan"
+        />
+        {/* FTDs — distinct referrals who actually deposited (gates on
+            both an affiliate_code_usages 'deposit' row for this code
+            AND a balances row with total_deposited > 0). All-time
+            count across this creator's primary code. */}
+        <KpiTile
+          label="FTDs"
+          value={formatNumber(profile.ftdCount)}
+          icon={BadgeDollarSign}
+          accent="purple"
+        />
+        {/* Active affi (7d) — distinct referrals with any deposit /
+            wager activity in the last 7 days, the window the affiliate
+            system uses to count them as "active". Amber to read as
+            "currently warm". */}
+        <KpiTile
+          label="Active affi"
+          value={formatNumber(profile.activeReferrals7d)}
+          sub="last 7 days"
+          icon={Flame}
+          accent="amber"
         />
         <KpiTile
           label="Wager Volume"
