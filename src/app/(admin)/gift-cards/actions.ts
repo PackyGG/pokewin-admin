@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { createHash, randomBytes } from "crypto";
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
@@ -8,26 +9,38 @@ import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 
-export async function createGiftCard(data: {
-  value: number;
-  region: "NA" | "EU";
-  expiresAt?: string;
-  code?: string;
-}) {
+const createGiftCardSchema = z.object({
+  value: z
+    .number()
+    .finite()
+    .positive("Value must be positive")
+    .max(10_000_000),
+  region: z.enum(["NA", "EU"]),
+  expiresAt: z.string().optional(),
+  code: z.string().trim().max(64, "Code is too long").optional(),
+});
+
+export async function createGiftCard(data: z.infer<typeof createGiftCardSchema>) {
   const db = await getDb();
   const session = await requirePageAccess("/gift-cards");
   await requireCapability(session, "__can_create_gift_card", "create gift cards");
 
-  const code = data.code?.trim() || randomBytes(8).toString("hex").toUpperCase();
+  const parsed = createGiftCardSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message ?? "Invalid gift card input");
+  }
+  const v = parsed.data;
+
+  const code = v.code || randomBytes(8).toString("hex").toUpperCase();
   const codeHash = createHash("sha256").update(code).digest("hex");
 
   const card = await db.gift_cards.create({
     data: {
-      value: data.value,
-      region: data.region,
+      value: v.value,
+      region: v.region,
       code,
       code_hash: codeHash,
-      expires_at: data.expiresAt ? new Date(data.expiresAt) : null,
+      expires_at: v.expiresAt ? new Date(v.expiresAt) : null,
     },
   });
 
@@ -43,7 +56,7 @@ export async function createGiftCard(data: {
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "gift_card_created",
-    metadata: { gift_card_id: card.id, value: data.value, region: data.region },
+    metadata: { gift_card_id: card.id, value: v.value, region: v.region },
   });
 
   revalidatePath("/gift-cards");

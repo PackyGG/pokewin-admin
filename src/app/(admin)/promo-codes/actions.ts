@@ -1,29 +1,44 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { getDb } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createHash } from "crypto";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 
-export async function createPromoCode(data: {
-  code: string;
-  value: number;
-  region: "NA" | "EU";
-  minimumLevel: number;
-  minimumWagerAmount: number;
-  wagerPeriodDays: number;
-  minimumAccountAgeDays: number;
-  requiresDiscord: boolean;
-  maxUses: number;
-  expiresAt: string | null;
-}) {
+const createPromoCodeSchema = z.object({
+  code: z.string().trim().min(1, "Code is required").max(64, "Code is too long"),
+  value: z
+    .number()
+    .finite()
+    .nonnegative("Value cannot be negative")
+    .max(10_000_000),
+  region: z.enum(["NA", "EU"]),
+  minimumLevel: z.number().int().nonnegative().max(1_000),
+  minimumWagerAmount: z.number().finite().nonnegative().max(10_000_000),
+  wagerPeriodDays: z.number().int().nonnegative().max(3650),
+  minimumAccountAgeDays: z.number().int().nonnegative().max(3650),
+  requiresDiscord: z.boolean(),
+  maxUses: z.number().int().nonnegative().max(10_000_000),
+  expiresAt: z.string().nullable(),
+});
+
+export async function createPromoCode(
+  data: z.infer<typeof createPromoCodeSchema>,
+) {
   const db = await getDb();
   const session = await requirePageAccess("/promo-codes");
   await requireCapability(session, "__can_create_promo_code", "create promo codes");
 
-  const codeHash = createHash("sha256").update(data.code.toUpperCase()).digest("hex");
+  const parsed = createPromoCodeSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message ?? "Invalid promo code input");
+  }
+  const v = parsed.data;
+
+  const codeHash = createHash("sha256").update(v.code.toUpperCase()).digest("hex");
 
   const existing = await db.promo_codes.findFirst({
     where: { code_hash: codeHash },
@@ -34,23 +49,23 @@ export async function createPromoCode(data: {
     data: {
       id: crypto.randomUUID(),
       code_hash: codeHash,
-      value: data.value,
-      region: data.region,
-      minimum_level: data.minimumLevel,
-      minimum_wager_amount: data.minimumWagerAmount,
-      wager_period_days: data.wagerPeriodDays,
-      minimum_account_age_days: data.minimumAccountAgeDays,
-      requires_discord: data.requiresDiscord,
-      max_uses: data.maxUses,
-      expires_at: data.expiresAt ? new Date(data.expiresAt) : null,
-      metadata: { code: data.code.trim() },
+      value: v.value,
+      region: v.region,
+      minimum_level: v.minimumLevel,
+      minimum_wager_amount: v.minimumWagerAmount,
+      wager_period_days: v.wagerPeriodDays,
+      minimum_account_age_days: v.minimumAccountAgeDays,
+      requires_discord: v.requiresDiscord,
+      max_uses: v.maxUses,
+      expires_at: v.expiresAt ? new Date(v.expiresAt) : null,
+      metadata: { code: v.code },
     },
   });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "promo_code_created",
-    metadata: { code_hash: codeHash, value: data.value, region: data.region },
+    metadata: { code_hash: codeHash, value: v.value, region: v.region },
   });
 
   revalidatePath("/promo-codes");
