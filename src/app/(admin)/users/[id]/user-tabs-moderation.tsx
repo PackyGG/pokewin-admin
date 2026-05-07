@@ -3,7 +3,7 @@
 import React, { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Ban, ShieldAlert, ShieldOff, Lock, Unlock, Trash2 } from "lucide-react";
+import { Archive, Ban, ShieldAlert, ShieldOff, Lock, Unlock, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,6 +26,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
+  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import {
   Dialog,
@@ -34,9 +35,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { formatDateTime } from "@/lib/utils/format";
+import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import type { UserDetail } from "./user-tabs-types";
 import { banUser, unbanUser, lockUser, unlockUser } from "../actions";
+import { moveBalanceToVault } from "./actions";
 import { DeleteUserDialog, WipeAccountButton, EditIdentityButton } from "./user-tabs-dialogs";
 
 /**
@@ -49,8 +51,14 @@ import { DeleteUserDialog, WipeAccountButton, EditIdentityButton } from "./user-
  */
 export function UserAdminActions({
   user,
+  availableBalance,
 }: {
   user: UserDetail["user"];
+  // Used by the "To vault" button so the confirm dialog can echo the
+  // exact amount that's about to be parked. Also drives the disabled
+  // state when the user has $0 spendable. Optional — older callers
+  // that don't have balance data just hide the button.
+  availableBalance?: number;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
@@ -63,6 +71,12 @@ export function UserAdminActions({
         <UnlockButton userId={user.id} />
       ) : (
         <LockButton userId={user.id} />
+      )}
+      {availableBalance !== undefined && (
+        <MoveToVaultButton
+          userId={user.id}
+          availableBalance={availableBalance}
+        />
       )}
       <DeleteUserDialog user={user} isPending={false} />
       <WipeAccountButton
@@ -409,6 +423,92 @@ function UnlockButton({ userId }: { userId: string }) {
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <AlertDialogAction onClick={submit} disabled={isPending}>
             {isPending ? "Unlocking..." : "Unlock"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Move balance → vault (instant, no unlock window)
+// ---------------------------------------------------------------------------
+
+function MoveToVaultButton({
+  userId,
+  availableBalance,
+}: {
+  userId: string;
+  availableBalance: number;
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [isPending, startTransition] = useTransition();
+  // Disable when there's nothing spendable to move — the action would
+  // fail server-side with "Available balance is already 0" anyway.
+  const disabled = availableBalance <= 0;
+
+  function submit() {
+    startTransition(async () => {
+      const result = await moveBalanceToVault(userId);
+      if (!result.success) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success(
+        `Moved ${formatCurrency(result.movedAmount)} to vault`,
+      );
+      setOpen(false);
+      router.refresh();
+    });
+  }
+
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <AlertDialogTrigger
+        render={
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={disabled}
+            title={
+              disabled
+                ? "Available balance is $0"
+                : "Move entire spendable balance to vault (no unlock time)"
+            }
+          />
+        }
+      >
+        <Archive className="size-3.5" />
+        <span>To vault</span>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle className="flex items-center gap-2">
+            <Archive className="size-4 text-primary" />
+            Move balance to vault?
+          </AlertDialogTitle>
+          <AlertDialogDescription className="space-y-2">
+            <span className="block">
+              This moves the user&apos;s entire spendable balance{" "}
+              <span className="font-semibold tabular-nums text-foreground">
+                ({formatCurrency(availableBalance)})
+              </span>{" "}
+              into their vault (locked balance) instantly.
+            </span>
+            <span className="block">
+              <strong>No unlock time</strong> — the lock has no scheduled
+              expiry, so the user can withdraw it back themselves whenever.
+              Total balance is unchanged. The movement is recorded in the
+              ledger as a <code className="font-mono text-xs">vault_lock</code>{" "}
+              event and audit-logged.
+            </span>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={submit} disabled={isPending}>
+            {isPending ? "Moving..." : "Move to vault"}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

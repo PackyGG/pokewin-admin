@@ -278,7 +278,10 @@ export function UserViewModern({
                       currentRole={user.role}
                     />
                   )}
-                  <UserAdminActions user={user} />
+                  <UserAdminActions
+                    user={user}
+                    availableBalance={balances?.availableBalance ?? 0}
+                  />
                 </div>
                 <p className="text-xs text-muted-foreground truncate">
                   {user.email}
