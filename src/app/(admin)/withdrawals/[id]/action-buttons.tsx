@@ -40,6 +40,8 @@ export function WithdrawalActionButtons({
   const [trackingNumber, setTrackingNumber] = useState("");
   const [carrier, setCarrier] = useState("");
   const [reason, setReason] = useState("");
+  const [totpCode, setTotpCode] = useState("");
+  const [processOpen, setProcessOpen] = useState(false);
 
   function handleAction(action: () => Promise<void>, label: string) {
     startTransition(async () => {
@@ -55,15 +57,56 @@ export function WithdrawalActionButtons({
 
   return (
     <div className="flex flex-wrap gap-2">
-      {/* Process: pending → processing */}
+      {/* Process: pending → processing — TOTP-gated */}
       {status === "pending" && (
-        <Button
-          size="sm"
-          disabled={isPending}
-          onClick={() => handleAction(() => processWithdrawal(withdrawalId), "processed")}
+        <AlertDialog
+          open={processOpen}
+          onOpenChange={(v) => {
+            setProcessOpen(v);
+            if (!v) setTotpCode("");
+          }}
         >
-          {isPending ? "Processing..." : "Process"}
-        </Button>
+          <AlertDialogTrigger render={<Button size="sm" disabled={isPending} />}>
+            {isPending ? "Processing..." : "Process"}
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Process Withdrawal</AlertDialogTitle>
+              <AlertDialogDescription>
+                For crypto withdrawals this initiates the Fireblocks transfer.
+                Enter your 2FA code to confirm.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">2FA Code</Label>
+              <Input
+                type="text"
+                inputMode="numeric"
+                placeholder="Enter your 6-digit code"
+                value={totpCode}
+                onChange={(e) => setTotpCode(e.target.value)}
+                maxLength={6}
+                autoComplete="one-time-code"
+              />
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <Button
+                disabled={isPending || !totpCode.trim()}
+                onClick={() => {
+                  handleAction(
+                    () => processWithdrawal(withdrawalId, totpCode.trim()),
+                    "processed",
+                  );
+                  setTotpCode("");
+                  setProcessOpen(false);
+                }}
+              >
+                Confirm Process
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       )}
 
       {/* Ship: processing → shipped (physical only) */}
@@ -127,9 +170,13 @@ export function WithdrawalActionButtons({
         </Button>
       )}
 
-      {/* Cancel: pending|processing → cancelled */}
+      {/* Cancel: pending|processing → cancelled — TOTP-gated (refunds user) */}
       {["pending", "processing"].includes(status) && (
-        <AlertDialog>
+        <AlertDialog
+          onOpenChange={(v) => {
+            if (!v) setTotpCode("");
+          }}
+        >
           <AlertDialogTrigger render={<Button size="sm" variant="destructive" />}>
             Cancel
           </AlertDialogTrigger>
@@ -145,16 +192,31 @@ export function WithdrawalActionButtons({
               value={reason}
               onChange={(e) => setReason(e.target.value)}
             />
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">2FA Code</Label>
+              <Input
+                type="text"
+                inputMode="numeric"
+                placeholder="Enter your 6-digit code"
+                value={totpCode}
+                onChange={(e) => setTotpCode(e.target.value)}
+                maxLength={6}
+                autoComplete="one-time-code"
+              />
+            </div>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
               <AlertDialogAction
-                disabled={isPending || !reason.trim()}
-                onClick={() =>
+                disabled={isPending || !reason.trim() || !totpCode.trim()}
+                onClick={() => {
                   handleAction(
-                    () => cancelWithdrawal(withdrawalId, reason),
-                    "cancelled"
-                  )
-                }
+                    () =>
+                      cancelWithdrawal(withdrawalId, reason, totpCode.trim()),
+                    "cancelled",
+                  );
+                  setReason("");
+                  setTotpCode("");
+                }}
               >
                 Confirm Cancel
               </AlertDialogAction>
@@ -163,9 +225,13 @@ export function WithdrawalActionButtons({
         </AlertDialog>
       )}
 
-      {/* Fail: shipped → failed */}
+      {/* Fail: shipped → failed — TOTP-gated (refunds user) */}
       {status === "shipped" && (
-        <AlertDialog>
+        <AlertDialog
+          onOpenChange={(v) => {
+            if (!v) setTotpCode("");
+          }}
+        >
           <AlertDialogTrigger render={<Button size="sm" variant="destructive" />}>
             Mark Failed
           </AlertDialogTrigger>
@@ -181,16 +247,31 @@ export function WithdrawalActionButtons({
               value={reason}
               onChange={(e) => setReason(e.target.value)}
             />
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">2FA Code</Label>
+              <Input
+                type="text"
+                inputMode="numeric"
+                placeholder="Enter your 6-digit code"
+                value={totpCode}
+                onChange={(e) => setTotpCode(e.target.value)}
+                maxLength={6}
+                autoComplete="one-time-code"
+              />
+            </div>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
               <AlertDialogAction
-                disabled={isPending || !reason.trim()}
-                onClick={() =>
+                disabled={isPending || !reason.trim() || !totpCode.trim()}
+                onClick={() => {
                   handleAction(
-                    () => failWithdrawal(withdrawalId, reason),
-                    "failed"
-                  )
-                }
+                    () =>
+                      failWithdrawal(withdrawalId, reason, totpCode.trim()),
+                    "failed",
+                  );
+                  setReason("");
+                  setTotpCode("");
+                }}
               >
                 Confirm Failed
               </AlertDialogAction>

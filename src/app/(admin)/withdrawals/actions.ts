@@ -4,13 +4,17 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
+import { require2FA } from "@/lib/require-2fa";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { backendApiRequest } from "@/lib/backend-api";
 
-export async function processWithdrawal(withdrawalId: string) {
+export async function processWithdrawal(withdrawalId: string, totpCode: string) {
   const db = await getDb();
   const session = await requirePageAccess("/withdrawals");
   await requireCapability(session, "__can_process_withdrawals", "process withdrawal requests");
+  // Initiates a real Fireblocks crypto transfer (or marks the physical
+  // withdrawal as ready to ship). Money-moving action → TOTP gate.
+  await require2FA(session.userId, totpCode);
 
   const withdrawal = await db.card_withdrawal_requests.findUnique({
     where: { id: withdrawalId },
@@ -148,10 +152,17 @@ export async function completeWithdrawal(withdrawalId: string) {
   revalidatePath(`/withdrawals/${withdrawalId}`);
 }
 
-export async function cancelWithdrawal(withdrawalId: string, reason: string) {
+export async function cancelWithdrawal(
+  withdrawalId: string,
+  reason: string,
+  totpCode: string,
+) {
   const db = await getDb();
   const session = await requirePageAccess("/withdrawals");
   await requireCapability(session, "__can_cancel_withdrawals", "cancel withdrawals");
+  // Cancelling refunds the user (balance + inventory restore via the
+  // backend) — money-moving, so TOTP-gated.
+  await require2FA(session.userId, totpCode);
 
   const withdrawal = await db.card_withdrawal_requests.findUnique({
     where: { id: withdrawalId },
@@ -176,10 +187,17 @@ export async function cancelWithdrawal(withdrawalId: string, reason: string) {
   revalidatePath(`/withdrawals/${withdrawalId}`);
 }
 
-export async function failWithdrawal(withdrawalId: string, reason: string) {
+export async function failWithdrawal(
+  withdrawalId: string,
+  reason: string,
+  totpCode: string,
+) {
   const db = await getDb();
   const session = await requirePageAccess("/withdrawals");
   await requireCapability(session, "__can_fail_withdrawals", "mark withdrawals as failed");
+  // Marking shipped-as-failed refunds the user (backend reverts the
+  // physical send + restores balance/inventory). Money-moving, gated.
+  await require2FA(session.userId, totpCode);
 
   const withdrawal = await db.card_withdrawal_requests.findUnique({
     where: { id: withdrawalId },
