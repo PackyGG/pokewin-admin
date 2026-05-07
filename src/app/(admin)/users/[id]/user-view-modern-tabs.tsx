@@ -435,11 +435,18 @@ function ReferrerCard({ user }: { user: UserDetail["user"] }) {
               <div className="flex flex-wrap items-center gap-2">
                 {/* The actual code string is the headline — it's what
                     admins are usually asked about. Mono font, tinted
-                    background so it reads as a token, not body text. */}
+                    background so it reads as a token, not body text.
+                    Clickable: navigates to the code owner's profile
+                    (same target as the @username link beside it) so
+                    admins can click either side to drill in. */}
                 {user.referredByCode ? (
-                  <span className="rounded-md bg-blue-500/15 px-2 py-1 font-mono text-sm font-semibold text-blue-700 dark:text-blue-300">
+                  <Link
+                    href={`/users/${user.referredBy}`}
+                    aria-label={`Open profile of ${user.referredByUsername ?? user.referredBy?.slice(0, 8)} (owner of ${user.referredByCode})`}
+                    className="rounded-md bg-blue-500/15 px-2 py-1 font-mono text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-500/25 dark:text-blue-300"
+                  >
                     {user.referredByCode}
-                  </span>
+                  </Link>
                 ) : (
                   <span className="text-sm italic text-muted-foreground">
                     code unknown
