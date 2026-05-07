@@ -106,6 +106,7 @@ export const CAPABILITIES = [
       { key: "users.toggle_feature_lock", label: "Toggle feature locks", description: "Lock/unlock deposits, withdrawals, exchanges, openings, vault." },
       { key: "users.change_role", label: "Change user role", description: "Change a user's platform role (user / creator / admin)." },
       { key: "users.update_withdrawal_limits", label: "Update withdrawal limits", description: "Set per-user withdrawal limits." },
+      { key: "users.export", label: "Export user emails", description: "Download a CSV of user emails via /api/users/export. Admin-only by default." },
     ],
   },
 
@@ -314,6 +315,7 @@ export const CAPABILITIES = [
       { key: "creators.delete_deal", label: "Delete deal", description: "Remove a creator deal." },
       { key: "creators.manual_fill", label: "Manual balance fill", description: "Trigger a manual balance fill for a creator." },
       { key: "creators.link_main_user", label: "Link to main user", description: "Link a creator admin user to a main-site user." },
+      { key: "creators.approve_leaderboard", label: "Approve affiliate leaderboard", description: "Approve, reject, or cancel a creator-submitted affiliate leaderboard." },
     ],
   },
 

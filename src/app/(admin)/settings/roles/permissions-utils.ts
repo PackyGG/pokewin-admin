@@ -75,6 +75,13 @@ export const CAPABILITIES: CapabilityDef[] = [
     description: "Set per-user creator/withdrawal limits and reset windows",
     group: "User Management",
   },
+  {
+    key: "__can_export_users",
+    label: "Export User Emails",
+    description:
+      "Download a CSV of user emails (PII) via /api/users/export. Admin-only by default — grant manually to any non-admin role that needs it.",
+    group: "User Management",
+  },
 
   // ── User Notes & Trust ──────────────────────────────────────────────
   {
@@ -496,6 +503,18 @@ export const CAPABILITIES: CapabilityDef[] = [
     key: "__can_link_creator_main_user",
     label: "Link Creator to Main User",
     description: "Link a creator admin user to their main-site user",
+    group: "Creators",
+  },
+  {
+    // Newly split out from __can_update_creator_deal — approval, rejection, and
+    // cancellation of submitted affiliate leaderboards. Admin-only by default;
+    // existing assignees of __can_update_creator_deal must add this new key
+    // manually in /admin-users (we deliberately do not migrate the prod
+    // allowed_pages arrays).
+    key: "__can_approve_leaderboard",
+    label: "Approve Affiliate Leaderboard",
+    description:
+      "Approve, reject, or cancel a creator-submitted affiliate leaderboard",
     group: "Creators",
   },
 
