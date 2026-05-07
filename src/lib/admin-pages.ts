@@ -40,6 +40,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Creator Portal", label: "My Profile", key: "/my-profile" },
   // Creators
   { group: "Creators", label: "Creators", key: "/creators" },
+  { group: "Creators", label: "Deal Estimates", key: "/creators/list" },
   { group: "Creators", label: "Codes", key: "/creators/codes" },
   { group: "Creators", label: "Ads", key: "/creators/ads" },
   { group: "Creators", label: "Analytics", key: "/creators/analytics" },
