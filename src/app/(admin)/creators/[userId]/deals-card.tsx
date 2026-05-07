@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { memo, useCallback, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Plus, Trash2, Pencil, DollarSign, Clock, Trophy, Monitor, AlertTriangle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -116,13 +116,26 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
   const [fillingDealId, setFillingDealId] = useState<string | null>(null);
   const [fillConfirmDeal, setFillConfirmDeal] = useState<Deal | null>(null);
 
+  // Functional updater — every onChange used to do `setForm({ ...form, x })`
+  // which captures the closed-over render snapshot. Under React 18 batching
+  // + fast typing this lost intermediate keystrokes. Updater form is the
+  // recommended pattern (see deal-form-dialog.tsx for the same approach).
+  const update = useCallback(
+    <K extends keyof DealFormData>(key: K, value: DealFormData[K]) => {
+      setForm((prev) => ({ ...prev, [key]: value }));
+    },
+    [],
+  );
+
   function openCreate() {
     setEditingDeal(null);
     setForm(emptyForm);
     setDialogOpen(true);
   }
 
-  function openEdit(deal: Deal) {
+  // Stable identity so memoized DealCard child rows don't bust their
+  // memo on every parent re-render.
+  const openEdit = useCallback((deal: Deal) => {
     setEditingDeal(deal);
     setForm({
       dealName: deal.dealName ?? "",
@@ -147,7 +160,7 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
       minStreamMinutes: deal.minStreamMinutes != null ? String(deal.minStreamMinutes) : "",
     });
     setDialogOpen(true);
-  }
+  }, []);
 
   function handleSubmit() {
     const amount = parseFloat(form.amount);
@@ -207,7 +220,7 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
     });
   }
 
-  function handleDelete(dealId: string) {
+  const handleDelete = useCallback((dealId: string) => {
     startTransition(async () => {
       try {
         await deleteDeal(dealId);
@@ -216,12 +229,15 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
         toast.error(e instanceof Error ? e.message : "Failed to delete deal");
       }
     });
-  }
+  }, []);
 
-  function handleManualFill(dealId: string) {
-    const deal = deals.find((d) => d.id === dealId);
-    if (deal) setFillConfirmDeal(deal);
-  }
+  const handleManualFill = useCallback(
+    (dealId: string) => {
+      const deal = deals.find((d) => d.id === dealId);
+      if (deal) setFillConfirmDeal(deal);
+    },
+    [deals],
+  );
 
   function confirmFill() {
     if (!fillConfirmDeal) return;
@@ -273,13 +289,13 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
                 <Input
                   placeholder="e.g. Twitch streamer"
                   value={form.dealName}
-                  onChange={(e) => setForm({ ...form, dealName: e.target.value })}
+                  onChange={(e) => update("dealName", e.target.value)}
                 />
               </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div className="space-y-2">
                   <Label>Type</Label>
-                  <Select value={form.dealType} onValueChange={(v) => v && setForm({ ...form, dealType: v })}>
+                  <Select value={form.dealType} onValueChange={(v) => v && update("dealType", v)}>
                     <SelectTrigger>
                       <span>{TYPE_LABELS[form.dealType] ?? form.dealType}</span>
                     </SelectTrigger>
@@ -298,14 +314,14 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
                     step="0.01"
                     placeholder="0.00"
                     value={form.amount}
-                    onChange={(e) => setForm({ ...form, amount: e.target.value })}
+                    onChange={(e) => update("amount", e.target.value)}
                   />
                 </div>
                 <div className="space-y-2">
                   <Label>Currency</Label>
                   <Input
                     value={form.currency}
-                    onChange={(e) => setForm({ ...form, currency: e.target.value })}
+                    onChange={(e) => update("currency", e.target.value)}
                   />
                 </div>
               </div>
@@ -315,7 +331,7 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
                   <Input
                     type="date"
                     value={form.startDate}
-                    onChange={(e) => setForm({ ...form, startDate: e.target.value })}
+                    onChange={(e) => update("startDate", e.target.value)}
                   />
                 </div>
                 <div className="space-y-2">
@@ -323,7 +339,7 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
                   <Input
                     type="date"
                     value={form.endDate}
-                    onChange={(e) => setForm({ ...form, endDate: e.target.value })}
+                    onChange={(e) => update("endDate", e.target.value)}
                   />
                 </div>
               </div>
@@ -343,7 +359,7 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
                     step="0.01"
                     placeholder="500.00"
                     value={form.dailyFillAmount}
-                    onChange={(e) => setForm({ ...form, dailyFillAmount: e.target.value })}
+                    onChange={(e) => update("dailyFillAmount", e.target.value)}
                   />
                 </div>
                 <div className="space-y-2">
@@ -351,13 +367,13 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
                   <Input
                     type="time"
                     value={form.dailyFillTime}
-                    onChange={(e) => setForm({ ...form, dailyFillTime: e.target.value })}
+                    onChange={(e) => update("dailyFillTime", e.target.value)}
                   />
                 </div>
                 <div className="flex items-end gap-2 pb-1">
                   <Switch
                     checked={form.dailyFillEnabled}
-                    onCheckedChange={(v) => setForm({ ...form, dailyFillEnabled: v })}
+                    onCheckedChange={(v) => update("dailyFillEnabled", v)}
                   />
                   <Label className="text-sm">Enabled</Label>
                 </div>
@@ -370,7 +386,7 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
                     step="1"
                     placeholder="20"
                     value={form.keepPercentage}
-                    onChange={(e) => setForm({ ...form, keepPercentage: e.target.value })}
+                    onChange={(e) => update("keepPercentage", e.target.value)}
                   />
                 </div>
               </div>
@@ -390,7 +406,7 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
                     step="0.01"
                     placeholder="200.00"
                     value={form.currencyLimitAmount}
-                    onChange={(e) => setForm({ ...form, currencyLimitAmount: e.target.value })}
+                    onChange={(e) => update("currencyLimitAmount", e.target.value)}
                   />
                 </div>
                 <div className="space-y-2">
@@ -400,7 +416,7 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
                     min="1"
                     placeholder="7"
                     value={form.currencyLimitResetDays}
-                    onChange={(e) => setForm({ ...form, currencyLimitResetDays: e.target.value })}
+                    onChange={(e) => update("currencyLimitResetDays", e.target.value)}
                   />
                 </div>
                 <div className="space-y-2">
@@ -412,7 +428,7 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
                     max="100"
                     placeholder="10"
                     value={form.percentageLimit}
-                    onChange={(e) => setForm({ ...form, percentageLimit: e.target.value })}
+                    onChange={(e) => update("percentageLimit", e.target.value)}
                   />
                 </div>
                 <div className="space-y-2">
@@ -422,7 +438,7 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
                     step="0.01"
                     placeholder="10.00"
                     value={form.tipLimit}
-                    onChange={(e) => setForm({ ...form, tipLimit: e.target.value })}
+                    onChange={(e) => update("tipLimit", e.target.value)}
                   />
                 </div>
                 <div className="space-y-2">
@@ -432,7 +448,7 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
                     min="1"
                     placeholder="7"
                     value={form.tipLimitResetDays}
-                    onChange={(e) => setForm({ ...form, tipLimitResetDays: e.target.value })}
+                    onChange={(e) => update("tipLimitResetDays", e.target.value)}
                   />
                 </div>
               </div>
@@ -452,7 +468,7 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
                     step="0.01"
                     placeholder="1000.00"
                     value={form.leaderboardPrizePool}
-                    onChange={(e) => setForm({ ...form, leaderboardPrizePool: e.target.value })}
+                    onChange={(e) => update("leaderboardPrizePool", e.target.value)}
                   />
                 </div>
                 <div className="space-y-2">
@@ -462,12 +478,12 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
                     step="1"
                     placeholder="50"
                     value={form.leaderboardOurShare}
-                    onChange={(e) => setForm({ ...form, leaderboardOurShare: e.target.value })}
+                    onChange={(e) => update("leaderboardOurShare", e.target.value)}
                   />
                 </div>
                 <div className="space-y-2">
                   <Label>Frequency</Label>
-                  <Select value={form.leaderboardFrequency || null} onValueChange={(v) => setForm({ ...form, leaderboardFrequency: v ?? "" })}>
+                  <Select value={form.leaderboardFrequency || null} onValueChange={(v) => update("leaderboardFrequency", v ?? "")}>
                     <SelectTrigger>
                       <span>{form.leaderboardFrequency ? { weekly: "Weekly", biweekly: "Bi-weekly", monthly: "Monthly" }[form.leaderboardFrequency] ?? form.leaderboardFrequency : "Select..."}</span>
                     </SelectTrigger>
@@ -493,7 +509,7 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
                   type="number"
                   placeholder="15"
                   value={form.minStreamMinutes}
-                  onChange={(e) => setForm({ ...form, minStreamMinutes: e.target.value })}
+                  onChange={(e) => update("minStreamMinutes", e.target.value)}
                 />
               </div>
             </div>
@@ -504,7 +520,7 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
               <Textarea
                 placeholder="Deal terms, conditions..."
                 value={form.notes}
-                onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                onChange={(e) => update("notes", e.target.value)}
                 rows={3}
               />
             </div>
@@ -552,7 +568,11 @@ export function DealsCard({ userId, deals }: { userId: string; deals: Deal[] }) 
   );
 }
 
-function DealCard({
+// React.memo so a list of deals doesn't re-render every card whenever
+// the parent's transition state, modal state, or any unrelated bit of
+// state flips. Callers pass stable useCallback'd handlers + per-row
+// `fillingDealId` for the loading state of the right card.
+const DealCard = memo(function DealCard({
   deal,
   onEdit,
   onDelete,
@@ -675,7 +695,7 @@ function DealCard({
       </CardContent>
     </Card>
   );
-}
+});
 
 function InfoBlock({
   label,
