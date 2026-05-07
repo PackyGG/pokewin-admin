@@ -40,6 +40,7 @@ import {
   Coins,
   ChevronRight,
   FlaskConical,
+  ListChecks,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -99,6 +100,7 @@ const ICONS: Record<string, LucideIcon> = {
   CalendarClock,
   Coins,
   FlaskConical,
+  ListChecks,
 };
 
 type NavItem = {
@@ -144,6 +146,10 @@ const NAV_GROUPS: NavGroup[] = [
       // expanding the group.
       { label: "Analytics", href: "/creators/analytics", icon: "BarChart3" },
       { label: "Creators", href: "/creators", icon: "Users" },
+      // Deal Estimates — scratchpad for prospective creators / deal
+      // budgeting. Sits right under Creators because it's a sibling
+      // planning surface to the live creator list.
+      { label: "Deal Estimates", href: "/creators/list", icon: "ListChecks" },
       // Ads is the more frequently-used surface (third-party promo
       // codes attached to specific campaigns) so it sits above Codes
       // (which is the raw code list).
