@@ -585,6 +585,64 @@ export async function getCodeAnalytics(code: string) {
   };
 }
 
+// Slim referrals query for the creator detail page. Returns ONLY the
+// columns that side panel actually renders (user, total wagers, total
+// commission, last activity) — no per-row correlated subqueries for
+// code_deposit_total / code_deposit_count, no active_elsewhere EXISTS
+// scan, no has_signup. The full version in getCodeAnalytics fires
+// 9 parallel queries and the usages query alone runs ~3 subqueries
+// per row, which is why /creators/[id] was waiting on data the page
+// then threw away. Use this when you only need the referrals list.
+export async function getCodeReferrals(code: string, limit: number = 50) {
+  const db = await getDb();
+  const uppercaseCode = code.toUpperCase();
+  const safeLimit = Math.max(1, Math.min(Math.floor(limit), 200));
+
+  const rows = await safe(
+    db.$queryRawUnsafe<
+      {
+        referred_user_id: string;
+        referred_username: string | null;
+        referred_email: string | null;
+        last_activity: Date;
+        total_wagers: string;
+        total_commission: string;
+      }[]
+    >(
+      `SELECT acu.referred_user_id,
+              u.username AS referred_username,
+              u.email    AS referred_email,
+              MAX(acu.created_at) AS last_activity,
+              COALESCE(SUM(acu.wager_amount_usd::numeric),   0)::text AS total_wagers,
+              COALESCE(SUM(acu.referrer_cut_usd::numeric),   0)::text AS total_commission
+         FROM affiliate_code_usages acu
+         LEFT JOIN "user" u ON u.id = acu.referred_user_id
+        WHERE UPPER(acu.code) = $1
+        GROUP BY acu.referred_user_id, u.username, u.email
+        ORDER BY MAX(acu.created_at) DESC
+        LIMIT ${safeLimit}`,
+      uppercaseCode,
+    ),
+    [] as {
+      referred_user_id: string;
+      referred_username: string | null;
+      referred_email: string | null;
+      last_activity: Date;
+      total_wagers: string;
+      total_commission: string;
+    }[],
+  );
+
+  return rows.map((r) => ({
+    referredUserId: r.referred_user_id,
+    referredUsername: r.referred_username,
+    referredEmail: r.referred_email,
+    lastActivityAt: r.last_activity.toISOString(),
+    totalWagersUsd: toNumber(r.total_wagers),
+    totalCommissionUsd: toNumber(r.total_commission),
+  }));
+}
+
 // Recent wager events from users tied to this affiliate code. Used by
 // the creator detail page to surface a chronological feed of activity
 // happening on the code right now (the per-user totals already live on

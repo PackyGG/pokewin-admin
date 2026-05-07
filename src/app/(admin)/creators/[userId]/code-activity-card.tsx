@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Activity, Coins, Package, Swords, Trophy, Users } from "lucide-react";
 
 import {
-  getCodeAnalytics,
+  getCodeReferrals,
   getRecentWagersOnCode,
 } from "@/lib/queries/creators";
 import { Badge } from "@/components/ui/badge";
@@ -64,12 +64,17 @@ export async function CodeActivityCard({ code }: { code: string }) {
   // Fetch in parallel so the panel doesn't extend the page TTFB. Both
   // queries already wrap their internals in safe() and return empty
   // arrays on failure, so we don't need a try/catch here.
-  const [analytics, recentWagers] = await Promise.all([
-    getCodeAnalytics(code),
+  //
+  // Slim queries on purpose: getCodeReferrals returns only the four
+  // columns the table renders (user / wagered / commission / last
+  // activity) — no per-row correlated subqueries. The fuller package
+  // (with FTD breakdown, status badges, click acquisition charts,
+  // country breakdown) lives behind the "Full breakdown →" link to
+  // /creators/codes/[code], which uses getCodeAnalytics for that.
+  const [referrals, recentWagers] = await Promise.all([
+    getCodeReferrals(code, 25),
     getRecentWagersOnCode(code, 25),
   ]);
-
-  const referrals = analytics?.recentReferrals ?? [];
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
