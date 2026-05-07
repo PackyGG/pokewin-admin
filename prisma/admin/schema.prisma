@@ -46,6 +46,7 @@ model admin_users {
   shift_assignments     admin_shift_assignments[]
   salary_employees      salary_employees[]
   salary_payouts        salary_payouts[]
+  creator_deal_estimates creator_deal_estimates[] @relation("creator_deal_estimates_created_by")
 }
 
 // Custom role definitions for the granular-permissions system. Four
@@ -381,6 +382,68 @@ model admin_shift_assignments {
   @@index([admin_user_id])
 }
 
+
+// ─── Creator deal estimates (planning scratchpad) ────────────────
+// Standalone tracking of prospective creator deals — admins enter
+// the deal terms here BEFORE any account / actual deal exists in
+// the main system, just to estimate "how much are we spending on
+// creators each month" and compare proposals. NOT linked to
+// admin_users, NOT linked to creator_deals on main DB. Pure
+// scratchpad — name is a free-text label.
+model creator_deal_estimates {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Free-text label — usually the creator's display name / handle.
+  // No FK constraint; this list is intentionally decoupled from
+  // any real user record.
+  name                String
+  // ── Daily / weekly spend (USD, all optional) ───────────────────
+  // daily_fill_usd: USD topped up onto the creator's balance per
+  // day. Weekly raw fill is daily_fill × 7 (computed at render time).
+  daily_fill_usd      Decimal? @db.Decimal(20, 2)
+  // withdrawal_cap_usd: max creator withdrawal per WEEK (USD).
+  // Treated as weekly for the Max Cost rollup so it lines up with
+  // daily_fill × 7. Document this on the form so admins enter the
+  // right number.
+  withdrawal_cap_usd  Decimal? @db.Decimal(20, 2)
+  // withdrawal_percent: cap on how much of their wagering they're
+  // allowed to withdraw (%). E.g. 30 = up to 30% of wager.
+  withdrawal_percent  Decimal? @db.Decimal(5, 2)
+  // ── Leaderboard sponsorship (one-time prize pool) ──────────────
+  // leaderboard_cost_usd: total prize pool of the leaderboard
+  // contest.
+  leaderboard_cost_usd Decimal? @db.Decimal(20, 2)
+  // packy_paid_percent: % of the prize pool we (the house) cover.
+  // Raw LB cost = leaderboard_cost × (packy_paid_percent / 100).
+  packy_paid_percent  Decimal? @db.Decimal(5, 2)
+  // ── Deal duration ──────────────────────────────────────────────
+  // deal_length_weeks: how long the deal runs (in WEEKS). Combined
+  // with the daily / weekly spend to compute Max Cost.
+  deal_length_weeks   Int?
+  // ── Video deal terms ───────────────────────────────────────────
+  // Same shape as the daily fill (amount + recoup % + count) but
+  // for video deliverables. Per the user spec: video cost counts
+  // into the same weekly bucket as the withdraw cap — added to
+  // weekly outflow alongside it, scaled by deal_length_weeks.
+  // video_amount_usd:   USD paid PER VIDEO
+  // video_percent:      % of video cost the house recoups
+  // video_fills_per_week: number of videos per week
+  video_amount_usd       Decimal? @db.Decimal(20, 2)
+  video_percent          Decimal? @db.Decimal(5, 2)
+  video_fills_per_week   Int?
+  // ── Flat balances added straight to Max Cost ───────────────────
+  // tip_balance_usd / battle_balance_usd: one-time pre-loaded
+  // balances we hand the creator for tips / sponsored battles.
+  // Added straight to Max Cost — no per-week scaling, no recoup.
+  tip_balance_usd     Decimal? @db.Decimal(20, 2)
+  battle_balance_usd  Decimal? @db.Decimal(20, 2)
+  notes               String?
+  created_at          DateTime @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime @updatedAt @db.Timestamptz(6)
+  created_by_id       String   @db.Uuid
+  created_by          admin_users @relation("creator_deal_estimates_created_by", fields: [created_by_id], references: [id])
+
+  @@index([created_at(sort: Desc)])
+}
 
 // ─── Employee salaries (motha-only manual payout register) ────────
 // We dropped the on-chain auto-payment system — motha sends USDT
