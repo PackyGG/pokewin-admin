@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import bcrypt from "bcryptjs";
+import { z } from "zod";
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { requirePageAccess } from "@/lib/dal";
@@ -12,6 +13,116 @@ import { toNumber } from "@/lib/utils/decimal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { dispatchWebhook } from "@/lib/webhook-dispatcher";
 import type { deal_type, deal_status } from "@/generated/admin-prisma/client";
+
+// ── Schemas ─────────────────────────────────────────────────────────
+
+// Affiliate codes live in URL paths and chat mentions — restrict to
+// lowercase alphanumeric + `_` + `-` to keep them safe everywhere.
+const codeSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .min(2)
+  .max(32)
+  .regex(/^[a-z0-9_-]+$/, "Code must be lowercase alphanumeric, _ or -");
+
+// Reusable USD-amount validator. Caps at 10M to catch typos.
+const optionalDollarAmount = z
+  .number()
+  .finite()
+  .nonnegative()
+  .max(10_000_000)
+  .nullable()
+  .optional();
+
+const requiredDollarAmount = z
+  .number()
+  .finite()
+  .nonnegative()
+  .multipleOf(0.01)
+  .max(10_000_000);
+
+// 0–100 percent, NOT 0–1. Admins type "20" not "0.2".
+const optionalPercent = z
+  .number()
+  .finite()
+  .nonnegative()
+  .max(100)
+  .nullable()
+  .optional();
+
+// Reset-window in days. 3650 = ~10 years, plenty of headroom.
+const optionalResetDays = z
+  .number()
+  .int()
+  .nonnegative()
+  .max(3650)
+  .nullable()
+  .optional();
+
+// Used for min-stream-minutes etc.
+const optionalCount = z
+  .number()
+  .int()
+  .nonnegative()
+  .max(1_000_000)
+  .nullable()
+  .optional();
+
+const dealTypeSchema = z.enum([
+  "flat_fee",
+  "rev_share",
+  "hybrid",
+  "custom",
+] as const satisfies readonly deal_type[]);
+
+const dealStatusSchema = z.enum([
+  "pending",
+  "active",
+  "completed",
+  "cancelled",
+] as const satisfies readonly deal_status[]);
+
+const createDealSchema = z.object({
+  dealName: z.string().trim().max(120).optional(),
+  dealType: dealTypeSchema,
+  amount: requiredDollarAmount,
+  currency: z.string().trim().min(1).max(8).optional(),
+  startDate: z.string().min(1, "Start date is required"),
+  endDate: z.string().optional(),
+  notes: z.string().max(2000).optional(),
+  keepPercentage: optionalPercent,
+  currencyLimitAmount: optionalDollarAmount,
+  currencyLimitResetDays: optionalResetDays,
+  percentageLimit: optionalPercent,
+  tipLimit: optionalDollarAmount,
+  tipLimitResetDays: optionalResetDays,
+  leaderboardPrizePool: optionalDollarAmount,
+  leaderboardOurShare: optionalPercent,
+  leaderboardFrequency: z.string().trim().max(32).nullable().optional(),
+  minStreamMinutes: optionalCount,
+});
+
+const updateDealSchema = z.object({
+  dealName: z.string().trim().max(120).nullable().optional(),
+  dealType: dealTypeSchema.optional(),
+  amount: requiredDollarAmount.optional(),
+  currency: z.string().trim().min(1).max(8).optional(),
+  startDate: z.string().min(1).optional(),
+  endDate: z.string().nullable().optional(),
+  status: dealStatusSchema.optional(),
+  notes: z.string().max(2000).nullable().optional(),
+  keepPercentage: optionalPercent,
+  currencyLimitAmount: optionalDollarAmount,
+  currencyLimitResetDays: optionalResetDays,
+  percentageLimit: optionalPercent,
+  tipLimit: optionalDollarAmount,
+  tipLimitResetDays: optionalResetDays,
+  leaderboardPrizePool: optionalDollarAmount,
+  leaderboardOurShare: optionalPercent,
+  leaderboardFrequency: z.string().trim().max(32).nullable().optional(),
+  minStreamMinutes: optionalCount,
+});
 
 export async function makeCreator(userId: string) {
   const db = await getDb();
@@ -122,8 +233,11 @@ export async function addAffiliateCode(userId: string, code: string) {
   const session = await requirePageAccess("/creators");
   await requireCapability(session, "__can_assign_affiliate", "create affiliate codes");
 
-  const trimmed = code.trim().toLowerCase();
-  if (!trimmed || trimmed.length < 2) throw new Error("Code must be at least 2 characters");
+  const parsedCode = codeSchema.safeParse(code);
+  if (!parsedCode.success) {
+    throw new Error(parsedCode.error.issues[0]?.message ?? "Invalid affiliate code");
+  }
+  const trimmed = parsedCode.data;
 
   const existing = await db.affiliate_codes.findUnique({ where: { code: trimmed } });
   if (existing) throw new Error("Code already exists");
@@ -600,52 +714,39 @@ export async function testWebhook(webhookId: string) {
 
 export async function createDeal(
   targetUserId: string,
-  data: {
-    dealName?: string;
-    dealType: deal_type;
-    amount: number;
-    currency?: string;
-    startDate: string;
-    endDate?: string;
-    notes?: string;
-    keepPercentage?: number | null;
-    currencyLimitAmount?: number | null;
-    currencyLimitResetDays?: number | null;
-    percentageLimit?: number | null;
-    tipLimit?: number | null;
-    tipLimitResetDays?: number | null;
-    leaderboardPrizePool?: number | null;
-    leaderboardOurShare?: number | null;
-    leaderboardFrequency?: string | null;
-    minStreamMinutes?: number | null;
-  }
+  data: z.infer<typeof createDealSchema>
 ) {
   const session = await requirePageAccess("/creators");
   await requireCapability(session, "__can_create_creator_deal", "create creator deals");
 
+  const parsed = createDealSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message ?? "Invalid deal input");
+  }
+
   // Calculate max financial exposure
-  const maxExposure = calculateMaxExposure(data);
+  const maxExposure = calculateMaxExposure(parsed.data);
 
   const deal = await adminDb.creator_deals.create({
     data: {
       target_user_id: targetUserId,
-      deal_name: data.dealName ?? null,
-      deal_type: data.dealType,
-      amount: data.amount,
-      currency: data.currency ?? "USD",
-      start_date: new Date(data.startDate),
-      end_date: data.endDate ? new Date(data.endDate) : null,
-      notes: data.notes ?? null,
-      keep_percentage: data.keepPercentage ?? null,
-      currency_limit_amount: data.currencyLimitAmount ?? null,
-      currency_limit_reset_days: data.currencyLimitResetDays ?? null,
-      percentage_limit: data.percentageLimit ?? null,
-      tip_limit: data.tipLimit ?? null,
-      tip_limit_reset_days: data.tipLimitResetDays ?? null,
-      leaderboard_prize_pool: data.leaderboardPrizePool ?? null,
-      leaderboard_our_share: data.leaderboardOurShare ?? null,
-      leaderboard_frequency: data.leaderboardFrequency ?? null,
-      min_stream_minutes: data.minStreamMinutes ?? null,
+      deal_name: parsed.data.dealName ?? null,
+      deal_type: parsed.data.dealType,
+      amount: parsed.data.amount,
+      currency: parsed.data.currency ?? "USD",
+      start_date: new Date(parsed.data.startDate),
+      end_date: parsed.data.endDate ? new Date(parsed.data.endDate) : null,
+      notes: parsed.data.notes ?? null,
+      keep_percentage: parsed.data.keepPercentage ?? null,
+      currency_limit_amount: parsed.data.currencyLimitAmount ?? null,
+      currency_limit_reset_days: parsed.data.currencyLimitResetDays ?? null,
+      percentage_limit: parsed.data.percentageLimit ?? null,
+      tip_limit: parsed.data.tipLimit ?? null,
+      tip_limit_reset_days: parsed.data.tipLimitResetDays ?? null,
+      leaderboard_prize_pool: parsed.data.leaderboardPrizePool ?? null,
+      leaderboard_our_share: parsed.data.leaderboardOurShare ?? null,
+      leaderboard_frequency: parsed.data.leaderboardFrequency ?? null,
+      min_stream_minutes: parsed.data.minStreamMinutes ?? null,
       max_financial_exposure: maxExposure,
       status: "active",
     },
@@ -653,13 +754,13 @@ export async function createDeal(
   });
 
   // Sync withdrawal limits to main DB
-  await syncWithdrawalLimits(targetUserId, data);
+  await syncWithdrawalLimits(targetUserId, parsed.data);
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "creator_deal_created",
     targetUserId,
-    metadata: { dealId: deal.id, dealType: data.dealType, amount: data.amount },
+    metadata: { dealId: deal.id, dealType: parsed.data.dealType, amount: parsed.data.amount },
   });
 
   revalidatePath(`/creators/${targetUserId}`);
@@ -667,64 +768,51 @@ export async function createDeal(
 
 export async function updateDeal(
   dealId: string,
-  data: {
-    dealName?: string | null;
-    dealType?: deal_type;
-    amount?: number;
-    currency?: string;
-    startDate?: string;
-    endDate?: string | null;
-    status?: deal_status;
-    notes?: string | null;
-    keepPercentage?: number | null;
-    currencyLimitAmount?: number | null;
-    currencyLimitResetDays?: number | null;
-    percentageLimit?: number | null;
-    tipLimit?: number | null;
-    tipLimitResetDays?: number | null;
-    leaderboardPrizePool?: number | null;
-    leaderboardOurShare?: number | null;
-    leaderboardFrequency?: string | null;
-    minStreamMinutes?: number | null;
-  }
+  data: z.infer<typeof updateDealSchema>
 ) {
   const session = await requirePageAccess("/creators");
   await requireCapability(session, "__can_update_creator_deal", "update creator deals");
+
+  const parsed = updateDealSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message ?? "Invalid deal input");
+  }
+  const v = parsed.data;
 
   const deal = await adminDb.creator_deals.findUnique({ where: { id: dealId } });
   if (!deal) throw new Error("Deal not found");
 
   // Merge existing deal data with updates for exposure calculation
   const merged = {
-    currencyLimitAmount: data.currencyLimitAmount !== undefined ? data.currencyLimitAmount : toNumber(deal.currency_limit_amount),
-    currencyLimitResetDays: data.currencyLimitResetDays !== undefined ? data.currencyLimitResetDays : deal.currency_limit_reset_days,
-    leaderboardPrizePool: data.leaderboardPrizePool !== undefined ? data.leaderboardPrizePool : toNumber(deal.leaderboard_prize_pool),
-    leaderboardOurShare: data.leaderboardOurShare !== undefined ? data.leaderboardOurShare : toNumber(deal.leaderboard_our_share),
-    leaderboardFrequency: data.leaderboardFrequency !== undefined ? data.leaderboardFrequency : deal.leaderboard_frequency,
+    currencyLimitAmount: v.currencyLimitAmount !== undefined ? v.currencyLimitAmount : toNumber(deal.currency_limit_amount),
+    currencyLimitResetDays: v.currencyLimitResetDays !== undefined ? v.currencyLimitResetDays : deal.currency_limit_reset_days,
+    leaderboardPrizePool: v.leaderboardPrizePool !== undefined ? v.leaderboardPrizePool : toNumber(deal.leaderboard_prize_pool),
+    leaderboardOurShare: v.leaderboardOurShare !== undefined ? v.leaderboardOurShare : toNumber(deal.leaderboard_our_share),
+    leaderboardFrequency: v.leaderboardFrequency !== undefined ? v.leaderboardFrequency : deal.leaderboard_frequency,
   };
   const maxExposure = calculateMaxExposure(merged);
 
   await adminDb.creator_deals.update({
     where: { id: dealId },
     data: {
-      ...(data.dealName !== undefined && { deal_name: data.dealName }),
-      ...(data.dealType !== undefined && { deal_type: data.dealType }),
-      ...(data.amount !== undefined && { amount: data.amount }),
-      ...(data.currency !== undefined && { currency: data.currency }),
-      ...(data.startDate !== undefined && { start_date: new Date(data.startDate) }),
-      ...(data.endDate !== undefined && { end_date: data.endDate ? new Date(data.endDate) : null }),
-      ...(data.status !== undefined && { status: data.status }),
-      ...(data.notes !== undefined && { notes: data.notes }),
-      ...(data.keepPercentage !== undefined && { keep_percentage: data.keepPercentage }),
-      ...(data.currencyLimitAmount !== undefined && { currency_limit_amount: data.currencyLimitAmount }),
-      ...(data.currencyLimitResetDays !== undefined && { currency_limit_reset_days: data.currencyLimitResetDays }),
-      ...(data.percentageLimit !== undefined && { percentage_limit: data.percentageLimit }),
-      ...(data.tipLimit !== undefined && { tip_limit: data.tipLimit }),
-      ...(data.tipLimitResetDays !== undefined && { tip_limit_reset_days: data.tipLimitResetDays }),
-      ...(data.leaderboardPrizePool !== undefined && { leaderboard_prize_pool: data.leaderboardPrizePool }),
-      ...(data.leaderboardOurShare !== undefined && { leaderboard_our_share: data.leaderboardOurShare }),
-      ...(data.leaderboardFrequency !== undefined && { leaderboard_frequency: data.leaderboardFrequency }),
-      ...(data.minStreamMinutes !== undefined && { min_stream_minutes: data.minStreamMinutes }),
+      ...(v.dealName !== undefined && { deal_name: v.dealName }),
+      ...(v.dealType !== undefined && { deal_type: v.dealType }),
+      ...(v.amount !== undefined && { amount: v.amount }),
+      ...(v.currency !== undefined && { currency: v.currency }),
+      ...(v.startDate !== undefined && { start_date: new Date(v.startDate) }),
+      ...(v.endDate !== undefined && { end_date: v.endDate ? new Date(v.endDate) : null }),
+      ...(v.status !== undefined && { status: v.status }),
+      ...(v.notes !== undefined && { notes: v.notes }),
+      ...(v.keepPercentage !== undefined && { keep_percentage: v.keepPercentage }),
+      ...(v.currencyLimitAmount !== undefined && { currency_limit_amount: v.currencyLimitAmount }),
+      ...(v.currencyLimitResetDays !== undefined && { currency_limit_reset_days: v.currencyLimitResetDays }),
+      ...(v.percentageLimit !== undefined && { percentage_limit: v.percentageLimit }),
+      ...(v.tipLimit !== undefined && { tip_limit: v.tipLimit }),
+      ...(v.tipLimitResetDays !== undefined && { tip_limit_reset_days: v.tipLimitResetDays }),
+      ...(v.leaderboardPrizePool !== undefined && { leaderboard_prize_pool: v.leaderboardPrizePool }),
+      ...(v.leaderboardOurShare !== undefined && { leaderboard_our_share: v.leaderboardOurShare }),
+      ...(v.leaderboardFrequency !== undefined && { leaderboard_frequency: v.leaderboardFrequency }),
+      ...(v.minStreamMinutes !== undefined && { min_stream_minutes: v.minStreamMinutes }),
       max_financial_exposure: maxExposure,
       updated_at: new Date(),
     },
@@ -733,18 +821,18 @@ export async function updateDeal(
 
   // Sync withdrawal limits to main DB
   await syncWithdrawalLimits(deal.target_user_id, {
-    currencyLimitAmount: data.currencyLimitAmount !== undefined ? data.currencyLimitAmount : toNumber(deal.currency_limit_amount),
-    currencyLimitResetDays: data.currencyLimitResetDays !== undefined ? data.currencyLimitResetDays : deal.currency_limit_reset_days,
-    percentageLimit: data.percentageLimit !== undefined ? data.percentageLimit : toNumber(deal.percentage_limit),
-    tipLimit: data.tipLimit !== undefined ? data.tipLimit : toNumber(deal.tip_limit),
-    tipLimitResetDays: data.tipLimitResetDays !== undefined ? data.tipLimitResetDays : deal.tip_limit_reset_days,
+    currencyLimitAmount: v.currencyLimitAmount !== undefined ? v.currencyLimitAmount : toNumber(deal.currency_limit_amount),
+    currencyLimitResetDays: v.currencyLimitResetDays !== undefined ? v.currencyLimitResetDays : deal.currency_limit_reset_days,
+    percentageLimit: v.percentageLimit !== undefined ? v.percentageLimit : toNumber(deal.percentage_limit),
+    tipLimit: v.tipLimit !== undefined ? v.tipLimit : toNumber(deal.tip_limit),
+    tipLimitResetDays: v.tipLimitResetDays !== undefined ? v.tipLimitResetDays : deal.tip_limit_reset_days,
   });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "creator_deal_updated",
     targetUserId: deal.target_user_id,
-    metadata: { dealId, ...data },
+    metadata: { dealId, ...v },
   });
 
   revalidatePath(`/creators/${deal.target_user_id}`);
