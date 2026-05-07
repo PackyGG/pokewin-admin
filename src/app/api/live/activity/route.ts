@@ -5,6 +5,13 @@ import {
 } from "@/lib/queries/dashboard-live";
 import { sseResponse } from "@/lib/sse";
 
+// Per-user concurrent-stream cap (3) for THIS route in THIS Node.js
+// process. Cap prevents a single tab-storm from holding three live
+// upstreams open and crowding out other admins. In-memory only —
+// per-instance, not global. Acceptable until a shared cache is wired up.
+const MAX_CONCURRENT = 3;
+const openStreams = new Map<string, number>();
+
 // This route streams and is expected to stay open for minutes at a time.
 // Vercel's Fluid Compute runtime supports streaming Responses; keep the
 // default Node runtime (NOT Edge) because the underlying Prisma query
@@ -26,10 +33,29 @@ export async function GET(request: Request): Promise<Response> {
   // Gate identical to the existing server-action wrapper
   // (`fetchRecentActivityLive`). Fails hard via redirect() if unauthed,
   // which turns into a normal HTTP redirect for the EventSource client.
-  await requirePageAccess("/dashboard");
+  const session = await requirePageAccess("/dashboard");
+  const userId = session.userId;
+
+  // Cap per-user concurrent SSE streams. The 4th attempt is rejected
+  // with 429 — the EventSource client surfaces this as `error` and the
+  // page can warn the user instead of silently piling on connections.
+  const currentOpen = openStreams.get(userId) ?? 0;
+  if (currentOpen >= MAX_CONCURRENT) {
+    return new Response("Too many concurrent streams", { status: 429 });
+  }
+  openStreams.set(userId, currentOpen + 1);
+  let decremented = false;
+  const decrementOnce = () => {
+    if (decremented) return;
+    decremented = true;
+    const next = (openStreams.get(userId) ?? 1) - 1;
+    if (next <= 0) openStreams.delete(userId);
+    else openStreams.set(userId, next);
+  };
 
   return sseResponse<LiveActivityItem>({
     request,
+    onClose: decrementOnce,
     initial: async () => {
       const rows = await getLiveActivity({ sinceCreatedAt: null, limit: 30 });
       // Advance the cursor to the newest row so `produce()` only emits

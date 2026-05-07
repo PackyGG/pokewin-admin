@@ -42,6 +42,13 @@ export function sseResponse<T>(params: {
   ) => Promise<{ rows: T[]; nextCursor: string | null }>;
   intervalMs?: number;
   maxDurationMs?: number;
+  /**
+   * Optional callback fired exactly once when the stream is torn down
+   * (client disconnect, server-initiated rotation, or write failure).
+   * Used by the live routes to decrement a per-user concurrent-stream
+   * counter so a 4th tab can connect once one of the first 3 hangs up.
+   */
+  onClose?: () => void;
 }): Response {
   const {
     request,
@@ -50,6 +57,7 @@ export function sseResponse<T>(params: {
     intervalMs = 3000,
     // 4 min — well under Vercel's 5min default maxDuration cap.
     maxDurationMs = 240_000,
+    onClose,
   } = params;
 
   const encoder = new TextEncoder();
@@ -79,6 +87,13 @@ export function sseResponse<T>(params: {
           controller.close();
         } catch {
           // Already closed — ignore.
+        }
+        if (onClose) {
+          try {
+            onClose();
+          } catch {
+            // The caller's onClose mustn't break the cleanup.
+          }
         }
       };
 
