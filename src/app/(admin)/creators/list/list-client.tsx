@@ -5,8 +5,12 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   Calculator,
+  CircleDollarSign,
+  FileText,
+  Notebook,
   Pencil,
   Plus,
+  Settings2,
   Trash2,
   Users,
   X,
@@ -61,10 +65,6 @@ export type CreatorEstimate = {
 };
 
 // ── Computed numbers (mirror page.tsx server computation) ─────────
-
-function rawWeeklyAmount(e: CreatorEstimate): number {
-  return (e.dailyFillUsd ?? 0) * 7;
-}
 
 function rawLbCost(e: CreatorEstimate): number {
   const lb = e.leaderboardCostUsd ?? 0;
@@ -160,34 +160,122 @@ export function CreatorEstimatesClient({
 }
 
 // ── Per-deal card ─────────────────────────────────────────────────
+//
+// Structure (top → bottom):
+//   1. Identity row — icon + name + length pill + edit/delete
+//   2. Hero — Max Cost in rose (house outflow per CLAUDE.md POV)
+//   3. Cost breakdown — only the components that actually contribute
+//      to Max Cost. Each row shows the dollar contribution on the
+//      right, and the small calc that produced it on the left under
+//      the label. Zero/null components are skipped so the card stays
+//      tight on simple deals (e.g. no leaderboard, no balances).
+//   4. Deal terms — the metadata the cost math doesn't directly use:
+//      daily fill (balance-side, capped by WD cap), withdraw % of
+//      balance, and the per-video terms when they exist. Hidden as a
+//      whole if none are set.
+//   5. Notes — italic muted block at the bottom.
 
 function EstimateCard({ estimate }: { estimate: CreatorEstimate }) {
   const [editOpen, setEditOpen] = useState(false);
   const max = maxCost(estimate);
-  const weekly = rawWeeklyAmount(estimate);
   const lbRaw = rawLbCost(estimate);
+  const videoNet = weeklyVideoNet(estimate);
+  const weeks = estimate.dealLengthWeeks ?? 0;
+
+  // Build the cost breakdown rows lazily — only show lines that
+  // actually contribute non-zero $ to Max Cost. Keeps the card
+  // visually tight when a deal has no leaderboard / no balances.
+  const breakdownRows: BreakdownRow[] = [];
+  if (estimate.withdrawalCapUsd && weeks) {
+    breakdownRows.push({
+      label: "Withdrawals",
+      hint: `${fmt$(estimate.withdrawalCapUsd)}/wk × ${weeks} wk${weeks === 1 ? "" : "s"}`,
+      amount: estimate.withdrawalCapUsd * weeks,
+    });
+  }
+  if (videoNet > 0 && weeks) {
+    breakdownRows.push({
+      label: "Videos (net)",
+      hint: `${fmt$(videoNet)}/wk × ${weeks} wk${weeks === 1 ? "" : "s"}`,
+      amount: videoNet * weeks,
+    });
+  }
+  if (lbRaw > 0) {
+    breakdownRows.push({
+      label: "Leaderboards",
+      hint: `${fmt$(estimate.leaderboardCostUsd)} × ${estimate.packyPaidPercent}% packy`,
+      amount: lbRaw,
+    });
+  }
+  if (estimate.tipBalanceUsd && estimate.tipBalanceUsd > 0) {
+    breakdownRows.push({
+      label: "Tip balance",
+      hint: "one-time",
+      amount: estimate.tipBalanceUsd,
+    });
+  }
+  if (estimate.battleBalanceUsd && estimate.battleBalanceUsd > 0) {
+    breakdownRows.push({
+      label: "Battle balance",
+      hint: "one-time",
+      amount: estimate.battleBalanceUsd,
+    });
+  }
+
+  // Build deal-terms rows the same way: include only what's set so
+  // we never render a section of dashes.
+  const termsRows: TermRow[] = [];
+  if (estimate.dailyFillUsd) {
+    const wk = estimate.dailyFillUsd * 7;
+    termsRows.push({
+      label: "Daily fill",
+      value: `${fmt$(estimate.dailyFillUsd)}/day`,
+      hint: `${fmt$(wk)}/wk · balance side`,
+    });
+  }
+  if (estimate.withdrawalPercent !== null) {
+    termsRows.push({
+      label: "Withdraw %",
+      value: `${estimate.withdrawalPercent}%`,
+      hint: "of balance",
+    });
+  }
+  if (estimate.videoAmountUsd || estimate.videoFillsPerWeek) {
+    const fills = estimate.videoFillsPerWeek ?? 0;
+    const amt = estimate.videoAmountUsd ?? 0;
+    const pct = estimate.videoPercent ?? 0;
+    termsRows.push({
+      label: "Videos",
+      value: `${fmt$(amt)} × ${fills}/wk`,
+      hint: pct > 0 ? `${pct}% recoup` : undefined,
+    });
+  }
 
   return (
-    <div className="group relative overflow-hidden rounded-2xl border border-border/60 bg-card p-5 transition-all hover:-translate-y-px hover:border-border hover:shadow-lg sm:p-6">
+    <div className="group relative overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-br from-card via-card to-card/80 p-5 transition-all hover:-translate-y-px hover:border-border hover:shadow-lg sm:p-6">
       <div
         aria-hidden
-        className="pointer-events-none absolute -right-16 -top-16 size-40 rounded-full bg-rose-500/0 blur-3xl transition-colors duration-500 group-hover:bg-rose-500/[0.08]"
+        className="pointer-events-none absolute -right-16 -top-16 size-40 rounded-full bg-rose-500/[0.06] blur-3xl transition-colors duration-500 group-hover:bg-rose-500/[0.12]"
       />
 
       <div className="relative space-y-5">
-        {/* Identity + actions */}
+        {/* ── Identity + actions ────────────────────────────────── */}
         <div className="flex items-start gap-3">
-          <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-rose-500/10 text-rose-500">
-            <Users className="size-6" />
+          <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-rose-500/10 text-rose-500">
+            <Users className="size-5" />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-base font-semibold leading-tight">
-              {estimate.name}
-            </p>
+            <div className="flex items-center gap-2">
+              <p className="truncate text-base font-semibold leading-tight">
+                {estimate.name}
+              </p>
+              {weeks > 0 && (
+                <span className="shrink-0 rounded-md border border-border/60 bg-muted/40 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {weeks} wk{weeks === 1 ? "" : "s"}
+                </span>
+              )}
+            </div>
             <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-              {estimate.dealLengthWeeks
-                ? `${estimate.dealLengthWeeks}-week deal · `
-                : ""}
               added {formatRelative(estimate.createdAt)}
             </p>
           </div>
@@ -205,122 +293,69 @@ function EstimateCard({ estimate }: { estimate: CreatorEstimate }) {
           </div>
         </div>
 
-        {/* Headline: Max Cost — rose because it's house outflow */}
-        <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 px-4 py-3">
+        {/* ── Hero: Max Cost ────────────────────────────────────── */}
+        {/* Rose because it's house outflow per CLAUDE.md POV. The
+            secondary line gives the admin one piece of context they
+            actually want at a glance — over how many weeks does this
+            $ figure cover. */}
+        <div className="relative overflow-hidden rounded-xl border border-rose-500/30 bg-gradient-to-br from-rose-500/[0.08] via-rose-500/[0.04] to-transparent px-4 py-3.5">
           <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
             <Calculator className="size-3" />
-            Max cost (over deal)
+            Max cost
           </div>
-          <p className="mt-0.5 text-2xl font-bold tabular-nums text-rose-600 dark:text-rose-400">
+          <p className="mt-1 text-3xl font-bold tabular-nums leading-none text-rose-600 dark:text-rose-400">
             {fmt$(max)}
           </p>
-          <p className="mt-0.5 text-[10px] text-muted-foreground">
-            (WD cap + video net) × weeks + raw LB cost + tip + battle
+          <p className="mt-1.5 text-[11px] text-muted-foreground">
+            {weeks > 0
+              ? `worst case across ${weeks} week${weeks === 1 ? "" : "s"}`
+              : "worst case"}
           </p>
         </div>
 
-        {/* Field grid — every column the user listed, raw inputs +
-            computed derivations side by side. */}
-        <div className="grid grid-cols-2 gap-x-3 gap-y-3">
-          <Stat label="Daily fill">
-            <span className="block truncate text-sm font-semibold tabular-nums">
-              {fmt$(estimate.dailyFillUsd)}
-            </span>
-          </Stat>
-          <Stat label="Raw $ / week">
-            <span className="block truncate text-sm font-semibold tabular-nums">
-              {estimate.dailyFillUsd ? fmt$(weekly) : "—"}
-            </span>
-          </Stat>
-          <Stat label="Withdraw %">
-            <span className="block truncate text-sm font-semibold tabular-nums">
-              {estimate.withdrawalPercent !== null
-                ? `${estimate.withdrawalPercent}%`
-                : "—"}
-            </span>
-          </Stat>
-          <Stat label="Withdraw cap / wk">
-            <span className="block truncate text-sm font-semibold tabular-nums">
-              {fmt$(estimate.withdrawalCapUsd)}
-            </span>
-          </Stat>
-          <Stat label="Leaderboard cost">
-            <span className="block truncate text-sm font-semibold tabular-nums">
-              {fmt$(estimate.leaderboardCostUsd)}
-            </span>
-          </Stat>
-          <Stat label="Packy paid %">
-            <span className="block truncate text-sm font-semibold tabular-nums">
-              {estimate.packyPaidPercent !== null
-                ? `${estimate.packyPaidPercent}%`
-                : "—"}
-            </span>
-          </Stat>
-          <Stat label="Raw LB cost">
-            <span className="block truncate text-sm font-semibold tabular-nums">
-              {estimate.leaderboardCostUsd && estimate.packyPaidPercent
-                ? fmt$(lbRaw)
-                : "—"}
-            </span>
-          </Stat>
-          <Stat label="Deal length">
-            <span className="block truncate text-sm font-semibold tabular-nums">
-              {estimate.dealLengthWeeks
-                ? `${estimate.dealLengthWeeks} wk${estimate.dealLengthWeeks === 1 ? "" : "s"}`
-                : "—"}
-            </span>
-          </Stat>
-          {/* Video deal terms — same shape as daily fill but per
-              video. Counts into the same weekly bucket as the WD
-              cap so it scales with deal length. */}
-          <Stat label="Video $ / each">
-            <span className="block truncate text-sm font-semibold tabular-nums">
-              {fmt$(estimate.videoAmountUsd)}
-            </span>
-          </Stat>
-          <Stat label="Video %">
-            <span className="block truncate text-sm font-semibold tabular-nums">
-              {estimate.videoPercent !== null
-                ? `${estimate.videoPercent}%`
-                : "—"}
-            </span>
-          </Stat>
-          <Stat label="Videos / week">
-            <span className="block truncate text-sm font-semibold tabular-nums">
-              {estimate.videoFillsPerWeek !== null
-                ? estimate.videoFillsPerWeek
-                : "—"}
-            </span>
-          </Stat>
-          <Stat label="Video net / week">
-            <span className="block truncate text-sm font-semibold tabular-nums">
-              {estimate.videoAmountUsd && estimate.videoFillsPerWeek
-                ? fmt$(weeklyVideoNet(estimate))
-                : "—"}
-            </span>
-          </Stat>
-          {/* Flat balances — added straight to Max Cost. Captioned
-              "+" so it's obvious they're additive, not weekly. */}
-          <Stat label="Tip balance">
-            <span className="block truncate text-sm font-semibold tabular-nums">
-              {estimate.tipBalanceUsd !== null
-                ? `+ ${fmt$(estimate.tipBalanceUsd)}`
-                : "—"}
-            </span>
-          </Stat>
-          <Stat label="Battle balance">
-            <span className="block truncate text-sm font-semibold tabular-nums">
-              {estimate.battleBalanceUsd !== null
-                ? `+ ${fmt$(estimate.battleBalanceUsd)}`
-                : "—"}
-            </span>
-          </Stat>
-        </div>
+        {/* ── Cost breakdown ────────────────────────────────────── */}
+        {breakdownRows.length > 0 && (
+          <div className="space-y-2">
+            <SectionLabel icon={CircleDollarSign} label="Cost breakdown" />
+            <div className="divide-y divide-border/60 rounded-xl border border-border/60 bg-muted/20">
+              {breakdownRows.map((row) => (
+                <BreakdownRowCell key={row.label} row={row} />
+              ))}
+            </div>
+          </div>
+        )}
 
+        {/* ── Deal terms (metadata) ─────────────────────────────── */}
+        {termsRows.length > 0 && (
+          <div className="space-y-2">
+            <SectionLabel icon={Settings2} label="Deal terms" />
+            <div className="space-y-1.5">
+              {termsRows.map((row) => (
+                <TermRowCell key={row.label} row={row} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Notes ─────────────────────────────────────────────── */}
         {estimate.notes && (
-          <p className="border-t border-border/60 pt-3 text-xs text-muted-foreground">
-            {estimate.notes}
-          </p>
+          <div className="space-y-2">
+            <SectionLabel icon={FileText} label="Notes" />
+            <p className="text-xs italic text-muted-foreground">
+              {estimate.notes}
+            </p>
+          </div>
+        )}
+
+        {/* Empty-state nudge — only render when the card has nothing
+            useful to show beyond the name+ Max Cost (which would be 0).
+            Encourages the admin to fill in the deal so the page is
+            actually useful. */}
+        {breakdownRows.length === 0 && termsRows.length === 0 && (
+          <div className="flex items-center gap-2 rounded-lg border border-dashed border-border/60 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
+            <Notebook className="size-3.5 shrink-0" />
+            No terms entered yet — click the pencil to fill in the deal.
+          </div>
         )}
       </div>
 
@@ -333,19 +368,64 @@ function EstimateCard({ estimate }: { estimate: CreatorEstimate }) {
   );
 }
 
-function Stat({
-  label,
-  children,
-}: {
+// ── Card sub-pieces ───────────────────────────────────────────────
+
+type BreakdownRow = {
   label: string;
-  children: React.ReactNode;
+  hint: string;
+  amount: number;
+};
+type TermRow = {
+  label: string;
+  value: string;
+  hint?: string;
+};
+
+function SectionLabel({
+  icon: Icon,
+  label,
+}: {
+  icon: React.ElementType;
+  label: string;
 }) {
   return (
-    <div className="min-w-0">
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        {label}
+    <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <Icon className="size-3" />
+      {label}
+    </div>
+  );
+}
+
+function BreakdownRowCell({ row }: { row: BreakdownRow }) {
+  return (
+    <div className="flex items-center justify-between gap-3 px-3 py-2.5">
+      <div className="min-w-0">
+        <div className="truncate text-xs font-semibold">{row.label}</div>
+        <div className="mt-0.5 truncate text-[10px] text-muted-foreground">
+          {row.hint}
+        </div>
       </div>
-      <div className="mt-0.5">{children}</div>
+      <div className="shrink-0 text-sm font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+        {fmt$(row.amount)}
+      </div>
+    </div>
+  );
+}
+
+function TermRowCell({ row }: { row: TermRow }) {
+  return (
+    <div className="flex items-center justify-between gap-3 text-xs">
+      <span className="truncate text-muted-foreground">{row.label}</span>
+      <span className="shrink-0 text-right">
+        <span className="font-semibold tabular-nums text-foreground">
+          {row.value}
+        </span>
+        {row.hint && (
+          <span className="ml-1.5 text-[10px] text-muted-foreground">
+            {row.hint}
+          </span>
+        )}
+      </span>
     </div>
   );
 }
