@@ -83,8 +83,14 @@ function weeklyVideoNet(e: CreatorEstimate): number {
 }
 
 function maxCost(e: CreatorEstimate): number {
-  const weekly =
-    rawWeeklyAmount(e) + (e.withdrawalCapUsd ?? 0) + weeklyVideoNet(e);
+  // Daily fill is intentionally NOT in the formula. It sits on the
+  // creator's on-site balance and only leaves the platform via
+  // withdrawals — and withdrawals are already bounded by wd_cap per
+  // week. So wd_cap × weeks captures the realistic worst-case cost
+  // of the fill stream. Videos are paid out separately and add to
+  // the weekly bucket alongside wd_cap. (Per user clarification
+  // 2026-05-07.)
+  const weekly = (e.withdrawalCapUsd ?? 0) + weeklyVideoNet(e);
   const weeks = e.dealLengthWeeks ?? 0;
   // Flat balances: not scaled by weeks, just added on top of the
   // computed total — they're one-time pots loaded onto the creator's
@@ -209,7 +215,7 @@ function EstimateCard({ estimate }: { estimate: CreatorEstimate }) {
             {fmt$(max)}
           </p>
           <p className="mt-0.5 text-[10px] text-muted-foreground">
-            (raw weekly + WD cap + video net) × weeks + raw LB cost + tip + battle
+            (WD cap + video net) × weeks + raw LB cost + tip + battle
           </p>
         </div>
 
@@ -491,13 +497,12 @@ function EstimateFormDialog({
   }
 
   // Live preview of the computed Max Cost so the admin sees the
-  // outcome of their inputs without having to save first. Tip +
-  // battle balances are added flat (no scaling) — same as the
-  // server-side maxCost helper. Video net counts into the weekly
-  // bucket alongside the WD cap, but only when the videos section
-  // is toggled on (otherwise it's saved as null).
+  // outcome of their inputs without having to save first. Daily
+  // fill is NOT in the formula — it lives on the creator's balance
+  // and only leaves via withdrawals which are already bounded by
+  // wd_cap. Videos are a separate payout that adds to the weekly
+  // bucket. Tip + battle are flat one-time pots.
   const previewMax = (() => {
-    const daily = parseDollarOrNull(dailyFill) ?? 0;
     const cap = parseDollarOrNull(wdCap) ?? 0;
     const lb = parseDollarOrNull(lbCost) ?? 0;
     const share = parseDollarOrNull(packyPaid) ?? 0;
@@ -510,10 +515,7 @@ function EstimateFormDialog({
     const tip = parseDollarOrNull(tipBalance) ?? 0;
     const battle = parseDollarOrNull(battleBalance) ?? 0;
     return (
-      (daily * 7 + cap + videoNet) * weeks +
-      lb * (share / 100) +
-      tip +
-      battle
+      (cap + videoNet) * weeks + lb * (share / 100) + tip + battle
     );
   })();
 
@@ -593,7 +595,8 @@ function EstimateFormDialog({
               Raw $ / week ={" "}
               <span className="font-mono">
                 {dailyFill ? fmt$((parseDollarOrNull(dailyFill) ?? 0) * 7) : "—"}
-              </span>
+              </span>{" "}
+              · balance-side only, capped by WD cap
             </p>
           </div>
 
@@ -836,8 +839,9 @@ function EstimateFormDialog({
               </span>
             </div>
             <p className="mt-0.5 text-[10px] text-muted-foreground">
-              (daily × 7 + WD cap + video net) × weeks + LB cost × packy %
-              + tip balance + battle balance
+              (WD cap + video net) × weeks + LB cost × packy %
+              + tip balance + battle balance · daily fill is balance-side
+              only (capped by WD cap)
             </p>
           </div>
         </div>

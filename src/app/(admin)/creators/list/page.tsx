@@ -11,20 +11,29 @@ export const metadata = { title: "Creator Deals · Estimates" };
 
 // Compute the Max Cost for one estimate row.
 //
-// Conventions:
-//   - daily_fill is per DAY → weekly raw fill = daily_fill × 7
-//   - withdrawal_cap is per WEEK
+// Conventions (per user clarification 2026-05-07):
+//   - daily_fill is per DAY but is NOT a direct outflow. The fill
+//     goes onto the creator's on-site balance and can only LEAVE
+//     the platform via withdrawals, which are bounded by
+//     withdrawal_cap_usd per week. So the realistic worst-case
+//     cost of the fill stream IS wd_cap × weeks, not
+//     (daily × 7 + wd_cap) × weeks.
+//   - withdrawal_cap is the per-WEEK ceiling on what the creator
+//     can withdraw — this is what the house actually pays out for
+//     the fill side of the deal.
+//   - withdrawal_percent is % of BALANCE (not wager) — informational
+//     only, doesn't enter the cost math.
 //   - leaderboard_cost is one-time (the prize pool)
 //   - packy_paid_percent is the % we cover of the prize pool
 //   - deal_length_weeks scales weekly outflows
 //   - tip_balance / battle_balance are flat one-time pots added
 //     straight to total (no per-week scaling, no recoup)
-//   - video_amount / video_percent / video_fills_per_week — same
-//     shape as daily fill but for video deliverables; counts into
-//     the same weekly bucket as the withdraw cap (per user spec)
+//   - video_amount / video_percent / video_fills_per_week — paid
+//     OUT to the creator separately for video deliverables, with
+//     the % we recoup. Net cost adds to the weekly bucket
+//     alongside wd_cap.
 //
-// Max Cost = (raw_weekly_fill + weekly_wd_cap + weekly_video_net)
-//              × deal_length_weeks
+// Max Cost = (weekly_wd_cap + weekly_video_net) × deal_length_weeks
 //          + leaderboard_cost × (packy_paid_percent / 100)
 //          + tip_balance + battle_balance
 //
@@ -32,7 +41,6 @@ export const metadata = { title: "Creator Deals · Estimates" };
 //   weekly_video_net = video_amount × video_fills_per_week
 //                      × (1 - video_percent / 100)
 function maxCost(e: {
-  daily_fill_usd: number | null;
   withdrawal_cap_usd: number | null;
   leaderboard_cost_usd: number | null;
   packy_paid_percent: number | null;
@@ -43,8 +51,6 @@ function maxCost(e: {
   tip_balance_usd: number | null;
   battle_balance_usd: number | null;
 }): number {
-  const dailyFill = e.daily_fill_usd ?? 0;
-  const weeklyRaw = dailyFill * 7;
   const wdCap = e.withdrawal_cap_usd ?? 0;
   const lbCost = e.leaderboard_cost_usd ?? 0;
   const lbShare = e.packy_paid_percent ?? 0;
@@ -57,10 +63,7 @@ function maxCost(e: {
   const tipBal = e.tip_balance_usd ?? 0;
   const battleBal = e.battle_balance_usd ?? 0;
   return (
-    (weeklyRaw + wdCap + weeklyVideoNet) * weeks +
-    rawLb +
-    tipBal +
-    battleBal
+    (wdCap + weeklyVideoNet) * weeks + rawLb + tipBal + battleBal
   );
 }
 
@@ -109,8 +112,6 @@ export default async function CreatorEstimatesPage() {
     (sum, e) =>
       sum +
       maxCost({
-        daily_fill_usd:
-          e.daily_fill_usd === null ? null : Number(e.daily_fill_usd),
         withdrawal_cap_usd:
           e.withdrawal_cap_usd === null
             ? null
@@ -140,14 +141,21 @@ export default async function CreatorEstimatesPage() {
       }),
     0,
   );
-  // Weekly burn = sum of (daily_fill × 7 + wd_cap) across all. The
-  // "what does this cost us per WEEK" headline number, ignoring deal
-  // length and leaderboards.
+  // Weekly burn = sum of (wd_cap + weekly_video_net) across all.
+  // Daily fill is intentionally NOT in here — it sits on the
+  // creator's balance and only leaves via withdrawals (which the
+  // wd_cap already bounds). Same conviction as the maxCost helper.
   const weeklyBurn = estimates.reduce((sum, e) => {
-    const weekly =
-      (e.daily_fill_usd === null ? 0 : Number(e.daily_fill_usd)) * 7 +
-      (e.withdrawal_cap_usd === null ? 0 : Number(e.withdrawal_cap_usd));
-    return sum + weekly;
+    const wdCap =
+      e.withdrawal_cap_usd === null ? 0 : Number(e.withdrawal_cap_usd);
+    const videoAmt =
+      e.video_amount_usd === null ? 0 : Number(e.video_amount_usd);
+    const videoPct =
+      e.video_percent === null ? 0 : Number(e.video_percent);
+    const videoFills =
+      e.video_fills_per_week === null ? 0 : Number(e.video_fills_per_week);
+    const videoNet = videoAmt * videoFills * (1 - videoPct / 100);
+    return sum + wdCap + videoNet;
   }, 0);
   const totalCount = estimates.length;
 
@@ -197,7 +205,7 @@ export default async function CreatorEstimatesPage() {
           label="Weekly Burn"
           value={formatCurrency(weeklyBurn)}
           icon={Coins}
-          sub="Fills + wd caps / week"
+          sub="WD caps + video net / week"
           accent="amber"
         />
       </div>
