@@ -419,6 +419,17 @@ model creator_deal_estimates {
   // deal_length_weeks: how long the deal runs (in WEEKS). Combined
   // with the daily / weekly spend to compute Max Cost.
   deal_length_weeks   Int?
+  // ── Video deal terms ───────────────────────────────────────────
+  // Same shape as the daily fill (amount + recoup % + count) but
+  // for video deliverables. Per the user spec: video cost counts
+  // into the same weekly bucket as the withdraw cap — added to
+  // weekly outflow alongside it, scaled by deal_length_weeks.
+  // video_amount_usd:   USD paid PER VIDEO
+  // video_percent:      % of video cost the house recoups
+  // video_fills_per_week: number of videos per week
+  video_amount_usd       Decimal? @db.Decimal(20, 2)
+  video_percent          Decimal? @db.Decimal(5, 2)
+  video_fills_per_week   Int?
   // ── Flat balances added straight to Max Cost ───────────────────
   // tip_balance_usd / battle_balance_usd: one-time pre-loaded
   // balances we hand the creator for tips / sponsored battles.

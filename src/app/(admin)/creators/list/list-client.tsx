@@ -33,7 +33,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { formatRelative } from "@/lib/utils/format";
+import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import {
   createCreatorEstimate,
   deleteCreatorEstimate,
@@ -49,6 +49,9 @@ export type CreatorEstimate = {
   leaderboardCostUsd: number | null;
   packyPaidPercent: number | null;
   dealLengthWeeks: number | null;
+  videoAmountUsd: number | null;
+  videoPercent: number | null;
+  videoFillsPerWeek: number | null;
   tipBalanceUsd: number | null;
   battleBalanceUsd: number | null;
   notes: string | null;
@@ -67,8 +70,19 @@ function rawLbCost(e: CreatorEstimate): number {
   return lb * (share / 100);
 }
 
+// Net weekly video cost. Same shape as daily fill: amount × fills,
+// minus the % the house recoups. Counts into the same weekly bucket
+// as the withdraw cap per the user spec.
+function weeklyVideoNet(e: CreatorEstimate): number {
+  const amt = e.videoAmountUsd ?? 0;
+  const fills = e.videoFillsPerWeek ?? 0;
+  const pct = e.videoPercent ?? 0;
+  return amt * fills * (1 - pct / 100);
+}
+
 function maxCost(e: CreatorEstimate): number {
-  const weekly = rawWeeklyAmount(e) + (e.withdrawalCapUsd ?? 0);
+  const weekly =
+    rawWeeklyAmount(e) + (e.withdrawalCapUsd ?? 0) + weeklyVideoNet(e);
   const weeks = e.dealLengthWeeks ?? 0;
   // Flat balances: not scaled by weeks, just added on top of the
   // computed total — they're one-time pots loaded onto the creator's
@@ -81,9 +95,14 @@ function maxCost(e: CreatorEstimate): number {
   );
 }
 
+// Currency formatter locked to en-US so commas/decimals are
+// unambiguous regardless of the admin's browser locale. Previously
+// used toLocaleString with undefined locale which produced "$13.775"
+// in EU locales — it read as "$13.77" to en-US viewers and made the
+// preview look broken.
 function fmt$(n: number | null | undefined): string {
   if (n === null || n === undefined) return "—";
-  return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  return formatCurrency(n);
 }
 
 // ── Top-level grid ─────────────────────────────────────────────────
@@ -188,7 +207,7 @@ function EstimateCard({ estimate }: { estimate: CreatorEstimate }) {
             {fmt$(max)}
           </p>
           <p className="mt-0.5 text-[10px] text-muted-foreground">
-            (raw weekly + WD cap) × weeks + raw LB cost + tip + battle
+            (raw weekly + WD cap + video net) × weeks + raw LB cost + tip + battle
           </p>
         </div>
 
@@ -240,6 +259,35 @@ function EstimateCard({ estimate }: { estimate: CreatorEstimate }) {
             <span className="block truncate text-sm font-semibold tabular-nums">
               {estimate.dealLengthWeeks
                 ? `${estimate.dealLengthWeeks} wk${estimate.dealLengthWeeks === 1 ? "" : "s"}`
+                : "—"}
+            </span>
+          </Stat>
+          {/* Video deal terms — same shape as daily fill but per
+              video. Counts into the same weekly bucket as the WD
+              cap so it scales with deal length. */}
+          <Stat label="Video $ / each">
+            <span className="block truncate text-sm font-semibold tabular-nums">
+              {fmt$(estimate.videoAmountUsd)}
+            </span>
+          </Stat>
+          <Stat label="Video %">
+            <span className="block truncate text-sm font-semibold tabular-nums">
+              {estimate.videoPercent !== null
+                ? `${estimate.videoPercent}%`
+                : "—"}
+            </span>
+          </Stat>
+          <Stat label="Videos / week">
+            <span className="block truncate text-sm font-semibold tabular-nums">
+              {estimate.videoFillsPerWeek !== null
+                ? estimate.videoFillsPerWeek
+                : "—"}
+            </span>
+          </Stat>
+          <Stat label="Video net / week">
+            <span className="block truncate text-sm font-semibold tabular-nums">
+              {estimate.videoAmountUsd && estimate.videoFillsPerWeek
+                ? fmt$(weeklyVideoNet(estimate))
                 : "—"}
             </span>
           </Stat>
@@ -336,6 +384,17 @@ function EstimateFormDialog({
       ? String(estimate.dealLengthWeeks)
       : "",
   );
+  const [videoAmount, setVideoAmount] = useState(
+    estimate?.videoAmountUsd != null ? String(estimate.videoAmountUsd) : "",
+  );
+  const [videoPercent, setVideoPercent] = useState(
+    estimate?.videoPercent != null ? String(estimate.videoPercent) : "",
+  );
+  const [videoFills, setVideoFills] = useState(
+    estimate?.videoFillsPerWeek != null
+      ? String(estimate.videoFillsPerWeek)
+      : "",
+  );
   const [tipBalance, setTipBalance] = useState(
     estimate?.tipBalanceUsd != null ? String(estimate.tipBalanceUsd) : "",
   );
@@ -379,6 +438,19 @@ function EstimateFormDialog({
           ? String(estimate.dealLengthWeeks)
           : "",
       );
+      setVideoAmount(
+        estimate?.videoAmountUsd != null
+          ? String(estimate.videoAmountUsd)
+          : "",
+      );
+      setVideoPercent(
+        estimate?.videoPercent != null ? String(estimate.videoPercent) : "",
+      );
+      setVideoFills(
+        estimate?.videoFillsPerWeek != null
+          ? String(estimate.videoFillsPerWeek)
+          : "",
+      );
       setTipBalance(
         estimate?.tipBalanceUsd != null ? String(estimate.tipBalanceUsd) : "",
       );
@@ -405,16 +477,26 @@ function EstimateFormDialog({
   // Live preview of the computed Max Cost so the admin sees the
   // outcome of their inputs without having to save first. Tip +
   // battle balances are added flat (no scaling) — same as the
-  // server-side maxCost helper.
+  // server-side maxCost helper. Video net counts into the weekly
+  // bucket alongside the WD cap.
   const previewMax = (() => {
     const daily = parseDollarOrNull(dailyFill) ?? 0;
     const cap = parseDollarOrNull(wdCap) ?? 0;
     const lb = parseDollarOrNull(lbCost) ?? 0;
     const share = parseDollarOrNull(packyPaid) ?? 0;
     const weeks = parseIntOrNull(dealLength) ?? 0;
+    const vAmt = parseDollarOrNull(videoAmount) ?? 0;
+    const vPct = parseDollarOrNull(videoPercent) ?? 0;
+    const vFills = parseIntOrNull(videoFills) ?? 0;
+    const videoNet = vAmt * vFills * (1 - vPct / 100);
     const tip = parseDollarOrNull(tipBalance) ?? 0;
     const battle = parseDollarOrNull(battleBalance) ?? 0;
-    return (daily * 7 + cap) * weeks + lb * (share / 100) + tip + battle;
+    return (
+      (daily * 7 + cap + videoNet) * weeks +
+      lb * (share / 100) +
+      tip +
+      battle
+    );
   })();
 
   function handleSubmit() {
@@ -430,6 +512,9 @@ function EstimateFormDialog({
       leaderboardCostUsd: parseDollarOrNull(lbCost),
       packyPaidPercent: parseDollarOrNull(packyPaid),
       dealLengthWeeks: parseIntOrNull(dealLength),
+      videoAmountUsd: parseDollarOrNull(videoAmount),
+      videoPercent: parseDollarOrNull(videoPercent),
+      videoFillsPerWeek: parseIntOrNull(videoFills),
       tipBalanceUsd: parseDollarOrNull(tipBalance),
       battleBalanceUsd: parseDollarOrNull(battleBalance),
       notes: notes.trim() || null,
@@ -537,6 +622,62 @@ function EstimateFormDialog({
             />
           </div>
 
+          {/* Video deal terms — same shape as daily fill (amount + %
+              + fills) but for videos. Per user spec: counts into the
+              same weekly bucket as the WD cap, scaled by deal length. */}
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">
+              Video $ / each (USD)
+            </Label>
+            <Input
+              type="number"
+              step="0.01"
+              min="0"
+              value={videoAmount}
+              onChange={(e) => setVideoAmount(e.target.value)}
+              placeholder="200"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">
+              Video % (recoup)
+            </Label>
+            <Input
+              type="number"
+              step="0.01"
+              min="0"
+              max="100"
+              value={videoPercent}
+              onChange={(e) => setVideoPercent(e.target.value)}
+              placeholder="50"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">
+              Videos / week
+            </Label>
+            <Input
+              type="number"
+              step="1"
+              min="0"
+              value={videoFills}
+              onChange={(e) => setVideoFills(e.target.value)}
+              placeholder="2"
+            />
+            <p className="text-[10px] text-muted-foreground">
+              Net / week ={" "}
+              <span className="font-mono">
+                {videoAmount && videoFills
+                  ? fmt$(
+                      (parseDollarOrNull(videoAmount) ?? 0) *
+                        (parseIntOrNull(videoFills) ?? 0) *
+                        (1 - (parseDollarOrNull(videoPercent) ?? 0) / 100),
+                    )
+                  : "—"}
+              </span>
+            </p>
+          </div>
+
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">
               Leaderboard cost (USD, one-time)
@@ -633,7 +774,7 @@ function EstimateFormDialog({
               </span>
             </div>
             <p className="mt-0.5 text-[10px] text-muted-foreground">
-              (daily × 7 + WD cap) × weeks + LB cost × packy %
+              (daily × 7 + WD cap + video net) × weeks + LB cost × packy %
               + tip balance + battle balance
             </p>
           </div>

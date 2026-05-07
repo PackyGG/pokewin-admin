@@ -64,6 +64,15 @@ export async function ensureCreatorEstimatesSchema(): Promise<void> {
         ADD COLUMN IF NOT EXISTS "tip_balance_usd"    NUMERIC(20, 2),
         ADD COLUMN IF NOT EXISTS "battle_balance_usd" NUMERIC(20, 2)
     `);
+    // v4 — video deal terms. Same shape as daily fill but for
+    // video deliverables. Counts into the weekly bucket alongside
+    // the withdraw cap.
+    await adminDb.$executeRawUnsafe(`
+      ALTER TABLE "creator_deal_estimates"
+        ADD COLUMN IF NOT EXISTS "video_amount_usd"     NUMERIC(20, 2),
+        ADD COLUMN IF NOT EXISTS "video_percent"        NUMERIC(5, 2),
+        ADD COLUMN IF NOT EXISTS "video_fills_per_week" INTEGER
+    `);
     await adminDb.$executeRawUnsafe(`
       CREATE INDEX IF NOT EXISTS "creator_deal_estimates_created_at_idx"
         ON "creator_deal_estimates" ("created_at" DESC)
