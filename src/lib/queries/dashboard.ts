@@ -4,7 +4,7 @@ import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { MS_PER_DAY } from "@/lib/utils/time";
-import { EXCLUDE_STAFF_USER_RELATION } from "./_exclude-staff";
+import { EXCLUDE_STAFF_USER_RELATION, STAFF_ROLES } from "./_exclude-staff";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
 
 export type ActivityItem = {
@@ -151,10 +151,23 @@ export async function getDashboardStats() {
 async function dashboardStatsInner() {
   const db = await getDb();
   const now = new Date();
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const startOfWeek = new Date(startOfDay);
-  startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  // UTC-anchored boundaries so the dashboard renders the same numbers no
+  // matter which timezone the request happens to land in (Vercel functions
+  // can run in any region). Mirrors the convention used by
+  // src/lib/queries/_realized-pnl.ts and src/lib/balance-limits.ts.
+  const startOfDay = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+  );
+  const startOfWeek = new Date(
+    Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate() - now.getUTCDay(),
+    ),
+  );
+  const startOfMonth = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+  );
 
   const threeDaysAgo = new Date(now.getTime() - 3 * MS_PER_DAY);
   const sevenDaysAgo = new Date(now.getTime() - 7 * MS_PER_DAY);
@@ -185,12 +198,15 @@ async function dashboardStatsInner() {
     totalInventoryValue,
     pendingConfirmationWithdrawals,
   ] = await Promise.all([
-    db.user.count({ where: { role: { not: "admin" } } }),
-    db.user.count({ where: { role: { not: "admin" }, created_at: { gte: startOfDay } } }),
-    db.user.count({ where: { role: { not: "admin" }, created_at: { gte: startOfWeek } } }),
-    db.user.count({ where: { role: { not: "admin" }, created_at: { gte: startOfMonth } } }),
-    db.user.count({ where: { role: { not: "admin" }, is_banned: true } }),
-    db.user.count({ where: { role: { not: "admin" }, is_locked: true } }),
+    // STAFF_ROLES (admin + support) excluded from every user count so the
+    // KPI strip reads only real customers — matches EXCLUDE_STAFF_USER_RELATION
+    // used by every aggregate below.
+    db.user.count({ where: { role: { notIn: STAFF_ROLES } } }),
+    db.user.count({ where: { role: { notIn: STAFF_ROLES }, created_at: { gte: startOfDay } } }),
+    db.user.count({ where: { role: { notIn: STAFF_ROLES }, created_at: { gte: startOfWeek } } }),
+    db.user.count({ where: { role: { notIn: STAFF_ROLES }, created_at: { gte: startOfMonth } } }),
+    db.user.count({ where: { role: { notIn: STAFF_ROLES }, is_banned: true } }),
+    db.user.count({ where: { role: { notIn: STAFF_ROLES }, is_locked: true } }),
     db.balances.aggregate({
       where: { user: EXCLUDE_STAFF_USER_RELATION },
       _sum: {
