@@ -343,6 +343,9 @@ export function SetAffiliateCodeDialog({
     currentOwnerUsername: string | null;
     currentOwnerEmail: string | null;
   } | null>(null);
+  // 2FA only matters in the transfer flow (conflict path), but keeping
+  // a single state slot keeps the reset logic simple.
+  const [totpCode, setTotpCode] = useState("");
   const [isPending, startTransition] = useTransition();
 
   // Reset on (re-)open so a stale conflict from a previous attempt
@@ -351,6 +354,7 @@ export function SetAffiliateCodeDialog({
     if (open) {
       setCodeValue("");
       setConflict(null);
+      setTotpCode("");
     }
   }, [open]);
 
@@ -390,10 +394,15 @@ export function SetAffiliateCodeDialog({
 
   function handleTransfer() {
     if (!conflict) return;
+    if (!totpCode.trim()) {
+      toast.error("Please enter your 2FA code");
+      return;
+    }
     startTransition(async () => {
       const result = await transferAffiliateCode({
         toUserId: userId,
         code: conflict.code,
+        totpCode: totpCode.trim(),
       });
       if (!result.success) {
         toast.error(result.error);
@@ -489,6 +498,22 @@ export function SetAffiliateCodeDialog({
               </span>
               ?
             </p>
+            {/* 2FA gate — same shape as the adjustBalance dialog. The
+                server re-verifies, the field here is just to collect
+                the code so the action call can succeed. */}
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">2FA Code</Label>
+              <Input
+                type="text"
+                inputMode="numeric"
+                placeholder="Enter your 6-digit code"
+                value={totpCode}
+                onChange={(e) => setTotpCode(e.target.value)}
+                maxLength={6}
+                autoComplete="one-time-code"
+                disabled={isPending}
+              />
+            </div>
           </div>
         )}
         <DialogFooter>
@@ -526,7 +551,7 @@ export function SetAffiliateCodeDialog({
               </Button>
               <Button
                 onClick={handleTransfer}
-                disabled={isPending}
+                disabled={isPending || !totpCode.trim()}
                 className="w-full sm:w-auto bg-amber-600 hover:bg-amber-600/90 text-white"
               >
                 {isPending ? (

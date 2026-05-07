@@ -1155,6 +1155,7 @@ async function generateRandomAffiliateCode(
 export async function transferAffiliateCode(args: {
   toUserId: string;
   code: string;
+  totpCode: string;
 }): Promise<
   | { success: true; replacementCode: string; previousOwnerId: string }
   | { success: false; error: string }
@@ -1162,6 +1163,18 @@ export async function transferAffiliateCode(args: {
   const db = await getDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_assign_affiliate", "transfer affiliate codes");
+
+  // 2FA gate — transferring an affiliate code reassigns the future
+  // referral revenue stream of the code, so we lift it to the same
+  // protection tier as a balance adjustment / role change.
+  try {
+    await require2FA(session.userId, args.totpCode);
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "2FA verification failed",
+    };
+  }
 
   const code = args.code.trim();
   if (!code) return { success: false, error: "Code cannot be empty" };
@@ -1229,6 +1242,10 @@ export async function transferAffiliateCode(args: {
       code,
       previousOwnerId,
       replacementCode,
+      // Note that 2FA was used to authorise this transfer — useful when
+      // reading the trail later because we can distinguish 2FA-gated
+      // actions from older transfers that bypassed the check.
+      two_factor_verified: true,
     },
   });
 
