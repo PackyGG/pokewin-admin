@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db";
+import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import type { CreatorListItem, UserSearchResult } from "./creators-types";
@@ -60,13 +61,39 @@ export async function getCreators(params: {
   const field = validSortFields.includes(sortBy) ? sortBy : "created_at";
   const direction = sortOrder === "asc" ? "ASC" : "DESC";
 
-  // Build WHERE clause
+  // Pull the set of creators who currently have at least one active
+  // deal from the admin DB. "Active" = status='active' AND (no end
+  // date OR end date in the future) so a row that's `active` on paper
+  // but past its window doesn't float to the top.
+  //
+  // Cross-DB lookup, kept out of the WHERE clause — the rows query
+  // uses it solely as a primary ORDER BY key. Empty array => everyone
+  // gets `0` from the CASE expression and the secondary sort takes
+  // over (stable behaviour when no creator has an active deal).
+  const activeDealRows = await adminDb.creator_deals.findMany({
+    where: {
+      status: "active",
+      OR: [{ end_date: null }, { end_date: { gt: new Date() } }],
+    },
+    distinct: ["target_user_id"],
+    select: { target_user_id: true },
+  });
+  const activeDealUserIds = activeDealRows.map((d) => d.target_user_id);
+
+  // Build WHERE clause + param list. The active-deal array gets
+  // appended AFTER any search param so its $-index is stable
+  // (`$N+1` where N = whereParams.length).
   let whereClause = "WHERE u.role = 'creator'";
-  const queryParams: string[] = [];
+  const whereParams: string[] = [];
   if (search) {
-    queryParams.push(`%${search}%`);
+    whereParams.push(`%${search}%`);
     whereClause = `WHERE u.role = 'creator' AND (u.username ILIKE $1 OR u.affiliate_code ILIKE $1)`;
   }
+  // Param list for the rows query: search pattern (if any) + the
+  // active-deal user_id array. The placeholder index for the array
+  // depends on whether search added a param first.
+  const rowsParams: unknown[] = [...whereParams, activeDealUserIds];
+  const activeArrayPlaceholder = `$${rowsParams.length}`;
 
   const offset = (page - 1) * perPage;
 
@@ -118,20 +145,27 @@ export async function getCreators(params: {
       JOIN "user" u ON u.id = aa.user_id
       LEFT JOIN creator_withdrawal_limits cwl ON cwl.user_id = aa.user_id
       ${whereClause}
-      ORDER BY aa.${field} ${direction}
+      ORDER BY
+        (CASE WHEN aa.user_id = ANY(${activeArrayPlaceholder}::text[]) THEN 1 ELSE 0 END) DESC,
+        aa.${field} ${direction}
       LIMIT ${perPage} OFFSET ${offset}`,
-      ...(search ? [`%${search}%`] : [])
+      ...rowsParams,
     ),
     db.$queryRawUnsafe<{ count: string }[]>(
       `SELECT COUNT(*)::text AS count
       FROM affiliate_accounts aa
       JOIN "user" u ON u.id = aa.user_id
       ${whereClause}`,
-      ...(search ? [`%${search}%`] : [])
+      ...whereParams,
     ),
   ]);
 
   const total = Number(countRows[0]?.count ?? 0);
+
+  // Set lookup so each row can carry a `hasActiveDeal` flag — drives
+  // the small "Active" dot in the Username column so the admin sees
+  // why these rows are on top.
+  const activeDealSet = new Set(activeDealUserIds);
 
   return {
     data: rows.map((r) => ({
@@ -143,6 +177,7 @@ export async function getCreators(params: {
       // compatibility with the existing column. Empty array when
       // creator hasn't minted any codes yet.
       codes: r.codes ?? [],
+      hasActiveDeal: activeDealSet.has(r.user_id),
       level: 1,
       totalReferred: r.total_referred,
       totalSignups: Number(r.total_signups),
