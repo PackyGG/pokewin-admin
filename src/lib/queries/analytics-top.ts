@@ -17,7 +17,11 @@ import { toNumber } from "@/lib/utils/decimal";
  *   • top_countries   — by GGR (wagers − payouts) aggregated per country
  *
  * Each leaderboard is period-scoped via the same `LeaderboardPeriod`
- * enum. Staff excluded from user-level leaderboards.
+ * enum. Staff users (admin, support) are excluded from user-level
+ * leaderboards — those are internal accounts and shouldn't appear
+ * next to real customers. Creators are kept in per the team's
+ * documented decision in _exclude-staff.ts (they wager + deposit
+ * like normal users for streams / give-aways / their own play).
  */
 
 export type LeaderboardPeriod = "7d" | "30d" | "all";
@@ -75,7 +79,7 @@ export async function getTopDepositors(
     FROM ledger_transactions lt
     JOIN "user" u ON u.id = lt.user_id
     WHERE lt.status = 'completed' AND lt.type = 'deposit'
-      AND u.role != 'admin'
+      AND u.role NOT IN ('admin', 'support')
       ${periodFilter(period)}
     GROUP BY u.id, u.username, u.image
     ORDER BY SUM(ABS(lt.amount::numeric)) DESC
@@ -100,7 +104,7 @@ export async function getTopWagerers(
     FROM ledger_transactions lt
     JOIN "user" u ON u.id = lt.user_id
     WHERE lt.status = 'completed' AND lt.type IN ${WAGER_TYPES}
-      AND u.role != 'admin'
+      AND u.role NOT IN ('admin', 'support')
       ${periodFilter(period)}
     GROUP BY u.id, u.username, u.image
     ORDER BY SUM(ABS(lt.amount::numeric)) DESC
@@ -136,7 +140,7 @@ export async function getTopLosers(
     FROM ledger_transactions lt
     JOIN "user" u ON u.id = lt.user_id
     WHERE lt.status = 'completed'
-      AND u.role != 'admin'
+      AND u.role NOT IN ('admin', 'support')
       ${periodFilter(period)}
     GROUP BY u.id, u.username, u.image
     HAVING (
@@ -179,7 +183,7 @@ export async function getTopWinners(
     FROM ledger_transactions lt
     JOIN "user" u ON u.id = lt.user_id
     WHERE lt.status = 'completed'
-      AND u.role != 'admin'
+      AND u.role NOT IN ('admin', 'support')
       ${periodFilter(period)}
     GROUP BY u.id, u.username, u.image
     HAVING (
@@ -282,7 +286,7 @@ export async function getTopCountries(
       )::text AS ggr
     FROM "user" u
     JOIN ledger_transactions lt ON lt.user_id = u.id
-    WHERE u.role != 'admin'
+    WHERE u.role NOT IN ('admin', 'support')
       AND lt.status = 'completed'
       ${periodFilter(period)}
     GROUP BY COALESCE(u.country, 'Unknown'), u.country_code

@@ -41,7 +41,7 @@ export type MapData = {
 export async function getUsersByCountry(period: Period): Promise<MapData> {
   const db = await getDb();
   const dateFilter = periodToDateFilter(period);
-  const staffFilter = `role != 'admin'`;
+  const staffFilter = `role NOT IN ('admin', 'support')`;
 
   // dateFilter above is phrased as "AND created_at >= ...", works for both
   // u.created_at (signups) and lt.created_at (tx) because each query

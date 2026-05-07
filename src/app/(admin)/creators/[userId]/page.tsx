@@ -196,6 +196,18 @@ export default async function CreatorDetailPage({
       </div>
 
       <FadeIn className="space-y-4 sm:space-y-6">
+        {/* Per-code activity tabs: who's using this creator's primary
+            code + a chronological feed of their recent wager events.
+            Sits above the deal management band so the admin sees who
+            is on the code before drilling into deal terms. Streamed
+            via Suspense so the two slim queries it fires don't extend
+            the page TTFB. */}
+        {profile.code && (
+          <Suspense fallback={<CodeActivitySkeleton />}>
+            <CodeActivityCard code={profile.code} />
+          </Suspense>
+        )}
+
         {/* Top band: deal management on the left (3/5), the acquisition
             chart on the right (2/5). Both in matching Card chrome so the
             row reads as one visual system with the analytics below. On
@@ -265,18 +277,6 @@ export default async function CreatorDetailPage({
           />
           <CountryBreakdown rows={profile.countryBreakdown} />
         </div>
-
-        {/* Per-code activity: who's using the creator's primary code right
-            now + a chronological feed of recent wager events from those
-            users. Only renders when the creator has a primary code; users
-            without one would just hit empty queries. Streamed via Suspense
-            so the two queries it fires (slim referrals + recent wagers)
-            don't extend the page TTFB. */}
-        {profile.code && (
-          <Suspense fallback={<CodeActivitySkeleton />}>
-            <CodeActivityCard code={profile.code} />
-          </Suspense>
-        )}
       </FadeIn>
     </div>
   );
@@ -307,21 +307,17 @@ function LeaderboardsSkeleton() {
 
 function CodeActivitySkeleton() {
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      {[0, 1].map((i) => (
-        <div key={i} className="space-y-3">
-          <div className="flex items-center gap-2">
-            <Skeleton className="h-7 w-7 rounded-md" />
-            <Skeleton className="h-4 w-32" />
-          </div>
-          <div className="rounded-2xl border bg-card/60 p-3 space-y-2">
-            <Skeleton className="h-7 w-full" />
-            <Skeleton className="h-7 w-full" />
-            <Skeleton className="h-7 w-full" />
-            <Skeleton className="h-7 w-full" />
-          </div>
-        </div>
-      ))}
-    </div>
+    <Card size="sm" className="space-y-3 p-4 sm:p-5">
+      <div className="flex items-center gap-3 border-b pb-3">
+        <Skeleton className="h-8 w-32" />
+        <Skeleton className="h-8 w-32" />
+      </div>
+      <div className="space-y-2">
+        <Skeleton className="h-9 w-full" />
+        <Skeleton className="h-9 w-full" />
+        <Skeleton className="h-9 w-full" />
+        <Skeleton className="h-9 w-full" />
+      </div>
+    </Card>
   );
 }

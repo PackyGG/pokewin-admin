@@ -129,7 +129,7 @@ export async function getRevenueBreakdown(
       COALESCE(SUM(CASE WHEN type = 'waitlist_prize' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS waitlist
     FROM ledger_transactions
     WHERE status = 'completed'
-      AND user_id IN (SELECT id FROM "user" WHERE role != 'admin')
+      AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support'))
       ${dateFilter}
     GROUP BY DATE(created_at)
     ORDER BY date

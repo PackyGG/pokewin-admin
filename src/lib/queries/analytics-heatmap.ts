@@ -71,7 +71,7 @@ export async function getActivityHeatmap(
       COUNT(CASE WHEN lt.type = 'deposit' THEN 1 END)::text AS deposits
     FROM ledger_transactions lt
     WHERE lt.status = 'completed'
-      AND lt.user_id IN (SELECT id FROM "user" WHERE role != 'admin')
+      AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support'))
       AND lt.created_at >= NOW() - INTERVAL '${days} days'
     GROUP BY EXTRACT(DOW FROM lt.created_at)::int, EXTRACT(HOUR FROM lt.created_at)::int
   `);

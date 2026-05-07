@@ -1,8 +1,11 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
-// SQL fragment for user_id filtering — injected via string concat (safe: hardcoded role name)
-const EXCL_STAFF_FRAG = `AND user_id IN (SELECT id FROM "user" WHERE role != 'admin')`;
+// SQL fragment for user_id filtering — admin + support are internal
+// accounts so we drop them from analytics. Creators stay in per the
+// documented decision in _exclude-staff.ts (their wagers/deposits are
+// real revenue/payouts). Hardcoded role names → safe with $queryRawUnsafe.
+const EXCL_STAFF_FRAG = `AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','support'))`;
 
 type Period = "today" | "7d" | "30d" | "90d" | "all";
 
@@ -266,7 +269,7 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
       db.$queryRawUnsafe<{ date: Date; count: string }[]>(`
         SELECT DATE(created_at) AS date, COUNT(*)::text AS count
         FROM "user"
-        WHERE role != 'admin' ${dateFilter}
+        WHERE role NOT IN ('admin', 'support') ${dateFilter}
         GROUP BY DATE(created_at)
         ORDER BY date
       `),
@@ -334,7 +337,7 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
         JOIN game_sessions gs ON lt.game_session_id = gs.id AND gs.game_type = 'pack'
         JOIN packs p ON gs.game_id = p.id
         WHERE lt.type = 'pack_opening' AND lt.status = 'completed' ${dateFilter.replace(/created_at/g, "lt.created_at")}
-          AND lt.user_id IN (SELECT id FROM "user" WHERE role != 'admin')
+          AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support'))
         GROUP BY p.id, p.name
         ORDER BY COUNT(*) DESC
         LIMIT 20

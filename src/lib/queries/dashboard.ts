@@ -44,7 +44,7 @@ function getPeriodAggregates(db: PrismaClient, startOfDay: Date, threeDaysAgo: D
     }[]
   >`
     WITH real_users AS (
-      SELECT id FROM "user" WHERE role != 'admin'
+      SELECT id FROM "user" WHERE role NOT IN ('admin', 'support')
     ),
     base AS (
       SELECT type, amount::numeric AS amount, created_at
@@ -214,7 +214,7 @@ async function dashboardStatsInner() {
       FROM ledger_transactions
       WHERE type IN ('pack_opening','battle_bet','battle_sponsorship') AND status = 'completed'
         AND created_at >= NOW() - INTERVAL '30 days'
-        AND user_id IN (SELECT id FROM "user" WHERE role != 'admin')
+        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support'))
       GROUP BY DATE(created_at)
       ORDER BY date
     `,
@@ -224,7 +224,7 @@ async function dashboardStatsInner() {
       FROM ledger_transactions
       WHERE type = 'deposit' AND status = 'completed'
         AND created_at >= NOW() - INTERVAL '30 days'
-        AND user_id IN (SELECT id FROM "user" WHERE role != 'admin')
+        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support'))
       GROUP BY DATE(created_at)
       ORDER BY date
     `,
@@ -233,7 +233,7 @@ async function dashboardStatsInner() {
       SELECT DATE(created_at) as date, COUNT(*)::text as count
       FROM "user"
       WHERE created_at >= NOW() - INTERVAL '30 days'
-        AND role != 'admin'
+        AND role NOT IN ('admin', 'support')
       GROUP BY DATE(created_at)
       ORDER BY date
     `,
@@ -260,12 +260,12 @@ async function dashboardStatsInner() {
       SELECT COUNT(DISTINCT user_id)::text AS count
       FROM ledger_transactions
       WHERE type = 'deposit' AND status = 'completed'
-        AND user_id IN (SELECT id FROM "user" WHERE role != 'admin')
+        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support'))
     `,
     getRealizedPnlSnapshot(),
     db.$queryRaw<{ avg_session_value: string }[]>`
       WITH real_users AS (
-        SELECT id FROM "user" WHERE role != 'admin'
+        SELECT id FROM "user" WHERE role NOT IN ('admin', 'support')
       ),
       withdrawal_events AS (
         SELECT user_id, created_at, 'withdrawal' as event_type
