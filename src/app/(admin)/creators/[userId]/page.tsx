@@ -1,10 +1,14 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import {
+  Activity,
   ArrowLeft,
+  ArrowRight,
   Star,
   MousePointerClick,
   UserPlus,
+  Users,
   Wallet,
   HandCoins,
   Info,
@@ -18,6 +22,7 @@ import { requirePageAccess } from "@/lib/dal";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { PageHero, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
@@ -136,10 +141,7 @@ export default async function CreatorDetailPage({
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
               {profile.email && <MaskedEmail email={profile.email} />}
-              <HeaderSocials
-                socials={profile.socials}
-                userId={profile.userId}
-              />
+              <HeaderSocials socials={profile.socials} />
             </div>
           </div>
           {profile.role === "creator" && (
@@ -199,6 +201,46 @@ export default async function CreatorDetailPage({
       </div>
 
       <FadeIn className="space-y-4 sm:space-y-6">
+        {/* Per-code activity entry points. Each is its own dedicated
+            page (full-width tables, breadcrumb back, pill-tab nav to
+            flip between the two views). Lives above the deal
+            management band so the admin sees the entry points before
+            drilling into deal terms. */}
+        {profile.code && (
+          <div className="grid gap-3 sm:gap-4 sm:grid-cols-2">
+            <Link
+              href={`/creators/${profile.userId}/users`}
+              className="group flex items-center gap-3 rounded-2xl border bg-card/60 p-4 transition-all hover:border-foreground/20 hover:bg-card hover:shadow-sm"
+            >
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-500">
+                <Users className="size-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold">Users on code</div>
+                <div className="truncate text-xs text-muted-foreground">
+                  Everyone tied to this creator&apos;s code
+                </div>
+              </div>
+              <ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
+            </Link>
+            <Link
+              href={`/creators/${profile.userId}/wagers`}
+              className="group flex items-center gap-3 rounded-2xl border bg-card/60 p-4 transition-all hover:border-foreground/20 hover:bg-card hover:shadow-sm"
+            >
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-500">
+                <Activity className="size-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold">Last wagers</div>
+                <div className="truncate text-xs text-muted-foreground">
+                  Recent wager events from those users
+                </div>
+              </div>
+              <ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
+            </Link>
+          </div>
+        )}
+
         {/* Top band: deal management on the left (3/5), the acquisition
             chart on the right (2/5). Both in matching Card chrome so the
             row reads as one visual system with the analytics below. On
@@ -238,6 +280,19 @@ export default async function CreatorDetailPage({
           </aside>
         </div>
 
+        {/* Affiliate leaderboards owned by this creator — read-only summary
+            with deep-link to the dedicated /creators/leaderboards management
+            surface for full action set (approve/reject/edit/sponsor/cancel).
+            Sits directly below the deal tabs row so leaderboards read as
+            part of the same "deal management" cluster, before the analytics
+            band kicks in.
+            Wrapped in Suspense so a slow backend API call here doesn't
+            block the rest of the page from rendering — Next streams this
+            section in once it resolves. */}
+        <Suspense fallback={<LeaderboardsSkeleton />}>
+          <LeaderboardsCard userId={profile.userId} />
+        </Suspense>
+
         {/* Bottom band: three equal-width analytics cards. On phone they
             stack full-width; tablet shows two-up wherever possible. */}
         <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -255,12 +310,31 @@ export default async function CreatorDetailPage({
           />
           <CountryBreakdown rows={profile.countryBreakdown} />
         </div>
-
-        {/* Affiliate leaderboards owned by this creator — read-only summary
-            with deep-link to the dedicated /creators/leaderboards management
-            surface for full action set (approve/reject/edit/sponsor/cancel). */}
-        <LeaderboardsCard userId={profile.userId} />
       </FadeIn>
     </div>
   );
 }
+
+// ── Suspense fallbacks ───────────────────────────────────────────────
+//
+// Both panels do their own DB / backend round-trips, so streaming them
+// in via Suspense lets the rest of the page paint immediately. The
+// skeletons below match the rough shape of each panel so the page
+// doesn't visibly jump when the real content swaps in.
+
+function LeaderboardsSkeleton() {
+  return (
+    <Card size="sm" className="space-y-3 p-4 sm:p-5">
+      <div className="flex items-center justify-between">
+        <Skeleton className="h-5 w-40" />
+        <Skeleton className="h-8 w-24" />
+      </div>
+      <div className="space-y-2">
+        <Skeleton className="h-9 w-full" />
+        <Skeleton className="h-9 w-full" />
+        <Skeleton className="h-9 w-full" />
+      </div>
+    </Card>
+  );
+}
+

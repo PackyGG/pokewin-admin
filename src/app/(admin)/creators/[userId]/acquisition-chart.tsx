@@ -224,8 +224,20 @@ export function AcquisitionChart({ hourly, daily }: Props) {
                 cursor={{ fill: "var(--accent)", opacity: 0.3 }}
                 content={<ChartTooltipContent indicator="dot" />}
               />
-              <Bar dataKey="clicks" fill="var(--color-clicks)" radius={[3, 3, 0, 0]} />
-              <Bar dataKey="signups" fill="var(--color-signups)" radius={[3, 3, 0, 0]} />
+              <Bar
+                dataKey="clicks"
+                fill="var(--color-clicks)"
+                radius={[3, 3, 0, 0]}
+                animationDuration={700}
+                animationEasing="ease-out"
+              />
+              <Bar
+                dataKey="signups"
+                fill="var(--color-signups)"
+                radius={[3, 3, 0, 0]}
+                animationDuration={700}
+                animationEasing="ease-out"
+              />
             </BarChart>
           </ResponsiveContainer>
         </ChartContainer>
@@ -246,7 +258,7 @@ export function AcquisitionChart({ hourly, daily }: Props) {
           </button>
 
           {expanded ? (
-            <div className="mt-3 overflow-hidden rounded-md border">
+            <div className="mt-3 overflow-hidden rounded-md border motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200">
               <Table>
                 <TableHeader>
                   {table.getHeaderGroups().map((hg) => (

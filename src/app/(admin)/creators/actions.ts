@@ -11,7 +11,6 @@ import { requireCapability } from "@/lib/require-capability";
 import { toNumber } from "@/lib/utils/decimal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { dispatchWebhook } from "@/lib/webhook-dispatcher";
-import { fetchPublicStats } from "@/lib/socials-public";
 import type { deal_type, deal_status } from "@/generated/admin-prisma/client";
 
 export async function makeCreator(userId: string) {
@@ -589,70 +588,13 @@ export async function testWebhook(webhookId: string) {
 }
 
 // --- Socials (admin management) ---
-
-export async function adminLinkSocialByUsername(
-  targetUserId: string,
-  platform: string,
-  username: string
-) {
-  const session = await requirePageAccess("/creators");
-  await requireCapability(session, "__can_link_creator_social", "link creator socials");
-
-  const trimmed = username.trim().replace(/^@/, "");
-  if (!trimmed) throw new Error("Username is required");
-
-  const validPlatforms = ["twitter", "youtube", "kick", "instagram"];
-  if (!validPlatforms.includes(platform)) throw new Error("Invalid platform");
-
-  const stats = await fetchPublicStats(platform, trimmed);
-
-  await adminDb.creator_socials.upsert({
-    where: {
-      target_user_id_platform: {
-        target_user_id: targetUserId,
-        platform: platform as "twitter" | "youtube" | "kick" | "instagram",
-      },
-    },
-    create: {
-      target_user_id: targetUserId,
-      platform: platform as "twitter" | "youtube" | "kick" | "instagram",
-      username: trimmed,
-      platform_user_id: stats.platformUserId ?? null,
-      follower_count: stats.followerCount ?? 0,
-      last_fetched_at: new Date(),
-    },
-    update: {
-      username: trimmed,
-      platform_user_id: stats.platformUserId ?? null,
-      follower_count: stats.followerCount ?? 0,
-      last_fetched_at: new Date(),
-    },
-    select: { id: true },
-  });
-
-  revalidatePath(`/creators/${targetUserId}`);
-  revalidatePath("/my-profile");
-  return stats.followerCount;
-}
-
-export async function adminUnlinkSocial(
-  targetUserId: string,
-  socialId: string
-) {
-  const session = await requirePageAccess("/creators");
-  await requireCapability(session, "__can_unlink_creator_social", "unlink creator socials");
-
-  const social = await adminDb.creator_socials.findUnique({
-    where: { id: socialId },
-  });
-  if (!social || social.target_user_id !== targetUserId)
-    throw new Error("Social connection not found");
-
-  await adminDb.creator_socials.delete({ where: { id: socialId }, select: { id: true } });
-
-  revalidatePath(`/creators/${targetUserId}`);
-  revalidatePath("/my-profile");
-}
+//
+// Removed 2026-05-07: admin link/unlink for creator socials.
+// Creators connect their own accounts via the public site flow now;
+// the admin panel only displays the resulting rows in the page header.
+// The supporting helpers (fetchPublicStats, refreshStaleSocials) stay
+// untouched — they're still used by the background refresher that
+// keeps follower counts fresh on the displayed chips.
 
 // --- Deals ---
 

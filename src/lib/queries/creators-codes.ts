@@ -584,3 +584,147 @@ export async function getCodeAnalytics(code: string) {
     })),
   };
 }
+
+// Slim referrals query for the creator detail page. Returns ONLY the
+// columns that side panel actually renders (user, total wagers, total
+// commission, last activity) — no per-row correlated subqueries for
+// code_deposit_total / code_deposit_count, no active_elsewhere EXISTS
+// scan, no has_signup. The full version in getCodeAnalytics fires
+// 9 parallel queries and the usages query alone runs ~3 subqueries
+// per row, which is why /creators/[id] was waiting on data the page
+// then threw away. Use this when you only need the referrals list.
+export async function getCodeReferrals(code: string, limit: number = 50) {
+  const db = await getDb();
+  const uppercaseCode = code.toUpperCase();
+  const safeLimit = Math.max(1, Math.min(Math.floor(limit), 200));
+
+  const rows = await safe(
+    db.$queryRawUnsafe<
+      {
+        referred_user_id: string;
+        referred_username: string | null;
+        referred_email: string | null;
+        last_activity: Date;
+        total_wagers: string;
+        total_commission: string;
+      }[]
+    >(
+      `SELECT acu.referred_user_id,
+              u.username AS referred_username,
+              u.email    AS referred_email,
+              MAX(acu.created_at) AS last_activity,
+              COALESCE(SUM(acu.wager_amount_usd::numeric),   0)::text AS total_wagers,
+              COALESCE(SUM(acu.referrer_cut_usd::numeric),   0)::text AS total_commission
+         FROM affiliate_code_usages acu
+         JOIN "user" u ON u.id = acu.referred_user_id
+        WHERE UPPER(acu.code) = $1
+          AND u.role NOT IN ('admin', 'support')
+        GROUP BY acu.referred_user_id, u.username, u.email
+        ORDER BY MAX(acu.created_at) DESC
+        LIMIT ${safeLimit}`,
+      uppercaseCode,
+    ),
+    [] as {
+      referred_user_id: string;
+      referred_username: string | null;
+      referred_email: string | null;
+      last_activity: Date;
+      total_wagers: string;
+      total_commission: string;
+    }[],
+  );
+
+  return rows.map((r) => ({
+    referredUserId: r.referred_user_id,
+    referredUsername: r.referred_username,
+    referredEmail: r.referred_email,
+    lastActivityAt: r.last_activity.toISOString(),
+    totalWagersUsd: toNumber(r.total_wagers),
+    totalCommissionUsd: toNumber(r.total_commission),
+  }));
+}
+
+// Recent wager events from users tied to this affiliate code. Used by
+// the creator detail page to surface a chronological feed of activity
+// happening on the code right now (the per-user totals already live on
+// `recentReferrals`; this complements that with an event-level view).
+//
+// Source set: every user with at least one row in affiliate_code_usages
+// for this code (signup, deposit, or wager event). That matches the
+// referrals table on the same page so the wager feed and the referral
+// list agree on the population.
+//
+// We pull the standard wager types — pack_opening, battle_bet,
+// battle_sponsorship — exactly as analytics-cohorts/analytics-top do,
+// gated to status='completed' so failed/pending bets don't spam the
+// feed. amount is stored as a negative number (debit from the user's
+// balance), so we ABS it for display — the table reads as
+// "user X bet $Y" not "user X bet -$Y".
+export async function getRecentWagersOnCode(
+  code: string,
+  limit: number = 25,
+) {
+  const db = await getDb();
+  const uppercaseCode = code.toUpperCase();
+  // Cap and floor the limit so a buggy caller can't fetch the world.
+  const safeLimit = Math.max(1, Math.min(Math.floor(limit), 100));
+
+  const rows = await safe(
+    db.$queryRawUnsafe<
+      {
+        id: string;
+        user_id: string;
+        username: string | null;
+        email: string | null;
+        type: string;
+        amount: string;
+        created_at: Date;
+      }[]
+    >(
+      `WITH code_users AS (
+         SELECT DISTINCT acu.referred_user_id
+         FROM affiliate_code_usages acu
+         JOIN "user" u ON u.id = acu.referred_user_id
+         WHERE UPPER(acu.code) = $1
+           AND u.role NOT IN ('admin', 'support')
+       )
+       SELECT
+         lt.id,
+         lt.user_id,
+         u.username,
+         u.email,
+         lt.type::text AS type,
+         lt.amount::text AS amount,
+         lt.created_at
+       FROM ledger_transactions lt
+       JOIN code_users cu ON cu.referred_user_id = lt.user_id
+       LEFT JOIN "user" u ON u.id = lt.user_id
+       WHERE lt.type IN ('pack_opening','battle_bet','battle_sponsorship')
+         AND lt.status = 'completed'
+       ORDER BY lt.created_at DESC
+       LIMIT ${safeLimit}`,
+      uppercaseCode,
+    ),
+    [] as {
+      id: string;
+      user_id: string;
+      username: string | null;
+      email: string | null;
+      type: string;
+      amount: string;
+      created_at: Date;
+    }[],
+  );
+
+  return rows.map((r) => ({
+    id: r.id,
+    userId: r.user_id,
+    username: r.username,
+    email: r.email,
+    type: r.type as "pack_opening" | "battle_bet" | "battle_sponsorship",
+    // amount is negative on the user's ledger (money leaving their
+    // balance); display as a positive bet figure.
+    amountUsd: Math.abs(toNumber(r.amount)),
+    createdAt: r.created_at.toISOString(),
+  }));
+}

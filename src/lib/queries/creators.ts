@@ -14,6 +14,11 @@ export type {
 export { getCreatorPnl } from "./creators-pnl";
 export { searchNonCreatorUsers, getCreators } from "./creators-list";
 export { getCreatorDetail, getCreatorTips } from "./creators-detail";
-export { getCodes, getCodeAnalytics } from "./creators-codes";
+export {
+  getCodes,
+  getCodeAnalytics,
+  getCodeReferrals,
+  getRecentWagersOnCode,
+} from "./creators-codes";
 export { getAffiliateAnalytics, getAffiliateLevelConfigs } from "./creators-analytics";
 export { refreshStaleSocials } from "./creators-social";
