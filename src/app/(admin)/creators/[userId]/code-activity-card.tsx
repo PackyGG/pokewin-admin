@@ -6,7 +6,6 @@ import {
   getRecentWagersOnCode,
 } from "@/lib/queries/creators";
 import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -73,10 +72,13 @@ export async function CodeActivityCard({ code }: { code: string }) {
   ]);
 
   // Render both tab panels server-side so the client tabs component
-  // can swap them in/out without re-fetching. Same pattern DealTabs
-  // already uses on the same page.
+  // can swap them in/out without re-fetching. Each panel wraps its
+  // table in a bordered rounded surface (no Card chrome) so the tab
+  // bar above reads as the section's identity, with the table sitting
+  // as the active "page" content beneath.
   const usersPanel = (
-    <Table>
+    <div className="overflow-hidden rounded-2xl border bg-card/60">
+      <Table>
       <TableHeader>
         <TableRow>
           <TableHead>User</TableHead>
@@ -124,9 +126,11 @@ export async function CodeActivityCard({ code }: { code: string }) {
         )}
       </TableBody>
     </Table>
+    </div>
   );
 
   const wagersPanel = (
+    <div className="overflow-hidden rounded-2xl border bg-card/60">
     <Table>
       <TableHeader>
         <TableRow>
@@ -188,16 +192,15 @@ export async function CodeActivityCard({ code }: { code: string }) {
         )}
       </TableBody>
     </Table>
+    </div>
   );
 
   return (
-    <Card size="sm">
-      <CodeActivityTabs
-        code={code}
-        counts={{ users: referrals.length, wagers: recentWagers.length }}
-        usersPanel={usersPanel}
-        wagersPanel={wagersPanel}
-      />
-    </Card>
+    <CodeActivityTabs
+      code={code}
+      counts={{ users: referrals.length, wagers: recentWagers.length }}
+      usersPanel={usersPanel}
+      wagersPanel={wagersPanel}
+    />
   );
 }

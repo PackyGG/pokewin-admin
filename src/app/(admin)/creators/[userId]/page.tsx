@@ -304,17 +304,17 @@ function LeaderboardsSkeleton() {
 
 function CodeActivitySkeleton() {
   return (
-    <Card size="sm" className="space-y-3 p-4 sm:p-5">
-      <div className="flex items-center gap-3 border-b pb-3">
-        <Skeleton className="h-8 w-32" />
-        <Skeleton className="h-8 w-32" />
+    <section className="space-y-3">
+      <div className="inline-flex items-center gap-1 rounded-xl border bg-card/60 p-1">
+        <Skeleton className="h-9 w-36 rounded-lg" />
+        <Skeleton className="h-9 w-32 rounded-lg" />
       </div>
-      <div className="space-y-2">
-        <Skeleton className="h-9 w-full" />
-        <Skeleton className="h-9 w-full" />
-        <Skeleton className="h-9 w-full" />
-        <Skeleton className="h-9 w-full" />
+      <div className="overflow-hidden rounded-2xl border bg-card/60 p-3 space-y-2">
+        <Skeleton className="h-8 w-full" />
+        <Skeleton className="h-8 w-full" />
+        <Skeleton className="h-8 w-full" />
+        <Skeleton className="h-8 w-full" />
       </div>
-    </Card>
+    </section>
   );
 }
