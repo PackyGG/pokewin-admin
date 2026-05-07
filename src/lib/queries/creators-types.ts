@@ -30,6 +30,11 @@ export type CreatorListItem = {
   // plus their ids so the inline codes editor can remove specific
   // rows.
   codes: { id: string; code: string }[];
+  // True when this creator has at least one creator_deals row with
+  // status='active' AND no future end_date. Drives the "Active"
+  // indicator in the Username cell + the primary sort key in the
+  // /creators list query.
+  hasActiveDeal: boolean;
   level: number;
   totalReferred: number;
   totalSignups: number;

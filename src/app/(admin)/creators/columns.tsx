@@ -14,12 +14,27 @@ export const columns: ColumnDef<CreatorListItem>[] = [
     accessorKey: "username",
     header: "Username",
     cell: ({ row }) => (
-      <Link
-        href={`/creators/${row.original.userId}`}
-        className="font-medium hover:underline"
-      >
-        {row.original.username ?? row.original.userId.slice(0, 8)}
-      </Link>
+      <div className="flex items-center gap-2">
+        {/* Live "Active" dot — only renders for creators with at
+            least one active deal. Pulses softly via motion-safe so
+            it draws the eye without being noisy under reduce-motion. */}
+        {row.original.hasActiveDeal && (
+          <span
+            className="relative flex size-2 shrink-0"
+            aria-label="Active deal"
+            title="Has an active deal"
+          >
+            <span className="absolute inline-flex size-full rounded-full bg-emerald-500/70 motion-safe:animate-ping" />
+            <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+          </span>
+        )}
+        <Link
+          href={`/creators/${row.original.userId}`}
+          className="font-medium hover:underline"
+        >
+          {row.original.username ?? row.original.userId.slice(0, 8)}
+        </Link>
+      </div>
     ),
   },
   {
