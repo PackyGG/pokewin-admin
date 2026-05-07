@@ -8,34 +8,32 @@ import { CreatorEstimatesClient } from "./list-client";
 
 export const metadata = { title: "Creator Deals · Estimates" };
 
-// Same cadence multiplier the /salaries page uses. Keep in sync.
-function periodsPerMonth(cadence: string): number {
-  if (cadence === "weekly") return 52 / 12;
-  if (cadence === "biweekly") return 26 / 12;
-  return 1;
-}
-
-// Worst-case monthly spend for a single estimate row, normalized to
-// a calendar month. fill_amount net of recoup % + every cap as if
-// fully consumed. This is intentionally pessimistic — admins want
-// "what's the maximum we'd pay this creator per month" so they can
-// budget conservatively.
-function maxMonthlySpend(e: {
-  cadence: string;
-  fill_amount_usd: number | null;
-  fill_percent: number | null;
+// Compute the Max Cost for one estimate row.
+//
+// Conventions:
+//   - daily_fill is per DAY → weekly raw fill = daily_fill × 7
+//   - withdrawal_cap is per WEEK
+//   - leaderboard_cost is one-time (the prize pool)
+//   - packy_paid_percent is the % we cover of the prize pool
+//   - deal_length_weeks scales weekly outflows
+//
+// Max Cost = (raw_weekly + weekly_wd_cap) × deal_length_weeks
+//          + leaderboard_cost × packy_paid_percent / 100
+function maxCost(e: {
+  daily_fill_usd: number | null;
   withdrawal_cap_usd: number | null;
-  tip_cap_usd: number | null;
-  free_battle_cap_usd: number | null;
+  leaderboard_cost_usd: number | null;
+  packy_paid_percent: number | null;
+  deal_length_weeks: number | null;
 }): number {
-  const fill = e.fill_amount_usd ?? 0;
-  const fillKeep = e.fill_percent ?? 0; // % house keeps
-  const fillNet = fill * (1 - fillKeep / 100);
-  const wd = e.withdrawal_cap_usd ?? 0;
-  const tip = e.tip_cap_usd ?? 0;
-  const fb = e.free_battle_cap_usd ?? 0;
-  const perPeriod = fillNet + wd + tip + fb;
-  return perPeriod * periodsPerMonth(e.cadence);
+  const dailyFill = e.daily_fill_usd ?? 0;
+  const weeklyRaw = dailyFill * 7;
+  const wdCap = e.withdrawal_cap_usd ?? 0;
+  const lbCost = e.leaderboard_cost_usd ?? 0;
+  const lbShare = e.packy_paid_percent ?? 0;
+  const rawLb = lbCost * (lbShare / 100);
+  const weeks = e.deal_length_weeks ?? 0;
+  return (weeklyRaw + wdCap) * weeks + rawLb;
 }
 
 export default async function CreatorEstimatesPage() {
@@ -51,46 +49,51 @@ export default async function CreatorEstimatesPage() {
   const numericEstimates = estimates.map((e) => ({
     id: e.id,
     name: e.name,
-    cadence: (["weekly", "biweekly", "monthly"].includes(e.cadence)
-      ? e.cadence
-      : "monthly") as "weekly" | "biweekly" | "monthly",
-    fillAmountUsd: e.fill_amount_usd === null ? null : Number(e.fill_amount_usd),
-    fillPercent: e.fill_percent === null ? null : Number(e.fill_percent),
+    dailyFillUsd: e.daily_fill_usd === null ? null : Number(e.daily_fill_usd),
     withdrawalCapUsd:
       e.withdrawal_cap_usd === null ? null : Number(e.withdrawal_cap_usd),
     withdrawalPercent:
       e.withdrawal_percent === null ? null : Number(e.withdrawal_percent),
-    tipCapUsd: e.tip_cap_usd === null ? null : Number(e.tip_cap_usd),
-    freeBattleCapUsd:
-      e.free_battle_cap_usd === null ? null : Number(e.free_battle_cap_usd),
+    leaderboardCostUsd:
+      e.leaderboard_cost_usd === null ? null : Number(e.leaderboard_cost_usd),
+    packyPaidPercent:
+      e.packy_paid_percent === null ? null : Number(e.packy_paid_percent),
+    dealLengthWeeks:
+      e.deal_length_weeks === null ? null : Number(e.deal_length_weeks),
     notes: e.notes,
     createdAt: e.created_at.toISOString(),
   }));
 
-  // Aggregate KPIs (worst-case monthly spend across all entries).
-  const totalMonthlySpend = estimates.reduce(
+  // Aggregate KPIs across all entries.
+  const totalMaxCost = estimates.reduce(
     (sum, e) =>
       sum +
-      maxMonthlySpend({
-        cadence: e.cadence,
-        fill_amount_usd:
-          e.fill_amount_usd === null ? null : Number(e.fill_amount_usd),
-        fill_percent: e.fill_percent === null ? null : Number(e.fill_percent),
+      maxCost({
+        daily_fill_usd:
+          e.daily_fill_usd === null ? null : Number(e.daily_fill_usd),
         withdrawal_cap_usd:
           e.withdrawal_cap_usd === null
             ? null
             : Number(e.withdrawal_cap_usd),
-        tip_cap_usd: e.tip_cap_usd === null ? null : Number(e.tip_cap_usd),
-        free_battle_cap_usd:
-          e.free_battle_cap_usd === null
+        leaderboard_cost_usd:
+          e.leaderboard_cost_usd === null
             ? null
-            : Number(e.free_battle_cap_usd),
+            : Number(e.leaderboard_cost_usd),
+        packy_paid_percent:
+          e.packy_paid_percent === null ? null : Number(e.packy_paid_percent),
+        deal_length_weeks:
+          e.deal_length_weeks === null ? null : Number(e.deal_length_weeks),
       }),
     0,
   );
-  const totalFillsMonthly = estimates.reduce((sum, e) => {
-    const fill = e.fill_amount_usd === null ? 0 : Number(e.fill_amount_usd);
-    return sum + fill * periodsPerMonth(e.cadence);
+  // Weekly burn = sum of (daily_fill × 7 + wd_cap) across all. The
+  // "what does this cost us per WEEK" headline number, ignoring deal
+  // length and leaderboards.
+  const weeklyBurn = estimates.reduce((sum, e) => {
+    const weekly =
+      (e.daily_fill_usd === null ? 0 : Number(e.daily_fill_usd)) * 7 +
+      (e.withdrawal_cap_usd === null ? 0 : Number(e.withdrawal_cap_usd));
+    return sum + weekly;
   }, 0);
   const totalCount = estimates.length;
 
@@ -107,7 +110,7 @@ export default async function CreatorEstimatesPage() {
             </h1>
             <p className="text-sm text-muted-foreground">
               Scratchpad for prospective creator deals. Enter terms,
-              see what they&apos;d cost monthly. Not linked to any
+              see total cost across all deals. Not linked to any
               real account — pure planning data.
             </p>
           </div>
@@ -121,25 +124,25 @@ export default async function CreatorEstimatesPage() {
           icon={Users}
           accent="blue"
         />
-        {/* Monthly spend = sum of every entry's max monthly spend.
-            Rose because it's house outflow (CLAUDE.md: paying out
-            to creators = house loss). */}
+        {/* Total Max Cost across all entries — every weekly cap fully
+            consumed × deal_length_weeks + leaderboards. Rose because
+            it's house outflow per CLAUDE.md house POV. */}
         <KpiTile
-          label="Max Monthly Spend"
-          value={`$${totalMonthlySpend.toLocaleString(undefined, {
+          label="Total Max Cost"
+          value={`$${totalMaxCost.toLocaleString(undefined, {
             maximumFractionDigits: 0,
           })}`}
           icon={Calculator}
-          sub="Worst-case across all"
+          sub="Worst case across all"
           accent="rose"
         />
         <KpiTile
-          label="Monthly Fills"
-          value={`$${totalFillsMonthly.toLocaleString(undefined, {
+          label="Weekly Burn"
+          value={`$${weeklyBurn.toLocaleString(undefined, {
             maximumFractionDigits: 0,
           })}`}
           icon={Coins}
-          sub="Gross, before recoup"
+          sub="Fills + wd caps / week"
           accent="amber"
         />
       </div>

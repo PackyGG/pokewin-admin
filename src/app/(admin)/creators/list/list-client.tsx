@@ -15,7 +15,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -41,57 +40,43 @@ import {
   updateCreatorEstimate,
 } from "./actions";
 
-type Cadence = "weekly" | "biweekly" | "monthly";
-
 export type CreatorEstimate = {
   id: string;
   name: string;
-  cadence: Cadence;
-  fillAmountUsd: number | null;
-  fillPercent: number | null;
+  dailyFillUsd: number | null;
   withdrawalCapUsd: number | null;
   withdrawalPercent: number | null;
-  tipCapUsd: number | null;
-  freeBattleCapUsd: number | null;
+  leaderboardCostUsd: number | null;
+  packyPaidPercent: number | null;
+  dealLengthWeeks: number | null;
   notes: string | null;
   createdAt: string;
 };
 
-const CADENCE_LABELS: Record<Cadence, string> = {
-  weekly: "Weekly",
-  biweekly: "Bi-weekly",
-  monthly: "Monthly",
-};
+// ── Computed numbers (mirror page.tsx server computation) ─────────
 
-const CADENCE_COLORS: Record<Cadence, string> = {
-  weekly:
-    "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-cyan-500/30",
-  biweekly:
-    "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
-  monthly:
-    "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
-};
-
-function periodsPerMonth(c: Cadence): number {
-  if (c === "weekly") return 52 / 12;
-  if (c === "biweekly") return 26 / 12;
-  return 1;
+function rawWeeklyAmount(e: CreatorEstimate): number {
+  return (e.dailyFillUsd ?? 0) * 7;
 }
 
-function maxMonthlySpend(e: CreatorEstimate): number {
-  const fill = e.fillAmountUsd ?? 0;
-  const fillKeep = e.fillPercent ?? 0;
-  const fillNet = fill * (1 - fillKeep / 100);
-  const wd = e.withdrawalCapUsd ?? 0;
-  const tip = e.tipCapUsd ?? 0;
-  const fb = e.freeBattleCapUsd ?? 0;
-  return (fillNet + wd + tip + fb) * periodsPerMonth(e.cadence);
+function rawLbCost(e: CreatorEstimate): number {
+  const lb = e.leaderboardCostUsd ?? 0;
+  const share = e.packyPaidPercent ?? 0;
+  return lb * (share / 100);
+}
+
+function maxCost(e: CreatorEstimate): number {
+  const weekly = rawWeeklyAmount(e) + (e.withdrawalCapUsd ?? 0);
+  const weeks = e.dealLengthWeeks ?? 0;
+  return weekly * weeks + rawLbCost(e);
 }
 
 function fmt$(n: number | null | undefined): string {
   if (n === null || n === undefined) return "—";
   return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 }
+
+// ── Top-level grid ─────────────────────────────────────────────────
 
 export function CreatorEstimatesClient({
   estimates,
@@ -137,11 +122,13 @@ export function CreatorEstimatesClient({
   );
 }
 
-// ── Card ──────────────────────────────────────────────────────────
+// ── Per-deal card ─────────────────────────────────────────────────
 
 function EstimateCard({ estimate }: { estimate: CreatorEstimate }) {
   const [editOpen, setEditOpen] = useState(false);
-  const monthly = maxMonthlySpend(estimate);
+  const max = maxCost(estimate);
+  const weekly = rawWeeklyAmount(estimate);
+  const lbRaw = rawLbCost(estimate);
 
   return (
     <div className="group relative overflow-hidden rounded-2xl border border-border/60 bg-card p-5 transition-all hover:-translate-y-px hover:border-border hover:shadow-lg sm:p-6">
@@ -160,19 +147,12 @@ function EstimateCard({ estimate }: { estimate: CreatorEstimate }) {
             <p className="truncate text-base font-semibold leading-tight">
               {estimate.name}
             </p>
-            <div className="mt-1 flex flex-wrap items-center gap-1.5">
-              <Badge
-                variant="outline"
-                className={
-                  "text-[10px] " + CADENCE_COLORS[estimate.cadence]
-                }
-              >
-                {CADENCE_LABELS[estimate.cadence]}
-              </Badge>
-              <span className="text-[11px] text-muted-foreground">
-                added {formatRelative(estimate.createdAt)}
-              </span>
-            </div>
+            <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+              {estimate.dealLengthWeeks
+                ? `${estimate.dealLengthWeeks}-week deal · `
+                : ""}
+              added {formatRelative(estimate.createdAt)}
+            </p>
           </div>
           <div className="flex shrink-0 items-center gap-1">
             <Button
@@ -188,51 +168,69 @@ function EstimateCard({ estimate }: { estimate: CreatorEstimate }) {
           </div>
         </div>
 
-        {/* Headline: max monthly spend (worst case) — rose because
-            it's a house outflow per CLAUDE.md house POV. */}
+        {/* Headline: Max Cost — rose because it's house outflow */}
         <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 px-4 py-3">
           <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
             <Calculator className="size-3" />
-            Max monthly spend
+            Max cost (over deal)
           </div>
           <p className="mt-0.5 text-2xl font-bold tabular-nums text-rose-600 dark:text-rose-400">
-            {fmt$(monthly)}
+            {fmt$(max)}
           </p>
           <p className="mt-0.5 text-[10px] text-muted-foreground">
-            Worst case — every cap consumed, fills net of recoup
+            (raw weekly + WD cap) × weeks + raw LB cost
           </p>
         </div>
 
-        {/* Caps grid */}
+        {/* Field grid — every column the user listed, raw inputs +
+            computed derivations side by side. */}
         <div className="grid grid-cols-2 gap-x-3 gap-y-3">
-          <Stat label="Fill / period">
+          <Stat label="Daily fill">
             <span className="block truncate text-sm font-semibold tabular-nums">
-              {fmt$(estimate.fillAmountUsd)}
-              {estimate.fillPercent !== null && (
-                <span className="ml-1 text-[10px] font-normal text-muted-foreground">
-                  · keep {estimate.fillPercent}%
-                </span>
-              )}
+              {fmt$(estimate.dailyFillUsd)}
             </span>
           </Stat>
-          <Stat label="WD cap">
+          <Stat label="Raw $ / week">
+            <span className="block truncate text-sm font-semibold tabular-nums">
+              {estimate.dailyFillUsd ? fmt$(weekly) : "—"}
+            </span>
+          </Stat>
+          <Stat label="Withdraw %">
+            <span className="block truncate text-sm font-semibold tabular-nums">
+              {estimate.withdrawalPercent !== null
+                ? `${estimate.withdrawalPercent}%`
+                : "—"}
+            </span>
+          </Stat>
+          <Stat label="Withdraw cap / wk">
             <span className="block truncate text-sm font-semibold tabular-nums">
               {fmt$(estimate.withdrawalCapUsd)}
-              {estimate.withdrawalPercent !== null && (
-                <span className="ml-1 text-[10px] font-normal text-muted-foreground">
-                  · {estimate.withdrawalPercent}%
-                </span>
-              )}
             </span>
           </Stat>
-          <Stat label="Tip cap">
+          <Stat label="Leaderboard cost">
             <span className="block truncate text-sm font-semibold tabular-nums">
-              {fmt$(estimate.tipCapUsd)}
+              {fmt$(estimate.leaderboardCostUsd)}
             </span>
           </Stat>
-          <Stat label="Free battle cap">
+          <Stat label="Packy paid %">
             <span className="block truncate text-sm font-semibold tabular-nums">
-              {fmt$(estimate.freeBattleCapUsd)}
+              {estimate.packyPaidPercent !== null
+                ? `${estimate.packyPaidPercent}%`
+                : "—"}
+            </span>
+          </Stat>
+          <Stat label="Raw LB cost">
+            <span className="block truncate text-sm font-semibold tabular-nums">
+              {estimate.leaderboardCostUsd && estimate.packyPaidPercent
+                ? fmt$(lbRaw)
+                : "—"}
+            </span>
+          </Stat>
+          <Stat label="Deal length">
+            <span className="block truncate text-sm font-semibold tabular-nums">
+              {estimate.dealLengthWeeks
+                ? `${estimate.dealLengthWeeks} wk${estimate.dealLengthWeeks === 1 ? "" : "s"}`
+                : "—"}
             </span>
           </Stat>
         </div>
@@ -284,31 +282,32 @@ function EstimateFormDialog({
   const router = useRouter();
   const isEdit = Boolean(estimate);
   const [name, setName] = useState(estimate?.name ?? "");
-  const [cadence, setCadence] = useState<Cadence>(
-    estimate?.cadence ?? "monthly",
-  );
-  const [fillAmount, setFillAmount] = useState(
-    estimate?.fillAmountUsd != null ? String(estimate.fillAmountUsd) : "",
-  );
-  const [fillPercent, setFillPercent] = useState(
-    estimate?.fillPercent != null ? String(estimate.fillPercent) : "",
-  );
-  const [wdCap, setWdCap] = useState(
-    estimate?.withdrawalCapUsd != null
-      ? String(estimate.withdrawalCapUsd)
-      : "",
+  const [dailyFill, setDailyFill] = useState(
+    estimate?.dailyFillUsd != null ? String(estimate.dailyFillUsd) : "",
   );
   const [wdPercent, setWdPercent] = useState(
     estimate?.withdrawalPercent != null
       ? String(estimate.withdrawalPercent)
       : "",
   );
-  const [tipCap, setTipCap] = useState(
-    estimate?.tipCapUsd != null ? String(estimate.tipCapUsd) : "",
+  const [wdCap, setWdCap] = useState(
+    estimate?.withdrawalCapUsd != null
+      ? String(estimate.withdrawalCapUsd)
+      : "",
   );
-  const [fbCap, setFbCap] = useState(
-    estimate?.freeBattleCapUsd != null
-      ? String(estimate.freeBattleCapUsd)
+  const [lbCost, setLbCost] = useState(
+    estimate?.leaderboardCostUsd != null
+      ? String(estimate.leaderboardCostUsd)
+      : "",
+  );
+  const [packyPaid, setPackyPaid] = useState(
+    estimate?.packyPaidPercent != null
+      ? String(estimate.packyPaidPercent)
+      : "",
+  );
+  const [dealLength, setDealLength] = useState(
+    estimate?.dealLengthWeeks != null
+      ? String(estimate.dealLengthWeeks)
       : "",
   );
   const [notes, setNotes] = useState(estimate?.notes ?? "");
@@ -318,27 +317,32 @@ function EstimateFormDialog({
   useEffect(() => {
     if (open) {
       setName(estimate?.name ?? "");
-      setCadence(estimate?.cadence ?? "monthly");
-      setFillAmount(
-        estimate?.fillAmountUsd != null ? String(estimate.fillAmountUsd) : "",
-      );
-      setFillPercent(
-        estimate?.fillPercent != null ? String(estimate.fillPercent) : "",
-      );
-      setWdCap(
-        estimate?.withdrawalCapUsd != null
-          ? String(estimate.withdrawalCapUsd)
-          : "",
+      setDailyFill(
+        estimate?.dailyFillUsd != null ? String(estimate.dailyFillUsd) : "",
       );
       setWdPercent(
         estimate?.withdrawalPercent != null
           ? String(estimate.withdrawalPercent)
           : "",
       );
-      setTipCap(estimate?.tipCapUsd != null ? String(estimate.tipCapUsd) : "");
-      setFbCap(
-        estimate?.freeBattleCapUsd != null
-          ? String(estimate.freeBattleCapUsd)
+      setWdCap(
+        estimate?.withdrawalCapUsd != null
+          ? String(estimate.withdrawalCapUsd)
+          : "",
+      );
+      setLbCost(
+        estimate?.leaderboardCostUsd != null
+          ? String(estimate.leaderboardCostUsd)
+          : "",
+      );
+      setPackyPaid(
+        estimate?.packyPaidPercent != null
+          ? String(estimate.packyPaidPercent)
+          : "",
+      );
+      setDealLength(
+        estimate?.dealLengthWeeks != null
+          ? String(estimate.dealLengthWeeks)
           : "",
       );
       setNotes(estimate?.notes ?? "");
@@ -350,6 +354,22 @@ function EstimateFormDialog({
     const n = parseFloat(v);
     return Number.isFinite(n) && n >= 0 ? n : null;
   }
+  function parseIntOrNull(v: string): number | null {
+    if (!v.trim()) return null;
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  }
+
+  // Live preview of the computed Max Cost so the admin sees the
+  // outcome of their inputs without having to save first.
+  const previewMax = (() => {
+    const daily = parseDollarOrNull(dailyFill) ?? 0;
+    const cap = parseDollarOrNull(wdCap) ?? 0;
+    const lb = parseDollarOrNull(lbCost) ?? 0;
+    const share = parseDollarOrNull(packyPaid) ?? 0;
+    const weeks = parseIntOrNull(dealLength) ?? 0;
+    return (daily * 7 + cap) * weeks + lb * (share / 100);
+  })();
 
   function handleSubmit() {
     if (!name.trim()) {
@@ -358,13 +378,12 @@ function EstimateFormDialog({
     }
     const payload = {
       name: name.trim(),
-      cadence,
-      fillAmountUsd: parseDollarOrNull(fillAmount),
-      fillPercent: parseDollarOrNull(fillPercent),
-      withdrawalCapUsd: parseDollarOrNull(wdCap),
+      dailyFillUsd: parseDollarOrNull(dailyFill),
       withdrawalPercent: parseDollarOrNull(wdPercent),
-      tipCapUsd: parseDollarOrNull(tipCap),
-      freeBattleCapUsd: parseDollarOrNull(fbCap),
+      withdrawalCapUsd: parseDollarOrNull(wdCap),
+      leaderboardCostUsd: parseDollarOrNull(lbCost),
+      packyPaidPercent: parseDollarOrNull(packyPaid),
+      dealLengthWeeks: parseIntOrNull(dealLength),
       notes: notes.trim() || null,
     };
     startTransition(async () => {
@@ -388,12 +407,12 @@ function EstimateFormDialog({
         if (!o) onClose();
       }}
     >
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{isEdit ? "Edit deal" : "Add deal"}</DialogTitle>
           <DialogDescription>
-            All caps and percentages are optional. Use whichever
-            fields apply to this deal.
+            All fields except the name are optional. Withdraw cap is
+            treated as a per-week cap; leaderboard cost is one-time.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 py-2 sm:grid-cols-2">
@@ -406,61 +425,44 @@ function EstimateFormDialog({
               maxLength={80}
             />
           </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Cadence</Label>
-            <select
-              value={cadence}
-              onChange={(e) => setCadence(e.target.value as Cadence)}
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-            >
-              <option value="weekly">Weekly</option>
-              <option value="biweekly">Bi-weekly</option>
-              <option value="monthly">Monthly</option>
-            </select>
-          </div>
+
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">
-              Fill amount (USD per period)
+              Daily fill (USD)
             </Label>
             <Input
               type="number"
               step="0.01"
               min="0"
-              value={fillAmount}
-              onChange={(e) => setFillAmount(e.target.value)}
-              placeholder="500"
+              value={dailyFill}
+              onChange={(e) => setDailyFill(e.target.value)}
+              placeholder="50"
             />
+            <p className="text-[10px] text-muted-foreground">
+              Raw $ / week ={" "}
+              <span className="font-mono">
+                {dailyFill ? fmt$((parseDollarOrNull(dailyFill) ?? 0) * 7) : "—"}
+              </span>
+            </p>
           </div>
+
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">
-              Fill recoup % (house keeps)
+              Deal length (weeks)
             </Label>
             <Input
               type="number"
-              step="0.01"
+              step="1"
               min="0"
-              max="100"
-              value={fillPercent}
-              onChange={(e) => setFillPercent(e.target.value)}
-              placeholder="20"
+              value={dealLength}
+              onChange={(e) => setDealLength(e.target.value)}
+              placeholder="4"
             />
           </div>
+
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">
-              Withdrawal cap (USD per period)
-            </Label>
-            <Input
-              type="number"
-              step="0.01"
-              min="0"
-              value={wdCap}
-              onChange={(e) => setWdCap(e.target.value)}
-              placeholder="1000"
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">
-              Withdrawal % (of wager)
+              Withdraw % (of wager)
             </Label>
             <Input
               type="number"
@@ -472,41 +474,88 @@ function EstimateFormDialog({
               placeholder="30"
             />
           </div>
+
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">
-              Tip cap (USD per period)
+              Withdraw cap / week (USD)
             </Label>
             <Input
               type="number"
               step="0.01"
               min="0"
-              value={tipCap}
-              onChange={(e) => setTipCap(e.target.value)}
-              placeholder="200"
+              value={wdCap}
+              onChange={(e) => setWdCap(e.target.value)}
+              placeholder="500"
             />
           </div>
+
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">
-              Free battle cap (USD per period)
+              Leaderboard cost (USD, one-time)
             </Label>
             <Input
               type="number"
               step="0.01"
               min="0"
-              value={fbCap}
-              onChange={(e) => setFbCap(e.target.value)}
-              placeholder="100"
+              value={lbCost}
+              onChange={(e) => setLbCost(e.target.value)}
+              placeholder="1000"
             />
           </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">
+              Packy paid % (of LB)
+            </Label>
+            <Input
+              type="number"
+              step="0.01"
+              min="0"
+              max="100"
+              value={packyPaid}
+              onChange={(e) => setPackyPaid(e.target.value)}
+              placeholder="50"
+            />
+            <p className="text-[10px] text-muted-foreground">
+              Raw LB cost ={" "}
+              <span className="font-mono">
+                {lbCost && packyPaid
+                  ? fmt$(
+                      (parseDollarOrNull(lbCost) ?? 0) *
+                        ((parseDollarOrNull(packyPaid) ?? 0) / 100),
+                    )
+                  : "—"}
+              </span>
+            </p>
+          </div>
+
           <div className="space-y-1 sm:col-span-2">
-            <Label className="text-xs text-muted-foreground">Notes</Label>
+            <Label className="text-xs text-muted-foreground">
+              Additional deal notes
+            </Label>
             <Textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               rows={2}
-              placeholder="Platform, agreed terms, etc."
+              placeholder="Platform, agreed terms, sponsor / brand, etc."
               maxLength={500}
             />
+          </div>
+
+          {/* Live Max Cost preview — same formula the card displays */}
+          <div className="sm:col-span-2 rounded-lg border border-rose-500/30 bg-rose-500/5 px-3 py-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                <Calculator className="size-3" />
+                Max cost preview
+              </div>
+              <span className="font-mono text-sm font-bold tabular-nums text-rose-600 dark:text-rose-400">
+                {fmt$(previewMax)}
+              </span>
+            </div>
+            <p className="mt-0.5 text-[10px] text-muted-foreground">
+              (daily × 7 + WD cap) × weeks + LB cost × packy %
+            </p>
           </div>
         </div>
         <DialogFooter>
@@ -576,4 +625,3 @@ function DeleteEstimateButton({ estimate }: { estimate: CreatorEstimate }) {
     </AlertDialog>
   );
 }
-
