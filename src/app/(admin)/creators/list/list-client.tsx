@@ -9,6 +9,8 @@ import {
   Plus,
   Trash2,
   Users,
+  X,
+  Youtube,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -384,6 +386,15 @@ function EstimateFormDialog({
       ? String(estimate.dealLengthWeeks)
       : "",
   );
+  // Videos are an optional section — hidden behind a button until
+  // the admin clicks "Add YouTube videos". Defaults to expanded if
+  // the row already has any video data so editing existing deals
+  // surfaces the fields automatically.
+  const [videosEnabled, setVideosEnabled] = useState(
+    estimate?.videoAmountUsd != null ||
+      estimate?.videoPercent != null ||
+      estimate?.videoFillsPerWeek != null,
+  );
   const [videoAmount, setVideoAmount] = useState(
     estimate?.videoAmountUsd != null ? String(estimate.videoAmountUsd) : "",
   );
@@ -438,6 +449,11 @@ function EstimateFormDialog({
           ? String(estimate.dealLengthWeeks)
           : "",
       );
+      setVideosEnabled(
+        estimate?.videoAmountUsd != null ||
+          estimate?.videoPercent != null ||
+          estimate?.videoFillsPerWeek != null,
+      );
       setVideoAmount(
         estimate?.videoAmountUsd != null
           ? String(estimate.videoAmountUsd)
@@ -478,17 +494,19 @@ function EstimateFormDialog({
   // outcome of their inputs without having to save first. Tip +
   // battle balances are added flat (no scaling) — same as the
   // server-side maxCost helper. Video net counts into the weekly
-  // bucket alongside the WD cap.
+  // bucket alongside the WD cap, but only when the videos section
+  // is toggled on (otherwise it's saved as null).
   const previewMax = (() => {
     const daily = parseDollarOrNull(dailyFill) ?? 0;
     const cap = parseDollarOrNull(wdCap) ?? 0;
     const lb = parseDollarOrNull(lbCost) ?? 0;
     const share = parseDollarOrNull(packyPaid) ?? 0;
     const weeks = parseIntOrNull(dealLength) ?? 0;
-    const vAmt = parseDollarOrNull(videoAmount) ?? 0;
-    const vPct = parseDollarOrNull(videoPercent) ?? 0;
-    const vFills = parseIntOrNull(videoFills) ?? 0;
-    const videoNet = vAmt * vFills * (1 - vPct / 100);
+    const videoNet = videosEnabled
+      ? (parseDollarOrNull(videoAmount) ?? 0) *
+        (parseIntOrNull(videoFills) ?? 0) *
+        (1 - (parseDollarOrNull(videoPercent) ?? 0) / 100)
+      : 0;
     const tip = parseDollarOrNull(tipBalance) ?? 0;
     const battle = parseDollarOrNull(battleBalance) ?? 0;
     return (
@@ -512,9 +530,9 @@ function EstimateFormDialog({
       leaderboardCostUsd: parseDollarOrNull(lbCost),
       packyPaidPercent: parseDollarOrNull(packyPaid),
       dealLengthWeeks: parseIntOrNull(dealLength),
-      videoAmountUsd: parseDollarOrNull(videoAmount),
-      videoPercent: parseDollarOrNull(videoPercent),
-      videoFillsPerWeek: parseIntOrNull(videoFills),
+      videoAmountUsd: videosEnabled ? parseDollarOrNull(videoAmount) : null,
+      videoPercent: videosEnabled ? parseDollarOrNull(videoPercent) : null,
+      videoFillsPerWeek: videosEnabled ? parseIntOrNull(videoFills) : null,
       tipBalanceUsd: parseDollarOrNull(tipBalance),
       battleBalanceUsd: parseDollarOrNull(battleBalance),
       notes: notes.trim() || null,
@@ -622,60 +640,104 @@ function EstimateFormDialog({
             />
           </div>
 
-          {/* Video deal terms — same shape as daily fill (amount + %
-              + fills) but for videos. Per user spec: counts into the
-              same weekly bucket as the WD cap, scaled by deal length. */}
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">
-              Video $ / each (USD)
-            </Label>
-            <Input
-              type="number"
-              step="0.01"
-              min="0"
-              value={videoAmount}
-              onChange={(e) => setVideoAmount(e.target.value)}
-              placeholder="200"
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">
-              Video % (recoup)
-            </Label>
-            <Input
-              type="number"
-              step="0.01"
-              min="0"
-              max="100"
-              value={videoPercent}
-              onChange={(e) => setVideoPercent(e.target.value)}
-              placeholder="50"
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">
-              Videos / week
-            </Label>
-            <Input
-              type="number"
-              step="1"
-              min="0"
-              value={videoFills}
-              onChange={(e) => setVideoFills(e.target.value)}
-              placeholder="2"
-            />
-            <p className="text-[10px] text-muted-foreground">
-              Net / week ={" "}
-              <span className="font-mono">
-                {videoAmount && videoFills
-                  ? fmt$(
-                      (parseDollarOrNull(videoAmount) ?? 0) *
-                        (parseIntOrNull(videoFills) ?? 0) *
-                        (1 - (parseDollarOrNull(videoPercent) ?? 0) / 100),
-                    )
-                  : "—"}
-              </span>
-            </p>
+          {/* Video deal terms — optional section behind a button.
+              Same shape as daily fill (amount + % + fills) but for
+              videos. Per user spec: counts into the same weekly
+              bucket as the WD cap, scaled by deal length. Hidden by
+              default; button reveals the inputs. Removing the
+              section sends null for all three so the row stays clean. */}
+          <div className="sm:col-span-2">
+            {videosEnabled ? (
+              <div className="rounded-lg border border-border/60 bg-muted/30 p-3">
+                <div className="mb-3 flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+                    <Youtube className="size-3.5 text-rose-500" />
+                    YouTube videos
+                  </div>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="size-6 text-muted-foreground hover:text-rose-500"
+                    onClick={() => {
+                      setVideosEnabled(false);
+                      setVideoAmount("");
+                      setVideoPercent("");
+                      setVideoFills("");
+                    }}
+                    aria-label="Remove videos"
+                  >
+                    <X className="size-3.5" />
+                  </Button>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">
+                      $ / video (USD)
+                    </Label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={videoAmount}
+                      onChange={(e) => setVideoAmount(e.target.value)}
+                      placeholder="200"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">
+                      % (recoup)
+                    </Label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="100"
+                      value={videoPercent}
+                      onChange={(e) => setVideoPercent(e.target.value)}
+                      placeholder="50"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">
+                      Videos / week
+                    </Label>
+                    <Input
+                      type="number"
+                      step="1"
+                      min="0"
+                      value={videoFills}
+                      onChange={(e) => setVideoFills(e.target.value)}
+                      placeholder="2"
+                    />
+                  </div>
+                </div>
+                <p className="mt-2 text-[10px] text-muted-foreground">
+                  Net / week ={" "}
+                  <span className="font-mono">
+                    {videoAmount && videoFills
+                      ? fmt$(
+                          (parseDollarOrNull(videoAmount) ?? 0) *
+                            (parseIntOrNull(videoFills) ?? 0) *
+                            (1 -
+                              (parseDollarOrNull(videoPercent) ?? 0) / 100),
+                        )
+                      : "—"}
+                  </span>{" "}
+                  · counts into the weekly bucket alongside the WD cap.
+                </p>
+              </div>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full justify-center text-muted-foreground hover:text-foreground"
+                onClick={() => setVideosEnabled(true)}
+              >
+                <Youtube className="size-4 text-rose-500" />
+                Add YouTube videos
+              </Button>
+            )}
           </div>
 
           <div className="space-y-1">
