@@ -159,6 +159,116 @@ export async function adjustBalance(data: {
 }
 
 // ---------------------------------------------------------------------------
+// Move whole balance → vault (instant, no unlock time)
+// ---------------------------------------------------------------------------
+//
+// Vault on the platform = `balances.locked_balance` (the spendable balance
+// is `balances.available_balance`). The platform already has `vault_lock` /
+// `vault_unlock` ledger types for this movement; this action wraps that
+// flow at the admin level so support can park a user's whole spendable
+// balance instantly without going through the normal user-side flow.
+//
+// "Instant, no unlock time" => `unlock_at = null`. If the user already
+// had locked balance with a future `unlock_at` set, that is overridden:
+// the new pool of locked funds (old locked + the newly-moved available)
+// becomes immediately unlockable. This matches the user-stated intent
+// ("no unlock time, just instant") — admins want a one-click anti-tilt
+// safety pause without committing the user to a fixed window.
+//
+// Total balance is unchanged. Reversible: admins can adjust back via
+// the existing balance-adjust flow if needed.
+export async function moveBalanceToVault(
+  userId: string,
+): Promise<
+  | { success: true; movedAmount: number }
+  | { success: false; error: string }
+> {
+  const db = await getDb();
+  const session = await requirePageAccess("/users");
+  // Reuses the same gate as the adjust-balance action — anyone with
+  // permission to manipulate a user's balance is permitted to park
+  // it in the vault. Admins always pass; non-admins need the explicit
+  // capability on their role.
+  if (session.role !== "admin") {
+    const perms = await adminDb.admin_users.findUnique({
+      where: { id: session.userId },
+      select: { allowed_pages: true },
+    });
+    if (!perms || !canUserAdjustBalance(perms.allowed_pages)) {
+      return {
+        success: false,
+        error: "You do not have permission to move balances to vault",
+      };
+    }
+  }
+
+  const balances = await db.balances.findUnique({
+    where: { user_id: userId },
+  });
+  if (!balances) {
+    return { success: false, error: "User has no balance row" };
+  }
+
+  const available = Number(balances.available_balance);
+  if (available <= 0) {
+    return {
+      success: false,
+      error: "Available balance is already 0 — nothing to move",
+    };
+  }
+
+  const locked = Number(balances.locked_balance);
+  const newLocked = locked + available;
+
+  try {
+    await db.$transaction([
+      db.balances.update({
+        where: { user_id: userId },
+        data: {
+          available_balance: 0,
+          locked_balance: newLocked,
+          // Per user spec: "no unlock time, just instant". Override
+          // any existing unlock_at on the row so the whole locked
+          // pool is admin-/user-controlled rather than time-gated.
+          unlock_at: null,
+        },
+      }),
+      db.ledger_transactions.create({
+        data: {
+          id: crypto.randomUUID(),
+          user_id: userId,
+          type: "vault_lock",
+          // Negative because available_balance dropped by `available`.
+          // The ledger's balance_before/after track available_balance
+          // (matches the convention in adjustBalance).
+          amount: -available,
+          balance_before: available,
+          balance_after: 0,
+          description: "Admin moved entire balance to vault (no unlock time)",
+          status: "completed",
+        },
+      }),
+    ]);
+  } catch (err) {
+    console.error("[moveBalanceToVault] transaction failed:", err);
+    return {
+      success: false,
+      error: "Failed to move balance to vault — please try again",
+    };
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "balance_moved_to_vault",
+    targetUserId: userId,
+    metadata: { amount: available, instant: true },
+  });
+
+  revalidatePath(`/users/${userId}`);
+  return { success: true, movedAmount: available };
+}
+
+// ---------------------------------------------------------------------------
 // Manual withdrawal — admin records an off-platform payout
 // ---------------------------------------------------------------------------
 //
