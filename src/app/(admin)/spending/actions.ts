@@ -207,7 +207,23 @@ export async function toggleRecurringExpense(id: string, isActive: boolean) {
 
 // --- Partial field update actions for inline editing ---
 
-const EXPENSE_FIELD_MAP: Record<string, string> = {
+// Single source of truth for which fields are inline-editable. The
+// type-level `z.enum(...)` makes TS catch drift at compile time so a
+// field added to the form (or removed from the validator map below)
+// can't slip through silently.
+const EXPENSE_FIELD_KEY = z.enum([
+  "description",
+  "amount",
+  "date",
+  "paidTo",
+  "paidBy",
+  "paymentMethod",
+  "category",
+  "notes",
+]);
+type ExpenseFieldKey = z.infer<typeof EXPENSE_FIELD_KEY>;
+
+const EXPENSE_FIELD_MAP: Record<ExpenseFieldKey, string> = {
   description: "description",
   amount: "amount",
   date: "date",
@@ -218,7 +234,7 @@ const EXPENSE_FIELD_MAP: Record<string, string> = {
   notes: "notes",
 };
 
-const expenseFieldValidators: Record<string, z.ZodType> = {
+const expenseFieldValidators: Record<ExpenseFieldKey, z.ZodType> = {
   description: z.string().min(1).nullable(),
   amount: z.number().positive().nullable(),
   date: z.string().min(1).nullable(),
@@ -236,14 +252,22 @@ export async function updateExpenseField(
 ) {
   const session = await requirePageAccess("/spending");
 
-  const dbField = EXPENSE_FIELD_MAP[field];
-  if (!dbField) throw new Error(`Invalid field: ${field}`);
+  // Validate the field key against the allowlist BEFORE the value
+  // validator runs. The previous version skipped value validation
+  // silently when `field` wasn't in the map — a typo on the client
+  // would write whatever value came in.
+  const parsedField = EXPENSE_FIELD_KEY.safeParse(field);
+  if (!parsedField.success) {
+    throw new Error("Field cannot be edited inline");
+  }
+  const fieldKey = parsedField.data;
 
-  const validator = expenseFieldValidators[field];
-  if (validator) validator.parse(value);
+  expenseFieldValidators[fieldKey].parse(value);
+
+  const dbField = EXPENSE_FIELD_MAP[fieldKey];
 
   const dbValue =
-    field === "date" && typeof value === "string"
+    fieldKey === "date" && typeof value === "string"
       ? new Date(value)
       : value;
 
@@ -256,13 +280,22 @@ export async function updateExpenseField(
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "expense_field_updated",
-    metadata: { expenseId: id, field, value },
+    metadata: { expenseId: id, field: fieldKey, value },
   });
 
   revalidatePath("/spending");
 }
 
-const RECURRING_FIELD_MAP: Record<string, string> = {
+const RECURRING_FIELD_KEY = z.enum([
+  "name",
+  "amount",
+  "category",
+  "notes",
+  "isActive",
+]);
+type RecurringFieldKey = z.infer<typeof RECURRING_FIELD_KEY>;
+
+const RECURRING_FIELD_MAP: Record<RecurringFieldKey, string> = {
   name: "name",
   amount: "amount",
   category: "category",
@@ -270,7 +303,7 @@ const RECURRING_FIELD_MAP: Record<string, string> = {
   isActive: "is_active",
 };
 
-const recurringFieldValidators: Record<string, z.ZodType> = {
+const recurringFieldValidators: Record<RecurringFieldKey, z.ZodType> = {
   name: z.string().min(1),
   amount: z.number().positive(),
   category: z.string().min(1),
@@ -285,11 +318,15 @@ export async function updateRecurringExpenseField(
 ) {
   const session = await requirePageAccess("/spending");
 
-  const dbField = RECURRING_FIELD_MAP[field];
-  if (!dbField) throw new Error(`Invalid field: ${field}`);
+  const parsedField = RECURRING_FIELD_KEY.safeParse(field);
+  if (!parsedField.success) {
+    throw new Error("Field cannot be edited inline");
+  }
+  const fieldKey = parsedField.data;
 
-  const validator = recurringFieldValidators[field];
-  if (validator) validator.parse(value);
+  recurringFieldValidators[fieldKey].parse(value);
+
+  const dbField = RECURRING_FIELD_MAP[fieldKey];
 
   await adminDb.recurring_expenses.update({
     where: { id },
@@ -300,7 +337,7 @@ export async function updateRecurringExpenseField(
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "recurring_expense_field_updated",
-    metadata: { recurringExpenseId: id, field, value },
+    metadata: { recurringExpenseId: id, field: fieldKey, value },
   });
 
   revalidatePath("/spending");
