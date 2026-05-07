@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 
 import {
-  getCreatorDetail,
+  getCreatorHeader,
   getRecentWagersOnCode,
 } from "@/lib/queries/creators";
 import { requirePageAccess } from "@/lib/dal";
@@ -71,7 +71,7 @@ export default async function CreatorWagersPage({
   await requirePageAccess("/creators");
   const { userId } = await params;
 
-  const profile = await getCreatorDetail(userId, 1, 1);
+  const profile = await getCreatorHeader(userId);
   if (!profile) notFound();
 
   const wagers = profile.code
