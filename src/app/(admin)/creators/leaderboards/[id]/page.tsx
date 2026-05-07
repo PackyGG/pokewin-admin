@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Crown, Medal, Trophy } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
 import { getDb } from "@/lib/db";
@@ -21,8 +21,9 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
-import { formatDateTime } from "@/lib/utils/format";
+import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { getAffiliateLeaderboardRankings } from "@/lib/queries/creators";
 
 import { DetailActions } from "../_components/detail-actions";
 
@@ -58,10 +59,27 @@ export default async function AffiliateLeaderboardDetailPage({
         throw err;
     }
     const db = await getDb();
-    const creator = await db.user.findUnique({
-        where: { id: lb.creator_user_id },
-        select: { id: true, username: true, email: true },
-    });
+    const [creator, rankings] = await Promise.all([
+        db.user.findUnique({
+            where: { id: lb.creator_user_id },
+            select: { id: true, username: true, email: true },
+        }),
+        // Live standings — computed against the main DB (this
+        // backend doesn't expose a /rankings endpoint yet).
+        // Wraps in a try/catch so a query error never breaks the
+        // page — the rest of the leaderboard config still renders.
+        getAffiliateLeaderboardRankings({
+            creatorUserId: lb.creator_user_id,
+            affiliateCodes: lb.affiliate_codes,
+            startDate: new Date(lb.start_date),
+            endDate: new Date(lb.end_date),
+            prizeTiers: lb.prize_tiers,
+            limit: 100,
+        }).catch((err) => {
+            console.error("[leaderboard] rankings query failed", err);
+            return [];
+        }),
+    ]);
 
     return (
         <div className="space-y-6">
@@ -225,9 +243,128 @@ export default async function AffiliateLeaderboardDetailPage({
                 </FadeIn>
             </div>
 
+            {/* Standings — live rankings of users tied to this
+                leaderboard's code(s) by wager volume inside the
+                event window. Sorted DESC. Top 3 get a medal icon
+                + emerald/silver-zinc/amber accents; lower
+                positions are plain. Prize $$ comes from the
+                leaderboard's prize_tiers map (null when the row's
+                position has no configured tier). */}
             <FadeIn>
                 <div className="rounded-lg border">
-                    <div className="border-b px-5 py-3">
+                    <div className="border-b px-5 py-3 flex items-center justify-between">
+                        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+                            Standings
+                        </h2>
+                        <span className="text-xs text-muted-foreground">
+                            {rankings.length === 0
+                                ? "no wager activity yet"
+                                : rankings.length === 1
+                                  ? "1 user wagered"
+                                  : `${rankings.length} users wagered`}
+                        </span>
+                    </div>
+                    <Table>
+                        <TableHeader>
+                            <TableRow>
+                                <TableHead className="w-16">Place</TableHead>
+                                <TableHead>User</TableHead>
+                                <TableHead className="text-right">Wagered</TableHead>
+                                <TableHead className="text-right">Prize</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {rankings.length === 0 ? (
+                                <TableRow>
+                                    <TableCell
+                                        colSpan={4}
+                                        className="text-center text-muted-foreground py-6"
+                                    >
+                                        {lb.time_status === "upcoming"
+                                            ? "Leaderboard hasn't started yet."
+                                            : "No qualifying wager activity in this window."}
+                                    </TableCell>
+                                </TableRow>
+                            ) : (
+                                rankings.map((r) => {
+                                    const isMedal = r.position <= 3;
+                                    const PositionIcon =
+                                        r.position === 1
+                                            ? Crown
+                                            : r.position <= 3
+                                              ? Medal
+                                              : null;
+                                    const positionAccent =
+                                        r.position === 1
+                                            ? "text-amber-500"
+                                            : r.position === 2
+                                              ? "text-zinc-400"
+                                              : r.position === 3
+                                                ? "text-orange-500"
+                                                : "text-muted-foreground";
+                                    return (
+                                        <TableRow key={r.userId}>
+                                            <TableCell>
+                                                <div
+                                                    className={cn(
+                                                        "inline-flex items-center gap-1.5 font-semibold tabular-nums",
+                                                        positionAccent,
+                                                    )}
+                                                >
+                                                    {PositionIcon && (
+                                                        <PositionIcon className="size-3.5" />
+                                                    )}
+                                                    #{r.position}
+                                                </div>
+                                            </TableCell>
+                                            <TableCell>
+                                                <Link
+                                                    href={`/users/${r.userId}`}
+                                                    className={cn(
+                                                        "hover:underline",
+                                                        isMedal && "font-semibold",
+                                                    )}
+                                                >
+                                                    {r.username ??
+                                                        r.email ??
+                                                        r.userId.slice(0, 8)}
+                                                </Link>
+                                                {r.email && r.username && (
+                                                    <p className="text-xs text-muted-foreground truncate">
+                                                        {r.email}
+                                                    </p>
+                                                )}
+                                            </TableCell>
+                                            {/* Wager volume — money INTO house treasury per
+                                                CLAUDE.md house-POV → emerald. */}
+                                            <TableCell className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">
+                                                {formatCurrency(r.totalWageredUsd)}
+                                            </TableCell>
+                                            {/* Prize is house outflow → rose. Null when
+                                                this position is below the lowest
+                                                configured tier. */}
+                                            <TableCell className="text-right tabular-nums">
+                                                {r.prizeUsd != null ? (
+                                                    <span className="font-semibold text-rose-600 dark:text-rose-400">
+                                                        {formatCurrency(r.prizeUsd)}
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-muted-foreground">—</span>
+                                                )}
+                                            </TableCell>
+                                        </TableRow>
+                                    );
+                                })
+                            )}
+                        </TableBody>
+                    </Table>
+                </div>
+            </FadeIn>
+
+            <FadeIn>
+                <div className="rounded-lg border">
+                    <div className="border-b px-5 py-3 flex items-center gap-2">
+                        <Trophy className="size-3.5 text-muted-foreground" />
                         <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
                             Prize tiers
                         </h2>
