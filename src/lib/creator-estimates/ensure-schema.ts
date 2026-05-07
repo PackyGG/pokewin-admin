@@ -56,6 +56,14 @@ export async function ensureCreatorEstimatesSchema(): Promise<void> {
         ADD COLUMN IF NOT EXISTS "packy_paid_percent"   NUMERIC(5, 2),
         ADD COLUMN IF NOT EXISTS "deal_length_weeks"    INTEGER
     `);
+    // v3 — flat balances pre-loaded onto the creator account.
+    // Tip + battle pots that get added to Max Cost as one-time
+    // outflows, no per-week scaling.
+    await adminDb.$executeRawUnsafe(`
+      ALTER TABLE "creator_deal_estimates"
+        ADD COLUMN IF NOT EXISTS "tip_balance_usd"    NUMERIC(20, 2),
+        ADD COLUMN IF NOT EXISTS "battle_balance_usd" NUMERIC(20, 2)
+    `);
     await adminDb.$executeRawUnsafe(`
       CREATE INDEX IF NOT EXISTS "creator_deal_estimates_created_at_idx"
         ON "creator_deal_estimates" ("created_at" DESC)

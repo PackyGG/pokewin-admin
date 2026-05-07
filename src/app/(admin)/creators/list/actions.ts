@@ -43,6 +43,8 @@ const estimateSchema = z.object({
   leaderboardCostUsd: optionalDollarAmount,
   packyPaidPercent: optionalPercent,
   dealLengthWeeks: optionalWeeks,
+  tipBalanceUsd: optionalDollarAmount,
+  battleBalanceUsd: optionalDollarAmount,
   notes: z.string().trim().max(500).nullable().optional(),
 });
 
@@ -80,6 +82,8 @@ export async function createCreatorEstimate(
       leaderboard_cost_usd: parsed.data.leaderboardCostUsd ?? null,
       packy_paid_percent: parsed.data.packyPaidPercent ?? null,
       deal_length_weeks: parsed.data.dealLengthWeeks ?? null,
+      tip_balance_usd: parsed.data.tipBalanceUsd ?? null,
+      battle_balance_usd: parsed.data.battleBalanceUsd ?? null,
       notes: parsed.data.notes?.trim() || null,
       created_by_id: session.userId,
     },
@@ -129,6 +133,10 @@ export async function updateCreatorEstimate(
     updateData.packy_paid_percent = parsed.data.packyPaidPercent;
   if (parsed.data.dealLengthWeeks !== undefined)
     updateData.deal_length_weeks = parsed.data.dealLengthWeeks;
+  if (parsed.data.tipBalanceUsd !== undefined)
+    updateData.tip_balance_usd = parsed.data.tipBalanceUsd;
+  if (parsed.data.battleBalanceUsd !== undefined)
+    updateData.battle_balance_usd = parsed.data.battleBalanceUsd;
   if (parsed.data.notes !== undefined) {
     updateData.notes = parsed.data.notes?.trim() || null;
   }

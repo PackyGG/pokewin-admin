@@ -419,6 +419,12 @@ model creator_deal_estimates {
   // deal_length_weeks: how long the deal runs (in WEEKS). Combined
   // with the daily / weekly spend to compute Max Cost.
   deal_length_weeks   Int?
+  // ── Flat balances added straight to Max Cost ───────────────────
+  // tip_balance_usd / battle_balance_usd: one-time pre-loaded
+  // balances we hand the creator for tips / sponsored battles.
+  // Added straight to Max Cost — no per-week scaling, no recoup.
+  tip_balance_usd     Decimal? @db.Decimal(20, 2)
+  battle_balance_usd  Decimal? @db.Decimal(20, 2)
   notes               String?
   created_at          DateTime @default(now()) @db.Timestamptz(6)
   updated_at          DateTime @updatedAt @db.Timestamptz(6)
