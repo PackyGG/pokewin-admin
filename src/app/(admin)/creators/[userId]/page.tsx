@@ -30,6 +30,7 @@ import { FunnelTable } from "./funnel-table";
 import { FinancialsCard } from "./financials-card";
 import { CountryBreakdown } from "./country-breakdown";
 import { LeaderboardsCard } from "./leaderboards-card";
+import { CodeActivityCard } from "./code-activity-card";
 
 import { parseCreatorDetailSearchParams } from "./_lib/search-params";
 import { getCreatorDealData } from "./_queries/get-creator-deal-data";
@@ -254,6 +255,12 @@ export default async function CreatorDetailPage({
             with deep-link to the dedicated /creators/leaderboards management
             surface for full action set (approve/reject/edit/sponsor/cancel). */}
         <LeaderboardsCard userId={profile.userId} />
+
+        {/* Per-code activity: who's using the creator's primary code right
+            now + a chronological feed of recent wager events from those
+            users. Only renders when the creator has a primary code; users
+            without one would just hit empty queries. */}
+        {profile.code && <CodeActivityCard code={profile.code} />}
       </FadeIn>
     </div>
   );
