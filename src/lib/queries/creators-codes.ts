@@ -616,8 +616,9 @@ export async function getCodeReferrals(code: string, limit: number = 50) {
               COALESCE(SUM(acu.wager_amount_usd::numeric),   0)::text AS total_wagers,
               COALESCE(SUM(acu.referrer_cut_usd::numeric),   0)::text AS total_commission
          FROM affiliate_code_usages acu
-         LEFT JOIN "user" u ON u.id = acu.referred_user_id
+         JOIN "user" u ON u.id = acu.referred_user_id
         WHERE UPPER(acu.code) = $1
+          AND u.role NOT IN ('admin', 'support')
         GROUP BY acu.referred_user_id, u.username, u.email
         ORDER BY MAX(acu.created_at) DESC
         LIMIT ${safeLimit}`,
@@ -681,9 +682,11 @@ export async function getRecentWagersOnCode(
       }[]
     >(
       `WITH code_users AS (
-         SELECT DISTINCT referred_user_id
-         FROM affiliate_code_usages
-         WHERE UPPER(code) = $1
+         SELECT DISTINCT acu.referred_user_id
+         FROM affiliate_code_usages acu
+         JOIN "user" u ON u.id = acu.referred_user_id
+         WHERE UPPER(acu.code) = $1
+           AND u.role NOT IN ('admin', 'support')
        )
        SELECT
          lt.id,
