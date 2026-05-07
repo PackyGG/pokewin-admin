@@ -6,11 +6,18 @@ import { requirePageAccess, requireAdmin } from "@/lib/dal";
 import { require2FA } from "@/lib/require-2fa";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { resolveAdminMainUserId } from "@/lib/resolve-admin-main-user-id";
 
 export async function banUser(userId: string, reason: string) {
   const db = await getDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_ban_users", "ban users");
+
+  // `user.banned_by` is a nullable FK to Main-DB `User.id`. Admin
+  // identities live in the Admin DB so we resolve via email match;
+  // unlinked admins fall back to null and the audit event below
+  // remains the source of truth for who actually triggered the ban.
+  const issuerMainUserId = await resolveAdminMainUserId(session.userId);
 
   await db.$transaction([
     db.user.update({
@@ -19,7 +26,7 @@ export async function banUser(userId: string, reason: string) {
         is_banned: true,
         banned_reason: reason,
         banned_at: new Date(),
-        banned_by: null,
+        banned_by: issuerMainUserId,
       },
     }),
     db.session.deleteMany({ where: { userId } }),
@@ -29,7 +36,7 @@ export async function banUser(userId: string, reason: string) {
     adminUserId: session.userId,
     eventType: "account_banned",
     targetUserId: userId,
-    metadata: { reason },
+    metadata: { reason, issuer_main_user_id: issuerMainUserId },
   });
 
   revalidatePath("/users");
@@ -69,6 +76,11 @@ export async function lockUser(userId: string, reason: string) {
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_lock_users", "lock user accounts");
 
+  // `user.locked_by` is a nullable FK to Main-DB `User.id`. Same
+  // resolution as `banUser` — admin → main user via email; null when
+  // no match. Audit event is the canonical trail.
+  const issuerMainUserId = await resolveAdminMainUserId(session.userId);
+
   await db.$transaction([
     db.user.update({
       where: { id: userId },
@@ -76,7 +88,7 @@ export async function lockUser(userId: string, reason: string) {
         is_locked: true,
         locked_reason: reason,
         locked_at: new Date(),
-        locked_by: null,
+        locked_by: issuerMainUserId,
       },
     }),
   ]);
@@ -85,7 +97,7 @@ export async function lockUser(userId: string, reason: string) {
     adminUserId: session.userId,
     eventType: "account_locked",
     targetUserId: userId,
-    metadata: { reason },
+    metadata: { reason, issuer_main_user_id: issuerMainUserId },
   });
 
   revalidatePath("/users");
