@@ -62,24 +62,40 @@ export async function adjustBalance(data: {
     return { success: false, error: err instanceof Error ? err.message : "Balance limit exceeded" };
   }
 
-  const balances = await db.balances.findUnique({
-    where: { user_id: parsed.userId },
-  });
-  if (!balances) return { success: false, error: "User balances not found" };
-
-  const currentBalance = Number(balances.available_balance);
-  const newBalance = currentBalance + parsed.amount;
-  if (newBalance < 0) {
-    return { success: false, error: "Resulting balance would be negative" };
-  }
-
+  // Optimistic-locking transaction. The previous (non-locking) version
+  // could double-write if two admin actions on the same balance row
+  // raced — both reading the same `currentBalance`, both computing
+  // `currentBalance + delta`, both updating to the SAME value, second
+  // ledger row reflects a balance_before that no longer matches reality.
+  // We now read inside the tx, recompute, and update only when the
+  // version still matches; on mismatch we abort + return a friendly retry.
+  let currentBalance = 0;
+  let newBalance = 0;
   try {
-    await db.$transaction([
-      db.balances.update({
+    await db.$transaction(async (tx) => {
+      const b = await tx.balances.findUnique({
         where: { user_id: parsed.userId },
-        data: { available_balance: newBalance },
-      }),
-      db.ledger_transactions.create({
+      });
+      if (!b) throw new Error("User balances not found");
+
+      currentBalance = Number(b.available_balance);
+      newBalance = currentBalance + parsed.amount;
+      if (newBalance < 0) {
+        throw new Error("Resulting balance would be negative");
+      }
+
+      const updated = await tx.balances.updateMany({
+        where: { user_id: parsed.userId, version: b.version },
+        data: {
+          available_balance: newBalance,
+          version: { increment: 1 },
+        },
+      });
+      if (updated.count !== 1) {
+        throw new Error("Balance changed concurrently — please retry");
+      }
+
+      await tx.ledger_transactions.create({
         data: {
           id: crypto.randomUUID(),
           user_id: parsed.userId,
@@ -90,9 +106,19 @@ export async function adjustBalance(data: {
           description: `Admin adjustment: ${parsed.reason}`,
           status: "completed",
         },
-      }),
-    ]);
+      });
+    });
   } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    // Surface known business errors verbatim; only generic crashes get
+    // the "please try again" wrapper.
+    if (
+      message === "User balances not found" ||
+      message === "Resulting balance would be negative" ||
+      message.includes("concurrently")
+    ) {
+      return { success: false, error: message };
+    }
     console.error("[adjustBalance] Transaction failed:", err);
     return { success: false, error: "Balance adjustment failed — please try again" };
   }
@@ -202,28 +228,26 @@ export async function moveBalanceToVault(
     }
   }
 
-  const balances = await db.balances.findUnique({
-    where: { user_id: userId },
-  });
-  if (!balances) {
-    return { success: false, error: "User has no balance row" };
-  }
-
-  const available = Number(balances.available_balance);
-  if (available <= 0) {
-    return {
-      success: false,
-      error: "Available balance is already 0 — nothing to move",
-    };
-  }
-
-  const locked = Number(balances.locked_balance);
-  const newLocked = locked + available;
-
+  // Optimistic-locking transaction. Reads balance + version inside the
+  // tx and aborts the update if the version moved between read and
+  // write — keeps two concurrent moves (or a move racing with a
+  // wager / admin adjust) from double-spending the available pool.
+  let available = 0;
   try {
-    await db.$transaction([
-      db.balances.update({
-        where: { user_id: userId },
+    await db.$transaction(async (tx) => {
+      const b = await tx.balances.findUnique({ where: { user_id: userId } });
+      if (!b) throw new Error("User has no balance row");
+
+      available = Number(b.available_balance);
+      if (available <= 0) {
+        throw new Error("Available balance is already 0 — nothing to move");
+      }
+
+      const locked = Number(b.locked_balance);
+      const newLocked = locked + available;
+
+      const updated = await tx.balances.updateMany({
+        where: { user_id: userId, version: b.version },
         data: {
           available_balance: 0,
           locked_balance: newLocked,
@@ -231,9 +255,14 @@ export async function moveBalanceToVault(
           // any existing unlock_at on the row so the whole locked
           // pool is admin-/user-controlled rather than time-gated.
           unlock_at: null,
+          version: { increment: 1 },
         },
-      }),
-      db.ledger_transactions.create({
+      });
+      if (updated.count !== 1) {
+        throw new Error("Balance changed concurrently — please retry");
+      }
+
+      await tx.ledger_transactions.create({
         data: {
           id: crypto.randomUUID(),
           user_id: userId,
@@ -247,9 +276,17 @@ export async function moveBalanceToVault(
           description: "Admin moved entire balance to vault (no unlock time)",
           status: "completed",
         },
-      }),
-    ]);
+      });
+    });
   } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    if (
+      message === "User has no balance row" ||
+      message === "Available balance is already 0 — nothing to move" ||
+      message.includes("concurrently")
+    ) {
+      return { success: false, error: message };
+    }
     console.error("[moveBalanceToVault] transaction failed:", err);
     return {
       success: false,
@@ -359,80 +396,99 @@ export async function recordManualWithdrawal(data: {
     };
   }
 
-  const balances = await db.balances.findUnique({
-    where: { user_id: parsed.userId },
-  });
-  if (!balances) return { success: false, error: "User balances not found" };
-
-  const currentBalance = Number(balances.available_balance);
-
-  // Two flavors of manual withdrawal, and we support both:
-  //
-  //   1. Live payout — user has the money on-site. We deduct from
-  //      `available_balance` AND bump `total_withdrawn`. The
-  //      `ledger_transactions` row reflects the actual balance delta
-  //      (so the invariant `amount = balance_after - balance_before`
-  //      holds). Mirrors a normal withdrawal, just outside the
-  //      card_withdrawal_requests flow.
-  //
-  //   2. Backfill / P&L correction — user already received the
-  //      money off-platform AND their on-site balance is gone (zero
-  //      or smaller than the payout). We deduct whatever is there
-  //      (could be 0) and bump `total_withdrawn` by the FULL recorded
-  //      amount so the canonical P&L formula
-  //          pnl = deposits − withdrawals − onSiteBalance − inv − vouch
-  //      counts the payout. The "phantom" portion (amount minus what
-  //      was actually deducted) is recorded in the audit event and
-  //      called out in the ledger description so the discrepancy is
-  //      auditable.
-  //
-  // We never let `available_balance` go negative — that would
-  // misrepresent the user's debt-vs-credit relationship with the
-  // platform and break wager-balance checks elsewhere.
-  const balanceDeducted = Math.min(currentBalance, parsed.amountUsd);
-  const newBalance = currentBalance - balanceDeducted;
-  const newTotalWithdrawn =
-    Number(balances.total_withdrawn) + parsed.amountUsd;
-  const phantomPortion = parsed.amountUsd - balanceDeducted;
-
+  // Optimistic-locking transaction. Reading balance + computing the
+  // deduction amount must happen INSIDE the tx because a concurrent
+  // wager / adjust could shrink available_balance between our read
+  // and write — without locking we'd deduct from a stale snapshot
+  // and either overdraw the user or under-bump total_withdrawn.
+  let currentBalance = 0;
+  let newBalance = 0;
+  let balanceDeducted = 0;
+  let phantomPortion = 0;
   try {
-    await db.$transaction([
-      db.balances.update({
+    await db.$transaction(async (tx) => {
+      const b = await tx.balances.findUnique({
         where: { user_id: parsed.userId },
+      });
+      if (!b) throw new Error("User balances not found");
+
+      currentBalance = Number(b.available_balance);
+
+      // Two flavors of manual withdrawal, and we support both:
+      //
+      //   1. Live payout — user has the money on-site. We deduct from
+      //      `available_balance` AND bump `total_withdrawn`. The
+      //      `ledger_transactions` row reflects the actual balance delta
+      //      (so the invariant `amount = balance_after - balance_before`
+      //      holds). Mirrors a normal withdrawal, just outside the
+      //      card_withdrawal_requests flow.
+      //
+      //   2. Backfill / P&L correction — user already received the
+      //      money off-platform AND their on-site balance is gone (zero
+      //      or smaller than the payout). We deduct whatever is there
+      //      (could be 0) and bump `total_withdrawn` by the FULL recorded
+      //      amount so the canonical P&L formula
+      //          pnl = deposits − withdrawals − onSiteBalance − inv − vouch
+      //      counts the payout. The "phantom" portion (amount minus what
+      //      was actually deducted) is recorded in the audit event and
+      //      called out in the ledger description so the discrepancy is
+      //      auditable.
+      //
+      // We never let `available_balance` go negative — that would
+      // misrepresent the user's debt-vs-credit relationship with the
+      // platform and break wager-balance checks elsewhere.
+      balanceDeducted = Math.min(currentBalance, parsed.amountUsd);
+      newBalance = currentBalance - balanceDeducted;
+      const newTotalWithdrawn =
+        Number(b.total_withdrawn) + parsed.amountUsd;
+      phantomPortion = parsed.amountUsd - balanceDeducted;
+
+      const updated = await tx.balances.updateMany({
+        where: { user_id: parsed.userId, version: b.version },
         data: {
           available_balance: newBalance,
           total_withdrawn: newTotalWithdrawn,
+          version: { increment: 1 },
         },
-      }),
+      });
+      if (updated.count !== 1) {
+        throw new Error("Balance changed concurrently — please retry");
+      }
+
       // Only write a ledger row when something was actually deducted
       // from on-site balance. A pure-record case (balance was 0,
       // payout fully phantom) gets recorded via the audit event and
       // total_withdrawn — writing a ledger row with amount=0 would
       // pollute transaction listings without conveying anything.
-      ...(balanceDeducted > 0
-        ? [
-            db.ledger_transactions.create({
-              data: {
-                id: crypto.randomUUID(),
-                user_id: parsed.userId,
-                // Reuse the existing type — we don't have schema-write
-                // access on the main DB; the "Manual withdrawal:"
-                // prefix + audit event keep these distinguishable.
-                type: "admin_balance_adjustment",
-                amount: -balanceDeducted,
-                balance_before: currentBalance,
-                balance_after: newBalance,
-                description:
-                  phantomPortion > 0
-                    ? `Manual withdrawal: ${parsed.reason} (total $${parsed.amountUsd.toFixed(2)}, $${balanceDeducted.toFixed(2)} from on-site)`
-                    : `Manual withdrawal: ${parsed.reason}`,
-                status: "completed",
-              },
-            }),
-          ]
-        : []),
-    ]);
+      if (balanceDeducted > 0) {
+        await tx.ledger_transactions.create({
+          data: {
+            id: crypto.randomUUID(),
+            user_id: parsed.userId,
+            // Reuse the existing type — we don't have schema-write
+            // access on the main DB; the "Manual withdrawal:"
+            // prefix + audit event keep these distinguishable.
+            type: "admin_balance_adjustment",
+            amount: -balanceDeducted,
+            balance_before: currentBalance,
+            balance_after: newBalance,
+            description:
+              phantomPortion > 0
+                ? `Manual withdrawal: ${parsed.reason} (total $${parsed.amountUsd.toFixed(2)}, $${balanceDeducted.toFixed(2)} from on-site)`
+                : `Manual withdrawal: ${parsed.reason}`,
+            status: "completed",
+          },
+        });
+      }
+    });
   } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    if (
+      message === "User balances not found" ||
+      message.includes("concurrently")
+    ) {
+      return { success: false, error: message };
+    }
     console.error("[recordManualWithdrawal] Transaction failed:", err);
     return {
       success: false,
