@@ -2,10 +2,13 @@ import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import {
+  Activity,
   ArrowLeft,
+  ArrowRight,
   Star,
   MousePointerClick,
   UserPlus,
+  Users,
   Wallet,
   HandCoins,
   Info,
@@ -32,7 +35,6 @@ import { FunnelTable } from "./funnel-table";
 import { FinancialsCard } from "./financials-card";
 import { CountryBreakdown } from "./country-breakdown";
 import { LeaderboardsCard } from "./leaderboards-card";
-import { CodeActivityCard } from "./code-activity-card";
 
 import { parseCreatorDetailSearchParams } from "./_lib/search-params";
 import { getCreatorDealData } from "./_queries/get-creator-deal-data";
@@ -193,16 +195,44 @@ export default async function CreatorDetailPage({
       </div>
 
       <FadeIn className="space-y-4 sm:space-y-6">
-        {/* Per-code activity tabs: who's using this creator's primary
-            code + a chronological feed of their recent wager events.
-            Sits above the deal management band so the admin sees who
-            is on the code before drilling into deal terms. Streamed
-            via Suspense so the two slim queries it fires don't extend
-            the page TTFB. */}
+        {/* Per-code activity entry points. Each is its own dedicated
+            page (full-width tables, breadcrumb back, pill-tab nav to
+            flip between the two views). Lives above the deal
+            management band so the admin sees the entry points before
+            drilling into deal terms. */}
         {profile.code && (
-          <Suspense fallback={<CodeActivitySkeleton />}>
-            <CodeActivityCard code={profile.code} />
-          </Suspense>
+          <div className="grid gap-3 sm:gap-4 sm:grid-cols-2">
+            <Link
+              href={`/creators/${profile.userId}/users`}
+              className="group flex items-center gap-3 rounded-2xl border bg-card/60 p-4 transition-all hover:border-foreground/20 hover:bg-card hover:shadow-sm"
+            >
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-500">
+                <Users className="size-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold">Users on code</div>
+                <div className="truncate text-xs text-muted-foreground">
+                  Everyone tied to this creator&apos;s code
+                </div>
+              </div>
+              <ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
+            </Link>
+            <Link
+              href={`/creators/${profile.userId}/wagers`}
+              className="group flex items-center gap-3 rounded-2xl border bg-card/60 p-4 transition-all hover:border-foreground/20 hover:bg-card hover:shadow-sm"
+            >
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-500">
+                <Activity className="size-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold">Last wagers</div>
+                <div className="truncate text-xs text-muted-foreground">
+                  Recent wager events from those users
+                </div>
+              </div>
+              <ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
+            </Link>
+          </div>
         )}
 
         {/* Top band: deal management on the left (3/5), the acquisition
@@ -302,19 +332,3 @@ function LeaderboardsSkeleton() {
   );
 }
 
-function CodeActivitySkeleton() {
-  return (
-    <section className="space-y-3">
-      <div className="inline-flex items-center gap-1 rounded-xl border bg-card/60 p-1">
-        <Skeleton className="h-9 w-36 rounded-lg" />
-        <Skeleton className="h-9 w-32 rounded-lg" />
-      </div>
-      <div className="overflow-hidden rounded-2xl border bg-card/60 p-3 space-y-2">
-        <Skeleton className="h-8 w-full" />
-        <Skeleton className="h-8 w-full" />
-        <Skeleton className="h-8 w-full" />
-        <Skeleton className="h-8 w-full" />
-      </div>
-    </section>
-  );
-}
