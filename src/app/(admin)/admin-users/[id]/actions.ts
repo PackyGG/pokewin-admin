@@ -5,6 +5,7 @@ import { adminDb } from "@/lib/admin-db";
 import { getDb } from "@/lib/db";
 import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
+import { require2FA } from "@/lib/require-2fa";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { ALL_PAGE_KEYS } from "@/lib/admin-pages";
 
@@ -30,9 +31,14 @@ export async function forceExpireAllSessions(adminUserId: string) {
   revalidatePath(`/admin-users/${adminUserId}`);
 }
 
-export async function updateUserPermissions(userId: string, pages: string[]) {
+export async function updateUserPermissions(
+  userId: string,
+  pages: string[],
+  totpCode: string,
+) {
   const session = await requireAdmin();
   await requireCapability(session, "__can_update_admin_permissions", "update admin permissions");
+  await require2FA(session.userId, totpCode);
 
   const targetUser = await adminDb.admin_users.findUnique({
     where: { id: userId },
