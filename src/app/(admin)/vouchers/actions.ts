@@ -1,11 +1,22 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+
+const createVoucherSchema = z.object({
+  userId: z.string().min(1, "User is required"),
+  value: z
+    .number()
+    .finite()
+    .positive("Value must be positive")
+    .max(10_000_000),
+  description: z.string().trim().max(500).optional(),
+});
 
 export async function searchUsers(query: string) {
   const db = await getDb();
@@ -32,16 +43,17 @@ export async function searchUsers(query: string) {
   }));
 }
 
-export async function createVoucher(data: {
-  userId: string;
-  value: number;
-  description?: string;
-}) {
+export async function createVoucher(data: z.infer<typeof createVoucherSchema>) {
   const db = await getDb();
   const session = await requirePageAccess("/vouchers");
   await requireCapability(session, "__can_create_voucher", "create vouchers");
 
-  const user = await db.user.findUnique({ where: { id: data.userId } });
+  const parsed = createVoucherSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message ?? "Invalid voucher input");
+  }
+
+  const user = await db.user.findUnique({ where: { id: parsed.data.userId } });
   if (!user) throw new Error("User not found");
 
   // NOTE: This uses raw SQL because the 'manual' origin is not in the
@@ -53,9 +65,9 @@ export async function createVoucher(data: {
     `INSERT INTO vouchers (user_id, value, origin, description)
      VALUES ($1, $2, 'manual', $3)
      RETURNING id`,
-    data.userId,
-    data.value,
-    data.description || null,
+    parsed.data.userId,
+    parsed.data.value,
+    parsed.data.description || null,
   );
 
   await adminDb.admin_voucher_actions.create({
@@ -70,8 +82,8 @@ export async function createVoucher(data: {
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "voucher_created",
-    targetUserId: data.userId,
-    metadata: { voucher_id: voucher.id, value: data.value },
+    targetUserId: parsed.data.userId,
+    metadata: { voucher_id: voucher.id, value: parsed.data.value },
   });
 
   revalidatePath("/vouchers");
