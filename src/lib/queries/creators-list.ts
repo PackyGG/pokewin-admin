@@ -82,6 +82,12 @@ export async function getCreators(params: {
         username: string | null;
         affiliate_code: string | null;
         first_code: string | null;
+        // codes is a json_agg of {id, code} ordered by created_at
+        // ASC, oldest first. NULL when the creator owns no codes —
+        // unwrapped to [] in the mapper below. Single subquery keeps
+        // this in the same round-trip rather than a separate fetch
+        // per row.
+        codes: { id: string; code: string }[] | null;
         currency_limit_amount: string | null;
         percentage_limit: string | null;
         currency_limit_reset_days: number | null;
@@ -97,6 +103,14 @@ export async function getCreators(params: {
         u.username,
         u.affiliate_code,
         (SELECT ac.code FROM affiliate_codes ac WHERE ac.user_id = aa.user_id ORDER BY ac.created_at ASC LIMIT 1) AS first_code,
+        (
+          SELECT COALESCE(
+            json_agg(json_build_object('id', ac.id, 'code', ac.code) ORDER BY ac.created_at ASC),
+            '[]'::json
+          )
+          FROM affiliate_codes ac
+          WHERE ac.user_id = aa.user_id
+        ) AS codes,
         cwl.currency_limit_amount::text,
         cwl.percentage_limit::text,
         cwl.currency_limit_reset_days
@@ -124,6 +138,11 @@ export async function getCreators(params: {
       userId: r.user_id,
       username: r.username ?? null,
       code: r.affiliate_code ?? r.first_code ?? "",
+      // Owned codes from affiliate_codes (oldest first). The
+      // primary `code` field above is preserved for backwards
+      // compatibility with the existing column. Empty array when
+      // creator hasn't minted any codes yet.
+      codes: r.codes ?? [],
       level: 1,
       totalReferred: r.total_referred,
       totalSignups: Number(r.total_signups),

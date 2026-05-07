@@ -25,6 +25,11 @@ export type CreatorListItem = {
   userId: string;
   username: string | null;
   code: string;
+  // Every code this creator owns, oldest-first. The `code` field
+  // above is the primary (oldest); this array carries the full set
+  // plus their ids so the inline codes editor can remove specific
+  // rows.
+  codes: { id: string; code: string }[];
   level: number;
   totalReferred: number;
   totalSignups: number;
