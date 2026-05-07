@@ -2,21 +2,11 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Activity, Users } from "lucide-react";
+import { Activity, ArrowUpRight, Users } from "lucide-react";
 
-import {
-  CardAction,
-  CardContent,
-  CardHeader,
-} from "@/components/ui/card";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
 
-type TabValue = "users" | "wagers";
+type TabKey = "users" | "wagers";
 
 type Props = {
   code: string;
@@ -25,17 +15,25 @@ type Props = {
   wagersPanel: React.ReactNode;
 };
 
+const TABS: Array<{
+  key: TabKey;
+  label: string;
+  icon: React.ElementType;
+}> = [
+  { key: "users", label: "Users on code", icon: Users },
+  { key: "wagers", label: "Last wagers", icon: Activity },
+];
+
 /**
- * Tabbed code-activity panel for the creator detail page. Wraps the
- * server-rendered "Users on this code" and "Last wagers" tables in
- * shadcn Tabs so the admin can flip between them in-place. Both
- * panels are pre-rendered server-side and kept mounted; the tab
- * switch only hides/shows them — no RSC re-fetch on click.
+ * Tabbed code-activity section for the creator detail page. Lays out
+ * like a "small page within the page": a sticky pill-tab bar at the
+ * top followed by the active tab's content full-width below, no Card
+ * chrome wrapping the whole thing. Same visual language as the
+ * pill-tab bar on /users/[id] — segmented pills, primary fill on the
+ * active tab, scroll-into-view on phone.
  *
- * Header has the section icon + count badges next to each tab label
- * (matches DealTabs above on the same page) plus a "Full breakdown
- * →" link out to /creators/codes/[code] when there's at least one
- * user on the code.
+ * Both panels are pre-rendered server-side and kept mounted via CSS
+ * `hidden`. Tab switch is purely visual, no RSC re-fetch on click.
  */
 export function CodeActivityTabs({
   code,
@@ -43,51 +41,84 @@ export function CodeActivityTabs({
   usersPanel,
   wagersPanel,
 }: Props) {
-  const [tab, setTab] = useState<TabValue>("users");
+  const [tab, setTab] = useState<TabKey>("users");
 
   return (
-    <Tabs
-      value={tab}
-      onValueChange={(v) => setTab(v as TabValue)}
-      className="gap-0"
-    >
-      <CardHeader className="border-b">
-        <TabsList variant="line" className="-mb-[3px] self-start">
-          <TabsTrigger value="users">
-            <Users className="size-3.5" />
-            Users on code
-            <span className="ml-1 text-muted-foreground">
-              ({counts.users})
-            </span>
-          </TabsTrigger>
-          <TabsTrigger value="wagers">
-            <Activity className="size-3.5" />
-            Last wagers
-            <span className="ml-1 text-muted-foreground">
-              ({counts.wagers})
-            </span>
-          </TabsTrigger>
-        </TabsList>
-        {counts.users > 0 && (
-          <CardAction>
-            <Link
-              href={`/creators/codes/${code}`}
-              className="text-xs text-muted-foreground hover:text-foreground hover:underline"
-            >
-              Full breakdown →
-            </Link>
-          </CardAction>
-        )}
-      </CardHeader>
+    <section className="space-y-3">
+      {/* Pill-tab bar — keeps the same row also when wrapping to mobile;
+          counts hug each label so the active tab reads as
+          "Users on code · 12". */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div
+          role="tablist"
+          aria-label="Code activity"
+          className="inline-flex items-center gap-1 rounded-xl border bg-card/60 p-1"
+        >
+          {TABS.map((t) => {
+            const Icon = t.icon;
+            const isActive = tab === t.key;
+            const count = t.key === "users" ? counts.users : counts.wagers;
+            return (
+              <button
+                key={t.key}
+                role="tab"
+                type="button"
+                aria-selected={isActive}
+                onClick={() => setTab(t.key)}
+                className={cn(
+                  "inline-flex shrink-0 items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
+                  isActive
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                )}
+              >
+                <Icon className="size-4" />
+                <span>{t.label}</span>
+                <span
+                  className={cn(
+                    "tabular-nums text-xs",
+                    isActive
+                      ? "text-primary-foreground/80"
+                      : "text-muted-foreground/70",
+                  )}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
 
-      <CardContent className="px-0">
-        <TabsContent value="users" keepMounted>
-          {usersPanel}
-        </TabsContent>
-        <TabsContent value="wagers" keepMounted>
-          {wagersPanel}
-        </TabsContent>
-      </CardContent>
-    </Tabs>
+        {counts.users > 0 && tab === "users" && (
+          <Link
+            href={`/creators/codes/${code}`}
+            className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+          >
+            Full breakdown
+            <ArrowUpRight className="size-3" />
+          </Link>
+        )}
+      </div>
+
+      {/* Tab panels — both rendered server-side and kept mounted to
+          avoid a flash on switch. `hidden` is the canonical no-paint
+          way; aria-hidden mirrors the visual state for assistive tech. */}
+      <div
+        role="tabpanel"
+        aria-labelledby="users-tab"
+        hidden={tab !== "users"}
+        aria-hidden={tab !== "users"}
+      >
+        {usersPanel}
+      </div>
+      <div
+        role="tabpanel"
+        aria-labelledby="wagers-tab"
+        hidden={tab !== "wagers"}
+        aria-hidden={tab !== "wagers"}
+      >
+        {wagersPanel}
+      </div>
+    </section>
   );
 }
