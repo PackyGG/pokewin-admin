@@ -138,10 +138,7 @@ export default async function CreatorDetailPage({
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
               {profile.email && <MaskedEmail email={profile.email} />}
-              <HeaderSocials
-                socials={profile.socials}
-                userId={profile.userId}
-              />
+              <HeaderSocials socials={profile.socials} />
             </div>
           </div>
         </div>

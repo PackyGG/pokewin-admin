@@ -76,6 +76,7 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
     deals,
     socials,
     pnl,
+    realAffiliateAgg,
   ] = await Promise.all([
     db.user.findMany({
       where: { referred_by: userId },
@@ -134,6 +135,31 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
       orderBy: { platform: "asc" },
     }),
     getCreatorPnl(userId),
+    // Real wager + commission aggregate, excluding staff (admin +
+    // support) so the KPI tiles + financials card don't double-count
+    // internal accounts. The stored affiliate_accounts.total_*
+    // fields are kept up-to-date by the backend but include EVERY
+    // referral including staff, which is why void was inflating the
+    // wager-volume tile. Re-aggregating here is one extra query but
+    // it's a flat scan of affiliate_code_usages joined to user, which
+    // already runs sub-second per creator.
+    db.$queryRawUnsafe<
+      {
+        wager_volume: string;
+        commission: string;
+        total_referred: string;
+      }[]
+    >(
+      `SELECT
+         COALESCE(SUM(acu.wager_amount_usd::numeric),   0)::text AS wager_volume,
+         COALESCE(SUM(acu.referrer_cut_usd::numeric),   0)::text AS commission,
+         COUNT(DISTINCT acu.referred_user_id)::text              AS total_referred
+       FROM affiliate_code_usages acu
+       JOIN "user" u ON u.id = acu.referred_user_id
+       WHERE acu.affiliate_user_id = $1
+         AND u.role NOT IN ('admin', 'support')`,
+      userId,
+    ),
   ]);
 
   const signupsRow = signupCounts[0];
@@ -488,9 +514,23 @@ export async function getCreatorDetail(userId: string, refPage?: number, refPerP
     // user (unrelated to whether they OWN any creator codes).
     codeActive: allCodes.length > 0,
     level: 1,
-    totalReferred: account?.total_referred ?? 0,
-    totalWagerVolumeUsd: toNumber(account?.total_wager_volume_usd ?? 0),
-    totalEarnedUsd: toNumber(account?.total_earned_usd ?? 0),
+    // Wager volume + commission earned override the stored
+    // affiliate_accounts.total_* counters with live aggregates that
+    // exclude staff (admin + support). The stored fields keep a
+    // running total of every usage including staff/internal accounts,
+    // which mis-states what real customer activity looks like.
+    // Stored total_referred is kept as the floor (it's a count of
+    // distinct referred users which the backend maintains
+    // deduplicated) but we override with the staff-excluded count
+    // when it returns a smaller number — prefer the lower one to
+    // avoid showing a count that's larger than the activity behind it.
+    totalReferred: Math.min(
+      account?.total_referred ?? 0,
+      Number(realAffiliateAgg[0]?.total_referred ?? 0) ||
+        (account?.total_referred ?? 0),
+    ),
+    totalWagerVolumeUsd: toNumber(realAffiliateAgg[0]?.wager_volume ?? "0"),
+    totalEarnedUsd: toNumber(realAffiliateAgg[0]?.commission ?? "0"),
     availableUsd: toNumber(account?.available_usd ?? 0),
     totalPaidOutUsd: toNumber(account?.total_paid_out_usd ?? 0),
     totalBonusDistributedUsd: toNumber(account?.total_bonus_distributed_usd ?? 0),
