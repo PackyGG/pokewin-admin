@@ -1328,18 +1328,42 @@ export async function fetchCreatorWithdrawalLimits(userId: string) {
 // $transaction so it's all-or-nothing.
 // ---------------------------------------------------------------------------
 
+// Validate the userId at the boundary — the wipe is destructive so we
+// don't want a malformed string sneaking past the dialog's confirmation
+// flow and matching some other unintended row by accident.
+const wipeUserAccountSchema = z.object({
+  userId: z.string().uuid(),
+  totpCode: z.string().min(1),
+  displayName: z.string().min(1, "Display name confirmation required"),
+});
+
 export async function wipeUserAccount(
   userId: string,
   totpCode: string,
+  displayName: string,
 ): Promise<{ success: true } | { success: false; error: string }> {
   const db = await getDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_wipe_accounts", "wipe user account data");
 
+  // Boundary validation — UUID userId, non-empty totp + displayName.
+  const parseResult = wipeUserAccountSchema.safeParse({
+    userId,
+    totpCode,
+    displayName,
+  });
+  if (!parseResult.success) {
+    return {
+      success: false,
+      error: parseResult.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+  const parsed = parseResult.data;
+
   // 2FA gate — verify the calling admin's TOTP code BEFORE doing anything
   // destructive. Mirrors the pattern used by deleteUser / changeRole.
   try {
-    await require2FA(session.userId, totpCode);
+    await require2FA(session.userId, parsed.totpCode);
   } catch (err) {
     return {
       success: false,
@@ -1347,20 +1371,45 @@ export async function wipeUserAccount(
     };
   }
 
-  // Verify the user exists
+  // Verify the user exists. Pull display_username so the server-side
+  // displayName check matches the resolution order the WipeAccountButton
+  // uses on the client (display_username → username → email → id).
   const user = await db.user.findUnique({
-    where: { id: userId },
-    select: { id: true, username: true, email: true },
+    where: { id: parsed.userId },
+    select: {
+      id: true,
+      username: true,
+      display_username: true,
+      email: true,
+    },
   });
   if (!user) return { success: false, error: "User not found" };
+
+  // Server-side displayName confirmation — exact-match (after trim) on
+  // the same fallback chain the client renders. This guards against the
+  // case where someone calls the action programmatically without going
+  // through the dialog's type-to-confirm gate.
+  const expectedDisplayName =
+    user.display_username ?? user.username ?? user.email ?? user.id;
+  if (parsed.displayName.trim() !== expectedDisplayName) {
+    return {
+      success: false,
+      error: "Display name confirmation does not match",
+    };
+  }
 
   // Audit BEFORE the wipe — if the transaction fails, the attempt is still logged
   try {
     await createAdminAuditEvent({
       adminUserId: session.userId,
       eventType: "user_account_wiped",
-      targetUserId: userId,
-      metadata: { username: user.username, email: user.email },
+      targetUserId: parsed.userId,
+      metadata: {
+        username: user.username,
+        display_username: user.display_username,
+        email: user.email,
+        confirmed_display_name: expectedDisplayName,
+      },
     });
   } catch (err) {
     console.error("[wipeUserAccount] Failed to create audit event:", err);

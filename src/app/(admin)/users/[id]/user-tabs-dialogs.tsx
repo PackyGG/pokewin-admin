@@ -616,7 +616,16 @@ export function WipeAccountButton({
     if (!canSubmit) return;
     startTransition(async () => {
       try {
-        const result = await wipeUserAccount(userId, totpCode.trim());
+        // Pass the typed display name through so the server can re-verify
+        // it server-side. The server expects an exact match (after trim)
+        // against the same fallback chain we used here to render
+        // `displayName`, so passing the trimmed input keeps the gate
+        // intact regardless of any whitespace the admin typed.
+        const result = await wipeUserAccount(
+          userId,
+          totpCode.trim(),
+          confirmValue.trim(),
+        );
         if (!result.success) {
           toast.error(result.error);
           return;
