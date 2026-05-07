@@ -66,6 +66,11 @@ export async function promoteUserToCreator(userId: string) {
 
 export async function demoteCreator(userId: string) {
   const session = await requirePageAccess("/creators");
+  // Symmetric with `promoteUserToCreator`: demoting is the inverse of
+  // promoting, so it gates on the same capability. Without this, any
+  // /creators-page-access role could revoke creator status without the
+  // promote-side check applying.
+  await requireCapability(session, "__can_make_creator", "demote creator");
   try {
     const result = await creatorsApi.demote(userId);
 
@@ -235,6 +240,15 @@ export async function forceEndCreatorSession(
   options: { reason?: string } = {},
 ) {
   const session = await requirePageAccess("/creators");
+  // TODO(audit): consider __can_force_end_session as a separate capability
+  // if force-ending live sessions needs to be restricted independently of
+  // promote/demote. For now we reuse the promote/demote capability so the
+  // same set of trusted admins can act on the creator lifecycle.
+  await requireCapability(
+    session,
+    "__can_make_creator",
+    "force-end creator session",
+  );
 
   try {
     const ended = await creatorsApi.forceEndSession(
