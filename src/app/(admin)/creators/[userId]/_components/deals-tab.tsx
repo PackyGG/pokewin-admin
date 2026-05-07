@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { memo, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Ban, Loader2, PackageOpen } from "lucide-react";
 
@@ -140,7 +140,11 @@ function weekHint(status: CreatorDealStatus, start: Date, end: Date): string {
   return "7-day window";
 }
 
-function DealRow({
+// React.memo so a deal row doesn't re-render every time the parent's
+// state (modal open, sibling tab pagination, etc.) changes — props are
+// stable across parent renders since `deal` is the same reference from
+// the server-rendered list.
+const DealRow = memo(function DealRow({
   userId,
   deal,
 }: {
@@ -149,9 +153,11 @@ function DealRow({
 }) {
   const canTerminate =
     deal.status === "scheduled" || deal.status === "active";
-  const start = new Date(deal.week_start_utc);
-  const end = new Date(deal.week_end_utc);
-  const hint = weekHint(deal.status, start, end);
+  const { start, end, hint } = useMemo(() => {
+    const s = new Date(deal.week_start_utc);
+    const e = new Date(deal.week_end_utc);
+    return { start: s, end: e, hint: weekHint(deal.status, s, e) };
+  }, [deal.week_start_utc, deal.week_end_utc, deal.status]);
 
   return (
     <TableRow>
@@ -201,9 +207,9 @@ function DealRow({
       </TableCell>
     </TableRow>
   );
-}
+});
 
-function DealMobileCard({
+const DealMobileCard = memo(function DealMobileCard({
   userId,
   deal,
 }: {
@@ -212,9 +218,11 @@ function DealMobileCard({
 }) {
   const canTerminate =
     deal.status === "scheduled" || deal.status === "active";
-  const start = new Date(deal.week_start_utc);
-  const end = new Date(deal.week_end_utc);
-  const hint = weekHint(deal.status, start, end);
+  const { start, end, hint } = useMemo(() => {
+    const s = new Date(deal.week_start_utc);
+    const e = new Date(deal.week_end_utc);
+    return { start: s, end: e, hint: weekHint(deal.status, s, e) };
+  }, [deal.week_start_utc, deal.week_end_utc, deal.status]);
 
   return (
     <div className="px-3 py-3">
@@ -286,7 +294,7 @@ function DealMobileCard({
       )}
     </div>
   );
-}
+});
 
 function CapCell({ deal }: { deal: CreatorDealResponse }) {
   const used = Number(deal.withdraw_cap_used_usd);

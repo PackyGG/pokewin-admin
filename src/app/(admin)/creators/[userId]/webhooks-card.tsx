@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { memo, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Plus, Trash2, Send, Copy } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -168,15 +168,7 @@ export function WebhooksCard({
               <div className="space-y-1 border-t pt-2">
                 <p className="text-xs font-medium text-muted-foreground">Recent deliveries</p>
                 {w.deliveries.map((d) => (
-                  <div key={d.id} className="flex items-center gap-2 text-xs">
-                    <span className={`size-1.5 rounded-full ${d.success ? "bg-green-500" : "bg-red-500"}`} />
-                    <span className="text-muted-foreground">{d.eventType}</span>
-                    <span className="font-mono">{d.statusCode ?? "—"}</span>
-                    <span className="text-muted-foreground">attempt {d.attempt}</span>
-                    <span className="ml-auto text-muted-foreground">
-                      {new Date(d.createdAt).toLocaleString()}
-                    </span>
-                  </div>
+                  <DeliveryRow key={d.id} delivery={d} />
                 ))}
               </div>
             )}
@@ -214,3 +206,29 @@ export function WebhooksCard({
     </Card>
   );
 }
+
+// Memoized delivery row — webhook deliveries are immutable per id, so the
+// formatted timestamp can be computed once and the row skipped on parent
+// re-renders (every transition flip would otherwise rebuild the Date +
+// locale string for every delivery).
+const DeliveryRow = memo(function DeliveryRow({
+  delivery: d,
+}: {
+  delivery: WebhookDelivery;
+}) {
+  const createdAt = useMemo(
+    () => new Date(d.createdAt).toLocaleString(),
+    [d.createdAt],
+  );
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span
+        className={`size-1.5 rounded-full ${d.success ? "bg-green-500" : "bg-red-500"}`}
+      />
+      <span className="text-muted-foreground">{d.eventType}</span>
+      <span className="font-mono">{d.statusCode ?? "—"}</span>
+      <span className="text-muted-foreground">attempt {d.attempt}</span>
+      <span className="ml-auto text-muted-foreground">{createdAt}</span>
+    </div>
+  );
+});
