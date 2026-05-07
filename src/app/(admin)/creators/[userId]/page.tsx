@@ -192,14 +192,17 @@ export default async function CreatorDetailPage({
           icon={BadgeDollarSign}
           accent="purple"
         />
-        {/* Active affi (7d) — distinct referrals with any deposit /
-            wager activity in the last 7 days, the window the affiliate
-            system uses to count them as "active". Amber to read as
+        {/* Active affi — distinct referrals with any deposit /
+            wager activity. Headline value is the 7-day count (the
+            window the affiliate system uses to count them as
+            "active"); subtitle layers in the 24h count so the admin
+            can see momentum at a glance — e.g. "12 active 7d, 3
+            still going today" reads in one beat. Amber to read as
             "currently warm". */}
         <KpiTile
           label="Active affi"
           value={formatNumber(profile.activeReferrals7d)}
-          sub="last 7 days"
+          sub={`${formatNumber(profile.activeReferrals24h)} in 24h · 7d window`}
           icon={Flame}
           accent="amber"
         />

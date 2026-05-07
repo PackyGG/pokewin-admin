@@ -169,6 +169,7 @@ export async function getCreatorDetail(
         commission: string;
         ftd_count: string;
         active_7d: string;
+        active_24h: string;
       }[]
     >(
       `SELECT
@@ -185,7 +186,11 @@ export async function getCreatorDetail(
          COUNT(DISTINCT acu.referred_user_id) FILTER (
            WHERE acu.usage_type IN ('deposit', 'wager')
              AND acu.created_at >= NOW() - INTERVAL '7 days'
-         )::text AS active_7d
+         )::text AS active_7d,
+         COUNT(DISTINCT acu.referred_user_id) FILTER (
+           WHERE acu.usage_type IN ('deposit', 'wager')
+             AND acu.created_at >= NOW() - INTERVAL '1 day'
+         )::text AS active_24h
        FROM affiliate_code_usages acu
        JOIN "user" u ON u.id = acu.referred_user_id
        WHERE acu.affiliate_user_id = $1
@@ -421,11 +426,14 @@ export async function getCreatorDetail(
     // which mis-states what real customer activity looks like.
     totalWagerVolumeUsd: toNumber(realAffiliateAgg[0]?.wager_volume ?? "0"),
     totalEarnedUsd: toNumber(realAffiliateAgg[0]?.commission ?? "0"),
-    // FTDs (all-time, this creator's code) + active referrals in the
-    // last 7d — fed into KPI tiles next to Signups. Both staff-
-    // excluded by the same JOIN as the wager/commission aggregates.
+    // FTDs (all-time, this creator's code) + active referrals in
+    // multiple windows — fed into KPI tiles next to Signups. All
+    // staff-excluded by the same JOIN as the wager/commission
+    // aggregates. activeReferrals24h surfaces on the "Active affi"
+    // tile's subtitle so the admin can see momentum at a glance.
     ftdCount: Number(realAffiliateAgg[0]?.ftd_count ?? 0),
     activeReferrals7d: Number(realAffiliateAgg[0]?.active_7d ?? 0),
+    activeReferrals24h: Number(realAffiliateAgg[0]?.active_24h ?? 0),
     availableUsd: toNumber(account?.available_usd ?? 0),
     totalPaidOutUsd: toNumber(account?.total_paid_out_usd ?? 0),
     totalBonusDistributedUsd: toNumber(account?.total_bonus_distributed_usd ?? 0),
