@@ -498,6 +498,13 @@ export const CAPABILITIES: CapabilityDef[] = [
     description: "Link a creator admin user to their main-site user",
     group: "Creators",
   },
+  {
+    key: "__can_rotate_creator_api_key",
+    label: "Rotate Creator API Key",
+    description:
+      "Generate or regenerate a creator's external API key (affiliate stats, leaderboards)",
+    group: "Creators",
+  },
 
   // ── Employees (expense tracking + shift planning) ──────────────────
   {

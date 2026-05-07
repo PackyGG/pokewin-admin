@@ -276,6 +276,21 @@ export const creatorsApi = {
         reason ? { reason } : {}
       )
       .then((r) => r.data),
+
+  getApiKeyStatus: (userId: string) =>
+    backendApi
+      .get<Success<{ has_api_key: boolean }>>(
+        `/admin/creators/${encodeURIComponent(userId)}/api-key`
+      )
+      .then((r) => r.data),
+
+  rotateApiKey: (userId: string) =>
+    backendApi
+      .post<Success<{ api_key: string; has_api_key: true }>>(
+        `/admin/creators/${encodeURIComponent(userId)}/api-key/rotate`,
+        {}
+      )
+      .then((r) => r.data),
 };
 
 export type CreatorSocialPlatform =
