@@ -258,7 +258,7 @@ export function AcquisitionChart({ hourly, daily }: Props) {
           </button>
 
           {expanded ? (
-            <div className="mt-3 overflow-hidden rounded-md border">
+            <div className="mt-3 overflow-hidden rounded-md border motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200">
               <Table>
                 <TableHeader>
                   {table.getHeaderGroups().map((hg) => (
