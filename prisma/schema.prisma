@@ -1210,6 +1210,16 @@ enum ledger_transaction_type {
   waitlist_prize
   pack_borrow_to_voucher
   card_withdrawal
+  creator_deal_fill_grant
+  creator_fill_activation
+  creator_fill_spend_tip
+  creator_fill_spend_battle
+  creator_fill_refund
+  creator_fill_conversion
+  creator_fill_forfeiture
+  affiliate_leaderboard_creation
+  affiliate_leaderboard_refund
+  affiliate_leaderboard_prize
 }
 
 enum race_type {
