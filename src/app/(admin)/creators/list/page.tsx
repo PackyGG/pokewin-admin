@@ -16,15 +16,20 @@ export const metadata = { title: "Creator Deals · Estimates" };
 //   - leaderboard_cost is one-time (the prize pool)
 //   - packy_paid_percent is the % we cover of the prize pool
 //   - deal_length_weeks scales weekly outflows
+//   - tip_balance / battle_balance are flat one-time pots added
+//     straight to total (no per-week scaling, no recoup)
 //
 // Max Cost = (raw_weekly + weekly_wd_cap) × deal_length_weeks
-//          + leaderboard_cost × packy_paid_percent / 100
+//          + leaderboard_cost × (packy_paid_percent / 100)
+//          + tip_balance + battle_balance
 function maxCost(e: {
   daily_fill_usd: number | null;
   withdrawal_cap_usd: number | null;
   leaderboard_cost_usd: number | null;
   packy_paid_percent: number | null;
   deal_length_weeks: number | null;
+  tip_balance_usd: number | null;
+  battle_balance_usd: number | null;
 }): number {
   const dailyFill = e.daily_fill_usd ?? 0;
   const weeklyRaw = dailyFill * 7;
@@ -33,7 +38,9 @@ function maxCost(e: {
   const lbShare = e.packy_paid_percent ?? 0;
   const rawLb = lbCost * (lbShare / 100);
   const weeks = e.deal_length_weeks ?? 0;
-  return (weeklyRaw + wdCap) * weeks + rawLb;
+  const tipBal = e.tip_balance_usd ?? 0;
+  const battleBal = e.battle_balance_usd ?? 0;
+  return (weeklyRaw + wdCap) * weeks + rawLb + tipBal + battleBal;
 }
 
 export default async function CreatorEstimatesPage() {
@@ -60,6 +67,10 @@ export default async function CreatorEstimatesPage() {
       e.packy_paid_percent === null ? null : Number(e.packy_paid_percent),
     dealLengthWeeks:
       e.deal_length_weeks === null ? null : Number(e.deal_length_weeks),
+    tipBalanceUsd:
+      e.tip_balance_usd === null ? null : Number(e.tip_balance_usd),
+    battleBalanceUsd:
+      e.battle_balance_usd === null ? null : Number(e.battle_balance_usd),
     notes: e.notes,
     createdAt: e.created_at.toISOString(),
   }));
@@ -83,6 +94,12 @@ export default async function CreatorEstimatesPage() {
           e.packy_paid_percent === null ? null : Number(e.packy_paid_percent),
         deal_length_weeks:
           e.deal_length_weeks === null ? null : Number(e.deal_length_weeks),
+        tip_balance_usd:
+          e.tip_balance_usd === null ? null : Number(e.tip_balance_usd),
+        battle_balance_usd:
+          e.battle_balance_usd === null
+            ? null
+            : Number(e.battle_balance_usd),
       }),
     0,
   );

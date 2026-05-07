@@ -49,6 +49,8 @@ export type CreatorEstimate = {
   leaderboardCostUsd: number | null;
   packyPaidPercent: number | null;
   dealLengthWeeks: number | null;
+  tipBalanceUsd: number | null;
+  battleBalanceUsd: number | null;
   notes: string | null;
   createdAt: string;
 };
@@ -68,7 +70,15 @@ function rawLbCost(e: CreatorEstimate): number {
 function maxCost(e: CreatorEstimate): number {
   const weekly = rawWeeklyAmount(e) + (e.withdrawalCapUsd ?? 0);
   const weeks = e.dealLengthWeeks ?? 0;
-  return weekly * weeks + rawLbCost(e);
+  // Flat balances: not scaled by weeks, just added on top of the
+  // computed total — they're one-time pots loaded onto the creator's
+  // account up front.
+  return (
+    weekly * weeks +
+    rawLbCost(e) +
+    (e.tipBalanceUsd ?? 0) +
+    (e.battleBalanceUsd ?? 0)
+  );
 }
 
 function fmt$(n: number | null | undefined): string {
@@ -178,7 +188,7 @@ function EstimateCard({ estimate }: { estimate: CreatorEstimate }) {
             {fmt$(max)}
           </p>
           <p className="mt-0.5 text-[10px] text-muted-foreground">
-            (raw weekly + WD cap) × weeks + raw LB cost
+            (raw weekly + WD cap) × weeks + raw LB cost + tip + battle
           </p>
         </div>
 
@@ -230,6 +240,22 @@ function EstimateCard({ estimate }: { estimate: CreatorEstimate }) {
             <span className="block truncate text-sm font-semibold tabular-nums">
               {estimate.dealLengthWeeks
                 ? `${estimate.dealLengthWeeks} wk${estimate.dealLengthWeeks === 1 ? "" : "s"}`
+                : "—"}
+            </span>
+          </Stat>
+          {/* Flat balances — added straight to Max Cost. Captioned
+              "+" so it's obvious they're additive, not weekly. */}
+          <Stat label="Tip balance">
+            <span className="block truncate text-sm font-semibold tabular-nums">
+              {estimate.tipBalanceUsd !== null
+                ? `+ ${fmt$(estimate.tipBalanceUsd)}`
+                : "—"}
+            </span>
+          </Stat>
+          <Stat label="Battle balance">
+            <span className="block truncate text-sm font-semibold tabular-nums">
+              {estimate.battleBalanceUsd !== null
+                ? `+ ${fmt$(estimate.battleBalanceUsd)}`
                 : "—"}
             </span>
           </Stat>
@@ -310,6 +336,14 @@ function EstimateFormDialog({
       ? String(estimate.dealLengthWeeks)
       : "",
   );
+  const [tipBalance, setTipBalance] = useState(
+    estimate?.tipBalanceUsd != null ? String(estimate.tipBalanceUsd) : "",
+  );
+  const [battleBalance, setBattleBalance] = useState(
+    estimate?.battleBalanceUsd != null
+      ? String(estimate.battleBalanceUsd)
+      : "",
+  );
   const [notes, setNotes] = useState(estimate?.notes ?? "");
   const [pending, startTransition] = useTransition();
 
@@ -345,6 +379,14 @@ function EstimateFormDialog({
           ? String(estimate.dealLengthWeeks)
           : "",
       );
+      setTipBalance(
+        estimate?.tipBalanceUsd != null ? String(estimate.tipBalanceUsd) : "",
+      );
+      setBattleBalance(
+        estimate?.battleBalanceUsd != null
+          ? String(estimate.battleBalanceUsd)
+          : "",
+      );
       setNotes(estimate?.notes ?? "");
     }
   }, [open, estimate]);
@@ -361,14 +403,18 @@ function EstimateFormDialog({
   }
 
   // Live preview of the computed Max Cost so the admin sees the
-  // outcome of their inputs without having to save first.
+  // outcome of their inputs without having to save first. Tip +
+  // battle balances are added flat (no scaling) — same as the
+  // server-side maxCost helper.
   const previewMax = (() => {
     const daily = parseDollarOrNull(dailyFill) ?? 0;
     const cap = parseDollarOrNull(wdCap) ?? 0;
     const lb = parseDollarOrNull(lbCost) ?? 0;
     const share = parseDollarOrNull(packyPaid) ?? 0;
     const weeks = parseIntOrNull(dealLength) ?? 0;
-    return (daily * 7 + cap) * weeks + lb * (share / 100);
+    const tip = parseDollarOrNull(tipBalance) ?? 0;
+    const battle = parseDollarOrNull(battleBalance) ?? 0;
+    return (daily * 7 + cap) * weeks + lb * (share / 100) + tip + battle;
   })();
 
   function handleSubmit() {
@@ -384,6 +430,8 @@ function EstimateFormDialog({
       leaderboardCostUsd: parseDollarOrNull(lbCost),
       packyPaidPercent: parseDollarOrNull(packyPaid),
       dealLengthWeeks: parseIntOrNull(dealLength),
+      tipBalanceUsd: parseDollarOrNull(tipBalance),
+      battleBalanceUsd: parseDollarOrNull(battleBalance),
       notes: notes.trim() || null,
     };
     startTransition(async () => {
@@ -529,6 +577,37 @@ function EstimateFormDialog({
             </p>
           </div>
 
+          {/* Flat balances pre-loaded onto the creator's account.
+              Per user spec: just added on top of Max Cost — no
+              calculation, no scaling, no recoup. Sit above the
+              notes field on purpose. */}
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">
+              Tip balance (USD, one-time)
+            </Label>
+            <Input
+              type="number"
+              step="0.01"
+              min="0"
+              value={tipBalance}
+              onChange={(e) => setTipBalance(e.target.value)}
+              placeholder="100"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">
+              Battle balance (USD, one-time)
+            </Label>
+            <Input
+              type="number"
+              step="0.01"
+              min="0"
+              value={battleBalance}
+              onChange={(e) => setBattleBalance(e.target.value)}
+              placeholder="100"
+            />
+          </div>
+
           <div className="space-y-1 sm:col-span-2">
             <Label className="text-xs text-muted-foreground">
               Additional deal notes
@@ -555,6 +634,7 @@ function EstimateFormDialog({
             </div>
             <p className="mt-0.5 text-[10px] text-muted-foreground">
               (daily × 7 + WD cap) × weeks + LB cost × packy %
+              + tip balance + battle balance
             </p>
           </div>
         </div>
