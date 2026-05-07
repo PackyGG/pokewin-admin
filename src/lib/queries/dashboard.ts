@@ -33,6 +33,14 @@ export type ActivityItem = {
  *
  * Row shape: one text column per (metric × period). Caller converts to
  * number via toNumber / parseFloat.
+ *
+ * Note on withdrawals: revenue/wager/GGR come from `ledger_transactions`,
+ * but withdrawals come from `card_withdrawal_requests` (status IN
+ * completed/shipped) so the StatCard matches the PnL formula's source of
+ * truth. Some pre-Fireblocks completions never got their ledger entry's
+ * status flipped to 'completed' — those withdrawals are real (money left
+ * the house) but a ledger-based query misses them. The request table is
+ * the authoritative record.
  */
 function getPeriodAggregates(db: PrismaClient, startOfDay: Date, threeDaysAgo: Date, sevenDaysAgo: Date, thirtyDaysAgo: Date) {
   return db.$queryRaw<
@@ -51,6 +59,17 @@ function getPeriodAggregates(db: PrismaClient, startOfDay: Date, threeDaysAgo: D
       FROM ledger_transactions
       WHERE status = 'completed'
         AND user_id IN (SELECT id FROM real_users)
+    ),
+    withdrawals AS (
+      SELECT
+        total_value_usd::numeric AS amount,
+        -- Use shipped_at as the "money out" timestamp when completed_at is
+        -- not yet set (status='shipped'). For status='completed' both
+        -- timestamps are usually populated; completed_at wins.
+        COALESCE(completed_at, shipped_at) AS effective_at
+      FROM card_withdrawal_requests
+      WHERE status IN ('completed', 'shipped')
+        AND user_id IN (SELECT id FROM real_users)
     )
     SELECT
       COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${startOfDay}    THEN amount ELSE 0 END), 0)::text AS revenue_24h,
@@ -59,11 +78,11 @@ function getPeriodAggregates(db: PrismaClient, startOfDay: Date, threeDaysAgo: D
       COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${thirtyDaysAgo} THEN amount ELSE 0 END), 0)::text AS revenue_30d,
       COALESCE(SUM(CASE WHEN type = 'deposit'                                    THEN amount ELSE 0 END), 0)::text AS revenue_all,
 
-      COALESCE(SUM(CASE WHEN type = 'card_withdrawal' AND created_at >= ${startOfDay}    THEN amount ELSE 0 END), 0)::text AS withdrawal_24h,
-      COALESCE(SUM(CASE WHEN type = 'card_withdrawal' AND created_at >= ${threeDaysAgo}  THEN amount ELSE 0 END), 0)::text AS withdrawal_3d,
-      COALESCE(SUM(CASE WHEN type = 'card_withdrawal' AND created_at >= ${sevenDaysAgo}  THEN amount ELSE 0 END), 0)::text AS withdrawal_7d,
-      COALESCE(SUM(CASE WHEN type = 'card_withdrawal' AND created_at >= ${thirtyDaysAgo} THEN amount ELSE 0 END), 0)::text AS withdrawal_30d,
-      COALESCE(SUM(CASE WHEN type = 'card_withdrawal'                                    THEN amount ELSE 0 END), 0)::text AS withdrawal_all,
+      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${startOfDay}    THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal_24h,
+      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${threeDaysAgo}  THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal_3d,
+      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${sevenDaysAgo}  THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal_7d,
+      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${thirtyDaysAgo} THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal_30d,
+      COALESCE((SELECT SUM(amount)                                                            FROM withdrawals), 0)::text AS withdrawal_all,
 
       COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND created_at >= ${startOfDay}    THEN amount ELSE 0 END), 0)::text AS wager_24h,
       COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND created_at >= ${threeDaysAgo}  THEN amount ELSE 0 END), 0)::text AS wager_3d,
@@ -372,8 +391,9 @@ async function dashboardStatsInner() {
       "30d": num(pa.revenue_30d),
       all: num(pa.revenue_all),
     },
-    // card_withdrawal amounts are stored as negative ledger entries, so
-    // abs() to surface a positive "outflow" magnitude.
+    // Sourced from card_withdrawal_requests (status IN completed/shipped)
+    // so the StatCard matches the PnL formula. Values are already positive
+    // outflow magnitudes; Math.abs is a defensive no-op.
     withdrawals: {
       "24h": Math.abs(num(pa.withdrawal_24h)),
       "3d": Math.abs(num(pa.withdrawal_3d)),
