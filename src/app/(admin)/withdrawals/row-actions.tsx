@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { toast } from "sonner";
 import { MoreHorizontal, Check, X, Truck, PackageCheck, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -43,19 +43,72 @@ export function WithdrawalRequestActions({ withdrawalId }: { withdrawalId: strin
   const [isPending, startTransition] = useTransition();
   const [reason, setReason] = useState("");
   const [declineOpen, setDeclineOpen] = useState(false);
+  const [approveOpen, setApproveOpen] = useState(false);
+  const [totpCode, setTotpCode] = useState("");
 
   return (
     <div className="flex items-center gap-1">
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={isPending}
-        onClick={() => startTransition(() => processWithdrawal(withdrawalId))}
+      <AlertDialog
+        open={approveOpen}
+        onOpenChange={(v) => {
+          setApproveOpen(v);
+          if (!v) setTotpCode("");
+        }}
       >
-        <Check className="mr-1 h-3 w-3" />
-        Approve
-      </Button>
-      <AlertDialog open={declineOpen} onOpenChange={setDeclineOpen}>
+        <AlertDialogTrigger render={<Button size="sm" variant="outline" disabled={isPending} />}>
+          <Check className="mr-1 h-3 w-3" />
+          Approve
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Process Withdrawal</AlertDialogTitle>
+            <AlertDialogDescription>
+              For crypto withdrawals this initiates the Fireblocks transfer.
+              Enter your 2FA code to confirm.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">2FA Code</Label>
+            <Input
+              type="text"
+              inputMode="numeric"
+              placeholder="Enter your 6-digit code"
+              value={totpCode}
+              onChange={(e) => setTotpCode(e.target.value)}
+              maxLength={6}
+              autoComplete="one-time-code"
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <Button
+              disabled={!totpCode.trim() || isPending}
+              onClick={() => {
+                startTransition(async () => {
+                  try {
+                    await processWithdrawal(withdrawalId, totpCode.trim());
+                    setTotpCode("");
+                    setApproveOpen(false);
+                  } catch (e) {
+                    toast.error(
+                      e instanceof Error ? e.message : "Failed to process",
+                    );
+                  }
+                });
+              }}
+            >
+              Approve
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog
+        open={declineOpen}
+        onOpenChange={(v) => {
+          setDeclineOpen(v);
+          if (!v) setTotpCode("");
+        }}
+      >
         <AlertDialogTrigger render={<Button size="sm" variant="outline" disabled={isPending} />}>
           <X className="mr-1 h-3 w-3" />
           Decline
@@ -72,20 +125,39 @@ export function WithdrawalRequestActions({ withdrawalId }: { withdrawalId: strin
             value={reason}
             onChange={(e) => setReason(e.target.value)}
           />
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">2FA Code</Label>
+            <Input
+              type="text"
+              inputMode="numeric"
+              placeholder="Enter your 6-digit code"
+              value={totpCode}
+              onChange={(e) => setTotpCode(e.target.value)}
+              maxLength={6}
+              autoComplete="one-time-code"
+            />
+          </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={!reason.trim()}
-              onClick={() =>
+            <Button
+              disabled={!reason.trim() || !totpCode.trim() || isPending}
+              onClick={() => {
                 startTransition(async () => {
-                  await cancelWithdrawal(withdrawalId, reason);
-                  setReason("");
-                  setDeclineOpen(false);
-                })
-              }
+                  try {
+                    await cancelWithdrawal(withdrawalId, reason, totpCode.trim());
+                    setReason("");
+                    setTotpCode("");
+                    setDeclineOpen(false);
+                  } catch (e) {
+                    toast.error(
+                      e instanceof Error ? e.message : "Failed to decline",
+                    );
+                  }
+                });
+              }}
             >
               Decline
-            </AlertDialogAction>
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -107,6 +179,7 @@ export function ActiveShipmentActions({
   const [tracking, setTracking] = useState("");
   const [carrier, setCarrier] = useState("");
   const [reason, setReason] = useState("");
+  const [totpCode, setTotpCode] = useState("");
 
   return (
     <>
@@ -210,8 +283,14 @@ export function ActiveShipmentActions({
         </DialogContent>
       </Dialog>
 
-      {/* Reason dialog (cancel / fail) */}
-      <AlertDialog open={reasonOpen} onOpenChange={setReasonOpen}>
+      {/* Reason + TOTP dialog (cancel / fail — both refund the user) */}
+      <AlertDialog
+        open={reasonOpen}
+        onOpenChange={(v) => {
+          setReasonOpen(v);
+          if (!v) setTotpCode("");
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
@@ -228,24 +307,43 @@ export function ActiveShipmentActions({
             value={reason}
             onChange={(e) => setReason(e.target.value)}
           />
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">2FA Code</Label>
+            <Input
+              type="text"
+              inputMode="numeric"
+              placeholder="Enter your 6-digit code"
+              value={totpCode}
+              onChange={(e) => setTotpCode(e.target.value)}
+              maxLength={6}
+              autoComplete="one-time-code"
+            />
+          </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Go Back</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={!reason.trim()}
+            <Button
+              disabled={!reason.trim() || !totpCode.trim() || isPending}
               onClick={() =>
                 startTransition(async () => {
-                  if (reasonAction === "cancel") {
-                    await cancelWithdrawal(withdrawalId, reason);
-                  } else {
-                    await failWithdrawal(withdrawalId, reason);
+                  try {
+                    if (reasonAction === "cancel") {
+                      await cancelWithdrawal(withdrawalId, reason, totpCode.trim());
+                    } else {
+                      await failWithdrawal(withdrawalId, reason, totpCode.trim());
+                    }
+                    setReason("");
+                    setTotpCode("");
+                    setReasonOpen(false);
+                  } catch (e) {
+                    toast.error(
+                      e instanceof Error ? e.message : "Action failed",
+                    );
                   }
-                  setReason("");
-                  setReasonOpen(false);
                 })
               }
             >
               Confirm
-            </AlertDialogAction>
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

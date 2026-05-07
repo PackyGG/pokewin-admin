@@ -65,7 +65,7 @@ export default async function CreatorDetailPage({
   // admin API doesn't expose yet. Deal data is fetched fresh from the
   // backend in parallel with per-tab pagination/filters.
   const [profile, dealData] = await Promise.all([
-    getCreatorDetail(userId, 1, 1),
+    getCreatorDetail(userId),
     getCreatorDealData(userId, {
       dealsPage: sp.dealsPage,
       dealsPerPage: sp.dealsPerPage,

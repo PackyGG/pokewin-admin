@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { adminDb } from "@/lib/admin-db";
 import { requirePageAccess } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { exportUsers, rowsToCsv } from "@/lib/queries/users-export";
 
 export const runtime = "nodejs";
@@ -20,6 +22,22 @@ const bodySchema = z.object({
 
 export async function POST(request: Request): Promise<Response> {
   const session = await requirePageAccess("/users");
+
+  // Page access is necessary but not sufficient — exporting raw user
+  // emails is a separate capability that must be granted explicitly.
+  // Admins always pass; non-admins need __can_export_users.
+  if (session.role !== "admin") {
+    const perms = await adminDb.admin_users.findUnique({
+      where: { id: session.userId },
+      select: { allowed_pages: true },
+    });
+    if (!perms || !hasCapability(perms.allowed_pages, "__can_export_users")) {
+      return NextResponse.json(
+        { error: "Not permitted" },
+        { status: 403 },
+      );
+    }
+  }
 
   let body: unknown;
   try {

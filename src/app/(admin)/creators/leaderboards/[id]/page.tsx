@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Crown, Medal, Trophy } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Crown, Medal, Trophy } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
 import { getDb } from "@/lib/db";
@@ -242,6 +242,43 @@ export default async function AffiliateLeaderboardDetailPage({
                     </div>
                 </FadeIn>
             </div>
+
+            {/* Window-drift warning — surfaces when the event window
+                no longer matches what was originally approved. Two
+                triggers:
+                  1. start_date < created_at — the start was backdated
+                     after the leaderboard was created.
+                  2. approved_at exists and is past start_date — the
+                     window opened before the approval landed, so any
+                     wager activity in the gap counts retroactively.
+                Live standings always recompute against the current
+                window, so the admin needs to know when that window
+                drifted from the originally-approved scoring period. */}
+            {(() => {
+                const created = new Date(lb.created_at);
+                const start = new Date(lb.start_date);
+                const startedBeforeCreation = start.getTime() < created.getTime();
+                const approvedAfterStart = lb.approved_at
+                    ? new Date(lb.approved_at).getTime() > start.getTime()
+                    : false;
+                if (!startedBeforeCreation && !approvedAfterStart) return null;
+                return (
+                    <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
+                        <AlertTriangle className="size-4 mt-0.5 text-amber-500 shrink-0" />
+                        <div>
+                            <div className="font-medium text-amber-500">
+                                Window changed after creation
+                            </div>
+                            <div className="mt-0.5 text-muted-foreground">
+                                This leaderboard&apos;s window was changed after
+                                creation — live standings are recomputed against
+                                the current window, which may not match the
+                                originally-approved scoring period.
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
 
             {/* Standings — live rankings of users tied to this
                 leaderboard's code(s) by wager volume inside the

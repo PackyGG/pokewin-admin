@@ -3,7 +3,7 @@ import Link from "next/link";
 import { ArrowLeft, Users } from "lucide-react";
 
 import {
-  getCreatorDetail,
+  getCreatorHeader,
   getCodeReferrals,
 } from "@/lib/queries/creators";
 import { requirePageAccess } from "@/lib/dal";
@@ -40,7 +40,7 @@ export default async function CreatorUsersPage({
   await requirePageAccess("/creators");
   const { userId } = await params;
 
-  const profile = await getCreatorDetail(userId, 1, 1);
+  const profile = await getCreatorHeader(userId);
   if (!profile) notFound();
 
   const referrals = profile.code

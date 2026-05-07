@@ -5,6 +5,46 @@ import type { PaginatedResult } from "@/lib/types";
 import type { CreatorTipItem } from "./creators-types";
 
 /**
+ * Slim header-only query for the creator sub-pages. Returns just the
+ * fields the PageHero needs (username/email/image/role/code) without
+ * pulling in the whole detail page's 12-round-trip aggregate.
+ *
+ * Used by /creators/[userId]/users and /creators/[userId]/wagers, which
+ * only render the avatar + name + primary code in their PageHero. The
+ * full getCreatorDetail() pulls click counts, signup buckets, FTD
+ * stats, country breakdowns, etc. — none of which the sub-pages use.
+ */
+export async function getCreatorHeader(userId: string) {
+  const db = await getDb();
+  const [primaryCodeRow, user] = await Promise.all([
+    db.$queryRawUnsafe<{ code: string }[]>(
+      `SELECT code FROM affiliate_codes WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1`,
+      userId,
+    ),
+    db.user.findUnique({
+      where: { id: userId },
+      select: {
+        username: true,
+        email: true,
+        image: true,
+        role: true,
+      },
+    }),
+  ]);
+
+  if (!user) return null;
+
+  return {
+    userId,
+    username: user.username,
+    email: user.email,
+    image: user.image,
+    role: user.role,
+    code: primaryCodeRow[0]?.code ?? "",
+  };
+}
+
+/**
  * Server-side query that powers /creators/[userId]. Returns ONLY the fields
  * the page actually renders — every property in the return shape maps to a
  * concrete consumer in `page.tsx` or one of its children.
@@ -16,17 +56,7 @@ import type { CreatorTipItem } from "./creators-types";
  * and to source deal data from the backend admin API. Removing them brings
  * this query from ~21 round-trips down to 12.
  */
-export async function getCreatorDetail(
-  userId: string,
-  // Legacy `refPage` / `refPerPage` parameters retained for call-site
-  // compatibility (page.tsx still passes 1, 1). The referrals listing was
-  // dropped from the return shape because it's no longer rendered — these
-  // arguments are accepted for API stability and ignored.
-  _refPage?: number,
-  _refPerPage?: number,
-) {
-  void _refPage;
-  void _refPerPage;
+export async function getCreatorDetail(userId: string) {
   const db = await getDb();
   // Fetch the affiliate account and the user record in parallel. A user can
   // exist without ever being promoted to an affiliate (no affiliate_accounts

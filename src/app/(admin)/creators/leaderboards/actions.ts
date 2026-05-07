@@ -197,7 +197,7 @@ export async function approveLeaderboard(id: string): Promise<ActionResult> {
     if (!parsed.success) {
         return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid id" };
     }
-    await requireCapability(session, "__can_update_creator_deal", "approve creator leaderboards");
+    await requireCapability(session, "__can_approve_leaderboard", "approve creator leaderboards");
 
     try {
         await affiliateLeaderboardsApi.approve(parsed.data, session.userId);
@@ -232,7 +232,7 @@ export async function rejectLeaderboard(
     if (!parsed.success) {
         return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
     }
-    await requireCapability(session, "__can_update_creator_deal", "reject creator leaderboards");
+    await requireCapability(session, "__can_approve_leaderboard", "reject creator leaderboards");
 
     try {
         await affiliateLeaderboardsApi.reject(parsedId.data, parsed.data, session.userId);
@@ -369,7 +369,7 @@ export async function cancelLeaderboard(id: string): Promise<ActionResult> {
     if (!parsedId.success) {
         return { success: false, error: parsedId.error.issues[0]?.message ?? "Invalid id" };
     }
-    await requireCapability(session, "__can_update_creator_deal", "cancel creator leaderboards");
+    await requireCapability(session, "__can_approve_leaderboard", "cancel creator leaderboards");
 
     try {
         await affiliateLeaderboardsApi.cancel(parsedId.data, session.userId);

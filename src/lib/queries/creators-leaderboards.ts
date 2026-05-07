@@ -63,8 +63,20 @@ export async function getAffiliateLeaderboardRankings(opts: {
   // Resolve the code set this leaderboard is scoped to. Empty array
   // on the input = "all codes this creator owns" (matches what the
   // page renders for the "all codes" affordance).
+  //
+  // Branching is intentional:
+  //   • Empty `affiliateCodes` (the "all codes for this creator"
+  //     fallback): we ALSO require acu.affiliate_user_id = creatorUserId
+  //     in the WHERE below. Otherwise, if a code was ever transferred
+  //     between creators, historical affiliate_code_usages rows tagged
+  //     to the OLD owner would leak into THIS creator's standings.
+  //   • Explicit `affiliateCodes`: scope follows the code string. If a
+  //     code was transferred, the standings intentionally include the
+  //     pre-transfer activity — that's the point of giving the admin
+  //     control over which codes belong to the leaderboard.
+  const codeFallback = opts.affiliateCodes.length === 0;
   let codes = opts.affiliateCodes;
-  if (codes.length === 0) {
+  if (codeFallback) {
     const owned = await db.$queryRawUnsafe<{ code: string }[]>(
       `SELECT code FROM affiliate_codes WHERE user_id = $1`,
       creatorUserId,
@@ -86,11 +98,20 @@ export async function getAffiliateLeaderboardRankings(opts: {
     total_wagered: string;
   };
 
+  // Param indices shift when the code-fallback path adds the creator
+  // id as $4. Build the WHERE clause + params separately so each path
+  // stays readable.
+  const whereExtra = codeFallback ? `AND acu.affiliate_user_id = $4` : ``;
+  const params: unknown[] = codeFallback
+    ? [upperCodes, startDate, endDate, creatorUserId]
+    : [upperCodes, startDate, endDate];
+
   const rows = await db.$queryRawUnsafe<Row[]>(
     `WITH leaderboard_users AS (
        SELECT DISTINCT acu.referred_user_id
        FROM affiliate_code_usages acu
        WHERE UPPER(acu.code) = ANY($1::text[])
+       ${whereExtra}
      )
      SELECT
        lt.user_id,
@@ -109,9 +130,7 @@ export async function getAffiliateLeaderboardRankings(opts: {
      HAVING SUM(ABS(lt.amount::numeric)) > 0
      ORDER BY SUM(ABS(lt.amount::numeric)) DESC
      LIMIT ${limit}`,
-    upperCodes,
-    startDate,
-    endDate,
+    ...params,
   );
 
   // Build a position → prize lookup once so the per-row mapping is O(1).

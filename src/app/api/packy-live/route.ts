@@ -1,4 +1,4 @@
-import { verifySession } from "@/lib/dal";
+import { requirePageAccess } from "@/lib/dal";
 import https from "node:https";
 import crypto from "node:crypto";
 import type { Duplex, Writable } from "node:stream";
@@ -77,12 +77,43 @@ const EXPECTED_ACCEPT = crypto
   .update(PACKY_WS_KEY + WS_GUID)
   .digest("base64");
 
+// Per-user concurrent-stream cap. Maps `userId → openCount` for THIS
+// route in THIS Node.js process. Caps at 3 so a single admin tab-storm
+// can't pin three SSE-rotating proxy upstreams + crowd out other admins.
+//
+// In-memory only: each Vercel function instance has its own map, so the
+// real ceiling is `MAX_CONCURRENT × instance_count`. Acceptable until a
+// shared cache is wired up.
+const MAX_CONCURRENT = 3;
+const openStreams = new Map<string, number>();
+
 export async function GET(request: Request): Promise<Response> {
+  // Match the rest of the live SSE family — gate on the dashboard
+  // capability so non-admin roles without /dashboard access can't open
+  // a long-running upstream proxy. requirePageAccess throws via Next's
+  // redirect() on failure, which is meaningless for an SSE endpoint.
+  // Catch + return 401 so the EventSource client sees the failure.
+  let userId: string;
   try {
-    await verifySession();
+    const session = await requirePageAccess("/dashboard");
+    userId = session.userId;
   } catch {
     return new Response("Unauthorized", { status: 401 });
   }
+
+  const currentOpen = openStreams.get(userId) ?? 0;
+  if (currentOpen >= MAX_CONCURRENT) {
+    return new Response("Too many concurrent streams", { status: 429 });
+  }
+  openStreams.set(userId, currentOpen + 1);
+  let decremented = false;
+  const decrementOnce = () => {
+    if (decremented) return;
+    decremented = true;
+    const next = (openStreams.get(userId) ?? 1) - 1;
+    if (next <= 0) openStreams.delete(userId);
+    else openStreams.set(userId, next);
+  };
 
   const encoder = new TextEncoder();
 
@@ -98,6 +129,10 @@ export async function GET(request: Request): Promise<Response> {
       const cleanup = () => {
         if (closed) return;
         closed = true;
+        // Decrement the per-user open-stream counter on close/abort/error
+        // so a 4th tab can connect once one of the first 3 hangs up. The
+        // helper is idempotent — calling it twice is safe.
+        decrementOnce();
         if (heartbeat) clearInterval(heartbeat);
         if (rotation) clearTimeout(rotation);
         if (receiver) {
