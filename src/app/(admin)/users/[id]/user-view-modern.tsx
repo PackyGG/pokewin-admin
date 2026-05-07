@@ -281,6 +281,10 @@ export function UserViewModern({
                   <UserAdminActions
                     user={user}
                     availableBalance={balances?.availableBalance ?? 0}
+                    lockedBalance={balances?.lockedBalance ?? 0}
+                    unlockAt={balances?.unlockAt ?? null}
+                    isAdmin={isAdmin}
+                    capabilities={capabilities}
                   />
                 </div>
                 <p className="text-xs text-muted-foreground truncate">

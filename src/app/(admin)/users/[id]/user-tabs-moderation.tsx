@@ -48,10 +48,21 @@ import { DeleteUserDialog, WipeAccountButton, EditIdentityButton } from "./user-
  *
  * NOTE: EditIdentityButton is NOT included here — it lives in the hero
  * directly, to the LEFT of ChangeRole, per user request.
+ *
+ * Each button is gated on the relevant capability so non-admins without
+ * the matching grant don't see ANY trigger for an action they can't
+ * perform — UI signaling matches the server-side gate. Defence-in-depth:
+ * the actions still re-check on the server, the gate here just keeps
+ * support staff from seeing dead buttons. Delete + Wipe stay admin-only
+ * because the corresponding actions are hard-gated with requireAdmin().
  */
 export function UserAdminActions({
   user,
   availableBalance,
+  lockedBalance,
+  unlockAt,
+  isAdmin,
+  capabilities,
 }: {
   user: UserDetail["user"];
   // Used by the "To vault" button so the confirm dialog can echo the
@@ -59,32 +70,53 @@ export function UserAdminActions({
   // state when the user has $0 spendable. Optional — older callers
   // that don't have balance data just hide the button.
   availableBalance?: number;
+  // Surfaced to the vault dialog so the existing-vault warning + the
+  // "clear unlock window" checkbox can flag the right state.
+  lockedBalance?: number;
+  unlockAt?: string | null;
+  // Admin or capability-resolved permission flags. Without these the
+  // toolbar refuses to render any of the moderation buttons.
+  isAdmin: boolean;
+  capabilities: UserDetail["capabilities"];
 }) {
+  const canBan = isAdmin || capabilities.canBanUsers;
+  const canLock = isAdmin || capabilities.canLockUsers;
+  const canMoveToVault = isAdmin || capabilities.canAdjustBalance;
+  // Delete + Wipe both gate on requireAdmin() server-side; we mirror
+  // that here rather than wiring up a non-existent capability check.
+  const canDelete = isAdmin;
+  const canWipe = isAdmin || capabilities.canWipeAccounts;
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      {user.isBanned ? (
-        <UnbanButton userId={user.id} />
-      ) : (
-        <BanButton userId={user.id} />
-      )}
-      {user.isLocked ? (
-        <UnlockButton userId={user.id} />
-      ) : (
-        <LockButton userId={user.id} />
-      )}
-      {availableBalance !== undefined && (
+      {canBan &&
+        (user.isBanned ? (
+          <UnbanButton userId={user.id} />
+        ) : (
+          <BanButton userId={user.id} />
+        ))}
+      {canLock &&
+        (user.isLocked ? (
+          <UnlockButton userId={user.id} />
+        ) : (
+          <LockButton userId={user.id} />
+        ))}
+      {canMoveToVault && availableBalance !== undefined && (
         <MoveToVaultButton
           userId={user.id}
           availableBalance={availableBalance}
+          lockedBalance={lockedBalance ?? 0}
+          unlockAt={unlockAt ?? null}
         />
       )}
-      <DeleteUserDialog user={user} isPending={false} />
-      <WipeAccountButton
-        userId={user.id}
-        displayName={
-          user.displayUsername ?? user.username ?? user.email ?? user.id
-        }
-      />
+      {canDelete && <DeleteUserDialog user={user} isPending={false} />}
+      {canWipe && (
+        <WipeAccountButton
+          userId={user.id}
+          displayName={
+            user.displayUsername ?? user.username ?? user.email ?? user.id
+          }
+        />
+      )}
     </div>
   );
 }
@@ -437,16 +469,35 @@ function UnlockButton({ userId }: { userId: string }) {
 function MoveToVaultButton({
   userId,
   availableBalance,
+  lockedBalance,
+  unlockAt,
 }: {
   userId: string;
   availableBalance: number;
+  // Surfaced so the dialog can warn the admin that an existing vault
+  // pool is about to be merged + an existing unlock window cleared.
+  lockedBalance: number;
+  unlockAt: string | null;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  // The "I understand" checkbox is only required when there's actual
+  // existing vault state that this action will overwrite; empty state
+  // (no locked balance and no unlock window) skips the gate.
+  const [acknowledged, setAcknowledged] = useState(false);
   const [isPending, startTransition] = useTransition();
   // Disable when there's nothing spendable to move — the action would
   // fail server-side with "Available balance is already 0" anyway.
   const disabled = availableBalance <= 0;
+  const hasExistingVaultState = lockedBalance > 0 || unlockAt !== null;
+
+  // Reset the acknowledgement on close so reopening the dialog requires
+  // the admin to re-tick the checkbox — prevents accidental confirm on
+  // a stale state if the user navigated away and back.
+  function handleOpenChange(v: boolean) {
+    setOpen(v);
+    if (!v) setAcknowledged(false);
+  }
 
   function submit() {
     startTransition(async () => {
@@ -459,12 +510,13 @@ function MoveToVaultButton({
         `Moved ${formatCurrency(result.movedAmount)} to vault`,
       );
       setOpen(false);
+      setAcknowledged(false);
       router.refresh();
     });
   }
 
   return (
-    <AlertDialog open={open} onOpenChange={setOpen}>
+    <AlertDialog open={open} onOpenChange={handleOpenChange}>
       <AlertDialogTrigger
         render={
           <Button
@@ -505,9 +557,50 @@ function MoveToVaultButton({
             </span>
           </AlertDialogDescription>
         </AlertDialogHeader>
+        {hasExistingVaultState && (
+          <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 space-y-2">
+            <p className="text-sm text-foreground">
+              <strong>Existing vault:</strong>{" "}
+              <span className="font-semibold tabular-nums">
+                {formatCurrency(lockedBalance)}
+              </span>
+              {unlockAt && (
+                <>
+                  {" · unlocks "}
+                  <span className="tabular-nums">
+                    {formatDateTime(unlockAt)}
+                  </span>
+                </>
+              )}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              This will merge{" "}
+              <span className="font-semibold tabular-nums text-foreground">
+                {formatCurrency(availableBalance)}
+              </span>{" "}
+              (available) into the existing vault and clear the unlock
+              window — both pools become unlock-anytime.
+            </p>
+            <label className="flex items-start gap-2 text-xs text-foreground cursor-pointer">
+              <input
+                type="checkbox"
+                checked={acknowledged}
+                onChange={(e) => setAcknowledged(e.target.checked)}
+                className="mt-0.5"
+                disabled={isPending}
+              />
+              <span>I understand this clears the unlock window.</span>
+            </label>
+          </div>
+        )}
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={submit} disabled={isPending}>
+          <AlertDialogAction
+            onClick={submit}
+            disabled={
+              isPending || (hasExistingVaultState && !acknowledged)
+            }
+          >
             {isPending ? "Moving..." : "Move to vault"}
           </AlertDialogAction>
         </AlertDialogFooter>
