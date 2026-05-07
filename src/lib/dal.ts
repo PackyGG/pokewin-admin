@@ -89,7 +89,7 @@ export async function getDefaultRouteForUser(userId: string, role: string): Prom
 //
 // This coexists with the legacy `allowed_pages` + hardcoded `requireRole()`
 // checks — existing call sites are untouched. New code can opt in by
-// calling requireCapability() / hasCapability() instead.
+// calling requireCapabilityForPage() / hasCapability() instead.
 //
 // Raw SQL is used for the lookup so this module compiles cleanly before
 // `admin:migrate` has been run (the generated Prisma client won't know
@@ -171,11 +171,19 @@ export async function hasCapability(
 }
 
 /**
- * Enforce that the current session user has `key`. Redirects to their
- * default route on failure, mirroring requireAdmin / requirePageAccess.
- * Intended for NEW server actions / routes; existing checks are untouched.
+ * Enforce that the current session user has `key` for a PAGE (Server
+ * Component) load. On failure, calls Next.js `redirect()` to the user's
+ * default route — mirroring `requireAdmin` / `requirePageAccess`. Because
+ * `redirect()` throws an internal Next signal that the framework handles,
+ * this function never returns when access is denied.
+ *
+ * For server-action capability gating (where you want a catchable error
+ * to surface a toast in the client), use `requireCapability` from
+ * `@/lib/require-capability` instead. The two helpers intentionally diverge:
+ *   • `requireCapabilityForPage` (this file)  → redirect-based, page-level
+ *   • `requireCapability`        (other file) → throw-based,    action-level
  */
-export async function requireCapability(key: CapabilityKey): Promise<SessionPayload> {
+export async function requireCapabilityForPage(key: CapabilityKey): Promise<SessionPayload> {
   const session = await verifySession();
   if (session.role === "admin") return session;
 
