@@ -17,7 +17,24 @@ export type RequestOptions = {
   headers?: Record<string, string>;
   /** Next.js fetch cache control. Defaults to 'no-store'. */
   cache?: RequestCache;
+  /**
+   * Optional caller-supplied AbortSignal. Combined with the default 8s
+   * timeout via AbortSignal.any so whichever fires first wins. Pass null
+   * to opt out of the default timeout entirely (rare — for streams etc.).
+   */
+  signal?: AbortSignal | null;
+  /**
+   * Override the default 8s timeout. Use a smaller value for hot paths
+   * or a larger one for slow endpoints. Set to 0 to disable.
+   */
+  timeoutMs?: number;
 };
+
+// Default fetch timeout. Caps how long any backend round-trip can pin the
+// Next.js handler — without this a stuck upstream would leave admin pages
+// hanging until Vercel's maxDuration kills the function. 8s is comfortably
+// above p99 backend latency in practice.
+const DEFAULT_TIMEOUT_MS = 8000;
 
 const buildQueryString = (
   query: RequestOptions["query"]
@@ -99,6 +116,22 @@ export const backendApiRequest = async <T = unknown>(
     ...options.headers,
   };
 
+  // Combine the (default) 8s timeout with an optional caller-supplied
+  // signal. AbortSignal.any() fires as soon as the FIRST of the inputs
+  // aborts — so callers can still cancel on user navigation, while the
+  // timeout still kicks in on a stuck upstream. Pass `signal: null` or
+  // `timeoutMs: 0` to opt out of the default cap.
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const signals: AbortSignal[] = [];
+  if (options.signal) signals.push(options.signal);
+  if (timeoutMs > 0) signals.push(AbortSignal.timeout(timeoutMs));
+  const fetchSignal: AbortSignal | undefined =
+    signals.length === 0
+      ? undefined
+      : signals.length === 1
+        ? signals[0]
+        : AbortSignal.any(signals);
+
   // Wrap the fetch in try/catch so DNS / TCP / TLS failures throw a
   // structured BackendNetworkError with the URL + underlying cause
   // instead of a bare "fetch failed". Without this every caller just
@@ -112,6 +145,7 @@ export const backendApiRequest = async <T = unknown>(
       body:
         options.body !== undefined ? JSON.stringify(options.body) : undefined,
       cache: options.cache ?? "no-store",
+      signal: fetchSignal,
     });
   } catch (err) {
     const networkErr = new BackendNetworkError(url, err);

@@ -1,6 +1,11 @@
 import { format, formatDistanceToNow } from "date-fns";
 
 export function formatCurrency(amount: number): string {
+  // Guard against NaN / Infinity sneaking through from a divide-by-zero
+  // upstream (e.g. avg-* metrics). Intl.NumberFormat would otherwise emit
+  // "NaN" / "∞" literals which look broken in admin UIs. Rendered as "—"
+  // matches the existing convention for "no value to show".
+  if (!Number.isFinite(amount)) return "—";
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
