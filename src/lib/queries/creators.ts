@@ -17,6 +17,7 @@ export { getCreatorDetail, getCreatorTips } from "./creators-detail";
 export {
   getCodes,
   getCodeAnalytics,
+  getCodeReferrals,
   getRecentWagersOnCode,
 } from "./creators-codes";
 export { getAffiliateAnalytics, getAffiliateLevelConfigs } from "./creators-analytics";

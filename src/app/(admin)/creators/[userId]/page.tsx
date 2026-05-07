@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import {
@@ -18,6 +19,7 @@ import { requirePageAccess } from "@/lib/dal";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { PageHero, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
@@ -238,8 +240,13 @@ export default async function CreatorDetailPage({
             surface for full action set (approve/reject/edit/sponsor/cancel).
             Sits directly below the deal tabs row so leaderboards read as
             part of the same "deal management" cluster, before the analytics
-            band kicks in. */}
-        <LeaderboardsCard userId={profile.userId} />
+            band kicks in.
+            Wrapped in Suspense so a slow backend API call here doesn't
+            block the rest of the page from rendering — Next streams this
+            section in once it resolves. */}
+        <Suspense fallback={<LeaderboardsSkeleton />}>
+          <LeaderboardsCard userId={profile.userId} />
+        </Suspense>
 
         {/* Bottom band: three equal-width analytics cards. On phone they
             stack full-width; tablet shows two-up wherever possible. */}
@@ -262,9 +269,59 @@ export default async function CreatorDetailPage({
         {/* Per-code activity: who's using the creator's primary code right
             now + a chronological feed of recent wager events from those
             users. Only renders when the creator has a primary code; users
-            without one would just hit empty queries. */}
-        {profile.code && <CodeActivityCard code={profile.code} />}
+            without one would just hit empty queries. Streamed via Suspense
+            so the two queries it fires (slim referrals + recent wagers)
+            don't extend the page TTFB. */}
+        {profile.code && (
+          <Suspense fallback={<CodeActivitySkeleton />}>
+            <CodeActivityCard code={profile.code} />
+          </Suspense>
+        )}
       </FadeIn>
+    </div>
+  );
+}
+
+// ── Suspense fallbacks ───────────────────────────────────────────────
+//
+// Both panels do their own DB / backend round-trips, so streaming them
+// in via Suspense lets the rest of the page paint immediately. The
+// skeletons below match the rough shape of each panel so the page
+// doesn't visibly jump when the real content swaps in.
+
+function LeaderboardsSkeleton() {
+  return (
+    <Card size="sm" className="space-y-3 p-4 sm:p-5">
+      <div className="flex items-center justify-between">
+        <Skeleton className="h-5 w-40" />
+        <Skeleton className="h-8 w-24" />
+      </div>
+      <div className="space-y-2">
+        <Skeleton className="h-9 w-full" />
+        <Skeleton className="h-9 w-full" />
+        <Skeleton className="h-9 w-full" />
+      </div>
+    </Card>
+  );
+}
+
+function CodeActivitySkeleton() {
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      {[0, 1].map((i) => (
+        <div key={i} className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Skeleton className="h-7 w-7 rounded-md" />
+            <Skeleton className="h-4 w-32" />
+          </div>
+          <div className="rounded-2xl border bg-card/60 p-3 space-y-2">
+            <Skeleton className="h-7 w-full" />
+            <Skeleton className="h-7 w-full" />
+            <Skeleton className="h-7 w-full" />
+            <Skeleton className="h-7 w-full" />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
