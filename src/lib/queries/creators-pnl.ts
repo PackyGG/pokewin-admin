@@ -1,10 +1,19 @@
 import { getDb } from "@/lib/db";
 import type { CreatorPnlData, CreatorPnlPeriod } from "./creators-types";
+import { WAGER_TYPES_SQL, PAYOUT_TYPES_SQL } from "./_wager-payout-types";
 
 const PNL_PERIODS = ["3h", "12h", "24h", "3d", "7d", "14d", "30d"] as const;
 
-const WAGER_TYPES = "('pack_opening','battle_bet','battle_sponsorship')";
-const PAYOUT_TYPES = "('battle_refund','card_sale','reward_card_sale')";
+// Shared with dashboard.ts via _wager-payout-types.ts so creator GGR and
+// global GGR agree on what counts. Previously the creators-pnl set was a
+// strict subset of dashboard's, so the same user's wagers contributed
+// differently to the two surfaces.
+const WAGER_TYPES = WAGER_TYPES_SQL;
+const PAYOUT_TYPES = PAYOUT_TYPES_SQL;
+// Costs are still creator-specific: these are the ledger types that
+// represent payouts the creator's referred users took out (not the
+// raw house-payout list above). They are the subset we treat as a
+// "cost the creator caused us" via their referral pool.
 const COST_TYPES = `('deposit_bonus','promo_code_redeemed','gift_card_redeemed','waitlist_prize',
   'rakeback_claim','affiliate_claim',
   'rain_win','race_prize','balance_reward_claim','creator_tip',
@@ -59,11 +68,24 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
     `, userId),
 
     // Query C: Creator's own cost to platform
+    //
+    // Disambiguation note: `admin_balance_adjustment` is overloaded —
+    // both manual balance fills (creator deal payouts, support credits)
+    // AND manual withdrawals are recorded with this type. Manual
+    // withdrawals are tagged in the description with "Manual withdrawal:%"
+    // (set by the withdrawal action). Filter them out so `fills` only
+    // counts what the platform actually paid into the creator, not what
+    // the creator pulled out as a manual withdrawal.
     db.$queryRawUnsafe<{ commission: string; tips: string; fills: string }[]>(`
       SELECT
         COALESCE(SUM(CASE WHEN type = 'affiliate_claim' THEN (balance_after - balance_before)::numeric ELSE 0 END), 0)::text AS commission,
         COALESCE(SUM(CASE WHEN type = 'creator_tip' THEN (balance_after - balance_before)::numeric ELSE 0 END), 0)::text AS tips,
-        COALESCE(SUM(CASE WHEN type = 'admin_balance_adjustment' THEN (balance_after - balance_before)::numeric ELSE 0 END), 0)::text AS fills
+        COALESCE(SUM(
+          CASE WHEN type = 'admin_balance_adjustment'
+                AND (description IS NULL OR description NOT ILIKE 'Manual withdrawal:%')
+               THEN (balance_after - balance_before)::numeric
+               ELSE 0 END
+        ), 0)::text AS fills
       FROM ledger_transactions
       WHERE user_id = $1 AND status = 'completed'
     `, userId),
