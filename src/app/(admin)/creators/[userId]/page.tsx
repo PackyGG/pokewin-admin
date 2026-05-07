@@ -233,6 +233,14 @@ export default async function CreatorDetailPage({
           </aside>
         </div>
 
+        {/* Affiliate leaderboards owned by this creator — read-only summary
+            with deep-link to the dedicated /creators/leaderboards management
+            surface for full action set (approve/reject/edit/sponsor/cancel).
+            Sits directly below the deal tabs row so leaderboards read as
+            part of the same "deal management" cluster, before the analytics
+            band kicks in. */}
+        <LeaderboardsCard userId={profile.userId} />
+
         {/* Bottom band: three equal-width analytics cards. On phone they
             stack full-width; tablet shows two-up wherever possible. */}
         <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -250,11 +258,6 @@ export default async function CreatorDetailPage({
           />
           <CountryBreakdown rows={profile.countryBreakdown} />
         </div>
-
-        {/* Affiliate leaderboards owned by this creator — read-only summary
-            with deep-link to the dedicated /creators/leaderboards management
-            surface for full action set (approve/reject/edit/sponsor/cancel). */}
-        <LeaderboardsCard userId={profile.userId} />
 
         {/* Per-code activity: who's using the creator's primary code right
             now + a chronological feed of recent wager events from those
