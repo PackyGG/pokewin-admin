@@ -2,6 +2,7 @@
 
 import { randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { adminDb } from "@/lib/admin-db";
 import { getDb } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
@@ -14,6 +15,15 @@ import {
   type MuteItem,
 } from "@/lib/queries/chat";
 import type { PaginatedResult } from "@/lib/types";
+
+const muteUserSchema = z.object({
+  userId: z.string().min(1, "User is required"),
+  reason: z.string().trim().max(500),
+  // ISO-8601 datetime string (e.g. from new Date().toISOString()) or
+  // null/undefined for "no expiration". Reject anything else cleanly so
+  // bad input doesn't reach `new Date(...)` and produce an Invalid Date.
+  expiresAt: z.string().datetime().nullable().optional(),
+});
 
 /**
  * Resolve a Main-DB `User.id` for the calling admin so it can be written
@@ -165,14 +175,16 @@ export async function unpinMessage(messageId: string) {
   revalidatePath("/chat");
 }
 
-export async function muteUser(data: {
-  userId: string;
-  reason: string;
-  expiresAt: string | null;
-}) {
+export async function muteUser(data: z.infer<typeof muteUserSchema>) {
   const db = await getDb();
   const session = await requirePageAccess("/chat");
   await requireCapability(session, "__can_mute_users", "mute users");
+
+  const parsed = muteUserSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message ?? "Invalid mute input");
+  }
+  const v = parsed.data;
 
   // `user_mutes.muted_by` is a NOT-NULL FK to Main-DB `User.id`.
   // Admin identities live in the Admin DB and have no corresponding
@@ -183,15 +195,15 @@ export async function muteUser(data: {
   // null here). The authoritative admin attribution is the audit
   // event written below regardless of which path is taken.
   const issuerMainUserId =
-    (await resolveAdminMainUserId(session.userId)) ?? data.userId;
+    (await resolveAdminMainUserId(session.userId)) ?? v.userId;
 
   await db.user_mutes.create({
     data: {
       id: randomUUID(),
-      user_id: data.userId,
+      user_id: v.userId,
       muted_by: issuerMainUserId,
-      reason: data.reason || null,
-      expires_at: data.expiresAt ? new Date(data.expiresAt) : null,
+      reason: v.reason || null,
+      expires_at: v.expiresAt ? new Date(v.expiresAt) : null,
     },
     select: { id: true },
   });
@@ -199,10 +211,10 @@ export async function muteUser(data: {
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "chat_muted",
-    targetUserId: data.userId,
+    targetUserId: v.userId,
     metadata: {
-      reason: data.reason,
-      expires_at: data.expiresAt,
+      reason: v.reason,
+      expires_at: v.expiresAt,
       issuer_main_user_id: issuerMainUserId,
     },
   });
