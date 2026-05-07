@@ -604,8 +604,35 @@ export async function adminLinkSocialByUsername(
   const validPlatforms = ["twitter", "youtube", "kick", "instagram"];
   if (!validPlatforms.includes(platform)) throw new Error("Invalid platform");
 
-  const stats = await fetchPublicStats(platform, trimmed);
+  // Bound the public-stats fetch with a short timeout race so the
+  // server action doesn't block the dialog for up to 20s. Each
+  // platform's fetcher has a 10s primary timeout AND falls back to a
+  // secondary API (twitterapi.io / Social Blade) with another 10s
+  // timeout, so worst case the user sees the page freeze for ~20s
+  // while the action awaits.
+  //
+  // Trade-off: if the primary API is slow, we save the row with
+  // follower_count = 0 and last_fetched_at = null. The page calls
+  // refreshStaleSocials() non-blocking on every render and that
+  // helper treats null last_fetched_at as stale, so the count gets
+  // backfilled on the next visit. UX: instant link + toast, follower
+  // number updates after the next page render rather than after a
+  // multi-second freeze.
+  const QUICK_FETCH_MS = 3000;
+  const stats = await Promise.race([
+    fetchPublicStats(platform, trimmed),
+    new Promise<{ followerCount: null; platformUserId: null }>((resolve) => {
+      setTimeout(
+        () => resolve({ followerCount: null, platformUserId: null }),
+        QUICK_FETCH_MS,
+      );
+    }),
+  ]);
 
+  // Only stamp last_fetched_at when we actually got stats — leaving
+  // it null means refreshStaleSocials will pick this row up on the
+  // next render and finish the fetch in the background.
+  const gotStats = stats.followerCount !== null;
   await adminDb.creator_socials.upsert({
     where: {
       target_user_id_platform: {
@@ -619,13 +646,18 @@ export async function adminLinkSocialByUsername(
       username: trimmed,
       platform_user_id: stats.platformUserId ?? null,
       follower_count: stats.followerCount ?? 0,
-      last_fetched_at: new Date(),
+      last_fetched_at: gotStats ? new Date() : null,
     },
     update: {
       username: trimmed,
+      // On re-link, only overwrite stats if we got fresh ones —
+      // otherwise leave the existing row's count alone and mark it
+      // stale (last_fetched_at: null) so the background refresher
+      // picks it up.
       platform_user_id: stats.platformUserId ?? null,
-      follower_count: stats.followerCount ?? 0,
-      last_fetched_at: new Date(),
+      ...(gotStats
+        ? { follower_count: stats.followerCount ?? 0, last_fetched_at: new Date() }
+        : { last_fetched_at: null }),
     },
     select: { id: true },
   });
