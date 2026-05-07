@@ -91,7 +91,12 @@ function getPeriodAggregates(db: PrismaClient, startOfDay: Date, threeDaysAgo: D
       COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship')                                    THEN amount ELSE 0 END), 0)::text AS wager_all,
 
       -- GGR = wagers − payouts (industry-standard pure gaming margin).
-      -- Same type lists as the old ggrAgg function.
+      -- Wager + payout type lists are intentionally hardcoded inline here
+      -- (Prisma's tagged $queryRaw can't interpolate raw SQL fragments).
+      -- The canonical sets live in src/lib/queries/_wager-payout-types.ts;
+      -- creators-pnl.ts imports from there. If you change the lists here,
+      -- update the shared constants too — otherwise per-creator GGR will
+      -- drift from the dashboard's global GGR for the same population.
       (
         COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','withdrawal_shipping_fee') AND created_at >= ${startOfDay} THEN ABS(amount) ELSE 0 END), 0)
         - COALESCE(SUM(CASE WHEN type IN (
