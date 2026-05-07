@@ -49,7 +49,7 @@ async function realizedPnlSnapshotInner(): Promise<RealizedPnlSnapshot> {
     }[]
   >`
     WITH real_users AS (
-      SELECT id FROM "user" WHERE role != 'admin'
+      SELECT id FROM "user" WHERE role NOT IN ('admin', 'support')
     )
     SELECT
       COALESCE((SELECT SUM(total_deposited::numeric)     FROM balances                 WHERE user_id IN (SELECT id FROM real_users)), 0)::text AS deposited,

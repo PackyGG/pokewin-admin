@@ -65,7 +65,7 @@ export async function getCohortRetention(
         u.id AS user_id,
         u.created_at
       FROM "user" u
-      WHERE u.role != 'admin'
+      WHERE u.role NOT IN ('admin', 'support')
         AND u.created_at >= NOW() - INTERVAL '${cohortHorizon}'
     ),
     cohort_sizes AS (

@@ -88,7 +88,7 @@ export async function getPackProfitability(
         FROM ledger_transactions lt
         JOIN game_sessions gs ON gs.id = lt.game_session_id AND gs.game_type = 'pack'
         WHERE lt.type = 'pack_opening' AND lt.status = 'completed'
-          AND lt.user_id IN (SELECT id FROM "user" WHERE role != 'admin')
+          AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support'))
           ${ltWhere}
         GROUP BY gs.game_id
       ),
@@ -106,7 +106,7 @@ export async function getPackProfitability(
         JOIN game_sessions gs ON gs.id = ui.source_id AND gs.game_type = 'pack'
         WHERE lt.type IN ('card_sale','reward_card_sale','card_exchange','exchange_excess_credit')
           AND lt.status = 'completed'
-          AND lt.user_id IN (SELECT id FROM "user" WHERE role != 'admin')
+          AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support'))
           ${ltWhere}
         GROUP BY gs.game_id
       )
@@ -140,7 +140,7 @@ export async function getPackProfitability(
         FROM battles b
         CROSS JOIN LATERAL UNNEST(b.pack_ids::uuid[]) AS pid
         WHERE b.status = 'completed'
-          AND b.user_id IN (SELECT id FROM "user" WHERE role != 'admin')
+          AND b.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support'))
           ${days !== null ? `AND b.created_at >= NOW() - INTERVAL '${days} days'` : ""}
       ),
       battle_agg AS (
