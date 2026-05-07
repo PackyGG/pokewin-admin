@@ -396,33 +396,35 @@ model creator_deal_estimates {
   // No FK constraint; this list is intentionally decoupled from
   // any real user record.
   name                String
-  // Pay frequency. "weekly" | "biweekly" | "monthly". TEXT so we
-  // can add new options without a migration; validated server-side.
-  cadence             String   @default("monthly")
-  // ── Spend caps per period (USD, all optional) ──────────────────
-  // fill_amount: how much we top up the creator's balance per period
-  fill_amount_usd     Decimal? @db.Decimal(20, 2)
-  // fill_percent: % of fills we recoup through gameplay (house keep
-  // ratio). 0.20 means we keep 20% of the fill amount (= 80% net
-  // cost to us).
-  fill_percent        Decimal? @db.Decimal(5, 2)
-  // withdrawal_cap_usd: max creator withdrawal per period (USD)
+  // ── Daily / weekly spend (USD, all optional) ───────────────────
+  // daily_fill_usd: USD topped up onto the creator's balance per
+  // day. Weekly raw fill is daily_fill × 7 (computed at render time).
+  daily_fill_usd      Decimal? @db.Decimal(20, 2)
+  // withdrawal_cap_usd: max creator withdrawal per WEEK (USD).
+  // Treated as weekly for the Max Cost rollup so it lines up with
+  // daily_fill × 7. Document this on the form so admins enter the
+  // right number.
   withdrawal_cap_usd  Decimal? @db.Decimal(20, 2)
   // withdrawal_percent: cap on how much of their wagering they're
   // allowed to withdraw (%). E.g. 30 = up to 30% of wager.
   withdrawal_percent  Decimal? @db.Decimal(5, 2)
-  // tip_cap_usd: max amount they can tip viewers per period (USD)
-  tip_cap_usd         Decimal? @db.Decimal(20, 2)
-  // free_battle_cap_usd: max budget for sponsored battles per
-  // period (USD)
-  free_battle_cap_usd Decimal? @db.Decimal(20, 2)
+  // ── Leaderboard sponsorship (one-time prize pool) ──────────────
+  // leaderboard_cost_usd: total prize pool of the leaderboard
+  // contest.
+  leaderboard_cost_usd Decimal? @db.Decimal(20, 2)
+  // packy_paid_percent: % of the prize pool we (the house) cover.
+  // Raw LB cost = leaderboard_cost × (packy_paid_percent / 100).
+  packy_paid_percent  Decimal? @db.Decimal(5, 2)
+  // ── Deal duration ──────────────────────────────────────────────
+  // deal_length_weeks: how long the deal runs (in WEEKS). Combined
+  // with the daily / weekly spend to compute Max Cost.
+  deal_length_weeks   Int?
   notes               String?
   created_at          DateTime @default(now()) @db.Timestamptz(6)
   updated_at          DateTime @updatedAt @db.Timestamptz(6)
   created_by_id       String   @db.Uuid
   created_by          admin_users @relation("creator_deal_estimates_created_by", fields: [created_by_id], references: [id])
 
-  @@index([cadence])
   @@index([created_at(sort: Desc)])
 }
 
