@@ -21,6 +21,12 @@ import { MoreHorizontal } from "lucide-react";
 import { toggleAdminActive, resetAdmin2FA, changeAdminRole, deleteAdminUser } from "./actions";
 import { toast } from "sonner";
 
+// Mode discriminator for the shared TOTP confirmation dialog. Each
+// privileged action (toggle, reset 2fa, delete, change role) reuses the
+// same dialog so admins can copy/paste the 6-digit code into one place
+// per action — keeps the UX consistent with /users/[id] dialogs.
+type TotpAction = "toggle" | "reset2fa" | "delete" | "changeRole";
+
 export function AdminUserActions({
   userId,
   isActive,
@@ -32,59 +38,78 @@ export function AdminUserActions({
   totpEnabled: boolean;
   role: string;
 }) {
-  const [roleDialogOpen, setRoleDialogOpen] = useState(false);
+  const [dialogAction, setDialogAction] = useState<TotpAction | null>(null);
   const [totpCode, setTotpCode] = useState("");
   const [isPending, setIsPending] = useState(false);
 
   const newRole = role === "admin" ? "support" : "admin";
 
-  async function handleToggleActive() {
-    try {
-      await toggleAdminActive(userId, !isActive);
-      toast.success(isActive ? "Admin deactivated" : "Admin activated");
-    } catch {
-      toast.error("Failed to update status");
-    }
+  function openDialog(action: TotpAction) {
+    setDialogAction(action);
+    setTotpCode("");
   }
 
-  async function handleReset2FA() {
-    if (!confirm("Reset 2FA for this admin? They will need to set it up again on next login.")) return;
-    try {
-      await resetAdmin2FA(userId);
-      toast.success("2FA reset");
-    } catch {
-      toast.error("Failed to reset 2FA");
-    }
+  function closeDialog() {
+    setDialogAction(null);
+    setTotpCode("");
+    setIsPending(false);
   }
 
-  async function handleDelete() {
-    if (!confirm("Permanently delete this admin user? Their audit logs will be preserved but they will lose all access.")) return;
-    try {
-      const result = await deleteAdminUser(userId);
-      if (!result.success) {
-        toast.error(result.error);
-        return;
-      }
-      toast.success("Admin user deleted");
-    } catch {
-      toast.error("Failed to delete admin user");
-    }
-  }
-
-  async function handleConfirmRoleChange() {
-    if (!totpCode.trim()) return;
+  async function handleConfirm() {
+    if (!totpCode.trim() || !dialogAction) return;
     setIsPending(true);
     try {
-      await changeAdminRole(userId, newRole, totpCode.trim());
-      toast.success(`Role changed to ${newRole}`);
-      setRoleDialogOpen(false);
-      setTotpCode("");
+      if (dialogAction === "toggle") {
+        await toggleAdminActive(userId, !isActive, totpCode.trim());
+        toast.success(isActive ? "Admin deactivated" : "Admin activated");
+      } else if (dialogAction === "reset2fa") {
+        await resetAdmin2FA(userId, totpCode.trim());
+        toast.success("2FA reset");
+      } else if (dialogAction === "delete") {
+        const result = await deleteAdminUser(userId, totpCode.trim());
+        if (!result.success) {
+          toast.error(result.error);
+          setIsPending(false);
+          return;
+        }
+        toast.success("Admin user deleted");
+      } else if (dialogAction === "changeRole") {
+        await changeAdminRole(userId, newRole, totpCode.trim());
+        toast.success(`Role changed to ${newRole}`);
+      }
+      closeDialog();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to change role");
-    } finally {
+      toast.error(e instanceof Error ? e.message : "Action failed");
       setIsPending(false);
     }
   }
+
+  const dialogConfig: Record<TotpAction, { title: string; description: string; confirmLabel: string }> = {
+    toggle: {
+      title: isActive ? "Deactivate Admin" : "Activate Admin",
+      description: isActive
+        ? "This will prevent the admin from logging in. Enter your 2FA code to confirm."
+        : "This will allow the admin to log in again. Enter your 2FA code to confirm.",
+      confirmLabel: isActive ? "Deactivate" : "Activate",
+    },
+    reset2fa: {
+      title: "Reset 2FA",
+      description:
+        "Wipes the admin's TOTP secret. They will need to set up 2FA again on next login. Enter your 2FA code to confirm.",
+      confirmLabel: "Reset 2FA",
+    },
+    delete: {
+      title: "Delete Admin User",
+      description:
+        "Permanently deletes this admin user. Their audit logs will be preserved but they lose all access. Enter your 2FA code to confirm.",
+      confirmLabel: "Delete",
+    },
+    changeRole: {
+      title: "Confirm Role Change",
+      description: `Change role to ${newRole}. Enter your 2FA code to confirm.`,
+      confirmLabel: "Confirm",
+    },
+  };
 
   return (
     <>
@@ -93,30 +118,30 @@ export function AdminUserActions({
           <MoreHorizontal className="size-4" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem onClick={handleToggleActive}>
+          <DropdownMenuItem onClick={() => openDialog("toggle")}>
             {isActive ? "Deactivate" : "Activate"}
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => { setTotpCode(""); setRoleDialogOpen(true); }}>
+          <DropdownMenuItem onClick={() => openDialog("changeRole")}>
             Change to {role === "admin" ? "Support" : "Admin"}
           </DropdownMenuItem>
           {totpEnabled && (
-            <DropdownMenuItem onClick={handleReset2FA} className="text-destructive">
+            <DropdownMenuItem onClick={() => openDialog("reset2fa")} className="text-destructive">
               Reset 2FA
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem onClick={handleDelete} className="text-destructive">
+          <DropdownMenuItem onClick={() => openDialog("delete")} className="text-destructive">
             Delete
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <Dialog open={roleDialogOpen} onOpenChange={setRoleDialogOpen}>
+      <Dialog open={dialogAction !== null} onOpenChange={(v) => { if (!v) closeDialog(); }}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>Confirm Role Change</DialogTitle>
+            <DialogTitle>{dialogAction ? dialogConfig[dialogAction].title : ""}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3 py-2">
             <p className="text-sm text-muted-foreground">
-              Change role to <span className="font-medium text-foreground">{newRole}</span>. Enter your 2FA code to confirm.
+              {dialogAction ? dialogConfig[dialogAction].description : ""}
             </p>
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">2FA Code</Label>
@@ -136,9 +161,9 @@ export function AdminUserActions({
               size="sm"
               className="w-full sm:w-auto"
               disabled={isPending || !totpCode.trim()}
-              onClick={handleConfirmRoleChange}
+              onClick={handleConfirm}
             >
-              {isPending ? "Updating..." : "Confirm"}
+              {isPending ? "Updating..." : dialogAction ? dialogConfig[dialogAction].confirmLabel : ""}
             </Button>
           </DialogFooter>
         </DialogContent>
