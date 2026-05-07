@@ -4,6 +4,7 @@ import { requirePageAccess } from "@/lib/dal";
 import { ensureCreatorEstimatesSchema } from "@/lib/creator-estimates/ensure-schema";
 import { PageHero, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { formatCurrency } from "@/lib/utils/format";
 import { CreatorEstimatesClient } from "./list-client";
 
 export const metadata = { title: "Creator Deals · Estimates" };
@@ -18,16 +19,27 @@ export const metadata = { title: "Creator Deals · Estimates" };
 //   - deal_length_weeks scales weekly outflows
 //   - tip_balance / battle_balance are flat one-time pots added
 //     straight to total (no per-week scaling, no recoup)
+//   - video_amount / video_percent / video_fills_per_week — same
+//     shape as daily fill but for video deliverables; counts into
+//     the same weekly bucket as the withdraw cap (per user spec)
 //
-// Max Cost = (raw_weekly + weekly_wd_cap) × deal_length_weeks
+// Max Cost = (raw_weekly_fill + weekly_wd_cap + weekly_video_net)
+//              × deal_length_weeks
 //          + leaderboard_cost × (packy_paid_percent / 100)
 //          + tip_balance + battle_balance
+//
+// where:
+//   weekly_video_net = video_amount × video_fills_per_week
+//                      × (1 - video_percent / 100)
 function maxCost(e: {
   daily_fill_usd: number | null;
   withdrawal_cap_usd: number | null;
   leaderboard_cost_usd: number | null;
   packy_paid_percent: number | null;
   deal_length_weeks: number | null;
+  video_amount_usd: number | null;
+  video_percent: number | null;
+  video_fills_per_week: number | null;
   tip_balance_usd: number | null;
   battle_balance_usd: number | null;
 }): number {
@@ -38,9 +50,18 @@ function maxCost(e: {
   const lbShare = e.packy_paid_percent ?? 0;
   const rawLb = lbCost * (lbShare / 100);
   const weeks = e.deal_length_weeks ?? 0;
+  const videoAmt = e.video_amount_usd ?? 0;
+  const videoPct = e.video_percent ?? 0;
+  const videoFills = e.video_fills_per_week ?? 0;
+  const weeklyVideoNet = videoAmt * videoFills * (1 - videoPct / 100);
   const tipBal = e.tip_balance_usd ?? 0;
   const battleBal = e.battle_balance_usd ?? 0;
-  return (weeklyRaw + wdCap) * weeks + rawLb + tipBal + battleBal;
+  return (
+    (weeklyRaw + wdCap + weeklyVideoNet) * weeks +
+    rawLb +
+    tipBal +
+    battleBal
+  );
 }
 
 export default async function CreatorEstimatesPage() {
@@ -67,6 +88,14 @@ export default async function CreatorEstimatesPage() {
       e.packy_paid_percent === null ? null : Number(e.packy_paid_percent),
     dealLengthWeeks:
       e.deal_length_weeks === null ? null : Number(e.deal_length_weeks),
+    videoAmountUsd:
+      e.video_amount_usd === null ? null : Number(e.video_amount_usd),
+    videoPercent:
+      e.video_percent === null ? null : Number(e.video_percent),
+    videoFillsPerWeek:
+      e.video_fills_per_week === null
+        ? null
+        : Number(e.video_fills_per_week),
     tipBalanceUsd:
       e.tip_balance_usd === null ? null : Number(e.tip_balance_usd),
     battleBalanceUsd:
@@ -94,6 +123,14 @@ export default async function CreatorEstimatesPage() {
           e.packy_paid_percent === null ? null : Number(e.packy_paid_percent),
         deal_length_weeks:
           e.deal_length_weeks === null ? null : Number(e.deal_length_weeks),
+        video_amount_usd:
+          e.video_amount_usd === null ? null : Number(e.video_amount_usd),
+        video_percent:
+          e.video_percent === null ? null : Number(e.video_percent),
+        video_fills_per_week:
+          e.video_fills_per_week === null
+            ? null
+            : Number(e.video_fills_per_week),
         tip_balance_usd:
           e.tip_balance_usd === null ? null : Number(e.tip_balance_usd),
         battle_balance_usd:
@@ -144,20 +181,21 @@ export default async function CreatorEstimatesPage() {
         {/* Total Max Cost across all entries — every weekly cap fully
             consumed × deal_length_weeks + leaderboards. Rose because
             it's house outflow per CLAUDE.md house POV. */}
+        {/* Currency formatted via the shared en-US formatCurrency
+            helper so commas/decimals are unambiguous regardless of
+            the admin's browser locale. Previously toLocaleString
+            with undefined locale produced "$13.775" in EU locales
+            which read as "$13.77" to en-US viewers. */}
         <KpiTile
           label="Total Max Cost"
-          value={`$${totalMaxCost.toLocaleString(undefined, {
-            maximumFractionDigits: 0,
-          })}`}
+          value={formatCurrency(totalMaxCost)}
           icon={Calculator}
           sub="Worst case across all"
           accent="rose"
         />
         <KpiTile
           label="Weekly Burn"
-          value={`$${weeklyBurn.toLocaleString(undefined, {
-            maximumFractionDigits: 0,
-          })}`}
+          value={formatCurrency(weeklyBurn)}
           icon={Coins}
           sub="Fills + wd caps / week"
           accent="amber"

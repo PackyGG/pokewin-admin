@@ -35,6 +35,14 @@ const optionalWeeks = z
   .nullable()
   .optional();
 
+const optionalCount = z
+  .number()
+  .int()
+  .nonnegative()
+  .max(10_000)
+  .nullable()
+  .optional();
+
 const estimateSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(80),
   dailyFillUsd: optionalDollarAmount,
@@ -43,6 +51,9 @@ const estimateSchema = z.object({
   leaderboardCostUsd: optionalDollarAmount,
   packyPaidPercent: optionalPercent,
   dealLengthWeeks: optionalWeeks,
+  videoAmountUsd: optionalDollarAmount,
+  videoPercent: optionalPercent,
+  videoFillsPerWeek: optionalCount,
   tipBalanceUsd: optionalDollarAmount,
   battleBalanceUsd: optionalDollarAmount,
   notes: z.string().trim().max(500).nullable().optional(),
@@ -82,6 +93,9 @@ export async function createCreatorEstimate(
       leaderboard_cost_usd: parsed.data.leaderboardCostUsd ?? null,
       packy_paid_percent: parsed.data.packyPaidPercent ?? null,
       deal_length_weeks: parsed.data.dealLengthWeeks ?? null,
+      video_amount_usd: parsed.data.videoAmountUsd ?? null,
+      video_percent: parsed.data.videoPercent ?? null,
+      video_fills_per_week: parsed.data.videoFillsPerWeek ?? null,
       tip_balance_usd: parsed.data.tipBalanceUsd ?? null,
       battle_balance_usd: parsed.data.battleBalanceUsd ?? null,
       notes: parsed.data.notes?.trim() || null,
@@ -133,6 +147,12 @@ export async function updateCreatorEstimate(
     updateData.packy_paid_percent = parsed.data.packyPaidPercent;
   if (parsed.data.dealLengthWeeks !== undefined)
     updateData.deal_length_weeks = parsed.data.dealLengthWeeks;
+  if (parsed.data.videoAmountUsd !== undefined)
+    updateData.video_amount_usd = parsed.data.videoAmountUsd;
+  if (parsed.data.videoPercent !== undefined)
+    updateData.video_percent = parsed.data.videoPercent;
+  if (parsed.data.videoFillsPerWeek !== undefined)
+    updateData.video_fills_per_week = parsed.data.videoFillsPerWeek;
   if (parsed.data.tipBalanceUsd !== undefined)
     updateData.tip_balance_usd = parsed.data.tipBalanceUsd;
   if (parsed.data.battleBalanceUsd !== undefined)
