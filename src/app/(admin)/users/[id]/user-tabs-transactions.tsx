@@ -409,6 +409,7 @@ export const CategoryTransactionsTable = React.memo(
 
           <TransactionDetailModal
             transaction={selectedTx}
+            userId={userId}
             onClose={() => setSelectedTx(null)}
           />
           {txData.totalPages > 0 && (
@@ -642,9 +643,11 @@ function CardWithdrawalsSubTable({
 
 function TransactionDetailModal({
   transaction,
+  userId,
   onClose,
 }: {
   transaction: Transaction | null;
+  userId: string;
   onClose: () => void;
 }) {
   const [gameSession, setGameSession] = useState<GameSessionDetails | null>(
@@ -659,10 +662,12 @@ function TransactionDetailModal({
     }
     setLoadingSession(true);
     setGameSession(null);
-    getGameSessionDetails(transaction.gameSessionId)
+    // Pass the URL's userId through so the server can verify ownership
+    // before returning provably_fair_results (server-seed leak guard).
+    getGameSessionDetails(transaction.gameSessionId, userId)
       .then((data) => setGameSession(data))
       .finally(() => setLoadingSession(false));
-  }, [transaction?.id, transaction?.gameSessionId]);
+  }, [transaction?.id, transaction?.gameSessionId, userId]);
 
   if (!transaction) return null;
   const t = transaction;

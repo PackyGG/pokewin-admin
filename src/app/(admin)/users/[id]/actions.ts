@@ -769,7 +769,10 @@ export async function fetchInventory(
   return getUserInventory(userId, page, perPage, filters);
 }
 
-export async function getGameSessionDetails(gameSessionId: string) {
+export async function getGameSessionDetails(
+  gameSessionId: string,
+  userId: string,
+) {
   const db = await getDb();
   await requirePageAccess("/users");
 
@@ -784,7 +787,14 @@ export async function getGameSessionDetails(gameSessionId: string) {
     },
   });
 
-  if (!session) return null;
+  // Ownership check — without this, anyone with access to /users could
+  // join across users by passing any session id (which leaks the
+  // session's server seed via provably_fair_results). We compare against
+  // the URL's userId rather than session.user_id so a wrong-page click
+  // returns "not found" rather than silently rendering another user's
+  // session. Returning null (same as a missing row) avoids leaking the
+  // existence of the session to admins viewing the wrong user.
+  if (!session || session.user_id !== userId) return null;
 
   // Fetch pack details if it's a pack opening
   let pack: { id: string; name: string; imageUrl: string | null } | null = null;
