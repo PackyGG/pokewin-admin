@@ -32,10 +32,18 @@ export async function checkBalanceAdjustmentLimit(
   for (const limit of limits) {
     const periodStart = getPeriodStart(limit.period_type);
 
+    // Both event types count against the same per-admin balance cap.
+    // - `balance_adjustment` is the regular adjustBalance() audit event
+    //   (metadata.amount carries the signed delta in USD).
+    // - `manual_withdrawal_recorded` is recordManualWithdrawal()
+    //   (metadata.amountUsd carries the positive USD amount that was
+    //   moved off the user's on-site balance).
+    // Manual withdrawals move user money around just like a balance
+    // adjustment does, so we sum both event types when checking caps.
     const events = await adminDb.admin_audit_events.findMany({
       where: {
         admin_user_id: adminUserId,
-        event_type: "balance_adjustment",
+        event_type: { in: ["balance_adjustment", "manual_withdrawal_recorded"] },
         created_at: { gte: periodStart },
       },
       select: { metadata: true },
@@ -44,8 +52,13 @@ export async function checkBalanceAdjustmentLimit(
     let currentUsage = 0;
     for (const event of events) {
       const meta = event.metadata as Record<string, unknown> | null;
-      if (meta && typeof meta.amount === "number") {
+      if (!meta) continue;
+      // Accept either field — `amount` for balance_adjustment events,
+      // `amountUsd` for manual_withdrawal_recorded events.
+      if (typeof meta.amount === "number") {
         currentUsage += Math.abs(meta.amount);
+      } else if (typeof meta.amountUsd === "number") {
+        currentUsage += Math.abs(meta.amountUsd);
       }
     }
 
