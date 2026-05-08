@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { formatDateTime } from "@/lib/utils/format";
 
 import { CreateDialog } from "../leaderboards/_components/create-dialog";
+import { CancelLeaderboardButton } from "../leaderboards/_components/cancel-leaderboard-button";
 
 type ApprovalStatus = "pending" | "approved" | "rejected";
 type TimeStatus = "upcoming" | "active" | "ended";
@@ -128,41 +129,59 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
                 ) : (
                     <div className="space-y-2">
                         {rows.map((r) => (
-                            <Link
+                            // Row split into a Link (body) + Cancel button
+                            // sibling so the cancel control isn't trapped
+                            // inside the row's click area. Hover state lives
+                            // on the inner Link to match the original look.
+                            <div
                                 key={r.id}
-                                href={`/creators/leaderboards/${r.id}`}
-                                className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3 rounded-md border p-3 hover:bg-muted/50 transition-colors"
+                                className="flex items-stretch gap-2 rounded-md border has-[a:hover]:bg-muted/50 transition-colors"
                             >
-                                <div className="min-w-0 sm:flex-1">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                        <span className="font-medium text-sm truncate">{r.title}</span>
-                                        {r.is_sponsored && (
-                                            <Badge variant="outline" className="text-[10px]">
-                                                sponsored
+                                <Link
+                                    href={`/creators/leaderboards/${r.id}`}
+                                    className="flex flex-1 min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3 p-3"
+                                >
+                                    <div className="min-w-0 sm:flex-1">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                            <span className="font-medium text-sm truncate">{r.title}</span>
+                                            {r.is_sponsored && (
+                                                <Badge variant="outline" className="text-[10px]">
+                                                    sponsored
+                                                </Badge>
+                                            )}
+                                        </div>
+                                        <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                                            <span className="truncate">
+                                                {formatDateTime(r.start_date)} → {formatDateTime(r.end_date)}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center flex-wrap gap-1.5 sm:gap-2 sm:shrink-0">
+                                        <span className="text-sm tabular-nums font-semibold">${r.total_prize_usd}</span>
+                                        <Badge variant="outline" className={`text-[10px] ${APPROVAL_COLORS[r.approval_status]}`}>
+                                            {r.approval_status}
+                                        </Badge>
+                                        <Badge variant="outline" className={`text-[10px] ${TIME_COLORS[r.time_status]}`}>
+                                            {r.time_status}
+                                        </Badge>
+                                        {r.cancelled_at && (
+                                            <Badge variant="outline" className="text-[10px] bg-zinc-500/15 text-zinc-600 border-zinc-500/30">
+                                                cancelled
                                             </Badge>
                                         )}
                                     </div>
-                                    <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                                        <span className="truncate">
-                                            {formatDateTime(r.start_date)} → {formatDateTime(r.end_date)}
-                                        </span>
-                                    </div>
+                                </Link>
+                                {/* Cancel button — disabled if already
+                                    cancelled. Sits outside the Link so the
+                                    button click doesn't navigate. */}
+                                <div className="flex items-center pr-2">
+                                    <CancelLeaderboardButton
+                                        id={r.id}
+                                        title={r.title}
+                                        disabled={r.cancelled_at !== null}
+                                    />
                                 </div>
-                                <div className="flex items-center flex-wrap gap-1.5 sm:gap-2 sm:shrink-0">
-                                    <span className="text-sm tabular-nums font-semibold">${r.total_prize_usd}</span>
-                                    <Badge variant="outline" className={`text-[10px] ${APPROVAL_COLORS[r.approval_status]}`}>
-                                        {r.approval_status}
-                                    </Badge>
-                                    <Badge variant="outline" className={`text-[10px] ${TIME_COLORS[r.time_status]}`}>
-                                        {r.time_status}
-                                    </Badge>
-                                    {r.cancelled_at && (
-                                        <Badge variant="outline" className="text-[10px] bg-zinc-500/15 text-zinc-600 border-zinc-500/30">
-                                            cancelled
-                                        </Badge>
-                                    )}
-                                </div>
-                            </Link>
+                            </div>
                         ))}
                         {total > rows.length && (
                             <Link
