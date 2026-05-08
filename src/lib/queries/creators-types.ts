@@ -41,6 +41,11 @@ export type CreatorListItem = {
   totalEarnedUsd: number;
   availableUsd: number;
   totalPaidOutUsd: number;
+  // 3-day rolling deposit + wager volume from this creator's
+  // affiliate referrals (staff-excluded). Surfaces "active right
+  // now" momentum on the row alongside the all-time totals.
+  deposits3dUsd: number;
+  wagers3dUsd: number;
   limits: CreatorLimits;
 };
 
