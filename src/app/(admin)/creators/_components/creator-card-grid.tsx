@@ -97,6 +97,14 @@ export type CreatorWithSocials = CreatorListItem & {
    * deposited at least once. Same as /creators/[id]'s ftdByPeriod.all.
    */
   ftds: number;
+  /**
+   * 3-day rolling deposit volume from this creator's affiliates.
+   * Surfaced as the "Last 3d" momentum line on the card so the admin
+   * can spot who is producing right now.
+   */
+  deposits3dUsd: number;
+  /** 3-day rolling wager volume — same source as deposits3dUsd. */
+  wagers3dUsd: number;
 };
 
 /**
@@ -204,6 +212,15 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
           wagerVolumeUsd={creator.wagerVolumeUsd}
           signups={creator.signups}
           ftds={creator.ftds}
+        />
+
+        {/* MOMENTUM — last 3 days. Reads as a thin support line under
+            the lifetime stats so admins can spot who's producing right
+            now without digging into the detail page. Hidden when both
+            numbers are 0 to keep dormant creators visually quieter. */}
+        <MomentumRow
+          deposits3dUsd={creator.deposits3dUsd}
+          wagers3dUsd={creator.wagers3dUsd}
         />
 
         {/* SOCIALS */}
@@ -408,6 +425,50 @@ function SocialsRow({ socials }: { socials: CreatorSocialSummary[] }) {
           </span>
         );
       })}
+    </div>
+  );
+}
+
+// 3-day rolling momentum line — deposits + wagers from this creator's
+// affiliates over the last 72h. Both staff-excluded at the query level
+// (admin / support filtered out), so dollar amounts here match the
+// per-creator KPI tiles on /creators/[id].
+//
+// Both zero → render a single muted "No activity in last 3 days" so the
+// row stays quiet for dormant creators. Money values render emerald per
+// CLAUDE.md house-POV (deposits + wagers are house income).
+function MomentumRow({
+  deposits3dUsd,
+  wagers3dUsd,
+}: {
+  deposits3dUsd: number;
+  wagers3dUsd: number;
+}) {
+  const hasActivity = deposits3dUsd > 0 || wagers3dUsd > 0;
+  if (!hasActivity) {
+    return (
+      <p className="text-[10px] italic text-muted-foreground/70">
+        No activity in last 3 days
+      </p>
+    );
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+      <span className="font-semibold uppercase tracking-wider text-muted-foreground">
+        Last 3d
+      </span>
+      <span className="text-muted-foreground">
+        Deposits{" "}
+        <span className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+          {deposits3dUsd > 0 ? formatCurrency(deposits3dUsd) : "—"}
+        </span>
+      </span>
+      <span className="text-muted-foreground">
+        Wagers{" "}
+        <span className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+          {wagers3dUsd > 0 ? formatCurrency(wagers3dUsd) : "—"}
+        </span>
+      </span>
     </div>
   );
 }

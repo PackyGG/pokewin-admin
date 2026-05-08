@@ -167,17 +167,39 @@ export default async function CreatorsPage({
         <FadeIn className="space-y-4">
           <DataTableToolbar searchPlaceholder="Search by username or email..." />
           <CreatorCardGrid
-            creators={(result?.data ?? []).map<CreatorWithSocials>((c) => {
-              const cw = codeAndWagerByUser.get(c.id);
-              return {
-                ...c,
-                socials: socialsByUser.get(c.id) ?? [],
-                code: cw?.code ?? null,
-                wagerVolumeUsd: cw?.wagerVolumeUsd ?? 0,
-                signups: cw?.signups ?? 0,
-                ftds: cw?.ftds ?? 0,
-              };
-            })}
+            creators={(result?.data ?? [])
+              .map<CreatorWithSocials>((c) => {
+                const cw = codeAndWagerByUser.get(c.id);
+                return {
+                  ...c,
+                  socials: socialsByUser.get(c.id) ?? [],
+                  code: cw?.code ?? null,
+                  wagerVolumeUsd: cw?.wagerVolumeUsd ?? 0,
+                  signups: cw?.signups ?? 0,
+                  ftds: cw?.ftds ?? 0,
+                  deposits3dUsd: cw?.deposits3dUsd ?? 0,
+                  wagers3dUsd: cw?.wagers3dUsd ?? 0,
+                };
+              })
+              // Pin creators with an active or scheduled deal to the top of
+              // the page. The backend's /admin/creators endpoint doesn't
+              // expose a sort param yet, so this is a per-page client-side
+              // re-order — within a page it surfaces "who has a deal right
+              // now". Stable Array.prototype.sort preserves the backend's
+              // creation-order tiebreak.
+              .sort((a, b) => {
+                const aActive =
+                  a.current_deal?.status === "active" ||
+                  a.current_deal?.status === "scheduled"
+                    ? 1
+                    : 0;
+                const bActive =
+                  b.current_deal?.status === "active" ||
+                  b.current_deal?.status === "scheduled"
+                    ? 1
+                    : 0;
+                return bActive - aActive;
+              })}
           />
           {result && (
             <DataTablePagination
