@@ -38,7 +38,9 @@ export async function createPromoCode(
   }
   const v = parsed.data;
 
-  const codeHash = createHash("sha256").update(v.code.toUpperCase()).digest("hex");
+  const pepper = process.env.GIFT_CARD_PEPPER ?? "";
+  const normalizedCode = v.code.toUpperCase().trim();
+  const codeHash = createHash("sha256").update(normalizedCode + pepper).digest("hex");
 
   const existing = await db.promo_codes.findFirst({
     where: { code_hash: codeHash },
@@ -58,7 +60,7 @@ export async function createPromoCode(
       requires_discord: v.requiresDiscord,
       max_uses: v.maxUses,
       expires_at: v.expiresAt ? new Date(v.expiresAt) : null,
-      metadata: { code: v.code },
+      metadata: { code: normalizedCode },
     },
   });
 

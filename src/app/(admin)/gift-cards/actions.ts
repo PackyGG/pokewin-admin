@@ -32,7 +32,8 @@ export async function createGiftCard(data: z.infer<typeof createGiftCardSchema>)
   const v = parsed.data;
 
   const code = v.code || randomBytes(8).toString("hex").toUpperCase();
-  const codeHash = createHash("sha256").update(code).digest("hex");
+  const pepper = process.env.GIFT_CARD_PEPPER ?? "";
+  const codeHash = createHash("sha256").update(code.toUpperCase().trim() + pepper).digest("hex");
 
   const card = await db.gift_cards.create({
     data: {
