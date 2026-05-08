@@ -71,7 +71,7 @@ export async function unbanUser(userId: string) {
   revalidatePath(`/users/${userId}`);
 }
 
-export async function lockUser(userId: string, reason: string) {
+export async function lockUser(userId: string, reason: string, lockedUntil: Date | null) {
   const db = await getDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_lock_users", "lock user accounts");
@@ -88,6 +88,7 @@ export async function lockUser(userId: string, reason: string) {
         is_locked: true,
         locked_reason: reason,
         locked_at: new Date(),
+        locked_until: lockedUntil,
         locked_by: issuerMainUserId,
       },
     }),
@@ -97,7 +98,11 @@ export async function lockUser(userId: string, reason: string) {
     adminUserId: session.userId,
     eventType: "account_locked",
     targetUserId: userId,
-    metadata: { reason, issuer_main_user_id: issuerMainUserId },
+    metadata: {
+      reason,
+      issuer_main_user_id: issuerMainUserId,
+      locked_until: lockedUntil?.toISOString() ?? null,
+    },
   });
 
   revalidatePath("/users");

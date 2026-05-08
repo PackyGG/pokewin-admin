@@ -35,6 +35,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import type { UserDetail } from "./user-tabs-types";
 import { banUser, unbanUser, lockUser, unlockUser } from "../actions";
@@ -351,10 +358,28 @@ function UnbanButton({ userId }: { userId: string }) {
   );
 }
 
+const LOCK_DURATIONS = [
+  { value: "7d", label: "7 days" },
+  { value: "30d", label: "1 month (30 days)" },
+  { value: "90d", label: "3 months (90 days)" },
+  { value: "180d", label: "6 months (180 days)" },
+  { value: "365d", label: "1 year (365 days)" },
+  { value: "permanent", label: "Permanent (manual unlock)" },
+] as const;
+
+function computeLockedUntil(duration: string): Date | null {
+  if (duration === "permanent") return null;
+  const days = parseInt(duration, 10);
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date;
+}
+
 function LockButton({ userId }: { userId: string }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
+  const [duration, setDuration] = useState("30d");
   const [isPending, startTransition] = useTransition();
 
   function submit() {
@@ -362,12 +387,14 @@ function LockButton({ userId }: { userId: string }) {
       toast.error("Reason required");
       return;
     }
+    const lockedUntil = computeLockedUntil(duration);
     startTransition(async () => {
       try {
-        await lockUser(userId, reason.trim());
+        await lockUser(userId, reason.trim(), lockedUntil);
         toast.success("User locked");
         setOpen(false);
         setReason("");
+        setDuration("30d");
         router.refresh();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Lock failed");
@@ -389,14 +416,31 @@ function LockButton({ userId }: { userId: string }) {
         <DialogHeader>
           <DialogTitle>Lock user account</DialogTitle>
         </DialogHeader>
-        <div className="space-y-2">
-          <Label className="text-xs text-muted-foreground">Reason</Label>
-          <Textarea
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="Why lock this account?"
-            rows={3}
-          />
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">Duration</Label>
+            <Select value={duration} onValueChange={(v) => setDuration(v ?? "30d")}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {LOCK_DURATIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs text-muted-foreground">Reason</Label>
+            <Textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Why lock this account?"
+              rows={3}
+            />
+          </div>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={() => setOpen(false)}>
