@@ -33,7 +33,7 @@ export async function encrypt(payload: SessionPayload) {
   return new SignJWT(payload as unknown as Record<string, unknown>)
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime("8h")
+    .setExpirationTime("12h")
     .sign(encodedKey);
 }
 
@@ -68,7 +68,10 @@ async function decryptGeneric<T>(token: string): Promise<T | null> {
 }
 
 export async function createSession(payload: Omit<SessionPayload, "expiresAt">) {
-  const expiresAt = new Date(Date.now() + 8 * MS_PER_HOUR);
+  // 12h session — keeps admins from re-logging in mid-shift. JWT
+  // expiration above must match this number ("12h"). No rolling
+  // refresh; the clock starts at login.
+  const expiresAt = new Date(Date.now() + 12 * MS_PER_HOUR);
   const session = await encrypt({ ...payload, expiresAt });
   const cookieStore = await cookies();
 
