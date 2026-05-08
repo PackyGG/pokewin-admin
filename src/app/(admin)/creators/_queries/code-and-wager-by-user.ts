@@ -33,6 +33,18 @@ export type CreatorCodeAndWager = {
    * (the "all" bucket of `ftdByPeriod`).
    */
   ftds: number;
+  /**
+   * 3-day rolling deposit volume from this creator's affiliates
+   * (sum of affiliate_code_usages.deposit_amount_usd in the last
+   * 72h, staff-excluded). Drives the "Last 3d" momentum line on
+   * the creator card.
+   */
+  deposits3dUsd: number;
+  /**
+   * 3-day rolling wager volume — same source/window/exclusion as
+   * deposits3dUsd, summing wager_amount_usd.
+   */
+  wagers3dUsd: number;
 };
 
 /**
@@ -56,46 +68,66 @@ export async function getCodeAndWagerByUser(
   if (userIds.length === 0) return result;
 
   const db = await getDb();
-  const [codeRows, affiliateAccounts, signupRows, ftdRows] = await Promise.all([
-    // Oldest affiliate_codes row per user_id — the same convention
-    // /creators/[id]'s primaryCode uses. DISTINCT ON keeps a single
-    // row per user_id with the earliest created_at (= the first code
-    // they ever minted).
-    db.$queryRawUnsafe<{ user_id: string; code: string }[]>(
-      `SELECT DISTINCT ON (user_id) user_id, code
-         FROM affiliate_codes
-        WHERE user_id = ANY($1::text[])
-        ORDER BY user_id, created_at ASC`,
-      userIds,
-    ),
-    db.affiliate_accounts.findMany({
-      where: { user_id: { in: userIds } },
-      select: { user_id: true, total_wager_volume_usd: true },
-    }),
-    db.$queryRawUnsafe<{ user_id: string; signups: string }[]>(
-      `SELECT referred_by AS user_id, COUNT(*)::text AS signups
-         FROM "user"
-        WHERE referred_by = ANY($1::text[])
-        GROUP BY referred_by`,
-      userIds,
-    ),
-    // Lifetime FTDs per creator: DISTINCT referred users (via
-    // affiliate_code_usages.usage_type = 'deposit') who have a
-    // non-zero total_deposited on `balances`. Mirrors the "all"
-    // bucket of /creators/[id]'s ftdByPeriod query.
-    db.$queryRawUnsafe<{ user_id: string; ftds: string }[]>(
-      `SELECT acu.affiliate_user_id AS user_id,
-              COUNT(DISTINCT acu.referred_user_id)::text AS ftds
-         FROM affiliate_code_usages acu
-         JOIN balances b
-           ON b.user_id = acu.referred_user_id
-          AND b.total_deposited > 0
-        WHERE acu.affiliate_user_id = ANY($1::text[])
-          AND acu.usage_type = 'deposit'
-        GROUP BY acu.affiliate_user_id`,
-      userIds,
-    ),
-  ]);
+  const [codeRows, affiliateAccounts, signupRows, ftdRows, momentumRows] =
+    await Promise.all([
+      // Oldest affiliate_codes row per user_id — the same convention
+      // /creators/[id]'s primaryCode uses. DISTINCT ON keeps a single
+      // row per user_id with the earliest created_at (= the first code
+      // they ever minted).
+      db.$queryRawUnsafe<{ user_id: string; code: string }[]>(
+        `SELECT DISTINCT ON (user_id) user_id, code
+           FROM affiliate_codes
+          WHERE user_id = ANY($1::text[])
+          ORDER BY user_id, created_at ASC`,
+        userIds,
+      ),
+      db.affiliate_accounts.findMany({
+        where: { user_id: { in: userIds } },
+        select: { user_id: true, total_wager_volume_usd: true },
+      }),
+      db.$queryRawUnsafe<{ user_id: string; signups: string }[]>(
+        `SELECT referred_by AS user_id, COUNT(*)::text AS signups
+           FROM "user"
+          WHERE referred_by = ANY($1::text[])
+          GROUP BY referred_by`,
+        userIds,
+      ),
+      // Lifetime FTDs per creator: DISTINCT referred users (via
+      // affiliate_code_usages.usage_type = 'deposit') who have a
+      // non-zero total_deposited on `balances`. Mirrors the "all"
+      // bucket of /creators/[id]'s ftdByPeriod query.
+      db.$queryRawUnsafe<{ user_id: string; ftds: string }[]>(
+        `SELECT acu.affiliate_user_id AS user_id,
+                COUNT(DISTINCT acu.referred_user_id)::text AS ftds
+           FROM affiliate_code_usages acu
+           JOIN balances b
+             ON b.user_id = acu.referred_user_id
+            AND b.total_deposited > 0
+          WHERE acu.affiliate_user_id = ANY($1::text[])
+            AND acu.usage_type = 'deposit'
+          GROUP BY acu.affiliate_user_id`,
+        userIds,
+      ),
+      // 3-day rolling momentum: deposit + wager volume from this
+      // creator's affiliates in the last 72h, staff-excluded.
+      // Single batched query over affiliate_code_usages — both sums
+      // share the same outer scan + JOIN to "user", so doing them
+      // separately would double the DB cost for no benefit.
+      db.$queryRawUnsafe<
+        { user_id: string; deposits_3d: string; wagers_3d: string }[]
+      >(
+        `SELECT acu.affiliate_user_id AS user_id,
+                COALESCE(SUM(acu.deposit_amount_usd::numeric), 0)::text AS deposits_3d,
+                COALESCE(SUM(acu.wager_amount_usd::numeric),   0)::text AS wagers_3d
+           FROM affiliate_code_usages acu
+           JOIN "user" ru ON ru.id = acu.referred_user_id
+          WHERE acu.affiliate_user_id = ANY($1::text[])
+            AND acu.created_at >= NOW() - INTERVAL '3 days'
+            AND ru.role NOT IN ('admin', 'support')
+          GROUP BY acu.affiliate_user_id`,
+        userIds,
+      ),
+    ]);
 
   const codeById = new Map(codeRows.map((r) => [r.user_id, r.code]));
   const wagerById = new Map(
@@ -108,6 +140,12 @@ export async function getCodeAndWagerByUser(
     signupRows.map((r) => [r.user_id, Number(r.signups)]),
   );
   const ftdsById = new Map(ftdRows.map((r) => [r.user_id, Number(r.ftds)]));
+  const deposits3dById = new Map(
+    momentumRows.map((r) => [r.user_id, toNumber(r.deposits_3d)]),
+  );
+  const wagers3dById = new Map(
+    momentumRows.map((r) => [r.user_id, toNumber(r.wagers_3d)]),
+  );
 
   for (const id of userIds) {
     result.set(id, {
@@ -115,6 +153,8 @@ export async function getCodeAndWagerByUser(
       wagerVolumeUsd: wagerById.get(id) ?? 0,
       signups: signupsById.get(id) ?? 0,
       ftds: ftdsById.get(id) ?? 0,
+      deposits3dUsd: deposits3dById.get(id) ?? 0,
+      wagers3dUsd: wagers3dById.get(id) ?? 0,
     });
   }
   return result;
