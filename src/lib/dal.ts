@@ -20,7 +20,7 @@ export const verifySession = cache(async (): Promise<SessionPayload> => {
   // Always read current role + active status from DB. The JWT may contain
   // a stale role if the user was demoted/promoted after login — relying on
   // the JWT role alone would let a demoted admin keep full access until
-  // their session expires (up to 8h).
+  // their session expires (up to 12h).
   const adminUser = await adminDb.admin_users.findUnique({
     where: { id: session.userId },
     select: { is_active: true, role: true },
