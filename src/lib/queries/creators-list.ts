@@ -115,6 +115,13 @@ export async function getCreators(params: {
         // this in the same round-trip rather than a separate fetch
         // per row.
         codes: { id: string; code: string }[] | null;
+        // 3-day rolling deposit + wager volume from this creator's
+        // referrals — surfaces "is this creator producing right now?"
+        // signal on the row. Source matches the staff-excluded
+        // creator-detail KPIs: affiliate_code_usages joined to
+        // user with role NOT IN ('admin','support').
+        deposits_3d: string;
+        wagers_3d: string;
         currency_limit_amount: string | null;
         percentage_limit: string | null;
         currency_limit_reset_days: number | null;
@@ -138,6 +145,28 @@ export async function getCreators(params: {
           FROM affiliate_codes ac
           WHERE ac.user_id = aa.user_id
         ) AS codes,
+        -- 3-day deposit volume from this creator's referrals.
+        -- affiliate_code_usages.deposit_amount_usd is the FTD value
+        -- per backend convention; sum over the 3-day window only.
+        -- Staff (admin / support) excluded so internal accounts don't
+        -- skew per-creator momentum.
+        COALESCE((
+          SELECT SUM(acu.deposit_amount_usd::numeric)
+          FROM affiliate_code_usages acu
+          JOIN "user" ru ON ru.id = acu.referred_user_id
+          WHERE acu.affiliate_user_id = aa.user_id
+            AND acu.created_at >= NOW() - INTERVAL '3 days'
+            AND ru.role NOT IN ('admin', 'support')
+        ), 0)::text AS deposits_3d,
+        -- 3-day wager volume — same source + same staff filter.
+        COALESCE((
+          SELECT SUM(acu.wager_amount_usd::numeric)
+          FROM affiliate_code_usages acu
+          JOIN "user" ru ON ru.id = acu.referred_user_id
+          WHERE acu.affiliate_user_id = aa.user_id
+            AND acu.created_at >= NOW() - INTERVAL '3 days'
+            AND ru.role NOT IN ('admin', 'support')
+        ), 0)::text AS wagers_3d,
         cwl.currency_limit_amount::text,
         cwl.percentage_limit::text,
         cwl.currency_limit_reset_days
@@ -184,6 +213,10 @@ export async function getCreators(params: {
       totalEarnedUsd: toNumber(r.total_earned_usd),
       availableUsd: toNumber(r.available_usd),
       totalPaidOutUsd: toNumber(r.total_paid_out_usd),
+      // 3-day rolling momentum from this creator's affiliates.
+      // Staff (admin / support) excluded at the query level.
+      deposits3dUsd: toNumber(r.deposits_3d),
+      wagers3dUsd: toNumber(r.wagers_3d),
       limits: {
         currencyLimitAmount: r.currency_limit_amount ? toNumber(r.currency_limit_amount) : null,
         percentageLimit: r.percentage_limit ? toNumber(r.percentage_limit) : null,

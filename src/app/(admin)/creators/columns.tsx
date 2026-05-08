@@ -66,6 +66,39 @@ export const columns: ColumnDef<CreatorListItem>[] = [
     cell: ({ row }) => formatCurrency(row.original.totalEarnedUsd),
   },
   {
+    // 3-day rolling deposit volume from this creator's affiliates.
+    // Money flowing FROM users TO us → emerald per CLAUDE.md house-POV.
+    // Renders "—" for zero so dormant creators read at a glance.
+    accessorKey: "deposits3dUsd",
+    header: "Deposits 3d",
+    cell: ({ row }) => {
+      const v = row.original.deposits3dUsd;
+      return v > 0 ? (
+        <span className="tabular-nums text-emerald-600 dark:text-emerald-400">
+          {formatCurrency(v)}
+        </span>
+      ) : (
+        <span className="text-muted-foreground">—</span>
+      );
+    },
+  },
+  {
+    // 3-day rolling wager volume from this creator's affiliates. Same
+    // house-POV color rule as deposits — wager volume is house income.
+    accessorKey: "wagers3dUsd",
+    header: "Wagers 3d",
+    cell: ({ row }) => {
+      const v = row.original.wagers3dUsd;
+      return v > 0 ? (
+        <span className="tabular-nums text-emerald-600 dark:text-emerald-400">
+          {formatCurrency(v)}
+        </span>
+      ) : (
+        <span className="text-muted-foreground">—</span>
+      );
+    },
+  },
+  {
     // Affiliate codes the creator owns. Trigger shows "{primary} +{N}"
     // when there are extras, the popover lets the admin add or remove
     // individual codes inline. Sits next to Earned per user direction
