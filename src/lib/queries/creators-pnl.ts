@@ -13,6 +13,19 @@ import type { CreatorPnlData, CreatorPnlPeriod } from "./creators-types";
  * lifetime_pnl(t_end) − lifetime_pnl(t_start) — i.e. the actual P&L
  * change attributable to the window.
  *
+ * Sign convention notes:
+ *   • `ledger_transactions.amount` is ALWAYS POSITIVE in this DB; the
+ *     sign of the balance impact lives in `balance_after −
+ *     balance_before`. So `balanceChange` sums the SIGNED delta, not
+ *     the amount.
+ *   • There is no `'withdrawal'` value in `ledger_transaction_type`.
+ *     Real withdrawals on this platform come via:
+ *       (a) `card_withdrawal_requests` (status completed/shipped) —
+ *           physical cards or crypto sells leaving the house, and
+ *       (b) `admin_balance_adjustment` rows tagged in description
+ *           with `Manual withdrawal:%` (a manual cash-out by an admin).
+ *     Both are summed into `withdrawals`.
+ *
  * Referred-user pool excludes:
  *   • admin / support — staff accounts (consistent with rest of analytics)
  *   • creator         — other streamer accounts; their on-site activity
@@ -55,26 +68,34 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
   const [ledgerRows, cardWithdrawalRows, inventoryRows, voucherRows] =
     await Promise.all([
       // Ledger-derived components per window:
-      //   deposits        = SUM(amount where type='deposit')
-      //   bal_withdrawals = SUM(ABS(amount) where type='withdrawal')
-      //   bal_change      = SUM(amount of EVERY completed event)
+      //   deposits           = SUM(amount where type='deposit')
+      //   manual_withdrawals = SUM(amount where type='admin_balance_adjustment'
+      //                            AND balance_after < balance_before
+      //                            AND description ILIKE 'Manual withdrawal:%')
+      //   bal_change         = SUM(balance_after − balance_before) — SIGNED.
       //
-      // The balance at any time t equals the cumulative sum of every
-      // completed ledger amount up to t. So the change in balance over
-      // a window is simply the sum of completed ledger amounts inside
-      // the window — no snapshot needed.
+      // The balance at any time t equals the cumulative SIGNED delta of
+      // every completed ledger event up to t (= sum of balance_after −
+      // balance_before). So the change in balance over a window is the
+      // sum of those signed deltas inside the window.
       db.$queryRawUnsafe<
         {
           period: string;
           deposits: string;
-          bal_withdrawals: string;
+          manual_withdrawals: string;
           bal_change: string;
         }[]
       >(
         `SELECT p.period,
-                COALESCE(SUM(CASE WHEN lt.type = 'deposit'    THEN lt.amount::numeric      ELSE 0 END), 0)::text AS deposits,
-                COALESCE(SUM(CASE WHEN lt.type = 'withdrawal' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS bal_withdrawals,
-                COALESCE(SUM(lt.amount::numeric), 0)::text AS bal_change
+                COALESCE(SUM(CASE WHEN lt.type = 'deposit'
+                                  THEN lt.amount::numeric
+                                  ELSE 0 END), 0)::text AS deposits,
+                COALESCE(SUM(CASE WHEN lt.type = 'admin_balance_adjustment'
+                                   AND lt.balance_after < lt.balance_before
+                                   AND lt.description ILIKE 'Manual withdrawal:%'
+                                  THEN lt.amount::numeric
+                                  ELSE 0 END), 0)::text AS manual_withdrawals,
+                COALESCE(SUM((lt.balance_after - lt.balance_before)::numeric), 0)::text AS bal_change
            FROM ${PERIODS_VALUES_SQL}
            LEFT JOIN ledger_transactions lt
              ON lt.user_id IN (${REFERRED_USERS_SQL})
@@ -84,9 +105,9 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
         userId,
       ),
 
-      // Card withdrawals — physical cards leaving the house. Time-scoped
-      // by COALESCE(shipped_at, completed_at) to match the moment the
-      // value left our books.
+      // Card withdrawals — physical cards / crypto sells leaving the
+      // house. Time-scoped by COALESCE(shipped_at, completed_at) to
+      // match the moment the value left our books.
       db.$queryRawUnsafe<
         {
           period: string;
@@ -191,9 +212,9 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
     const vc = vchByPeriod.get(period);
 
     const deposits = Number(lr?.deposits ?? 0);
-    const balWithdrawals = Number(lr?.bal_withdrawals ?? 0);
+    const manualWithdrawals = Number(lr?.manual_withdrawals ?? 0);
     const cardWithdrawals = Number(cw?.card_withdrawals ?? 0);
-    const withdrawals = balWithdrawals + cardWithdrawals;
+    const withdrawals = manualWithdrawals + cardWithdrawals;
     const balanceChange = Number(lr?.bal_change ?? 0);
     const inventoryChange =
       Number(iv?.obtained ?? 0) - Number(iv?.disposed ?? 0);
