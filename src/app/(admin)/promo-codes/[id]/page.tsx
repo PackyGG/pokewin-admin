@@ -176,6 +176,18 @@ export default async function PromoCodeDetailPage({
                 : "None"
             }
           />
+          <PanelRow
+            label="Min Deposit"
+            value={
+              data.minimumDepositAmount > 0
+                ? formatCurrency(data.minimumDepositAmount)
+                : "None"
+            }
+          />
+          <PanelRow
+            label="Affiliate Code"
+            value={data.requiredAffiliateCode ?? "Any"}
+          />
         </StatPanel>
       </div>
 
