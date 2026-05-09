@@ -2,49 +2,61 @@ import "server-only";
 
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
-import {
-  WAGER_TYPES_SQL,
-  PAYOUT_TYPES_SQL,
-} from "@/lib/queries/_wager-payout-types";
+import { WAGER_TYPES_SQL } from "@/lib/queries/_wager-payout-types";
 
 /**
- * Per-period PnL snapshot for a single creator. Periods match what the
- * card displays: 1d / 3d / 7d / 14d / 30d.
+ * Per-period House P&L for a single creator's referrals — same canonical
+ * formula as the lifetime Platform-P&L on the dashboard / user-detail
+ * page, evaluated as DELTAS over the window:
  *
- * PnL reproduces the comprehensive Platform-P&L formula used on the
- * user-detail page, scaled per-period:
+ *   pnl = deposits − withdrawals − balanceChange − inventoryChange − voucherChange
  *
- *   pnl = wagers − payouts − inventoryChange
+ * Each component is the change over the window. Because lifetime PnL is
+ * cash_in − cash_out − liability_now, the windowed delta equals
+ * lifetime_pnl(t_end) − lifetime_pnl(t_start). So per-creator cards
+ * surface the same formula the dashboard's "Lifetime PnL" surfaces,
+ * just scoped to a window and to this creator's referred users.
  *
- * where inventoryChange = value of items the user GAINED in the
- * window minus value of items they DISPOSED of (sold / exchanged).
- * The realized side of disposal is already in `payouts` (card_sale,
- * card_exchange ledger types), so the formula effectively becomes:
+ * Referred-user pool excludes admin / support / creator roles AND the
+ * creator's own user_id — so other streamers' on-site activity (their
+ * giveaways, their personal play) doesn't skew the per-creator PnL.
  *
- *   pnl = wagers − realized_payouts − unrealized_inventory_obtained
- *
- * That captures the case where a referral opens a $10 pack, pulls a
- * $500 card, and DOESN'T sell it — gross GGR would call that a $10
- * win, but we still owe the user $500 in inventory, so the true house
- * P&L is −$490. Same reasoning as Platform P&L on the user-detail
- * page (Deposits − Withdrawals − Balance − Inventory − Vouchers).
- *
- * House POV: positive = we made money, negative = we lost money.
+ * House POV: positive (emerald) = we made money, negative (rose) = we lost money.
  */
 export type CreatorPnlByPeriod = {
-  wagers: number;
-  payouts: number;
+  /** Real cash deposits in the window (lt.type='deposit'). */
+  deposits: number;
   /**
-   * Net inventory value the user gained in the window
-   * (value-at-obtained for items obtained_at IN window
-   * minus value-at-obtained for items sold_at OR exchanged_at IN
-   * window). Positive when the user is up unrealized inventory.
+   * Cash + cards leaving the house in the window:
+   *   ledger withdrawals (lt.type='withdrawal', ABS) +
+   *   card_withdrawal_requests.total_value_usd for status in
+   *   ('completed','shipped') with COALESCE(shipped_at, completed_at)
+   *   in window.
+   */
+  withdrawals: number;
+  /**
+   * Net change in user balance over the window (= sum of every
+   * completed ledger.amount in window). Positive = we owe MORE
+   * balance.
+   */
+  balanceChange: number;
+  /**
+   * Net change in unsold-inventory liability over the window
+   * (value_at_obtained obtained_at IN window − sold/exchanged IN
+   * window). Positive = we owe MORE inventory.
    */
   inventoryChange: number;
-  /** wagers − payouts − inventoryChange. House POV. */
+  /**
+   * Net change in unclaimed-voucher liability over the window
+   * (issued IN window − claimed IN window). Positive = we owe MORE
+   * voucher value.
+   */
+  voucherChange: number;
+  /**
+   * House P&L for the window — same formula the dashboard's Lifetime
+   * PnL uses, evaluated per window.
+   */
   pnl: number;
-  /** Real deposit volume from referred users in the period (lt.type='deposit'). */
-  deposits: number;
 };
 
 export type CreatorCodeAndWager = {
@@ -79,27 +91,25 @@ export type CreatorCodeAndWager = {
   ftds: number;
   /**
    * 3-day rolling deposit volume from this creator's affiliates.
-   * Source: `ledger_transactions` rows of `type = 'deposit'` from
-   * users this creator referred, staff-excluded, last 72h. Used to
-   * be `affiliate_code_usages.deposit_amount_usd` which the backend
-   * only writes for the FIRST deposit per user (FTD-only) — that
-   * was undercounting repeat deposits, hence the migration to the
-   * ledger source for the actual cash-in number.
+   * Source: ledger_transactions of type='deposit' from referred
+   * users (admin/support/creator excluded), last 72h. Pulled from
+   * the same per-period record as the PnL strip so the displayed
+   * row + the displayed PnL never disagree.
    */
   deposits3dUsd: number;
   /**
    * 3-day rolling wager volume — wager-type ledger transactions
    * (pack_opening / battle_bet / battle_sponsorship /
-   * withdrawal_shipping_fee, the canonical wager set) from referred
-   * users in the last 72h. Aligned with the per-creator PnL row so
-   * the displayed wagers always reconcile against the displayed PnL.
+   * withdrawal_shipping_fee) from referred users in the last 72h.
+   * Informational only (does not feed the PnL formula); shown next
+   * to deposits3dUsd in the row's momentum line.
    */
   wagers3dUsd: number;
   /**
-   * Per-period PnL from this creator's referrals — wagers minus
-   * payouts (GGR). Periods: 1d / 3d / 7d / 14d / 30d. Positive =
-   * house gain, negative = house loss. Drives the per-card PnL
-   * strip on /creators.
+   * Per-period House P&L from this creator's referrals — same
+   * canonical balance-sheet formula as the dashboard's Lifetime PnL,
+   * evaluated as deltas over each window. Positive = house gain,
+   * negative = house loss. Drives the per-card PnL strip on /creators.
    */
   pnlByPeriod: {
     "1d": CreatorPnlByPeriod;
@@ -110,13 +120,13 @@ export type CreatorCodeAndWager = {
   };
 };
 
-/** Empty period record — used when a creator has no referred-user ledger activity. */
 const EMPTY_PERIOD: CreatorPnlByPeriod = {
-  wagers: 0,
-  payouts: 0,
-  inventoryChange: 0,
-  pnl: 0,
   deposits: 0,
+  withdrawals: 0,
+  balanceChange: 0,
+  inventoryChange: 0,
+  voucherChange: 0,
+  pnl: 0,
 };
 const EMPTY_PNL: CreatorCodeAndWager["pnlByPeriod"] = {
   "1d": EMPTY_PERIOD,
@@ -126,19 +136,38 @@ const EMPTY_PNL: CreatorCodeAndWager["pnlByPeriod"] = {
   "30d": EMPTY_PERIOD,
 };
 
+type LedgerRow = {
+  creator_user_id: string;
+  deposits_1d: string; deposits_3d: string; deposits_7d: string; deposits_14d: string; deposits_30d: string;
+  bal_wd_1d: string; bal_wd_3d: string; bal_wd_7d: string; bal_wd_14d: string; bal_wd_30d: string;
+  bal_change_1d: string; bal_change_3d: string; bal_change_7d: string; bal_change_14d: string; bal_change_30d: string;
+  wagers_3d: string;
+};
+
+type CardWithdrawalRow = {
+  creator_user_id: string;
+  cwd_1d: string; cwd_3d: string; cwd_7d: string; cwd_14d: string; cwd_30d: string;
+};
+
+type InventoryRow = {
+  creator_user_id: string;
+  obtained_1d: string; obtained_3d: string; obtained_7d: string; obtained_14d: string; obtained_30d: string;
+  disposed_1d: string; disposed_3d: string; disposed_7d: string; disposed_14d: string; disposed_30d: string;
+};
+
+type VoucherRow = {
+  creator_user_id: string;
+  issued_1d: string; issued_3d: string; issued_7d: string; issued_14d: string; issued_30d: string;
+  claimed_1d: string; claimed_3d: string; claimed_7d: string; claimed_14d: string; claimed_30d: string;
+};
+
 /**
- * Fetch (code, wagerVolumeUsd, signups, ftds) for a list of creator
- * user_ids in batch. Keyed on user_id; missing creators get a
- * zero/null record so callers can `.get(id) ?? EMPTY` without guards.
+ * Fetch (code, wagerVolumeUsd, signups, ftds, momentum, pnlByPeriod) for
+ * a list of creator user_ids in batch. Keyed on user_id; missing
+ * creators get a zero/null record so callers can `.get(id) ?? EMPTY`
+ * without guards.
  *
- * Sources, all main DB:
- *   - affiliate_codes (oldest row per user_id) → code
- *   - affiliate_accounts.total_wager_volume_usd → wagerVolumeUsd
- *   - COUNT(user WHERE referred_by = creator.id) → signups
- *   - COUNT(DISTINCT acu.referred_user_id WHERE balances.total_deposited > 0)
- *       → ftds (matches /creators/[id]'s lifetime FTD count)
- *
- * Four parallel round-trips, no N+1.
+ * 8 parallel round-trips — none of them N+1.
  */
 export async function getCodeAndWagerByUser(
   userIds: string[],
@@ -152,172 +181,183 @@ export async function getCodeAndWagerByUser(
     affiliateAccounts,
     signupRows,
     ftdRows,
-    momentumRows,
+    ledgerRows,
+    cardWithdrawalRows,
     inventoryRows,
+    voucherRows,
   ] = await Promise.all([
-      // Oldest affiliate_codes row per user_id — the same convention
-      // /creators/[id]'s primaryCode uses. DISTINCT ON keeps a single
-      // row per user_id with the earliest created_at (= the first code
-      // they ever minted).
-      db.$queryRawUnsafe<{ user_id: string; code: string }[]>(
-        `SELECT DISTINCT ON (user_id) user_id, code
-           FROM affiliate_codes
-          WHERE user_id = ANY($1::text[])
-          ORDER BY user_id, created_at ASC`,
-        userIds,
-      ),
-      db.affiliate_accounts.findMany({
-        where: { user_id: { in: userIds } },
-        select: { user_id: true, total_wager_volume_usd: true },
-      }),
-      db.$queryRawUnsafe<{ user_id: string; signups: string }[]>(
-        `SELECT referred_by AS user_id, COUNT(*)::text AS signups
-           FROM "user"
-          WHERE referred_by = ANY($1::text[])
-          GROUP BY referred_by`,
-        userIds,
-      ),
-      // Lifetime FTDs per creator: DISTINCT referred users (via
-      // affiliate_code_usages.usage_type = 'deposit') who have a
-      // non-zero total_deposited on `balances`. Mirrors the "all"
-      // bucket of /creators/[id]'s ftdByPeriod query.
-      db.$queryRawUnsafe<{ user_id: string; ftds: string }[]>(
-        `SELECT acu.affiliate_user_id AS user_id,
-                COUNT(DISTINCT acu.referred_user_id)::text AS ftds
+    // Oldest affiliate_codes row per user_id — the same convention
+    // /creators/[id]'s primaryCode uses. DISTINCT ON keeps a single
+    // row per user_id with the earliest created_at (= the first code
+    // they ever minted).
+    db.$queryRawUnsafe<{ user_id: string; code: string }[]>(
+      `SELECT DISTINCT ON (user_id) user_id, code
+         FROM affiliate_codes
+        WHERE user_id = ANY($1::text[])
+        ORDER BY user_id, created_at ASC`,
+      userIds,
+    ),
+    db.affiliate_accounts.findMany({
+      where: { user_id: { in: userIds } },
+      select: { user_id: true, total_wager_volume_usd: true },
+    }),
+    db.$queryRawUnsafe<{ user_id: string; signups: string }[]>(
+      `SELECT referred_by AS user_id, COUNT(*)::text AS signups
+         FROM "user"
+        WHERE referred_by = ANY($1::text[])
+        GROUP BY referred_by`,
+      userIds,
+    ),
+    // Lifetime FTDs per creator: DISTINCT referred users (via
+    // affiliate_code_usages.usage_type = 'deposit') who have a
+    // non-zero total_deposited on `balances`. Mirrors the "all"
+    // bucket of /creators/[id]'s ftdByPeriod query.
+    db.$queryRawUnsafe<{ user_id: string; ftds: string }[]>(
+      `SELECT acu.affiliate_user_id AS user_id,
+              COUNT(DISTINCT acu.referred_user_id)::text AS ftds
+         FROM affiliate_code_usages acu
+         JOIN balances b
+           ON b.user_id = acu.referred_user_id
+          AND b.total_deposited > 0
+        WHERE acu.affiliate_user_id = ANY($1::text[])
+          AND acu.usage_type = 'deposit'
+        GROUP BY acu.affiliate_user_id`,
+      userIds,
+    ),
+
+    // Ledger-derived components (deposits, balance withdrawals,
+    // balance change) per window per creator. The 3d wager total is
+    // also pulled here so the row's momentum line + the PnL strip
+    // share a single ledger scan. All rows are bounded to the last
+    // 30 days so the planner doesn't traverse historical ledger.
+    db.$queryRawUnsafe<LedgerRow[]>(
+      `WITH creator_referrals AS (
+         SELECT DISTINCT acu.affiliate_user_id AS creator_user_id,
+                         acu.referred_user_id  AS user_id
            FROM affiliate_code_usages acu
-           JOIN balances b
-             ON b.user_id = acu.referred_user_id
-            AND b.total_deposited > 0
+           JOIN "user" u ON u.id = acu.referred_user_id
           WHERE acu.affiliate_user_id = ANY($1::text[])
-            AND acu.usage_type = 'deposit'
-          GROUP BY acu.affiliate_user_id`,
-        userIds,
-      ),
-      // Per-creator PnL + momentum across 5 windows (1d / 3d / 7d /
-      // 14d / 30d), batched. Source = ledger_transactions for users
-      // referred by this creator (joined via affiliate_code_usages
-      // → DISTINCT referred_user_id). Staff (admin / support)
-      // excluded. Each period's three SUM-CASE clauses share the
-      // same scan, so the planner does one ledger seq/index scan
-      // for the whole result no matter how many periods are
-      // requested.
-      //
-      // Why ledger and not affiliate_code_usages: the backend writes
-      // acu.deposit_amount_usd for the FTD only; repeat deposits
-      // weren't counted. Switching to lt.type='deposit' on referred
-      // users counts every cash deposit, which is the number the
-      // admin actually wants to see. Wagers + payouts on the same
-      // source guarantees the displayed PnL reconciles with the
-      // displayed wager number per row.
-      db.$queryRawUnsafe<
-        Array<
-          {
-            creator_user_id: string;
-          } & Record<
-            | "wagers_1d" | "wagers_3d" | "wagers_7d" | "wagers_14d" | "wagers_30d"
-            | "payouts_1d" | "payouts_3d" | "payouts_7d" | "payouts_14d" | "payouts_30d"
-            | "deposits_1d" | "deposits_3d" | "deposits_7d" | "deposits_14d" | "deposits_30d",
-            string
-          >
-        >
-      >(
-        `WITH creator_referrals AS (
-           SELECT DISTINCT acu.affiliate_user_id AS creator_user_id,
-                           acu.referred_user_id  AS user_id
-             FROM affiliate_code_usages acu
-            WHERE acu.affiliate_user_id = ANY($1::text[])
-         )
-         SELECT cr.creator_user_id,
-                -- Wagers per window — ABS because user-side ledger
-                -- amounts are stored negative for debits.
-                COALESCE(SUM(CASE WHEN lt.type IN ${WAGER_TYPES_SQL}  AND lt.created_at >= NOW() - INTERVAL '1 day'   THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS wagers_1d,
-                COALESCE(SUM(CASE WHEN lt.type IN ${WAGER_TYPES_SQL}  AND lt.created_at >= NOW() - INTERVAL '3 days'  THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS wagers_3d,
-                COALESCE(SUM(CASE WHEN lt.type IN ${WAGER_TYPES_SQL}  AND lt.created_at >= NOW() - INTERVAL '7 days'  THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS wagers_7d,
-                COALESCE(SUM(CASE WHEN lt.type IN ${WAGER_TYPES_SQL}  AND lt.created_at >= NOW() - INTERVAL '14 days' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS wagers_14d,
-                COALESCE(SUM(CASE WHEN lt.type IN ${WAGER_TYPES_SQL}  AND lt.created_at >= NOW() - INTERVAL '30 days' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS wagers_30d,
-                -- Payouts per window — same set of types the dashboard
-                -- subtracts when computing GGR (see _wager-payout-types.ts).
-                COALESCE(SUM(CASE WHEN lt.type IN ${PAYOUT_TYPES_SQL} AND lt.created_at >= NOW() - INTERVAL '1 day'   THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS payouts_1d,
-                COALESCE(SUM(CASE WHEN lt.type IN ${PAYOUT_TYPES_SQL} AND lt.created_at >= NOW() - INTERVAL '3 days'  THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS payouts_3d,
-                COALESCE(SUM(CASE WHEN lt.type IN ${PAYOUT_TYPES_SQL} AND lt.created_at >= NOW() - INTERVAL '7 days'  THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS payouts_7d,
-                COALESCE(SUM(CASE WHEN lt.type IN ${PAYOUT_TYPES_SQL} AND lt.created_at >= NOW() - INTERVAL '14 days' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS payouts_14d,
-                COALESCE(SUM(CASE WHEN lt.type IN ${PAYOUT_TYPES_SQL} AND lt.created_at >= NOW() - INTERVAL '30 days' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS payouts_30d,
-                -- Real deposits per window — lt.type='deposit', not
-                -- the FTD-only acu.deposit_amount_usd. Counts every
-                -- cash-in by referred users, which is what the admin
-                -- expects.
-                COALESCE(SUM(CASE WHEN lt.type = 'deposit'           AND lt.created_at >= NOW() - INTERVAL '1 day'   THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS deposits_1d,
-                COALESCE(SUM(CASE WHEN lt.type = 'deposit'           AND lt.created_at >= NOW() - INTERVAL '3 days'  THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS deposits_3d,
-                COALESCE(SUM(CASE WHEN lt.type = 'deposit'           AND lt.created_at >= NOW() - INTERVAL '7 days'  THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS deposits_7d,
-                COALESCE(SUM(CASE WHEN lt.type = 'deposit'           AND lt.created_at >= NOW() - INTERVAL '14 days' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS deposits_14d,
-                COALESCE(SUM(CASE WHEN lt.type = 'deposit'           AND lt.created_at >= NOW() - INTERVAL '30 days' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS deposits_30d
-           FROM ledger_transactions lt
-           JOIN creator_referrals cr ON cr.user_id = lt.user_id
-           JOIN "user" ru            ON ru.id      = lt.user_id
-          WHERE lt.status = 'completed'
-            AND ru.role NOT IN ('admin', 'support')
-          GROUP BY cr.creator_user_id`,
-        userIds,
-      ),
-      // Per-creator inventory deltas across the same 5 windows.
-      // `value_at_obtained` is the canonical valuation Platform P&L
-      // uses on the user-detail page, so per-creator P&L can't drift
-      // from Platform P&L for the same user pool.
-      //
-      // We sum value_at_obtained twice:
-      //   • obtained_*  — items the user GAINED in the window
-      //     (we now owe them this much in inventory liability)
-      //   • disposed_*  — items the user SOLD or EXCHANGED in the
-      //     window (the realized cash side already lives in payouts
-      //     above; subtracting disposed here cancels the
-      //     simultaneous obtained spike for items that came AND
-      //     went inside the same window so we don't double-count
-      //     a quick flip)
-      //
-      // The 30-day OR clause is a hard upper bound on the scan so
-      // user_inventory's full history doesn't get pulled — every
-      // window we display is ≤ 30d.
-      db.$queryRawUnsafe<
-        Array<
-          {
-            creator_user_id: string;
-          } & Record<
-            | "obtained_1d" | "obtained_3d" | "obtained_7d" | "obtained_14d" | "obtained_30d"
-            | "disposed_1d" | "disposed_3d" | "disposed_7d" | "disposed_14d" | "disposed_30d",
-            string
-          >
-        >
-      >(
-        `WITH creator_referrals AS (
-           SELECT DISTINCT acu.affiliate_user_id AS creator_user_id,
-                           acu.referred_user_id  AS user_id
-             FROM affiliate_code_usages acu
-            WHERE acu.affiliate_user_id = ANY($1::text[])
-         )
-         SELECT cr.creator_user_id,
-                COALESCE(SUM(CASE WHEN ui.obtained_at >= NOW() - INTERVAL '1 day'   THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained_1d,
-                COALESCE(SUM(CASE WHEN ui.obtained_at >= NOW() - INTERVAL '3 days'  THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained_3d,
-                COALESCE(SUM(CASE WHEN ui.obtained_at >= NOW() - INTERVAL '7 days'  THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained_7d,
-                COALESCE(SUM(CASE WHEN ui.obtained_at >= NOW() - INTERVAL '14 days' THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained_14d,
-                COALESCE(SUM(CASE WHEN ui.obtained_at >= NOW() - INTERVAL '30 days' THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained_30d,
-                COALESCE(SUM(CASE WHEN (ui.sold_at >= NOW() - INTERVAL '1 day'   OR ui.exchanged_at >= NOW() - INTERVAL '1 day')   THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS disposed_1d,
-                COALESCE(SUM(CASE WHEN (ui.sold_at >= NOW() - INTERVAL '3 days'  OR ui.exchanged_at >= NOW() - INTERVAL '3 days')  THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS disposed_3d,
-                COALESCE(SUM(CASE WHEN (ui.sold_at >= NOW() - INTERVAL '7 days'  OR ui.exchanged_at >= NOW() - INTERVAL '7 days')  THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS disposed_7d,
-                COALESCE(SUM(CASE WHEN (ui.sold_at >= NOW() - INTERVAL '14 days' OR ui.exchanged_at >= NOW() - INTERVAL '14 days') THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS disposed_14d,
-                COALESCE(SUM(CASE WHEN (ui.sold_at >= NOW() - INTERVAL '30 days' OR ui.exchanged_at >= NOW() - INTERVAL '30 days') THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS disposed_30d
-           FROM user_inventory ui
-           JOIN creator_referrals cr ON cr.user_id = ui.user_id
-           JOIN "user" ru            ON ru.id      = ui.user_id
-          WHERE ru.role NOT IN ('admin', 'support')
-            AND (
+            AND u.role NOT IN ('admin', 'support', 'creator')
+            AND u.id != acu.affiliate_user_id
+       )
+       SELECT cr.creator_user_id,
+              COALESCE(SUM(CASE WHEN lt.type = 'deposit'    AND lt.created_at >= NOW() - INTERVAL '1 day'   THEN lt.amount::numeric      ELSE 0 END), 0)::text AS deposits_1d,
+              COALESCE(SUM(CASE WHEN lt.type = 'deposit'    AND lt.created_at >= NOW() - INTERVAL '3 days'  THEN lt.amount::numeric      ELSE 0 END), 0)::text AS deposits_3d,
+              COALESCE(SUM(CASE WHEN lt.type = 'deposit'    AND lt.created_at >= NOW() - INTERVAL '7 days'  THEN lt.amount::numeric      ELSE 0 END), 0)::text AS deposits_7d,
+              COALESCE(SUM(CASE WHEN lt.type = 'deposit'    AND lt.created_at >= NOW() - INTERVAL '14 days' THEN lt.amount::numeric      ELSE 0 END), 0)::text AS deposits_14d,
+              COALESCE(SUM(CASE WHEN lt.type = 'deposit'    AND lt.created_at >= NOW() - INTERVAL '30 days' THEN lt.amount::numeric      ELSE 0 END), 0)::text AS deposits_30d,
+              COALESCE(SUM(CASE WHEN lt.type = 'withdrawal' AND lt.created_at >= NOW() - INTERVAL '1 day'   THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS bal_wd_1d,
+              COALESCE(SUM(CASE WHEN lt.type = 'withdrawal' AND lt.created_at >= NOW() - INTERVAL '3 days'  THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS bal_wd_3d,
+              COALESCE(SUM(CASE WHEN lt.type = 'withdrawal' AND lt.created_at >= NOW() - INTERVAL '7 days'  THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS bal_wd_7d,
+              COALESCE(SUM(CASE WHEN lt.type = 'withdrawal' AND lt.created_at >= NOW() - INTERVAL '14 days' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS bal_wd_14d,
+              COALESCE(SUM(CASE WHEN lt.type = 'withdrawal' AND lt.created_at >= NOW() - INTERVAL '30 days' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS bal_wd_30d,
+              COALESCE(SUM(CASE WHEN                            lt.created_at >= NOW() - INTERVAL '1 day'   THEN lt.amount::numeric      ELSE 0 END), 0)::text AS bal_change_1d,
+              COALESCE(SUM(CASE WHEN                            lt.created_at >= NOW() - INTERVAL '3 days'  THEN lt.amount::numeric      ELSE 0 END), 0)::text AS bal_change_3d,
+              COALESCE(SUM(CASE WHEN                            lt.created_at >= NOW() - INTERVAL '7 days'  THEN lt.amount::numeric      ELSE 0 END), 0)::text AS bal_change_7d,
+              COALESCE(SUM(CASE WHEN                            lt.created_at >= NOW() - INTERVAL '14 days' THEN lt.amount::numeric      ELSE 0 END), 0)::text AS bal_change_14d,
+              COALESCE(SUM(CASE WHEN                            lt.created_at >= NOW() - INTERVAL '30 days' THEN lt.amount::numeric      ELSE 0 END), 0)::text AS bal_change_30d,
+              COALESCE(SUM(CASE WHEN lt.type IN ${WAGER_TYPES_SQL} AND lt.created_at >= NOW() - INTERVAL '3 days'  THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS wagers_3d
+         FROM ledger_transactions lt
+         JOIN creator_referrals cr ON cr.user_id = lt.user_id
+        WHERE lt.status = 'completed'
+          AND lt.created_at >= NOW() - INTERVAL '30 days'
+        GROUP BY cr.creator_user_id`,
+      userIds,
+    ),
+
+    // Card withdrawals per window per creator. Time-scoped on the
+    // moment the value left the house (COALESCE shipped, completed).
+    db.$queryRawUnsafe<CardWithdrawalRow[]>(
+      `WITH creator_referrals AS (
+         SELECT DISTINCT acu.affiliate_user_id AS creator_user_id,
+                         acu.referred_user_id  AS user_id
+           FROM affiliate_code_usages acu
+           JOIN "user" u ON u.id = acu.referred_user_id
+          WHERE acu.affiliate_user_id = ANY($1::text[])
+            AND u.role NOT IN ('admin', 'support', 'creator')
+            AND u.id != acu.affiliate_user_id
+       )
+       SELECT cr.creator_user_id,
+              COALESCE(SUM(CASE WHEN COALESCE(cwr.shipped_at, cwr.completed_at) >= NOW() - INTERVAL '1 day'   THEN cwr.total_value_usd::numeric ELSE 0 END), 0)::text AS cwd_1d,
+              COALESCE(SUM(CASE WHEN COALESCE(cwr.shipped_at, cwr.completed_at) >= NOW() - INTERVAL '3 days'  THEN cwr.total_value_usd::numeric ELSE 0 END), 0)::text AS cwd_3d,
+              COALESCE(SUM(CASE WHEN COALESCE(cwr.shipped_at, cwr.completed_at) >= NOW() - INTERVAL '7 days'  THEN cwr.total_value_usd::numeric ELSE 0 END), 0)::text AS cwd_7d,
+              COALESCE(SUM(CASE WHEN COALESCE(cwr.shipped_at, cwr.completed_at) >= NOW() - INTERVAL '14 days' THEN cwr.total_value_usd::numeric ELSE 0 END), 0)::text AS cwd_14d,
+              COALESCE(SUM(CASE WHEN COALESCE(cwr.shipped_at, cwr.completed_at) >= NOW() - INTERVAL '30 days' THEN cwr.total_value_usd::numeric ELSE 0 END), 0)::text AS cwd_30d
+         FROM card_withdrawal_requests cwr
+         JOIN creator_referrals cr ON cr.user_id = cwr.user_id
+        WHERE cwr.status IN ('completed', 'shipped')
+          AND COALESCE(cwr.shipped_at, cwr.completed_at) >= NOW() - INTERVAL '30 days'
+        GROUP BY cr.creator_user_id`,
+      userIds,
+    ),
+
+    // Inventory delta per window per creator (value_at_obtained for
+    // items obtained / disposed in window). Same valuation Platform-P&L
+    // uses on the user-detail page.
+    db.$queryRawUnsafe<InventoryRow[]>(
+      `WITH creator_referrals AS (
+         SELECT DISTINCT acu.affiliate_user_id AS creator_user_id,
+                         acu.referred_user_id  AS user_id
+           FROM affiliate_code_usages acu
+           JOIN "user" u ON u.id = acu.referred_user_id
+          WHERE acu.affiliate_user_id = ANY($1::text[])
+            AND u.role NOT IN ('admin', 'support', 'creator')
+            AND u.id != acu.affiliate_user_id
+       )
+       SELECT cr.creator_user_id,
+              COALESCE(SUM(CASE WHEN ui.obtained_at >= NOW() - INTERVAL '1 day'   THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained_1d,
+              COALESCE(SUM(CASE WHEN ui.obtained_at >= NOW() - INTERVAL '3 days'  THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained_3d,
+              COALESCE(SUM(CASE WHEN ui.obtained_at >= NOW() - INTERVAL '7 days'  THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained_7d,
+              COALESCE(SUM(CASE WHEN ui.obtained_at >= NOW() - INTERVAL '14 days' THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained_14d,
+              COALESCE(SUM(CASE WHEN ui.obtained_at >= NOW() - INTERVAL '30 days' THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained_30d,
+              COALESCE(SUM(CASE WHEN (ui.sold_at >= NOW() - INTERVAL '1 day'   OR ui.exchanged_at >= NOW() - INTERVAL '1 day')   THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS disposed_1d,
+              COALESCE(SUM(CASE WHEN (ui.sold_at >= NOW() - INTERVAL '3 days'  OR ui.exchanged_at >= NOW() - INTERVAL '3 days')  THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS disposed_3d,
+              COALESCE(SUM(CASE WHEN (ui.sold_at >= NOW() - INTERVAL '7 days'  OR ui.exchanged_at >= NOW() - INTERVAL '7 days')  THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS disposed_7d,
+              COALESCE(SUM(CASE WHEN (ui.sold_at >= NOW() - INTERVAL '14 days' OR ui.exchanged_at >= NOW() - INTERVAL '14 days') THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS disposed_14d,
+              COALESCE(SUM(CASE WHEN (ui.sold_at >= NOW() - INTERVAL '30 days' OR ui.exchanged_at >= NOW() - INTERVAL '30 days') THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS disposed_30d
+         FROM user_inventory ui
+         JOIN creator_referrals cr ON cr.user_id = ui.user_id
+        WHERE (
               ui.obtained_at  >= NOW() - INTERVAL '30 days'
-              OR ui.sold_at      >= NOW() - INTERVAL '30 days'
-              OR ui.exchanged_at >= NOW() - INTERVAL '30 days'
-            )
-          GROUP BY cr.creator_user_id`,
-        userIds,
-      ),
-    ]);
+           OR ui.sold_at      >= NOW() - INTERVAL '30 days'
+           OR ui.exchanged_at >= NOW() - INTERVAL '30 days'
+        )
+        GROUP BY cr.creator_user_id`,
+      userIds,
+    ),
+
+    // Voucher delta per window per creator.
+    db.$queryRawUnsafe<VoucherRow[]>(
+      `WITH creator_referrals AS (
+         SELECT DISTINCT acu.affiliate_user_id AS creator_user_id,
+                         acu.referred_user_id  AS user_id
+           FROM affiliate_code_usages acu
+           JOIN "user" u ON u.id = acu.referred_user_id
+          WHERE acu.affiliate_user_id = ANY($1::text[])
+            AND u.role NOT IN ('admin', 'support', 'creator')
+            AND u.id != acu.affiliate_user_id
+       )
+       SELECT cr.creator_user_id,
+              COALESCE(SUM(CASE WHEN v.created_at >= NOW() - INTERVAL '1 day'   THEN v.value::numeric ELSE 0 END), 0)::text AS issued_1d,
+              COALESCE(SUM(CASE WHEN v.created_at >= NOW() - INTERVAL '3 days'  THEN v.value::numeric ELSE 0 END), 0)::text AS issued_3d,
+              COALESCE(SUM(CASE WHEN v.created_at >= NOW() - INTERVAL '7 days'  THEN v.value::numeric ELSE 0 END), 0)::text AS issued_7d,
+              COALESCE(SUM(CASE WHEN v.created_at >= NOW() - INTERVAL '14 days' THEN v.value::numeric ELSE 0 END), 0)::text AS issued_14d,
+              COALESCE(SUM(CASE WHEN v.created_at >= NOW() - INTERVAL '30 days' THEN v.value::numeric ELSE 0 END), 0)::text AS issued_30d,
+              COALESCE(SUM(CASE WHEN v.claimed_at >= NOW() - INTERVAL '1 day'   THEN v.value::numeric ELSE 0 END), 0)::text AS claimed_1d,
+              COALESCE(SUM(CASE WHEN v.claimed_at >= NOW() - INTERVAL '3 days'  THEN v.value::numeric ELSE 0 END), 0)::text AS claimed_3d,
+              COALESCE(SUM(CASE WHEN v.claimed_at >= NOW() - INTERVAL '7 days'  THEN v.value::numeric ELSE 0 END), 0)::text AS claimed_7d,
+              COALESCE(SUM(CASE WHEN v.claimed_at >= NOW() - INTERVAL '14 days' THEN v.value::numeric ELSE 0 END), 0)::text AS claimed_14d,
+              COALESCE(SUM(CASE WHEN v.claimed_at >= NOW() - INTERVAL '30 days' THEN v.value::numeric ELSE 0 END), 0)::text AS claimed_30d
+         FROM vouchers v
+         JOIN creator_referrals cr ON cr.user_id = v.user_id
+        WHERE (
+              v.created_at >= NOW() - INTERVAL '30 days'
+           OR v.claimed_at >= NOW() - INTERVAL '30 days'
+        )
+        GROUP BY cr.creator_user_id`,
+      userIds,
+    ),
+  ]);
 
   const codeById = new Map(codeRows.map((r) => [r.user_id, r.code]));
   const wagerById = new Map(
@@ -331,101 +371,86 @@ export async function getCodeAndWagerByUser(
   );
   const ftdsById = new Map(ftdRows.map((r) => [r.user_id, Number(r.ftds)]));
 
-  // Project the wide momentum + inventory rows (one row each per
-  // creator, with all 5 periods × N metrics) into the nested per-
-  // period shape the UI expects. PnL = wagers − payouts −
-  // inventoryChange (house POV — same comprehensive formula used
-  // by Platform P&L on the user-detail page).
-  const inventoryByCreatorId = new Map<
-    string,
-    Record<"1d" | "3d" | "7d" | "14d" | "30d", { obtained: number; disposed: number }>
-  >();
-  for (const r of inventoryRows) {
-    inventoryByCreatorId.set(r.creator_user_id, {
-      "1d": { obtained: toNumber(r.obtained_1d), disposed: toNumber(r.disposed_1d) },
-      "3d": { obtained: toNumber(r.obtained_3d), disposed: toNumber(r.disposed_3d) },
-      "7d": { obtained: toNumber(r.obtained_7d), disposed: toNumber(r.disposed_7d) },
-      "14d": { obtained: toNumber(r.obtained_14d), disposed: toNumber(r.disposed_14d) },
-      "30d": { obtained: toNumber(r.obtained_30d), disposed: toNumber(r.disposed_30d) },
-    });
-  }
+  // Project the four wide rows (one row per creator from each scan)
+  // into a single CreatorPnlByPeriod object per creator per period.
+  // Components default to 0 when a creator has no rows from that
+  // particular scan (e.g. no card withdrawals in 30 days).
+  const cwById = new Map(cardWithdrawalRows.map((r) => [r.creator_user_id, r]));
+  const ivById = new Map(inventoryRows.map((r) => [r.creator_user_id, r]));
+  const vchById = new Map(voucherRows.map((r) => [r.creator_user_id, r]));
 
-  const pnlByCreatorId = new Map<string, CreatorCodeAndWager["pnlByPeriod"]>();
-  for (const r of momentumRows) {
-    const inventoryForCreator = inventoryByCreatorId.get(r.creator_user_id);
-    const project = (
-      w: string,
-      p: string,
-      d: string,
-      period: "1d" | "3d" | "7d" | "14d" | "30d",
-    ): CreatorPnlByPeriod => {
-      const wagers = toNumber(w);
-      const payouts = toNumber(p);
-      const obtained = inventoryForCreator?.[period].obtained ?? 0;
-      const disposed = inventoryForCreator?.[period].disposed ?? 0;
-      // inventoryChange is the net inventory value the user gained
-      // in the window. Subtracting it from the realized GGR captures
-      // the unrealized "user pulled a $500 card from a $10 pack and
-      // didn't sell it yet" case, which gross GGR would falsely
-      // count as a $10 house win.
+  type PKey = "1d" | "3d" | "7d" | "14d" | "30d";
+
+  const buildForCreator = (creatorId: string): CreatorCodeAndWager["pnlByPeriod"] => {
+    const lr = ledgerRows.find((r) => r.creator_user_id === creatorId);
+    const cw = cwById.get(creatorId);
+    const iv = ivById.get(creatorId);
+    const vc = vchById.get(creatorId);
+
+    const computeForPeriod = (period: PKey): CreatorPnlByPeriod => {
+      const deposits = lr ? toNumber(lr[`deposits_${period}` as const]) : 0;
+      const balWithdrawals = lr ? toNumber(lr[`bal_wd_${period}` as const]) : 0;
+      const cardWithdrawals = cw ? toNumber(cw[`cwd_${period}` as const]) : 0;
+      const withdrawals = balWithdrawals + cardWithdrawals;
+      const balanceChange = lr ? toNumber(lr[`bal_change_${period}` as const]) : 0;
+      const obtained = iv ? toNumber(iv[`obtained_${period}` as const]) : 0;
+      const disposed = iv ? toNumber(iv[`disposed_${period}` as const]) : 0;
       const inventoryChange = obtained - disposed;
+      const issued = vc ? toNumber(vc[`issued_${period}` as const]) : 0;
+      const claimed = vc ? toNumber(vc[`claimed_${period}` as const]) : 0;
+      const voucherChange = issued - claimed;
+      const pnl =
+        deposits -
+        withdrawals -
+        balanceChange -
+        inventoryChange -
+        voucherChange;
       return {
-        wagers,
-        payouts,
+        deposits,
+        withdrawals,
+        balanceChange,
         inventoryChange,
-        pnl: wagers - payouts - inventoryChange,
-        deposits: toNumber(d),
+        voucherChange,
+        pnl,
       };
     };
-    pnlByCreatorId.set(r.creator_user_id, {
-      "1d": project(r.wagers_1d, r.payouts_1d, r.deposits_1d, "1d"),
-      "3d": project(r.wagers_3d, r.payouts_3d, r.deposits_3d, "3d"),
-      "7d": project(r.wagers_7d, r.payouts_7d, r.deposits_7d, "7d"),
-      "14d": project(r.wagers_14d, r.payouts_14d, r.deposits_14d, "14d"),
-      "30d": project(r.wagers_30d, r.payouts_30d, r.deposits_30d, "30d"),
-    });
-  }
 
-  // Creators with NO ledger activity but inventory activity
-  // (extremely rare — would be a creator whose referrals only got
-  // free cards somehow) still need a record so the UI doesn't
-  // collapse them to all-zero. Walk the inventory rows and seed any
-  // creator missing from pnlByCreatorId.
-  for (const r of inventoryRows) {
-    if (pnlByCreatorId.has(r.creator_user_id)) continue;
-    const inv = inventoryByCreatorId.get(r.creator_user_id);
-    if (!inv) continue;
-    const fromInv = (period: "1d" | "3d" | "7d" | "14d" | "30d"): CreatorPnlByPeriod => {
-      const inventoryChange = inv[period].obtained - inv[period].disposed;
-      return {
-        wagers: 0,
-        payouts: 0,
-        inventoryChange,
-        pnl: -inventoryChange,
-        deposits: 0,
-      };
+    return {
+      "1d": computeForPeriod("1d"),
+      "3d": computeForPeriod("3d"),
+      "7d": computeForPeriod("7d"),
+      "14d": computeForPeriod("14d"),
+      "30d": computeForPeriod("30d"),
     };
-    pnlByCreatorId.set(r.creator_user_id, {
-      "1d": fromInv("1d"),
-      "3d": fromInv("3d"),
-      "7d": fromInv("7d"),
-      "14d": fromInv("14d"),
-      "30d": fromInv("30d"),
-    });
-  }
+  };
+
+  // Set of creator IDs that produced ANY rows from the four PnL scans
+  // — even one of {ledger, card_withdrawals, inventory, vouchers}.
+  // Anyone with no activity at all gets EMPTY_PNL.
+  const activeCreatorIds = new Set<string>();
+  for (const r of ledgerRows) activeCreatorIds.add(r.creator_user_id);
+  for (const r of cardWithdrawalRows) activeCreatorIds.add(r.creator_user_id);
+  for (const r of inventoryRows) activeCreatorIds.add(r.creator_user_id);
+  for (const r of voucherRows) activeCreatorIds.add(r.creator_user_id);
 
   for (const id of userIds) {
-    const pnl = pnlByCreatorId.get(id) ?? EMPTY_PNL;
+    const pnl = activeCreatorIds.has(id) ? buildForCreator(id) : EMPTY_PNL;
     result.set(id, {
       code: codeById.get(id) ?? null,
       wagerVolumeUsd: wagerById.get(id) ?? 0,
       signups: signupsById.get(id) ?? 0,
       ftds: ftdsById.get(id) ?? 0,
       // 3d wagers + deposits surface on the existing momentum line —
-      // pulled from the same per-period record so the row + the PnL
+      // pulled from the per-period record so the row + the PnL
       // strip can never disagree.
       deposits3dUsd: pnl["3d"].deposits,
-      wagers3dUsd: pnl["3d"].wagers,
+      // wagers3dUsd is informational (not used in PnL formula); pulled
+      // directly from the ledger-side aggregate.
+      wagers3dUsd: ledgerRows.find((r) => r.creator_user_id === id)
+        ? toNumber(
+            ledgerRows.find((r) => r.creator_user_id === id)!.wagers_3d,
+          )
+        : 0,
       pnlByPeriod: pnl,
     });
   }
