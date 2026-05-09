@@ -21,10 +21,10 @@ import type { deal_type, deal_status } from "@/generated/admin-prisma/client";
 const codeSchema = z
   .string()
   .trim()
-  .toLowerCase()
-  .min(2)
+  .toUpperCase()
+  .min(4)
   .max(32)
-  .regex(/^[a-z0-9_-]+$/, "Code must be lowercase alphanumeric, _ or -");
+  .regex(/^[A-Z0-9_-]+$/, "Code must be alphanumeric, _ or -");
 
 // Reusable USD-amount validator. Caps at 10M to catch typos.
 const optionalDollarAmount = z
@@ -136,7 +136,8 @@ export async function makeCreator(userId: string) {
   if (!user) throw new Error("User not found");
   if (!user.email) throw new Error("User has no email");
 
-  const code = (user.username ?? user.email.split("@")[0]).toLowerCase().replace(/[^a-z0-9]/g, "");
+  const raw = (user.username ?? user.email.split("@")[0]).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const code = raw.length >= 4 ? raw : raw + Math.random().toString(36).toUpperCase().slice(2, 2 + (4 - raw.length));
 
   // Check code uniqueness, append random suffix if needed
   let finalCode = code;
