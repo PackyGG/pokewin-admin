@@ -1,28 +1,65 @@
+/**
+ * Per-window House P&L for a single creator's referrals — same canonical
+ * formula as the lifetime Platform-P&L on the dashboard / user-detail
+ * page, evaluated as DELTAS over the window:
+ *
+ *   pnl = deposits − withdrawals − balanceChange − inventoryChange − voucherChange
+ *
+ * House POV:
+ *   pnl > 0 (emerald) — house made money in the window
+ *   pnl < 0 (rose)    — house lost money in the window
+ *
+ * "Withdrawals" combines on-balance cash withdrawals (ledger
+ * `withdrawal` debits) and physical card withdrawals
+ * (card_withdrawal_requests with status completed/shipped, time-scoped
+ * by COALESCE(shipped_at, completed_at)). "BalanceChange",
+ * "inventoryChange" and "voucherChange" are net deltas in user-side
+ * liability over the window — positive means we owe MORE at the end of
+ * the window than we did at the start, so they SUBTRACT from house P&L.
+ */
 export type CreatorPnlPeriod = {
   period: string;
-  ggr: number;
-  costs: number;
+  /** Real cash deposits in the window (lt.type='deposit'). */
+  deposits: number;
   /**
-   * Net inventory value the user gained in the window (items
-   * obtained_at IN window minus items sold_at OR exchanged_at IN
-   * window, valued at value_at_obtained). Positive means the user
-   * is up unrealized inventory we owe them.
+   * Cash + cards leaving the house in the window:
+   *   ledger withdrawals (lt.type='withdrawal', ABS) +
+   *   card_withdrawal_requests.total_value_usd for status in
+   *   ('completed','shipped') with COALESCE(shipped_at, completed_at)
+   *   in window.
+   */
+  withdrawals: number;
+  /**
+   * Net change in on-site balance (available + locked) over the window.
+   * Computed as SUM(ledger.amount) for completed transactions in the
+   * window — the balance is the running sum of every ledger event, so
+   * the windowed change is just the windowed sum.
+   */
+  balanceChange: number;
+  /**
+   * Net change in unsold-inventory liability over the window:
+   *   value_at_obtained for items obtained_at IN window
+   *   −
+   *   value_at_obtained for items sold_at OR exchanged_at IN window
+   * Positive = we owe MORE inventory at the end of the window.
    */
   inventoryChange: number;
   /**
-   * House P&L: ggr − inventoryChange. Includes both realized and
-   * unrealized house exposure for the window. Positive = we made
-   * money, negative = we lost money.
+   * Net change in unclaimed-voucher liability over the window:
+   *   value of vouchers created_at IN window
+   *   −
+   *   value of vouchers claimed_at IN window
+   * Positive = we owe MORE voucher value at the end of the window.
    */
-  netPnl: number;
+  voucherChange: number;
+  /**
+   * House P&L for the window. Same canonical balance-sheet formula the
+   * dashboard's lifetime PnL uses, evaluated per window.
+   */
+  pnl: number;
 };
 
 export type CreatorPnlData = {
-  totalGgr: number;
-  totalCosts: number;
-  totalNetPnl: number;
-  creatorCost: number;
-  truePlatformPnl: number;
   byPeriod: CreatorPnlPeriod[];
 };
 

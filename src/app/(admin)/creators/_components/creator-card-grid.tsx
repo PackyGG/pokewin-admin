@@ -106,51 +106,34 @@ export type CreatorWithSocials = CreatorListItem & {
   /** 3-day rolling wager volume — same source as deposits3dUsd. */
   wagers3dUsd: number;
   /**
-   * Per-period House P&L from this creator's referrals
-   * (wagers − payouts − inventoryChange) for 1d / 3d / 7d / 14d /
-   * 30d. Same comprehensive formula Platform-P&L on /users/[id]
-   * uses: includes UNREALIZED inventory wins (a referral pulled a
-   * $500 card and hasn't sold it yet → we still owe them $500).
-   * House POV: positive = we made money, negative = we lost money.
-   * null when batch query failed.
+   * Per-period House P&L from this creator's referrals — same
+   * canonical balance-sheet formula as the dashboard's Lifetime PnL,
+   * evaluated as deltas over each window (1d / 3d / 7d / 14d / 30d):
+   *
+   *   pnl = deposits − withdrawals − balanceChange − inventoryChange − voucherChange
+   *
+   * Referred-user pool excludes admin / support / creator roles AND
+   * the creator's own user_id (so other streamers' on-site activity
+   * doesn't skew the per-creator number). House POV: positive = we
+   * made money, negative = we lost money. null when batch query
+   * failed.
    */
   pnlByPeriod: {
-    "1d": {
-      wagers: number;
-      payouts: number;
-      inventoryChange: number;
-      pnl: number;
-      deposits: number;
-    };
-    "3d": {
-      wagers: number;
-      payouts: number;
-      inventoryChange: number;
-      pnl: number;
-      deposits: number;
-    };
-    "7d": {
-      wagers: number;
-      payouts: number;
-      inventoryChange: number;
-      pnl: number;
-      deposits: number;
-    };
-    "14d": {
-      wagers: number;
-      payouts: number;
-      inventoryChange: number;
-      pnl: number;
-      deposits: number;
-    };
-    "30d": {
-      wagers: number;
-      payouts: number;
-      inventoryChange: number;
-      pnl: number;
-      deposits: number;
-    };
+    "1d": CreatorPnlPeriodCell;
+    "3d": CreatorPnlPeriodCell;
+    "7d": CreatorPnlPeriodCell;
+    "14d": CreatorPnlPeriodCell;
+    "30d": CreatorPnlPeriodCell;
   } | null;
+};
+
+type CreatorPnlPeriodCell = {
+  deposits: number;
+  withdrawals: number;
+  balanceChange: number;
+  inventoryChange: number;
+  voucherChange: number;
+  pnl: number;
 };
 
 /**
@@ -528,14 +511,18 @@ function MomentumRow({
   );
 }
 
-// Per-period PnL strip — 5 mini-cells (1d / 3d / 7d / 14d / 30d), each
-// showing the GGR contribution from this creator's referrals in that
+// Per-period PnL strip — 5 mini-cells (1d / 3d / 7d / 14d / 30d),
+// each showing the House P&L from this creator's referrals in that
 // window. House POV: positive emerald, negative rose, zero muted "—".
 //
-// Wagers + payouts in the underlying data come from ledger_transactions
-// of referred users (staff-excluded); PnL = wagers − payouts. Same
-// formula the dashboard uses for global GGR, so per-creator + global
-// numbers reconcile.
+// PnL formula (same as the dashboard's Lifetime PnL, evaluated as
+// deltas over the window):
+//
+//   pnl = deposits − withdrawals − balanceChange − inventoryChange − voucherChange
+//
+// Referred-user pool excludes admin / support / creator role accounts
+// and the creator's own user_id, so other streamers' on-site activity
+// doesn't skew the number.
 //
 // Compact layout: 5-up grid, divider-separated, label above value.
 // Tabular nums so the dollar amounts line up across the row.
@@ -560,29 +547,31 @@ function PnlStrip({
         <span>PnL</span>
         <span
           className="text-muted-foreground/60 normal-case"
-          title="Wagers minus payouts from this creator's referrals (GGR). House POV: positive = we made money, negative = we lost money."
+          title="Same balance-sheet formula as the dashboard's Lifetime PnL, evaluated per window. Positive = we made money, negative = we lost money."
         >
           (house POV)
         </span>
       </div>
       <div className="grid grid-cols-5 divide-x divide-border/60">
         {periods.map(({ key, label }) => {
-          const v = pnlByPeriod[key].pnl;
+          const cell = pnlByPeriod[key];
+          const v = cell.pnl;
           const color =
             v > 0
               ? "text-emerald-600 dark:text-emerald-400"
               : v < 0
                 ? "text-rose-600 dark:text-rose-400"
                 : "text-muted-foreground/60";
-          const inv = pnlByPeriod[key].inventoryChange;
-          // Tooltip shows the full breakdown so admins can see
-          // why a number is the way it is — particularly helps
-          // when inventory is the dominant component (a referral
-          // pulled a big card but didn't sell yet).
+          // Full breakdown so admins can see why a number is the
+          // way it is — particularly helps when inventory or
+          // balance change dominates (a referral pulled a big
+          // card but didn't sell yet, etc.).
           const tooltip =
-            `${label}: wagers ${formatCurrency(pnlByPeriod[key].wagers)} ` +
-            `− payouts ${formatCurrency(pnlByPeriod[key].payouts)} ` +
-            `− inv change ${formatCurrency(inv)}`;
+            `${label}: deposits ${formatCurrency(cell.deposits)} ` +
+            `− withdrawals ${formatCurrency(cell.withdrawals)} ` +
+            `− balance Δ ${formatCurrency(cell.balanceChange)} ` +
+            `− inventory Δ ${formatCurrency(cell.inventoryChange)} ` +
+            `− voucher Δ ${formatCurrency(cell.voucherChange)}`;
           return (
             <div
               key={key}
