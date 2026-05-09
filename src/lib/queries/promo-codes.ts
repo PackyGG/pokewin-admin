@@ -118,8 +118,6 @@ export async function getPromoCodeDetail(id: string) {
     minimumWagerAmount: toNumber(code.minimum_wager_amount),
     wagerPeriodDays: code.wager_period_days,
     minimumAccountAgeDays: code.minimum_account_age_days,
-    minimumDepositAmount: toNumber(code.minimum_deposit_amount),
-    requiredAffiliateCode: code.required_affiliate_code ?? null,
     requiresDiscord: code.requires_discord,
     maxUses: code.max_uses,
     expiresAt: code.expires_at?.toISOString() ?? null,
