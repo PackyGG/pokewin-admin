@@ -179,6 +179,7 @@ export default async function CreatorsPage({
                   ftds: cw?.ftds ?? 0,
                   deposits3dUsd: cw?.deposits3dUsd ?? 0,
                   wagers3dUsd: cw?.wagers3dUsd ?? 0,
+                  pnlByPeriod: cw?.pnlByPeriod ?? null,
                 };
               })
               // Pin creators with an active or scheduled deal to the top of

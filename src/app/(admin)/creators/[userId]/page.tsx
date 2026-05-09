@@ -37,6 +37,7 @@ import { FunnelTable } from "./funnel-table";
 import { FinancialsCard } from "./financials-card";
 import { CountryBreakdown } from "./country-breakdown";
 import { LeaderboardsCard } from "./leaderboards-card";
+import { CreatorPnlPanel } from "./creator-pnl-panel";
 
 import { parseCreatorDetailSearchParams } from "./_lib/search-params";
 import { getCreatorDealData } from "./_queries/get-creator-deal-data";
@@ -320,6 +321,15 @@ export default async function CreatorDetailPage({
           <LeaderboardsCard userId={profile.userId} />
         </Suspense>
 
+        {/* Affiliates PnL — 5 mini-tiles for 1d / 3d / 7d / 2w / 1m
+            showing GGR (wagers − payouts) from this creator's
+            referrals in the window. House POV: positive emerald,
+            negative rose. Streamed via Suspense so the heavier
+            ledger scan doesn't extend the rest of the page's TTFB. */}
+        <Suspense fallback={<CreatorPnlSkeleton />}>
+          <CreatorPnlPanel userId={profile.userId} />
+        </Suspense>
+
         {/* Bottom band: three equal-width analytics cards. On phone they
             stack full-width; tablet shows two-up wherever possible. */}
         <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -362,6 +372,29 @@ function LeaderboardsSkeleton() {
         <Skeleton className="h-9 w-full" />
       </div>
     </Card>
+  );
+}
+
+// 5-tile grid placeholder matching the CreatorPnlPanel shape so the
+// page doesn't reflow when the real content lands.
+function CreatorPnlSkeleton() {
+  return (
+    <div className="space-y-3">
+      <Skeleton className="h-5 w-36" />
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        {[0, 1, 2, 3, 4].map((i) => (
+          <Card key={i} size="sm" className="space-y-2 p-4">
+            <Skeleton className="h-4 w-10" />
+            <Skeleton className="h-7 w-24" />
+            <Skeleton className="h-3 w-20" />
+            <div className="space-y-1.5 pt-1">
+              <Skeleton className="h-3 w-full" />
+              <Skeleton className="h-3 w-full" />
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
   );
 }
 
