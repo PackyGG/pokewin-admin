@@ -3,8 +3,23 @@
 import { useState, useTransition } from "react";
 import { ColumnDef } from "@tanstack/react-table";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils/format";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import {
   Dialog,
   DialogContent,
@@ -20,7 +35,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { PromoCodeListItem } from "@/lib/queries/promo-codes";
-import { getRedemptions } from "./actions";
+import { deletePromoCode, getRedemptions } from "./actions";
 
 type Redemption = {
   id: string;
@@ -181,6 +196,60 @@ function RedemptionsCell({
   );
 }
 
+// Inline row-level delete. Same server action as the detail page's
+// DeletePromoCodeButton, but stays on the list and just refreshes
+// the route instead of navigating away. Server enforces the
+// `__can_delete_promo_code` capability — the button is shown for
+// everyone but the action will reject unauthorized users with a
+// toast.
+function RowDeleteButton({ promoCodeId }: { promoCodeId: string }) {
+  const [isPending, startTransition] = useTransition();
+  const router = useRouter();
+
+  function handleDelete() {
+    startTransition(async () => {
+      try {
+        await deletePromoCode(promoCodeId);
+        toast.success("Promo code deleted");
+        router.refresh();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Failed to delete");
+      }
+    });
+  }
+
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon"
+            disabled={isPending}
+            className="size-8 text-muted-foreground hover:text-rose-600 dark:hover:text-rose-400"
+            aria-label="Delete promo code"
+          />
+        }
+      >
+        <Trash2 className="size-4" />
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete Promo Code?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This action cannot be undone. This will permanently delete the
+            promo code.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={handleDelete}>Delete</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 export const columns: ColumnDef<PromoCodeListItem>[] = [
   {
     accessorKey: "code",
@@ -241,5 +310,14 @@ export const columns: ColumnDef<PromoCodeListItem>[] = [
     accessorKey: "createdAt",
     header: "Created",
     cell: ({ row }) => formatDate(row.original.createdAt),
+  },
+  {
+    id: "actions",
+    header: "",
+    cell: ({ row }) => (
+      <div className="flex justify-end">
+        <RowDeleteButton promoCodeId={row.original.id} />
+      </div>
+    ),
   },
 ];
