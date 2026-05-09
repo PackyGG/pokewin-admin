@@ -2,6 +2,18 @@ export type CreatorPnlPeriod = {
   period: string;
   ggr: number;
   costs: number;
+  /**
+   * Net inventory value the user gained in the window (items
+   * obtained_at IN window minus items sold_at OR exchanged_at IN
+   * window, valued at value_at_obtained). Positive means the user
+   * is up unrealized inventory we owe them.
+   */
+  inventoryChange: number;
+  /**
+   * House P&L: ggr − inventoryChange. Includes both realized and
+   * unrealized house exposure for the window. Positive = we made
+   * money, negative = we lost money.
+   */
   netPnl: number;
 };
 

@@ -9,14 +9,39 @@ import {
 
 /**
  * Per-period PnL snapshot for a single creator. Periods match what the
- * card displays: 1d / 3d / 7d / 14d / 30d. PnL is GGR from this
- * creator's referrals — wagers minus payouts — in house POV. Positive
- * = house income, negative = house loss.
+ * card displays: 1d / 3d / 7d / 14d / 30d.
+ *
+ * PnL reproduces the comprehensive Platform-P&L formula used on the
+ * user-detail page, scaled per-period:
+ *
+ *   pnl = wagers − payouts − inventoryChange
+ *
+ * where inventoryChange = value of items the user GAINED in the
+ * window minus value of items they DISPOSED of (sold / exchanged).
+ * The realized side of disposal is already in `payouts` (card_sale,
+ * card_exchange ledger types), so the formula effectively becomes:
+ *
+ *   pnl = wagers − realized_payouts − unrealized_inventory_obtained
+ *
+ * That captures the case where a referral opens a $10 pack, pulls a
+ * $500 card, and DOESN'T sell it — gross GGR would call that a $10
+ * win, but we still owe the user $500 in inventory, so the true house
+ * P&L is −$490. Same reasoning as Platform P&L on the user-detail
+ * page (Deposits − Withdrawals − Balance − Inventory − Vouchers).
+ *
+ * House POV: positive = we made money, negative = we lost money.
  */
 export type CreatorPnlByPeriod = {
   wagers: number;
   payouts: number;
-  /** wagers − payouts. Same shape as the dashboard GGR aggregate. */
+  /**
+   * Net inventory value the user gained in the window
+   * (value-at-obtained for items obtained_at IN window
+   * minus value-at-obtained for items sold_at OR exchanged_at IN
+   * window). Positive when the user is up unrealized inventory.
+   */
+  inventoryChange: number;
+  /** wagers − payouts − inventoryChange. House POV. */
   pnl: number;
   /** Real deposit volume from referred users in the period (lt.type='deposit'). */
   deposits: number;
@@ -89,6 +114,7 @@ export type CreatorCodeAndWager = {
 const EMPTY_PERIOD: CreatorPnlByPeriod = {
   wagers: 0,
   payouts: 0,
+  inventoryChange: 0,
   pnl: 0,
   deposits: 0,
 };
@@ -121,8 +147,14 @@ export async function getCodeAndWagerByUser(
   if (userIds.length === 0) return result;
 
   const db = await getDb();
-  const [codeRows, affiliateAccounts, signupRows, ftdRows, momentumRows] =
-    await Promise.all([
+  const [
+    codeRows,
+    affiliateAccounts,
+    signupRows,
+    ftdRows,
+    momentumRows,
+    inventoryRows,
+  ] = await Promise.all([
       // Oldest affiliate_codes row per user_id — the same convention
       // /creators/[id]'s primaryCode uses. DISTINCT ON keeps a single
       // row per user_id with the earliest created_at (= the first code
@@ -227,6 +259,64 @@ export async function getCodeAndWagerByUser(
           GROUP BY cr.creator_user_id`,
         userIds,
       ),
+      // Per-creator inventory deltas across the same 5 windows.
+      // `value_at_obtained` is the canonical valuation Platform P&L
+      // uses on the user-detail page, so per-creator P&L can't drift
+      // from Platform P&L for the same user pool.
+      //
+      // We sum value_at_obtained twice:
+      //   • obtained_*  — items the user GAINED in the window
+      //     (we now owe them this much in inventory liability)
+      //   • disposed_*  — items the user SOLD or EXCHANGED in the
+      //     window (the realized cash side already lives in payouts
+      //     above; subtracting disposed here cancels the
+      //     simultaneous obtained spike for items that came AND
+      //     went inside the same window so we don't double-count
+      //     a quick flip)
+      //
+      // The 30-day OR clause is a hard upper bound on the scan so
+      // user_inventory's full history doesn't get pulled — every
+      // window we display is ≤ 30d.
+      db.$queryRawUnsafe<
+        Array<
+          {
+            creator_user_id: string;
+          } & Record<
+            | "obtained_1d" | "obtained_3d" | "obtained_7d" | "obtained_14d" | "obtained_30d"
+            | "disposed_1d" | "disposed_3d" | "disposed_7d" | "disposed_14d" | "disposed_30d",
+            string
+          >
+        >
+      >(
+        `WITH creator_referrals AS (
+           SELECT DISTINCT acu.affiliate_user_id AS creator_user_id,
+                           acu.referred_user_id  AS user_id
+             FROM affiliate_code_usages acu
+            WHERE acu.affiliate_user_id = ANY($1::text[])
+         )
+         SELECT cr.creator_user_id,
+                COALESCE(SUM(CASE WHEN ui.obtained_at >= NOW() - INTERVAL '1 day'   THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained_1d,
+                COALESCE(SUM(CASE WHEN ui.obtained_at >= NOW() - INTERVAL '3 days'  THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained_3d,
+                COALESCE(SUM(CASE WHEN ui.obtained_at >= NOW() - INTERVAL '7 days'  THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained_7d,
+                COALESCE(SUM(CASE WHEN ui.obtained_at >= NOW() - INTERVAL '14 days' THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained_14d,
+                COALESCE(SUM(CASE WHEN ui.obtained_at >= NOW() - INTERVAL '30 days' THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained_30d,
+                COALESCE(SUM(CASE WHEN (ui.sold_at >= NOW() - INTERVAL '1 day'   OR ui.exchanged_at >= NOW() - INTERVAL '1 day')   THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS disposed_1d,
+                COALESCE(SUM(CASE WHEN (ui.sold_at >= NOW() - INTERVAL '3 days'  OR ui.exchanged_at >= NOW() - INTERVAL '3 days')  THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS disposed_3d,
+                COALESCE(SUM(CASE WHEN (ui.sold_at >= NOW() - INTERVAL '7 days'  OR ui.exchanged_at >= NOW() - INTERVAL '7 days')  THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS disposed_7d,
+                COALESCE(SUM(CASE WHEN (ui.sold_at >= NOW() - INTERVAL '14 days' OR ui.exchanged_at >= NOW() - INTERVAL '14 days') THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS disposed_14d,
+                COALESCE(SUM(CASE WHEN (ui.sold_at >= NOW() - INTERVAL '30 days' OR ui.exchanged_at >= NOW() - INTERVAL '30 days') THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS disposed_30d
+           FROM user_inventory ui
+           JOIN creator_referrals cr ON cr.user_id = ui.user_id
+           JOIN "user" ru            ON ru.id      = ui.user_id
+          WHERE ru.role NOT IN ('admin', 'support')
+            AND (
+              ui.obtained_at  >= NOW() - INTERVAL '30 days'
+              OR ui.sold_at      >= NOW() - INTERVAL '30 days'
+              OR ui.exchanged_at >= NOW() - INTERVAL '30 days'
+            )
+          GROUP BY cr.creator_user_id`,
+        userIds,
+      ),
     ]);
 
   const codeById = new Map(codeRows.map((r) => [r.user_id, r.code]));
@@ -241,31 +331,86 @@ export async function getCodeAndWagerByUser(
   );
   const ftdsById = new Map(ftdRows.map((r) => [r.user_id, Number(r.ftds)]));
 
-  // Project the wide momentum row (one row per creator with all 5
-  // periods × 3 metrics) into the nested per-period shape the UI
-  // expects. PnL = wagers − payouts in house POV.
+  // Project the wide momentum + inventory rows (one row each per
+  // creator, with all 5 periods × N metrics) into the nested per-
+  // period shape the UI expects. PnL = wagers − payouts −
+  // inventoryChange (house POV — same comprehensive formula used
+  // by Platform P&L on the user-detail page).
+  const inventoryByCreatorId = new Map<
+    string,
+    Record<"1d" | "3d" | "7d" | "14d" | "30d", { obtained: number; disposed: number }>
+  >();
+  for (const r of inventoryRows) {
+    inventoryByCreatorId.set(r.creator_user_id, {
+      "1d": { obtained: toNumber(r.obtained_1d), disposed: toNumber(r.disposed_1d) },
+      "3d": { obtained: toNumber(r.obtained_3d), disposed: toNumber(r.disposed_3d) },
+      "7d": { obtained: toNumber(r.obtained_7d), disposed: toNumber(r.disposed_7d) },
+      "14d": { obtained: toNumber(r.obtained_14d), disposed: toNumber(r.disposed_14d) },
+      "30d": { obtained: toNumber(r.obtained_30d), disposed: toNumber(r.disposed_30d) },
+    });
+  }
+
   const pnlByCreatorId = new Map<string, CreatorCodeAndWager["pnlByPeriod"]>();
   for (const r of momentumRows) {
+    const inventoryForCreator = inventoryByCreatorId.get(r.creator_user_id);
     const project = (
       w: string,
       p: string,
       d: string,
+      period: "1d" | "3d" | "7d" | "14d" | "30d",
     ): CreatorPnlByPeriod => {
       const wagers = toNumber(w);
       const payouts = toNumber(p);
+      const obtained = inventoryForCreator?.[period].obtained ?? 0;
+      const disposed = inventoryForCreator?.[period].disposed ?? 0;
+      // inventoryChange is the net inventory value the user gained
+      // in the window. Subtracting it from the realized GGR captures
+      // the unrealized "user pulled a $500 card from a $10 pack and
+      // didn't sell it yet" case, which gross GGR would falsely
+      // count as a $10 house win.
+      const inventoryChange = obtained - disposed;
       return {
         wagers,
         payouts,
-        pnl: wagers - payouts,
+        inventoryChange,
+        pnl: wagers - payouts - inventoryChange,
         deposits: toNumber(d),
       };
     };
     pnlByCreatorId.set(r.creator_user_id, {
-      "1d": project(r.wagers_1d, r.payouts_1d, r.deposits_1d),
-      "3d": project(r.wagers_3d, r.payouts_3d, r.deposits_3d),
-      "7d": project(r.wagers_7d, r.payouts_7d, r.deposits_7d),
-      "14d": project(r.wagers_14d, r.payouts_14d, r.deposits_14d),
-      "30d": project(r.wagers_30d, r.payouts_30d, r.deposits_30d),
+      "1d": project(r.wagers_1d, r.payouts_1d, r.deposits_1d, "1d"),
+      "3d": project(r.wagers_3d, r.payouts_3d, r.deposits_3d, "3d"),
+      "7d": project(r.wagers_7d, r.payouts_7d, r.deposits_7d, "7d"),
+      "14d": project(r.wagers_14d, r.payouts_14d, r.deposits_14d, "14d"),
+      "30d": project(r.wagers_30d, r.payouts_30d, r.deposits_30d, "30d"),
+    });
+  }
+
+  // Creators with NO ledger activity but inventory activity
+  // (extremely rare — would be a creator whose referrals only got
+  // free cards somehow) still need a record so the UI doesn't
+  // collapse them to all-zero. Walk the inventory rows and seed any
+  // creator missing from pnlByCreatorId.
+  for (const r of inventoryRows) {
+    if (pnlByCreatorId.has(r.creator_user_id)) continue;
+    const inv = inventoryByCreatorId.get(r.creator_user_id);
+    if (!inv) continue;
+    const fromInv = (period: "1d" | "3d" | "7d" | "14d" | "30d"): CreatorPnlByPeriod => {
+      const inventoryChange = inv[period].obtained - inv[period].disposed;
+      return {
+        wagers: 0,
+        payouts: 0,
+        inventoryChange,
+        pnl: -inventoryChange,
+        deposits: 0,
+      };
+    };
+    pnlByCreatorId.set(r.creator_user_id, {
+      "1d": fromInv("1d"),
+      "3d": fromInv("3d"),
+      "7d": fromInv("7d"),
+      "14d": fromInv("14d"),
+      "30d": fromInv("30d"),
     });
   }
 
