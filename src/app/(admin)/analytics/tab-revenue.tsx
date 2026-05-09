@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { PieChart, ArrowDown, ArrowUp } from "lucide-react";
+import { PieChart, ArrowDown, ArrowUp, Coins } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -9,7 +9,7 @@ import {
   TableBody,
   TableCell,
 } from "@/components/ui/table";
-import { formatCurrency } from "@/lib/utils/format";
+import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { FadeIn } from "@/components/fade-in";
 import { MetricTile } from "@/components/modern-panels";
 import { cn } from "@/lib/utils";
@@ -17,6 +17,10 @@ import {
   getRevenueBreakdown,
   type RevenuePeriod,
 } from "@/lib/queries/analytics-revenue";
+import {
+  getWithdrawnCoinsBreakdown,
+  type WithdrawnAsset,
+} from "@/lib/queries/analytics-withdrawals";
 import { RevenueStackedCharts } from "./revenue-chart";
 import type { AnalyticsPeriod } from "./types";
 
@@ -44,7 +48,10 @@ export async function RevenueTab({
         ? heroPeriod
         : "30d";
 
-  const data = await getRevenueBreakdown(period);
+  const [data, withdrawnCoins] = await Promise.all([
+    getRevenueBreakdown(period),
+    getWithdrawnCoinsBreakdown(period),
+  ]);
 
   return (
     <FadeIn>
@@ -125,6 +132,23 @@ export async function RevenueTab({
 
         <Card>
           <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm font-medium">
+              <Coins className="size-4 text-primary" />
+              Withdrawn coins — {periodLabel(period)}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <WithdrawnCoinsTable
+              assets={withdrawnCoins.assets}
+              totalCryptoUsd={withdrawnCoins.totalCryptoUsd}
+              physicalUsd={withdrawnCoins.physicalUsd}
+              physicalCount={withdrawnCoins.physicalCount}
+            />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
             <CardTitle className="text-sm font-medium">
               Stacked revenue series — {periodLabel(period)}
             </CardTitle>
@@ -135,6 +159,109 @@ export async function RevenueTab({
         </Card>
       </div>
     </FadeIn>
+  );
+}
+
+/**
+ * Crypto-asset withdrawal breakdown. Each row = one crypto asset
+ * sorted by USD value descending. The footer line shows physical
+ * (shipped card) totals so admins can compare crypto-cashout volume
+ * against physical-card volume in the same window.
+ *
+ * House POV: every row here is real cash leaving the platform, so
+ * dollar amounts render in rose. Native crypto amount is rendered
+ * neutral (it's a quantity, not a P&L impact).
+ */
+function WithdrawnCoinsTable({
+  assets,
+  totalCryptoUsd,
+  physicalUsd,
+  physicalCount,
+}: {
+  assets: WithdrawnAsset[];
+  totalCryptoUsd: number;
+  physicalUsd: number;
+  physicalCount: number;
+}) {
+  if (assets.length === 0 && physicalCount === 0) {
+    return (
+      <p className="py-4 text-center text-sm text-muted-foreground">
+        No withdrawals in this window.
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      {assets.length === 0 ? (
+        <p className="py-2 text-center text-sm text-muted-foreground">
+          No crypto withdrawals in this window.
+        </p>
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Asset</TableHead>
+              <TableHead className="text-right">Withdrawals</TableHead>
+              <TableHead className="text-right">Native amount</TableHead>
+              <TableHead className="text-right">USD value</TableHead>
+              <TableHead className="text-right">Share</TableHead>
+              <TableHead className="w-[120px]">Bar</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {assets.map((a) => {
+              const pct =
+                totalCryptoUsd > 0 ? (a.totalUsd / totalCryptoUsd) * 100 : 0;
+              return (
+                <TableRow key={a.asset}>
+                  <TableCell className="font-mono text-xs">
+                    {a.asset}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatNumber(a.count)}
+                  </TableCell>
+                  <TableCell className="text-right font-mono text-xs tabular-nums text-muted-foreground">
+                    {a.totalCryptoAmount.toLocaleString("en-US", {
+                      maximumFractionDigits: 8,
+                    })}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-rose-600 dark:text-rose-400">
+                    {formatCurrency(a.totalUsd)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {pct.toFixed(1)}%
+                  </TableCell>
+                  <TableCell>
+                    <div className="h-2 overflow-hidden rounded-sm bg-muted">
+                      <div
+                        className="h-full rounded-sm bg-rose-500/60 transition-all"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      )}
+
+      {/* Physical card shipments — separate line so the crypto table
+          stays focused on coins. Physical withdrawals don't have a
+          coin to attribute to but they're still real outflows of the
+          same shape, so we surface them here for completeness. */}
+      <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-2 text-xs">
+        <div className="flex items-center gap-2">
+          <span className="text-muted-foreground">Physical card shipments</span>
+          <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+            {formatNumber(physicalCount)}
+          </span>
+        </div>
+        <span className="font-medium tabular-nums text-rose-600 dark:text-rose-400">
+          {physicalCount > 0 ? formatCurrency(physicalUsd) : "—"}
+        </span>
+      </div>
+    </div>
   );
 }
 
