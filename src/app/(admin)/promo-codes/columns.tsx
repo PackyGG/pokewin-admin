@@ -272,18 +272,19 @@ export const columns: ColumnDef<PromoCodeListItem>[] = [
     enableSorting: false,
     enableHiding: false,
     header: ({ table }) => {
-      // base-ui Checkbox in this codebase only supports boolean — no
-      // tri-state. Treat "some selected" as checked too so a single
-      // header click flips between toggle-all-on / toggle-all-off.
+      // Use the row-level (not page-level) selection helpers — the
+      // page-level versions (`getIsAllPageRowsSelected`,
+      // `toggleAllPageRowsSelected`) require `getPaginationRowModel`
+      // to be wired up, which we don't have. base-ui Checkbox in
+      // this codebase only supports boolean (no tri-state), so we
+      // treat "some selected" as checked too — a single header click
+      // then flips between toggle-all-on / toggle-all-off.
       const checked =
-        table.getIsAllPageRowsSelected() ||
-        table.getIsSomePageRowsSelected();
+        table.getIsAllRowsSelected() || table.getIsSomeRowsSelected();
       return (
         <Checkbox
           checked={checked}
-          onCheckedChange={(v) =>
-            table.toggleAllPageRowsSelected(v === true)
-          }
+          onCheckedChange={(v) => table.toggleAllRowsSelected(v === true)}
           aria-label="Select all rows"
         />
       );

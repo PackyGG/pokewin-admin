@@ -113,14 +113,19 @@ export function PromoCodesDataTable({ data }: { data: PromoCodeListItem[] }) {
     getCoreRowModel: getCoreRowModel(),
   });
 
-  const selectedIds = useMemo(
-    () =>
-      table
-        .getFilteredSelectedRowModel()
-        .rows.map((r) => r.original.id),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rowSelection, data],
-  );
+  // `rowSelection` keys ARE the promo_code.id (we set getRowId above),
+  // so derive the id list directly from the state object — no need to
+  // go through table.getFilteredSelectedRowModel(), which requires
+  // `getFilteredRowModel` to be wired up and throws otherwise. Also
+  // intersect with the current `data` so stale ids from a previous
+  // page (left over after `router.refresh()`) don't leak into the
+  // count or the bulk-delete payload.
+  const selectedIds = useMemo(() => {
+    const visibleIds = new Set(data.map((d) => d.id));
+    return Object.keys(rowSelection).filter(
+      (id) => rowSelection[id] && visibleIds.has(id),
+    );
+  }, [rowSelection, data]);
 
   return (
     <>
