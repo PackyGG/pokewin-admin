@@ -106,17 +106,50 @@ export type CreatorWithSocials = CreatorListItem & {
   /** 3-day rolling wager volume — same source as deposits3dUsd. */
   wagers3dUsd: number;
   /**
-   * Per-period PnL from this creator's referrals (GGR — wagers minus
-   * payouts) for 1d / 3d / 7d / 14d / 30d. House POV: positive = we
-   * made money, negative = we lost money. null when batch query
-   * failed (renders the row as muted "—" instead of blowing up).
+   * Per-period House P&L from this creator's referrals
+   * (wagers − payouts − inventoryChange) for 1d / 3d / 7d / 14d /
+   * 30d. Same comprehensive formula Platform-P&L on /users/[id]
+   * uses: includes UNREALIZED inventory wins (a referral pulled a
+   * $500 card and hasn't sold it yet → we still owe them $500).
+   * House POV: positive = we made money, negative = we lost money.
+   * null when batch query failed.
    */
   pnlByPeriod: {
-    "1d": { wagers: number; payouts: number; pnl: number; deposits: number };
-    "3d": { wagers: number; payouts: number; pnl: number; deposits: number };
-    "7d": { wagers: number; payouts: number; pnl: number; deposits: number };
-    "14d": { wagers: number; payouts: number; pnl: number; deposits: number };
-    "30d": { wagers: number; payouts: number; pnl: number; deposits: number };
+    "1d": {
+      wagers: number;
+      payouts: number;
+      inventoryChange: number;
+      pnl: number;
+      deposits: number;
+    };
+    "3d": {
+      wagers: number;
+      payouts: number;
+      inventoryChange: number;
+      pnl: number;
+      deposits: number;
+    };
+    "7d": {
+      wagers: number;
+      payouts: number;
+      inventoryChange: number;
+      pnl: number;
+      deposits: number;
+    };
+    "14d": {
+      wagers: number;
+      payouts: number;
+      inventoryChange: number;
+      pnl: number;
+      deposits: number;
+    };
+    "30d": {
+      wagers: number;
+      payouts: number;
+      inventoryChange: number;
+      pnl: number;
+      deposits: number;
+    };
   } | null;
 };
 
@@ -541,11 +574,20 @@ function PnlStrip({
               : v < 0
                 ? "text-rose-600 dark:text-rose-400"
                 : "text-muted-foreground/60";
+          const inv = pnlByPeriod[key].inventoryChange;
+          // Tooltip shows the full breakdown so admins can see
+          // why a number is the way it is — particularly helps
+          // when inventory is the dominant component (a referral
+          // pulled a big card but didn't sell yet).
+          const tooltip =
+            `${label}: wagers ${formatCurrency(pnlByPeriod[key].wagers)} ` +
+            `− payouts ${formatCurrency(pnlByPeriod[key].payouts)} ` +
+            `− inv change ${formatCurrency(inv)}`;
           return (
             <div
               key={key}
               className="min-w-0 px-2 first:pl-0 last:pr-0"
-              title={`${label}: wagers ${formatCurrency(pnlByPeriod[key].wagers)} − payouts ${formatCurrency(pnlByPeriod[key].payouts)}`}
+              title={tooltip}
             >
               <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
                 {label}
