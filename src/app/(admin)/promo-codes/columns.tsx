@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -197,12 +198,23 @@ function RedemptionsCell({
 }
 
 // Inline row-level delete. Same server action as the detail page's
-// DeletePromoCodeButton, but stays on the list and just refreshes
-// the route instead of navigating away. Server enforces the
+// DeletePromoCodeButton, but stays on the list and just refreshes the
+// route instead of navigating away. Server enforces the
 // `__can_delete_promo_code` capability — the button is shown for
-// everyone but the action will reject unauthorized users with a
-// toast.
+// everyone but the action will reject unauthorized users with a toast.
+//
+// IMPORTANT: AlertDialogAction in this codebase is just a styled
+// <Button> (see src/components/ui/alert-dialog.tsx) — clicking it does
+// NOT auto-close the dialog. We have to control `open` explicitly and
+// call setOpen(false) after the action completes, otherwise:
+//   • the popup stays open after a successful delete (visible bug)
+//   • a confused admin can double-click Delete on the same row,
+//     firing a second deletePromoCode for an already-deleted row,
+//     which used to throw P2025 and trigger the page-level error
+//     boundary. The server action is now idempotent (deleteMany)
+//     too, but the UX still needs the explicit close.
 function RowDeleteButton({ promoCodeId }: { promoCodeId: string }) {
+  const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
@@ -211,15 +223,17 @@ function RowDeleteButton({ promoCodeId }: { promoCodeId: string }) {
       try {
         await deletePromoCode(promoCodeId);
         toast.success("Promo code deleted");
+        setOpen(false);
         router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to delete");
+        setOpen(false);
       }
     });
   }
 
   return (
-    <AlertDialog>
+    <AlertDialog open={open} onOpenChange={setOpen}>
       <AlertDialogTrigger
         render={
           <Button
@@ -242,8 +256,10 @@ function RowDeleteButton({ promoCodeId }: { promoCodeId: string }) {
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={handleDelete}>Delete</AlertDialogAction>
+          <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={handleDelete} disabled={isPending}>
+            {isPending ? "Deleting…" : "Delete"}
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
@@ -251,6 +267,35 @@ function RowDeleteButton({ promoCodeId }: { promoCodeId: string }) {
 }
 
 export const columns: ColumnDef<PromoCodeListItem>[] = [
+  {
+    id: "select",
+    enableSorting: false,
+    enableHiding: false,
+    header: ({ table }) => {
+      // base-ui Checkbox in this codebase only supports boolean — no
+      // tri-state. Treat "some selected" as checked too so a single
+      // header click flips between toggle-all-on / toggle-all-off.
+      const checked =
+        table.getIsAllPageRowsSelected() ||
+        table.getIsSomePageRowsSelected();
+      return (
+        <Checkbox
+          checked={checked}
+          onCheckedChange={(v) =>
+            table.toggleAllPageRowsSelected(v === true)
+          }
+          aria-label="Select all rows"
+        />
+      );
+    },
+    cell: ({ row }) => (
+      <Checkbox
+        checked={row.getIsSelected()}
+        onCheckedChange={(v) => row.toggleSelected(v === true)}
+        aria-label={`Select promo code ${row.original.code ?? row.original.codeHash.slice(0, 12)}`}
+      />
+    ),
+  },
   {
     accessorKey: "code",
     header: "Code",

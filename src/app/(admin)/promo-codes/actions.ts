@@ -99,13 +99,58 @@ export async function deletePromoCode(promoCodeId: string) {
   const session = await requirePageAccess("/promo-codes");
   await requireCapability(session, "__can_delete_promo_code", "delete promo codes");
 
-  await db.promo_codes.delete({ where: { id: promoCodeId } });
-
-  await createAdminAuditEvent({
-    adminUserId: session.userId,
-    eventType: "promo_code_deleted",
-    metadata: { promo_code_id: promoCodeId },
+  // `deleteMany` is idempotent — returns `{ count: 0 }` instead of
+  // throwing P2025 when the record is already gone. Important for the
+  // list-page UX where a stuck-open AlertDialog could let an admin
+  // double-click and trigger a second delete on a row that already
+  // disappeared from the table on the first click. The audit row only
+  // gets written if at least one record was actually deleted.
+  const result = await db.promo_codes.deleteMany({
+    where: { id: promoCodeId },
   });
 
+  if (result.count > 0) {
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "promo_code_deleted",
+      metadata: { promo_code_id: promoCodeId },
+    });
+  }
+
   revalidatePath("/promo-codes");
+  return { deleted: result.count };
+}
+
+/**
+ * Delete a batch of promo codes by id. Used by the row-selection
+ * bulk-delete on /promo-codes. Idempotent — already-deleted ids are
+ * just no-ops, the same way the single-delete handles double-clicks.
+ *
+ * Caps the input list at 1000 to keep the prepared statement
+ * reasonable; nobody should be selecting more than that interactively.
+ */
+export async function deletePromoCodesBulk(promoCodeIds: string[]) {
+  const db = await getDb();
+  const session = await requirePageAccess("/promo-codes");
+  await requireCapability(session, "__can_delete_promo_code", "delete promo codes");
+
+  const ids = Array.from(new Set(promoCodeIds.filter(Boolean))).slice(0, 1000);
+  if (ids.length === 0) {
+    return { deleted: 0 };
+  }
+
+  const result = await db.promo_codes.deleteMany({
+    where: { id: { in: ids } },
+  });
+
+  if (result.count > 0) {
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "promo_codes_bulk_deleted",
+      metadata: { count: result.count, requested: ids.length, ids },
+    });
+  }
+
+  revalidatePath("/promo-codes");
+  return { deleted: result.count };
 }
