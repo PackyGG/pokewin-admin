@@ -57,10 +57,41 @@ function codeStatus(row: PromoCodeListItem): { label: string; cls: string } {
   };
 }
 
+// Mobile card view — same row data as the desktop table, just stacked
+// for narrow viewports. Shows region + the same compact requirement
+// summary as the desktop "Requirements" column so admins on phones
+// see the same info at a glance.
+function regionCls(region: string) {
+  if (region === "NA") {
+    return "border-blue-500/30 bg-blue-500/15 text-blue-600 dark:text-blue-400";
+  }
+  if (region === "EU") {
+    return "border-purple-500/30 bg-purple-500/15 text-purple-600 dark:text-purple-400";
+  }
+  return "border-muted bg-muted/40 text-muted-foreground";
+}
+
+function requirementsSummary(code: PromoCodeListItem): string | null {
+  const parts: string[] = [];
+  if (code.minimumLevel > 0) parts.push(`Lv ${code.minimumLevel}`);
+  if (code.minimumWagerAmount > 0) {
+    const wager = formatCurrency(code.minimumWagerAmount);
+    parts.push(
+      code.wagerPeriodDays > 0
+        ? `${wager}w / ${code.wagerPeriodDays}d`
+        : `${wager}w`,
+    );
+  }
+  if (code.minimumAccountAgeDays > 0) parts.push(`${code.minimumAccountAgeDays}d age`);
+  if (code.requiresDiscord) parts.push("Discord");
+  return parts.length === 0 ? null : parts.join(" · ");
+}
+
 function PromoMobileCard({ code }: { code: PromoCodeListItem }) {
   const router = useRouter();
   const status = codeStatus(code);
   const display = code.code ?? code.codeHash.slice(0, 12) + "…";
+  const reqs = requirementsSummary(code);
   return (
     <MobileCard
       onClick={() => router.push(`/promo-codes/${code.id}`)}
@@ -72,6 +103,9 @@ function PromoMobileCard({ code }: { code: PromoCodeListItem }) {
       primary={
         <span className="flex items-center gap-2">
           <span className="font-mono text-sm">{display}</span>
+          <Badge variant="outline" className={"h-4 px-1 text-[9px] " + regionCls(code.region)}>
+            {code.region}
+          </Badge>
           <Badge variant="outline" className={"h-4 px-1 text-[9px] " + status.cls}>
             {status.label}
           </Badge>
@@ -79,7 +113,7 @@ function PromoMobileCard({ code }: { code: PromoCodeListItem }) {
       }
       secondary={
         <span>
-          Min level {code.minimumLevel} · {code.redemptionCount}/{code.maxUses} used
+          {reqs ?? "No requirements"} · {code.redemptionCount}/{code.maxUses} used
         </span>
       }
       trailing={

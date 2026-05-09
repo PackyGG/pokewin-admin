@@ -197,6 +197,56 @@ function RedemptionsCell({
   );
 }
 
+// Region badge — subtle colored chip matching the rest of the admin
+// palette. NA = blue, EU = purple. Unknown values fall through to a
+// neutral muted style so a future region (e.g. APAC) doesn't render
+// blank if the schema is extended before this list is updated.
+function RegionBadge({ region }: { region: string }) {
+  const cls =
+    region === "NA"
+      ? "border-blue-500/30 bg-blue-500/15 text-blue-600 dark:text-blue-400"
+      : region === "EU"
+        ? "border-purple-500/30 bg-purple-500/15 text-purple-600 dark:text-purple-400"
+        : "border-muted bg-muted/40 text-muted-foreground";
+  return (
+    <Badge variant="outline" className={cls}>
+      {region}
+    </Badge>
+  );
+}
+
+// Compact requirements summary so admins can scan eligibility gates
+// at a glance without opening the detail page. Fields with a zero /
+// false default are dropped — only the gates that ACTUALLY restrict
+// redemption show up. Renders "—" when nothing is gated so the
+// column doesn't look empty.
+function RequirementsCell({ row }: { row: PromoCodeListItem }) {
+  const parts: string[] = [];
+  if (row.minimumLevel > 0) parts.push(`Lv ${row.minimumLevel}`);
+  if (row.minimumWagerAmount > 0) {
+    // Append the window when there is one ("$100w / 7d") so the admin
+    // can tell a "lifetime $100 wager" gate from a "$100 in last 7
+    // days" gate. wager_period_days = 0 means lifetime.
+    const wager = formatCurrency(row.minimumWagerAmount);
+    parts.push(
+      row.wagerPeriodDays > 0
+        ? `${wager}w / ${row.wagerPeriodDays}d`
+        : `${wager}w`,
+    );
+  }
+  if (row.minimumAccountAgeDays > 0) {
+    parts.push(`${row.minimumAccountAgeDays}d age`);
+  }
+  if (row.requiresDiscord) parts.push("Discord");
+
+  if (parts.length === 0) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  return (
+    <span className="text-xs text-muted-foreground">{parts.join(" · ")}</span>
+  );
+}
+
 // Inline row-level delete. Same server action as the detail page's
 // DeletePromoCodeButton, but stays on the list and just refreshes the
 // route instead of navigating away. Server enforces the
@@ -310,13 +360,19 @@ export const columns: ColumnDef<PromoCodeListItem>[] = [
     ),
   },
   {
+    accessorKey: "region",
+    header: "Region",
+    cell: ({ row }) => <RegionBadge region={row.original.region} />,
+  },
+  {
     accessorKey: "value",
     header: "Value",
     cell: ({ row }) => formatCurrency(row.original.value),
   },
   {
-    accessorKey: "minimumLevel",
-    header: "Min Level",
+    id: "requirements",
+    header: "Requirements",
+    cell: ({ row }) => <RequirementsCell row={row.original} />,
   },
   {
     accessorKey: "maxUses",

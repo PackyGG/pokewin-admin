@@ -10,6 +10,17 @@ export type PromoCodeListItem = {
   value: number;
   region: string;
   minimumLevel: number;
+  /** Lifetime wager required (USD) before the user can redeem. 0 = no gate. */
+  minimumWagerAmount: number;
+  /**
+   * Window the wager requirement is evaluated over (days). 0 means "all-time
+   * lifetime wager"; non-zero means "wager in the last N days".
+   */
+  wagerPeriodDays: number;
+  /** Minimum account age in days before the user can redeem. 0 = no gate. */
+  minimumAccountAgeDays: number;
+  /** Whether the user must have a linked Discord account to redeem. */
+  requiresDiscord: boolean;
   maxUses: number;
   redemptionCount: number;
   expiresAt: string | null;
@@ -77,6 +88,10 @@ export async function getPromoCodes(params: {
         value: toNumber(c.value),
         region: c.region,
         minimumLevel: c.minimum_level,
+        minimumWagerAmount: toNumber(c.minimum_wager_amount),
+        wagerPeriodDays: c.wager_period_days,
+        minimumAccountAgeDays: c.minimum_account_age_days,
+        requiresDiscord: c.requires_discord,
         maxUses: c.max_uses,
         redemptionCount: countByCodeId.get(c.id) ?? 0,
         expiresAt: c.expires_at?.toISOString() ?? null,
