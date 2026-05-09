@@ -105,6 +105,19 @@ export type CreatorWithSocials = CreatorListItem & {
   deposits3dUsd: number;
   /** 3-day rolling wager volume — same source as deposits3dUsd. */
   wagers3dUsd: number;
+  /**
+   * Per-period PnL from this creator's referrals (GGR — wagers minus
+   * payouts) for 1d / 3d / 7d / 14d / 30d. House POV: positive = we
+   * made money, negative = we lost money. null when batch query
+   * failed (renders the row as muted "—" instead of blowing up).
+   */
+  pnlByPeriod: {
+    "1d": { wagers: number; payouts: number; pnl: number; deposits: number };
+    "3d": { wagers: number; payouts: number; pnl: number; deposits: number };
+    "7d": { wagers: number; payouts: number; pnl: number; deposits: number };
+    "14d": { wagers: number; payouts: number; pnl: number; deposits: number };
+    "30d": { wagers: number; payouts: number; pnl: number; deposits: number };
+  } | null;
 };
 
 /**
@@ -222,6 +235,15 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
           deposits3dUsd={creator.deposits3dUsd}
           wagers3dUsd={creator.wagers3dUsd}
         />
+
+        {/* PNL STRIP — per-period GGR (wagers − payouts) from this
+            creator's referrals across 1d / 3d / 7d / 14d / 30d. House
+            POV: positive = we made money (emerald), negative = we lost
+            money (rose). Hidden when the batched query failed (null
+            input) so the card doesn't render dashes for everyone. */}
+        {creator.pnlByPeriod && (
+          <PnlStrip pnlByPeriod={creator.pnlByPeriod} />
+        )}
 
         {/* SOCIALS */}
         <SocialsRow socials={creator.socials} />
@@ -469,6 +491,77 @@ function MomentumRow({
           {wagers3dUsd > 0 ? formatCurrency(wagers3dUsd) : "—"}
         </span>
       </span>
+    </div>
+  );
+}
+
+// Per-period PnL strip — 5 mini-cells (1d / 3d / 7d / 14d / 30d), each
+// showing the GGR contribution from this creator's referrals in that
+// window. House POV: positive emerald, negative rose, zero muted "—".
+//
+// Wagers + payouts in the underlying data come from ledger_transactions
+// of referred users (staff-excluded); PnL = wagers − payouts. Same
+// formula the dashboard uses for global GGR, so per-creator + global
+// numbers reconcile.
+//
+// Compact layout: 5-up grid, divider-separated, label above value.
+// Tabular nums so the dollar amounts line up across the row.
+function PnlStrip({
+  pnlByPeriod,
+}: {
+  pnlByPeriod: NonNullable<CreatorWithSocials["pnlByPeriod"]>;
+}) {
+  const periods: Array<{
+    key: keyof typeof pnlByPeriod;
+    label: string;
+  }> = [
+    { key: "1d", label: "1d" },
+    { key: "3d", label: "3d" },
+    { key: "7d", label: "7d" },
+    { key: "14d", label: "2w" },
+    { key: "30d", label: "1m" },
+  ];
+  return (
+    <div>
+      <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <span>PnL</span>
+        <span
+          className="text-muted-foreground/60 normal-case"
+          title="Wagers minus payouts from this creator's referrals (GGR). House POV: positive = we made money, negative = we lost money."
+        >
+          (house POV)
+        </span>
+      </div>
+      <div className="grid grid-cols-5 divide-x divide-border/60">
+        {periods.map(({ key, label }) => {
+          const v = pnlByPeriod[key].pnl;
+          const color =
+            v > 0
+              ? "text-emerald-600 dark:text-emerald-400"
+              : v < 0
+                ? "text-rose-600 dark:text-rose-400"
+                : "text-muted-foreground/60";
+          return (
+            <div
+              key={key}
+              className="min-w-0 px-2 first:pl-0 last:pr-0"
+              title={`${label}: wagers ${formatCurrency(pnlByPeriod[key].wagers)} − payouts ${formatCurrency(pnlByPeriod[key].payouts)}`}
+            >
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
+                {label}
+              </div>
+              <div
+                className={cn(
+                  "truncate text-xs font-semibold tabular-nums",
+                  color,
+                )}
+              >
+                {v === 0 ? "—" : formatCurrency(v)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

@@ -2,6 +2,25 @@ import "server-only";
 
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import {
+  WAGER_TYPES_SQL,
+  PAYOUT_TYPES_SQL,
+} from "@/lib/queries/_wager-payout-types";
+
+/**
+ * Per-period PnL snapshot for a single creator. Periods match what the
+ * card displays: 1d / 3d / 7d / 14d / 30d. PnL is GGR from this
+ * creator's referrals — wagers minus payouts — in house POV. Positive
+ * = house income, negative = house loss.
+ */
+export type CreatorPnlByPeriod = {
+  wagers: number;
+  payouts: number;
+  /** wagers − payouts. Same shape as the dashboard GGR aggregate. */
+  pnl: number;
+  /** Real deposit volume from referred users in the period (lt.type='deposit'). */
+  deposits: number;
+};
 
 export type CreatorCodeAndWager = {
   /**
@@ -34,17 +53,51 @@ export type CreatorCodeAndWager = {
    */
   ftds: number;
   /**
-   * 3-day rolling deposit volume from this creator's affiliates
-   * (sum of affiliate_code_usages.deposit_amount_usd in the last
-   * 72h, staff-excluded). Drives the "Last 3d" momentum line on
-   * the creator card.
+   * 3-day rolling deposit volume from this creator's affiliates.
+   * Source: `ledger_transactions` rows of `type = 'deposit'` from
+   * users this creator referred, staff-excluded, last 72h. Used to
+   * be `affiliate_code_usages.deposit_amount_usd` which the backend
+   * only writes for the FIRST deposit per user (FTD-only) — that
+   * was undercounting repeat deposits, hence the migration to the
+   * ledger source for the actual cash-in number.
    */
   deposits3dUsd: number;
   /**
-   * 3-day rolling wager volume — same source/window/exclusion as
-   * deposits3dUsd, summing wager_amount_usd.
+   * 3-day rolling wager volume — wager-type ledger transactions
+   * (pack_opening / battle_bet / battle_sponsorship /
+   * withdrawal_shipping_fee, the canonical wager set) from referred
+   * users in the last 72h. Aligned with the per-creator PnL row so
+   * the displayed wagers always reconcile against the displayed PnL.
    */
   wagers3dUsd: number;
+  /**
+   * Per-period PnL from this creator's referrals — wagers minus
+   * payouts (GGR). Periods: 1d / 3d / 7d / 14d / 30d. Positive =
+   * house gain, negative = house loss. Drives the per-card PnL
+   * strip on /creators.
+   */
+  pnlByPeriod: {
+    "1d": CreatorPnlByPeriod;
+    "3d": CreatorPnlByPeriod;
+    "7d": CreatorPnlByPeriod;
+    "14d": CreatorPnlByPeriod;
+    "30d": CreatorPnlByPeriod;
+  };
+};
+
+/** Empty period record — used when a creator has no referred-user ledger activity. */
+const EMPTY_PERIOD: CreatorPnlByPeriod = {
+  wagers: 0,
+  payouts: 0,
+  pnl: 0,
+  deposits: 0,
+};
+const EMPTY_PNL: CreatorCodeAndWager["pnlByPeriod"] = {
+  "1d": EMPTY_PERIOD,
+  "3d": EMPTY_PERIOD,
+  "7d": EMPTY_PERIOD,
+  "14d": EMPTY_PERIOD,
+  "30d": EMPTY_PERIOD,
 };
 
 /**
@@ -108,23 +161,70 @@ export async function getCodeAndWagerByUser(
           GROUP BY acu.affiliate_user_id`,
         userIds,
       ),
-      // 3-day rolling momentum: deposit + wager volume from this
-      // creator's affiliates in the last 72h, staff-excluded.
-      // Single batched query over affiliate_code_usages — both sums
-      // share the same outer scan + JOIN to "user", so doing them
-      // separately would double the DB cost for no benefit.
+      // Per-creator PnL + momentum across 5 windows (1d / 3d / 7d /
+      // 14d / 30d), batched. Source = ledger_transactions for users
+      // referred by this creator (joined via affiliate_code_usages
+      // → DISTINCT referred_user_id). Staff (admin / support)
+      // excluded. Each period's three SUM-CASE clauses share the
+      // same scan, so the planner does one ledger seq/index scan
+      // for the whole result no matter how many periods are
+      // requested.
+      //
+      // Why ledger and not affiliate_code_usages: the backend writes
+      // acu.deposit_amount_usd for the FTD only; repeat deposits
+      // weren't counted. Switching to lt.type='deposit' on referred
+      // users counts every cash deposit, which is the number the
+      // admin actually wants to see. Wagers + payouts on the same
+      // source guarantees the displayed PnL reconciles with the
+      // displayed wager number per row.
       db.$queryRawUnsafe<
-        { user_id: string; deposits_3d: string; wagers_3d: string }[]
+        Array<
+          {
+            creator_user_id: string;
+          } & Record<
+            | "wagers_1d" | "wagers_3d" | "wagers_7d" | "wagers_14d" | "wagers_30d"
+            | "payouts_1d" | "payouts_3d" | "payouts_7d" | "payouts_14d" | "payouts_30d"
+            | "deposits_1d" | "deposits_3d" | "deposits_7d" | "deposits_14d" | "deposits_30d",
+            string
+          >
+        >
       >(
-        `SELECT acu.affiliate_user_id AS user_id,
-                COALESCE(SUM(acu.deposit_amount_usd::numeric), 0)::text AS deposits_3d,
-                COALESCE(SUM(acu.wager_amount_usd::numeric),   0)::text AS wagers_3d
-           FROM affiliate_code_usages acu
-           JOIN "user" ru ON ru.id = acu.referred_user_id
-          WHERE acu.affiliate_user_id = ANY($1::text[])
-            AND acu.created_at >= NOW() - INTERVAL '3 days'
+        `WITH creator_referrals AS (
+           SELECT DISTINCT acu.affiliate_user_id AS creator_user_id,
+                           acu.referred_user_id  AS user_id
+             FROM affiliate_code_usages acu
+            WHERE acu.affiliate_user_id = ANY($1::text[])
+         )
+         SELECT cr.creator_user_id,
+                -- Wagers per window — ABS because user-side ledger
+                -- amounts are stored negative for debits.
+                COALESCE(SUM(CASE WHEN lt.type IN ${WAGER_TYPES_SQL}  AND lt.created_at >= NOW() - INTERVAL '1 day'   THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS wagers_1d,
+                COALESCE(SUM(CASE WHEN lt.type IN ${WAGER_TYPES_SQL}  AND lt.created_at >= NOW() - INTERVAL '3 days'  THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS wagers_3d,
+                COALESCE(SUM(CASE WHEN lt.type IN ${WAGER_TYPES_SQL}  AND lt.created_at >= NOW() - INTERVAL '7 days'  THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS wagers_7d,
+                COALESCE(SUM(CASE WHEN lt.type IN ${WAGER_TYPES_SQL}  AND lt.created_at >= NOW() - INTERVAL '14 days' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS wagers_14d,
+                COALESCE(SUM(CASE WHEN lt.type IN ${WAGER_TYPES_SQL}  AND lt.created_at >= NOW() - INTERVAL '30 days' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS wagers_30d,
+                -- Payouts per window — same set of types the dashboard
+                -- subtracts when computing GGR (see _wager-payout-types.ts).
+                COALESCE(SUM(CASE WHEN lt.type IN ${PAYOUT_TYPES_SQL} AND lt.created_at >= NOW() - INTERVAL '1 day'   THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS payouts_1d,
+                COALESCE(SUM(CASE WHEN lt.type IN ${PAYOUT_TYPES_SQL} AND lt.created_at >= NOW() - INTERVAL '3 days'  THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS payouts_3d,
+                COALESCE(SUM(CASE WHEN lt.type IN ${PAYOUT_TYPES_SQL} AND lt.created_at >= NOW() - INTERVAL '7 days'  THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS payouts_7d,
+                COALESCE(SUM(CASE WHEN lt.type IN ${PAYOUT_TYPES_SQL} AND lt.created_at >= NOW() - INTERVAL '14 days' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS payouts_14d,
+                COALESCE(SUM(CASE WHEN lt.type IN ${PAYOUT_TYPES_SQL} AND lt.created_at >= NOW() - INTERVAL '30 days' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS payouts_30d,
+                -- Real deposits per window — lt.type='deposit', not
+                -- the FTD-only acu.deposit_amount_usd. Counts every
+                -- cash-in by referred users, which is what the admin
+                -- expects.
+                COALESCE(SUM(CASE WHEN lt.type = 'deposit'           AND lt.created_at >= NOW() - INTERVAL '1 day'   THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS deposits_1d,
+                COALESCE(SUM(CASE WHEN lt.type = 'deposit'           AND lt.created_at >= NOW() - INTERVAL '3 days'  THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS deposits_3d,
+                COALESCE(SUM(CASE WHEN lt.type = 'deposit'           AND lt.created_at >= NOW() - INTERVAL '7 days'  THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS deposits_7d,
+                COALESCE(SUM(CASE WHEN lt.type = 'deposit'           AND lt.created_at >= NOW() - INTERVAL '14 days' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS deposits_14d,
+                COALESCE(SUM(CASE WHEN lt.type = 'deposit'           AND lt.created_at >= NOW() - INTERVAL '30 days' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS deposits_30d
+           FROM ledger_transactions lt
+           JOIN creator_referrals cr ON cr.user_id = lt.user_id
+           JOIN "user" ru            ON ru.id      = lt.user_id
+          WHERE lt.status = 'completed'
             AND ru.role NOT IN ('admin', 'support')
-          GROUP BY acu.affiliate_user_id`,
+          GROUP BY cr.creator_user_id`,
         userIds,
       ),
     ]);
@@ -140,21 +240,48 @@ export async function getCodeAndWagerByUser(
     signupRows.map((r) => [r.user_id, Number(r.signups)]),
   );
   const ftdsById = new Map(ftdRows.map((r) => [r.user_id, Number(r.ftds)]));
-  const deposits3dById = new Map(
-    momentumRows.map((r) => [r.user_id, toNumber(r.deposits_3d)]),
-  );
-  const wagers3dById = new Map(
-    momentumRows.map((r) => [r.user_id, toNumber(r.wagers_3d)]),
-  );
+
+  // Project the wide momentum row (one row per creator with all 5
+  // periods × 3 metrics) into the nested per-period shape the UI
+  // expects. PnL = wagers − payouts in house POV.
+  const pnlByCreatorId = new Map<string, CreatorCodeAndWager["pnlByPeriod"]>();
+  for (const r of momentumRows) {
+    const project = (
+      w: string,
+      p: string,
+      d: string,
+    ): CreatorPnlByPeriod => {
+      const wagers = toNumber(w);
+      const payouts = toNumber(p);
+      return {
+        wagers,
+        payouts,
+        pnl: wagers - payouts,
+        deposits: toNumber(d),
+      };
+    };
+    pnlByCreatorId.set(r.creator_user_id, {
+      "1d": project(r.wagers_1d, r.payouts_1d, r.deposits_1d),
+      "3d": project(r.wagers_3d, r.payouts_3d, r.deposits_3d),
+      "7d": project(r.wagers_7d, r.payouts_7d, r.deposits_7d),
+      "14d": project(r.wagers_14d, r.payouts_14d, r.deposits_14d),
+      "30d": project(r.wagers_30d, r.payouts_30d, r.deposits_30d),
+    });
+  }
 
   for (const id of userIds) {
+    const pnl = pnlByCreatorId.get(id) ?? EMPTY_PNL;
     result.set(id, {
       code: codeById.get(id) ?? null,
       wagerVolumeUsd: wagerById.get(id) ?? 0,
       signups: signupsById.get(id) ?? 0,
       ftds: ftdsById.get(id) ?? 0,
-      deposits3dUsd: deposits3dById.get(id) ?? 0,
-      wagers3dUsd: wagers3dById.get(id) ?? 0,
+      // 3d wagers + deposits surface on the existing momentum line —
+      // pulled from the same per-period record so the row + the PnL
+      // strip can never disagree.
+      deposits3dUsd: pnl["3d"].deposits,
+      wagers3dUsd: pnl["3d"].wagers,
+      pnlByPeriod: pnl,
     });
   }
   return result;
