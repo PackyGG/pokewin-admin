@@ -22,7 +22,7 @@ const codeSchema = z
   .string()
   .trim()
   .toUpperCase()
-  .min(4)
+  .min(2)
   .max(32)
   .regex(/^[A-Z0-9_-]+$/, "Code must be alphanumeric, _ or -");
 
@@ -137,7 +137,7 @@ export async function makeCreator(userId: string) {
   if (!user.email) throw new Error("User has no email");
 
   const raw = (user.username ?? user.email.split("@")[0]).toUpperCase().replace(/[^A-Z0-9]/g, "");
-  const code = raw.length >= 4 ? raw : raw + Math.random().toString(36).toUpperCase().slice(2, 2 + (4 - raw.length));
+  const code = raw.length >= 2 ? raw : raw + Math.random().toString(36).toUpperCase().slice(2, 2 + (2 - raw.length));
 
   // Check code uniqueness, append random suffix if needed
   let finalCode = code;
