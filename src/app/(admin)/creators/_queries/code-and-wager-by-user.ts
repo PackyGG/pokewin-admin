@@ -139,7 +139,7 @@ const EMPTY_PNL: CreatorCodeAndWager["pnlByPeriod"] = {
 type LedgerRow = {
   creator_user_id: string;
   deposits_1d: string; deposits_3d: string; deposits_7d: string; deposits_14d: string; deposits_30d: string;
-  bal_wd_1d: string; bal_wd_3d: string; bal_wd_7d: string; bal_wd_14d: string; bal_wd_30d: string;
+  manual_wd_1d: string; manual_wd_3d: string; manual_wd_7d: string; manual_wd_14d: string; manual_wd_30d: string;
   bal_change_1d: string; bal_change_3d: string; bal_change_7d: string; bal_change_14d: string; bal_change_30d: string;
   wagers_3d: string;
 };
@@ -225,11 +225,25 @@ export async function getCodeAndWagerByUser(
       userIds,
     ),
 
-    // Ledger-derived components (deposits, balance withdrawals,
-    // balance change) per window per creator. The 3d wager total is
-    // also pulled here so the row's momentum line + the PnL strip
-    // share a single ledger scan. All rows are bounded to the last
-    // 30 days so the planner doesn't traverse historical ledger.
+    // Ledger-derived components per window per creator:
+    //   deposits     = SUM(amount where type='deposit')
+    //   manual_wd    = SUM(amount where type='admin_balance_adjustment'
+    //                       AND balance_after < balance_before
+    //                       AND description ILIKE 'Manual withdrawal:%')
+    //   bal_change   = SUM(balance_after − balance_before) — SIGNED.
+    //
+    // Sign convention notes:
+    //   • lt.amount is ALWAYS POSITIVE in this DB; the sign of the
+    //     balance impact lives in (balance_after − balance_before).
+    //   • There is no 'withdrawal' value in ledger_transaction_type.
+    //     Real withdrawals are captured by card_withdrawal_requests
+    //     (separate table, scanned in the next query) plus the rare
+    //     admin_balance_adjustment manual-cashout (description-tagged).
+    //
+    // The 3d wager total is also pulled here so the row's momentum
+    // line + the PnL strip share a single ledger scan. All rows are
+    // bounded to the last 30 days so the planner doesn't traverse
+    // historical ledger.
     db.$queryRawUnsafe<LedgerRow[]>(
       `WITH creator_referrals AS (
          SELECT DISTINCT acu.affiliate_user_id AS creator_user_id,
@@ -241,22 +255,22 @@ export async function getCodeAndWagerByUser(
             AND u.id != acu.affiliate_user_id
        )
        SELECT cr.creator_user_id,
-              COALESCE(SUM(CASE WHEN lt.type = 'deposit'    AND lt.created_at >= NOW() - INTERVAL '1 day'   THEN lt.amount::numeric      ELSE 0 END), 0)::text AS deposits_1d,
-              COALESCE(SUM(CASE WHEN lt.type = 'deposit'    AND lt.created_at >= NOW() - INTERVAL '3 days'  THEN lt.amount::numeric      ELSE 0 END), 0)::text AS deposits_3d,
-              COALESCE(SUM(CASE WHEN lt.type = 'deposit'    AND lt.created_at >= NOW() - INTERVAL '7 days'  THEN lt.amount::numeric      ELSE 0 END), 0)::text AS deposits_7d,
-              COALESCE(SUM(CASE WHEN lt.type = 'deposit'    AND lt.created_at >= NOW() - INTERVAL '14 days' THEN lt.amount::numeric      ELSE 0 END), 0)::text AS deposits_14d,
-              COALESCE(SUM(CASE WHEN lt.type = 'deposit'    AND lt.created_at >= NOW() - INTERVAL '30 days' THEN lt.amount::numeric      ELSE 0 END), 0)::text AS deposits_30d,
-              COALESCE(SUM(CASE WHEN lt.type = 'withdrawal' AND lt.created_at >= NOW() - INTERVAL '1 day'   THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS bal_wd_1d,
-              COALESCE(SUM(CASE WHEN lt.type = 'withdrawal' AND lt.created_at >= NOW() - INTERVAL '3 days'  THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS bal_wd_3d,
-              COALESCE(SUM(CASE WHEN lt.type = 'withdrawal' AND lt.created_at >= NOW() - INTERVAL '7 days'  THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS bal_wd_7d,
-              COALESCE(SUM(CASE WHEN lt.type = 'withdrawal' AND lt.created_at >= NOW() - INTERVAL '14 days' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS bal_wd_14d,
-              COALESCE(SUM(CASE WHEN lt.type = 'withdrawal' AND lt.created_at >= NOW() - INTERVAL '30 days' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS bal_wd_30d,
-              COALESCE(SUM(CASE WHEN                            lt.created_at >= NOW() - INTERVAL '1 day'   THEN lt.amount::numeric      ELSE 0 END), 0)::text AS bal_change_1d,
-              COALESCE(SUM(CASE WHEN                            lt.created_at >= NOW() - INTERVAL '3 days'  THEN lt.amount::numeric      ELSE 0 END), 0)::text AS bal_change_3d,
-              COALESCE(SUM(CASE WHEN                            lt.created_at >= NOW() - INTERVAL '7 days'  THEN lt.amount::numeric      ELSE 0 END), 0)::text AS bal_change_7d,
-              COALESCE(SUM(CASE WHEN                            lt.created_at >= NOW() - INTERVAL '14 days' THEN lt.amount::numeric      ELSE 0 END), 0)::text AS bal_change_14d,
-              COALESCE(SUM(CASE WHEN                            lt.created_at >= NOW() - INTERVAL '30 days' THEN lt.amount::numeric      ELSE 0 END), 0)::text AS bal_change_30d,
-              COALESCE(SUM(CASE WHEN lt.type IN ${WAGER_TYPES_SQL} AND lt.created_at >= NOW() - INTERVAL '3 days'  THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS wagers_3d
+              COALESCE(SUM(CASE WHEN lt.type = 'deposit' AND lt.created_at >= NOW() - INTERVAL '1 day'   THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits_1d,
+              COALESCE(SUM(CASE WHEN lt.type = 'deposit' AND lt.created_at >= NOW() - INTERVAL '3 days'  THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits_3d,
+              COALESCE(SUM(CASE WHEN lt.type = 'deposit' AND lt.created_at >= NOW() - INTERVAL '7 days'  THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits_7d,
+              COALESCE(SUM(CASE WHEN lt.type = 'deposit' AND lt.created_at >= NOW() - INTERVAL '14 days' THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits_14d,
+              COALESCE(SUM(CASE WHEN lt.type = 'deposit' AND lt.created_at >= NOW() - INTERVAL '30 days' THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits_30d,
+              COALESCE(SUM(CASE WHEN lt.type = 'admin_balance_adjustment' AND lt.balance_after < lt.balance_before AND lt.description ILIKE 'Manual withdrawal:%' AND lt.created_at >= NOW() - INTERVAL '1 day'   THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd_1d,
+              COALESCE(SUM(CASE WHEN lt.type = 'admin_balance_adjustment' AND lt.balance_after < lt.balance_before AND lt.description ILIKE 'Manual withdrawal:%' AND lt.created_at >= NOW() - INTERVAL '3 days'  THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd_3d,
+              COALESCE(SUM(CASE WHEN lt.type = 'admin_balance_adjustment' AND lt.balance_after < lt.balance_before AND lt.description ILIKE 'Manual withdrawal:%' AND lt.created_at >= NOW() - INTERVAL '7 days'  THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd_7d,
+              COALESCE(SUM(CASE WHEN lt.type = 'admin_balance_adjustment' AND lt.balance_after < lt.balance_before AND lt.description ILIKE 'Manual withdrawal:%' AND lt.created_at >= NOW() - INTERVAL '14 days' THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd_14d,
+              COALESCE(SUM(CASE WHEN lt.type = 'admin_balance_adjustment' AND lt.balance_after < lt.balance_before AND lt.description ILIKE 'Manual withdrawal:%' AND lt.created_at >= NOW() - INTERVAL '30 days' THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd_30d,
+              COALESCE(SUM(CASE WHEN lt.created_at >= NOW() - INTERVAL '1 day'   THEN (lt.balance_after - lt.balance_before)::numeric ELSE 0 END), 0)::text AS bal_change_1d,
+              COALESCE(SUM(CASE WHEN lt.created_at >= NOW() - INTERVAL '3 days'  THEN (lt.balance_after - lt.balance_before)::numeric ELSE 0 END), 0)::text AS bal_change_3d,
+              COALESCE(SUM(CASE WHEN lt.created_at >= NOW() - INTERVAL '7 days'  THEN (lt.balance_after - lt.balance_before)::numeric ELSE 0 END), 0)::text AS bal_change_7d,
+              COALESCE(SUM(CASE WHEN lt.created_at >= NOW() - INTERVAL '14 days' THEN (lt.balance_after - lt.balance_before)::numeric ELSE 0 END), 0)::text AS bal_change_14d,
+              COALESCE(SUM(CASE WHEN lt.created_at >= NOW() - INTERVAL '30 days' THEN (lt.balance_after - lt.balance_before)::numeric ELSE 0 END), 0)::text AS bal_change_30d,
+              COALESCE(SUM(CASE WHEN lt.type IN ${WAGER_TYPES_SQL} AND lt.created_at >= NOW() - INTERVAL '3 days' THEN lt.amount::numeric ELSE 0 END), 0)::text AS wagers_3d
          FROM ledger_transactions lt
          JOIN creator_referrals cr ON cr.user_id = lt.user_id
         WHERE lt.status = 'completed'
@@ -389,9 +403,11 @@ export async function getCodeAndWagerByUser(
 
     const computeForPeriod = (period: PKey): CreatorPnlByPeriod => {
       const deposits = lr ? toNumber(lr[`deposits_${period}` as const]) : 0;
-      const balWithdrawals = lr ? toNumber(lr[`bal_wd_${period}` as const]) : 0;
+      const manualWithdrawals = lr
+        ? toNumber(lr[`manual_wd_${period}` as const])
+        : 0;
       const cardWithdrawals = cw ? toNumber(cw[`cwd_${period}` as const]) : 0;
-      const withdrawals = balWithdrawals + cardWithdrawals;
+      const withdrawals = manualWithdrawals + cardWithdrawals;
       const balanceChange = lr ? toNumber(lr[`bal_change_${period}` as const]) : 0;
       const obtained = iv ? toNumber(iv[`obtained_${period}` as const]) : 0;
       const disposed = iv ? toNumber(iv[`disposed_${period}` as const]) : 0;
