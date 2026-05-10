@@ -1,11 +1,25 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
-// SQL fragment for user_id filtering — admin + support are internal
-// accounts so we drop them from analytics. Creators stay in per the
-// documented decision in _exclude-staff.ts (their wagers/deposits are
-// real revenue/payouts). Hardcoded role names → safe with $queryRawUnsafe.
-const EXCL_STAFF_FRAG = `AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','support'))`;
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+
+// SQL fragment builder for user_id filtering — admin + support are
+// internal accounts so we drop them from analytics. Creators stay in
+// per the documented decision in _exclude-staff.ts (their
+// wagers/deposits are real revenue/payouts). Now ALSO appends the
+// admin-managed blacklist from `excluded_users` so manually-excluded
+// accounts drop out of every analytics aggregate. IDs inlined as
+// quoted literals — they're packy.gg user_ids (alphanum), and we
+// double-up embedded single quotes defensively.
+function buildExclStaffFrag(excluded: string[]): string {
+  const tail =
+    excluded.length > 0
+      ? ` AND id NOT IN (${excluded
+          .map((id) => `'${id.replace(/'/g, "''")}'`)
+          .join(",")})`
+      : "";
+  return `AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','support')${tail})`;
+}
 
 type Period = "today" | "7d" | "30d" | "90d" | "all";
 
@@ -100,6 +114,20 @@ export type AnalyticsData = {
 export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
   const db = await getDb();
   const dateFilter = periodToDateFilter(period);
+  // Per-request blacklist (cached via React cache) → build the staff
+  // + blacklist SQL fragment once and re-use across every sub-query
+  // below. Same trick `dashboard.ts` uses.
+  const excluded = await getExcludedUserIds();
+  const EXCL_STAFF_FRAG = buildExclStaffFrag(excluded);
+  // Inline `AND id NOT IN (...)` for queries that filter directly on
+  // the user table (rather than on `user_id IN (subquery)`). Empty
+  // string when nothing is blacklisted.
+  const blacklistIdNotIn =
+    excluded.length > 0
+      ? `AND id NOT IN (${excluded
+          .map((id) => `'${id.replace(/'/g, "''")}'`)
+          .join(",")})`
+      : "";
   // Same filter, but without the leading "AND " because it'll be the only WHERE condition
   // Exclude battles created by admin/creator (support counts as normal user)
   const battleStaffExcl = `user_id IN (SELECT id FROM "user" WHERE role != 'admin')`;
@@ -269,7 +297,7 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
       db.$queryRawUnsafe<{ date: Date; count: string }[]>(`
         SELECT DATE(created_at) AS date, COUNT(*)::text AS count
         FROM "user"
-        WHERE role NOT IN ('admin', 'support') ${dateFilter}
+        WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn} ${dateFilter}
         GROUP BY DATE(created_at)
         ORDER BY date
       `),
@@ -337,7 +365,7 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
         JOIN game_sessions gs ON lt.game_session_id = gs.id AND gs.game_type = 'pack'
         JOIN packs p ON gs.game_id = p.id
         WHERE lt.type = 'pack_opening' AND lt.status = 'completed' ${dateFilter.replace(/created_at/g, "lt.created_at")}
-          AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support'))
+          AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})
         GROUP BY p.id, p.name
         ORDER BY COUNT(*) DESC
         LIMIT 20

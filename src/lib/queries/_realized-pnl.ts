@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db";
 import { withTiming } from "@/lib/observability/query-timings";
 import { computeHousePnl } from "./pnl";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 /**
  * Lifetime realized P&L from the house perspective — a balance-sheet snapshot.
@@ -36,7 +37,20 @@ export async function getRealizedPnlSnapshot(): Promise<RealizedPnlSnapshot> {
 
 async function realizedPnlSnapshotInner(): Promise<RealizedPnlSnapshot> {
   const db = await getDb();
-  const rows = await db.$queryRaw<
+  // Pull the blacklist alongside the role-based staff exclusion so
+  // admin-managed exclusions (the /system/excluded-users page) drop
+  // out of lifetime PnL too. Empty list → no extra filter, query
+  // stays equivalent to the previous staff-only version. IDs are
+  // packy.gg user_ids — already alphanumeric — but we double-up any
+  // embedded single quote defensively before inlining.
+  const excluded = await getExcludedUserIds();
+  const blacklistFrag =
+    excluded.length > 0
+      ? `AND id NOT IN (${excluded
+          .map((id) => `'${id.replace(/'/g, "''")}'`)
+          .join(",")})`
+      : "";
+  const rows = await db.$queryRawUnsafe<
     {
       deposited: string;
       balance_withdrawn: string;
@@ -47,9 +61,9 @@ async function realizedPnlSnapshotInner(): Promise<RealizedPnlSnapshot> {
       vouchers: string;
       unclaimed_rakeback: string;
     }[]
-  >`
+  >(`
     WITH real_users AS (
-      SELECT id FROM "user" WHERE role NOT IN ('admin', 'support')
+      SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistFrag}
     )
     SELECT
       COALESCE((SELECT SUM(total_deposited::numeric)     FROM balances                 WHERE user_id IN (SELECT id FROM real_users)), 0)::text AS deposited,
@@ -60,7 +74,7 @@ async function realizedPnlSnapshotInner(): Promise<RealizedPnlSnapshot> {
       COALESCE((SELECT SUM(value_at_obtained::numeric)   FROM user_inventory            WHERE sold_at IS NULL AND exchanged_at IS NULL AND user_id IN (SELECT id FROM real_users)), 0)::text AS inventory,
       COALESCE((SELECT SUM(value::numeric)               FROM vouchers                  WHERE claimed_at IS NULL AND user_id IN (SELECT id FROM real_users)), 0)::text AS vouchers,
       COALESCE((SELECT SUM(rakeback_amount_usd::numeric) FROM rakeback_claims           WHERE claimed_at IS NULL AND user_id IN (SELECT id FROM real_users)), 0)::text AS unclaimed_rakeback
-  `;
+  `);
 
   const r = rows[0];
   const totalDeposited = Number(r?.deposited ?? 0);

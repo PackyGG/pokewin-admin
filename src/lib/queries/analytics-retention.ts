@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 /**
  * Retention / churn curves.
@@ -36,6 +37,11 @@ export type RetentionData = {
 
 export async function getRetentionCurve(): Promise<RetentionData> {
   const db = await getDb();
+  const excluded = await getExcludedUserIds();
+  const blacklistIdNotIn =
+    excluded.length > 0
+      ? `AND id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
+      : "";
   // Pull per-day retention in one shot. For each (cohort, day-offset)
   // bucket, count distinct users that wagered in that bucket. The
   // "eligible cohort" for day N is everyone who signed up at least N
@@ -50,7 +56,7 @@ export async function getRetentionCurve(): Promise<RetentionData> {
     WITH eligible AS (
       SELECT id AS user_id, created_at
       FROM "user"
-      WHERE role NOT IN ('admin', 'support')
+      WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
         AND created_at >= NOW() - INTERVAL '${COHORT_WINDOW_DAYS} days'
     ),
     days AS (

@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 /**
  * Activity heatmap: 7 days × 24 hours of wager volume + deposit count.
@@ -54,6 +55,11 @@ export async function getActivityHeatmap(
 ): Promise<HeatmapData> {
   const db = await getDb();
   const days = daysForPeriod(period);
+  const excluded = await getExcludedUserIds();
+  const blacklistIdNotIn =
+    excluded.length > 0
+      ? `AND id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
+      : "";
 
   const rows = await db.$queryRawUnsafe<
     {
@@ -71,7 +77,7 @@ export async function getActivityHeatmap(
       COUNT(CASE WHEN lt.type = 'deposit' THEN 1 END)::text AS deposits
     FROM ledger_transactions lt
     WHERE lt.status = 'completed'
-      AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support'))
+      AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})
       AND lt.created_at >= NOW() - INTERVAL '${days} days'
     GROUP BY EXTRACT(DOW FROM lt.created_at)::int, EXTRACT(HOUR FROM lt.created_at)::int
   `);

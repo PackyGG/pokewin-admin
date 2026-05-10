@@ -41,6 +41,7 @@ import {
   ChevronRight,
   FlaskConical,
   ListChecks,
+  Ban,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -101,6 +102,7 @@ const ICONS: Record<string, LucideIcon> = {
   Coins,
   FlaskConical,
   ListChecks,
+  Ban,
 };
 
 type NavItem = {
@@ -246,6 +248,15 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Role Permissions", href: "/settings/roles", icon: "Shield" },
       { label: "Bots", href: "/bots", icon: "Bot" },
       { label: "Settings", href: "/settings", icon: "Settings" },
+      // Excluded users blacklist — motha-only entry point. The page
+      // itself ALSO enforces the gate server-side, so this is just a
+      // UI hide; the security boundary is in the page + actions.
+      {
+        label: "Excluded Users",
+        href: "/system/excluded-users",
+        icon: "Ban",
+        usernameAllowlist: ["motha"],
+      },
       { label: "Audit Log", href: "/audit", icon: "FileText" },
       { label: "Commands", href: "/system/commands", icon: "Command" },
       { label: "Dashboard Stats", href: "/system/stats", icon: "Gauge" },

@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 /**
  * Cohort retention analysis.
@@ -46,6 +47,11 @@ export async function getCohortRetention(
   const dateTrunc = granularity === "week" ? "week" : "month";
   const periodInterval = granularity === "week" ? "7 days" : "1 month";
   const cohortHorizon = granularity === "week" ? "140 days" : "36 months";
+  const excluded = await getExcludedUserIds();
+  const blacklistIdNotIn =
+    excluded.length > 0
+      ? `AND u.id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
+      : "";
 
   // Pull cohorts + activity in a single pass. `period_index` is integer
   // distance between activity bucket and signup bucket; clamp to the last
@@ -65,7 +71,7 @@ export async function getCohortRetention(
         u.id AS user_id,
         u.created_at
       FROM "user" u
-      WHERE u.role NOT IN ('admin', 'support')
+      WHERE u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
         AND u.created_at >= NOW() - INTERVAL '${cohortHorizon}'
     ),
     cohort_sizes AS (

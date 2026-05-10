@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
 
 /**
@@ -91,6 +92,13 @@ export async function getRevenueBreakdown(
   const days = daysForPeriod(period);
   const dateFilter =
     days !== null ? `AND created_at >= NOW() - INTERVAL '${days} days'` : "";
+  const excluded = await getExcludedUserIds();
+  const blacklistIdNotIn =
+    excluded.length > 0
+      ? `AND id NOT IN (${excluded
+          .map((id) => `'${id.replace(/'/g, "''")}'`)
+          .join(",")})`
+      : "";
 
   const dailyRows = await db.$queryRawUnsafe<
     {
@@ -129,7 +137,7 @@ export async function getRevenueBreakdown(
       COALESCE(SUM(CASE WHEN type = 'waitlist_prize' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS waitlist
     FROM ledger_transactions
     WHERE status = 'completed'
-      AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support'))
+      AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})
       ${dateFilter}
     GROUP BY DATE(created_at)
     ORDER BY date

@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 /**
  * Acquisition funnel: clicks → signups → first-deposit → first-wager →
@@ -47,6 +48,11 @@ export async function getFunnelData(period: FunnelPeriod): Promise<FunnelData> {
   const usersDateFilter =
     days !== null ? `AND u.created_at >= NOW() - INTERVAL '${days} days'` : "";
   const maWCutoff = 30; // MAW = wager in the last 30 days
+  const excluded = await getExcludedUserIds();
+  const blacklistIdNotIn =
+    excluded.length > 0
+      ? `AND u.id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
+      : "";
 
   // Two parallel queries: one for the time-bounded top of the funnel
   // (clicks, taken from affiliate_clicks) and one for the cohort-scoped
@@ -77,7 +83,7 @@ export async function getFunnelData(period: FunnelPeriod): Promise<FunnelData> {
       WITH cohort AS (
         SELECT u.id
         FROM "user" u
-        WHERE u.role NOT IN ('admin', 'support')
+        WHERE u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
           ${usersDateFilter}
       ),
       activity AS (

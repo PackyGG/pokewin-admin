@@ -1,5 +1,19 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+
+// Append-only `AND u.id NOT IN (...)` fragment for the staff-exclusion
+// WHERE clauses used in each leaderboard query. Empty string when
+// nothing is admin-blacklisted so the query stays valid. IDs are
+// inlined as quoted literals — packy.gg user_ids are alphanum, with
+// defensive single-quote escaping.
+async function buildBlacklistIdNotIn(alias = "u"): Promise<string> {
+  const excluded = await getExcludedUserIds();
+  if (excluded.length === 0) return "";
+  return `AND ${alias}.id NOT IN (${excluded
+    .map((id) => `'${id.replace(/'/g, "''")}'`)
+    .join(",")})`;
+}
 
 /**
  * Top-performers leaderboards for /analytics Top Performers tab.
@@ -72,6 +86,7 @@ export async function getTopDepositors(
   period: LeaderboardPeriod,
 ): Promise<UserLeaderRow[]> {
   const db = await getDb();
+  const blacklistIdNotIn = await buildBlacklistIdNotIn();
   const rows = await db.$queryRawUnsafe<
     { id: string; username: string | null; image: string | null; amount: string }[]
   >(`
@@ -79,7 +94,7 @@ export async function getTopDepositors(
     FROM ledger_transactions lt
     JOIN "user" u ON u.id = lt.user_id
     WHERE lt.status = 'completed' AND lt.type = 'deposit'
-      AND u.role NOT IN ('admin', 'support')
+      AND u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
       ${periodFilter(period)}
     GROUP BY u.id, u.username, u.image
     ORDER BY SUM(ABS(lt.amount::numeric)) DESC
@@ -97,6 +112,7 @@ export async function getTopWagerers(
   period: LeaderboardPeriod,
 ): Promise<UserLeaderRow[]> {
   const db = await getDb();
+  const blacklistIdNotIn = await buildBlacklistIdNotIn();
   const rows = await db.$queryRawUnsafe<
     { id: string; username: string | null; image: string | null; amount: string }[]
   >(`
@@ -104,7 +120,7 @@ export async function getTopWagerers(
     FROM ledger_transactions lt
     JOIN "user" u ON u.id = lt.user_id
     WHERE lt.status = 'completed' AND lt.type IN ${WAGER_TYPES}
-      AND u.role NOT IN ('admin', 'support')
+      AND u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
       ${periodFilter(period)}
     GROUP BY u.id, u.username, u.image
     ORDER BY SUM(ABS(lt.amount::numeric)) DESC
@@ -126,6 +142,7 @@ export async function getTopLosers(
   period: LeaderboardPeriod,
 ): Promise<UserLeaderRow[]> {
   const db = await getDb();
+  const blacklistIdNotIn = await buildBlacklistIdNotIn();
   const rows = await db.$queryRawUnsafe<
     { id: string; username: string | null; image: string | null; amount: string }[]
   >(`
@@ -140,7 +157,7 @@ export async function getTopLosers(
     FROM ledger_transactions lt
     JOIN "user" u ON u.id = lt.user_id
     WHERE lt.status = 'completed'
-      AND u.role NOT IN ('admin', 'support')
+      AND u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
       ${periodFilter(period)}
     GROUP BY u.id, u.username, u.image
     HAVING (
@@ -169,6 +186,7 @@ export async function getTopWinners(
   period: LeaderboardPeriod,
 ): Promise<UserLeaderRow[]> {
   const db = await getDb();
+  const blacklistIdNotIn = await buildBlacklistIdNotIn();
   const rows = await db.$queryRawUnsafe<
     { id: string; username: string | null; image: string | null; amount: string }[]
   >(`
@@ -183,7 +201,7 @@ export async function getTopWinners(
     FROM ledger_transactions lt
     JOIN "user" u ON u.id = lt.user_id
     WHERE lt.status = 'completed'
-      AND u.role NOT IN ('admin', 'support')
+      AND u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
       ${periodFilter(period)}
     GROUP BY u.id, u.username, u.image
     HAVING (
@@ -268,6 +286,7 @@ export async function getTopCountries(
   period: LeaderboardPeriod,
 ): Promise<CountryLeaderRow[]> {
   const db = await getDb();
+  const blacklistIdNotIn = await buildBlacklistIdNotIn();
   const rows = await db.$queryRawUnsafe<
     {
       country: string;
@@ -286,7 +305,7 @@ export async function getTopCountries(
       )::text AS ggr
     FROM "user" u
     JOIN ledger_transactions lt ON lt.user_id = u.id
-    WHERE u.role NOT IN ('admin', 'support')
+    WHERE u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
       AND lt.status = 'completed'
       ${periodFilter(period)}
     GROUP BY COALESCE(u.country, 'Unknown'), u.country_code

@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 // Wager events the platform counts as "wagered for leaderboard
 // purposes". Same set used by analytics-cohorts / analytics-top so
@@ -59,6 +60,11 @@ export async function getAffiliateLeaderboardRankings(opts: {
   const limit = Math.max(1, Math.min(Math.floor(opts.limit ?? 100), 500));
 
   const db = await getDb();
+  const excluded = await getExcludedUserIds();
+  const blacklistIdNotIn =
+    excluded.length > 0
+      ? `AND u.id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
+      : "";
 
   // Resolve the code set this leaderboard is scoped to. Empty array
   // on the input = "all codes this creator owns" (matches what the
@@ -125,7 +131,7 @@ export async function getAffiliateLeaderboardRankings(opts: {
        AND lt.type IN ${WAGER_TYPES}
        AND lt.created_at >= $2
        AND lt.created_at <  $3
-       AND u.role NOT IN ('admin', 'support')
+       AND u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
      GROUP BY lt.user_id, u.username, u.email
      HAVING SUM(ABS(lt.amount::numeric)) > 0
      ORDER BY SUM(ABS(lt.amount::numeric)) DESC

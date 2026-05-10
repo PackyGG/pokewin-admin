@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 /**
  * Crypto-asset withdrawal breakdown — answers "which coins get withdrawn
@@ -65,6 +66,11 @@ export async function getWithdrawnCoinsBreakdown(
   const dateFilter = interval
     ? `AND COALESCE(cwr.shipped_at, cwr.completed_at) >= NOW() - ${interval}`
     : "";
+  const excluded = await getExcludedUserIds();
+  const blacklistIdNotIn =
+    excluded.length > 0
+      ? `AND u.id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
+      : "";
 
   // Single round-trip: per-asset crypto totals + a single physical
   // bucket. Results merged in JS into the WithdrawnCoinsData shape so
@@ -88,7 +94,7 @@ export async function getWithdrawnCoinsBreakdown(
     FROM card_withdrawal_requests cwr
     JOIN "user" u ON u.id = cwr.user_id
     WHERE cwr.status IN ('completed', 'shipped')
-      AND u.role NOT IN ('admin', 'support')
+      AND u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
       ${dateFilter}
     GROUP BY bucket, cwr.crypto_asset
     ORDER BY total_usd DESC

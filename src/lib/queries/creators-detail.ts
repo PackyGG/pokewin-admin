@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import type { PaginatedResult } from "@/lib/types";
 import type { CreatorTipItem } from "./creators-types";
 
@@ -58,6 +59,11 @@ export async function getCreatorHeader(userId: string) {
  */
 export async function getCreatorDetail(userId: string) {
   const db = await getDb();
+  const excluded = await getExcludedUserIds();
+  const blacklistIdNotIn =
+    excluded.length > 0
+      ? `AND u.id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
+      : "";
   // Fetch the affiliate account and the user record in parallel. A user can
   // exist without ever being promoted to an affiliate (no affiliate_accounts
   // row, no affiliate_codes). The detail page should still render for these
@@ -224,7 +230,7 @@ export async function getCreatorDetail(userId: string) {
        FROM affiliate_code_usages acu
        JOIN "user" u ON u.id = acu.referred_user_id
        WHERE acu.affiliate_user_id = $1
-         AND u.role NOT IN ('admin', 'support')`,
+         AND u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}`,
       userId,
     ),
     // FTD-by-period — distinct depositors referred by this creator
