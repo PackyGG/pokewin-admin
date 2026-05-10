@@ -57,6 +57,28 @@ const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
  * the `ws` library can't rewrite Sec-WebSocket-Key.
  */
 const PACKY_WS_KEY = "LMUTEH207xvS5FA2bTrXCw==";
+
+// Cookie string captured from a logged-in browser session against the
+// packy.gg gateway. The gateway authenticates the upgrade against
+// `__Secure-better-auth.session_token`; the rest are tracking cookies
+// that the browser would send alongside (kept verbatim so the
+// handshake header set matches the reference exactly — no behavioral
+// difference, but the gateway's bot/abuse heuristics watch for the
+// full set). Rotate this string when the underlying packy.gg session
+// expires (rough cadence: a few weeks per browser session).
+const PACKY_WS_COOKIE = [
+  "intercom-device-id-c5c1dbk8=45f6321b-9e74-4796-8434-d4d59986838a",
+  "_gcl_au=1.1.1107809093.1776644257",
+  "_scid=AFTprP8CczRvaHE9YZX8JOjppSGXmi9DLI0Jig",
+  "_fbp=fb.1.1776644257669.778699124620237106",
+  "_scsrid=VIru1yZyG_-yvZAjQPIcuF9xqlzb9MnTFlTprP8CczRvaHE9YZX8JOjppSGXmi9DLI0JgA",
+  "referral_code=OGNYENGAMBA",
+  "__Secure-better-auth.session_token=olhAMmi7JkUMvWp8Sjg3WUeeXefucPNf.sNIrI8jNYKIdD%2F%2Bn10mFRRjNEtA9mTgyUZzrC7ZM8n8%3D",
+  "_scid_r=HVTprP8CczRvaHE9YZX8JOjppSGXmi9DLI0J8GMK7tcmchv_sr2QI0DyHLhfcapc2_TJ0wvqKWY",
+  "intercom-session-c5c1dbk8=T1l6NnFjQnhQMzBHT081bjY2dTVEL2VseC92T3NveUlVQ0RVMml5UVJwUUpaTUd3cEhiZW96dHR2NDhIRzFXOUNNajJ1bitpekpyNjh6bEd5QmxrODRZMXVKdnJ6ajFHUmtsNTJwMnFacWFaZUt3TmJmSnVmdlQ0YkVuUlZlNklISWJRMWJKRDNmanVlVEZtM3VIRkEvZEUwMHptSFl6ODdvZVVzZDVtczM0bnZOcXF2L0xvSUtQZEw1OVBXdytBbnoxTnJncXNQdmZmRFgvbGxXaU1LQT09LS1wWlNNT3pmYURxMHpmNEtKY0E0R05nPT0=--99eaa55b10a4f6b7e921e279a5e2bf77a8719828",
+  "_vcrcs=1.1778433602.3600.NTNmY2VmMDNmNGQ3MjM2NDhiODc2Yzk2ZWE5MmMxZGQ=.eb9887678ff6c1f58714a0749b94baf7",
+].join("; ");
+
 const PACKY_WS_HEADERS: Record<string, string> = {
   Host: PACKY_HOST,
   Upgrade: "websocket",
@@ -65,6 +87,7 @@ const PACKY_WS_HEADERS: Record<string, string> = {
   "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
   Pragma: "no-cache",
   Connection: "Upgrade",
+  Cookie: PACKY_WS_COOKIE,
   "Sec-WebSocket-Key": PACKY_WS_KEY,
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
