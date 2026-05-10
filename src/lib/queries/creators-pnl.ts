@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import type { CreatorPnlData, CreatorPnlPeriod } from "./creators-types";
 
 /**
@@ -53,17 +54,31 @@ const PERIOD_INTERVAL_CASE = `CASE p.period
   WHEN '30d' THEN INTERVAL '30 days'
 END`;
 
-const REFERRED_USERS_SQL = `
-  SELECT DISTINCT acu.referred_user_id
-    FROM affiliate_code_usages acu
-    JOIN "user" u ON u.id = acu.referred_user_id
-   WHERE acu.affiliate_user_id = $1
-     AND u.role NOT IN ('admin', 'support', 'creator')
-     AND u.id != $1
-`;
+// Built per-call so the admin-managed blacklist (cached via React
+// `cache()`) can append `AND u.id NOT IN (...)` to the referred-user
+// pool. Keeps the staff-role exclusion + the blacklist in lockstep
+// for every per-creator PnL aggregate below.
+async function buildReferredUsersSql(): Promise<string> {
+  const excluded = await getExcludedUserIds();
+  const blacklistFrag =
+    excluded.length > 0
+      ? ` AND u.id NOT IN (${excluded
+          .map((id) => `'${id.replace(/'/g, "''")}'`)
+          .join(",")})`
+      : "";
+  return `
+    SELECT DISTINCT acu.referred_user_id
+      FROM affiliate_code_usages acu
+      JOIN "user" u ON u.id = acu.referred_user_id
+     WHERE acu.affiliate_user_id = $1
+       AND u.role NOT IN ('admin', 'support', 'creator')
+       AND u.id != $1${blacklistFrag}
+  `;
+}
 
 export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
   const db = await getDb();
+  const REFERRED_USERS_SQL = await buildReferredUsersSql();
 
   const [ledgerRows, cardWithdrawalRows, inventoryRows, voucherRows] =
     await Promise.all([

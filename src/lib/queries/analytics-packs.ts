@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 /**
  * Pack + battle profitability deep-dive.
@@ -69,6 +70,11 @@ export async function getPackProfitability(
   const days = daysForPeriod(period);
   const ltWhere =
     days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";
+  const excluded = await getExcludedUserIds();
+  const blacklistIdNotIn =
+    excluded.length > 0
+      ? `AND id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
+      : "";
 
   const [packRows, battleRows] = await Promise.all([
     db.$queryRawUnsafe<
@@ -88,7 +94,7 @@ export async function getPackProfitability(
         FROM ledger_transactions lt
         JOIN game_sessions gs ON gs.id = lt.game_session_id AND gs.game_type = 'pack'
         WHERE lt.type = 'pack_opening' AND lt.status = 'completed'
-          AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support'))
+          AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})
           ${ltWhere}
         GROUP BY gs.game_id
       ),
@@ -106,7 +112,7 @@ export async function getPackProfitability(
         JOIN game_sessions gs ON gs.id = ui.source_id AND gs.game_type = 'pack'
         WHERE lt.type IN ('card_sale','reward_card_sale','card_exchange','exchange_excess_credit')
           AND lt.status = 'completed'
-          AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support'))
+          AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})
           ${ltWhere}
         GROUP BY gs.game_id
       )
@@ -140,7 +146,7 @@ export async function getPackProfitability(
         FROM battles b
         CROSS JOIN LATERAL UNNEST(b.pack_ids::uuid[]) AS pid
         WHERE b.status = 'completed'
-          AND b.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support'))
+          AND b.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})
           ${days !== null ? `AND b.created_at >= NOW() - INTERVAL '${days} days'` : ""}
       ),
       battle_agg AS (

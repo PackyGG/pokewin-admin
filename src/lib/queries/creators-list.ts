@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import type { PaginatedResult } from "@/lib/types";
 import type { CreatorListItem, UserSearchResult } from "./creators-types";
 
@@ -44,6 +45,11 @@ export async function getCreators(params: {
   } = params;
 
   const db = await getDb();
+  const excluded = await getExcludedUserIds();
+  const blacklistIdNotIn =
+    excluded.length > 0
+      ? `AND ru.id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
+      : "";
   const where: Record<string, unknown> = {
     user: { role: "creator" },
   };
@@ -156,7 +162,7 @@ export async function getCreators(params: {
           JOIN "user" ru ON ru.id = acu.referred_user_id
           WHERE acu.affiliate_user_id = aa.user_id
             AND acu.created_at >= NOW() - INTERVAL '3 days'
-            AND ru.role NOT IN ('admin', 'support')
+            AND ru.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
         ), 0)::text AS deposits_3d,
         -- 3-day wager volume — same source + same staff filter.
         COALESCE((
@@ -165,7 +171,7 @@ export async function getCreators(params: {
           JOIN "user" ru ON ru.id = acu.referred_user_id
           WHERE acu.affiliate_user_id = aa.user_id
             AND acu.created_at >= NOW() - INTERVAL '3 days'
-            AND ru.role NOT IN ('admin', 'support')
+            AND ru.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
         ), 0)::text AS wagers_3d,
         cwl.currency_limit_amount::text,
         cwl.percentage_limit::text,

@@ -47,6 +47,34 @@ model admin_users {
   salary_employees      salary_employees[]
   salary_payouts        salary_payouts[]
   creator_deal_estimates creator_deal_estimates[] @relation("creator_deal_estimates_created_by")
+  excluded_users         excluded_users[]
+}
+
+// Admin-managed blacklist of packy.gg user IDs whose activity should
+// NOT count toward dashboard / analytics / PnL / wager metrics. Used
+// for excluding internal test accounts, hand-picked outliers, and
+// staff users who happen to play. Race-related queries (rakeback,
+// leaderboards, race claims) intentionally IGNORE this list — the
+// user explicitly asked for races to keep counting blacklisted
+// users so leaderboard positions don't shift when an exclusion
+// lands.
+//
+// Storage notes:
+//   • Primary key IS the packy.gg user_id — a user can only be
+//     excluded once and the row IS the exclusion record.
+//   • `excluded_by` references admin_users.id so we know who added
+//     each entry. We could soft-delete instead of hard-delete, but
+//     the audit table already captures every add/remove event, so a
+//     hard delete is fine — the history lives there.
+model excluded_users {
+  user_id     String      @id
+  reason      String?
+  excluded_by String      @db.Uuid
+  created_at  DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime    @updatedAt      @db.Timestamptz(6)
+  admin_user  admin_users @relation(fields: [excluded_by], references: [id], onDelete: Restrict)
+
+  @@index([created_at(sort: Desc)], map: "excluded_users_created_at_idx")
 }
 
 // Custom role definitions for the granular-permissions system. Four

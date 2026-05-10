@@ -1,7 +1,7 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { MS_PER_DAY } from "@/lib/utils/time";
-import { EXCLUDE_STAFF_USER_RELATION } from "./_exclude-staff";
+import { excludeStaffAndBlacklisted } from "./_blacklist";
 
 /**
  * Live-feed queries for the dashboard. Kept separate from the general
@@ -43,6 +43,7 @@ export async function getLiveDeposits(params: {
   const db = await getDb();
   const limit = Math.max(1, Math.min(50, Math.floor(params.limit)));
   const since = params.sinceCreatedAt ? new Date(params.sinceCreatedAt) : null;
+  const staffRelation = await excludeStaffAndBlacklisted();
 
   const dayAgo = new Date(Date.now() - MS_PER_DAY);
 
@@ -52,7 +53,7 @@ export async function getLiveDeposits(params: {
         type: "deposit",
         status: "completed",
         ...(since ? { created_at: { gt: since } } : {}),
-        user: EXCLUDE_STAFF_USER_RELATION,
+        user: staffRelation,
       },
       orderBy: { created_at: "desc" },
       take: limit,
@@ -65,7 +66,7 @@ export async function getLiveDeposits(params: {
         type: "deposit",
         status: "completed",
         created_at: { gte: dayAgo },
-        user: EXCLUDE_STAFF_USER_RELATION,
+        user: staffRelation,
       },
       _sum: { amount: true },
     }),
@@ -179,13 +180,14 @@ export async function getLiveActivity(params: {
   const db = await getDb();
   const limit = Math.max(1, Math.min(60, Math.floor(params.limit)));
   const since = params.sinceCreatedAt ? new Date(params.sinceCreatedAt) : null;
+  const staffRelation = await excludeStaffAndBlacklisted();
 
   const [ledgerRows, withdrawalRequests, signupRows] = await Promise.all([
     db.ledger_transactions.findMany({
       where: {
         status: "completed",
         ...(since ? { created_at: { gt: since } } : {}),
-        user: EXCLUDE_STAFF_USER_RELATION,
+        user: staffRelation,
         type: {
           // Note: `card_withdrawal` is intentionally NOT in this list.
           // That ledger row is only created AFTER admin processing, so
@@ -232,7 +234,7 @@ export async function getLiveActivity(params: {
     db.card_withdrawal_requests.findMany({
       where: {
         ...(since ? { requested_at: { gt: since } } : {}),
-        user_card_withdrawal_requests_user_idTouser: EXCLUDE_STAFF_USER_RELATION,
+        user_card_withdrawal_requests_user_idTouser: staffRelation,
       },
       orderBy: { requested_at: "desc" },
       take: limit,

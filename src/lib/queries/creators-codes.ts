@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import type { PaginatedResult } from "@/lib/types";
 import type { CodeListItem } from "./creators-types";
 
@@ -597,6 +598,11 @@ export async function getCodeReferrals(code: string, limit: number = 50) {
   const db = await getDb();
   const uppercaseCode = code.toUpperCase();
   const safeLimit = Math.max(1, Math.min(Math.floor(limit), 200));
+  const excluded = await getExcludedUserIds();
+  const blacklistIdNotIn =
+    excluded.length > 0
+      ? `AND u.id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
+      : "";
 
   const rows = await safe(
     db.$queryRawUnsafe<
@@ -618,7 +624,7 @@ export async function getCodeReferrals(code: string, limit: number = 50) {
          FROM affiliate_code_usages acu
          JOIN "user" u ON u.id = acu.referred_user_id
         WHERE UPPER(acu.code) = $1
-          AND u.role NOT IN ('admin', 'support')
+          AND u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
         GROUP BY acu.referred_user_id, u.username, u.email
         ORDER BY MAX(acu.created_at) DESC
         LIMIT ${safeLimit}`,
@@ -668,6 +674,11 @@ export async function getRecentWagersOnCode(
   const uppercaseCode = code.toUpperCase();
   // Cap and floor the limit so a buggy caller can't fetch the world.
   const safeLimit = Math.max(1, Math.min(Math.floor(limit), 100));
+  const excludedRecent = await getExcludedUserIds();
+  const blacklistIdNotIn =
+    excludedRecent.length > 0
+      ? `AND u.id NOT IN (${excludedRecent.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
+      : "";
 
   const rows = await safe(
     db.$queryRawUnsafe<
@@ -686,7 +697,7 @@ export async function getRecentWagersOnCode(
          FROM affiliate_code_usages acu
          JOIN "user" u ON u.id = acu.referred_user_id
          WHERE UPPER(acu.code) = $1
-           AND u.role NOT IN ('admin', 'support')
+           AND u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
        )
        SELECT
          lt.id,

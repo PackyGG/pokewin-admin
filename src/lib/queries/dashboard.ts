@@ -1,10 +1,14 @@
 import { getDb } from "@/lib/db";
-import type { PrismaClient } from "@/generated/prisma/client";
+import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { MS_PER_DAY } from "@/lib/utils/time";
-import { EXCLUDE_STAFF_USER_RELATION, STAFF_ROLES } from "./_exclude-staff";
+import {
+  excludeStaffAndBlacklisted,
+  excludeStaffAndBlacklistedDirect,
+} from "./_blacklist";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
 
 export type ActivityItem = {
@@ -42,7 +46,14 @@ export type ActivityItem = {
  * the house) but a ledger-based query misses them. The request table is
  * the authoritative record.
  */
-function getPeriodAggregates(db: PrismaClient, startOfDay: Date, threeDaysAgo: Date, sevenDaysAgo: Date, thirtyDaysAgo: Date) {
+function getPeriodAggregates(
+  db: PrismaClient,
+  startOfDay: Date,
+  threeDaysAgo: Date,
+  sevenDaysAgo: Date,
+  thirtyDaysAgo: Date,
+  blacklistIdNotIn: string,
+) {
   return db.$queryRaw<
     {
       revenue_24h: string; revenue_3d: string; revenue_7d: string; revenue_30d: string; revenue_all: string;
@@ -52,7 +63,7 @@ function getPeriodAggregates(db: PrismaClient, startOfDay: Date, threeDaysAgo: D
     }[]
   >`
     WITH real_users AS (
-      SELECT id FROM "user" WHERE role NOT IN ('admin', 'support')
+      SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
     ),
     base AS (
       SELECT type, amount::numeric AS amount, created_at
@@ -155,6 +166,24 @@ export async function getDashboardStats() {
 
 async function dashboardStatsInner() {
   const db = await getDb();
+  // Resolve the combined staff+blacklist filter ONCE per request so
+  // every aggregate below applies the same exclusion set. The list is
+  // cached via React `cache()` in fetch.ts → repeated invocations are
+  // free.
+  const [staffRelation, staffRoleDirect, excluded] = await Promise.all([
+    excludeStaffAndBlacklisted(),
+    excludeStaffAndBlacklistedDirect(),
+    getExcludedUserIds(),
+  ]);
+  // Inline SQL fragment for `AND id NOT IN (...)` for the raw queries
+  // that already do role NOT IN ('admin','support'). Empty string when
+  // nothing is blacklisted so the query stays valid.
+  const blacklistIdNotIn =
+    excluded.length > 0
+      ? `AND id NOT IN (${excluded
+          .map((id) => `'${id.replace(/'/g, "''")}'`)
+          .join(",")})`
+      : "";
   const now = new Date();
   // UTC-anchored boundaries so the dashboard renders the same numbers no
   // matter which timezone the request happens to land in (Vercel functions
@@ -204,16 +233,16 @@ async function dashboardStatsInner() {
     pendingConfirmationWithdrawals,
   ] = await Promise.all([
     // STAFF_ROLES (admin + support) excluded from every user count so the
-    // KPI strip reads only real customers — matches EXCLUDE_STAFF_USER_RELATION
+    // KPI strip reads only real customers — matches staffRelation
     // used by every aggregate below.
-    db.user.count({ where: { role: { notIn: STAFF_ROLES } } }),
-    db.user.count({ where: { role: { notIn: STAFF_ROLES }, created_at: { gte: startOfDay } } }),
-    db.user.count({ where: { role: { notIn: STAFF_ROLES }, created_at: { gte: startOfWeek } } }),
-    db.user.count({ where: { role: { notIn: STAFF_ROLES }, created_at: { gte: startOfMonth } } }),
-    db.user.count({ where: { role: { notIn: STAFF_ROLES }, is_banned: true } }),
-    db.user.count({ where: { role: { notIn: STAFF_ROLES }, is_locked: true } }),
+    db.user.count({ where: { ...staffRoleDirect } }),
+    db.user.count({ where: { ...staffRoleDirect, created_at: { gte: startOfDay } } }),
+    db.user.count({ where: { ...staffRoleDirect, created_at: { gte: startOfWeek } } }),
+    db.user.count({ where: { ...staffRoleDirect, created_at: { gte: startOfMonth } } }),
+    db.user.count({ where: { ...staffRoleDirect, is_banned: true } }),
+    db.user.count({ where: { ...staffRoleDirect, is_locked: true } }),
     db.balances.aggregate({
-      where: { user: EXCLUDE_STAFF_USER_RELATION },
+      where: { user: staffRelation },
       _sum: {
         total_deposited: true,
         total_withdrawn: true,
@@ -222,13 +251,13 @@ async function dashboardStatsInner() {
       },
     }),
     db.balances.aggregate({
-      where: { user: EXCLUDE_STAFF_USER_RELATION },
+      where: { user: staffRelation },
       _sum: { available_balance: true },
     }),
     db.card_withdrawal_requests.aggregate({
       where: {
         status: { in: ["pending", "processing"] },
-        user_card_withdrawal_requests_user_idTouser: EXCLUDE_STAFF_USER_RELATION,
+        user_card_withdrawal_requests_user_idTouser: staffRelation,
       },
       _count: true,
       _sum: { total_value_usd: true },
@@ -243,7 +272,7 @@ async function dashboardStatsInner() {
     }),
     adminDb.admin_audit_events.count(),
     db.ledger_transactions.count({
-      where: { user: EXCLUDE_STAFF_USER_RELATION },
+      where: { user: staffRelation },
     }),
     // Wagers last 30 days — split by packs vs battles for stacked bar chart
     db.$queryRaw<{ date: Date; packs: string; battles: string }[]>`
@@ -254,7 +283,7 @@ async function dashboardStatsInner() {
       FROM ledger_transactions
       WHERE type IN ('pack_opening','battle_bet','battle_sponsorship') AND status = 'completed'
         AND created_at >= NOW() - INTERVAL '30 days'
-        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support'))
+        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)})
       GROUP BY DATE(created_at)
       ORDER BY date
     `,
@@ -264,7 +293,7 @@ async function dashboardStatsInner() {
       FROM ledger_transactions
       WHERE type = 'deposit' AND status = 'completed'
         AND created_at >= NOW() - INTERVAL '30 days'
-        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support'))
+        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)})
       GROUP BY DATE(created_at)
       ORDER BY date
     `,
@@ -273,22 +302,22 @@ async function dashboardStatsInner() {
       SELECT DATE(created_at) as date, COUNT(*)::text as count
       FROM "user"
       WHERE created_at >= NOW() - INTERVAL '30 days'
-        AND role NOT IN ('admin', 'support')
+        AND role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
       GROUP BY DATE(created_at)
       ORDER BY date
     `,
     // Single batched query replaces 20 independent aggregates (revenue, withdrawal,
     // wager, ggr × 5 periods each). Same plan + same index scan — but one round-trip.
-    getPeriodAggregates(db, startOfDay, threeDaysAgo, sevenDaysAgo, thirtyDaysAgo),
+    getPeriodAggregates(db, startOfDay, threeDaysAgo, sevenDaysAgo, thirtyDaysAgo, blacklistIdNotIn),
     db.user_statistics.aggregate({
-      where: { user: EXCLUDE_STAFF_USER_RELATION },
+      where: { user: staffRelation },
       _sum: { opened_packs_count: true, battles_played: true },
     }),
     db.ledger_transactions.count({
       where: {
         type: "deposit",
         status: "completed",
-        user: EXCLUDE_STAFF_USER_RELATION,
+        user: staffRelation,
       },
     }),
     // Distinct depositor count — # of unique real users who have
@@ -300,12 +329,12 @@ async function dashboardStatsInner() {
       SELECT COUNT(DISTINCT user_id)::text AS count
       FROM ledger_transactions
       WHERE type = 'deposit' AND status = 'completed'
-        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support'))
+        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)})
     `,
     getRealizedPnlSnapshot(),
     db.$queryRaw<{ avg_session_value: string }[]>`
       WITH real_users AS (
-        SELECT id FROM "user" WHERE role NOT IN ('admin', 'support')
+        SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
       ),
       withdrawal_events AS (
         SELECT user_id, created_at, 'withdrawal' as event_type
@@ -355,14 +384,14 @@ async function dashboardStatsInner() {
         // they are effectively "on their way out" of the user's on-site
         // holdings and shouldn't inflate the aggregate balance.
         withdrawal_locked_at: null,
-        user: EXCLUDE_STAFF_USER_RELATION,
+        user: staffRelation,
       },
       _sum: { value_at_obtained: true },
     }),
     db.card_withdrawal_requests.aggregate({
       where: {
         status: "pending",
-        user_card_withdrawal_requests_user_idTouser: EXCLUDE_STAFF_USER_RELATION,
+        user_card_withdrawal_requests_user_idTouser: staffRelation,
       },
       _count: true,
       _sum: { total_value_usd: true },

@@ -3,6 +3,7 @@ import "server-only";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { WAGER_TYPES_SQL } from "@/lib/queries/_wager-payout-types";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 /**
  * Per-period House P&L for a single creator's referrals — same canonical
@@ -169,6 +170,16 @@ type VoucherRow = {
  *
  * 8 parallel round-trips — none of them N+1.
  */
+// Built per-call so the admin-managed blacklist (cached via React
+// `cache()`) can append `AND u.id NOT IN (...)` to every per-creator
+// referral aggregate. Same convention as `creators-pnl.ts`.
+async function buildBlacklistIdNotIn(): Promise<string> {
+  const excluded = await getExcludedUserIds();
+  return excluded.length > 0
+    ? `AND u.id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
+    : "";
+}
+
 export async function getCodeAndWagerByUser(
   userIds: string[],
 ): Promise<Map<string, CreatorCodeAndWager>> {
@@ -176,6 +187,7 @@ export async function getCodeAndWagerByUser(
   if (userIds.length === 0) return result;
 
   const db = await getDb();
+  const blacklistIdNotIn = await buildBlacklistIdNotIn();
   const [
     codeRows,
     affiliateAccounts,
@@ -251,7 +263,7 @@ export async function getCodeAndWagerByUser(
            FROM affiliate_code_usages acu
            JOIN "user" u ON u.id = acu.referred_user_id
           WHERE acu.affiliate_user_id = ANY($1::text[])
-            AND u.role NOT IN ('admin', 'support', 'creator')
+            AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
             AND u.id != acu.affiliate_user_id
        )
        SELECT cr.creator_user_id,
@@ -288,7 +300,7 @@ export async function getCodeAndWagerByUser(
            FROM affiliate_code_usages acu
            JOIN "user" u ON u.id = acu.referred_user_id
           WHERE acu.affiliate_user_id = ANY($1::text[])
-            AND u.role NOT IN ('admin', 'support', 'creator')
+            AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
             AND u.id != acu.affiliate_user_id
        )
        SELECT cr.creator_user_id,
@@ -315,7 +327,7 @@ export async function getCodeAndWagerByUser(
            FROM affiliate_code_usages acu
            JOIN "user" u ON u.id = acu.referred_user_id
           WHERE acu.affiliate_user_id = ANY($1::text[])
-            AND u.role NOT IN ('admin', 'support', 'creator')
+            AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
             AND u.id != acu.affiliate_user_id
        )
        SELECT cr.creator_user_id,
@@ -348,7 +360,7 @@ export async function getCodeAndWagerByUser(
            FROM affiliate_code_usages acu
            JOIN "user" u ON u.id = acu.referred_user_id
           WHERE acu.affiliate_user_id = ANY($1::text[])
-            AND u.role NOT IN ('admin', 'support', 'creator')
+            AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
             AND u.id != acu.affiliate_user_id
        )
        SELECT cr.creator_user_id,
