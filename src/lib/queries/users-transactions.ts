@@ -49,8 +49,15 @@ export async function getUserTransactions(
             game_id: true,
             game_type: true,
             result: true,
+            bet_amount: true,
             provably_fair_results: {
+              // result_metadata + battle_id are needed for the borrow
+              // badge — solo opens carry the % in metadata, battle
+              // opens link to a battle whose borrow_percentage is on
+              // the battles table (joined below).
               select: {
+                battle_id: true,
+                result_metadata: true,
                 user_inventory: { select: { value_at_obtained: true } },
               },
             },
@@ -60,6 +67,27 @@ export async function getUserTransactions(
     }),
     db.ledger_transactions.count({ where }),
   ]);
+
+  // Batch-fetch battles.borrow_percentage for any battle-linked PF
+  // results so the user-detail tab can render the same BorrowBadge
+  // as the global transactions list / live feed.
+  const battleIdsForBorrow = new Set<string>();
+  for (const t of transactions) {
+    const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
+    for (const pf of gs?.provably_fair_results ?? []) {
+      if (pf.battle_id) battleIdsForBorrow.add(pf.battle_id);
+    }
+  }
+  const battleBorrowMap = new Map<string, number>();
+  if (battleIdsForBorrow.size > 0) {
+    const battlesForBorrow = await db.battles.findMany({
+      where: { id: { in: [...battleIdsForBorrow] } },
+      select: { id: true, borrow_percentage: true },
+    });
+    for (const b of battlesForBorrow) {
+      battleBorrowMap.set(b.id, b.borrow_percentage ?? 0);
+    }
+  }
 
   // Three independent lookup chains run in parallel:
   //   1) pack-name resolution (two-step: packs → user_packs fallback)
@@ -177,6 +205,33 @@ export async function getUserTransactions(
       const meta = t.metadata as Record<string, unknown> | null;
       const invItemId = meta?.inventory_item_id as string | undefined;
       const soldItem = invItemId ? inventoryMap.get(invItemId) ?? null : null;
+
+      // Borrow extraction — same convention used by getTransactions
+      // and getLiveActivity. Battle rows read borrow_percentage off
+      // the linked battle; solo rows read it off the first PF
+      // result's metadata. All PF results in a session share the
+      // same borrow setting.
+      let borrowPercentage: number | null = null;
+      let borrowedAmountUsd: number | null = null;
+      if (gs) {
+        const firstPf = gs.provably_fair_results[0];
+        if (firstPf?.battle_id) {
+          borrowPercentage = battleBorrowMap.get(firstPf.battle_id) ?? null;
+        } else if (firstPf) {
+          const m = firstPf.result_metadata as Record<string, unknown> | null;
+          const raw = m?.borrow_percentage;
+          if (typeof raw === "number") borrowPercentage = raw;
+          else if (typeof raw === "string") {
+            const n = parseInt(raw, 10);
+            borrowPercentage = Number.isFinite(n) ? n : null;
+          }
+        }
+        if (borrowPercentage != null && borrowPercentage > 0) {
+          const cost = toNumber(gs.bet_amount);
+          if (cost > 0) borrowedAmountUsd = cost * (borrowPercentage / 100);
+        }
+      }
+
       return {
         id: t.id,
         type: t.type,
@@ -209,6 +264,8 @@ export async function getUserTransactions(
         externalTxId: t.external_tx_id,
         createdAt: t.created_at.toISOString(),
         updatedAt: t.updated_at.toISOString(),
+        borrowPercentage,
+        borrowedAmountUsd,
       };
     }),
     total,

@@ -13,6 +13,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { BorrowBadge } from "@/components/borrow-badge";
 import type {
   LiveActivityEventKind,
   LiveActivityItem,
@@ -275,12 +276,22 @@ function ActivityRow({
       {/* Username + caption stack on the left — username is the dominant
           line, type + time live as muted metadata underneath. */}
       <div className="min-w-0 flex-1">
-        <Link
-          href={`/users/${item.userId}`}
-          className="block truncate text-sm font-semibold text-foreground hover:underline"
-        >
-          {item.username}
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href={`/users/${item.userId}`}
+            className="block truncate text-sm font-semibold text-foreground hover:underline"
+          >
+            {item.username}
+          </Link>
+          {/* Borrow signal sits next to the username so it's visible
+              even on a busy feed without scanning the metadata line.
+              Renders nothing for non-borrowed events. */}
+          <BorrowBadge
+            percent={item.borrowPercentage}
+            amountUsd={item.borrowedAmountUsd}
+            size="sm"
+          />
+        </div>
         <p className="truncate text-xs text-muted-foreground">
           <span className={style.amountClass}>{typeLabel}</span>
           <span className="mx-1.5 text-muted-foreground/60">·</span>

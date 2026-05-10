@@ -17,6 +17,27 @@ export type BattleListItem = {
   createdAt: string;
   totalPayout: number | null;
   houseEdge: number | null;
+  /**
+   * % of every participant's bet that the house fronted. 0 = fully
+   * cash-paid. Surfaced on the battles list so admins can spot
+   * borrowed battles at a glance, same convention as the detail
+   * page's Borrow row.
+   */
+  borrowPercentage: number;
+  /**
+   * % of the pack that was sponsored by another user. 0 = no
+   * sponsorship. Bundled here for the same reason — admins want a
+   * full at-a-glance picture of how the bet was funded without
+   * opening the detail page.
+   */
+  sponsorshipPercentage: number;
+  /**
+   * USD value the house fronted across the whole battle (sum across
+   * all participants). `betAmount × playersTotal × borrow% / 100`.
+   * Pre-computed so the badge's tooltip can show a real $ number
+   * instead of forcing the admin to multiply.
+   */
+  borrowedAmountUsd: number;
 };
 
 export async function getBattles(params: {
@@ -52,6 +73,11 @@ export async function getBattles(params: {
       orderBy: { created_at: "desc" },
       skip: (page - 1) * perPage,
       take: perPage,
+      // borrow_percentage / sponsorship_percentage are scalars on the
+      // battle row itself — included implicitly via findMany default
+      // select. Listed here just as a reminder for the projection
+      // below; no need for an explicit `select` block since the rest
+      // of the page consumes the full row already.
       include: {
         user: { select: { username: true } },
         battle_participants: {
@@ -127,6 +153,13 @@ export async function getBattles(params: {
       const creatorWon = creatorTeam != null && creatorTeam === b.winner_team;
       const creatorPayout = creatorWon ? totalCardValue : 0;
 
+      // Borrow exposure for this battle: every participant pays
+      // bet_amount, of which borrow% comes from the house. Total
+      // fronted USD is bet × N players × borrow%.
+      const borrowPct = b.borrow_percentage ?? 0;
+      const borrowedAmountUsd =
+        borrowPct > 0 ? totalWagered * (borrowPct / 100) : 0;
+
       return {
         id: b.id,
         userId: b.user_id,
@@ -141,6 +174,9 @@ export async function getBattles(params: {
         createdAt: b.created_at.toISOString(),
         totalPayout: b.status === "completed" ? creatorPayout : null,
         houseEdge: b.status === "completed" ? houseEdge : null,
+        borrowPercentage: borrowPct,
+        sponsorshipPercentage: b.sponsorship_percentage ?? 0,
+        borrowedAmountUsd,
       };
     }),
     total,

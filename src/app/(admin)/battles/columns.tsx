@@ -3,6 +3,7 @@
 import { ColumnDef } from "@tanstack/react-table";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
+import { BorrowBadge } from "@/components/borrow-badge";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import type { BattleListItem } from "@/lib/queries/battles";
 import { InlineCancelBattleButton } from "./inline-cancel-button";
@@ -50,7 +51,22 @@ export const columns: ColumnDef<BattleListItem>[] = [
   {
     accessorKey: "betAmount",
     header: "Bet",
-    cell: ({ row }) => formatCurrency(row.original.betAmount),
+    // Bet column doubles as the borrow surface — admins scanning the
+    // table want to know "how much was bet AND was it borrowed" in
+    // the same glance. Stacking the bet amount over the BorrowBadge
+    // keeps the column compact and avoids adding a separate column.
+    cell: ({ row }) => (
+      <div className="flex flex-col items-start gap-0.5">
+        <span className="tabular-nums">
+          {formatCurrency(row.original.betAmount)}
+        </span>
+        <BorrowBadge
+          percent={row.original.borrowPercentage}
+          amountUsd={row.original.borrowedAmountUsd}
+          size="sm"
+        />
+      </div>
+    ),
   },
   {
     accessorKey: "totalPayout",
