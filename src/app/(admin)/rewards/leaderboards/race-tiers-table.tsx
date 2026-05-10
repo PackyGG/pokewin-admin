@@ -25,7 +25,7 @@ type PrizeTier = {
   prizeAmountUsd: number;
 };
 
-type RaceType = "daily" | "weekly";
+type RaceType = "daily" | "weekly" | "monthly";
 
 export function RaceTiersTable({ tiers }: { tiers: PrizeTier[] }) {
   const [isPending, startTransition] = useTransition();
@@ -47,6 +47,9 @@ export function RaceTiersTable({ tiers }: { tiers: PrizeTier[] }) {
     .sort((a, b) => a.position - b.position);
   const weeklyTiers = tiers
     .filter((t) => t.raceType === "weekly")
+    .sort((a, b) => a.position - b.position);
+  const monthlyTiers = tiers
+    .filter((t) => t.raceType === "monthly")
     .sort((a, b) => a.position - b.position);
 
   function startEdit(tier: PrizeTier) {
@@ -312,8 +315,9 @@ export function RaceTiersTable({ tiers }: { tiers: PrizeTier[] }) {
 
   return (
     <div className="space-y-6">
-      {renderGroup("daily", dailyTiers)}
+      {renderGroup("monthly", monthlyTiers)}
       {renderGroup("weekly", weeklyTiers)}
+      {renderGroup("daily", dailyTiers)}
     </div>
   );
 }

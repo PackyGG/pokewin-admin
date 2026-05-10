@@ -9,6 +9,17 @@ export type RacePrizeTier = {
   prizeAmountUsd: number;
 };
 
+export type RacePeriod = {
+  id: string;
+  raceType: string;
+  startsAt: string;
+  endsAt: string;
+  autoRenew: boolean;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type RaceClaimItem = {
   id: string;
   userId: string;
@@ -141,6 +152,48 @@ export async function getRaceLeaderboard(params: {
     page,
     perPage,
     totalPages: Math.ceil(total / perPage),
+  };
+}
+
+/**
+ * Active period for each race type and the most recently ended one as a
+ * compact history. Used by the Periods tab on /rewards/leaderboards so admins
+ * can see at a glance which races are running, when they end, and whether
+ * auto-renew is on. Monthly typically has no active row until an admin
+ * manually starts one.
+ */
+export async function getRacePeriodsOverview(params?: {
+  recentLimit?: number;
+}): Promise<{ active: RacePeriod[]; recent: RacePeriod[] }> {
+  const db = await getDb();
+  const recentLimit = params?.recentLimit ?? 20;
+
+  const [active, recent] = await Promise.all([
+    db.race_periods.findMany({
+      where: { status: "active" },
+      orderBy: [{ race_type: "asc" }],
+    }),
+    db.race_periods.findMany({
+      where: { status: "ended" },
+      orderBy: { ends_at: "desc" },
+      take: recentLimit,
+    }),
+  ]);
+
+  const map = (p: (typeof active)[number]): RacePeriod => ({
+    id: p.id,
+    raceType: p.race_type,
+    startsAt: p.starts_at.toISOString(),
+    endsAt: p.ends_at.toISOString(),
+    autoRenew: p.auto_renew,
+    status: p.status,
+    createdAt: p.created_at.toISOString(),
+    updatedAt: p.updated_at.toISOString(),
+  });
+
+  return {
+    active: active.map(map),
+    recent: recent.map(map),
   };
 }
 

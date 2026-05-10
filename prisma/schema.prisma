@@ -555,6 +555,10 @@ model race_leaderboard_snapshots {
   user_id      String
   race_type    race_type
   period_start DateTime  @db.Date
+  // Nullable for backwards compat with rows written before period_end was
+  // added. New snapshots always populate it; legacy daily/weekly rows were
+  // backfilled from period_start in the same migration.
+  period_end   DateTime? @db.Timestamp(6)
   position     Int
   wagered_usd  Decimal   @db.Decimal(20, 2)
   created_at   DateTime  @default(now()) @db.Timestamp(6)
@@ -563,6 +567,20 @@ model race_leaderboard_snapshots {
 
   @@unique([user_id, race_type, period_start], map: "race_leaderboard_snapshots_user_id_race_type_period_start_uniqu")
   @@index([race_type, period_start, position], map: "race_snapshots_leaderboard_idx")
+}
+
+model race_periods {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  race_type  race_type
+  starts_at  DateTime @db.Timestamp(6)
+  ends_at    DateTime @db.Timestamp(6)
+  auto_renew Boolean  @default(true)
+  // 'active' | 'ended'
+  status     String   @default("active")
+  created_at DateTime @default(now()) @db.Timestamp(6)
+  updated_at DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([race_type, status, ends_at(sort: Desc)], map: "race_periods_recently_ended_idx")
 }
 
 model race_prize_tiers {
@@ -1227,6 +1245,7 @@ enum ledger_transaction_type {
 enum race_type {
   daily
   weekly
+  monthly
 }
 
 enum raffle_status {
