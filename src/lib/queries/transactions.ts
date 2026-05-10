@@ -329,6 +329,16 @@ export async function getTransactions(params: {
   // battles.borrow_percentage to render the badge. One round-trip
   // batched across the visible page; cheaper than letting Prisma fan
   // out a per-row include.
+  //
+  // CRITICAL: this lookup is AUXILIARY — the page's whole job is to
+  // show the ledger, and the borrow badge is a nice-to-have on top.
+  // If this single round-trip fails (DB blip, schema drift on the
+  // battles table, replica lag, anything), the WHOLE /transactions
+  // page used to crash — admin sees the route-level error boundary
+  // ("Couldn't load the ledger") instead of the rows. Wrap in
+  // try/catch and degrade gracefully: rows still render, badge is
+  // just absent for that page-load. Logged so we still notice in
+  // Vercel function logs.
   const battleIds = new Set<string>();
   for (const t of transactions) {
     const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
@@ -338,12 +348,19 @@ export async function getTransactions(params: {
   }
   const battleBorrowMap = new Map<string, number>();
   if (battleIds.size > 0) {
-    const battles = await db.battles.findMany({
-      where: { id: { in: [...battleIds] } },
-      select: { id: true, borrow_percentage: true },
-    });
-    for (const b of battles) {
-      battleBorrowMap.set(b.id, b.borrow_percentage ?? 0);
+    try {
+      const battles = await db.battles.findMany({
+        where: { id: { in: [...battleIds] } },
+        select: { id: true, borrow_percentage: true },
+      });
+      for (const b of battles) {
+        battleBorrowMap.set(b.id, b.borrow_percentage ?? 0);
+      }
+    } catch (e) {
+      console.error(
+        "[getTransactions] battle borrow lookup failed (non-fatal — rows still render without badge):",
+        e,
+      );
     }
   }
 

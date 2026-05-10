@@ -71,6 +71,11 @@ export async function getUserTransactions(
   // Batch-fetch battles.borrow_percentage for any battle-linked PF
   // results so the user-detail tab can render the same BorrowBadge
   // as the global transactions list / live feed.
+  //
+  // CRITICAL: auxiliary lookup — same convention as getTransactions.
+  // A failure here must NOT take down the whole /users/[id] activity
+  // tab. Wrap in try/catch; on failure, badge is just absent for the
+  // page-load and rows still render.
   const battleIdsForBorrow = new Set<string>();
   for (const t of transactions) {
     const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
@@ -80,12 +85,19 @@ export async function getUserTransactions(
   }
   const battleBorrowMap = new Map<string, number>();
   if (battleIdsForBorrow.size > 0) {
-    const battlesForBorrow = await db.battles.findMany({
-      where: { id: { in: [...battleIdsForBorrow] } },
-      select: { id: true, borrow_percentage: true },
-    });
-    for (const b of battlesForBorrow) {
-      battleBorrowMap.set(b.id, b.borrow_percentage ?? 0);
+    try {
+      const battlesForBorrow = await db.battles.findMany({
+        where: { id: { in: [...battleIdsForBorrow] } },
+        select: { id: true, borrow_percentage: true },
+      });
+      for (const b of battlesForBorrow) {
+        battleBorrowMap.set(b.id, b.borrow_percentage ?? 0);
+      }
+    } catch (e) {
+      console.error(
+        "[getUserTransactions] battle borrow lookup failed (non-fatal):",
+        e,
+      );
     }
   }
 
