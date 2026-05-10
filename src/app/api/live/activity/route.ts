@@ -5,11 +5,12 @@ import {
 } from "@/lib/queries/dashboard-live";
 import { sseResponse } from "@/lib/sse";
 
-// Per-user concurrent-stream cap (3) for THIS route in THIS Node.js
-// process. Cap prevents a single tab-storm from holding three live
-// upstreams open and crowding out other admins. In-memory only —
-// per-instance, not global. Acceptable until a shared cache is wired up.
-const MAX_CONCURRENT = 3;
+// Per-user concurrent-stream cap (1) for THIS route in THIS Node.js
+// process. One stream per user is enough — multiple tabs all show the
+// same activity feed, so opening N upstreams for one admin just
+// multiplies DB load for identical data. The 2nd tab gets 429 and the
+// EventSource client retries once the first tab closes.
+const MAX_CONCURRENT = 1;
 const openStreams = new Map<string, number>();
 
 // This route streams and is expected to stay open for minutes at a time.
@@ -77,6 +78,6 @@ export async function GET(request: Request): Promise<Response> {
       const ordered = [...rows].reverse();
       return { rows: ordered, nextCursor: rows[0].createdAt };
     },
-    intervalMs: 3000,
+    intervalMs: 6000,
   });
 }

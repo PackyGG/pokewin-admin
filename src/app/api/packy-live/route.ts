@@ -84,7 +84,7 @@ const EXPECTED_ACCEPT = crypto
 // In-memory only: each Vercel function instance has its own map, so the
 // real ceiling is `MAX_CONCURRENT × instance_count`. Acceptable until a
 // shared cache is wired up.
-const MAX_CONCURRENT = 3;
+const MAX_CONCURRENT = 1;
 const openStreams = new Map<string, number>();
 
 export async function GET(request: Request): Promise<Response> {

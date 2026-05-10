@@ -11,7 +11,7 @@ export function AutoRefresh() {
       if (document.visibilityState === "visible") {
         router.refresh();
       }
-    }, 15_000);
+    }, 60_000);
     return () => clearInterval(interval);
   }, [router]);
 
