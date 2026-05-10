@@ -19,6 +19,10 @@ export type PromoCodeListItem = {
   wagerPeriodDays: number;
   /** Minimum account age in days before the user can redeem. 0 = no gate. */
   minimumAccountAgeDays: number;
+  /** All-time deposit total (USD) the user must reach before redeeming. 0 = no gate. */
+  minimumDepositAmount: number;
+  /** If set, the user must have signed up with this exact affiliate code (case-insensitive). */
+  requiredAffiliateCode: string | null;
   /** Whether the user must have a linked Discord account to redeem. */
   requiresDiscord: boolean;
   maxUses: number;
@@ -91,6 +95,8 @@ export async function getPromoCodes(params: {
         minimumWagerAmount: toNumber(c.minimum_wager_amount),
         wagerPeriodDays: c.wager_period_days,
         minimumAccountAgeDays: c.minimum_account_age_days,
+        minimumDepositAmount: toNumber(c.minimum_deposit_amount),
+        requiredAffiliateCode: c.required_affiliate_code,
         requiresDiscord: c.requires_discord,
         maxUses: c.max_uses,
         redemptionCount: countByCodeId.get(c.id) ?? 0,
@@ -133,6 +139,8 @@ export async function getPromoCodeDetail(id: string) {
     minimumWagerAmount: toNumber(code.minimum_wager_amount),
     wagerPeriodDays: code.wager_period_days,
     minimumAccountAgeDays: code.minimum_account_age_days,
+    minimumDepositAmount: toNumber(code.minimum_deposit_amount),
+    requiredAffiliateCode: code.required_affiliate_code,
     requiresDiscord: code.requires_discord,
     maxUses: code.max_uses,
     expiresAt: code.expires_at?.toISOString() ?? null,

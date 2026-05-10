@@ -237,6 +237,12 @@ function RequirementsCell({ row }: { row: PromoCodeListItem }) {
   if (row.minimumAccountAgeDays > 0) {
     parts.push(`${row.minimumAccountAgeDays}d age`);
   }
+  if (row.minimumDepositAmount > 0) {
+    parts.push(`${formatCurrency(row.minimumDepositAmount)}d`);
+  }
+  if (row.requiredAffiliateCode) {
+    parts.push(`code ${row.requiredAffiliateCode}`);
+  }
   if (row.requiresDiscord) parts.push("Discord");
 
   if (parts.length === 0) {

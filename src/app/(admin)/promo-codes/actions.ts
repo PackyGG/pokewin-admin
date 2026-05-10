@@ -20,6 +20,16 @@ const createPromoCodeSchema = z.object({
   minimumWagerAmount: z.number().finite().nonnegative().max(10_000_000),
   wagerPeriodDays: z.number().int().nonnegative().max(3650),
   minimumAccountAgeDays: z.number().int().nonnegative().max(3650),
+  minimumDepositAmount: z.number().finite().nonnegative().max(10_000_000),
+  // Trim+uppercase here so the DB stores the canonical form. The
+  // backend matches case-insensitively but normalising at write time
+  // means the admin UI always shows the same shape on read-back.
+  requiredAffiliateCode: z
+    .string()
+    .trim()
+    .max(64)
+    .transform((s) => (s.length === 0 ? null : s.toUpperCase()))
+    .nullable(),
   requiresDiscord: z.boolean(),
   maxUses: z.number().int().nonnegative().max(10_000_000),
   expiresAt: z.string().nullable(),
@@ -57,6 +67,8 @@ export async function createPromoCode(
       minimum_wager_amount: v.minimumWagerAmount,
       wager_period_days: v.wagerPeriodDays,
       minimum_account_age_days: v.minimumAccountAgeDays,
+      minimum_deposit_amount: v.minimumDepositAmount,
+      required_affiliate_code: v.requiredAffiliateCode,
       requires_discord: v.requiresDiscord,
       max_uses: v.maxUses,
       expires_at: v.expiresAt ? new Date(v.expiresAt) : null,
