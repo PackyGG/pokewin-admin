@@ -132,6 +132,11 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Dashboard", href: "/dashboard", icon: "LayoutDashboard" },
       { label: "Analytics", href: "/analytics", icon: "BarChart3" },
+      // Top-level shortcut to the all-types ledger. The narrower
+      // sub-views (Packs / Battles / Rewards) still live under the
+      // Transactions group below — this entry is the catch-all entry
+      // point admins reach for most often.
+      { label: "Transactions", href: "/transactions", icon: "Receipt" },
       { label: "Map", href: "/map", icon: "Globe" },
       { label: "Users", href: "/users", icon: "Users" },
       { label: "Deposits", href: "/transactions/deposits", icon: "ArrowDownToLine" },
@@ -190,9 +195,12 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    // "All" was promoted to the Overview group up top — admins reach
+    // for that one most often. The narrower per-type ledgers stay
+    // here so they don't clutter Overview but remain discoverable
+    // when an admin already knows they want a single category.
     label: "Transactions",
     items: [
-      { label: "All", href: "/transactions", icon: "Receipt" },
       { label: "Packs", href: "/transactions/packs", icon: "Package" },
       { label: "Battles", href: "/transactions/battles", icon: "Swords" },
       { label: "Rewards", href: "/transactions/rewards", icon: "Award" },
