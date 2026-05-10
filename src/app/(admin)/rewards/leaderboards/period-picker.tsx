@@ -18,17 +18,24 @@ export function PeriodPicker({
     router.push(`/rewards/leaderboards?raceType=${raceType}&periodStart=${date}`);
   }
 
-  function shift(days: number) {
+  function shift(direction: -1 | 1) {
     const d = new Date(periodStart);
-    d.setDate(d.getDate() + days);
+    if (raceType === "monthly") {
+      // Calendar-month step. Snapshots are dated by the period's start day so
+      // shifting by ±30 days could land off the calendar grid; using
+      // setUTCMonth keeps us anchored to actual month boundaries.
+      d.setUTCMonth(d.getUTCMonth() + direction);
+    } else if (raceType === "weekly") {
+      d.setUTCDate(d.getUTCDate() + direction * 7);
+    } else {
+      d.setUTCDate(d.getUTCDate() + direction);
+    }
     navigate(d.toISOString().slice(0, 10));
   }
 
-  const step = raceType === "weekly" ? 7 : 1;
-
   return (
     <div className="flex items-center gap-1">
-      <Button variant="outline" size="icon" className="size-8" onClick={() => shift(-step)}>
+      <Button variant="outline" size="icon" className="size-8" onClick={() => shift(-1)}>
         <ChevronLeft className="size-4" />
       </Button>
       <Input
@@ -37,7 +44,7 @@ export function PeriodPicker({
         onChange={(e) => e.target.value && navigate(e.target.value)}
         className="h-8 w-40"
       />
-      <Button variant="outline" size="icon" className="size-8" onClick={() => shift(step)}>
+      <Button variant="outline" size="icon" className="size-8" onClick={() => shift(1)}>
         <ChevronRight className="size-4" />
       </Button>
     </div>

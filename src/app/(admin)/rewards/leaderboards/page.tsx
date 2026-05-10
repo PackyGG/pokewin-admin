@@ -6,6 +6,7 @@ import {
   getRaceLeaderboard,
   getRacePrizeTiers,
   getRaceClaims,
+  getRacePeriodsOverview,
 } from "@/lib/queries/races";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import {
@@ -18,6 +19,7 @@ import { PeriodPicker } from "./period-picker";
 import { RaceTiersTable } from "./race-tiers-table";
 import { StandingsTable } from "./standings-table";
 import { HistoryTable } from "./history-table";
+import { PeriodsTable } from "./periods-table";
 import { PageHero } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
@@ -25,16 +27,21 @@ export const metadata = { title: "Leaderboards" };
 
 // Leaderboards is the single entry point for everything race-related now
 // that /rewards/races is gone:
-//   - Standings: current wager standings per period (daily/weekly)
-//   - Prize Tiers: admin-editable prize amounts per position and period type
+//   - Standings:  current wager standings per period (daily/weekly/monthly)
+//   - Prize Tiers: admin-editable prize amounts per position and race type
 //   - History:    historical claims (who won what, when)
+//   - Periods:    race_periods management — start/end/auto-renew toggle.
+//                 Monthly only ever runs after admin starts a period here.
 const TABS = [
   { value: "standings", label: "Standings" },
   { value: "tiers", label: "Prize Tiers" },
   { value: "history", label: "History" },
+  { value: "periods", label: "Periods" },
 ] as const;
 
 type TabValue = (typeof TABS)[number]["value"];
+
+const RACE_TYPE_FILTERS = ["all", "monthly", "weekly", "daily"] as const;
 
 function getDefaultPeriodStart(raceType: string): string {
   const now = new Date();
@@ -42,6 +49,14 @@ function getDefaultPeriodStart(raceType: string): string {
     const day = now.getDay();
     const diff = day === 0 ? 6 : day - 1;
     now.setDate(now.getDate() - diff);
+  } else if (raceType === "monthly") {
+    // Calendar month start (UTC) is the most useful default for monthly
+    // even though admin-created monthly races may not align to month #1.
+    return new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+    )
+      .toISOString()
+      .slice(0, 10);
   }
   return now.toISOString().slice(0, 10);
 }
@@ -67,7 +82,7 @@ export default async function LeaderboardsPage({
           <div>
             <h1 className="text-2xl font-bold leading-tight">Leaderboards</h1>
             <p className="text-sm text-muted-foreground">
-              Wager standings, prize tiers, and historical race claims.
+              Wager standings, prize tiers, race periods, and historical claims.
             </p>
           </div>
         </div>
@@ -122,6 +137,11 @@ export default async function LeaderboardsPage({
             <HistoryTab params={params} />
           </Suspense>
         )}
+        {tab === "periods" && (
+          <Suspense fallback={<TableSkeleton rows={4} columns={6} />}>
+            <PeriodsTab />
+          </Suspense>
+        )}
       </div>
     </div>
   );
@@ -153,7 +173,7 @@ async function StandingsTab({
     <div className="space-y-4">
       <div className="flex items-center gap-4">
         <div className="flex gap-1 rounded-lg bg-muted p-1">
-          {["all", "daily", "weekly"].map((type) => (
+          {RACE_TYPE_FILTERS.map((type) => (
             <Link
               key={type}
               href={`/rewards/leaderboards?tab=standings&raceType=${type}${
@@ -214,7 +234,7 @@ async function HistoryTab({
   return (
     <div className="space-y-4">
       <div className="flex gap-1 rounded-lg bg-muted p-1 w-fit">
-        {["all", "daily", "weekly"].map((type) => (
+        {RACE_TYPE_FILTERS.map((type) => (
           <Link
             key={type}
             href={`/rewards/leaderboards?tab=history&raceType=${type}`}
@@ -239,5 +259,14 @@ async function HistoryTab({
         perPage={claims.perPage}
       />
     </div>
+  );
+}
+
+async function PeriodsTab() {
+  const { active, recent } = await getRacePeriodsOverview();
+  return (
+    <FadeIn>
+      <PeriodsTable active={active} recent={recent} />
+    </FadeIn>
   );
 }

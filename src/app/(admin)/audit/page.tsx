@@ -45,6 +45,9 @@ const EVENT_TYPES = [
   { label: "Affiliate Payout", value: "affiliate_payout_processed" },
   { label: "Rakeback Config Updated", value: "rakeback_config_updated" },
   { label: "Race Prize Updated", value: "race_prize_tier_updated" },
+  { label: "Race Started", value: "race_period_started" },
+  { label: "Race Ended", value: "race_period_ended" },
+  { label: "Race Auto-renew Toggled", value: "race_period_auto_renew_toggled" },
   { label: "Country Restriction Updated", value: "country_restriction_updated" },
 ];
 

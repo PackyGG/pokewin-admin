@@ -339,6 +339,13 @@ export const CAPABILITIES: CapabilityDef[] = [
     description: "Remove a race / leaderboard prize tier",
     group: "Race Leaderboards",
   },
+  {
+    key: "__can_manage_race_periods",
+    label: "Manage Race Periods",
+    description:
+      "Start a race period (incl. monthly with custom dates), toggle auto-renew, or end an active period now",
+    group: "Race Leaderboards",
+  },
 
   // ── Rain ────────────────────────────────────────────────────────────
   {
