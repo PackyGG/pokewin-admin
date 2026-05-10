@@ -79,6 +79,122 @@ export async function upsertRacePrizeTier(
 }
 
 /**
+ * Bulk-upsert race prize tiers. Used by the "Add Multiple" flow on
+ * the Prize Tiers tab so an admin can stage a whole podium worth of
+ * positions and persist them in a single click instead of saving
+ * after every row.
+ *
+ * Atomicity: all-or-nothing via `$transaction` — a bad row in the
+ * middle (duplicate position, negative amount, etc.) rolls back any
+ * partial work, so the table on screen never gets stuck with half a
+ * podium applied. Validation runs UP FRONT before we touch the DB so
+ * a typo doesn't even open a transaction.
+ */
+export async function upsertRacePrizeTiersBulk(
+  raceType: string,
+  rows: { position: number; prizeAmountUsd: number }[],
+) {
+  const db = await getDb();
+  const session = await requireAdmin();
+
+  if (!VALID_RACE_TYPES.has(raceType as race_type)) {
+    throw new Error("Invalid race type (must be daily, weekly, or monthly)");
+  }
+  if (!Array.isArray(rows) || rows.length === 0) {
+    throw new Error("At least one row is required");
+  }
+  // Cap the batch so a typo in the form (or a malicious payload) can't
+  // chew through the table. 100 positions is well above any real podium.
+  if (rows.length > 100) {
+    throw new Error("Too many rows in one batch (max 100)");
+  }
+
+  const seenPositions = new Set<number>();
+  for (const row of rows) {
+    if (!Number.isInteger(row.position) || row.position < 1) {
+      throw new Error(`Invalid position "${row.position}" — must be a positive integer`);
+    }
+    if (
+      !Number.isFinite(row.prizeAmountUsd) ||
+      row.prizeAmountUsd < 0
+    ) {
+      throw new Error(
+        `Invalid prize amount for #${row.position} — must be a non-negative number`,
+      );
+    }
+    if (seenPositions.has(row.position)) {
+      throw new Error(
+        `Duplicate position #${row.position} in the same batch`,
+      );
+    }
+    seenPositions.add(row.position);
+  }
+
+  await requireCapability(
+    session,
+    "__can_upsert_race_prize_tier",
+    "upsert race prize tiers",
+  );
+
+  // Resolve which rows are inserts vs updates BEFORE the transaction
+  // so the audit metadata can label each one accurately. One round-trip
+  // for the page's worth of positions.
+  const existing = await db.race_prize_tiers.findMany({
+    where: {
+      race_type: raceType as race_type,
+      position: { in: rows.map((r) => r.position) },
+    },
+    select: { id: true, position: true, prize_amount_usd: true },
+  });
+  const existingByPosition = new Map(existing.map((e) => [e.position, e]));
+
+  const operations = rows.map((row) => {
+    const prior = existingByPosition.get(row.position);
+    if (prior) {
+      return db.race_prize_tiers.update({
+        where: { id: prior.id },
+        data: { prize_amount_usd: row.prizeAmountUsd },
+      });
+    }
+    return db.race_prize_tiers.create({
+      data: {
+        race_type: raceType as race_type,
+        position: row.position,
+        prize_amount_usd: row.prizeAmountUsd,
+      },
+    });
+  });
+
+  await db.$transaction(operations);
+
+  // One audit event for the whole batch (rather than N events) so the
+  // audit log doesn't get spammed by a single "set up the podium" admin
+  // action. Per-row detail is preserved in the metadata array.
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "race_prize_tiers_bulk_upserted",
+    metadata: {
+      race_type: raceType,
+      count: rows.length,
+      rows: rows.map((r) => {
+        const prior = existingByPosition.get(r.position);
+        return {
+          position: r.position,
+          prize_amount_usd: r.prizeAmountUsd,
+          op: prior ? "updated" : "created",
+          ...(prior
+            ? { old_prize_amount_usd: Number(prior.prize_amount_usd) }
+            : {}),
+        };
+      }),
+    },
+  });
+
+  revalidatePath("/rewards/leaderboards");
+  return { upserted: rows.length };
+}
+
+/**
  * Remove a race prize tier. Used when an admin wants to stop awarding
  * a specific position — e.g. dropping weekly #10 after shrinking the
  * podium. Deletion is hard; no soft-delete column on the table.

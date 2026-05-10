@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatCurrency } from "@/lib/utils/format";
-import { upsertRacePrizeTier, deleteRacePrizeTier } from "./actions";
+import {
+  upsertRacePrizeTier,
+  upsertRacePrizeTiersBulk,
+  deleteRacePrizeTier,
+} from "./actions";
 
 type PrizeTier = {
   id: string;
@@ -27,6 +31,27 @@ type PrizeTier = {
 
 type RaceType = "daily" | "weekly" | "monthly";
 
+// Pending-row shape for the multi-row "Add Tiers" stage. Inputs stay as
+// strings until save (so the field can hold "" or "1." mid-typing
+// without re-rendering as NaN). Each row gets a stable client-side key
+// so React doesn't reorder when the array splices.
+type PendingRow = {
+  key: string;
+  position: string;
+  amount: string;
+};
+
+function makePendingRow(position: number, amount = ""): PendingRow {
+  return {
+    key:
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `r-${Math.random().toString(36).slice(2)}`,
+    position: String(position),
+    amount,
+  };
+}
+
 export function RaceTiersTable({ tiers }: { tiers: PrizeTier[] }) {
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
@@ -36,11 +61,13 @@ export function RaceTiersTable({ tiers }: { tiers: PrizeTier[] }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
 
-  // "Add Tier" form state — keyed by race type so the daily and
-  // weekly forms don't collide if both ever get opened.
+  // "Add Tiers" stage — keyed by race type (so the daily and weekly
+  // sections don't collide when both are open) and holds a LIST of
+  // pending rows. Admin can stack as many rows as they want and save
+  // them all at once via the bulk action — no more saving after every
+  // row.
   const [addingFor, setAddingFor] = useState<RaceType | null>(null);
-  const [addPosition, setAddPosition] = useState("");
-  const [addAmount, setAddAmount] = useState("");
+  const [pendingRows, setPendingRows] = useState<PendingRow[]>([]);
 
   const dailyTiers = tiers
     .filter((t) => t.raceType === "daily")
@@ -81,42 +108,102 @@ export function RaceTiersTable({ tiers }: { tiers: PrizeTier[] }) {
     });
   }
 
+  function nextPositionAfter(existing: PrizeTier[], pending: PendingRow[]) {
+    // Highest position across both saved tiers and the rows already
+    // staged in the form. Adding a new row should pick up where the
+    // last staged row left off, not duplicate it.
+    const taken = [
+      ...existing.map((t) => t.position),
+      ...pending
+        .map((r) => parseInt(r.position, 10))
+        .filter((n) => Number.isInteger(n) && n > 0),
+    ];
+    return taken.length === 0 ? 1 : Math.max(...taken) + 1;
+  }
+
   function startAdd(raceType: RaceType, existing: PrizeTier[]) {
-    const nextPosition =
-      existing.length === 0
-        ? 1
-        : Math.max(...existing.map((t) => t.position)) + 1;
     setAddingFor(raceType);
-    setAddPosition(String(nextPosition));
-    setAddAmount("");
+    setPendingRows([makePendingRow(nextPositionAfter(existing, []))]);
     setEditingId(null);
+  }
+
+  function appendPendingRow(existing: PrizeTier[]) {
+    setPendingRows((rows) => [
+      ...rows,
+      makePendingRow(nextPositionAfter(existing, rows)),
+    ]);
+  }
+
+  function updatePendingRow(
+    key: string,
+    patch: Partial<Omit<PendingRow, "key">>,
+  ) {
+    setPendingRows((rows) =>
+      rows.map((r) => (r.key === key ? { ...r, ...patch } : r)),
+    );
+  }
+
+  function removePendingRow(key: string) {
+    setPendingRows((rows) => rows.filter((r) => r.key !== key));
   }
 
   function cancelAdd() {
     setAddingFor(null);
-    setAddPosition("");
-    setAddAmount("");
+    setPendingRows([]);
   }
 
   function saveAdd(raceType: RaceType) {
-    const position = parseInt(addPosition, 10);
-    const amount = parseFloat(addAmount);
-    if (!Number.isInteger(position) || position < 1) {
-      toast.error("Position must be a positive integer");
+    if (pendingRows.length === 0) {
+      toast.error("Add at least one row before saving");
       return;
     }
-    if (!Number.isFinite(amount) || amount < 0) {
-      toast.error("Prize amount must be a non-negative number");
-      return;
+    // Validate + parse client-side first so we surface a friendly toast
+    // instead of bouncing off the server's thrown Error string.
+    const parsed: { position: number; prizeAmountUsd: number }[] = [];
+    const seen = new Set<number>();
+    for (const row of pendingRows) {
+      const position = parseInt(row.position, 10);
+      const amount = parseFloat(row.amount);
+      if (!Number.isInteger(position) || position < 1) {
+        toast.error(`Position "${row.position || "(empty)"}" is not a positive integer`);
+        return;
+      }
+      if (!Number.isFinite(amount) || amount < 0) {
+        toast.error(`Prize amount for #${position} must be a non-negative number`);
+        return;
+      }
+      if (seen.has(position)) {
+        toast.error(`Position #${position} appears twice in the form`);
+        return;
+      }
+      seen.add(position);
+      parsed.push({ position, prizeAmountUsd: amount });
     }
+
+    // Single row → fall through to the existing single-row action so
+    // the server-side audit event records "race_prize_tier_created"
+    // (matches what a one-off edit produces). Multi-row → bulk action.
     startTransition(async () => {
       try {
-        await upsertRacePrizeTier(raceType, position, amount);
-        toast.success("Prize tier created");
+        if (parsed.length === 1) {
+          await upsertRacePrizeTier(
+            raceType,
+            parsed[0].position,
+            parsed[0].prizeAmountUsd,
+          );
+          toast.success("Prize tier saved");
+        } else {
+          const result = await upsertRacePrizeTiersBulk(raceType, parsed);
+          toast.success(
+            result.upserted === 1
+              ? "Prize tier saved"
+              : `${result.upserted} prize tiers saved`,
+          );
+        }
         cancelAdd();
         router.refresh();
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Failed to create");
+        toast.error(e instanceof Error ? e.message : "Failed to save");
       }
     });
   }
@@ -144,6 +231,7 @@ export function RaceTiersTable({ tiers }: { tiers: PrizeTier[] }) {
 
   function renderGroup(raceType: RaceType, items: PrizeTier[]) {
     const isAdding = addingFor === raceType;
+    const visiblePending = isAdding ? pendingRows : [];
 
     return (
       <div key={raceType}>
@@ -158,7 +246,7 @@ export function RaceTiersTable({ tiers }: { tiers: PrizeTier[] }) {
               disabled={isPending}
             >
               <Plus className="mr-1 size-3" />
-              Add Tier
+              Add Tiers
             </Button>
           )}
         </div>
@@ -243,17 +331,20 @@ export function RaceTiersTable({ tiers }: { tiers: PrizeTier[] }) {
                 </TableRow>
               ))}
 
-              {isAdding && (
-                <TableRow>
+              {visiblePending.map((row, idx) => (
+                <TableRow key={row.key}>
                   <TableCell>
                     <Input
                       type="number"
                       step="1"
                       min="1"
-                      value={addPosition}
-                      onChange={(e) => setAddPosition(e.target.value)}
+                      value={row.position}
+                      onChange={(e) =>
+                        updatePendingRow(row.key, { position: e.target.value })
+                      }
                       className="h-8 w-20"
                       placeholder="#"
+                      autoFocus={idx === visiblePending.length - 1}
                     />
                   </TableCell>
                   <TableCell>
@@ -261,35 +352,86 @@ export function RaceTiersTable({ tiers }: { tiers: PrizeTier[] }) {
                       type="number"
                       step="0.01"
                       min="0"
-                      value={addAmount}
-                      onChange={(e) => setAddAmount(e.target.value)}
+                      value={row.amount}
+                      onChange={(e) =>
+                        updatePendingRow(row.key, { amount: e.target.value })
+                      }
                       className="h-8 w-32"
                       placeholder="0.00"
-                      autoFocus
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") saveAdd(raceType);
+                        // Enter on the last row appends a fresh row so
+                        // admins can keep typing without grabbing the
+                        // mouse. Cmd/Ctrl+Enter saves the whole batch.
+                        if (e.key === "Enter") {
+                          if (e.metaKey || e.ctrlKey) {
+                            saveAdd(raceType);
+                          } else if (idx === visiblePending.length - 1) {
+                            e.preventDefault();
+                            appendPendingRow(items);
+                          }
+                        }
                         if (e.key === "Escape") cancelAdd();
                       }}
                     />
                   </TableCell>
                   <TableCell>
-                    <div className="flex gap-1">
+                    {/* Per-row remove (X). Cancel + Save All live in
+                        the footer row below so they aren't repeated on
+                        every pending row. */}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => removePendingRow(row.key)}
+                      disabled={isPending || visiblePending.length === 1}
+                      aria-label={`Remove pending row ${idx + 1}`}
+                      className="text-muted-foreground hover:text-destructive"
+                    >
+                      <X className="size-4" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+
+              {isAdding && (
+                <TableRow>
+                  <TableCell colSpan={3} className="bg-muted/20">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => saveAdd(raceType)}
+                        className="h-7 text-xs"
+                        onClick={() => appendPendingRow(items)}
                         disabled={isPending}
                       >
-                        Save
+                        <Plus className="mr-1 size-3" />
+                        Add another row
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={cancelAdd}
-                        disabled={isPending}
-                      >
-                        Cancel
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-muted-foreground">
+                          {visiblePending.length}{" "}
+                          {visiblePending.length === 1 ? "row" : "rows"} staged
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => saveAdd(raceType)}
+                          disabled={isPending || visiblePending.length === 0}
+                        >
+                          {isPending
+                            ? "Saving…"
+                            : visiblePending.length > 1
+                              ? "Save all"
+                              : "Save"}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={cancelAdd}
+                          disabled={isPending}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
                     </div>
                   </TableCell>
                 </TableRow>
