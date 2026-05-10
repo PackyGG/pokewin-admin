@@ -48,6 +48,7 @@ import {
   amountSignFor,
   ledgerDirection,
 } from "@/lib/utils/ledger-direction";
+import { BorrowBadge } from "@/components/borrow-badge";
 import { fetchUserTransactions, getGameSessionDetails } from "./actions";
 import type {
   Transaction,
@@ -282,9 +283,20 @@ export const CategoryTransactionsTable = React.memo(
                     </button>
                   </TableCell>
                   <TableCell>
-                    <Badge variant="outline" className="font-mono text-xs">
-                      {t.type}
-                    </Badge>
+                    <div className="flex flex-col items-start gap-0.5">
+                      <Badge variant="outline" className="font-mono text-xs">
+                        {t.type}
+                      </Badge>
+                      {/* Borrow signal lives directly under the type
+                          chip so admins scrolling a long activity
+                          tab can spot borrowed opens at a glance.
+                          Renders nothing for non-borrowed events. */}
+                      <BorrowBadge
+                        percent={t.borrowPercentage}
+                        amountUsd={t.borrowedAmountUsd}
+                        size="sm"
+                      />
+                    </div>
                   </TableCell>
                   {(() => {
                     // HOUSE-POV amount. The signed balance delta alone is

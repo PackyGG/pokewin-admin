@@ -150,6 +150,14 @@ export type LiveActivityItem = {
   amount: number | null;
   detail: string | null;
   createdAt: string;
+  /**
+   * % of the bet that the house fronted on this event. null = not a
+   * borrow-capable event. Drives the BorrowBadge that appears next
+   * to pack-opening / battle-bet rows in the Recent Activity feed.
+   */
+  borrowPercentage: number | null;
+  /** USD the house fronted (bet × borrow%). null when borrow doesn't apply. */
+  borrowedAmountUsd: number | null;
 };
 
 /**
@@ -251,18 +259,73 @@ export async function getLiveActivity(params: {
     }),
   ]);
 
-  const ledgerItems: LiveActivityItem[] = ledgerRows.map((r) => ({
-    id: `tx:${r.id}`,
-    kind: classifyLedgerKind(r.type),
-    type: r.type,
-    userId: r.user_id,
-    username: r.user?.username ?? r.user?.email ?? "Unknown",
-    image: r.user?.image ?? null,
-    // Store the absolute amount so the UI can sign it via `kind`.
-    amount: Math.abs(toNumber(r.amount)),
-    detail: r.description || null,
-    createdAt: r.created_at.toISOString(),
-  }));
+  // Batch-fetch borrow_percentage for any battle_bet / battle_sponsorship
+  // rows in the page. The ledger row's `metadata` doesn't include the
+  // battle_id (verified against live data — metadata is null on these
+  // rows), so we go through the unique game_session_id → battle_participants
+  // → battles chain.
+  const battleSessionIds = ledgerRows
+    .filter(
+      (r) =>
+        (r.type === "battle_bet" || r.type === "battle_sponsorship") &&
+        r.game_session_id,
+    )
+    .map((r) => r.game_session_id as string);
+  const borrowByGameSessionId = new Map<string, number>();
+  if (battleSessionIds.length > 0) {
+    const participants = await db.battle_participants.findMany({
+      where: { game_session_id: { in: battleSessionIds } },
+      select: {
+        game_session_id: true,
+        battles: { select: { borrow_percentage: true } },
+      },
+    });
+    for (const p of participants) {
+      const pct = p.battles?.borrow_percentage ?? 0;
+      if (pct > 0) borrowByGameSessionId.set(p.game_session_id, pct);
+    }
+  }
+
+  // Solo pack_opening: backend writes a deterministic description
+  // ("Opened N pack(s) (X% borrowed)"). Cheaper than a per-row PF
+  // result lookup for the live feed; verified format against
+  // production data.
+  const SOLO_BORROW_REGEX = /(\d{1,3})% borrowed/i;
+
+  const ledgerItems: LiveActivityItem[] = ledgerRows.map((r) => {
+    let borrowPercentage: number | null = null;
+    let borrowedAmountUsd: number | null = null;
+    if (r.type === "battle_bet" || r.type === "battle_sponsorship") {
+      const pct = r.game_session_id
+        ? borrowByGameSessionId.get(r.game_session_id) ?? null
+        : null;
+      if (pct != null && pct > 0) {
+        borrowPercentage = pct;
+        borrowedAmountUsd = Math.abs(toNumber(r.amount)) * (pct / 100);
+      }
+    } else if (r.type === "pack_opening") {
+      const m = r.description?.match(SOLO_BORROW_REGEX);
+      const pct = m ? parseInt(m[1], 10) : null;
+      if (pct != null && pct > 0 && Number.isFinite(pct)) {
+        borrowPercentage = pct;
+        borrowedAmountUsd = Math.abs(toNumber(r.amount)) * (pct / 100);
+      }
+    }
+    return {
+      id: `tx:${r.id}`,
+      kind: classifyLedgerKind(r.type),
+      type: r.type,
+      userId: r.user_id,
+      username: r.user?.username ?? r.user?.email ?? "Unknown",
+      image: r.user?.image ?? null,
+      // Store the absolute amount so the UI can sign it via `kind`.
+      amount: Math.abs(toNumber(r.amount)),
+      detail: r.description || null,
+      createdAt: r.created_at.toISOString(),
+      borrowPercentage,
+      borrowedAmountUsd,
+    };
+  });
 
   const withdrawalItems: LiveActivityItem[] = withdrawalRequests.map((r) => {
     const u = r.user_card_withdrawal_requests_user_idTouser;
@@ -276,6 +339,8 @@ export async function getLiveActivity(params: {
       amount: toNumber(r.total_value_usd),
       detail: r.method ? `${r.method}${r.crypto_asset ? ` · ${r.crypto_asset}` : ""}` : null,
       createdAt: r.requested_at.toISOString(),
+      borrowPercentage: null,
+      borrowedAmountUsd: null,
     };
   });
 
@@ -289,6 +354,8 @@ export async function getLiveActivity(params: {
     amount: null,
     detail: null,
     createdAt: u.created_at.toISOString(),
+    borrowPercentage: null,
+    borrowedAmountUsd: null,
   }));
 
   return [...ledgerItems, ...withdrawalItems, ...signupItems]

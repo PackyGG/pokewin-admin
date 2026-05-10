@@ -22,6 +22,24 @@ export type TransactionListItem = {
   // Set by mergeDepositBonuses() when a deposit_bonus ledger row has been
   // folded into its parent deposit row. Null means no merged bonus.
   bonusAmount: number | null;
+  /**
+   * % of the bet that the house fronted (borrow). null = not a
+   * borrow-capable event (e.g. deposit, withdrawal). 0 = pack/battle
+   * paid fully in cash. >0 = borrow signal — surfaced via BorrowBadge
+   * across the transactions list, user-detail tab, and recent
+   * activity feed.
+   *
+   * Source for solo pack opens: `provably_fair_results.result_metadata
+   * ->>'borrow_percentage'` on the linked game_session.
+   * Source for battle bets: the linked `battles.borrow_percentage`.
+   */
+  borrowPercentage: number | null;
+  /**
+   * USD value the house fronted on this row. For solo opens this is
+   * the bet × borrow%. For battle bets it's the per-participant
+   * fronted amount (bet × borrow%). Null when borrow doesn't apply.
+   */
+  borrowedAmountUsd: number | null;
 };
 
 /**
@@ -207,6 +225,10 @@ export async function getDepositTransactions(params: {
       cryptoAsset: r.crypto_asset,
       cryptoAmount: r.crypto_amount != null ? Number(r.crypto_amount) : null,
       bonusAmount,
+      // Deposits/withdrawals can't be borrowed — null both fields so
+      // the BorrowBadge cell renders empty.
+      borrowPercentage: null,
+      borrowedAmountUsd: null,
     };
   });
 
@@ -285,7 +307,13 @@ export async function getTransactions(params: {
           select: {
             bet_amount: true,
             provably_fair_results: {
+              // result_metadata carries the per-result `borrow_percentage`
+              // for solo pack opens; for battle rows it's stored on the
+              // battle (separate join below). battle_id distinguishes the
+              // two so we don't accidentally double-attribute.
               select: {
+                battle_id: true,
+                result_metadata: true,
                 user_inventory: { select: { value_at_obtained: true } },
               },
             },
@@ -296,11 +324,36 @@ export async function getTransactions(params: {
     db.ledger_transactions.count({ where }),
   ]);
 
+  // Battle borrow lookup — for any battle_bet / battle_sponsorship row
+  // that has a linked PF result with a battle_id, we need the
+  // battles.borrow_percentage to render the badge. One round-trip
+  // batched across the visible page; cheaper than letting Prisma fan
+  // out a per-row include.
+  const battleIds = new Set<string>();
+  for (const t of transactions) {
+    const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
+    for (const pf of gs?.provably_fair_results ?? []) {
+      if (pf.battle_id) battleIds.add(pf.battle_id);
+    }
+  }
+  const battleBorrowMap = new Map<string, number>();
+  if (battleIds.size > 0) {
+    const battles = await db.battles.findMany({
+      where: { id: { in: [...battleIds] } },
+      select: { id: true, borrow_percentage: true },
+    });
+    for (const b of battles) {
+      battleBorrowMap.set(b.id, b.borrow_percentage ?? 0);
+    }
+  }
+
   return {
     data: transactions.map((t) => {
       const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
       let houseEdge: number | null = null;
       let payout: number | null = null;
+      let borrowPercentage: number | null = null;
+      let borrowedAmountUsd: number | null = null;
       if (gs) {
         const cost = toNumber(gs.bet_amount);
         payout = gs.provably_fair_results.reduce(
@@ -309,6 +362,25 @@ export async function getTransactions(params: {
         );
         if (cost > 0) {
           houseEdge = ((cost - payout) / cost) * 100;
+        }
+        // Borrow %: pull from the linked battle for battle rows, else
+        // from the first PF result's metadata for solo opens. All PF
+        // results in one solo session share the same borrow setting,
+        // so reading the first is correct.
+        const firstPf = gs.provably_fair_results[0];
+        if (firstPf?.battle_id) {
+          borrowPercentage = battleBorrowMap.get(firstPf.battle_id) ?? null;
+        } else if (firstPf) {
+          const meta = firstPf.result_metadata as Record<string, unknown> | null;
+          const raw = meta?.borrow_percentage;
+          if (typeof raw === "number") borrowPercentage = raw;
+          else if (typeof raw === "string") {
+            const n = parseInt(raw, 10);
+            borrowPercentage = Number.isFinite(n) ? n : null;
+          }
+        }
+        if (borrowPercentage != null && borrowPercentage > 0 && cost > 0) {
+          borrowedAmountUsd = cost * (borrowPercentage / 100);
         }
       }
       const balanceBefore = toNumber(t.balance_before);
@@ -332,6 +404,8 @@ export async function getTransactions(params: {
         // Shared query doesn't pair deposit_bonus rows — only the
         // deposits-specific getDepositTransactions does that merging.
         bonusAmount: null,
+        borrowPercentage,
+        borrowedAmountUsd,
       };
     }),
     total,

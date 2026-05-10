@@ -206,6 +206,15 @@ export type Transaction = {
   externalTxId: string | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * % of the bet that the house fronted (borrow). null = not a
+   * borrow-capable event (e.g. deposit). 0 = pack/battle paid fully
+   * in cash. >0 = borrow signal — drives the BorrowBadge in the
+   * activity tab.
+   */
+  borrowPercentage: number | null;
+  /** USD the house fronted on this row (bet × borrow%). */
+  borrowedAmountUsd: number | null;
 };
 
 export type PaginatedTransactions = {

@@ -3,6 +3,7 @@
 import { ColumnDef } from "@tanstack/react-table";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
+import { BorrowBadge } from "@/components/borrow-badge";
 import { STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import {
@@ -53,10 +54,20 @@ export const columns: ColumnDef<TransactionListItem>[] = [
   {
     accessorKey: "type",
     header: "Type",
+    // Type column doubles as the borrow surface — pack_opening and
+    // battle_bet rows render the BorrowBadge underneath the type
+    // chip so the borrow signal sits next to the event identity.
     cell: ({ row }) => (
-      <Badge variant="outline" className={TYPE_COLORS[row.original.type] ?? "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"}>
-        {row.original.type.replace(/_/g, " ")}
-      </Badge>
+      <div className="flex flex-col items-start gap-0.5">
+        <Badge variant="outline" className={TYPE_COLORS[row.original.type] ?? "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"}>
+          {row.original.type.replace(/_/g, " ")}
+        </Badge>
+        <BorrowBadge
+          percent={row.original.borrowPercentage}
+          amountUsd={row.original.borrowedAmountUsd}
+          size="sm"
+        />
+      </div>
     ),
   },
   {
