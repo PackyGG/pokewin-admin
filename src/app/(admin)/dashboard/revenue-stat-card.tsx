@@ -4,7 +4,6 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TrendingUp, TrendingDown } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatCurrency } from "@/lib/utils/format";
 import { AnimatedNumber } from "@/components/animated-number";
 
 // Chronological order — shortest window first so the chips read left-to-right
@@ -161,12 +160,23 @@ export function WagerStatCard({
 }
 
 // Deposits = fresh cash flowing into the house. House gain → emerald.
+// Shows two stacked signals tied to the same period selector:
+//   1) total deposit amount in USD (the primary hero number)
+//   2) deposit count (smaller, muted) — answers "how many deposits"
+//      without needing a separate card. The two move together so the
+//      admin can read off the average deposit at a glance.
 export function DepositsStatCard({
   deposits,
+  depositCounts,
 }: {
   deposits: Record<string, number>;
+  // Optional so existing call sites (or older snapshots in tests)
+  // don't break if the counts aren't provided. When omitted we just
+  // skip the secondary line.
+  depositCounts?: Record<string, number>;
 }) {
   const [selected, setSelected] = useState<string>("24h");
+  const count = depositCounts?.[selected];
 
   return (
     <Card className="bg-emerald-500/10">
@@ -200,6 +210,12 @@ export function DepositsStatCard({
             format="currency"
           />
         </div>
+        {typeof count === "number" && (
+          <p className="text-stat-label mt-0.5">
+            <AnimatedNumber value={count} format="number" />{" "}
+            {count === 1 ? "deposit" : "deposits"}
+          </p>
+        )}
       </CardContent>
     </Card>
   );

@@ -67,7 +67,10 @@ export default async function DashboardPage() {
         <PnlStatCard pnl={stats.realizedPnl} />
         <GgrStatCard ggr={stats.ggr} />
         <WagerStatCard wagers={stats.wagers} />
-        <DepositsStatCard deposits={stats.deposits} />
+        <DepositsStatCard
+          deposits={stats.deposits}
+          depositCounts={stats.depositCounts}
+        />
         <WithdrawalsStatCard withdrawals={stats.withdrawals} />
       </div>
 
