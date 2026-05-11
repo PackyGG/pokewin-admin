@@ -539,3 +539,165 @@ function parseDays(period: Period): number {
       return 36500;
   }
 }
+
+/**
+ * Slim variant of {@link getAnalyticsData} that runs ONLY the battle-
+ * mode + pack-popularity aggregates (6 raws). Used by the
+ * `/analytics?tab=packs` page, which previously called the full
+ * `getAnalyticsData(period)` bundle (11 raws) purely to populate two
+ * sections at the top — wasting an analytics-grade Postgres scan
+ * (PERCENTILE_CONT, multi-day GROUP BY, …) on every tab render.
+ *
+ * Returns only `{ battleStats, packStats }` — the two fields the
+ * Pack & Battle tab consumes. Same per-request blacklist filter as
+ * `getAnalyticsData` so the numbers stay consistent across pages.
+ */
+export async function getPackAndBattleStats(
+  period: Period,
+): Promise<{ battleStats: BattleModeStats; packStats: PackPopularityStats }> {
+  const db = await getDb();
+  const dateFilter = periodToDateFilter(period);
+  const excluded = await getExcludedUserIds();
+  const blacklistIdNotIn =
+    excluded.length > 0
+      ? `AND id NOT IN (${excluded
+          .map((id) => `'${id.replace(/'/g, "''")}'`)
+          .join(",")})`
+      : "";
+  const battleStaffExcl = `user_id IN (SELECT id FROM "user" WHERE role != 'admin')`;
+  const battleStaffExclAliased = `b.user_id IN (SELECT id FROM "user" WHERE role != 'admin')`;
+  const battleDateWhere =
+    period === "all"
+      ? `WHERE ${battleStaffExcl}`
+      : `WHERE created_at >= NOW() - INTERVAL '${parseDays(period)} days' AND ${battleStaffExcl}`;
+  const battleDateWhereAliased =
+    period === "all"
+      ? `WHERE ${battleStaffExclAliased}`
+      : `WHERE b.created_at >= NOW() - INTERVAL '${parseDays(period)} days' AND ${battleStaffExclAliased}`;
+
+  const [
+    battleModeRows,
+    battleSettingRows,
+    battleFlags,
+    battleFormatRows,
+    topBattlePackRows,
+    topPacksRows,
+  ] = await Promise.all([
+    db.$queryRawUnsafe<{ mode: string; count: string }[]>(`
+      SELECT mode::text AS mode, COUNT(*)::text AS count
+      FROM battles
+      ${battleDateWhere}
+      GROUP BY mode
+      ORDER BY COUNT(*) DESC
+    `),
+    db.$queryRawUnsafe<{ setting: string; count: string }[]>(`
+      SELECT setting, COUNT(*)::text AS count
+      FROM battles, UNNEST(additional_settings) AS setting
+      ${battleDateWhere}
+      GROUP BY setting
+      ORDER BY COUNT(*) DESC
+    `),
+    db.$queryRawUnsafe<{
+      total_battles: string;
+      borrow_count: string;
+      sponsored_count: string;
+      private_count: string;
+    }[]>(`
+      SELECT
+        COUNT(*)::text AS total_battles,
+        COUNT(*) FILTER (WHERE borrow_percentage > 0)::text AS borrow_count,
+        COUNT(*) FILTER (WHERE sponsorship_percentage > 0)::text AS sponsored_count,
+        COUNT(*) FILTER (WHERE password IS NOT NULL)::text AS private_count
+      FROM battles
+      ${battleDateWhere}
+    `),
+    db.$queryRawUnsafe<{ teams: number; players_per_team: number; count: string }[]>(`
+      SELECT teams, players_per_team, COUNT(*)::text AS count
+      FROM battles
+      ${battleDateWhere}
+      GROUP BY teams, players_per_team
+      ORDER BY COUNT(*) DESC
+    `),
+    db.$queryRawUnsafe<{ id: string; name: string; count: string }[]>(`
+      SELECT p.id::text AS id, p.name AS name, COUNT(*)::text AS count
+      FROM battles b
+      CROSS JOIN LATERAL UNNEST(b.pack_ids::uuid[]) AS pid
+      JOIN packs p ON p.id = pid
+      ${battleDateWhereAliased}
+      GROUP BY p.id, p.name
+      ORDER BY COUNT(*) DESC
+      LIMIT 10
+    `),
+    db.$queryRawUnsafe<{
+      id: string;
+      name: string;
+      opens_total: string;
+      opens_borrowed: string;
+    }[]>(`
+      SELECT
+        p.id::text AS id,
+        p.name AS name,
+        COUNT(*)::text AS opens_total,
+        COUNT(*) FILTER (WHERE lt.description ILIKE '%borrow%')::text AS opens_borrowed
+      FROM ledger_transactions lt
+      JOIN game_sessions gs ON lt.game_session_id = gs.id AND gs.game_type = 'pack'
+      JOIN packs p ON gs.game_id = p.id
+      WHERE lt.type = 'pack_opening' AND lt.status = 'completed' ${dateFilter.replace(/created_at/g, "lt.created_at")}
+        AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})
+      GROUP BY p.id, p.name
+      ORDER BY COUNT(*) DESC
+      LIMIT 20
+    `),
+  ]);
+
+  return {
+    battleStats: {
+      totalBattles: Number(battleFlags[0]?.total_battles ?? 0),
+      byMode: battleModeRows.map((r) => ({ mode: r.mode, count: Number(r.count) })),
+      bySetting: battleSettingRows.map((r) => ({
+        setting: r.setting,
+        count: Number(r.count),
+      })),
+      byFormat: battleFormatRows.map((r) => ({
+        format:
+          r.teams === 2 && r.players_per_team === 1
+            ? "1v1"
+            : Array(Number(r.teams))
+                .fill(String(Number(r.players_per_team)))
+                .join("v"),
+        count: Number(r.count),
+      })),
+      borrowCount: Number(battleFlags[0]?.borrow_count ?? 0),
+      sponsoredCount: Number(battleFlags[0]?.sponsored_count ?? 0),
+      privateCount: Number(battleFlags[0]?.private_count ?? 0),
+      topBattlePacks: topBattlePackRows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        count: Number(r.count),
+      })),
+    },
+    packStats: {
+      topPacks: topPacksRows.map((r) => {
+        const total = Number(r.opens_total);
+        const borrowed = Number(r.opens_borrowed);
+        return {
+          id: r.id,
+          name: r.name,
+          opensTotal: total,
+          opensBorrowed: borrowed,
+          opensNormal: total - borrowed,
+        };
+      }),
+      topBorrowedPacks: [...topPacksRows]
+        .map((r) => ({
+          id: r.id,
+          name: r.name,
+          opensBorrowed: Number(r.opens_borrowed),
+          opensTotal: Number(r.opens_total),
+        }))
+        .filter((p) => p.opensBorrowed > 0)
+        .sort((a, b) => b.opensBorrowed - a.opensBorrowed)
+        .slice(0, 10),
+    },
+  };
+}

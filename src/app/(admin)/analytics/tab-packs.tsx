@@ -16,7 +16,7 @@ import {
   getPackProfitability,
   type PacksPeriod,
 } from "@/lib/queries/analytics-packs";
-import { getAnalyticsData } from "@/lib/queries/analytics";
+import { getPackAndBattleStats } from "@/lib/queries/analytics";
 import { BattleModesSection, PackPopularitySection } from "./sections";
 import type { AnalyticsPeriod } from "./types";
 
@@ -60,12 +60,15 @@ export async function PacksBattlesTab({
   const sort = parseSort(sortKey);
   // `getPackProfitability` powers the profitability tables below; the
   // battle-mode / pack-popularity breakdowns at the top of this tab are
-  // sourced from the shared analytics bundle. Each tab is rendered as its
-  // own suspense boundary (see `page.tsx`) so this call only fires when
-  // the user actually opens the Pack & Battle tab.
+  // sourced from the slim `getPackAndBattleStats` helper. Previously
+  // this called the full `getAnalyticsData(heroPeriod)` bundle (11
+  // raws — incl. PERCENTILE_CONT median, multi-day GROUP BY revenue,
+  // visitors count, etc.) purely to consume two of its return fields.
+  // Slim variant runs the 6 raws that actually feed those two
+  // sections, dropping the rest entirely.
   const [data, overview] = await Promise.all([
     getPackProfitability(period),
-    getAnalyticsData(heroPeriod),
+    getPackAndBattleStats(heroPeriod),
   ]);
   const sortFn = (a: {
     revenue: number;
