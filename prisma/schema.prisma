@@ -1297,6 +1297,7 @@ enum voucher_origin {
   exchange_excess_to_voucher
   battle_excess_to_voucher
   pack_borrow_to_voucher
+  creator_fill_conversion
 }
 
 enum pack_tag {

@@ -14,6 +14,8 @@ import { SponsorDialog } from "./sponsor-dialog";
 type Row = {
     id: string;
     title: string;
+    creator_user_id: string;
+    co_creator_user_ids: string[];
     approval_status: "pending" | "approved" | "rejected";
     cancelled_at: string | null;
     creator_prize_usd: string;
