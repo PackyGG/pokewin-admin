@@ -41,7 +41,9 @@ export default async function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <AutoRefresh />
+      {/* Dashboard polls at 60s — KPIs settle slowly and the live
+          feeds (RecentActivity SSE, LivePulls WS) update independently. */}
+      <AutoRefresh intervalMs={60_000} />
 
       <PageHero>
         <div className="flex min-w-0 items-center gap-3">

@@ -56,7 +56,10 @@ export default async function AnalyticsPage({
 
   return (
     <div className="space-y-6">
-      <AutoRefresh />
+      {/* Analytics polls at 300s — cohorts/funnel/LTV move on hour/day
+          boundaries, not seconds. Use the period/tab navigation to
+          force a fresh fetch when needed. */}
+      <AutoRefresh intervalMs={300_000} />
       <PageHero>
         {/* Identity + period filter stack vertically on phones — the
             5-chip filter would otherwise wrap awkwardly under the
