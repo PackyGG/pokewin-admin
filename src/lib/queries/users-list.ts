@@ -24,6 +24,14 @@ type UserListItem = {
   totalWagered: number;
   depositCount: number;
   pnl: number;
+  /**
+   * Combined on-platform holdings = available + locked balance +
+   * unsold/unexchanged inventory value. This is the user's TOTAL
+   * position on-site right now, which from the house POV is the
+   * direct liability per user. Useful for spotting whales without
+   * having to mentally add the Balance + Inventory columns.
+   */
+  netHoldings: number;
   createdAt: string;
   riskScore: number;
   riskTier: RiskTier;
@@ -124,8 +132,14 @@ export async function getUsers(params: {
   let total: number;
 
   // These computed sorts need raw SQL because the displayed value combines
-  // multiple tables (e.g. totalWithdrawn = balances.total_withdrawn + card_withdrawal_requests).
-  const rawSqlSorts = new Set(["pnl", "totalWithdrawn", "inventoryValue"]);
+  // multiple tables (e.g. totalWithdrawn = balances.total_withdrawn +
+  // card_withdrawal_requests; netHoldings = balances + user_inventory).
+  const rawSqlSorts = new Set([
+    "pnl",
+    "totalWithdrawn",
+    "inventoryValue",
+    "netHoldings",
+  ]);
 
   if (rawSqlSorts.has(sortBy)) {
     const orderSql = order === "asc" ? "ASC" : "DESC";
@@ -176,7 +190,16 @@ export async function getUsers(params: {
           ? `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)`
           : sortBy === "inventoryValue"
             ? `COALESCE(inv.inv_value, 0)`
-            : `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)
+            : sortBy === "netHoldings"
+              ? // Net on-platform position from the house POV: cash
+                // (available + locked) + open inventory. This is the
+                // "what the user has on-site RIGHT NOW" snapshot —
+                // ignores lifetime deposits/withdrawals/PnL so big
+                // holders surface even if they never wagered.
+                `COALESCE(b.available_balance::numeric, 0)
+                 + COALESCE(b.locked_balance::numeric, 0)
+                 + COALESCE(inv.inv_value, 0)`
+              : `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)
                + COALESCE(b.available_balance::numeric, 0)
                + COALESCE(b.locked_balance::numeric, 0)
                + COALESCE(inv.inv_value, 0)
@@ -272,6 +295,7 @@ export async function getUsers(params: {
   return {
     data: users.map((u) => {
       const availableBalance = toNumber(u.balances?.available_balance);
+      const lockedBalance = toNumber(u.balances?.locked_balance);
       const totalWagered = toNumber(u.balances?.total_wagered);
       const userPnl = pnlByUserId.get(u.id);
       const totalDeposited = userPnl?.deposits ?? 0;
@@ -281,6 +305,12 @@ export async function getUsers(params: {
       // shown red because that's our liability). The shared helper returns
       // House-POV; flip the sign here to keep the column semantics intact.
       const pnl = userPnl ? -userPnl.pnl : 0;
+      // Net on-platform holdings = cash (available + locked vault) +
+      // open inventory. Mirrors the SQL ORDER BY expression for the
+      // `netHoldings` sort so client-side reordering matches what the
+      // server returned. Lifetime deposits/withdrawals deliberately
+      // excluded — this is "what's on-site RIGHT NOW", not PnL.
+      const netHoldings = availableBalance + lockedBalance + inventoryValue;
       const risk = riskScoresMap.get(u.id);
       return {
         id: u.id,
@@ -293,6 +323,7 @@ export async function getUsers(params: {
         countryCode: u.country_code,
         availableBalance,
         inventoryValue,
+        netHoldings,
         totalDeposited,
         totalWithdrawn,
         totalWagered,
