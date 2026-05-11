@@ -75,6 +75,12 @@ function getPeriodAggregates(
       wager_24h: string; wager_3d: string; wager_7d: string; wager_30d: string; wager_all: string;
       ggr_1h: string; ggr_3h: string; ggr_6h: string; ggr_12h: string;
       ggr_24h: string; ggr_3d: string; ggr_7d: string; ggr_30d: string; ggr_all: string;
+      // Deposit COUNT (number of completed deposit transactions) per
+      // period. Pairs with the existing revenue_* (sum) columns so the
+      // Deposits KPI card can show "$X across N deposits" on the same
+      // period selector.
+      deposit_count_1h: string; deposit_count_3h: string; deposit_count_6h: string; deposit_count_12h: string;
+      deposit_count_24h: string; deposit_count_3d: string; deposit_count_7d: string; deposit_count_30d: string; deposit_count_all: string;
     }[]
   >`
     WITH real_users AS (
@@ -215,7 +221,22 @@ function getPeriodAggregates(
             'balance_reward_claim','affiliate_claim','rain_win','waitlist_prize','creator_tip',
             'voucher_redeemed','voucher_exchange','exchange_excess_to_voucher','battle_excess_to_voucher'
           ) THEN ABS(amount) ELSE 0 END), 0)
-      )::text AS ggr_all
+      )::text AS ggr_all,
+
+      -- Deposit COUNT per period. Same window definitions as the
+      -- revenue_* (sum) columns so the Deposits card can show both
+      -- "$X" and "N deposits" on a single period selector. COUNT()
+      -- with FILTER (CASE WHEN ... THEN 1 END) — only counts rows
+      -- where the condition is true; null rows are skipped.
+      COUNT(CASE WHEN type = 'deposit' AND created_at >= ${oneHourAgo}        THEN 1 END)::text AS deposit_count_1h,
+      COUNT(CASE WHEN type = 'deposit' AND created_at >= ${threeHoursAgo}     THEN 1 END)::text AS deposit_count_3h,
+      COUNT(CASE WHEN type = 'deposit' AND created_at >= ${sixHoursAgo}       THEN 1 END)::text AS deposit_count_6h,
+      COUNT(CASE WHEN type = 'deposit' AND created_at >= ${twelveHoursAgo}    THEN 1 END)::text AS deposit_count_12h,
+      COUNT(CASE WHEN type = 'deposit' AND created_at >= ${twentyFourHoursAgo} THEN 1 END)::text AS deposit_count_24h,
+      COUNT(CASE WHEN type = 'deposit' AND created_at >= ${threeDaysAgo}      THEN 1 END)::text AS deposit_count_3d,
+      COUNT(CASE WHEN type = 'deposit' AND created_at >= ${sevenDaysAgo}      THEN 1 END)::text AS deposit_count_7d,
+      COUNT(CASE WHEN type = 'deposit' AND created_at >= ${thirtyDaysAgo}     THEN 1 END)::text AS deposit_count_30d,
+      COUNT(CASE WHEN type = 'deposit'                                         THEN 1 END)::text AS deposit_count_all
     FROM base
   `;
 }
@@ -515,6 +536,8 @@ async function dashboardStatsInner() {
     wager_24h: "0", wager_3d: "0", wager_7d: "0", wager_30d: "0", wager_all: "0",
     ggr_1h: "0", ggr_3h: "0", ggr_6h: "0", ggr_12h: "0",
     ggr_24h: "0", ggr_3d: "0", ggr_7d: "0", ggr_30d: "0", ggr_all: "0",
+    deposit_count_1h: "0", deposit_count_3h: "0", deposit_count_6h: "0", deposit_count_12h: "0",
+    deposit_count_24h: "0", deposit_count_3d: "0", deposit_count_7d: "0", deposit_count_30d: "0", deposit_count_all: "0",
   };
   const num = (s: string) => parseFloat(s) || 0;
 
@@ -553,6 +576,21 @@ async function dashboardStatsInner() {
       "7d": num(pa.revenue_7d),
       "30d": num(pa.revenue_30d),
       all: num(pa.revenue_all),
+    },
+    // Deposit COUNT (number of completed deposit transactions) per
+    // period. Same window definitions as `deposits` above — they pair
+    // 1:1 so the Deposits KPI card can show "$X across N deposits"
+    // synced to a single period selector.
+    depositCounts: {
+      "1h": num(pa.deposit_count_1h),
+      "3h": num(pa.deposit_count_3h),
+      "6h": num(pa.deposit_count_6h),
+      "12h": num(pa.deposit_count_12h),
+      "24h": num(pa.deposit_count_24h),
+      "3d": num(pa.deposit_count_3d),
+      "7d": num(pa.deposit_count_7d),
+      "30d": num(pa.deposit_count_30d),
+      all: num(pa.deposit_count_all),
     },
     // Sourced from card_withdrawal_requests (status IN completed/shipped)
     // so the StatCard matches the PnL formula. Values are already positive
