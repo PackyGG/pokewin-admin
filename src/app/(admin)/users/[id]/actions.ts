@@ -18,10 +18,58 @@ import {
   hasCapability,
 } from "@/app/(admin)/settings/roles/permissions-utils";
 
+// Hosts we accept as a "Giveaway" source URL. Anything else is rejected
+// at the action boundary so the giveaway log can't be polluted with
+// random links. Twitter accepts both legacy twitter.com + the new x.com;
+// Discord covers the web client (discord.com), the app deeplinks
+// (canary/ptb), and the invite shortener (discord.gg).
+const GIVEAWAY_SOURCE_HOSTS: Record<string, "twitter" | "discord"> = {
+  "twitter.com": "twitter",
+  "www.twitter.com": "twitter",
+  "x.com": "twitter",
+  "www.x.com": "twitter",
+  "mobile.twitter.com": "twitter",
+  "discord.com": "discord",
+  "www.discord.com": "discord",
+  "canary.discord.com": "discord",
+  "ptb.discord.com": "discord",
+  "discord.gg": "discord",
+};
+
+/**
+ * Validate + classify a giveaway source URL. Returns the resolved
+ * source-type (`twitter` / `discord` / `other`) or throws if the URL
+ * is malformed. We use `other` as a soft escape hatch in case the
+ * admin pastes something we don't know about — the row still lands,
+ * just labelled neutrally. Throws only on outright unparseable input.
+ */
+function classifyGiveawaySourceUrl(rawUrl: string): {
+  url: string;
+  sourceType: "twitter" | "discord" | "other";
+} {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error("Giveaway source URL is not a valid URL");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("Giveaway source URL must be http(s)");
+  }
+  const host = parsed.host.toLowerCase();
+  const sourceType = GIVEAWAY_SOURCE_HOSTS[host] ?? "other";
+  return { url: parsed.toString(), sourceType };
+}
+
 const adjustBalanceSchema = z.object({
   userId: z.string(),
   amount: z.number(),
   reason: z.string().min(1),
+  // Optional giveaway payload — required iff the reason category was
+  // "giveaway" on the client. The client always sends the source URL
+  // when that's true; missing source on a Giveaway reason → reject so
+  // the giveaway log isn't missing rows.
+  giveawaySourceUrl: z.string().trim().min(1).optional(),
 });
 
 export async function adjustBalance(data: {
@@ -29,6 +77,7 @@ export async function adjustBalance(data: {
   amount: number;
   reason: string;
   totpCode: string;
+  giveawaySourceUrl?: string;
 }): Promise<{ success: true } | { success: false; error: string }> {
   const db = await getDb();
   const session = await requirePageAccess("/users");
@@ -62,6 +111,30 @@ export async function adjustBalance(data: {
     return { success: false, error: err instanceof Error ? err.message : "Balance limit exceeded" };
   }
 
+  // If this adjustment is tagged as a Giveaway, the source URL is
+  // required AND must point at a recognized host (Twitter / Discord
+  // for now; anything else is rejected so we don't pollute the
+  // giveaway feed with junk links). The classifier is the single
+  // source of truth — no parallel validation in the UI.
+  const isGiveaway = parsed.reason.trim().toLowerCase() === "giveaway";
+  let giveawaySource: { url: string; sourceType: "twitter" | "discord" | "other" } | null = null;
+  if (isGiveaway) {
+    if (!parsed.giveawaySourceUrl) {
+      return {
+        success: false,
+        error: "Giveaway adjustments require a source URL (tweet or Discord message)",
+      };
+    }
+    try {
+      giveawaySource = classifyGiveawaySourceUrl(parsed.giveawaySourceUrl);
+    } catch (err) {
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : "Invalid giveaway source URL",
+      };
+    }
+  }
+
   // Optimistic-locking transaction. The previous (non-locking) version
   // could double-write if two admin actions on the same balance row
   // raced — both reading the same `currentBalance`, both computing
@@ -71,6 +144,9 @@ export async function adjustBalance(data: {
   // version still matches; on mismatch we abort + return a friendly retry.
   let currentBalance = 0;
   let newBalance = 0;
+  // Capture the ledger row id so the giveaway-side write below can
+  // cross-reference it.
+  const ledgerTxId = crypto.randomUUID();
   try {
     await db.$transaction(async (tx) => {
       const b = await tx.balances.findUnique({
@@ -97,7 +173,7 @@ export async function adjustBalance(data: {
 
       await tx.ledger_transactions.create({
         data: {
-          id: crypto.randomUUID(),
+          id: ledgerTxId,
           user_id: parsed.userId,
           type: "admin_balance_adjustment",
           amount: parsed.amount,
@@ -129,6 +205,32 @@ export async function adjustBalance(data: {
     targetUserId: parsed.userId,
     metadata: { amount: parsed.amount, reason: parsed.reason },
   });
+
+  // Persist the giveaway-side metadata in the admin DB. Best-effort —
+  // we already wrote the ledger row, so a giveaway-row failure here
+  // shouldn't fail the whole adjustment (the user got their balance
+  // either way). The admin gets a separate console.error so the
+  // server logs surface a row-write failure without blocking the toast.
+  if (isGiveaway && giveawaySource) {
+    try {
+      await adminDb.admin_giveaway_actions.create({
+        data: {
+          admin_user_id: session.userId,
+          target_user_id: parsed.userId,
+          amount_usd: parsed.amount,
+          source_url: giveawaySource.url,
+          source_type: giveawaySource.sourceType,
+          reason: parsed.reason,
+          ledger_tx_id: ledgerTxId,
+        },
+      });
+    } catch (err) {
+      console.error(
+        "[adjustBalance] giveaway-row write failed (ledger already committed):",
+        err,
+      );
+    }
+  }
 
   // Fire balance_fill webhooks (non-blocking)
   adminDb.creator_webhooks

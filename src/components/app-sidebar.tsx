@@ -146,7 +146,13 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: "Creators",
+    // Renamed from "Creators" → "Marketing" + absorbed the standalone
+    // "Marketing" group (Promo Codes, Gift Cards, Vouchers) so there's
+    // a single home for every outreach / acquisition / promo surface.
+    // Order: creator-side first (analytics → people → campaign tools)
+    // then promo-side (codes / cards / vouchers / giveaways) so the
+    // group reads top-down as "who promotes us → what we promote with".
+    label: "Marketing",
     items: [
       // Analytics sits at the top — it's the "what's happening across
       // creators right now" overview, so admins land on it first when
@@ -165,14 +171,17 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Leaderboards", href: "/creators/leaderboards", icon: "Trophy" },
       { label: "Socials Review", href: "/creators/socials", icon: "ShieldCheck" },
       { label: "Settings", href: "/creators/settings", icon: "Settings" },
-    ],
-  },
-  {
-    label: "Marketing",
-    items: [
+      // Promo / acquisition surfaces (previously in their own
+      // "Marketing" group). Kept after the creator-side so the visual
+      // grouping inside the section still reads "people → tools".
       { label: "Promo Codes", href: "/promo-codes", icon: "Tag" },
       { label: "Gift Cards", href: "/gift-cards", icon: "Gift" },
       { label: "Vouchers", href: "/vouchers", icon: "Ticket" },
+      // Giveaway log — every balance-adjustment tagged as a giveaway
+      // shows up here with the source tweet / Discord link, so the
+      // marketing team has a single feed of "what we gave away and
+      // why" without grepping the ledger.
+      { label: "Giveaway", href: "/marketing/giveaway", icon: "Gift" },
     ],
   },
   {
