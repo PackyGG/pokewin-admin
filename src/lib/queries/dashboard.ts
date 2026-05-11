@@ -32,8 +32,12 @@ export type ActivityItem = {
  * plan + execution, and the underlying index scan is the same. Collapsing
  * into one query shaves ~15 round-trips off the hot dashboard path.
  *
- * Stores the 24h cutoff as `startOfDay` (calendar day) to match the
- * pre-existing behaviour — that's what the Dashboard UI calls "24h".
+ * All cutoffs are TRUE ROLLING WINDOWS from `now` (1h ago, 3h ago, …,
+ * 24h ago, 3d ago …). The 24h bucket used to be `startOfDay` (UTC
+ * midnight = calendar day) which made the card reset to zero every
+ * midnight and read like a partial half-day for most of the morning
+ * — out of step with the other rolling chips on the same card. The
+ * fix unifies the semantic: every chip is now `now − N`.
  *
  * Row shape: one text column per (metric × period). Caller converts to
  * number via toNumber / parseFloat.
@@ -52,7 +56,10 @@ function getPeriodAggregates(
   threeHoursAgo: Date,
   sixHoursAgo: Date,
   twelveHoursAgo: Date,
-  startOfDay: Date,
+  // Rolling 24h cutoff — `now − 24h`. NOT the start of the UTC day.
+  // Renamed from the old `startOfDay` to make the new semantic
+  // obvious at every call site.
+  twentyFourHoursAgo: Date,
   threeDaysAgo: Date,
   sevenDaysAgo: Date,
   thirtyDaysAgo: Date,
@@ -95,7 +102,7 @@ function getPeriodAggregates(
       COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${threeHoursAgo}  THEN amount ELSE 0 END), 0)::text AS revenue_3h,
       COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${sixHoursAgo}    THEN amount ELSE 0 END), 0)::text AS revenue_6h,
       COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${twelveHoursAgo} THEN amount ELSE 0 END), 0)::text AS revenue_12h,
-      COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${startOfDay}    THEN amount ELSE 0 END), 0)::text AS revenue_24h,
+      COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${twentyFourHoursAgo}    THEN amount ELSE 0 END), 0)::text AS revenue_24h,
       COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${threeDaysAgo}  THEN amount ELSE 0 END), 0)::text AS revenue_3d,
       COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${sevenDaysAgo}  THEN amount ELSE 0 END), 0)::text AS revenue_7d,
       COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${thirtyDaysAgo} THEN amount ELSE 0 END), 0)::text AS revenue_30d,
@@ -105,7 +112,7 @@ function getPeriodAggregates(
       COALESCE((SELECT SUM(CASE WHEN effective_at >= ${threeHoursAgo}  THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal_3h,
       COALESCE((SELECT SUM(CASE WHEN effective_at >= ${sixHoursAgo}    THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal_6h,
       COALESCE((SELECT SUM(CASE WHEN effective_at >= ${twelveHoursAgo} THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal_12h,
-      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${startOfDay}    THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal_24h,
+      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${twentyFourHoursAgo}    THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal_24h,
       COALESCE((SELECT SUM(CASE WHEN effective_at >= ${threeDaysAgo}  THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal_3d,
       COALESCE((SELECT SUM(CASE WHEN effective_at >= ${sevenDaysAgo}  THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal_7d,
       COALESCE((SELECT SUM(CASE WHEN effective_at >= ${thirtyDaysAgo} THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal_30d,
@@ -115,7 +122,7 @@ function getPeriodAggregates(
       COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND created_at >= ${threeHoursAgo}  THEN amount ELSE 0 END), 0)::text AS wager_3h,
       COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND created_at >= ${sixHoursAgo}    THEN amount ELSE 0 END), 0)::text AS wager_6h,
       COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND created_at >= ${twelveHoursAgo} THEN amount ELSE 0 END), 0)::text AS wager_12h,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND created_at >= ${startOfDay}    THEN amount ELSE 0 END), 0)::text AS wager_24h,
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND created_at >= ${twentyFourHoursAgo}    THEN amount ELSE 0 END), 0)::text AS wager_24h,
       COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND created_at >= ${threeDaysAgo}  THEN amount ELSE 0 END), 0)::text AS wager_3d,
       COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND created_at >= ${sevenDaysAgo}  THEN amount ELSE 0 END), 0)::text AS wager_7d,
       COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND created_at >= ${thirtyDaysAgo} THEN amount ELSE 0 END), 0)::text AS wager_30d,
@@ -165,13 +172,13 @@ function getPeriodAggregates(
           ) AND created_at >= ${twelveHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
       )::text AS ggr_12h,
       (
-        COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','withdrawal_shipping_fee') AND created_at >= ${startOfDay} THEN ABS(amount) ELSE 0 END), 0)
+        COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','withdrawal_shipping_fee') AND created_at >= ${twentyFourHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
         - COALESCE(SUM(CASE WHEN type IN (
             'battle_refund','card_sale','reward_card_sale','card_exchange','exchange_excess_credit',
             'deposit_bonus','race_prize','gift_card_redeemed','promo_code_redeemed','rakeback_claim',
             'balance_reward_claim','affiliate_claim','rain_win','waitlist_prize','creator_tip',
             'voucher_redeemed','voucher_exchange','exchange_excess_to_voucher','battle_excess_to_voucher'
-          ) AND created_at >= ${startOfDay} THEN ABS(amount) ELSE 0 END), 0)
+          ) AND created_at >= ${twentyFourHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
       )::text AS ggr_24h,
       (
         COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','withdrawal_shipping_fee') AND created_at >= ${threeDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
@@ -266,10 +273,12 @@ async function dashboardStatsInner() {
   const threeDaysAgo = new Date(now.getTime() - 3 * MS_PER_DAY);
   const sevenDaysAgo = new Date(now.getTime() - 7 * MS_PER_DAY);
   const thirtyDaysAgo = new Date(now.getTime() - 30 * MS_PER_DAY);
-  // Rolling 24h cutoff (not calendar day) — feeds the "24h Activity"
-  // tile on the dashboard which counts pack openings + battles. Uses a
-  // rolling window because that matches what an admin glancing at the
-  // panel actually wants ("how busy were we today / in the last day").
+  // Rolling 24h cutoff (now − 24h, NOT UTC midnight). Used by every
+  // "24h" surface on the dashboard:
+  //   • Period aggregates (revenue / wager / GGR / withdrawal "24h" KPI cards)
+  //   • The 24h Activity tile (pack openings + battles count)
+  // The card chips next to "24h" are 1h / 3h / 6h / 12h / 3d / 7d / 30d
+  // — all rolling. Making "24h" rolling too keeps the row coherent.
   const rolling24h = new Date(now.getTime() - 1 * MS_PER_DAY);
 
   const [
@@ -375,7 +384,11 @@ async function dashboardStatsInner() {
     `,
     // Single batched query replaces 20 independent aggregates (revenue, withdrawal,
     // wager, ggr × 5 periods each). Same plan + same index scan — but one round-trip.
-    getPeriodAggregates(db, oneHourAgo, threeHoursAgo, sixHoursAgo, twelveHoursAgo, startOfDay, threeDaysAgo, sevenDaysAgo, thirtyDaysAgo, blacklistIdNotIn),
+    // 5th arg is the 24h cutoff — pass `rolling24h` (now − 24h), not
+    // `startOfDay`. The old behaviour reset every "24h" KPI to zero at
+    // UTC midnight, which read like a partial half-day for most of the
+    // morning; rolling matches the 1h / 3h / 12h chips on the same card.
+    getPeriodAggregates(db, oneHourAgo, threeHoursAgo, sixHoursAgo, twelveHoursAgo, rolling24h, threeDaysAgo, sevenDaysAgo, thirtyDaysAgo, blacklistIdNotIn),
     db.user_statistics.aggregate({
       where: { user: staffRelation },
       _sum: { opened_packs_count: true, battles_played: true },
