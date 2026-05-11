@@ -28,6 +28,8 @@ export type UserRow = {
   countryCode: string | null;
   availableBalance: number;
   inventoryValue: number;
+  /** Cash + locked vault + open inventory — total on-site position. */
+  netHoldings: number;
   totalDeposited: number;
   totalWithdrawn: number;
   totalWagered: number;
@@ -215,6 +217,21 @@ export const columns: ColumnDef<UserRow>[] = [
     cell: ({ row }) => (
       <span className="tabular-nums text-muted-foreground">
         {formatCurrency(row.original.inventoryValue)}
+      </span>
+    ),
+  },
+  {
+    // Combined Balance + Inventory column — answers "who's holding the
+    // most on-platform right now" in one sort click. Colored amber
+    // because every dollar here is a direct house liability (we owe
+    // the user that much in cash + cards). Tooltip-free for now;
+    // admins can hover Balance / Inventory individually if they need
+    // the breakdown.
+    accessorKey: "netHoldings",
+    header: () => <UsersSortHeader title="Net" sortKey="netHoldings" />,
+    cell: ({ row }) => (
+      <span className="font-medium tabular-nums text-orange-600 dark:text-orange-400">
+        {formatCurrency(row.original.netHoldings)}
       </span>
     ),
   },

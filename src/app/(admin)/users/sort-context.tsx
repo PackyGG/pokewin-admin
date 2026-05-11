@@ -26,6 +26,10 @@ const COMPARATORS: Record<string, (a: UserRow, b: UserRow) => number> = {
   totalWithdrawn: (a, b) => a.totalWithdrawn - b.totalWithdrawn,
   totalWagered: (a, b) => a.totalWagered - b.totalWagered,
   inventoryValue: (a, b) => a.inventoryValue - b.inventoryValue,
+  // Combined on-site holdings — surfaces whales without having to
+  // mentally sum Balance + Inventory. Server query computes the same
+  // expression in SQL so client + server agree on ordering.
+  netHoldings: (a, b) => a.netHoldings - b.netHoldings,
   pnl: (a, b) => a.pnl - b.pnl,
   // Risk is client-sortable only — the server query ignores the sortBy
   // value for riskScore and returns the pre-paginated list of users
