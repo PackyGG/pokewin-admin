@@ -7,7 +7,11 @@ import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
 import { AnimatedNumber } from "@/components/animated-number";
 
-const ranges = ["24h", "3d", "7d", "30d", "all"] as const;
+// Chronological order — shortest window first so the chips read left-to-right
+// as "right now → all time". 1h/3h/6h/12h were added on top of the original
+// daily/multi-day buckets for spotting acute spikes (live tournament starting,
+// rain-tip flood, etc.) without waiting for the 24h aggregate to move.
+const ranges = ["1h", "3h", "6h", "12h", "24h", "3d", "7d", "30d", "all"] as const;
 
 // Lifetime realized P&L — a single snapshot number, not period-based. The
 // number comes straight from getRealizedPnlSnapshot() in the dashboard query and
