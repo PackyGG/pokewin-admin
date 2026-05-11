@@ -385,6 +385,8 @@ type FieldRefInputType<Model, FieldType> = Model extends never ? never : FieldRe
 
 export const ModelName = {
   admin_users: 'admin_users',
+  admin_giveaway_actions: 'admin_giveaway_actions',
+  excluded_users: 'excluded_users',
   admin_roles: 'admin_roles',
   admin_sessions: 'admin_sessions',
   admin_notes: 'admin_notes',
@@ -402,6 +404,7 @@ export const ModelName = {
   admin_settings: 'admin_settings',
   admin_shifts: 'admin_shifts',
   admin_shift_assignments: 'admin_shift_assignments',
+  creator_deal_estimates: 'creator_deal_estimates',
   salary_employees: 'salary_employees',
   salary_payouts: 'salary_payouts'
 } as const
@@ -419,7 +422,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "admin_users" | "admin_roles" | "admin_sessions" | "admin_notes" | "admin_audit_events" | "admin_gift_card_actions" | "admin_voucher_actions" | "creator_webhooks" | "creator_deals" | "creator_socials" | "webhook_deliveries" | "creator_balance_fills" | "admin_balance_limits" | "expenses" | "recurring_expenses" | "admin_settings" | "admin_shifts" | "admin_shift_assignments" | "salary_employees" | "salary_payouts"
+    modelProps: "admin_users" | "admin_giveaway_actions" | "excluded_users" | "admin_roles" | "admin_sessions" | "admin_notes" | "admin_audit_events" | "admin_gift_card_actions" | "admin_voucher_actions" | "creator_webhooks" | "creator_deals" | "creator_socials" | "webhook_deliveries" | "creator_balance_fills" | "admin_balance_limits" | "expenses" | "recurring_expenses" | "admin_settings" | "admin_shifts" | "admin_shift_assignments" | "creator_deal_estimates" | "salary_employees" | "salary_payouts"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -494,6 +497,154 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         count: {
           args: Prisma.admin_usersCountArgs<ExtArgs>
           result: runtime.Types.Utils.Optional<Prisma.Admin_usersCountAggregateOutputType> | number
+        }
+      }
+    }
+    admin_giveaway_actions: {
+      payload: Prisma.$admin_giveaway_actionsPayload<ExtArgs>
+      fields: Prisma.admin_giveaway_actionsFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.admin_giveaway_actionsFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_giveaway_actionsPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.admin_giveaway_actionsFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_giveaway_actionsPayload>
+        }
+        findFirst: {
+          args: Prisma.admin_giveaway_actionsFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_giveaway_actionsPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.admin_giveaway_actionsFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_giveaway_actionsPayload>
+        }
+        findMany: {
+          args: Prisma.admin_giveaway_actionsFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_giveaway_actionsPayload>[]
+        }
+        create: {
+          args: Prisma.admin_giveaway_actionsCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_giveaway_actionsPayload>
+        }
+        createMany: {
+          args: Prisma.admin_giveaway_actionsCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.admin_giveaway_actionsCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_giveaway_actionsPayload>[]
+        }
+        delete: {
+          args: Prisma.admin_giveaway_actionsDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_giveaway_actionsPayload>
+        }
+        update: {
+          args: Prisma.admin_giveaway_actionsUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_giveaway_actionsPayload>
+        }
+        deleteMany: {
+          args: Prisma.admin_giveaway_actionsDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.admin_giveaway_actionsUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.admin_giveaway_actionsUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_giveaway_actionsPayload>[]
+        }
+        upsert: {
+          args: Prisma.admin_giveaway_actionsUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_giveaway_actionsPayload>
+        }
+        aggregate: {
+          args: Prisma.Admin_giveaway_actionsAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateAdmin_giveaway_actions>
+        }
+        groupBy: {
+          args: Prisma.admin_giveaway_actionsGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Admin_giveaway_actionsGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.admin_giveaway_actionsCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Admin_giveaway_actionsCountAggregateOutputType> | number
+        }
+      }
+    }
+    excluded_users: {
+      payload: Prisma.$excluded_usersPayload<ExtArgs>
+      fields: Prisma.excluded_usersFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.excluded_usersFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$excluded_usersPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.excluded_usersFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$excluded_usersPayload>
+        }
+        findFirst: {
+          args: Prisma.excluded_usersFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$excluded_usersPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.excluded_usersFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$excluded_usersPayload>
+        }
+        findMany: {
+          args: Prisma.excluded_usersFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$excluded_usersPayload>[]
+        }
+        create: {
+          args: Prisma.excluded_usersCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$excluded_usersPayload>
+        }
+        createMany: {
+          args: Prisma.excluded_usersCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.excluded_usersCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$excluded_usersPayload>[]
+        }
+        delete: {
+          args: Prisma.excluded_usersDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$excluded_usersPayload>
+        }
+        update: {
+          args: Prisma.excluded_usersUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$excluded_usersPayload>
+        }
+        deleteMany: {
+          args: Prisma.excluded_usersDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.excluded_usersUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.excluded_usersUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$excluded_usersPayload>[]
+        }
+        upsert: {
+          args: Prisma.excluded_usersUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$excluded_usersPayload>
+        }
+        aggregate: {
+          args: Prisma.Excluded_usersAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateExcluded_users>
+        }
+        groupBy: {
+          args: Prisma.excluded_usersGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Excluded_usersGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.excluded_usersCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Excluded_usersCountAggregateOutputType> | number
         }
       }
     }
@@ -1755,6 +1906,80 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         }
       }
     }
+    creator_deal_estimates: {
+      payload: Prisma.$creator_deal_estimatesPayload<ExtArgs>
+      fields: Prisma.creator_deal_estimatesFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.creator_deal_estimatesFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$creator_deal_estimatesPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.creator_deal_estimatesFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$creator_deal_estimatesPayload>
+        }
+        findFirst: {
+          args: Prisma.creator_deal_estimatesFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$creator_deal_estimatesPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.creator_deal_estimatesFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$creator_deal_estimatesPayload>
+        }
+        findMany: {
+          args: Prisma.creator_deal_estimatesFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$creator_deal_estimatesPayload>[]
+        }
+        create: {
+          args: Prisma.creator_deal_estimatesCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$creator_deal_estimatesPayload>
+        }
+        createMany: {
+          args: Prisma.creator_deal_estimatesCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.creator_deal_estimatesCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$creator_deal_estimatesPayload>[]
+        }
+        delete: {
+          args: Prisma.creator_deal_estimatesDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$creator_deal_estimatesPayload>
+        }
+        update: {
+          args: Prisma.creator_deal_estimatesUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$creator_deal_estimatesPayload>
+        }
+        deleteMany: {
+          args: Prisma.creator_deal_estimatesDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.creator_deal_estimatesUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.creator_deal_estimatesUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$creator_deal_estimatesPayload>[]
+        }
+        upsert: {
+          args: Prisma.creator_deal_estimatesUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$creator_deal_estimatesPayload>
+        }
+        aggregate: {
+          args: Prisma.Creator_deal_estimatesAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateCreator_deal_estimates>
+        }
+        groupBy: {
+          args: Prisma.creator_deal_estimatesGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Creator_deal_estimatesGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.creator_deal_estimatesCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Creator_deal_estimatesCountAggregateOutputType> | number
+        }
+      }
+    }
     salary_employees: {
       payload: Prisma.$salary_employeesPayload<ExtArgs>
       fields: Prisma.salary_employeesFieldRefs
@@ -1963,6 +2188,32 @@ export const Admin_usersScalarFieldEnum = {
 } as const
 
 export type Admin_usersScalarFieldEnum = (typeof Admin_usersScalarFieldEnum)[keyof typeof Admin_usersScalarFieldEnum]
+
+
+export const Admin_giveaway_actionsScalarFieldEnum = {
+  id: 'id',
+  admin_user_id: 'admin_user_id',
+  target_user_id: 'target_user_id',
+  amount_usd: 'amount_usd',
+  source_url: 'source_url',
+  source_type: 'source_type',
+  reason: 'reason',
+  ledger_tx_id: 'ledger_tx_id',
+  created_at: 'created_at'
+} as const
+
+export type Admin_giveaway_actionsScalarFieldEnum = (typeof Admin_giveaway_actionsScalarFieldEnum)[keyof typeof Admin_giveaway_actionsScalarFieldEnum]
+
+
+export const Excluded_usersScalarFieldEnum = {
+  user_id: 'user_id',
+  reason: 'reason',
+  excluded_by: 'excluded_by',
+  created_at: 'created_at',
+  updated_at: 'updated_at'
+} as const
+
+export type Excluded_usersScalarFieldEnum = (typeof Excluded_usersScalarFieldEnum)[keyof typeof Excluded_usersScalarFieldEnum]
 
 
 export const Admin_rolesScalarFieldEnum = {
@@ -2224,10 +2475,34 @@ export const Admin_shift_assignmentsScalarFieldEnum = {
 export type Admin_shift_assignmentsScalarFieldEnum = (typeof Admin_shift_assignmentsScalarFieldEnum)[keyof typeof Admin_shift_assignmentsScalarFieldEnum]
 
 
-export const Salary_employeesScalarFieldEnum = {
+export const Creator_deal_estimatesScalarFieldEnum = {
   id: 'id',
   name: 'name',
+  daily_fill_usd: 'daily_fill_usd',
+  withdrawal_cap_usd: 'withdrawal_cap_usd',
+  withdrawal_percent: 'withdrawal_percent',
+  leaderboard_cost_usd: 'leaderboard_cost_usd',
+  packy_paid_percent: 'packy_paid_percent',
+  deal_length_weeks: 'deal_length_weeks',
+  video_amount_usd: 'video_amount_usd',
+  video_percent: 'video_percent',
+  video_fills_per_week: 'video_fills_per_week',
+  tip_balance_usd: 'tip_balance_usd',
+  battle_balance_usd: 'battle_balance_usd',
+  notes: 'notes',
+  created_at: 'created_at',
+  updated_at: 'updated_at',
+  created_by_id: 'created_by_id'
+} as const
+
+export type Creator_deal_estimatesScalarFieldEnum = (typeof Creator_deal_estimatesScalarFieldEnum)[keyof typeof Creator_deal_estimatesScalarFieldEnum]
+
+
+export const Salary_employeesScalarFieldEnum = {
+  id: 'id',
+  discord_name: 'discord_name',
   eth_address: 'eth_address',
+  cadence: 'cadence',
   salary_usdt: 'salary_usdt',
   max_per_payout: 'max_per_payout',
   active: 'active',
@@ -2391,6 +2666,20 @@ export type ListDateTimeFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaM
 
 
 /**
+ * Reference to a field of type 'Decimal'
+ */
+export type DecimalFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'Decimal'>
+    
+
+
+/**
+ * Reference to a field of type 'Decimal[]'
+ */
+export type ListDecimalFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'Decimal[]'>
+    
+
+
+/**
  * Reference to a field of type 'webhook_type'
  */
 export type Enumwebhook_typeFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'webhook_type'>
@@ -2415,20 +2704,6 @@ export type Enumdeal_typeFieldRefInput<$PrismaModel> = FieldRefInputType<$Prisma
  * Reference to a field of type 'deal_type[]'
  */
 export type ListEnumdeal_typeFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'deal_type[]'>
-    
-
-
-/**
- * Reference to a field of type 'Decimal'
- */
-export type DecimalFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'Decimal'>
-    
-
-
-/**
- * Reference to a field of type 'Decimal[]'
- */
-export type ListDecimalFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'Decimal[]'>
     
 
 
@@ -2611,6 +2886,8 @@ export type PrismaClientOptions = ({
 }
 export type GlobalOmitConfig = {
   admin_users?: Prisma.admin_usersOmit
+  admin_giveaway_actions?: Prisma.admin_giveaway_actionsOmit
+  excluded_users?: Prisma.excluded_usersOmit
   admin_roles?: Prisma.admin_rolesOmit
   admin_sessions?: Prisma.admin_sessionsOmit
   admin_notes?: Prisma.admin_notesOmit
@@ -2628,6 +2905,7 @@ export type GlobalOmitConfig = {
   admin_settings?: Prisma.admin_settingsOmit
   admin_shifts?: Prisma.admin_shiftsOmit
   admin_shift_assignments?: Prisma.admin_shift_assignmentsOmit
+  creator_deal_estimates?: Prisma.creator_deal_estimatesOmit
   salary_employees?: Prisma.salary_employeesOmit
   salary_payouts?: Prisma.salary_payoutsOmit
 }

@@ -47,6 +47,28 @@ export { Prisma }
  */
 export type admin_users = Prisma.admin_usersModel
 /**
+ * Model admin_giveaway_actions
+ * Admin-DB metadata for balance adjustments tagged as "Giveaway" on the
+ * /users/[id] adjust-balance flow. Stored separately from the main-DB
+ * ledger row because:
+ * • the source URL (Twitter / Discord) is admin-internal — no reason
+ * to expose it on the user-facing ledger,
+ * • we can't cross-DB FK into ledger_transactions (different
+ * PostgreSQL databases),
+ * • the /marketing/giveaway page only needs the admin-side data
+ * anyway (user_id + amount + source).
+ * 
+ * `ledger_tx_id` is stored as TEXT (not a real FK) so we can still
+ * cross-reference each giveaway row back to the ledger event that
+ * funded it for auditing — no constraint, just a reference.
+ */
+export type admin_giveaway_actions = Prisma.admin_giveaway_actionsModel
+/**
+ * Model excluded_users
+ * 
+ */
+export type excluded_users = Prisma.excluded_usersModel
+/**
  * Model admin_roles
  * 
  */
@@ -131,6 +153,11 @@ export type admin_shifts = Prisma.admin_shiftsModel
  * 
  */
 export type admin_shift_assignments = Prisma.admin_shift_assignmentsModel
+/**
+ * Model creator_deal_estimates
+ * 
+ */
+export type creator_deal_estimates = Prisma.creator_deal_estimatesModel
 /**
  * Model salary_employees
  * 

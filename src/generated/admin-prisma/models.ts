@@ -9,6 +9,8 @@
  * 🟢 You can import this file directly.
  */
 export type * from './models/admin_users'
+export type * from './models/admin_giveaway_actions'
+export type * from './models/excluded_users'
 export type * from './models/admin_roles'
 export type * from './models/admin_sessions'
 export type * from './models/admin_notes'
@@ -26,6 +28,7 @@ export type * from './models/recurring_expenses'
 export type * from './models/admin_settings'
 export type * from './models/admin_shifts'
 export type * from './models/admin_shift_assignments'
+export type * from './models/creator_deal_estimates'
 export type * from './models/salary_employees'
 export type * from './models/salary_payouts'
 export type * from './commonInputTypes'
