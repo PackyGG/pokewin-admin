@@ -175,6 +175,9 @@ export function BalanceAdjustDialog({
   const [amount, setAmount] = useState("");
   const [reasonCategory, setReasonCategory] = useState<string>("");
   const [customReason, setCustomReason] = useState("");
+  // Giveaway-specific extra field — only shown when reasonCategory ===
+  // "giveaway". Server requires it (tweet / Discord URL) in that case.
+  const [giveawaySourceUrl, setGiveawaySourceUrl] = useState("");
   const [totpCode, setTotpCode] = useState("");
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
@@ -210,6 +213,13 @@ export function BalanceAdjustDialog({
       toast.error("Please enter your 2FA code");
       return;
     }
+    // Giveaway-specific gate. Server enforces this too — checking
+    // client-side just gives the admin a friendlier inline toast
+    // instead of a round-trip error.
+    if (reasonCategory === "giveaway" && !giveawaySourceUrl.trim()) {
+      toast.error("Giveaway needs a source URL (tweet or Discord message)");
+      return;
+    }
     startTransition(async () => {
       try {
         const result = await adjustBalance({
@@ -217,6 +227,10 @@ export function BalanceAdjustDialog({
           amount: numAmount,
           reason: resolvedReason,
           totpCode: totpCode.trim(),
+          giveawaySourceUrl:
+            reasonCategory === "giveaway"
+              ? giveawaySourceUrl.trim()
+              : undefined,
         });
         if (!result.success) {
           toast.error(result.error);
@@ -226,6 +240,7 @@ export function BalanceAdjustDialog({
         setAmount("");
         setReasonCategory("");
         setCustomReason("");
+        setGiveawaySourceUrl("");
         setTotpCode("");
         onOpenChange(false);
         router.refresh();
@@ -281,6 +296,26 @@ export function BalanceAdjustDialog({
                 rows={2}
                 className="mt-2"
               />
+            )}
+            {/* Giveaway: source URL is required so the /marketing/giveaway
+                feed can show "where did this giveaway come from".
+                Server-side classifier accepts Twitter / X / Discord
+                hosts — anything else lands as `source_type=other`. */}
+            {reasonCategory === "giveaway" && (
+              <div className="mt-2 space-y-1">
+                <Input
+                  type="url"
+                  inputMode="url"
+                  placeholder="https://x.com/.../status/... or https://discord.com/channels/..."
+                  value={giveawaySourceUrl}
+                  onChange={(e) => setGiveawaySourceUrl(e.target.value)}
+                  autoFocus
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Link to the tweet or Discord message that advertised the
+                  giveaway. Shown on the /marketing/giveaway feed.
+                </p>
+              </div>
             )}
           </div>
           <div className="space-y-1">

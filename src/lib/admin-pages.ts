@@ -33,6 +33,10 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Marketing", label: "Promo Codes", key: "/promo-codes" },
   { group: "Marketing", label: "Gift Cards", key: "/gift-cards" },
   { group: "Marketing", label: "Vouchers", key: "/vouchers" },
+  // Giveaway log — driven by `admin_giveaway_actions` rows that the
+  // adjust-balance flow writes when the reason is tagged "Giveaway".
+  // Same permission default as the rest of Marketing.
+  { group: "Marketing", label: "Giveaway", key: "/marketing/giveaway" },
   // Employees — internal staff workflow (shift planning + expense tracking)
   { group: "Employees", label: "Shifts", key: "/shifts" },
   { group: "Employees", label: "Spending", key: "/spending" },

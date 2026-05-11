@@ -48,6 +48,54 @@ model admin_users {
   salary_payouts        salary_payouts[]
   creator_deal_estimates creator_deal_estimates[] @relation("creator_deal_estimates_created_by")
   excluded_users         excluded_users[]
+  giveaway_actions       admin_giveaway_actions[]
+}
+
+/// Admin-DB metadata for balance adjustments tagged as "Giveaway" on the
+/// /users/[id] adjust-balance flow. Stored separately from the main-DB
+/// ledger row because:
+///   • the source URL (Twitter / Discord) is admin-internal — no reason
+///     to expose it on the user-facing ledger,
+///   • we can't cross-DB FK into ledger_transactions (different
+///     PostgreSQL databases),
+///   • the /marketing/giveaway page only needs the admin-side data
+///     anyway (user_id + amount + source).
+///
+/// `ledger_tx_id` is stored as TEXT (not a real FK) so we can still
+/// cross-reference each giveaway row back to the ledger event that
+/// funded it for auditing — no constraint, just a reference.
+model admin_giveaway_actions {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  admin_user_id  String      @db.Uuid
+  /// packy.gg user.id (text, not UUID — better-auth nanoid).
+  target_user_id String
+  /// Signed USD amount that actually landed on the user's balance.
+  /// Mirrors the ledger row's `amount` field for self-contained
+  /// display on the giveaway page without a cross-DB lookup.
+  amount_usd     Decimal     @db.Decimal(20, 2)
+  /// Full URL the giveaway was advertised at (tweet / Discord
+  /// message). Validated server-side against an allowlist of hosts.
+  source_url     String
+  /// Derived from `source_url` host at write time. Cached so the
+  /// list page doesn't need to re-parse 1000 URLs to draw badges.
+  /// One of: "twitter" | "discord" | "other".
+  source_type    String
+  /// Optional free-text reason the admin entered (mirrors the
+  /// `reason` argument to adjustBalance). Useful when multiple
+  /// admins want to remember WHY this specific giveaway happened
+  /// beyond just the source URL.
+  reason         String?
+  /// Cross-reference to the main-DB ledger row this giveaway funded.
+  /// Stored as TEXT because the main DB lives in a separate Postgres
+  /// — Prisma can't enforce a real FK here. Always set in practice
+  /// because the giveaway row is only written AFTER the ledger
+  /// transaction succeeds.
+  ledger_tx_id   String?
+  created_at     DateTime    @default(now()) @db.Timestamptz(6)
+  admin_user     admin_users @relation(fields: [admin_user_id], references: [id])
+
+  @@index([created_at(sort: Desc)], map: "admin_giveaway_actions_created_at_idx")
+  @@index([target_user_id], map: "admin_giveaway_actions_target_user_id_idx")
 }
 
 // Admin-managed blacklist of packy.gg user IDs whose activity should
