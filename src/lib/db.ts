@@ -14,7 +14,7 @@ function createClient(connectionString: string | undefined, label: string) {
       max: 5,
       idleTimeoutMillis: 10_000,
       connectionTimeoutMillis: 10_000,
-      maxLifetimeSeconds: 30,
+      maxLifetimeSeconds: 600,
       keepAlive: true,
       keepAliveInitialDelayMillis: 5_000,
       allowExitOnIdle: true,

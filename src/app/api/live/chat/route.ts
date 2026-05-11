@@ -5,10 +5,11 @@ import {
 } from "@/lib/queries/chat";
 import { sseResponse } from "@/lib/sse";
 
-// Per-user concurrent-stream cap (3) for THIS route in THIS Node.js
-// process. In-memory only — per-instance, not global. Acceptable until
-// a shared cache is wired up.
-const MAX_CONCURRENT = 3;
+// Per-user concurrent-stream cap (1) for THIS route in THIS Node.js
+// process. One stream per user — multiple tabs would just multiply DB
+// poll load for identical data. In-memory only — per-instance, not
+// global. Acceptable until a shared cache is wired up.
+const MAX_CONCURRENT = 1;
 const openStreams = new Map<string, number>();
 
 // Stream keeps the connection open for minutes at a time — disable
@@ -70,6 +71,6 @@ export async function GET(request: Request): Promise<Response> {
         nextCursor: rows[rows.length - 1].createdAt,
       };
     },
-    intervalMs: 3000,
+    intervalMs: 6000,
   });
 }
