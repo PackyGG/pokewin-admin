@@ -50,6 +50,7 @@ export type LeaderboardRanking = {
  */
 export async function getAffiliateLeaderboardRankings(opts: {
   creatorUserId: string;
+  coCreatorUserIds?: string[];
   affiliateCodes: string[];
   startDate: Date;
   endDate: Date;
@@ -57,6 +58,14 @@ export async function getAffiliateLeaderboardRankings(opts: {
   limit?: number;
 }): Promise<LeaderboardRanking[]> {
   const { creatorUserId, startDate, endDate, prizeTiers } = opts;
+  const coCreatorUserIds = (opts.coCreatorUserIds ?? []).filter(
+    (id) => id && id !== creatorUserId,
+  );
+  // Union of all creators whose codes count toward this leaderboard.
+  // Primary creator first preserves existing single-creator behavior; the
+  // array form is also used in the fallback below when callers don't
+  // supply an explicit affiliateCodes list.
+  const participatingCreatorIds = [creatorUserId, ...coCreatorUserIds];
   const limit = Math.max(1, Math.min(Math.floor(opts.limit ?? 100), 500));
 
   const db = await getDb();
@@ -83,13 +92,16 @@ export async function getAffiliateLeaderboardRankings(opts: {
   const codeFallback = opts.affiliateCodes.length === 0;
   let codes = opts.affiliateCodes;
   if (codeFallback) {
+    // Multi-creator: union codes from primary + every co-creator. Each
+    // participating creator's codes are eligible — that's the whole point
+    // of the shared-leaderboard feature.
     const owned = await db.$queryRawUnsafe<{ code: string }[]>(
-      `SELECT code FROM affiliate_codes WHERE user_id = $1`,
-      creatorUserId,
+      `SELECT code FROM affiliate_codes WHERE user_id = ANY($1::text[])`,
+      participatingCreatorIds,
     );
     codes = owned.map((c) => c.code);
   }
-  if (codes.length === 0) return []; // creator has no codes
+  if (codes.length === 0) return []; // no codes resolved for any participating creator
 
   // Casing dance — same convention as creators-codes.ts:
   // affiliate_clicks is always uppercase, affiliate_code_usages is
@@ -104,12 +116,15 @@ export async function getAffiliateLeaderboardRankings(opts: {
     total_wagered: string;
   };
 
-  // Param indices shift when the code-fallback path adds the creator
-  // id as $4. Build the WHERE clause + params separately so each path
-  // stays readable.
-  const whereExtra = codeFallback ? `AND acu.affiliate_user_id = $4` : ``;
+  // Param indices shift when the code-fallback path adds the participating
+  // creator IDs as $4. Build the WHERE clause + params separately so each
+  // path stays readable. The fallback narrows usage rows to ones tagged
+  // to one of the participating creators so transferred codes don't leak
+  // pre-transfer activity into the standings; the explicit-codes path
+  // skips that filter intentionally (codes are the source of truth there).
+  const whereExtra = codeFallback ? `AND acu.affiliate_user_id = ANY($4::text[])` : ``;
   const params: unknown[] = codeFallback
-    ? [upperCodes, startDate, endDate, creatorUserId]
+    ? [upperCodes, startDate, endDate, participatingCreatorIds]
     : [upperCodes, startDate, endDate];
 
   const rows = await db.$queryRawUnsafe<Row[]>(

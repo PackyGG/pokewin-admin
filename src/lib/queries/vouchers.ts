@@ -22,6 +22,7 @@ const ORIGIN_LABELS: Record<string, string> = {
   exchange_excess_to_voucher: "Exchange Excess",
   battle_excess_to_voucher: "Battle Excess",
   pack_borrow_to_voucher: "Pack Borrow",
+  creator_fill_conversion: "Creator Fill Conversion",
   manual: "Manual",
 };
 

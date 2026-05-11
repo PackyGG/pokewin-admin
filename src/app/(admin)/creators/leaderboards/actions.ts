@@ -104,6 +104,7 @@ const sponsorSchema = z.object({
 
 const createSchema = z.object({
     creator_user_id: z.string().trim().min(1, "Creator user id is required"),
+    co_creator_user_ids: z.array(z.string().trim().min(1)).default([]),
     title: z.string().trim().min(1).max(100),
     affiliate_codes: z.array(z.string()).default([]),
     site_bonus_usd: z.number().positive("Total prize pool must be positive"),
@@ -122,6 +123,7 @@ const createSchema = z.object({
 const editSchema = z.object({
     title: z.string().trim().min(1).max(100).optional(),
     affiliate_codes: z.array(z.string()).optional(),
+    co_creator_user_ids: z.array(z.string().trim().min(1)).optional(),
     start_date: z.string().optional(),
     end_date: z.string().optional(),
     prize_tiers: z
@@ -403,6 +405,7 @@ function extractEditedFields(
     const out: Record<string, unknown> = {};
     if (edited.title !== undefined) out.title = row.title;
     if (edited.affiliate_codes !== undefined) out.affiliate_codes = row.affiliate_codes;
+    if (edited.co_creator_user_ids !== undefined) out.co_creator_user_ids = row.co_creator_user_ids;
     if (edited.start_date !== undefined) out.start_date = row.start_date;
     if (edited.end_date !== undefined) out.end_date = row.end_date;
     if (edited.prize_tiers !== undefined) out.prize_tiers = row.prize_tiers;

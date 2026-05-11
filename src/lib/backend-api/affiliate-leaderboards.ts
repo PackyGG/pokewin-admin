@@ -14,6 +14,7 @@ export type PrizeTier = {
 export type LeaderboardAdminRow = {
   id: string;
   creator_user_id: string;
+  co_creator_user_ids: string[];
   title: string;
   affiliate_codes: string[];
   creator_prize_usd: string;
@@ -58,6 +59,7 @@ export type SponsorInput = { additional_bonus_usd: number };
 export type EditInput = {
   title?: string;
   affiliate_codes?: string[];
+  co_creator_user_ids?: string[];
   start_date?: string;
   end_date?: string;
   prize_tiers?: Array<{ position: number; prize_amount_usd: number }>;
@@ -65,6 +67,7 @@ export type EditInput = {
 
 export type CreateInput = {
   creator_user_id: string;
+  co_creator_user_ids?: string[];
   title: string;
   affiliate_codes: string[];
   site_bonus_usd: number;
