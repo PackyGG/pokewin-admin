@@ -266,6 +266,11 @@ async function dashboardStatsInner() {
   const threeDaysAgo = new Date(now.getTime() - 3 * MS_PER_DAY);
   const sevenDaysAgo = new Date(now.getTime() - 7 * MS_PER_DAY);
   const thirtyDaysAgo = new Date(now.getTime() - 30 * MS_PER_DAY);
+  // Rolling 24h cutoff (not calendar day) — feeds the "24h Activity"
+  // tile on the dashboard which counts pack openings + battles. Uses a
+  // rolling window because that matches what an admin glancing at the
+  // panel actually wants ("how busy were we today / in the last day").
+  const rolling24h = new Date(now.getTime() - 1 * MS_PER_DAY);
 
   const [
     totalUsers,
@@ -291,6 +296,8 @@ async function dashboardStatsInner() {
     avgSessionValueResult,
     totalInventoryValue,
     pendingConfirmationWithdrawals,
+    packsOpened24h,
+    battlesPlayed24h,
   ] = await Promise.all([
     // STAFF_ROLES (admin + support) excluded from every user count so the
     // KPI strip reads only real customers — matches staffRelation
@@ -456,6 +463,27 @@ async function dashboardStatsInner() {
       _count: true,
       _sum: { total_value_usd: true },
     }),
+    // Rolling-24h pack opening count for the "24h Activity" tile.
+    // Filter game_sessions by game_type='pack' to match the same
+    // definition the existing pack profitability queries use.
+    db.game_sessions.count({
+      where: {
+        game_type: "pack",
+        created_at: { gte: rolling24h },
+        user: staffRelation,
+      },
+    }),
+    // Rolling-24h battle count — counts battles created in the last 24h
+    // regardless of status (started = counts as "happened today").
+    // `user` on battles points to the battle creator; that's the row we
+    // exclude staff/blacklist on (matching the staff-exclusion in every
+    // other dashboard aggregate).
+    db.battles.count({
+      where: {
+        created_at: { gte: rolling24h },
+        user: staffRelation,
+      },
+    }),
   ]);
 
   const totalWagered = toNumber(balanceAggregates._sum?.total_wagered);
@@ -577,6 +605,10 @@ async function dashboardStatsInner() {
     activity: {
       totalPacksOpened: Number(activityTotals._sum?.opened_packs_count ?? 0),
       totalBattlesPlayed: Number(activityTotals._sum?.battles_played ?? 0),
+      // Rolling 24h counts — drive the "24h Activity" dashboard tile.
+      // Real users only; admins / support / blacklisted accounts excluded.
+      packsOpened24h,
+      battlesPlayed24h,
     },
     totalActivityCount,
     dailyWagers: dailyWagers.map((d) => ({

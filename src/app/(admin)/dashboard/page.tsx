@@ -25,6 +25,7 @@ import { AutoRefresh } from "./auto-refresh";
 import { WagerChart, DepositsChart, SignupsChart } from "./charts";
 import { RecentActivity, RecentActivityLivePulse } from "./recent-activity";
 import { LivePulls } from "./live-pulls";
+import { Activity24hCard } from "./activity-24h-card";
 import { PageHero, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
@@ -72,8 +73,17 @@ export default async function DashboardPage() {
 
       {/* Secondary stats — all-time / snapshot. These are simpler
           (no period chips) so they tolerate 2-up on phone, then
-          widen up to 5 across. */}
-      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-5">
+          widen up to 6 across (5 single-metric + the 24h Activity
+          tile which packs 2 metrics in one card). */}
+      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-6">
+        {/* 24h Activity — packs opened + battles played in one tile.
+            Sits first in the secondary row so it's the most prominent
+            "what happened today" signal, matching the rolling-24h
+            framing of the primary cards above. */}
+        <Activity24hCard
+          packsOpened={stats.activity.packsOpened24h}
+          battlesPlayed={stats.activity.battlesPlayed24h}
+        />
         <StatCard
           title="Total Users"
           animatedValue={stats.users.total}
