@@ -23,7 +23,16 @@ export function DataTableToolbar({
   children,
 }: {
   searchPlaceholder?: string;
-  filters?: { name: string; paramKey: string; options: FilterOption[] }[];
+  filters?: {
+    name: string;
+    paramKey: string;
+    options: FilterOption[];
+    // Optional override for the label shown when no value is selected
+    // (the "all" state). Defaults to `All ${name}`. Useful when the
+    // filter isn't a category set but a sort / time-window selector
+    // (e.g. "Recent" / "All time") where "All Sort" reads weird.
+    allLabel?: string;
+  }[];
   children?: React.ReactNode;
 }) {
   const router = useRouter();
@@ -96,10 +105,11 @@ export function DataTableToolbar({
       <div className="flex flex-wrap items-center gap-2 sm:contents">
         {filters?.map((filter) => {
           const currentValue = searchParams.get(filter.paramKey) ?? "all";
+          const allLabel = filter.allLabel ?? `All ${filter.name}`;
           const currentLabel =
             currentValue === "all"
-              ? `All ${filter.name}`
-              : filter.options.find((o) => o.value === currentValue)?.label ?? `All ${filter.name}`;
+              ? allLabel
+              : filter.options.find((o) => o.value === currentValue)?.label ?? allLabel;
           return (
             <Select
               key={filter.paramKey}
@@ -110,7 +120,7 @@ export function DataTableToolbar({
                 <span className="truncate">{currentLabel}</span>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All {filter.name}</SelectItem>
+                <SelectItem value="all">{allLabel}</SelectItem>
                 {filter.options.map((opt) => (
                   <SelectItem key={opt.value} value={opt.value}>
                     {opt.label}

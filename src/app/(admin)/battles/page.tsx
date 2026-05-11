@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { Swords } from "lucide-react";
-import { getBattles } from "@/lib/queries/battles";
+import { getBattles, type BattleSortMode } from "@/lib/queries/battles";
 import { requirePageAccess } from "@/lib/dal";
 import { BattlesDataTable } from "./data-table";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
@@ -21,6 +21,11 @@ const STATUS_TABS = [
   { value: "cancelled", label: "Cancelled" },
 ];
 
+// Whitelist of accepted `sortBy` values to avoid forwarding random URL
+// junk into the query layer (where it would fall through to "recent"
+// anyway, but better to reject explicitly at the boundary).
+const SORT_MODES: BattleSortMode[] = ["recent", "bet", "hit"];
+
 export default async function BattlesPage({
   searchParams,
 }: {
@@ -32,12 +37,20 @@ export default async function BattlesPage({
   const perPage = Number(params.perPage) || 20;
   const tab = params.tab || "all";
 
+  const rawSort = params.sortBy;
+  const sortBy: BattleSortMode = (
+    rawSort && (SORT_MODES as string[]).includes(rawSort) ? rawSort : "recent"
+  ) as BattleSortMode;
+  const since = params.since === "24h" ? "24h" : undefined;
+
   const result = await getBattles({
     page,
     perPage,
     status: tab === "all" ? undefined : tab,
     mode: params.mode,
     search: params.search,
+    sortBy,
+    since,
   });
 
   return (
@@ -86,6 +99,31 @@ export default async function BattlesPage({
                   { label: "Group", value: "group" },
                   { label: "HP Rush", value: "hp_rush" },
                   { label: "Lowest", value: "lowest" },
+                ],
+              },
+              // Sort dropdown — admins want to find the big battles
+              // quickly. "Bet" = highest single buy-in; "Hit" = biggest
+              // total payout (only on completed battles).
+              {
+                name: "Sort",
+                paramKey: "sortBy",
+                allLabel: "Recent",
+                options: [
+                  { label: "Recent", value: "recent" },
+                  { label: "Highest Bet", value: "bet" },
+                  { label: "Biggest Hit", value: "hit" },
+                ],
+              },
+              // Time window — composes with Sort. Pairing Sort=Hit
+              // with Since=24h answers "biggest hit today" in two
+              // clicks.
+              {
+                name: "Period",
+                paramKey: "since",
+                allLabel: "All time",
+                options: [
+                  { label: "All time", value: "all" },
+                  { label: "Last 24h", value: "24h" },
                 ],
               },
             ]}

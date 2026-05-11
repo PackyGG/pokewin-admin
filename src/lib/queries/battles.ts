@@ -38,7 +38,37 @@ export type BattleListItem = {
    * instead of forcing the admin to multiply.
    */
   borrowedAmountUsd: number;
+  /**
+   * Total card value paid out across the WHOLE battle (winner takes
+   * all, but this is the sum across every PF result regardless of
+   * which team won — i.e. the actual size of the hit). Used as the
+   * sort key for the "Biggest Hit" filter and surfaced as a column
+   * so admins can scan for high-value battles. Null for non-completed
+   * battles (no payout yet).
+   */
+  totalPotUsd: number | null;
 };
+
+/**
+ * Sort modes for the /battles list. `recent` = newest first (default
+ * site-wide behaviour). `bet` = highest single-player buy-in first
+ * (proxy for "expensive battles" — combined with the Teams column an
+ * admin can read off the total pot). `hit` = biggest payout first,
+ * forces status=completed so unfinished battles don't pollute the
+ * leaderboard. `hit` requires an in-memory sort because total payout
+ * is a derived value (sum of card values across PF results).
+ */
+export type BattleSortMode = "recent" | "bet" | "hit";
+
+/**
+ * Caps the row count we pull into memory for the biggest-hit sort.
+ * Pre-narrowed by `bet_amount DESC` so the biggest *single* buys land
+ * in the cap first — biggest hits in practice come from high-stakes
+ * battles, so this catches the right rows even when the full table
+ * has millions of completed games. Tuned for: page-of-20 × ~25 pages
+ * worth of headroom, comfortably small enough for in-memory sort.
+ */
+const BIGGEST_HIT_CAP = 500;
 
 export async function getBattles(params: {
   page?: number;
@@ -46,8 +76,22 @@ export async function getBattles(params: {
   status?: string;
   mode?: string;
   search?: string;
+  /**
+   * Sort mode. Default `recent` (newest first). `bet` orders by
+   * `bet_amount DESC` (highest single buy-in first). `hit` forces
+   * status=completed and orders by total payout via in-memory sort
+   * over a `BIGGEST_HIT_CAP`-sized window.
+   */
+  sortBy?: BattleSortMode;
+  /**
+   * Optional time-window filter. Currently only `24h` is supported —
+   * narrows the result set to battles created in the last 24 hours.
+   * Composes with `sortBy` (e.g. `sortBy=hit, since=24h` = biggest
+   * hits today).
+   */
+  since?: "24h";
 }): Promise<PaginatedResult<BattleListItem>> {
-  const { page = 1, perPage = 20, status, mode, search } = params;
+  const { page = 1, perPage = 20, status, mode, search, sortBy = "recent", since } = params;
   const db = await getDb();
 
   const where: Prisma.battlesWhereInput = {};
@@ -67,12 +111,51 @@ export async function getBattles(params: {
     ];
   }
 
+  // Time-window filter — applied additively so it composes cleanly with
+  // the status/mode/search filters above. 24h is the only supported
+  // window for now; expand here if we ever need 7d/30d.
+  if (since === "24h") {
+    where.created_at = { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) };
+  }
+
+  // "Biggest hit" only makes sense for battles that finished — pending
+  // / cancelled rows have no payout. Default to completed when the
+  // user hasn't picked a specific status tab; if they explicitly chose
+  // e.g. "waiting", respect that and return zero rows rather than
+  // silently overriding their selection.
+  if (sortBy === "hit" && !where.status) {
+    where.status = "completed";
+  }
+
+  // Prisma orderBy — only meaningful for recent / bet. The hit sort
+  // can't be expressed in SQL because the payout is a JS-side reduce
+  // over PF results, so we pre-cap by bet_amount DESC (biggest
+  // single-buyin battles first — the ones most likely to have big
+  // hits) and sort + paginate the result in memory below.
+  const orderBy: Prisma.battlesOrderByWithRelationInput =
+    sortBy === "bet"
+      ? { bet_amount: "desc" }
+      : sortBy === "hit"
+        ? { bet_amount: "desc" }
+        : { created_at: "desc" };
+
+  // Pagination strategy diverges by sort mode:
+  //   - recent / bet → standard DB-side skip/take, count() for total
+  //   - hit → fetch `BIGGEST_HIT_CAP` rows, sort in memory by payout,
+  //     slice for the requested page. `total` becomes
+  //     min(count, CAP) so the pagination UI never offers a page that
+  //     we can't actually render. The cap means battles outside the
+  //     top-CAP-by-bet won't appear under this sort — that's an
+  //     intentional trade for keeping the in-memory work bounded.
+  const skip = sortBy === "hit" ? 0 : (page - 1) * perPage;
+  const take = sortBy === "hit" ? BIGGEST_HIT_CAP : perPage;
+
   const [battles, total] = await Promise.all([
     db.battles.findMany({
       where,
-      orderBy: { created_at: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
+      orderBy,
+      skip,
+      take,
       // borrow_percentage / sponsorship_percentage are scalars on the
       // battle row itself — included implicitly via findMany default
       // select. Listed here just as a reminder for the projection
@@ -125,60 +208,84 @@ export async function getBattles(params: {
     for (const c of cards) cardPriceMap.set(c.id, toNumber(c.price));
   }
 
+  const projected: BattleListItem[] = battles.map((b) => {
+    const betAmount = toNumber(b.bet_amount);
+    const totalPlayers = b.battle_participants.length;
+    const totalWagered = betAmount * totalPlayers;
+
+    // Flatten all PF results across all participants (same as detail page)
+    // then sum card values using user_inventory if available, else card.price
+    const allPfResults = b.battle_participants.flatMap(
+      (p) => p.game_sessions.provably_fair_results
+    );
+
+    function pfValue(pf: typeof allPfResults[number]) {
+      if (pf.user_inventory) return toNumber(pf.user_inventory.value_at_obtained);
+      const meta = pf.result_metadata as Record<string, unknown> | null;
+      const cardId = meta?.card_id as string | undefined;
+      return cardId ? (cardPriceMap.get(cardId) ?? 0) : 0;
+    }
+
+    // Global payout (all cards) for house edge AND for the biggest-hit
+    // sort. This is the size of the actual hit — winner takes all, so
+    // this is what got paid out.
+    const totalCardValue = allPfResults.reduce((s, pf) => s + pfValue(pf), 0);
+    const houseEdge = totalWagered > 0 ? ((totalWagered - totalCardValue) / totalWagered) * 100 : null;
+
+    // Creator's payout: winner takes all cards, loser gets nothing
+    const creatorTeam = b.battle_participants.find((p) => p.user_id === b.user_id)?.team_number;
+    const creatorWon = creatorTeam != null && creatorTeam === b.winner_team;
+    const creatorPayout = creatorWon ? totalCardValue : 0;
+
+    // Borrow exposure for this battle: every participant pays
+    // bet_amount, of which borrow% comes from the house. Total
+    // fronted USD is bet × N players × borrow%.
+    const borrowPct = b.borrow_percentage ?? 0;
+    const borrowedAmountUsd =
+      borrowPct > 0 ? totalWagered * (borrowPct / 100) : 0;
+
+    return {
+      id: b.id,
+      userId: b.user_id,
+      username: b.user?.username ?? null,
+      mode: b.mode,
+      teams: b.teams,
+      playersPerTeam: b.players_per_team,
+      status: b.status,
+      betAmount,
+      winnerTeam: b.winner_team,
+      regionCode: b.region_code,
+      createdAt: b.created_at.toISOString(),
+      totalPayout: b.status === "completed" ? creatorPayout : null,
+      houseEdge: b.status === "completed" ? houseEdge : null,
+      borrowPercentage: borrowPct,
+      sponsorshipPercentage: b.sponsorship_percentage ?? 0,
+      borrowedAmountUsd,
+      // Total pot = sum of all cards regardless of who won. Only set
+      // for completed battles (no payout exists for waiting/cancelled).
+      totalPotUsd: b.status === "completed" ? totalCardValue : null,
+    };
+  });
+
+  // For the biggest-hit sort we did the DB-side pre-cap by bet_amount
+  // DESC; now we re-sort by computed payout DESC and paginate in
+  // memory. `total` is clamped to the cap so the pagination UI
+  // doesn't offer pages we can't actually render.
+  if (sortBy === "hit") {
+    projected.sort((a, b) => (b.totalPotUsd ?? 0) - (a.totalPotUsd ?? 0));
+    const cappedTotal = Math.min(total, BIGGEST_HIT_CAP);
+    const sliceStart = (page - 1) * perPage;
+    return {
+      data: projected.slice(sliceStart, sliceStart + perPage),
+      total: cappedTotal,
+      page,
+      perPage,
+      totalPages: Math.ceil(cappedTotal / perPage),
+    };
+  }
+
   return {
-    data: battles.map((b) => {
-      const betAmount = toNumber(b.bet_amount);
-      const totalPlayers = b.battle_participants.length;
-      const totalWagered = betAmount * totalPlayers;
-
-      // Flatten all PF results across all participants (same as detail page)
-      // then sum card values using user_inventory if available, else card.price
-      const allPfResults = b.battle_participants.flatMap(
-        (p) => p.game_sessions.provably_fair_results
-      );
-
-      function pfValue(pf: typeof allPfResults[number]) {
-        if (pf.user_inventory) return toNumber(pf.user_inventory.value_at_obtained);
-        const meta = pf.result_metadata as Record<string, unknown> | null;
-        const cardId = meta?.card_id as string | undefined;
-        return cardId ? (cardPriceMap.get(cardId) ?? 0) : 0;
-      }
-
-      // Global payout (all cards) for house edge
-      const totalCardValue = allPfResults.reduce((s, pf) => s + pfValue(pf), 0);
-      const houseEdge = totalWagered > 0 ? ((totalWagered - totalCardValue) / totalWagered) * 100 : null;
-
-      // Creator's payout: winner takes all cards, loser gets nothing
-      const creatorTeam = b.battle_participants.find((p) => p.user_id === b.user_id)?.team_number;
-      const creatorWon = creatorTeam != null && creatorTeam === b.winner_team;
-      const creatorPayout = creatorWon ? totalCardValue : 0;
-
-      // Borrow exposure for this battle: every participant pays
-      // bet_amount, of which borrow% comes from the house. Total
-      // fronted USD is bet × N players × borrow%.
-      const borrowPct = b.borrow_percentage ?? 0;
-      const borrowedAmountUsd =
-        borrowPct > 0 ? totalWagered * (borrowPct / 100) : 0;
-
-      return {
-        id: b.id,
-        userId: b.user_id,
-        username: b.user?.username ?? null,
-        mode: b.mode,
-        teams: b.teams,
-        playersPerTeam: b.players_per_team,
-        status: b.status,
-        betAmount,
-        winnerTeam: b.winner_team,
-        regionCode: b.region_code,
-        createdAt: b.created_at.toISOString(),
-        totalPayout: b.status === "completed" ? creatorPayout : null,
-        houseEdge: b.status === "completed" ? houseEdge : null,
-        borrowPercentage: borrowPct,
-        sponsorshipPercentage: b.sponsorship_percentage ?? 0,
-        borrowedAmountUsd,
-      };
-    }),
+    data: projected,
     total,
     page,
     perPage,
