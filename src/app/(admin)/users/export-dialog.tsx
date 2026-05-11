@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
-import { Download, FileDown, Search, X, Check, Globe } from "lucide-react";
+import { Download, FileDown, Search, X, Check, Globe, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,17 +16,14 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { fetchDistinctUserCountries } from "./actions";
 
 type Country = { code: string; name: string };
 
 type DepositFilter = "any" | "has_deposited" | "no_deposit";
 type CountryMode = "any" | "include" | "exclude";
 
-export function ExportUsersButton({
-  countries,
-}: {
-  countries: Country[];
-}) {
+export function ExportUsersButton() {
   const [open, setOpen] = React.useState(false);
   const [countryMode, setCountryMode] = React.useState<CountryMode>("any");
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
@@ -35,9 +32,16 @@ export function ExportUsersButton({
   const [requireEmail, setRequireEmail] = React.useState(true);
   const [countryQuery, setCountryQuery] = React.useState("");
   const [downloading, setDownloading] = React.useState(false);
+  // Countries are lazy-loaded on first dialog open. Cached on the
+  // client across re-opens within the same page session so the admin
+  // doesn't pay the round-trip more than once. `null` = not loaded
+  // yet; an array (possibly empty) = loaded.
+  const [countries, setCountries] = React.useState<Country[] | null>(null);
+  const [countriesLoading, setCountriesLoading] = React.useState(false);
 
   // Reset the form each time the dialog opens — prevents a previous
-  // export's filters from leaking into a new session.
+  // export's filters from leaking into a new session. Also kicks off
+  // the country fetch on first open.
   React.useEffect(() => {
     if (!open) return;
     setCountryMode("any");
@@ -46,9 +50,24 @@ export function ExportUsersButton({
     setExcludeStaff(true);
     setRequireEmail(true);
     setCountryQuery("");
-  }, [open]);
+    // Only fetch once per page session — cached on the client.
+    if (countries === null && !countriesLoading) {
+      setCountriesLoading(true);
+      fetchDistinctUserCountries()
+        .then((rows) => setCountries(rows))
+        .catch((err) => {
+          console.error("[export-dialog] country fetch failed:", err);
+          // Degrade gracefully — render the dialog with no country
+          // options rather than crashing. Admin can still export
+          // without the country filter.
+          setCountries([]);
+        })
+        .finally(() => setCountriesLoading(false));
+    }
+  }, [open, countries, countriesLoading]);
 
-  const filteredCountries = React.useMemo(() => {
+  const filteredCountries = React.useMemo<Country[]>(() => {
+    if (!countries) return [];
     const q = countryQuery.trim().toLowerCase();
     if (!q) return countries;
     return countries.filter(
@@ -115,13 +134,12 @@ export function ExportUsersButton({
     }
   }
 
-  const selectedList = React.useMemo(
-    () =>
-      [...selected]
-        .map((code) => countries.find((c) => c.code === code))
-        .filter((c): c is Country => c != null),
-    [selected, countries],
-  );
+  const selectedList = React.useMemo<Country[]>(() => {
+    if (!countries) return [];
+    return [...selected]
+      .map((code) => countries.find((c) => c.code === code))
+      .filter((c): c is Country => c != null);
+  }, [selected, countries]);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -177,12 +195,23 @@ export function ExportUsersButton({
                   <Input
                     value={countryQuery}
                     onChange={(e) => setCountryQuery(e.target.value)}
-                    placeholder={`Search ${countries.length} countries…`}
+                    placeholder={
+                      countries
+                        ? `Search ${countries.length} countries…`
+                        : "Loading countries…"
+                    }
                     className="h-7 pl-8 text-xs"
+                    disabled={!countries}
                   />
                 </div>
                 <div className="max-h-48 space-y-1 overflow-y-auto">
-                  {filteredCountries.length === 0 && (
+                  {countriesLoading && (
+                    <p className="flex items-center gap-2 px-2 py-3 text-xs text-muted-foreground">
+                      <Loader2 className="size-3.5 animate-spin" />
+                      Loading countries…
+                    </p>
+                  )}
+                  {!countriesLoading && filteredCountries.length === 0 && (
                     <p className="px-2 py-3 text-xs text-muted-foreground">
                       No match.
                     </p>

@@ -7,6 +7,21 @@ import { require2FA } from "@/lib/require-2fa";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { resolveAdminMainUserId } from "@/lib/resolve-admin-main-user-id";
+import { getDistinctUserCountries } from "@/lib/queries/users-export";
+
+/**
+ * Lazily-fetched list of distinct user countries. Used by the Export
+ * dialog's country filter. The query was previously eager-fetched on
+ * every /users page render even though the dialog is opened rarely —
+ * this server action lets the dialog defer the lookup until it's
+ * actually opened. Page-level cost goes from ~1 wide-table scan per
+ * render to zero for the common path of admins listing users without
+ * exporting.
+ */
+export async function fetchDistinctUserCountries() {
+  await requirePageAccess("/users");
+  return getDistinctUserCountries();
+}
 
 export async function banUser(userId: string, reason: string) {
   const db = await getDb();

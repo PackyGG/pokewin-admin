@@ -1,7 +1,6 @@
 import { Suspense } from "react";
 import { Users } from "lucide-react";
 import { getUsers } from "@/lib/queries/users";
-import { getDistinctUserCountries } from "@/lib/queries/users-export";
 import { requirePageAccess } from "@/lib/dal";
 import { UsersDataTable } from "./data-table";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
@@ -23,18 +22,20 @@ export default async function UsersPage({
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
 
-  const [result, countries] = await Promise.all([
-    getUsers({
-      page,
-      perPage,
-      search: params.search,
-      role: params.role,
-      status: params.status,
-      sortBy: params.sortBy,
-      sortOrder: params.sortOrder,
-    }),
-    getDistinctUserCountries(),
-  ]);
+  // `getDistinctUserCountries()` used to be eager-fetched here for the
+  // Export dialog's country filter. It scanned every user row to
+  // collect distinct country codes — wasted work on the 95 % of page
+  // loads that never open the dialog. Moved to a server action that
+  // the dialog itself calls on first open (see ExportUsersButton).
+  const result = await getUsers({
+    page,
+    perPage,
+    search: params.search,
+    role: params.role,
+    status: params.status,
+    sortBy: params.sortBy,
+    sortOrder: params.sortOrder,
+  });
 
   return (
     <div className="space-y-6">
@@ -78,7 +79,7 @@ export default async function UsersPage({
               },
             ]}
           >
-            <ExportUsersButton countries={countries} />
+            <ExportUsersButton />
           </DataTableToolbar>
         </Suspense>
         <FadeIn>
