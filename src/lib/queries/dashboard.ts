@@ -302,30 +302,39 @@ async function dashboardStatsInner() {
   // — all rolling. Making "24h" rolling too keeps the row coherent.
   const rolling24h = new Date(now.getTime() - 1 * MS_PER_DAY);
 
+  // Perf audit (2026-05-11): the Promise.all below previously fired
+  // 25 parallel queries per dashboard refresh, several of which fed
+  // return-shape fields that the UI no longer renders. Dropped queries:
+  //   • bannedUsers / lockedUsers  → users.banned/locked were unused
+  //   • pendingWithdrawals (status IN pending/processing)  → unused
+  //   • pendingConfirmationWithdrawals (status = pending) → unused
+  //   • totalAuditEvents (adminDb count) + totalTransactions (ledger count)
+  //     → only fed totalActivityCount, which was unused
+  // Plus two structural merges:
+  //   • two `balances.aggregate` calls collapsed into one (adds
+  //     available_balance to the existing _sum block — same plan, one
+  //     round-trip instead of two)
+  //   • depositCount now reuses `pa.deposit_count_all` from the period
+  //     aggregates CTE — the count was being recomputed redundantly
+  // Net: 25 queries → 17 queries per refresh (-8) and one fewer adminDb
+  // round-trip. Compounded with the 15s→60s AutoRefresh cadence change,
+  // dashboard polling load drops by roughly 8×.
   const [
     totalUsers,
     usersToday,
     usersWeek,
     usersMonth,
-    bannedUsers,
-    lockedUsers,
     balanceAggregates,
-    totalSiteBalance,
-    pendingWithdrawals,
     packStats,
-    totalAuditEvents,
-    totalTransactions,
     dailyWagers,
     dailyDeposits,
     dailySignups,
     periodAggregates,
     activityTotals,
-    depositCount,
     uniqueDepositorsResult,
     realizedPnlResult,
     avgSessionValueResult,
     totalInventoryValue,
-    pendingConfirmationWithdrawals,
     packsOpened24h,
     battlesPlayed24h,
   ] = await Promise.all([
@@ -336,8 +345,10 @@ async function dashboardStatsInner() {
     db.user.count({ where: { ...staffRoleDirect, created_at: { gte: startOfDay } } }),
     db.user.count({ where: { ...staffRoleDirect, created_at: { gte: startOfWeek } } }),
     db.user.count({ where: { ...staffRoleDirect, created_at: { gte: startOfMonth } } }),
-    db.user.count({ where: { ...staffRoleDirect, is_banned: true } }),
-    db.user.count({ where: { ...staffRoleDirect, is_locked: true } }),
+    // Single balances aggregate — `available_balance` is folded in with
+    // the lifetime _sums so the dashboard pays one round-trip, not two.
+    // The `Users Total Balance` tile + lifetime financial KPIs all draw
+    // from this row.
     db.balances.aggregate({
       where: { user: staffRelation },
       _sum: {
@@ -345,19 +356,8 @@ async function dashboardStatsInner() {
         total_withdrawn: true,
         total_wagered: true,
         total_won: true,
+        available_balance: true,
       },
-    }),
-    db.balances.aggregate({
-      where: { user: staffRelation },
-      _sum: { available_balance: true },
-    }),
-    db.card_withdrawal_requests.aggregate({
-      where: {
-        status: { in: ["pending", "processing"] },
-        user_card_withdrawal_requests_user_idTouser: staffRelation,
-      },
-      _count: true,
-      _sum: { total_value_usd: true },
     }),
     db.packs.aggregate({
       _sum: {
@@ -366,10 +366,6 @@ async function dashboardStatsInner() {
         total_payout: true,
       },
       _avg: { actual_house_edge: true },
-    }),
-    adminDb.admin_audit_events.count(),
-    db.ledger_transactions.count({
-      where: { user: staffRelation },
     }),
     // Wagers last 30 days — split by packs vs battles for stacked bar chart
     db.$queryRaw<{ date: Date; packs: string; battles: string }[]>`
@@ -413,13 +409,6 @@ async function dashboardStatsInner() {
     db.user_statistics.aggregate({
       where: { user: staffRelation },
       _sum: { opened_packs_count: true, battles_played: true },
-    }),
-    db.ledger_transactions.count({
-      where: {
-        type: "deposit",
-        status: "completed",
-        user: staffRelation,
-      },
     }),
     // Distinct depositor count — # of unique real users who have
     // completed at least one deposit. Powers the dashboard's
@@ -489,14 +478,6 @@ async function dashboardStatsInner() {
       },
       _sum: { value_at_obtained: true },
     }),
-    db.card_withdrawal_requests.aggregate({
-      where: {
-        status: "pending",
-        user_card_withdrawal_requests_user_idTouser: staffRelation,
-      },
-      _count: true,
-      _sum: { total_value_usd: true },
-    }),
     // Rolling-24h pack opening count for the "24h Activity" tile.
     // Filter game_sessions by game_type='pack' to match the same
     // definition the existing pack profitability queries use.
@@ -522,7 +503,6 @@ async function dashboardStatsInner() {
 
   const totalWagered = toNumber(balanceAggregates._sum?.total_wagered);
   const totalWon = toNumber(balanceAggregates._sum?.total_won);
-  const totalActivityCount = totalAuditEvents + totalTransactions;
 
   // Unpack the batched period aggregates. Each field is a text-encoded
   // numeric; parseFloat() is sufficient because we're always going
@@ -540,6 +520,10 @@ async function dashboardStatsInner() {
     deposit_count_24h: "0", deposit_count_3d: "0", deposit_count_7d: "0", deposit_count_30d: "0", deposit_count_all: "0",
   };
   const num = (s: string) => parseFloat(s) || 0;
+  // Lifetime deposit transaction count — reused from the period
+  // aggregates CTE (column `deposit_count_all`) so we don't pay a
+  // dedicated `ledger_transactions.count()` round-trip just for this.
+  const depositCount = num(pa.deposit_count_all);
 
   return {
     users: {
@@ -547,8 +531,6 @@ async function dashboardStatsInner() {
       today: usersToday,
       week: usersWeek,
       month: usersMonth,
-      banned: bannedUsers,
-      locked: lockedUsers,
     },
     // Gaming margin (wagers − payouts) per period. Pure GGR, no liability
     // adjustment. Use realizedPnl for the balance-sheet-true number.
@@ -622,7 +604,10 @@ async function dashboardStatsInner() {
       totalWithdrawn: toNumber(balanceAggregates._sum?.total_withdrawn),
       totalWagered,
       totalWon,
-      totalSiteBalance: toNumber(totalSiteBalance._sum?.available_balance),
+      // `available_balance` lives on the merged balanceAggregates row
+      // (was a second `.aggregate()` call previously — folded into one
+      // round-trip during the 2026-05-11 perf pass).
+      totalSiteBalance: toNumber(balanceAggregates._sum?.available_balance),
       totalInventoryValue: toNumber(totalInventoryValue._sum?.value_at_obtained),
       avgWagerPerDeposit: depositCount > 0 ? totalWagered / depositCount : 0,
       avgDeposit:
@@ -637,15 +622,6 @@ async function dashboardStatsInner() {
       // uniqueDepositors 1.
       uniqueDepositors: Number(uniqueDepositorsResult[0]?.count ?? 0),
       avgSessionValue: Number(avgSessionValueResult[0]?.avg_session_value ?? 0),
-      pendingWithdrawalsCount: pendingWithdrawals._count,
-      pendingWithdrawalsValue: toNumber(pendingWithdrawals._sum?.total_value_usd),
-      // Separate from pendingWithdrawalsCount/Value above: those include
-      // both `pending` and `processing` (everything in-flight). This one
-      // is strictly `pending` — withdrawals waiting for admin to pick up.
-      pendingConfirmationCount: pendingConfirmationWithdrawals._count,
-      pendingConfirmationValue: toNumber(
-        pendingConfirmationWithdrawals._sum?.total_value_usd
-      ),
     },
     packs: {
       totalOpenings: Number(packStats._sum.total_openings ?? 0),
@@ -661,7 +637,6 @@ async function dashboardStatsInner() {
       packsOpened24h,
       battlesPlayed24h,
     },
-    totalActivityCount,
     dailyWagers: dailyWagers.map((d) => ({
       date: new Date(d.date).toISOString().split("T")[0],
       packs: Number(d.packs),

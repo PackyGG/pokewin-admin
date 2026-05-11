@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { getDb } from "@/lib/db";
 import { withTiming } from "@/lib/observability/query-timings";
 import { computeHousePnl } from "./pnl";
@@ -31,9 +32,20 @@ export type RealizedPnlSnapshot = {
   unclaimedRakeback: number;
 };
 
-export async function getRealizedPnlSnapshot(): Promise<RealizedPnlSnapshot> {
-  return withTiming("realizedPnl.snapshot", () => realizedPnlSnapshotInner());
-}
+/**
+ * Per-request memoized. The snapshot is called from BOTH
+ * `getDashboardStats` and `getAnalyticsData` — when a request renders
+ * both surfaces (or when a single render reaches into either bundle)
+ * the React `cache()` wrapper ensures the heavy 8-aggregate raw query
+ * runs once, not twice. Cross-request caching is intentionally NOT
+ * added here: the snapshot tracks live balances and unclaimed
+ * vouchers/rakeback, both of which can change between requests.
+ */
+export const getRealizedPnlSnapshot = cache(
+  async (): Promise<RealizedPnlSnapshot> => {
+    return withTiming("realizedPnl.snapshot", () => realizedPnlSnapshotInner());
+  },
+);
 
 async function realizedPnlSnapshotInner(): Promise<RealizedPnlSnapshot> {
   const db = await getDb();
