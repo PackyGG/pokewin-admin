@@ -16,6 +16,20 @@ const BATTLE_STATUS_COLORS: Record<string, string> = {
   cancelled: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
 };
 
+/**
+ * Compact representation of the winner's payout multiplier. Keeps
+ * the badge readable across the full range we expect to see:
+ *   • < 10×  → one decimal (e.g. 2.5×, 8.3×)
+ *   • < 1000× → integer (e.g. 12×, 100×)
+ *   • ≥ 1000× → k-suffixed integer (e.g. 1.2k×) so the column
+ *     doesn't blow up when a $1 bet hits a $5000 card
+ */
+function formatHitMultiplier(m: number): string {
+  if (m < 10) return `${m.toFixed(1)}×`;
+  if (m < 1000) return `${Math.round(m)}×`;
+  return `${(m / 1000).toFixed(1)}k×`;
+}
+
 export const columns: ColumnDef<BattleListItem>[] = [
   {
     accessorKey: "id",
@@ -74,14 +88,26 @@ export const columns: ColumnDef<BattleListItem>[] = [
     // "Hit" = total card value paid out across the whole battle (sum
     // across every team, regardless of who won). This is the size of
     // the actual hit — what someone walked away with. House loss → rose.
-    // Matches the "Biggest Hit" sort filter in the toolbar.
+    // The smaller "Nx" badge under the amount is the winner's payout
+    // multiplier (totalCardValue / bet_amount). The "Biggest Hit" sort
+    // ranks by this multiplier, not the absolute pot — a $100 → $10k
+    // hit (100×) beats a $5k → $40k hit (8×) even though the absolute
+    // pot is smaller.
     cell: ({ row }) => {
       const p = row.original.totalPotUsd;
+      const m = row.original.hitMultiplier;
       if (p == null) return <span className="text-muted-foreground">—</span>;
       return (
-        <span className="text-rose-600 dark:text-rose-400">
-          {formatCurrency(p)}
-        </span>
+        <div className="flex flex-col items-start gap-0.5">
+          <span className="text-rose-600 dark:text-rose-400">
+            {formatCurrency(p)}
+          </span>
+          {m != null && m > 0 && (
+            <span className="text-[10px] tabular-nums text-muted-foreground">
+              {formatHitMultiplier(m)}
+            </span>
+          )}
+        </div>
       );
     },
   },
