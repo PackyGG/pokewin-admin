@@ -2,6 +2,65 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
+export type TopPack24hRow = {
+  id: string;
+  name: string;
+  imageUrl: string | null;
+  opens: number;
+};
+
+/**
+ * Top N packs by opening count over the rolling last 24 hours. Used
+ * by the Analytics overview tab to surface "what's hot right now"
+ * with exact open counts + pack names.
+ *
+ * Same staff-exclusion + blacklist semantics as every other dashboard
+ * aggregate. Uses `game_sessions.game_id → packs.id` direct join —
+ * matches the convention in `getPackProfitability` above. Pack openings
+ * that go through `user_packs` (e.g. reward packs) are not counted
+ * here, matching the existing per-pack analytics behaviour. If we
+ * ever need to include them, mirror the COALESCE pattern from
+ * /users/[id]/actions.ts:getGameSessionDetails.
+ */
+export async function getTopOpenedPacks24h(
+  limit = 20,
+): Promise<TopPack24hRow[]> {
+  const db = await getDb();
+  const excluded = await getExcludedUserIds();
+  const blacklistIdNotIn =
+    excluded.length > 0
+      ? `AND id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
+      : "";
+
+  // Clamp the limit so a caller-side bug can't pull thousands of rows.
+  const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+
+  const rows = await db.$queryRawUnsafe<
+    { id: string; name: string; image_url: string | null; opens: string }[]
+  >(`
+    SELECT
+      p.id::text AS id,
+      p.name,
+      p.image_url,
+      COUNT(*)::text AS opens
+    FROM game_sessions gs
+    JOIN packs p ON p.id = gs.game_id
+    WHERE gs.game_type = 'pack'
+      AND gs.created_at >= NOW() - INTERVAL '24 hours'
+      AND gs.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})
+    GROUP BY p.id, p.name, p.image_url
+    ORDER BY opens DESC
+    LIMIT ${safeLimit}
+  `);
+
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    imageUrl: r.image_url,
+    opens: Number(r.opens),
+  }));
+}
+
 /**
  * Pack + battle profitability deep-dive.
  *
