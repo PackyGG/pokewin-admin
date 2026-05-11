@@ -47,26 +47,42 @@ export type BattleListItem = {
    * battles (no payout yet).
    */
   totalPotUsd: number | null;
+  /**
+   * Winner's payout multiplier: `totalPotUsd / betAmount`. Per-player
+   * POV — what the winner walked away with vs what they personally
+   * paid in. A $100 buy-in that hit $10,000 = 100×, regardless of
+   * how many teams. This is the primary signal for the "Biggest Hit"
+   * sort (admins specifically want multiplier-driven ranking — a $100
+   * → $10k hit beats a $5k → $40k hit even though the absolute pot is
+   * smaller). Null for non-completed battles or zero-bet edge cases.
+   */
+  hitMultiplier: number | null;
 };
 
 /**
  * Sort modes for the /battles list. `recent` = newest first (default
  * site-wide behaviour). `bet` = highest single-player buy-in first
  * (proxy for "expensive battles" — combined with the Teams column an
- * admin can read off the total pot). `hit` = biggest payout first,
- * forces status=completed so unfinished battles don't pollute the
- * leaderboard. `hit` requires an in-memory sort because total payout
- * is a derived value (sum of card values across PF results).
+ * admin can read off the total pot). `hit` = biggest WIN MULTIPLIER
+ * first (`totalCardValue / bet_amount`, per-player POV); forces
+ * status=completed so unfinished battles don't pollute the leaderboard.
+ *
+ * The hit sort is intentionally multiplier-based rather than absolute-
+ * pot-based: admins want to surface lucky low-bet hits ($100 → $10k =
+ * 100×) over fat-pot grinds ($5k → $40k = 8×). Switching this back to
+ * absolute pot would bury the most viral hits in the noise.
  */
 export type BattleSortMode = "recent" | "bet" | "hit";
 
 /**
  * Caps the row count we pull into memory for the biggest-hit sort.
- * Pre-narrowed by `bet_amount DESC` so the biggest *single* buys land
- * in the cap first — biggest hits in practice come from high-stakes
- * battles, so this catches the right rows even when the full table
- * has millions of completed games. Tuned for: page-of-20 × ~25 pages
- * worth of headroom, comfortably small enough for in-memory sort.
+ * The pre-cap is done in SQL via a CTE that computes the multiplier
+ * for every completed battle (with a COALESCE fallback to cards.price
+ * for cards that were sold/exchanged out of inventory) and returns
+ * the top N by multiplier DESC. This is the ONLY way to catch
+ * low-bet huge-multiplier hits (e.g. $1 → $1000 = 1000×) without
+ * loading every battle into memory. Tuned for: page-of-20 × 25
+ * pages of headroom.
  */
 const BIGGEST_HIT_CAP = 500;
 
@@ -119,73 +135,149 @@ export async function getBattles(params: {
   }
 
   // "Biggest hit" only makes sense for battles that finished — pending
-  // / cancelled rows have no payout. Default to completed when the
-  // user hasn't picked a specific status tab; if they explicitly chose
-  // e.g. "waiting", respect that and return zero rows rather than
-  // silently overriding their selection.
-  if (sortBy === "hit" && !where.status) {
-    where.status = "completed";
-  }
+  // / cancelled rows have no payout. The dedicated SQL path below
+  // (sortBy === "hit") forces status = 'completed' directly in the
+  // CTE, so we don't need to touch `where.status` for that case.
+  // Non-hit sorts respect the user's status tab as-is.
 
   // Prisma orderBy — only meaningful for recent / bet. The hit sort
-  // can't be expressed in SQL because the payout is a JS-side reduce
-  // over PF results, so we pre-cap by bet_amount DESC (biggest
-  // single-buyin battles first — the ones most likely to have big
-  // hits) and sort + paginate the result in memory below.
+  // is handled separately below via a SQL CTE that computes the
+  // multiplier server-side, so the `orderBy` here is a no-op for it.
   const orderBy: Prisma.battlesOrderByWithRelationInput =
-    sortBy === "bet"
-      ? { bet_amount: "desc" }
-      : sortBy === "hit"
-        ? { bet_amount: "desc" }
-        : { created_at: "desc" };
+    sortBy === "bet" ? { bet_amount: "desc" } : { created_at: "desc" };
 
   // Pagination strategy diverges by sort mode:
   //   - recent / bet → standard DB-side skip/take, count() for total
-  //   - hit → fetch `BIGGEST_HIT_CAP` rows, sort in memory by payout,
-  //     slice for the requested page. `total` becomes
-  //     min(count, CAP) so the pagination UI never offers a page that
-  //     we can't actually render. The cap means battles outside the
-  //     top-CAP-by-bet won't appear under this sort — that's an
-  //     intentional trade for keeping the in-memory work bounded.
-  const skip = sortBy === "hit" ? 0 : (page - 1) * perPage;
-  const take = sortBy === "hit" ? BIGGEST_HIT_CAP : perPage;
+  //   - hit → two-stage: SQL CTE picks the top `BIGGEST_HIT_CAP`
+  //     battle IDs by computed multiplier, then Prisma findMany
+  //     loads full data for those IDs. We re-order to match the SQL
+  //     result, project, then slice for the page. `total` is clamped
+  //     to the cap so the pagination UI doesn't offer pages we
+  //     can't render.
 
-  const [battles, total] = await Promise.all([
-    db.battles.findMany({
-      where,
-      orderBy,
-      skip,
-      take,
-      // borrow_percentage / sponsorship_percentage are scalars on the
-      // battle row itself — included implicitly via findMany default
-      // select. Listed here just as a reminder for the projection
-      // below; no need for an explicit `select` block since the rest
-      // of the page consumes the full row already.
-      include: {
-        user: { select: { username: true } },
-        battle_participants: {
+  // SHARED include block — both paths read the same shape so the
+  // projection logic below doesn't have to branch.
+  const battleInclude = {
+    user: { select: { username: true } },
+    battle_participants: {
+      select: {
+        id: true,
+        user_id: true,
+        team_number: true,
+        game_sessions: {
           select: {
-            id: true,
-            user_id: true,
-            team_number: true,
-            game_sessions: {
+            provably_fair_results: {
               select: {
-                provably_fair_results: {
-                  select: {
-                    result_metadata: true,
-                    user_inventory: {
-                      select: { value_at_obtained: true },
-                    },
-                  },
+                result_metadata: true,
+                user_inventory: {
+                  select: { value_at_obtained: true },
                 },
               },
             },
           },
         },
       },
-    }),
-    db.battles.count({ where }),
-  ]);
+    },
+  } as const;
+
+  let battles: Awaited<ReturnType<typeof fetchBattles>>;
+  let total: number;
+
+  async function fetchBattles() {
+    return db.battles.findMany({
+      where,
+      orderBy,
+      skip: (page - 1) * perPage,
+      take: perPage,
+      include: battleInclude,
+    });
+  }
+
+  if (sortBy === "hit") {
+    // ── Multiplier-based pre-cap (SQL) ───────────────────────────────
+    //
+    // Compute `total_card_value / bet_amount` for every completed
+    // battle matching the time/mode filters, sort by multiplier DESC,
+    // take top BIGGEST_HIT_CAP. Joins user_inventory for the post-
+    // battle card values; falls back to cards.price (via the JSON
+    // card_id in result_metadata) for cards that were sold/exchanged
+    // out of inventory immediately after the win. Comparing via
+    // c.id::text avoids a uuid-cast error on any non-uuid card_id
+    // strings that might exist in legacy result_metadata.
+    //
+    // `mode_clause` and `since_clause` are inlined safely — both come
+    // from a fixed allowlist (enum value + literal "24h"), not user
+    // input that could carry SQL.
+    const modeClause =
+      mode && mode !== "all"
+        ? Prisma.sql`AND b.mode::text = ${mode}`
+        : Prisma.empty;
+    const sinceClause =
+      since === "24h"
+        ? Prisma.sql`AND b.created_at >= NOW() - INTERVAL '24 hours'`
+        : Prisma.empty;
+
+    const topRows = await db.$queryRaw<{ id: string }[]>`
+      WITH battle_multipliers AS (
+        SELECT
+          b.id,
+          b.bet_amount::numeric AS bet_amount,
+          COALESCE(SUM(COALESCE(ui.value_at_obtained::numeric, c.price::numeric, 0)), 0) AS total_card_value
+        FROM battles b
+        LEFT JOIN battle_participants bp ON bp.battle_id = b.id
+        LEFT JOIN game_sessions gs ON gs.id = bp.game_session_id
+        LEFT JOIN provably_fair_results pf ON pf.game_session_id = gs.id
+        LEFT JOIN user_inventory ui ON ui.id = pf.inventory_item_id
+        LEFT JOIN cards c ON c.id::text = pf.result_metadata->>'card_id'
+        WHERE b.status = 'completed'
+          AND b.bet_amount::numeric > 0
+          ${modeClause}
+          ${sinceClause}
+        GROUP BY b.id, b.bet_amount
+      )
+      SELECT id::text AS id
+      FROM battle_multipliers
+      WHERE total_card_value > 0
+      ORDER BY (total_card_value / bet_amount) DESC NULLS LAST
+      LIMIT ${BIGGEST_HIT_CAP}
+    `;
+
+    const topIds = topRows.map((r) => r.id);
+
+    // Fetch full data for the pre-capped IDs and rebuild order. The
+    // search filter is applied here (rather than in the SQL CTE) so
+    // admins combining search with sort=hit still get accurate top-
+    // multiplier results that match their query — at the cost of
+    // potentially fewer than perPage rows when the search is narrow.
+    const found = topIds.length === 0
+      ? []
+      : await db.battles.findMany({
+          where: search
+            ? {
+                AND: [
+                  { id: { in: topIds } },
+                  {
+                    OR: [
+                      { id: search },
+                      { user: { username: { contains: search, mode: "insensitive" } } },
+                    ],
+                  },
+                ],
+              }
+            : { id: { in: topIds } },
+          include: battleInclude,
+        });
+    const byId = new Map(found.map((b) => [b.id, b]));
+    battles = topIds
+      .map((id) => byId.get(id))
+      .filter((b): b is NonNullable<typeof b> => b != null);
+    total = battles.length;
+  } else {
+    [battles, total] = await Promise.all([
+      fetchBattles(),
+      db.battles.count({ where }),
+    ]);
+  }
 
   // Collect ALL card IDs from result_metadata across all battles for price lookup
   // This mirrors the detail page logic: use user_inventory.value_at_obtained if available,
@@ -244,6 +336,12 @@ export async function getBattles(params: {
     const borrowedAmountUsd =
       borrowPct > 0 ? totalWagered * (borrowPct / 100) : 0;
 
+    // Hit multiplier from the winner's POV — what they got back vs
+    // their own bet (not the total wagered across all players).
+    // Matches the user's mental model: "I paid 100, won 10000 = 100×".
+    const hitMultiplier =
+      betAmount > 0 ? totalCardValue / betAmount : 0;
+
     return {
       id: b.id,
       userId: b.user_id,
@@ -264,23 +362,23 @@ export async function getBattles(params: {
       // Total pot = sum of all cards regardless of who won. Only set
       // for completed battles (no payout exists for waiting/cancelled).
       totalPotUsd: b.status === "completed" ? totalCardValue : null,
+      hitMultiplier: b.status === "completed" ? hitMultiplier : null,
     };
   });
 
-  // For the biggest-hit sort we did the DB-side pre-cap by bet_amount
-  // DESC; now we re-sort by computed payout DESC and paginate in
-  // memory. `total` is clamped to the cap so the pagination UI
-  // doesn't offer pages we can't actually render.
+  // For the biggest-hit sort the SQL CTE already returned the top
+  // BIGGEST_HIT_CAP battles by multiplier and `battles` is in that
+  // order; here we just slice the requested page. We don't re-sort
+  // in JS — the JS-side multiplier should match the SQL one (same
+  // COALESCE rule), and small drift from sold cards is acceptable.
   if (sortBy === "hit") {
-    projected.sort((a, b) => (b.totalPotUsd ?? 0) - (a.totalPotUsd ?? 0));
-    const cappedTotal = Math.min(total, BIGGEST_HIT_CAP);
     const sliceStart = (page - 1) * perPage;
     return {
       data: projected.slice(sliceStart, sliceStart + perPage),
-      total: cappedTotal,
+      total,
       page,
       perPage,
-      totalPages: Math.ceil(cappedTotal / perPage),
+      totalPages: Math.ceil(total / perPage),
     };
   }
 
