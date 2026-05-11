@@ -52,6 +52,8 @@ export const AnyNull = runtime.AnyNull
 
 export const ModelName = {
   admin_users: 'admin_users',
+  admin_giveaway_actions: 'admin_giveaway_actions',
+  excluded_users: 'excluded_users',
   admin_roles: 'admin_roles',
   admin_sessions: 'admin_sessions',
   admin_notes: 'admin_notes',
@@ -69,6 +71,7 @@ export const ModelName = {
   admin_settings: 'admin_settings',
   admin_shifts: 'admin_shifts',
   admin_shift_assignments: 'admin_shift_assignments',
+  creator_deal_estimates: 'creator_deal_estimates',
   salary_employees: 'salary_employees',
   salary_payouts: 'salary_payouts'
 } as const
@@ -110,6 +113,32 @@ export const Admin_usersScalarFieldEnum = {
 } as const
 
 export type Admin_usersScalarFieldEnum = (typeof Admin_usersScalarFieldEnum)[keyof typeof Admin_usersScalarFieldEnum]
+
+
+export const Admin_giveaway_actionsScalarFieldEnum = {
+  id: 'id',
+  admin_user_id: 'admin_user_id',
+  target_user_id: 'target_user_id',
+  amount_usd: 'amount_usd',
+  source_url: 'source_url',
+  source_type: 'source_type',
+  reason: 'reason',
+  ledger_tx_id: 'ledger_tx_id',
+  created_at: 'created_at'
+} as const
+
+export type Admin_giveaway_actionsScalarFieldEnum = (typeof Admin_giveaway_actionsScalarFieldEnum)[keyof typeof Admin_giveaway_actionsScalarFieldEnum]
+
+
+export const Excluded_usersScalarFieldEnum = {
+  user_id: 'user_id',
+  reason: 'reason',
+  excluded_by: 'excluded_by',
+  created_at: 'created_at',
+  updated_at: 'updated_at'
+} as const
+
+export type Excluded_usersScalarFieldEnum = (typeof Excluded_usersScalarFieldEnum)[keyof typeof Excluded_usersScalarFieldEnum]
 
 
 export const Admin_rolesScalarFieldEnum = {
@@ -371,10 +400,34 @@ export const Admin_shift_assignmentsScalarFieldEnum = {
 export type Admin_shift_assignmentsScalarFieldEnum = (typeof Admin_shift_assignmentsScalarFieldEnum)[keyof typeof Admin_shift_assignmentsScalarFieldEnum]
 
 
-export const Salary_employeesScalarFieldEnum = {
+export const Creator_deal_estimatesScalarFieldEnum = {
   id: 'id',
   name: 'name',
+  daily_fill_usd: 'daily_fill_usd',
+  withdrawal_cap_usd: 'withdrawal_cap_usd',
+  withdrawal_percent: 'withdrawal_percent',
+  leaderboard_cost_usd: 'leaderboard_cost_usd',
+  packy_paid_percent: 'packy_paid_percent',
+  deal_length_weeks: 'deal_length_weeks',
+  video_amount_usd: 'video_amount_usd',
+  video_percent: 'video_percent',
+  video_fills_per_week: 'video_fills_per_week',
+  tip_balance_usd: 'tip_balance_usd',
+  battle_balance_usd: 'battle_balance_usd',
+  notes: 'notes',
+  created_at: 'created_at',
+  updated_at: 'updated_at',
+  created_by_id: 'created_by_id'
+} as const
+
+export type Creator_deal_estimatesScalarFieldEnum = (typeof Creator_deal_estimatesScalarFieldEnum)[keyof typeof Creator_deal_estimatesScalarFieldEnum]
+
+
+export const Salary_employeesScalarFieldEnum = {
+  id: 'id',
+  discord_name: 'discord_name',
   eth_address: 'eth_address',
+  cadence: 'cadence',
   salary_usdt: 'salary_usdt',
   max_per_payout: 'max_per_payout',
   active: 'active',

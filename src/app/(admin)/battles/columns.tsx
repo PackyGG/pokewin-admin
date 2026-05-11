@@ -69,11 +69,14 @@ export const columns: ColumnDef<BattleListItem>[] = [
     ),
   },
   {
-    accessorKey: "totalPayout",
-    header: "Payout",
-    // Payout = what the house paid out to the winner(s). House loss → rose.
+    accessorKey: "totalPotUsd",
+    header: "Hit",
+    // "Hit" = total card value paid out across the whole battle (sum
+    // across every team, regardless of who won). This is the size of
+    // the actual hit — what someone walked away with. House loss → rose.
+    // Matches the "Biggest Hit" sort filter in the toolbar.
     cell: ({ row }) => {
-      const p = row.original.totalPayout;
+      const p = row.original.totalPotUsd;
       if (p == null) return <span className="text-muted-foreground">—</span>;
       return (
         <span className="text-rose-600 dark:text-rose-400">

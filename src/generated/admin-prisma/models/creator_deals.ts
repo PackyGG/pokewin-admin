@@ -881,14 +881,6 @@ export type Enumdeal_typeFieldUpdateOperationsInput = {
   set?: $Enums.deal_type
 }
 
-export type DecimalFieldUpdateOperationsInput = {
-  set?: runtime.Decimal | runtime.DecimalJsLike | number | string
-  increment?: runtime.Decimal | runtime.DecimalJsLike | number | string
-  decrement?: runtime.Decimal | runtime.DecimalJsLike | number | string
-  multiply?: runtime.Decimal | runtime.DecimalJsLike | number | string
-  divide?: runtime.Decimal | runtime.DecimalJsLike | number | string
-}
-
 export type Enumdeal_statusFieldUpdateOperationsInput = {
   set?: $Enums.deal_status
 }

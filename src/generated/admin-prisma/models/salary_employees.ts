@@ -38,8 +38,9 @@ export type Salary_employeesSumAggregateOutputType = {
 
 export type Salary_employeesMinAggregateOutputType = {
   id: string | null
-  name: string | null
+  discord_name: string | null
   eth_address: string | null
+  cadence: string | null
   salary_usdt: runtime.Decimal | null
   max_per_payout: runtime.Decimal | null
   active: boolean | null
@@ -52,8 +53,9 @@ export type Salary_employeesMinAggregateOutputType = {
 
 export type Salary_employeesMaxAggregateOutputType = {
   id: string | null
-  name: string | null
+  discord_name: string | null
   eth_address: string | null
+  cadence: string | null
   salary_usdt: runtime.Decimal | null
   max_per_payout: runtime.Decimal | null
   active: boolean | null
@@ -66,8 +68,9 @@ export type Salary_employeesMaxAggregateOutputType = {
 
 export type Salary_employeesCountAggregateOutputType = {
   id: number
-  name: number
+  discord_name: number
   eth_address: number
+  cadence: number
   salary_usdt: number
   max_per_payout: number
   active: number
@@ -92,8 +95,9 @@ export type Salary_employeesSumAggregateInputType = {
 
 export type Salary_employeesMinAggregateInputType = {
   id?: true
-  name?: true
+  discord_name?: true
   eth_address?: true
+  cadence?: true
   salary_usdt?: true
   max_per_payout?: true
   active?: true
@@ -106,8 +110,9 @@ export type Salary_employeesMinAggregateInputType = {
 
 export type Salary_employeesMaxAggregateInputType = {
   id?: true
-  name?: true
+  discord_name?: true
   eth_address?: true
+  cadence?: true
   salary_usdt?: true
   max_per_payout?: true
   active?: true
@@ -120,8 +125,9 @@ export type Salary_employeesMaxAggregateInputType = {
 
 export type Salary_employeesCountAggregateInputType = {
   id?: true
-  name?: true
+  discord_name?: true
   eth_address?: true
+  cadence?: true
   salary_usdt?: true
   max_per_payout?: true
   active?: true
@@ -221,8 +227,9 @@ export type salary_employeesGroupByArgs<ExtArgs extends runtime.Types.Extensions
 
 export type Salary_employeesGroupByOutputType = {
   id: string
-  name: string
+  discord_name: string
   eth_address: string
+  cadence: string
   salary_usdt: runtime.Decimal
   max_per_payout: runtime.Decimal | null
   active: boolean
@@ -258,8 +265,9 @@ export type salary_employeesWhereInput = {
   OR?: Prisma.salary_employeesWhereInput[]
   NOT?: Prisma.salary_employeesWhereInput | Prisma.salary_employeesWhereInput[]
   id?: Prisma.UuidFilter<"salary_employees"> | string
-  name?: Prisma.StringFilter<"salary_employees"> | string
+  discord_name?: Prisma.StringFilter<"salary_employees"> | string
   eth_address?: Prisma.StringFilter<"salary_employees"> | string
+  cadence?: Prisma.StringFilter<"salary_employees"> | string
   salary_usdt?: Prisma.DecimalFilter<"salary_employees"> | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.DecimalNullableFilter<"salary_employees"> | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolFilter<"salary_employees"> | boolean
@@ -274,8 +282,9 @@ export type salary_employeesWhereInput = {
 
 export type salary_employeesOrderByWithRelationInput = {
   id?: Prisma.SortOrder
-  name?: Prisma.SortOrder
+  discord_name?: Prisma.SortOrder
   eth_address?: Prisma.SortOrder
+  cadence?: Prisma.SortOrder
   salary_usdt?: Prisma.SortOrder
   max_per_payout?: Prisma.SortOrderInput | Prisma.SortOrder
   active?: Prisma.SortOrder
@@ -293,8 +302,9 @@ export type salary_employeesWhereUniqueInput = Prisma.AtLeast<{
   AND?: Prisma.salary_employeesWhereInput | Prisma.salary_employeesWhereInput[]
   OR?: Prisma.salary_employeesWhereInput[]
   NOT?: Prisma.salary_employeesWhereInput | Prisma.salary_employeesWhereInput[]
-  name?: Prisma.StringFilter<"salary_employees"> | string
+  discord_name?: Prisma.StringFilter<"salary_employees"> | string
   eth_address?: Prisma.StringFilter<"salary_employees"> | string
+  cadence?: Prisma.StringFilter<"salary_employees"> | string
   salary_usdt?: Prisma.DecimalFilter<"salary_employees"> | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.DecimalNullableFilter<"salary_employees"> | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolFilter<"salary_employees"> | boolean
@@ -309,8 +319,9 @@ export type salary_employeesWhereUniqueInput = Prisma.AtLeast<{
 
 export type salary_employeesOrderByWithAggregationInput = {
   id?: Prisma.SortOrder
-  name?: Prisma.SortOrder
+  discord_name?: Prisma.SortOrder
   eth_address?: Prisma.SortOrder
+  cadence?: Prisma.SortOrder
   salary_usdt?: Prisma.SortOrder
   max_per_payout?: Prisma.SortOrderInput | Prisma.SortOrder
   active?: Prisma.SortOrder
@@ -331,8 +342,9 @@ export type salary_employeesScalarWhereWithAggregatesInput = {
   OR?: Prisma.salary_employeesScalarWhereWithAggregatesInput[]
   NOT?: Prisma.salary_employeesScalarWhereWithAggregatesInput | Prisma.salary_employeesScalarWhereWithAggregatesInput[]
   id?: Prisma.UuidWithAggregatesFilter<"salary_employees"> | string
-  name?: Prisma.StringWithAggregatesFilter<"salary_employees"> | string
+  discord_name?: Prisma.StringWithAggregatesFilter<"salary_employees"> | string
   eth_address?: Prisma.StringWithAggregatesFilter<"salary_employees"> | string
+  cadence?: Prisma.StringWithAggregatesFilter<"salary_employees"> | string
   salary_usdt?: Prisma.DecimalWithAggregatesFilter<"salary_employees"> | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.DecimalNullableWithAggregatesFilter<"salary_employees"> | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolWithAggregatesFilter<"salary_employees"> | boolean
@@ -345,8 +357,9 @@ export type salary_employeesScalarWhereWithAggregatesInput = {
 
 export type salary_employeesCreateInput = {
   id?: string
-  name: string
+  discord_name: string
   eth_address: string
+  cadence?: string
   salary_usdt: runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: boolean
@@ -360,8 +373,9 @@ export type salary_employeesCreateInput = {
 
 export type salary_employeesUncheckedCreateInput = {
   id?: string
-  name: string
+  discord_name: string
   eth_address: string
+  cadence?: string
   salary_usdt: runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: boolean
@@ -375,8 +389,9 @@ export type salary_employeesUncheckedCreateInput = {
 
 export type salary_employeesUpdateInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
-  name?: Prisma.StringFieldUpdateOperationsInput | string
+  discord_name?: Prisma.StringFieldUpdateOperationsInput | string
   eth_address?: Prisma.StringFieldUpdateOperationsInput | string
+  cadence?: Prisma.StringFieldUpdateOperationsInput | string
   salary_usdt?: Prisma.DecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.NullableDecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -390,8 +405,9 @@ export type salary_employeesUpdateInput = {
 
 export type salary_employeesUncheckedUpdateInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
-  name?: Prisma.StringFieldUpdateOperationsInput | string
+  discord_name?: Prisma.StringFieldUpdateOperationsInput | string
   eth_address?: Prisma.StringFieldUpdateOperationsInput | string
+  cadence?: Prisma.StringFieldUpdateOperationsInput | string
   salary_usdt?: Prisma.DecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.NullableDecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -405,8 +421,9 @@ export type salary_employeesUncheckedUpdateInput = {
 
 export type salary_employeesCreateManyInput = {
   id?: string
-  name: string
+  discord_name: string
   eth_address: string
+  cadence?: string
   salary_usdt: runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: boolean
@@ -419,8 +436,9 @@ export type salary_employeesCreateManyInput = {
 
 export type salary_employeesUpdateManyMutationInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
-  name?: Prisma.StringFieldUpdateOperationsInput | string
+  discord_name?: Prisma.StringFieldUpdateOperationsInput | string
   eth_address?: Prisma.StringFieldUpdateOperationsInput | string
+  cadence?: Prisma.StringFieldUpdateOperationsInput | string
   salary_usdt?: Prisma.DecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.NullableDecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -432,8 +450,9 @@ export type salary_employeesUpdateManyMutationInput = {
 
 export type salary_employeesUncheckedUpdateManyInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
-  name?: Prisma.StringFieldUpdateOperationsInput | string
+  discord_name?: Prisma.StringFieldUpdateOperationsInput | string
   eth_address?: Prisma.StringFieldUpdateOperationsInput | string
+  cadence?: Prisma.StringFieldUpdateOperationsInput | string
   salary_usdt?: Prisma.DecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.NullableDecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -456,8 +475,9 @@ export type salary_employeesOrderByRelationAggregateInput = {
 
 export type salary_employeesCountOrderByAggregateInput = {
   id?: Prisma.SortOrder
-  name?: Prisma.SortOrder
+  discord_name?: Prisma.SortOrder
   eth_address?: Prisma.SortOrder
+  cadence?: Prisma.SortOrder
   salary_usdt?: Prisma.SortOrder
   max_per_payout?: Prisma.SortOrder
   active?: Prisma.SortOrder
@@ -475,8 +495,9 @@ export type salary_employeesAvgOrderByAggregateInput = {
 
 export type salary_employeesMaxOrderByAggregateInput = {
   id?: Prisma.SortOrder
-  name?: Prisma.SortOrder
+  discord_name?: Prisma.SortOrder
   eth_address?: Prisma.SortOrder
+  cadence?: Prisma.SortOrder
   salary_usdt?: Prisma.SortOrder
   max_per_payout?: Prisma.SortOrder
   active?: Prisma.SortOrder
@@ -489,8 +510,9 @@ export type salary_employeesMaxOrderByAggregateInput = {
 
 export type salary_employeesMinOrderByAggregateInput = {
   id?: Prisma.SortOrder
-  name?: Prisma.SortOrder
+  discord_name?: Prisma.SortOrder
   eth_address?: Prisma.SortOrder
+  cadence?: Prisma.SortOrder
   salary_usdt?: Prisma.SortOrder
   max_per_payout?: Prisma.SortOrder
   active?: Prisma.SortOrder
@@ -569,8 +591,9 @@ export type salary_employeesUpdateOneRequiredWithoutPayoutsNestedInput = {
 
 export type salary_employeesCreateWithoutCreated_byInput = {
   id?: string
-  name: string
+  discord_name: string
   eth_address: string
+  cadence?: string
   salary_usdt: runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: boolean
@@ -583,8 +606,9 @@ export type salary_employeesCreateWithoutCreated_byInput = {
 
 export type salary_employeesUncheckedCreateWithoutCreated_byInput = {
   id?: string
-  name: string
+  discord_name: string
   eth_address: string
+  cadence?: string
   salary_usdt: runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: boolean
@@ -626,8 +650,9 @@ export type salary_employeesScalarWhereInput = {
   OR?: Prisma.salary_employeesScalarWhereInput[]
   NOT?: Prisma.salary_employeesScalarWhereInput | Prisma.salary_employeesScalarWhereInput[]
   id?: Prisma.UuidFilter<"salary_employees"> | string
-  name?: Prisma.StringFilter<"salary_employees"> | string
+  discord_name?: Prisma.StringFilter<"salary_employees"> | string
   eth_address?: Prisma.StringFilter<"salary_employees"> | string
+  cadence?: Prisma.StringFilter<"salary_employees"> | string
   salary_usdt?: Prisma.DecimalFilter<"salary_employees"> | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.DecimalNullableFilter<"salary_employees"> | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolFilter<"salary_employees"> | boolean
@@ -640,8 +665,9 @@ export type salary_employeesScalarWhereInput = {
 
 export type salary_employeesCreateWithoutPayoutsInput = {
   id?: string
-  name: string
+  discord_name: string
   eth_address: string
+  cadence?: string
   salary_usdt: runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: boolean
@@ -654,8 +680,9 @@ export type salary_employeesCreateWithoutPayoutsInput = {
 
 export type salary_employeesUncheckedCreateWithoutPayoutsInput = {
   id?: string
-  name: string
+  discord_name: string
   eth_address: string
+  cadence?: string
   salary_usdt: runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: boolean
@@ -684,8 +711,9 @@ export type salary_employeesUpdateToOneWithWhereWithoutPayoutsInput = {
 
 export type salary_employeesUpdateWithoutPayoutsInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
-  name?: Prisma.StringFieldUpdateOperationsInput | string
+  discord_name?: Prisma.StringFieldUpdateOperationsInput | string
   eth_address?: Prisma.StringFieldUpdateOperationsInput | string
+  cadence?: Prisma.StringFieldUpdateOperationsInput | string
   salary_usdt?: Prisma.DecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.NullableDecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -698,8 +726,9 @@ export type salary_employeesUpdateWithoutPayoutsInput = {
 
 export type salary_employeesUncheckedUpdateWithoutPayoutsInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
-  name?: Prisma.StringFieldUpdateOperationsInput | string
+  discord_name?: Prisma.StringFieldUpdateOperationsInput | string
   eth_address?: Prisma.StringFieldUpdateOperationsInput | string
+  cadence?: Prisma.StringFieldUpdateOperationsInput | string
   salary_usdt?: Prisma.DecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.NullableDecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -712,8 +741,9 @@ export type salary_employeesUncheckedUpdateWithoutPayoutsInput = {
 
 export type salary_employeesCreateManyCreated_byInput = {
   id?: string
-  name: string
+  discord_name: string
   eth_address: string
+  cadence?: string
   salary_usdt: runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: boolean
@@ -725,8 +755,9 @@ export type salary_employeesCreateManyCreated_byInput = {
 
 export type salary_employeesUpdateWithoutCreated_byInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
-  name?: Prisma.StringFieldUpdateOperationsInput | string
+  discord_name?: Prisma.StringFieldUpdateOperationsInput | string
   eth_address?: Prisma.StringFieldUpdateOperationsInput | string
+  cadence?: Prisma.StringFieldUpdateOperationsInput | string
   salary_usdt?: Prisma.DecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.NullableDecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -739,8 +770,9 @@ export type salary_employeesUpdateWithoutCreated_byInput = {
 
 export type salary_employeesUncheckedUpdateWithoutCreated_byInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
-  name?: Prisma.StringFieldUpdateOperationsInput | string
+  discord_name?: Prisma.StringFieldUpdateOperationsInput | string
   eth_address?: Prisma.StringFieldUpdateOperationsInput | string
+  cadence?: Prisma.StringFieldUpdateOperationsInput | string
   salary_usdt?: Prisma.DecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.NullableDecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -753,8 +785,9 @@ export type salary_employeesUncheckedUpdateWithoutCreated_byInput = {
 
 export type salary_employeesUncheckedUpdateManyWithoutCreated_byInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
-  name?: Prisma.StringFieldUpdateOperationsInput | string
+  discord_name?: Prisma.StringFieldUpdateOperationsInput | string
   eth_address?: Prisma.StringFieldUpdateOperationsInput | string
+  cadence?: Prisma.StringFieldUpdateOperationsInput | string
   salary_usdt?: Prisma.DecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.NullableDecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -797,8 +830,9 @@ export type Salary_employeesCountOutputTypeCountPayoutsArgs<ExtArgs extends runt
 
 export type salary_employeesSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
-  name?: boolean
+  discord_name?: boolean
   eth_address?: boolean
+  cadence?: boolean
   salary_usdt?: boolean
   max_per_payout?: boolean
   active?: boolean
@@ -814,8 +848,9 @@ export type salary_employeesSelect<ExtArgs extends runtime.Types.Extensions.Inte
 
 export type salary_employeesSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
-  name?: boolean
+  discord_name?: boolean
   eth_address?: boolean
+  cadence?: boolean
   salary_usdt?: boolean
   max_per_payout?: boolean
   active?: boolean
@@ -829,8 +864,9 @@ export type salary_employeesSelectCreateManyAndReturn<ExtArgs extends runtime.Ty
 
 export type salary_employeesSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
-  name?: boolean
+  discord_name?: boolean
   eth_address?: boolean
+  cadence?: boolean
   salary_usdt?: boolean
   max_per_payout?: boolean
   active?: boolean
@@ -844,8 +880,9 @@ export type salary_employeesSelectUpdateManyAndReturn<ExtArgs extends runtime.Ty
 
 export type salary_employeesSelectScalar = {
   id?: boolean
-  name?: boolean
+  discord_name?: boolean
   eth_address?: boolean
+  cadence?: boolean
   salary_usdt?: boolean
   max_per_payout?: boolean
   active?: boolean
@@ -856,7 +893,7 @@ export type salary_employeesSelectScalar = {
   created_by_id?: boolean
 }
 
-export type salary_employeesOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "name" | "eth_address" | "salary_usdt" | "max_per_payout" | "active" | "last_paid_at" | "notes" | "created_at" | "updated_at" | "created_by_id", ExtArgs["result"]["salary_employees"]>
+export type salary_employeesOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "discord_name" | "eth_address" | "cadence" | "salary_usdt" | "max_per_payout" | "active" | "last_paid_at" | "notes" | "created_at" | "updated_at" | "created_by_id", ExtArgs["result"]["salary_employees"]>
 export type salary_employeesInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   created_by?: boolean | Prisma.admin_usersDefaultArgs<ExtArgs>
   payouts?: boolean | Prisma.salary_employees$payoutsArgs<ExtArgs>
@@ -877,8 +914,9 @@ export type $salary_employeesPayload<ExtArgs extends runtime.Types.Extensions.In
   }
   scalars: runtime.Types.Extensions.GetPayloadResult<{
     id: string
-    name: string
+    discord_name: string
     eth_address: string
+    cadence: string
     salary_usdt: runtime.Decimal
     max_per_payout: runtime.Decimal | null
     active: boolean
@@ -1313,8 +1351,9 @@ export interface Prisma__salary_employeesClient<T, Null = never, ExtArgs extends
  */
 export interface salary_employeesFieldRefs {
   readonly id: Prisma.FieldRef<"salary_employees", 'String'>
-  readonly name: Prisma.FieldRef<"salary_employees", 'String'>
+  readonly discord_name: Prisma.FieldRef<"salary_employees", 'String'>
   readonly eth_address: Prisma.FieldRef<"salary_employees", 'String'>
+  readonly cadence: Prisma.FieldRef<"salary_employees", 'String'>
   readonly salary_usdt: Prisma.FieldRef<"salary_employees", 'Decimal'>
   readonly max_per_payout: Prisma.FieldRef<"salary_employees", 'Decimal'>
   readonly active: Prisma.FieldRef<"salary_employees", 'Boolean'>
