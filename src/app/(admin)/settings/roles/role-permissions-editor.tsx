@@ -27,6 +27,37 @@ const ROLE_DESCRIPTIONS: Record<string, string> = {
     "Pack creator employee — only Packs page + Create Pack capability. Demo (inactive) packs are always editable; grant 'Edit Live Packs' if you want them to be able to change card pool / price / house edge on packs that are already live in production.",
 };
 
+/**
+ * Per-role UI scope: hides capability groups + page entries that
+ * the role has no business seeing, so the editor doesn't drown a
+ * single-purpose role like `pack_creator` in irrelevant toggles.
+ *
+ * - `capabilityGroups` is matched by the `group` label on each
+ *   capability spec (`permissions-utils.ts`).
+ * - `pageKeys` is matched by the page's `key` from `admin-pages.ts`.
+ *
+ * `null` (or missing entry) → no scoping; render the full catalog,
+ * matching the current behaviour for support / marketing / creator.
+ *
+ * Save semantics: out-of-scope keys already in the stored config are
+ * preserved (we only operate on what the UI exposes). Select-All /
+ * Select-None likewise only touch in-scope entries — they don't
+ * blow away historical assignments.
+ */
+const ROLE_SCOPES: Record<
+  string,
+  { capabilityGroups: string[]; pageKeys: string[] } | null
+> = {
+  pack_creator: {
+    capabilityGroups: ["Packs"],
+    pageKeys: ["/packs"],
+  },
+  // Other roles: no scoping (full catalog).
+  support: null,
+  marketing: null,
+  creator: null,
+};
+
 type GroupedPages = {
   group: string;
   pages: { key: string; label: string }[];
@@ -55,8 +86,29 @@ export function RolePermissionsEditor({
     capabilities: {},
   };
   const currentPages = new Set(config.pages);
-  const allPageKeys = groupedPages.flatMap((g) => g.pages.map((p) => p.key));
   const capabilityGroups = getCapabilityGroups();
+
+  // Apply the per-role scope (see ROLE_SCOPES above). For roles with
+  // no scope, this is the identity transform — render everything.
+  const scope = ROLE_SCOPES[activeRole] ?? null;
+  const visibleCapabilityGroups = scope
+    ? capabilityGroups.filter((g) => scope.capabilityGroups.includes(g.group))
+    : capabilityGroups;
+  const visiblePageGroups = scope
+    ? groupedPages
+        .map((g) => ({
+          ...g,
+          pages: g.pages.filter((p) => scope.pageKeys.includes(p.key)),
+        }))
+        .filter((g) => g.pages.length > 0)
+    : groupedPages;
+  // Badge + Select-All/None operate on the VISIBLE pages only so a
+  // scoped role's "1/1 pages" stays meaningful and an admin can't
+  // accidentally tick all 50 site pages for a pack_creator via the
+  // "All" shortcut.
+  const allPageKeys = visiblePageGroups.flatMap((g) =>
+    g.pages.map((p) => p.key),
+  );
 
   function hasChanges(role: string) {
     return JSON.stringify(configs[role]) !== JSON.stringify(savedConfigs[role]);
@@ -110,11 +162,29 @@ export function RolePermissionsEditor({
   }
 
   function selectAll() {
-    updateConfig({ pages: [...allPageKeys] });
+    if (scope) {
+      // Scoped role: preserve any out-of-scope keys already stored
+      // and only add the visible ones. Lets us narrow a role's UI
+      // without wiping its historical access.
+      const next = new Set(config.pages);
+      for (const k of allPageKeys) next.add(k);
+      updateConfig({ pages: [...next] });
+    } else {
+      updateConfig({ pages: [...allPageKeys] });
+    }
   }
 
   function selectNone() {
-    updateConfig({ pages: [] });
+    if (scope) {
+      // Scoped role: only un-tick the visible pages; preserve
+      // anything stored outside the scope.
+      const visibleSet = new Set(allPageKeys);
+      updateConfig({
+        pages: config.pages.filter((k) => !visibleSet.has(k)),
+      });
+    } else {
+      updateConfig({ pages: [] });
+    }
   }
 
   function handleSave() {
@@ -137,7 +207,11 @@ export function RolePermissionsEditor({
     });
   }
 
-  const selectedCount = currentPages.size;
+  // Badge shows visible-selected / visible-total so a scoped role's
+  // "1 / 1 pages" reads naturally. For unscoped roles `allPageKeys`
+  // covers the whole catalog, so this stays equivalent to the
+  // previous `currentPages.size` / `allPageKeys.length`.
+  const selectedCount = allPageKeys.filter((k) => currentPages.has(k)).length;
   const totalCount = allPageKeys.length;
 
   return (
@@ -173,7 +247,7 @@ export function RolePermissionsEditor({
           Capabilities
         </h2>
         <div className="grid gap-4 md:grid-cols-2">
-          {capabilityGroups.map((group) => (
+          {visibleCapabilityGroups.map((group) => (
             <Card key={group.group}>
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-medium">
@@ -258,7 +332,7 @@ export function RolePermissionsEditor({
           </div>
         </div>
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {groupedPages.map((group) => {
+          {visiblePageGroups.map((group) => {
             const groupKeys = group.pages.map((p) => p.key);
             const checkedCount = groupKeys.filter((k) =>
               currentPages.has(k),
