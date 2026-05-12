@@ -365,6 +365,70 @@ export async function sponsorLeaderboard(
     return { success: true };
 }
 
+const hardDeleteSchema = z.object({
+    confirmation_id: z.string().uuid("Confirmation id must be the leaderboard's UUID"),
+});
+
+export async function hardDeleteLeaderboard(
+    id: string,
+    input: { confirmation_id: string },
+): Promise<ActionResult<{ refund_amount_usd: string; previous_status: string }>> {
+    const session = await requirePageAccess(PAGE_KEY);
+    const parsedId = idSchema.safeParse(id);
+    if (!parsedId.success) {
+        return { success: false, error: parsedId.error.issues[0]?.message ?? "Invalid id" };
+    }
+    const parsed = hardDeleteSchema.safeParse(input);
+    if (!parsed.success) {
+        return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+    // Local guard so a typo in the dialog can't reach the backend with a
+    // valid-looking-but-wrong UUID. Backend also enforces the same check.
+    if (parsed.data.confirmation_id !== parsedId.data) {
+        return {
+            success: false,
+            error: "Confirmation id must exactly match the leaderboard id",
+        };
+    }
+    await requireCapability(session, "__can_approve_leaderboard", "hard-delete creator leaderboards");
+
+    let result;
+    try {
+        result = await affiliateLeaderboardsApi.hardDelete(
+            parsedId.data,
+            { confirmation_id: parsed.data.confirmation_id },
+            session.userId,
+        );
+    } catch (err) {
+        return { success: false, error: toErrorMessage(err) };
+    }
+
+    try {
+        await createAdminAuditEvent({
+            adminUserId: session.userId,
+            eventType: "affiliate_leaderboard_hard_deleted",
+            metadata: {
+                leaderboard_id: parsedId.data,
+                previous_status: result.previous_status,
+                refund_amount_usd: result.refund_amount_usd,
+            },
+        });
+    } catch (err) {
+        logAuditFailure("hardDeleteLeaderboard", err);
+    }
+
+    // The detail page no longer exists post-delete, but revalidating the list
+    // is essential so the row disappears immediately on return.
+    revalidatePath(PAGE_KEY);
+    return {
+        success: true,
+        data: {
+            refund_amount_usd: result.refund_amount_usd,
+            previous_status: result.previous_status,
+        },
+    };
+}
+
 export async function cancelLeaderboard(id: string): Promise<ActionResult> {
     const session = await requirePageAccess(PAGE_KEY);
     const parsedId = idSchema.safeParse(id);

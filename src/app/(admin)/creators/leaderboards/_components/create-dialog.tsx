@@ -239,6 +239,22 @@ export function CreateDialog({ trigger, fixedCreatorUserId }: Props) {
             toast.error("End date must be after start date");
             return;
         }
+        // Backend rejects fully back-dated leaderboards (end_date already past)
+        // because the next snapshot tick would freeze "winners" out of historical
+        // wagers with no real competition. Mirror that check client-side.
+        if (new Date(endISO) <= new Date()) {
+            toast.error("End date must be in the future");
+            return;
+        }
+        // Backend requires admin-created leaderboards to span at least 6 days.
+        // Catch this client-side too so the form surfaces a clear error instead
+        // of bouncing off a 400.
+        const MIN_DURATION_MS = 6 * 24 * 60 * 60 * 1000;
+        const durationMs = new Date(endISO).getTime() - new Date(startISO).getTime();
+        if (durationMs < MIN_DURATION_MS) {
+            toast.error("Leaderboard must span at least 6 days from start to end");
+            return;
+        }
 
         const codesParsed = codesText
             .split(",")

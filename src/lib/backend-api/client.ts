@@ -219,6 +219,7 @@ export const backendApi = {
 
   delete: <T = unknown>(
     path: string,
+    body: unknown = undefined,
     opts: Omit<RequestOptions, "method" | "body"> = {}
-  ) => backendApiRequest<T>(path, { ...opts, method: "DELETE" }),
+  ) => backendApiRequest<T>(path, { ...opts, method: "DELETE", body }),
 };

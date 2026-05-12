@@ -151,4 +151,25 @@ export const affiliateLeaderboardsApi = {
         { headers: adminHeaders(adminUserId) },
       )
       .then((r) => r.data),
+
+  hardDelete: (
+    id: string,
+    input: HardDeleteInput,
+    adminUserId: string,
+  ) =>
+    backendApi
+      .delete<Success<HardDeleteResult>>(
+        `${BASE}/${encodeURIComponent(id)}`,
+        input,
+        { headers: adminHeaders(adminUserId) },
+      )
+      .then((r) => r.data),
+};
+
+export type HardDeleteInput = { confirmation_id: string };
+
+export type HardDeleteResult = {
+  deleted_id: string;
+  previous_status: ApprovalStatus;
+  refund_amount_usd: string;
 };
