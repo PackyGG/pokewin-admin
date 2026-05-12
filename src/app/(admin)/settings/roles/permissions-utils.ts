@@ -222,6 +222,19 @@ export const CAPABILITIES: CapabilityDef[] = [
     group: "Packs",
   },
   {
+    // Pack creators are normally locked out of editing ACTIVE (live)
+    // packs — only inactive demo packs. This capability lifts that
+    // restriction so they can change card weights / price / house
+    // edge on packs that are currently in production. Sensitive:
+    // grant only to trusted pack_creator employees who understand
+    // they're directly changing an in-production game's economics.
+    key: "__can_edit_live_packs",
+    label: "Edit Live Packs",
+    description:
+      "Allow editing of active (live) packs — required for pack creators to change card pool / price / house edge after a pack is live. Without this, a pack creator can only edit demo (inactive) packs. Real admins always pass.",
+    group: "Packs",
+  },
+  {
     key: "__can_delete_pack",
     label: "Delete Pack",
     description: "Permanently delete a pack",

@@ -2,8 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
+import { adminDb } from "@/lib/admin-db";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
+import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { getPackGames } from "@/lib/queries/packs";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { uploadImage } from "@/lib/imagekit";
@@ -199,11 +201,14 @@ export async function updatePack(
   await requireCapability(session, "__can_update_pack", "update packs");
 
   // Pack creators can iterate on their demo packs (active=false) but
-  // must not be able to edit a pack the platform has already
-  // promoted to live. They also can't toggle active themselves
-  // (no __can_toggle_pack_active), so this gate plus the missing
-  // toggle capability together pin them inside the demo workflow.
-  // Admin / support / etc with __can_update_pack still edit anything.
+  // are blocked from editing packs already live in production —
+  // unless they've been granted the `__can_edit_live_packs`
+  // capability. The capability is the explicit per-user opt-in for
+  // changing card pool / price / house edge on an in-production
+  // pack; without it the previous "demo-only" behaviour is kept.
+  // Admin / support / marketing with __can_update_pack still edit
+  // anything as before — this gate is pack_creator-specific.
+  let editedLivePackUnderCapability = false;
   if (session.role === "pack_creator") {
     const target = await db.packs.findUnique({
       where: { id },
@@ -211,9 +216,22 @@ export async function updatePack(
     });
     if (!target) throw new Error("Pack not found");
     if (target.active) {
-      throw new Error(
-        "Live packs can only be edited by full admins. Ask an admin to deactivate the pack first if it needs changes.",
-      );
+      // Look up the admin user's allowed_pages once — same shape the
+      // rest of the codebase uses for capability checks against
+      // non-admin roles.
+      const perms = await adminDb.admin_users.findUnique({
+        where: { id: session.userId },
+        select: { allowed_pages: true },
+      });
+      const canEditLive = perms
+        ? hasCapability(perms.allowed_pages, "__can_edit_live_packs")
+        : false;
+      if (!canEditLive) {
+        throw new Error(
+          "Live packs can only be edited by full admins or pack creators with the 'Edit Live Packs' capability. Ask an admin to grant the capability, or deactivate the pack first.",
+        );
+      }
+      editedLivePackUnderCapability = true;
     }
   }
 
@@ -253,7 +271,18 @@ export async function updatePack(
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "pack_updated",
-    metadata: { pack_id: id, name: data.name, card_count: data.cards.length },
+    metadata: {
+      pack_id: id,
+      name: data.name,
+      card_count: data.cards.length,
+      // Flag the rare case: a pack_creator edited an ACTIVE pack via
+      // the explicit `__can_edit_live_packs` capability. Lets audit
+      // reviews answer "who changed the house edge on a live pack?"
+      // without re-deriving from role + pack.active at the time.
+      ...(editedLivePackUnderCapability && {
+        edited_live_pack_under_capability: true,
+      }),
+    },
   });
 
   reloadPacks();

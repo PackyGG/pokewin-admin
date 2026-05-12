@@ -49,19 +49,27 @@ export default async function PackDetailPage({
   const isAdmin = session.role === "admin";
   let canToggle = isAdmin;
   let canEdit = isAdmin;
+  let canEditLive = isAdmin;
   let canDelete = isAdmin;
   if (!isAdmin) {
     const perms = await getUserPermissions(session.userId);
     canToggle = hasCapability(perms, "__can_toggle_pack_active");
     canEdit = hasCapability(perms, "__can_update_pack");
+    canEditLive = hasCapability(perms, "__can_edit_live_packs");
     canDelete = hasCapability(perms, "__can_delete_pack");
   }
   // Pack creators only get to edit packs while they're still in the
-  // demo (inactive) state. Once a pack is live, only full admins can
-  // edit it. Mirrors the server-side gate in updatePack so the UI
+  // demo (inactive) state — UNLESS they've been granted the
+  // __can_edit_live_packs capability, which lifts that restriction
+  // so they can edit card pool / price / house edge on an active
+  // pack. Mirrors the server-side gate in updatePack so the UI
   // doesn't dangle a button that 500s on click.
   const showEditButton =
-    canEdit && (isAdmin || session.role !== "pack_creator" || !data.active);
+    canEdit &&
+    (isAdmin ||
+      session.role !== "pack_creator" ||
+      !data.active ||
+      canEditLive);
 
   const [packStats, initialGames] = await Promise.all([
     getPackStats(id, data.priceUsd, {
