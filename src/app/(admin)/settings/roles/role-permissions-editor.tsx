@@ -24,7 +24,7 @@ const ROLE_DESCRIPTIONS: Record<string, string> = {
   marketing: "Marketing team — typically needs Promo Codes, Gift Cards, Creators",
   creator: "Content creators — typically only needs My Profile",
   pack_creator:
-    "Pack creator employee — only Packs page + Create Pack capability. Cannot toggle packs live or edit existing ones.",
+    "Pack creator employee — only Packs page + Create Pack capability. Demo (inactive) packs are always editable; grant 'Edit Live Packs' if you want them to be able to change card pool / price / house edge on packs that are already live in production.",
 };
 
 type GroupedPages = {
