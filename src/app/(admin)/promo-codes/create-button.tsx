@@ -233,10 +233,12 @@ export function CreatePromoCodeButton() {
                 <Input
                   value={requiredAffiliateCode}
                   onChange={(e) => setRequiredAffiliateCode(e.target.value)}
-                  placeholder="Leave empty for no requirement"
+                  placeholder="ALICE  or  ALICE,BOB,CHARLIE"
                 />
                 <p className="text-[10px] text-muted-foreground">
-                  User must have signed up with this exact code (matched case-insensitively).
+                  User&apos;s currently carried referral code must match one
+                  of these (case-insensitive). Comma-separate to allow
+                  multiple codes.
                 </p>
               </div>
             </div>
