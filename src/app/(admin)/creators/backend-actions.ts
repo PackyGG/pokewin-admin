@@ -160,6 +160,8 @@ const UpdateDealPatchSchema = z
     allow_site_leaderboards: z.boolean().optional(),
     allow_code_leaderboards: z.boolean().optional(),
     terms: z.record(z.string(), z.unknown()).nullable().optional(),
+    fills_used: z.number().int().min(0).optional(),
+    withdraw_cap_used_usd: z.number().min(0).optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
     message: "Patch must contain at least one field",

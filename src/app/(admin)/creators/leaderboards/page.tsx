@@ -45,11 +45,16 @@ export default async function AffiliateLeaderboardsPage({
         ? (params.status as StatusTab)
         : "all";
     const creatorUserId = params.creator_user_id?.trim() || undefined;
+    const includeCancelled = params.include_cancelled === "1";
     const offset = Number(params.offset) || 0;
 
     const result = await affiliateLeaderboardsApi.list({
         status: tab === "all" ? undefined : tab,
         creator_user_id: creatorUserId,
+        // Only forward the flag when truthy — the backend's safe-boolean
+        // schema accepts 'true'/'false'/'1'/'0' but never auto-derives a
+        // default beyond hidden=false, so leaving it off is equivalent.
+        include_cancelled: includeCancelled ? true : undefined,
         limit: PAGE_LIMIT,
         offset,
     });
@@ -105,6 +110,7 @@ export default async function AffiliateLeaderboardsPage({
                                 href={`/creators/leaderboards${buildQueryString({
                                     status: s.value === "all" ? undefined : s.value,
                                     creator_user_id: creatorUserId,
+                                    include_cancelled: includeCancelled ? "1" : undefined,
                                 })}`}
                                 className={cn(
                                     "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
@@ -118,15 +124,38 @@ export default async function AffiliateLeaderboardsPage({
                         ))}
                     </div>
 
-                    <form className="flex items-center gap-2" action="/creators/leaderboards" method="get">
-                        {tab !== "all" && <input type="hidden" name="status" value={tab} />}
-                        <Input
-                            name="creator_user_id"
-                            defaultValue={creatorUserId ?? ""}
-                            placeholder="Filter by creator user id..."
-                            className="w-64"
-                        />
-                    </form>
+                    <div className="flex items-center gap-3 flex-wrap">
+                        {/* Cancelled rows stay in the DB for refund/audit trail —
+                            toggle surfaces them when reviewing cancellations. */}
+                        <Link
+                            href={`/creators/leaderboards${buildQueryString({
+                                status: tab === "all" ? undefined : tab,
+                                creator_user_id: creatorUserId,
+                                include_cancelled: includeCancelled ? undefined : "1",
+                            })}`}
+                            className={cn(
+                                "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                                includeCancelled
+                                    ? "border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                                    : "text-muted-foreground hover:text-foreground hover:bg-muted",
+                            )}
+                        >
+                            {includeCancelled ? "✓ Showing cancelled" : "Show cancelled"}
+                        </Link>
+
+                        <form className="flex items-center gap-2" action="/creators/leaderboards" method="get">
+                            {tab !== "all" && <input type="hidden" name="status" value={tab} />}
+                            {includeCancelled && (
+                                <input type="hidden" name="include_cancelled" value="1" />
+                            )}
+                            <Input
+                                name="creator_user_id"
+                                defaultValue={creatorUserId ?? ""}
+                                placeholder="Filter by creator user id..."
+                                className="w-64"
+                            />
+                        </form>
+                    </div>
                 </div>
 
                 <FadeIn>
@@ -143,6 +172,7 @@ export default async function AffiliateLeaderboardsPage({
                                 href={`/creators/leaderboards${buildQueryString({
                                     status: tab === "all" ? undefined : tab,
                                     creator_user_id: creatorUserId,
+                                    include_cancelled: includeCancelled ? "1" : undefined,
                                     offset: Math.max(0, offset - PAGE_LIMIT),
                                 })}`}
                                 className="rounded-md border px-3 py-1 hover:bg-muted"
@@ -155,6 +185,7 @@ export default async function AffiliateLeaderboardsPage({
                                 href={`/creators/leaderboards${buildQueryString({
                                     status: tab === "all" ? undefined : tab,
                                     creator_user_id: creatorUserId,
+                                    include_cancelled: includeCancelled ? "1" : undefined,
                                     offset: offset + PAGE_LIMIT,
                                 })}`}
                                 className="rounded-md border px-3 py-1 hover:bg-muted"

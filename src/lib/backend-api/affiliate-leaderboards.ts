@@ -41,6 +41,9 @@ export type LeaderboardAdminRow = {
 export type ListQuery = {
   status?: ApprovalStatus;
   creator_user_id?: string;
+  // Cancelled leaderboards are excluded by default. Set true to include
+  // them in the listing (e.g. for refund history review).
+  include_cancelled?: boolean;
   offset?: number;
   limit?: number;
 };

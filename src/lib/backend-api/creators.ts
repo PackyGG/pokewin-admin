@@ -130,6 +130,10 @@ export type UpdateDealInput = {
     allow_site_leaderboards: boolean;
     allow_code_leaderboards: boolean;
     terms: Record<string, unknown> | null;
+    // Admin overrides for usage counters. Sent only when admin
+    // explicitly corrects fill/cap state — never auto-populated.
+    fills_used: number;
+    withdraw_cap_used_usd: number;
   }>;
 };
 
