@@ -136,8 +136,40 @@ const coinColumn: ColumnDef<TransactionListItem> = {
   },
 };
 
+// Deposit-specific Amount cell: hero figure (the row's amount in
+// house-POV emerald — deposit = cash in) with the user's rolling
+// 24h / 3d deposit totals stacked underneath as a small badge.
+// Lets admins judge at a glance whether a $300 deposit is a one-off
+// or someone's 5th in 24 hours.
+const amountColumn: ColumnDef<TransactionListItem> = {
+  accessorKey: "amount",
+  header: "Amount",
+  cell: ({ row }) => {
+    const amount = row.original.amount;
+    const d24 = row.original.userDeposit24h;
+    const d3d = row.original.userDeposit3d;
+    return (
+      <div className="flex flex-col items-start gap-0.5">
+        <span className="font-medium tabular-nums text-emerald-600 dark:text-emerald-400">
+          {formatCurrency(amount)}
+        </span>
+        {(d24 != null || d3d != null) && (
+          <span className="text-[10px] tabular-nums text-muted-foreground">
+            {/* 24h on the left, 3d on the right — both labels short
+                so the badge stays on one line on phones. Reads
+                "$300 / $1.2k" with the slash separator. */}
+            24h: {formatCurrency(d24 ?? 0)} · 3d:{" "}
+            {formatCurrency(d3d ?? 0)}
+          </span>
+        )}
+      </div>
+    );
+  },
+};
+
 // Start from the shared columns, drop payout + houseEdge, then replace the
-// User and Type columns with our deposit-specific ones.
+// User, Type, and Amount columns with our deposit-specific ones (Amount
+// gains the per-user 24h / 3d totals subtitle).
 const baseColumns = sharedColumns
   .filter((col) => {
     const key = getColumnKey(col);
@@ -147,6 +179,7 @@ const baseColumns = sharedColumns
     const key = getColumnKey(col);
     if (key === "username") return userColumn;
     if (key === "type") return typeColumn;
+    if (key === "amount") return amountColumn;
     return col;
   });
 

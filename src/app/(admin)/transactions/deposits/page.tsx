@@ -9,6 +9,7 @@ import { DataTablePagination } from "@/components/data-table/data-table-paginati
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHero } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { BigDepositsToggle } from "./big-deposits-toggle";
 
 export const metadata = { title: "Deposits" };
 
@@ -21,11 +22,19 @@ export default async function DepositsTransactionsPage({
   const params = await searchParams;
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
+  // Big-deposits filter — URL-driven so it survives refresh / page
+  // navigation. Coerce defensively: NaN / negative / non-finite
+  // values fall back to "no filter" (matches the toggle's default
+  // when reading the same param).
+  const parsedMin = Number(params.minAmount);
+  const minAmount =
+    Number.isFinite(parsedMin) && parsedMin > 0 ? parsedMin : undefined;
 
   const result = await getDepositTransactions({
     page,
     perPage,
     search: params.search,
+    minAmount,
   });
 
   return (
@@ -48,7 +57,9 @@ export default async function DepositsTransactionsPage({
         <Suspense fallback={<Skeleton className="h-10 w-full" />}>
           <DataTableToolbar
             searchPlaceholder="Search by user ID, username, or transaction ID..."
-          />
+          >
+            <BigDepositsToggle />
+          </DataTableToolbar>
         </Suspense>
         <FadeIn>
           <TransactionsDataTable data={result.data} columns={depositsColumns} />
