@@ -1,4 +1,10 @@
-import { AlertTriangle, Megaphone, Users } from "lucide-react";
+import {
+  AlertTriangle,
+  Handshake,
+  Megaphone,
+  Radio,
+  Users,
+} from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
 import { FadeIn } from "@/components/fade-in";
@@ -21,6 +27,10 @@ import {
   getCodeAndWagerByUser,
   type CreatorCodeAndWager,
 } from "./_queries/code-and-wager-by-user";
+import {
+  getCreatorTopCounts,
+  type CreatorTopCounts,
+} from "./_queries/get-creator-counts";
 import {
   CreatorCardGrid,
   type CreatorWithSocials,
@@ -47,11 +57,16 @@ export default async function CreatorsPage({
   let result: CreatorsListPage | null = null;
   let socialsByUser: Map<string, CreatorSocialSummary[]> = new Map();
   let codeAndWagerByUser: Map<string, CreatorCodeAndWager> = new Map();
+  // Tiles tally across ALL creators, not just the current page. Loaded
+  // in parallel with the list. Falls back to null on backend hiccup so
+  // the tiles render "—" without crashing the rest of the page.
+  let counts: CreatorTopCounts | null = null;
   let loadError: { title: string; detail: string } | null = null;
   try {
-    // Wave 1 — creators list + socials (independent). Socials is
-    // best-effort; backend hiccup falls back to empty.
-    const [creators, socials] = await Promise.all([
+    // Wave 1 — creators list + socials + top-level counts (all
+    // independent). Socials and counts are best-effort; backend hiccup
+    // on either falls back to empty / null so the page still renders.
+    const [creators, socials, topCounts] = await Promise.all([
       listCreatorsForPage(params),
       getApprovedSocialsByUser().catch((e) => {
         console.error(
@@ -60,9 +75,17 @@ export default async function CreatorsPage({
         );
         return new Map<string, CreatorSocialSummary[]>();
       }),
+      getCreatorTopCounts().catch((e) => {
+        console.error(
+          "[creators] top counts fetch failed (rendering tiles as —):",
+          e,
+        );
+        return null as CreatorTopCounts | null;
+      }),
     ]);
     result = creators;
     socialsByUser = socials;
+    counts = topCounts;
 
     // Wave 2 — code + lifetime wager from the main DB, keyed on the
     // user IDs we just got from the backend list. Best-effort too —
@@ -129,7 +152,26 @@ export default async function CreatorsPage({
       </PageHero>
 
       {result && (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-2">
+        // Top KPI strip: live + active-deal counts read across the whole
+        // creator population (not just this page), then the page-scope
+        // tiles. 2-up on phones, 4-up at md+ so the operationally
+        // interesting counts (live, active deals) sit alongside the
+        // pagination context.
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <KpiTile
+            label="Live Now"
+            value={counts ? formatNumber(counts.liveNow) : "—"}
+            sub="Active stream sessions"
+            icon={Radio}
+            accent="emerald"
+          />
+          <KpiTile
+            label="Active Deals"
+            value={counts ? formatNumber(counts.activeDeals) : "—"}
+            sub="Running this week"
+            icon={Handshake}
+            accent="amber"
+          />
           <KpiTile
             label="Total Creators"
             value={formatNumber(result.total)}
