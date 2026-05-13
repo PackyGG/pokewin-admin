@@ -3,9 +3,11 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { getUserDetail, getUserTransactions, getUserAuditLog, getUserInventory, getUserPnlBreakdown, getUserRewards } from "@/lib/queries/users";
 import { getNotesForUser } from "@/lib/queries/admin-notes";
+import { getUserTags } from "@/lib/queries/user-tags";
 import { requirePageAccess, getUserPermissions } from "@/lib/dal";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { UserTabs } from "./user-tabs";
+import { UserTagsPanel } from "./user-tags-panel";
 import { computeRiskScore } from "@/lib/fraud/score";
 import {
   getSharedIpUsers,
@@ -43,7 +45,7 @@ export default async function UserDetailPage({
   // definition), so only non-admins trigger the extra round-trip. Previously
   // this was awaited inside the JSX after the main Promise.all, adding
   // a serial round-trip to the page's time-to-render.
-  const [data, transactions, auditLog, inventory, disposedInventory, pnlBreakdown, notes, gamingTx, financialTx, rewards, riskBreakdown, sharedIps, sharedFingerprints, permissions] = await Promise.all([
+  const [data, transactions, auditLog, inventory, disposedInventory, pnlBreakdown, notes, gamingTx, financialTx, rewards, riskBreakdown, sharedIps, sharedFingerprints, permissions, userTags] = await Promise.all([
     getUserDetail(id),
     getUserTransactions(id, txPage, txPerPage, {
       type: typeof sp.txType === "string" ? sp.txType : undefined,
@@ -69,6 +71,11 @@ export default async function UserDetailPage({
     getSharedIpUsers(id).catch(() => []),
     getSharedFingerprintUsers(id).catch(() => []),
     session.role === "admin" ? Promise.resolve(null) : getUserPermissions(session.userId),
+    // VIP tags (admin-CRM metadata). Single round-trip to adminDb;
+    // joins to admin_users so the panel tooltip can show who set
+    // each tag. Always fetched — the panel renders read-only for
+    // viewers without __can_manage_user_tags.
+    getUserTags(id),
   ]);
 
   if (!data) notFound();
@@ -100,16 +107,34 @@ export default async function UserDetailPage({
           canRecordManualWithdrawal: hasCapability(permissions ?? [], "__can_record_manual_withdrawal"),
         };
 
+  // Tag management is independent of the per-action capabilities
+  // above so it can be granted to a CRM/sales role without giving
+  // them ban/edit-identity/wipe etc.
+  const canManageUserTags =
+    session.role === "admin" ||
+    hasCapability(permissions ?? [], "__can_manage_user_tags");
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <Link href="/users" className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground">
           <ArrowLeft className="size-4" />
         </Link>
-        <div>
-          <h1 className="text-2xl font-bold">
-            {data.user.username ?? data.user.email}
-          </h1>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-2xl font-bold leading-tight">
+              {data.user.username ?? data.user.email}
+            </h1>
+            {/* VIP tag panel — inline next to the username so it's
+                visible without scrolling. Read-only for viewers
+                without __can_manage_user_tags; toggle UI for admins
+                and granted roles. */}
+            <UserTagsPanel
+              userId={id}
+              initialTags={userTags}
+              canManage={canManageUserTags}
+            />
+          </div>
           <p className="text-sm text-muted-foreground">{data.user.email}</p>
         </div>
       </div>

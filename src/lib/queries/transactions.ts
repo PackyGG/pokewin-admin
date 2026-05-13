@@ -40,6 +40,19 @@ export type TransactionListItem = {
    * fronted amount (bet × borrow%). Null when borrow doesn't apply.
    */
   borrowedAmountUsd: number | null;
+  /**
+   * Rolling 24h deposit total for THIS user (sum of completed deposits,
+   * type='deposit', last 24h). Used by the Deposits transactions list
+   * to show "user has deposited $X in the last 24h" next to the row's
+   * amount. Null on non-deposit transaction lists (we don't populate
+   * the field there since it isn't rendered).
+   */
+  userDeposit24h: number | null;
+  /**
+   * Rolling 3-day deposit total for THIS user. Same semantics as
+   * userDeposit24h. Null when not rendered.
+   */
+  userDeposit3d: number | null;
 };
 
 /**
@@ -69,12 +82,21 @@ export async function getDepositTransactions(params: {
   perPage?: number;
   search?: string;
   status?: string;
+  /**
+   * USD threshold — only return rows with `amount >= minAmount`. Used
+   * by the Deposits page's "$200+" filter to surface big-ticket
+   * deposits. Filters on the raw `t.amount` (deposit amount, before
+   * the bonus merge) since that's the natural reading of "deposit
+   * size". A $0 / falsy value disables the filter.
+   */
+  minAmount?: number;
 }): Promise<PaginatedResult<TransactionListItem>> {
   const {
     page = 1,
     perPage = 20,
     search,
     status,
+    minAmount,
   } = params;
   const db = await getDb();
   const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
@@ -107,6 +129,16 @@ export async function getDepositTransactions(params: {
       ? `AND t.status = '${status}'`
       : "";
 
+  // Min-amount filter. Bind via positional parameter; coerce to a
+  // safe finite non-negative number first so a NaN / negative URL
+  // value can't smuggle SQL through. A 0 / undefined value disables.
+  let minAmountFilter = "";
+  if (typeof minAmount === "number" && Number.isFinite(minAmount) && minAmount > 0) {
+    queryParams.push(minAmount);
+    const idx = queryParams.length;
+    minAmountFilter = `AND t.amount::numeric >= $${idx}`;
+  }
+
   // Exclude bonus rows that are paired with a deposit already in the set.
   // This keeps page sizes exact and avoids showing the bonus twice (once
   // merged into its deposit, once as its own row).
@@ -128,6 +160,7 @@ export async function getDepositTransactions(params: {
     WHERE t.type IN ('deposit', 'deposit_bonus', 'withdrawal_shipping_fee')
       ${searchFilter}
       ${statusFilter}
+      ${minAmountFilter}
       ${bonusPairedExclusion}
   `;
 
@@ -197,6 +230,56 @@ export async function getDepositTransactions(params: {
 
   const total = Number(countResult[0]?.total ?? "0");
 
+  // Per-user 24h / 3d deposit totals for THIS page's users. Single
+  // GROUP BY against ledger_transactions — one round-trip regardless
+  // of how many users are on the page. We aggregate only `deposit`
+  // rows (no bonuses, no shipping fees) so the totals reflect actual
+  // money the user paid in, matching the page's "amount" column
+  // semantics for the headline number.
+  const pageUserIds = [...new Set(rows.map((r) => r.user_id))];
+  type UserDepositTotalsRow = {
+    user_id: string;
+    total_24h: string;
+    total_3d: string;
+  };
+  let userTotalsMap = new Map<string, { d24h: number; d3d: number }>();
+  if (pageUserIds.length > 0) {
+    // Inline the user IDs via positional params so the prepared
+    // statement can plan the IN list well. They came from `t.user_id`
+    // which is itself bound from the main DB, so injection isn't a
+    // real risk here, but we still parameterise for hygiene.
+    const placeholders = pageUserIds
+      .map((_, i) => `$${i + 1}`)
+      .join(",");
+    const userTotalsRows = await db.$queryRawUnsafe<UserDepositTotalsRow[]>(
+      `
+        SELECT
+          user_id,
+          COALESCE(
+            SUM(CASE WHEN created_at >= NOW() - INTERVAL '24 hours' THEN amount::numeric ELSE 0 END),
+            0
+          )::text AS total_24h,
+          COALESCE(
+            SUM(CASE WHEN created_at >= NOW() - INTERVAL '3 days' THEN amount::numeric ELSE 0 END),
+            0
+          )::text AS total_3d
+        FROM ledger_transactions
+        WHERE type = 'deposit'
+          AND status = 'completed'
+          AND user_id IN (${placeholders})
+          AND created_at >= NOW() - INTERVAL '3 days'
+        GROUP BY user_id
+      `,
+      ...pageUserIds,
+    );
+    userTotalsMap = new Map(
+      userTotalsRows.map((r) => [
+        r.user_id,
+        { d24h: Number(r.total_24h), d3d: Number(r.total_3d) },
+      ]),
+    );
+  }
+
   const data: TransactionListItem[] = rows.map((r) => {
     const balanceBefore = Number(r.balance_before);
     const rawBalanceAfter = Number(r.balance_after);
@@ -207,6 +290,7 @@ export async function getDepositTransactions(params: {
       bonusAmount != null && r.bonus_balance_after != null
         ? Number(r.bonus_balance_after)
         : rawBalanceAfter;
+    const userTotals = userTotalsMap.get(r.user_id);
     return {
       id: r.id,
       userId: r.user_id,
@@ -225,6 +309,12 @@ export async function getDepositTransactions(params: {
       cryptoAsset: r.crypto_asset,
       cryptoAmount: r.crypto_amount != null ? Number(r.crypto_amount) : null,
       bonusAmount,
+      // Per-user deposit totals attached for the Deposits page's
+      // "How much in 24h / 3d" surface. Default to 0 when the user
+      // hasn't deposited in the window (the GROUP BY drops them from
+      // the result set).
+      userDeposit24h: userTotals?.d24h ?? 0,
+      userDeposit3d: userTotals?.d3d ?? 0,
       // Deposits/withdrawals can't be borrowed — null both fields so
       // the BorrowBadge cell renders empty.
       borrowPercentage: null,
@@ -423,6 +513,11 @@ export async function getTransactions(params: {
         bonusAmount: null,
         borrowPercentage,
         borrowedAmountUsd,
+        // Per-user deposit totals are only populated by
+        // getDepositTransactions where the 24h/3d cells render. Null
+        // here so the type contract stays consistent across views.
+        userDeposit24h: null,
+        userDeposit3d: null,
       };
     }),
     total,
