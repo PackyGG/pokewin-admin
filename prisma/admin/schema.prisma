@@ -49,6 +49,7 @@ model admin_users {
   creator_deal_estimates creator_deal_estimates[] @relation("creator_deal_estimates_created_by")
   excluded_users         excluded_users[]
   giveaway_actions       admin_giveaway_actions[]
+  user_tags              admin_user_tags[]
 }
 
 /// Admin-DB metadata for balance adjustments tagged as "Giveaway" on the
@@ -96,6 +97,41 @@ model admin_giveaway_actions {
 
   @@index([created_at(sort: Desc)], map: "admin_giveaway_actions_created_at_idx")
   @@index([target_user_id], map: "admin_giveaway_actions_target_user_id_idx")
+}
+
+/// Admin-set VIP tags on packy.gg users. Lives in the admin DB because
+/// it's admin-internal CRM metadata — never exposed to the user side
+/// and not part of the game DB's user schema (we can't cross-DB FK to
+/// the main `user` table anyway).
+///
+/// Two tags supported today, enforced by the `tag` text + a CHECK
+/// constraint at the SQL layer (see migration):
+///   • contacted_vip — sales/CRM reached out to this user
+///   • confirmed_vip — user is verified as an active VIP (deposits,
+///     wagers, communication patterns, etc.)
+///
+/// Each (user, tag) pair is unique — re-tagging is idempotent. Removing
+/// a tag is a DELETE; we don't soft-delete because the audit trail
+/// already lives in `admin_audit_events`.
+model admin_user_tags {
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // packy.gg user_id (text — main DB lives in a separate Postgres
+  // cluster, can't be an FK).
+  target_user_id  String
+  // Tag value — currently 'contacted_vip' | 'confirmed_vip'.
+  // The set is also enforced server-side in the action (Zod enum) so
+  // even if a future code path bypasses the SQL CHECK we still catch
+  // bad values.
+  tag             String
+  // Who set the tag. Used for the audit panel and to know which admin
+  // owns a CRM assignment.
+  set_by_admin_id String      @db.Uuid
+  created_at      DateTime    @default(now()) @db.Timestamptz(6)
+  admin_user      admin_users @relation(fields: [set_by_admin_id], references: [id])
+
+  @@unique([target_user_id, tag], map: "admin_user_tags_user_tag_unique")
+  @@index([target_user_id], map: "admin_user_tags_target_user_id_idx")
+  @@index([tag], map: "admin_user_tags_tag_idx")
 }
 
 // Admin-managed blacklist of packy.gg user IDs whose activity should

@@ -1753,3 +1753,125 @@ export async function wipeUserAccount(
   revalidatePath("/users");
   return { success: true };
 }
+
+// ---------------------------------------------------------------------------
+// VIP Tags — admin-CRM metadata on packy.gg users
+// ---------------------------------------------------------------------------
+// Two-tag system today (Contacted VIP / Confirmed VIP). Stored in the
+// admin DB only — no main-DB write. The full set lives in the
+// `admin_user_tags` table; this action only knows about the allow-listed
+// tag values. Adding a new tag = update both the Zod enum here AND the
+// CHECK constraint in
+// prisma/admin/migrations/20260513000000_admin_user_tags/migration.sql.
+
+const USER_TAG_VALUES = ["contacted_vip", "confirmed_vip"] as const;
+export type UserTagValue = (typeof USER_TAG_VALUES)[number];
+
+const userTagSchema = z.object({
+  userId: z.string().min(1),
+  tag: z.enum(USER_TAG_VALUES),
+});
+
+/**
+ * Idempotent tag-set. Upserts the (user, tag) pair — re-tagging the
+ * same user is a no-op at the DB level (unique index handles it).
+ * Audit-logs the assignment with the admin who set it.
+ */
+export async function setUserTag(
+  userId: string,
+  tag: UserTagValue,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requirePageAccess("/users");
+  await requireCapability(
+    session,
+    "__can_manage_user_tags",
+    "manage user tags",
+  );
+
+  const parsed = userTagSchema.safeParse({ userId, tag });
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  try {
+    await adminDb.admin_user_tags.upsert({
+      where: {
+        target_user_id_tag: {
+          target_user_id: parsed.data.userId,
+          tag: parsed.data.tag,
+        },
+      },
+      update: {},
+      create: {
+        target_user_id: parsed.data.userId,
+        tag: parsed.data.tag,
+        set_by_admin_id: session.userId,
+      },
+    });
+  } catch (err) {
+    console.error("[setUserTag] upsert failed:", err);
+    return { success: false, error: "Failed to set tag" };
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "user_tag_set",
+    targetUserId: parsed.data.userId,
+    metadata: { tag: parsed.data.tag },
+  });
+
+  revalidatePath(`/users/${parsed.data.userId}`);
+  return { success: true };
+}
+
+/**
+ * Remove a single (user, tag) pair. Idempotent — `deleteMany` returns
+ * `{ count: 0 }` instead of throwing P2025 when the row is already
+ * gone, so a double-click on the toggle can't crash the page.
+ */
+export async function removeUserTag(
+  userId: string,
+  tag: UserTagValue,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requirePageAccess("/users");
+  await requireCapability(
+    session,
+    "__can_manage_user_tags",
+    "manage user tags",
+  );
+
+  const parsed = userTagSchema.safeParse({ userId, tag });
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  try {
+    const result = await adminDb.admin_user_tags.deleteMany({
+      where: {
+        target_user_id: parsed.data.userId,
+        tag: parsed.data.tag,
+      },
+    });
+
+    if (result.count > 0) {
+      await createAdminAuditEvent({
+        adminUserId: session.userId,
+        eventType: "user_tag_removed",
+        targetUserId: parsed.data.userId,
+        metadata: { tag: parsed.data.tag },
+      });
+    }
+  } catch (err) {
+    console.error("[removeUserTag] delete failed:", err);
+    return { success: false, error: "Failed to remove tag" };
+  }
+
+  revalidatePath(`/users/${parsed.data.userId}`);
+  return { success: true };
+}
