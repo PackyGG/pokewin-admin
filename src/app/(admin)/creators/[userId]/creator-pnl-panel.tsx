@@ -1,4 +1,4 @@
-import { LineChart, TrendingDown, TrendingUp } from "lucide-react";
+import { Infinity as InfinityIcon, LineChart, TrendingDown, TrendingUp } from "lucide-react";
 
 import { getCreatorPnl } from "@/lib/queries/creators";
 import { SectionHeading, StatPanel, PanelRow } from "@/components/modern-panels";
@@ -43,9 +43,128 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
   // Map period key → row for O(1) lookup.
   const byPeriod = new Map(data.byPeriod.map((p) => [p.period, p]));
 
+  // Lifetime / all-time hero. Same canonical formula as the per-
+  // period tiles below, but evaluated as a snapshot — so balance /
+  // inventory / vouchers are CURRENT values (not deltas), which is
+  // what "all-time PnL" naturally reads as.
+  const lifetimePnl = data.lifetime.pnl;
+  const isLifetimeWin = lifetimePnl > 0;
+  const isLifetimeLoss = lifetimePnl < 0;
+  const lifetimeAccent: "emerald" | "rose" | "blue" = isLifetimeWin
+    ? "emerald"
+    : isLifetimeLoss
+      ? "rose"
+      : "blue";
+
   return (
     <div className="space-y-3">
       <SectionHeading icon={LineChart} title="Affiliates PnL" />
+
+      {/* All-time hero — the single number admins most often want
+          to scan ("how much have we made off this creator
+          lifetime"). Spans full width, larger heading, breakdown
+          rows below the hero number. Period tiles below stay for
+          drill-in on shorter horizons. */}
+      <StatPanel
+        title="All-time"
+        icon={InfinityIcon}
+        accent={lifetimeAccent}
+      >
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div className="space-y-1">
+            <div
+              className={cn(
+                "text-3xl font-bold tabular-nums leading-none sm:text-4xl",
+                isLifetimeWin
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : isLifetimeLoss
+                    ? "text-rose-600 dark:text-rose-400"
+                    : "text-muted-foreground",
+              )}
+              title="Lifetime House P&L from this creator's affiliates"
+            >
+              {lifetimePnl === 0
+                ? "—"
+                : `${isLifetimeWin ? "+" : ""}${formatCurrency(lifetimePnl)}`}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Lifetime House P&amp;L from this creator&apos;s affiliates
+            </p>
+          </div>
+        </div>
+        {/* Snapshot components — currentBalance / currentInventory /
+            currentVouchers are RIGHT-NOW values (liability), not
+            window deltas. Same house-POV color rules: positive
+            liability subtracts from PnL → rose; positive cash-in
+            adds to PnL → emerald. */}
+        <div className="mt-4 grid grid-cols-1 gap-y-0.5 sm:grid-cols-2 sm:gap-x-6">
+          <PanelRow
+            label="Total Deposits"
+            value={
+              data.lifetime.totalDeposits === 0
+                ? "—"
+                : formatCurrency(data.lifetime.totalDeposits)
+            }
+            valueClassName={
+              data.lifetime.totalDeposits > 0
+                ? "text-emerald-600 dark:text-emerald-400"
+                : ""
+            }
+          />
+          <PanelRow
+            label="Total Withdrawals"
+            value={
+              data.lifetime.totalWithdrawals === 0
+                ? "—"
+                : formatCurrency(data.lifetime.totalWithdrawals)
+            }
+            valueClassName={
+              data.lifetime.totalWithdrawals > 0
+                ? "text-rose-600 dark:text-rose-400"
+                : ""
+            }
+          />
+          <PanelRow
+            label="Current Balance"
+            value={
+              data.lifetime.currentBalance === 0
+                ? "—"
+                : formatCurrency(data.lifetime.currentBalance)
+            }
+            valueClassName={
+              data.lifetime.currentBalance > 0
+                ? "text-rose-600 dark:text-rose-400"
+                : ""
+            }
+          />
+          <PanelRow
+            label="Current Inventory"
+            value={
+              data.lifetime.currentInventory === 0
+                ? "—"
+                : formatCurrency(data.lifetime.currentInventory)
+            }
+            valueClassName={
+              data.lifetime.currentInventory > 0
+                ? "text-rose-600 dark:text-rose-400"
+                : ""
+            }
+          />
+          <PanelRow
+            label="Current Vouchers"
+            value={
+              data.lifetime.currentVouchers === 0
+                ? "—"
+                : formatCurrency(data.lifetime.currentVouchers)
+            }
+            valueClassName={
+              data.lifetime.currentVouchers > 0
+                ? "text-rose-600 dark:text-rose-400"
+                : ""
+            }
+          />
+        </div>
+      </StatPanel>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {DISPLAYED_PERIODS.map(({ key, label, sub }) => {
