@@ -2,11 +2,14 @@
 
 import type { ColumnDef } from "@tanstack/react-table";
 import Link from "next/link";
+import { Crown, Phone } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { columns as sharedColumns } from "../columns";
 import { formatCurrency } from "@/lib/utils/format";
+import { cn } from "@/lib/utils";
 import type { TransactionListItem } from "@/lib/queries/transactions";
+import type { UserTagValue } from "@/lib/queries/user-tags";
 
 /**
  * Column set for the Deposits & Withdrawals transactions view.
@@ -65,27 +68,78 @@ function initialsFor(username: string | null, userId: string): string {
   return src.slice(0, 2).toUpperCase();
 }
 
+// Compact tag badge — mirrors the colors / icons from the user-detail
+// tag panel so the same VIP signal looks the same site-wide. Tooltip-
+// free here (less hover noise on a busy table); the user-detail page
+// still shows the full set-by + when info.
+const TAG_META: Record<
+  UserTagValue,
+  { label: string; icon: typeof Phone; color: string }
+> = {
+  contacted_vip: {
+    label: "Contacted",
+    icon: Phone,
+    color:
+      "border-amber-500/30 bg-amber-500/15 text-amber-700 dark:text-amber-300",
+  },
+  confirmed_vip: {
+    label: "VIP",
+    icon: Crown,
+    color:
+      "border-purple-500/30 bg-purple-500/15 text-purple-700 dark:text-purple-300",
+  },
+};
+
+function UserTagBadge({ tag }: { tag: UserTagValue }) {
+  const meta = TAG_META[tag];
+  const Icon = meta.icon;
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        "h-4 gap-0.5 px-1 text-[9px] font-medium uppercase tracking-wide",
+        meta.color,
+      )}
+    >
+      <Icon className="size-2.5" />
+      {meta.label}
+    </Badge>
+  );
+}
+
 // Deposit-specific User cell: profile picture on the left, username on the
-// right, linking to the user detail page. The shared column is text-only.
+// right, linking to the user detail page. Underneath the username, any VIP
+// tags (Contacted VIP / Confirmed VIP) render as small inline badges so a
+// reviewer scanning the deposits list can spot known whales without
+// clicking into each profile.
 const userColumn: ColumnDef<TransactionListItem> = {
   accessorKey: "username",
   header: "User",
   cell: ({ row }) => {
-    const { userId, username, image } = row.original;
+    const { userId, username, image, userTags } = row.original;
     const label = username ?? userId.slice(0, 8);
     return (
-      <Link
-        href={`/users/${userId}`}
-        className="flex items-center gap-2 hover:underline"
-      >
-        <Avatar size="sm" className="shrink-0">
-          {image && <AvatarImage src={image} alt="" />}
-          <AvatarFallback className="text-[10px]">
-            {initialsFor(username, userId)}
-          </AvatarFallback>
-        </Avatar>
-        <span className="truncate">{label}</span>
-      </Link>
+      <div className="flex items-center gap-2 min-w-0">
+        <Link
+          href={`/users/${userId}`}
+          className="flex items-center gap-2 hover:underline min-w-0"
+        >
+          <Avatar size="sm" className="shrink-0">
+            {image && <AvatarImage src={image} alt="" />}
+            <AvatarFallback className="text-[10px]">
+              {initialsFor(username, userId)}
+            </AvatarFallback>
+          </Avatar>
+          <span className="truncate">{label}</span>
+        </Link>
+        {userTags.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1 shrink-0">
+            {userTags.map((t) => (
+              <UserTagBadge key={t} tag={t} />
+            ))}
+          </div>
+        )}
+      </div>
     );
   },
 };

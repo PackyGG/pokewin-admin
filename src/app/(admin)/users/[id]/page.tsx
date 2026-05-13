@@ -116,27 +116,26 @@ export default async function UserDetailPage({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3 flex-wrap">
-        <Link href="/users" className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground">
-          <ArrowLeft className="size-4" />
-        </Link>
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
+      <div className="space-y-2">
+        <div className="flex items-center gap-3 flex-wrap">
+          <Link href="/users" className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground">
+            <ArrowLeft className="size-4" />
+          </Link>
+          <div className="min-w-0">
             <h1 className="text-2xl font-bold leading-tight">
               {data.user.username ?? data.user.email}
             </h1>
-            {/* VIP tag panel — inline next to the username so it's
-                visible without scrolling. Read-only for viewers
-                without __can_manage_user_tags; toggle UI for admins
-                and granted roles. */}
-            <UserTagsPanel
-              userId={id}
-              initialTags={userTags}
-              canManage={canManageUserTags}
-            />
+            <p className="text-sm text-muted-foreground">{data.user.email}</p>
           </div>
-          <p className="text-sm text-muted-foreground">{data.user.email}</p>
         </div>
+        {/* VIP tag manager — dedicated dashed-border row so admins
+            always notice the section (even on empty profiles). Read-
+            only for viewers without __can_manage_user_tags. */}
+        <UserTagsPanel
+          userId={id}
+          initialTags={userTags}
+          canManage={canManageUserTags}
+        />
       </div>
       <UserTabs data={{ ...data, sessionRole: session.role, capabilities }} transactions={transactions} auditLog={auditLog} inventory={inventory} disposedInventory={disposedInventory} pnlBreakdown={pnlBreakdown} notes={notes} gamingTx={gamingTx} financialTx={financialTx} rewards={rewards} riskBreakdown={riskBreakdown} sharedIps={sharedIps} sharedFingerprints={sharedFingerprints} />
     </div>

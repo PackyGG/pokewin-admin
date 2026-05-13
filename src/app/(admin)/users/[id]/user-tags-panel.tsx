@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Crown, Phone, X, Check } from "lucide-react";
+import { Crown, Phone, X, Check, Tag as TagIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -141,12 +141,26 @@ export function UserTagsPanel({
     );
   }
 
-  // Managed path — badges are toggle buttons. Closed by default if
-  // no tags are set; opens an inline "Add tag" tray on click.
+  // Managed path — explicit "Tags:" label so admins notice the
+  // section, even on profiles where no tag has been set yet. Click a
+  // badge to remove it, click the "Tag user" button to open the add-
+  // tag tray.
+  const noUntagged = !ALL_TAGS.some((t) => !tagSet.has(t));
+
   return (
     <TooltipProvider>
-      <div className="flex flex-wrap items-center gap-1.5">
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-border bg-muted/30 px-3 py-2">
+        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+          <TagIcon className="size-3.5" />
+          Tags:
+        </span>
+
         {/* Currently-set tags — clicking removes them */}
+        {tags.length === 0 && (
+          <span className="text-xs text-muted-foreground italic">
+            None yet
+          </span>
+        )}
         {tags.map((t) => {
           const meta = TAG_META[t.tag];
           const Icon = meta.icon;
@@ -185,19 +199,21 @@ export function UserTagsPanel({
           );
         })}
 
-        {/* "Add tag" trigger — only shows untagged options */}
-        {ALL_TAGS.some((t) => !tagSet.has(t)) && (
+        {/* "Add tag" trigger — only shows when at least one tag in
+            ALL_TAGS isn't already set on this user. */}
+        {!noUntagged && (
           <>
             {!open ? (
               <Button
                 type="button"
-                variant="ghost"
+                variant="outline"
                 size="sm"
                 onClick={() => setOpen(true)}
                 disabled={isPending}
-                className="h-6 px-2 text-[11px] text-muted-foreground"
+                className="h-7 gap-1 px-2.5 text-xs"
               >
-                + Tag
+                <TagIcon className="size-3.5" />
+                {tags.length === 0 ? "Tag user" : "Add tag"}
               </Button>
             ) : (
               <>
@@ -214,7 +230,7 @@ export function UserTagsPanel({
                       }}
                       disabled={isPending}
                       className={cn(
-                        "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] transition-colors",
+                        "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium transition-colors",
                         meta.color,
                         isLoading && "opacity-50",
                         "hover:brightness-110",
@@ -230,9 +246,9 @@ export function UserTagsPanel({
                   variant="ghost"
                   size="sm"
                   onClick={() => setOpen(false)}
-                  className="h-6 px-1.5 text-muted-foreground"
+                  className="h-7 px-1.5 text-muted-foreground"
                 >
-                  <X className="size-3" />
+                  <X className="size-3.5" />
                 </Button>
               </>
             )}
