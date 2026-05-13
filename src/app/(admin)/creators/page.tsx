@@ -1,9 +1,11 @@
+import Link from "next/link";
 import {
   AlertTriangle,
   Handshake,
   Megaphone,
   Radio,
   Users,
+  X,
 } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
@@ -11,6 +13,7 @@ import { FadeIn } from "@/components/fade-in";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { formatNumber } from "@/lib/utils/format";
+import { cn } from "@/lib/utils";
 import { BackendApiError, BackendNetworkError } from "@/lib/backend-api";
 import { PageHero, KpiTile, SectionHeading } from "@/components/modern-panels";
 
@@ -19,6 +22,7 @@ import {
   listCreatorsForPage,
   type CreatorsListPage,
 } from "./_queries/list-creators";
+import { listCreatorsFiltered } from "./_queries/list-creators-filtered";
 import {
   getApprovedSocialsByUser,
   type CreatorSocialSummary,
@@ -66,8 +70,17 @@ export default async function CreatorsPage({
     // Wave 1 — creators list + socials + top-level counts (all
     // independent). Socials and counts are best-effort; backend hiccup
     // on either falls back to empty / null so the page still renders.
+    //
+    // When a KPI tile filter is active (?filter=live or
+    // ?filter=active-deals) we route through `listCreatorsFiltered`
+    // instead, which paginates the whole population and narrows in
+    // memory. Pagination is collapsed in that mode — the filtered
+    // set is small enough to fit on one page comfortably.
+    const listPromise = params.filter
+      ? listCreatorsFiltered(params.filter, params.search)
+      : listCreatorsForPage(params);
     const [creators, socials, topCounts] = await Promise.all([
-      listCreatorsForPage(params),
+      listPromise,
       getApprovedSocialsByUser().catch((e) => {
         console.error(
           "[creators] socials fetch failed (rendering without):",
@@ -157,21 +170,74 @@ export default async function CreatorsPage({
         // tiles. 2-up on phones, 4-up at md+ so the operationally
         // interesting counts (live, active deals) sit alongside the
         // pagination context.
+        //
+        // The first two tiles double as filter toggles. Clicking the
+        // Live Now tile sets `?filter=live` and the page re-renders
+        // showing only live creators; clicking again clears the
+        // filter. Same for Active Deals. The active tile gets a
+        // colored ring matching its accent so it reads as "this is
+        // the filter you're in right now".
+        //
+        // `buildFilterHref` preserves the current search query when
+        // toggling so an admin who has "alice" typed in the search
+        // box doesn't lose it just because they clicked a tile.
+        // Page/perPage are intentionally dropped — the filter
+        // collapses pagination anyway.
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <KpiTile
-            label="Live Now"
-            value={counts ? formatNumber(counts.liveNow) : "—"}
-            sub="Active stream sessions"
-            icon={Radio}
-            accent="emerald"
-          />
-          <KpiTile
-            label="Active Deals"
-            value={counts ? formatNumber(counts.activeDeals) : "—"}
-            sub="Running this week"
-            icon={Handshake}
-            accent="amber"
-          />
+          <Link
+            href={buildFilterHref("live", params.filter, params.search)}
+            aria-label={
+              params.filter === "live"
+                ? "Clear filter — show all creators"
+                : "Filter to live creators"
+            }
+            className={cn(
+              "block rounded-xl outline-none ring-offset-background transition focus-visible:ring-2 focus-visible:ring-emerald-500",
+              params.filter === "live" &&
+                "ring-2 ring-emerald-500/60",
+            )}
+          >
+            <KpiTile
+              label="Live Now"
+              value={counts ? formatNumber(counts.liveNow) : "—"}
+              sub={
+                params.filter === "live"
+                  ? "Filter active — click to clear"
+                  : "Active stream sessions"
+              }
+              icon={Radio}
+              accent="emerald"
+            />
+          </Link>
+          <Link
+            href={buildFilterHref(
+              "active-deals",
+              params.filter,
+              params.search,
+            )}
+            aria-label={
+              params.filter === "active-deals"
+                ? "Clear filter — show all creators"
+                : "Filter to creators with an active deal"
+            }
+            className={cn(
+              "block rounded-xl outline-none ring-offset-background transition focus-visible:ring-2 focus-visible:ring-amber-500",
+              params.filter === "active-deals" &&
+                "ring-2 ring-amber-500/60",
+            )}
+          >
+            <KpiTile
+              label="Active Deals"
+              value={counts ? formatNumber(counts.activeDeals) : "—"}
+              sub={
+                params.filter === "active-deals"
+                  ? "Filter active — click to clear"
+                  : "Running this week"
+              }
+              icon={Handshake}
+              accent="amber"
+            />
+          </Link>
           <KpiTile
             label="Total Creators"
             value={formatNumber(result.total)}
@@ -181,7 +247,11 @@ export default async function CreatorsPage({
           <KpiTile
             label="On This Page"
             value={String(result.data.length)}
-            sub={`Page ${result.page} of ${result.totalPages}`}
+            sub={
+              params.filter
+                ? "Filter active — pagination disabled"
+                : `Page ${result.page} of ${result.totalPages}`
+            }
             icon={Users}
             accent="purple"
           />
@@ -205,7 +275,16 @@ export default async function CreatorsPage({
       )}
 
       <div className="space-y-3">
-        <SectionHeading icon={Users} title="All Creators" />
+        <SectionHeading
+          icon={Users}
+          title={
+            params.filter === "live"
+              ? "Live Creators"
+              : params.filter === "active-deals"
+                ? "Creators with Active Deals"
+                : "All Creators"
+          }
+        />
         <FadeIn className="space-y-4">
           <DataTableToolbar searchPlaceholder="Search by username or email..." />
           <CreatorCardGrid
@@ -244,7 +323,12 @@ export default async function CreatorsPage({
                 return bActive - aActive;
               })}
           />
-          {result && (
+          {/* Pagination is hidden while a tile filter is active because
+              `listCreatorsFiltered` collapses the result to a single
+              page — the filtered set is small enough to fit on one
+              screen, and showing fake "1 of 1" pagination would just
+              be visual noise. */}
+          {result && !params.filter && (
             <DataTablePagination
               page={result.page}
               totalPages={result.totalPages}
@@ -259,6 +343,32 @@ export default async function CreatorsPage({
 }
 
 // ─── Helpers — keep error-state copy near the page that uses it ───
+
+type CreatorFilter = "live" | "active-deals";
+
+/**
+ * Build the `href` for a KPI-tile filter toggle. Behaviour:
+ *   - tile NOT currently selected → set `?filter=<target>` (and keep
+ *     the current search query so the filter narrows whatever the
+ *     admin had already typed)
+ *   - tile IS currently selected → clear `filter` (still keeping
+ *     search). This makes every tile a one-click toggle.
+ *
+ * `page` / `perPage` are intentionally dropped on every toggle: the
+ * filtered view collapses pagination, and unfiltered → filtered →
+ * unfiltered should always return to page 1 instead of a stale page.
+ */
+function buildFilterHref(
+  target: CreatorFilter,
+  current: CreatorFilter | undefined,
+  search: string | undefined,
+): string {
+  const params = new URLSearchParams();
+  if (search) params.set("search", search);
+  if (current !== target) params.set("filter", target);
+  const qs = params.toString();
+  return qs ? `/creators?${qs}` : "/creators";
+}
 
 /**
  * Map a fetch-failure cause code to a human-readable headline. Covers
