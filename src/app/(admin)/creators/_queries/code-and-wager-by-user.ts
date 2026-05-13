@@ -4,6 +4,7 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { WAGER_TYPES_SQL } from "@/lib/queries/_wager-payout-types";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import type { CreatorLifetimePnl } from "@/lib/queries/creators-types";
 
 /**
  * Per-period House P&L for a single creator's referrals — same canonical
@@ -107,18 +108,32 @@ export type CreatorCodeAndWager = {
    */
   wagers3dUsd: number;
   /**
-   * Per-period House P&L from this creator's referrals — same
-   * canonical balance-sheet formula as the dashboard's Lifetime PnL,
-   * evaluated as deltas over each window. Positive = house gain,
-   * negative = house loss. Drives the per-card PnL strip on /creators.
+   * Windowed House P&L from this creator's referrals — same canonical
+   * balance-sheet formula as the dashboard's Lifetime PnL, evaluated
+   * as a DELTA over the window. Positive = house gain, negative =
+   * house loss.
+   *
+   * Trimmed to 1d + 3d (was 1d/3d/7d/14d/30d) because the card UI
+   * only renders 1d alongside the lifetime hero now — admins asked
+   * for a simpler strip. 3d stays because the MomentumRow on the
+   * same card pulls `deposits3dUsd` / `wagers3dUsd` from this
+   * window. Drop only via a coordinated UI + query change if 3d
+   * ever stops being displayed.
    */
   pnlByPeriod: {
     "1d": CreatorPnlByPeriod;
     "3d": CreatorPnlByPeriod;
-    "7d": CreatorPnlByPeriod;
-    "14d": CreatorPnlByPeriod;
-    "30d": CreatorPnlByPeriod;
   };
+  /**
+   * All-time House P&L from this creator's referrals. Same formula
+   * but evaluated as a SNAPSHOT (totalDeposits − totalWithdrawals
+   * − currentBalance − currentInventory − currentVouchers) instead
+   * of a window delta. Drives the "Lifetime" column on the per-card
+   * PnL strip; reads as the natural "all-time house gain" admins
+   * asked for. Null when the batched lifetime queries fail
+   * (best-effort path).
+   */
+  lifetimePnl: CreatorLifetimePnl | null;
 };
 
 const EMPTY_PERIOD: CreatorPnlByPeriod = {
@@ -132,34 +147,64 @@ const EMPTY_PERIOD: CreatorPnlByPeriod = {
 const EMPTY_PNL: CreatorCodeAndWager["pnlByPeriod"] = {
   "1d": EMPTY_PERIOD,
   "3d": EMPTY_PERIOD,
-  "7d": EMPTY_PERIOD,
-  "14d": EMPTY_PERIOD,
-  "30d": EMPTY_PERIOD,
+};
+const EMPTY_LIFETIME: CreatorLifetimePnl = {
+  totalDeposits: 0,
+  totalWithdrawals: 0,
+  currentBalance: 0,
+  currentInventory: 0,
+  currentVouchers: 0,
+  pnl: 0,
 };
 
 type LedgerRow = {
   creator_user_id: string;
-  deposits_1d: string; deposits_3d: string; deposits_7d: string; deposits_14d: string; deposits_30d: string;
-  manual_wd_1d: string; manual_wd_3d: string; manual_wd_7d: string; manual_wd_14d: string; manual_wd_30d: string;
-  bal_change_1d: string; bal_change_3d: string; bal_change_7d: string; bal_change_14d: string; bal_change_30d: string;
+  deposits_1d: string; deposits_3d: string;
+  manual_wd_1d: string; manual_wd_3d: string;
+  bal_change_1d: string; bal_change_3d: string;
   wagers_3d: string;
 };
 
 type CardWithdrawalRow = {
   creator_user_id: string;
-  cwd_1d: string; cwd_3d: string; cwd_7d: string; cwd_14d: string; cwd_30d: string;
+  cwd_1d: string; cwd_3d: string;
 };
 
 type InventoryRow = {
   creator_user_id: string;
-  obtained_1d: string; obtained_3d: string; obtained_7d: string; obtained_14d: string; obtained_30d: string;
-  disposed_1d: string; disposed_3d: string; disposed_7d: string; disposed_14d: string; disposed_30d: string;
+  obtained_1d: string; obtained_3d: string;
+  disposed_1d: string; disposed_3d: string;
 };
 
 type VoucherRow = {
   creator_user_id: string;
-  issued_1d: string; issued_3d: string; issued_7d: string; issued_14d: string; issued_30d: string;
-  claimed_1d: string; claimed_3d: string; claimed_7d: string; claimed_14d: string; claimed_30d: string;
+  issued_1d: string; issued_3d: string;
+  claimed_1d: string; claimed_3d: string;
+};
+
+// Lifetime aggregate row types — one row per creator from each of
+// the five scans. No time-window filter; we want the lifetime
+// snapshot for the new "Lifetime" tile on the strip.
+type LifetimeLedgerRow = {
+  creator_user_id: string;
+  total_deposits: string;
+  total_manual_withdrawals: string;
+};
+type LifetimeCardWithdrawalRow = {
+  creator_user_id: string;
+  total_card_withdrawals: string;
+};
+type LifetimeBalanceRow = {
+  creator_user_id: string;
+  current_balance: string;
+};
+type LifetimeInventoryRow = {
+  creator_user_id: string;
+  current_inventory: string;
+};
+type LifetimeVoucherRow = {
+  creator_user_id: string;
+  current_vouchers: string;
 };
 
 /**
@@ -197,6 +242,11 @@ export async function getCodeAndWagerByUser(
     cardWithdrawalRows,
     inventoryRows,
     voucherRows,
+    lifetimeLedgerRows,
+    lifetimeCardWithdrawalRows,
+    lifetimeBalanceRows,
+    lifetimeInventoryRows,
+    lifetimeVoucherRows,
   ] = await Promise.all([
     // Oldest affiliate_codes row per user_id — the same convention
     // /creators/[id]'s primaryCode uses. DISTINCT ON keeps a single
@@ -269,24 +319,15 @@ export async function getCodeAndWagerByUser(
        SELECT cr.creator_user_id,
               COALESCE(SUM(CASE WHEN lt.type = 'deposit' AND lt.created_at >= NOW() - INTERVAL '1 day'   THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits_1d,
               COALESCE(SUM(CASE WHEN lt.type = 'deposit' AND lt.created_at >= NOW() - INTERVAL '3 days'  THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits_3d,
-              COALESCE(SUM(CASE WHEN lt.type = 'deposit' AND lt.created_at >= NOW() - INTERVAL '7 days'  THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits_7d,
-              COALESCE(SUM(CASE WHEN lt.type = 'deposit' AND lt.created_at >= NOW() - INTERVAL '14 days' THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits_14d,
-              COALESCE(SUM(CASE WHEN lt.type = 'deposit' AND lt.created_at >= NOW() - INTERVAL '30 days' THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits_30d,
               COALESCE(SUM(CASE WHEN lt.type = 'admin_balance_adjustment' AND lt.balance_after < lt.balance_before AND lt.description ILIKE 'Manual withdrawal:%' AND lt.created_at >= NOW() - INTERVAL '1 day'   THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd_1d,
               COALESCE(SUM(CASE WHEN lt.type = 'admin_balance_adjustment' AND lt.balance_after < lt.balance_before AND lt.description ILIKE 'Manual withdrawal:%' AND lt.created_at >= NOW() - INTERVAL '3 days'  THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd_3d,
-              COALESCE(SUM(CASE WHEN lt.type = 'admin_balance_adjustment' AND lt.balance_after < lt.balance_before AND lt.description ILIKE 'Manual withdrawal:%' AND lt.created_at >= NOW() - INTERVAL '7 days'  THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd_7d,
-              COALESCE(SUM(CASE WHEN lt.type = 'admin_balance_adjustment' AND lt.balance_after < lt.balance_before AND lt.description ILIKE 'Manual withdrawal:%' AND lt.created_at >= NOW() - INTERVAL '14 days' THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd_14d,
-              COALESCE(SUM(CASE WHEN lt.type = 'admin_balance_adjustment' AND lt.balance_after < lt.balance_before AND lt.description ILIKE 'Manual withdrawal:%' AND lt.created_at >= NOW() - INTERVAL '30 days' THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd_30d,
               COALESCE(SUM(CASE WHEN lt.created_at >= NOW() - INTERVAL '1 day'   THEN (lt.balance_after - lt.balance_before)::numeric ELSE 0 END), 0)::text AS bal_change_1d,
               COALESCE(SUM(CASE WHEN lt.created_at >= NOW() - INTERVAL '3 days'  THEN (lt.balance_after - lt.balance_before)::numeric ELSE 0 END), 0)::text AS bal_change_3d,
-              COALESCE(SUM(CASE WHEN lt.created_at >= NOW() - INTERVAL '7 days'  THEN (lt.balance_after - lt.balance_before)::numeric ELSE 0 END), 0)::text AS bal_change_7d,
-              COALESCE(SUM(CASE WHEN lt.created_at >= NOW() - INTERVAL '14 days' THEN (lt.balance_after - lt.balance_before)::numeric ELSE 0 END), 0)::text AS bal_change_14d,
-              COALESCE(SUM(CASE WHEN lt.created_at >= NOW() - INTERVAL '30 days' THEN (lt.balance_after - lt.balance_before)::numeric ELSE 0 END), 0)::text AS bal_change_30d,
               COALESCE(SUM(CASE WHEN lt.type IN ${WAGER_TYPES_SQL} AND lt.created_at >= NOW() - INTERVAL '3 days' THEN lt.amount::numeric ELSE 0 END), 0)::text AS wagers_3d
          FROM ledger_transactions lt
          JOIN creator_referrals cr ON cr.user_id = lt.user_id
         WHERE lt.status = 'completed'
-          AND lt.created_at >= NOW() - INTERVAL '30 days'
+          AND lt.created_at >= NOW() - INTERVAL '3 days'
         GROUP BY cr.creator_user_id`,
       userIds,
     ),
@@ -305,14 +346,11 @@ export async function getCodeAndWagerByUser(
        )
        SELECT cr.creator_user_id,
               COALESCE(SUM(CASE WHEN COALESCE(cwr.shipped_at, cwr.completed_at) >= NOW() - INTERVAL '1 day'   THEN cwr.total_value_usd::numeric ELSE 0 END), 0)::text AS cwd_1d,
-              COALESCE(SUM(CASE WHEN COALESCE(cwr.shipped_at, cwr.completed_at) >= NOW() - INTERVAL '3 days'  THEN cwr.total_value_usd::numeric ELSE 0 END), 0)::text AS cwd_3d,
-              COALESCE(SUM(CASE WHEN COALESCE(cwr.shipped_at, cwr.completed_at) >= NOW() - INTERVAL '7 days'  THEN cwr.total_value_usd::numeric ELSE 0 END), 0)::text AS cwd_7d,
-              COALESCE(SUM(CASE WHEN COALESCE(cwr.shipped_at, cwr.completed_at) >= NOW() - INTERVAL '14 days' THEN cwr.total_value_usd::numeric ELSE 0 END), 0)::text AS cwd_14d,
-              COALESCE(SUM(CASE WHEN COALESCE(cwr.shipped_at, cwr.completed_at) >= NOW() - INTERVAL '30 days' THEN cwr.total_value_usd::numeric ELSE 0 END), 0)::text AS cwd_30d
+              COALESCE(SUM(CASE WHEN COALESCE(cwr.shipped_at, cwr.completed_at) >= NOW() - INTERVAL '3 days'  THEN cwr.total_value_usd::numeric ELSE 0 END), 0)::text AS cwd_3d
          FROM card_withdrawal_requests cwr
          JOIN creator_referrals cr ON cr.user_id = cwr.user_id
         WHERE cwr.status IN ('completed', 'shipped')
-          AND COALESCE(cwr.shipped_at, cwr.completed_at) >= NOW() - INTERVAL '30 days'
+          AND COALESCE(cwr.shipped_at, cwr.completed_at) >= NOW() - INTERVAL '3 days'
         GROUP BY cr.creator_user_id`,
       userIds,
     ),
@@ -333,20 +371,14 @@ export async function getCodeAndWagerByUser(
        SELECT cr.creator_user_id,
               COALESCE(SUM(CASE WHEN ui.obtained_at >= NOW() - INTERVAL '1 day'   THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained_1d,
               COALESCE(SUM(CASE WHEN ui.obtained_at >= NOW() - INTERVAL '3 days'  THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained_3d,
-              COALESCE(SUM(CASE WHEN ui.obtained_at >= NOW() - INTERVAL '7 days'  THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained_7d,
-              COALESCE(SUM(CASE WHEN ui.obtained_at >= NOW() - INTERVAL '14 days' THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained_14d,
-              COALESCE(SUM(CASE WHEN ui.obtained_at >= NOW() - INTERVAL '30 days' THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained_30d,
               COALESCE(SUM(CASE WHEN (ui.sold_at >= NOW() - INTERVAL '1 day'   OR ui.exchanged_at >= NOW() - INTERVAL '1 day')   THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS disposed_1d,
-              COALESCE(SUM(CASE WHEN (ui.sold_at >= NOW() - INTERVAL '3 days'  OR ui.exchanged_at >= NOW() - INTERVAL '3 days')  THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS disposed_3d,
-              COALESCE(SUM(CASE WHEN (ui.sold_at >= NOW() - INTERVAL '7 days'  OR ui.exchanged_at >= NOW() - INTERVAL '7 days')  THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS disposed_7d,
-              COALESCE(SUM(CASE WHEN (ui.sold_at >= NOW() - INTERVAL '14 days' OR ui.exchanged_at >= NOW() - INTERVAL '14 days') THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS disposed_14d,
-              COALESCE(SUM(CASE WHEN (ui.sold_at >= NOW() - INTERVAL '30 days' OR ui.exchanged_at >= NOW() - INTERVAL '30 days') THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS disposed_30d
+              COALESCE(SUM(CASE WHEN (ui.sold_at >= NOW() - INTERVAL '3 days'  OR ui.exchanged_at >= NOW() - INTERVAL '3 days')  THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS disposed_3d
          FROM user_inventory ui
          JOIN creator_referrals cr ON cr.user_id = ui.user_id
         WHERE (
-              ui.obtained_at  >= NOW() - INTERVAL '30 days'
-           OR ui.sold_at      >= NOW() - INTERVAL '30 days'
-           OR ui.exchanged_at >= NOW() - INTERVAL '30 days'
+              ui.obtained_at  >= NOW() - INTERVAL '3 days'
+           OR ui.sold_at      >= NOW() - INTERVAL '3 days'
+           OR ui.exchanged_at >= NOW() - INTERVAL '3 days'
         )
         GROUP BY cr.creator_user_id`,
       userIds,
@@ -366,20 +398,130 @@ export async function getCodeAndWagerByUser(
        SELECT cr.creator_user_id,
               COALESCE(SUM(CASE WHEN v.created_at >= NOW() - INTERVAL '1 day'   THEN v.value::numeric ELSE 0 END), 0)::text AS issued_1d,
               COALESCE(SUM(CASE WHEN v.created_at >= NOW() - INTERVAL '3 days'  THEN v.value::numeric ELSE 0 END), 0)::text AS issued_3d,
-              COALESCE(SUM(CASE WHEN v.created_at >= NOW() - INTERVAL '7 days'  THEN v.value::numeric ELSE 0 END), 0)::text AS issued_7d,
-              COALESCE(SUM(CASE WHEN v.created_at >= NOW() - INTERVAL '14 days' THEN v.value::numeric ELSE 0 END), 0)::text AS issued_14d,
-              COALESCE(SUM(CASE WHEN v.created_at >= NOW() - INTERVAL '30 days' THEN v.value::numeric ELSE 0 END), 0)::text AS issued_30d,
               COALESCE(SUM(CASE WHEN v.claimed_at >= NOW() - INTERVAL '1 day'   THEN v.value::numeric ELSE 0 END), 0)::text AS claimed_1d,
-              COALESCE(SUM(CASE WHEN v.claimed_at >= NOW() - INTERVAL '3 days'  THEN v.value::numeric ELSE 0 END), 0)::text AS claimed_3d,
-              COALESCE(SUM(CASE WHEN v.claimed_at >= NOW() - INTERVAL '7 days'  THEN v.value::numeric ELSE 0 END), 0)::text AS claimed_7d,
-              COALESCE(SUM(CASE WHEN v.claimed_at >= NOW() - INTERVAL '14 days' THEN v.value::numeric ELSE 0 END), 0)::text AS claimed_14d,
-              COALESCE(SUM(CASE WHEN v.claimed_at >= NOW() - INTERVAL '30 days' THEN v.value::numeric ELSE 0 END), 0)::text AS claimed_30d
+              COALESCE(SUM(CASE WHEN v.claimed_at >= NOW() - INTERVAL '3 days'  THEN v.value::numeric ELSE 0 END), 0)::text AS claimed_3d
          FROM vouchers v
          JOIN creator_referrals cr ON cr.user_id = v.user_id
         WHERE (
-              v.created_at >= NOW() - INTERVAL '30 days'
-           OR v.claimed_at >= NOW() - INTERVAL '30 days'
+              v.created_at >= NOW() - INTERVAL '3 days'
+           OR v.claimed_at >= NOW() - INTERVAL '3 days'
         )
+        GROUP BY cr.creator_user_id`,
+      userIds,
+    ),
+
+    // ── Lifetime aggregates (5 batched queries) ─────────────────────
+    // Same JOIN pattern as the windowed scans above (referred-user
+    // pool excludes staff + blacklist + the creator themselves), but
+    // NO time-window filter — these are the cumulative all-time
+    // totals that feed the "Lifetime" tile on the per-card PnL strip.
+    // Each query batches every creator on the page into one
+    // round-trip; even at 20 creators per page that's ~ten thousand
+    // tx scanned per scan, not per creator.
+
+    // Lifetime ledger — total deposits + total manual withdrawals.
+    db.$queryRawUnsafe<LifetimeLedgerRow[]>(
+      `WITH creator_referrals AS (
+         SELECT DISTINCT acu.affiliate_user_id AS creator_user_id,
+                         acu.referred_user_id  AS user_id
+           FROM affiliate_code_usages acu
+           JOIN "user" u ON u.id = acu.referred_user_id
+          WHERE acu.affiliate_user_id = ANY($1::text[])
+            AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
+            AND u.id != acu.affiliate_user_id
+       )
+       SELECT cr.creator_user_id,
+              COALESCE(SUM(CASE WHEN lt.type = 'deposit'
+                                  THEN lt.amount::numeric
+                                  ELSE 0 END), 0)::text AS total_deposits,
+              COALESCE(SUM(CASE WHEN lt.type = 'admin_balance_adjustment'
+                                  AND lt.balance_after < lt.balance_before
+                                  AND lt.description ILIKE 'Manual withdrawal:%'
+                                  THEN lt.amount::numeric
+                                  ELSE 0 END), 0)::text AS total_manual_withdrawals
+         FROM ledger_transactions lt
+         JOIN creator_referrals cr ON cr.user_id = lt.user_id
+        WHERE lt.status = 'completed'
+        GROUP BY cr.creator_user_id`,
+      userIds,
+    ),
+
+    // Lifetime card withdrawals (status in completed/shipped — any time).
+    db.$queryRawUnsafe<LifetimeCardWithdrawalRow[]>(
+      `WITH creator_referrals AS (
+         SELECT DISTINCT acu.affiliate_user_id AS creator_user_id,
+                         acu.referred_user_id  AS user_id
+           FROM affiliate_code_usages acu
+           JOIN "user" u ON u.id = acu.referred_user_id
+          WHERE acu.affiliate_user_id = ANY($1::text[])
+            AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
+            AND u.id != acu.affiliate_user_id
+       )
+       SELECT cr.creator_user_id,
+              COALESCE(SUM(cwr.total_value_usd::numeric), 0)::text AS total_card_withdrawals
+         FROM card_withdrawal_requests cwr
+         JOIN creator_referrals cr ON cr.user_id = cwr.user_id
+        WHERE cwr.status IN ('completed', 'shipped')
+        GROUP BY cr.creator_user_id`,
+      userIds,
+    ),
+
+    // Current balance snapshot (available + locked, RIGHT NOW).
+    db.$queryRawUnsafe<LifetimeBalanceRow[]>(
+      `WITH creator_referrals AS (
+         SELECT DISTINCT acu.affiliate_user_id AS creator_user_id,
+                         acu.referred_user_id  AS user_id
+           FROM affiliate_code_usages acu
+           JOIN "user" u ON u.id = acu.referred_user_id
+          WHERE acu.affiliate_user_id = ANY($1::text[])
+            AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
+            AND u.id != acu.affiliate_user_id
+       )
+       SELECT cr.creator_user_id,
+              COALESCE(SUM(b.available_balance::numeric + b.locked_balance::numeric), 0)::text AS current_balance
+         FROM balances b
+         JOIN creator_referrals cr ON cr.user_id = b.user_id
+        GROUP BY cr.creator_user_id`,
+      userIds,
+    ),
+
+    // Current inventory snapshot (unsold + unexchanged, RIGHT NOW).
+    db.$queryRawUnsafe<LifetimeInventoryRow[]>(
+      `WITH creator_referrals AS (
+         SELECT DISTINCT acu.affiliate_user_id AS creator_user_id,
+                         acu.referred_user_id  AS user_id
+           FROM affiliate_code_usages acu
+           JOIN "user" u ON u.id = acu.referred_user_id
+          WHERE acu.affiliate_user_id = ANY($1::text[])
+            AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
+            AND u.id != acu.affiliate_user_id
+       )
+       SELECT cr.creator_user_id,
+              COALESCE(SUM(ui.value_at_obtained::numeric), 0)::text AS current_inventory
+         FROM user_inventory ui
+         JOIN creator_referrals cr ON cr.user_id = ui.user_id
+        WHERE ui.sold_at IS NULL
+          AND ui.exchanged_at IS NULL
+        GROUP BY cr.creator_user_id`,
+      userIds,
+    ),
+
+    // Current vouchers snapshot (unclaimed, RIGHT NOW).
+    db.$queryRawUnsafe<LifetimeVoucherRow[]>(
+      `WITH creator_referrals AS (
+         SELECT DISTINCT acu.affiliate_user_id AS creator_user_id,
+                         acu.referred_user_id  AS user_id
+           FROM affiliate_code_usages acu
+           JOIN "user" u ON u.id = acu.referred_user_id
+          WHERE acu.affiliate_user_id = ANY($1::text[])
+            AND u.role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
+            AND u.id != acu.affiliate_user_id
+       )
+       SELECT cr.creator_user_id,
+              COALESCE(SUM(v.value::numeric), 0)::text AS current_vouchers
+         FROM vouchers v
+         JOIN creator_referrals cr ON cr.user_id = v.user_id
+        WHERE v.claimed_at IS NULL
         GROUP BY cr.creator_user_id`,
       userIds,
     ),
@@ -400,15 +542,34 @@ export async function getCodeAndWagerByUser(
   // Project the four wide rows (one row per creator from each scan)
   // into a single CreatorPnlByPeriod object per creator per period.
   // Components default to 0 when a creator has no rows from that
-  // particular scan (e.g. no card withdrawals in 30 days).
+  // particular scan (e.g. no card withdrawals in 3 days).
+  const lrById = new Map(ledgerRows.map((r) => [r.creator_user_id, r]));
   const cwById = new Map(cardWithdrawalRows.map((r) => [r.creator_user_id, r]));
   const ivById = new Map(inventoryRows.map((r) => [r.creator_user_id, r]));
   const vchById = new Map(voucherRows.map((r) => [r.creator_user_id, r]));
 
-  type PKey = "1d" | "3d" | "7d" | "14d" | "30d";
+  // Lifetime aggregates keyed by creator id (one row per creator
+  // from each of the five lifetime scans).
+  const lifeLrById = new Map(
+    lifetimeLedgerRows.map((r) => [r.creator_user_id, r]),
+  );
+  const lifeCwById = new Map(
+    lifetimeCardWithdrawalRows.map((r) => [r.creator_user_id, r]),
+  );
+  const lifeBalById = new Map(
+    lifetimeBalanceRows.map((r) => [r.creator_user_id, r]),
+  );
+  const lifeInvById = new Map(
+    lifetimeInventoryRows.map((r) => [r.creator_user_id, r]),
+  );
+  const lifeVchById = new Map(
+    lifetimeVoucherRows.map((r) => [r.creator_user_id, r]),
+  );
+
+  type PKey = "1d" | "3d";
 
   const buildForCreator = (creatorId: string): CreatorCodeAndWager["pnlByPeriod"] => {
-    const lr = ledgerRows.find((r) => r.creator_user_id === creatorId);
+    const lr = lrById.get(creatorId);
     const cw = cwById.get(creatorId);
     const iv = ivById.get(creatorId);
     const vc = vchById.get(creatorId);
@@ -446,15 +607,54 @@ export async function getCodeAndWagerByUser(
     return {
       "1d": computeForPeriod("1d"),
       "3d": computeForPeriod("3d"),
-      "7d": computeForPeriod("7d"),
-      "14d": computeForPeriod("14d"),
-      "30d": computeForPeriod("30d"),
     };
   };
 
-  // Set of creator IDs that produced ANY rows from the four PnL scans
-  // — even one of {ledger, card_withdrawals, inventory, vouchers}.
-  // Anyone with no activity at all gets EMPTY_PNL.
+  // Build the lifetime snapshot for a creator using the five
+  // lifetime aggregate maps. Same formula as the per-window pnl
+  // above but evaluated against the lifetime totals + current
+  // liability snapshots. Returns null only when the creator
+  // appears in NONE of the five lifetime maps — i.e. has zero
+  // referred-user activity ever.
+  const buildLifetimeForCreator = (
+    creatorId: string,
+  ): CreatorLifetimePnl | null => {
+    const lr = lifeLrById.get(creatorId);
+    const cw = lifeCwById.get(creatorId);
+    const bal = lifeBalById.get(creatorId);
+    const inv = lifeInvById.get(creatorId);
+    const vc = lifeVchById.get(creatorId);
+    // If a creator has zero referred-user activity across every
+    // lifetime scan, we render EMPTY_LIFETIME so the strip shows "—"
+    // (consistent with the 1d empty state) instead of a misleading "$0".
+    if (!lr && !cw && !bal && !inv && !vc) return EMPTY_LIFETIME;
+    const totalDeposits = lr ? toNumber(lr.total_deposits) : 0;
+    const totalManualWithdrawals = lr
+      ? toNumber(lr.total_manual_withdrawals)
+      : 0;
+    const totalCardWithdrawals = cw ? toNumber(cw.total_card_withdrawals) : 0;
+    const totalWithdrawals = totalManualWithdrawals + totalCardWithdrawals;
+    const currentBalance = bal ? toNumber(bal.current_balance) : 0;
+    const currentInventory = inv ? toNumber(inv.current_inventory) : 0;
+    const currentVouchers = vc ? toNumber(vc.current_vouchers) : 0;
+    return {
+      totalDeposits,
+      totalWithdrawals,
+      currentBalance,
+      currentInventory,
+      currentVouchers,
+      pnl:
+        totalDeposits -
+        totalWithdrawals -
+        currentBalance -
+        currentInventory -
+        currentVouchers,
+    };
+  };
+
+  // Set of creator IDs that produced ANY rows from the four windowed
+  // PnL scans — even one of {ledger, card_withdrawals, inventory,
+  // vouchers}. Anyone with no recent activity gets EMPTY_PNL.
   const activeCreatorIds = new Set<string>();
   for (const r of ledgerRows) activeCreatorIds.add(r.creator_user_id);
   for (const r of cardWithdrawalRows) activeCreatorIds.add(r.creator_user_id);
@@ -463,6 +663,7 @@ export async function getCodeAndWagerByUser(
 
   for (const id of userIds) {
     const pnl = activeCreatorIds.has(id) ? buildForCreator(id) : EMPTY_PNL;
+    const lifetimePnl = buildLifetimeForCreator(id);
     result.set(id, {
       code: codeById.get(id) ?? null,
       wagerVolumeUsd: wagerById.get(id) ?? 0,
@@ -474,12 +675,11 @@ export async function getCodeAndWagerByUser(
       deposits3dUsd: pnl["3d"].deposits,
       // wagers3dUsd is informational (not used in PnL formula); pulled
       // directly from the ledger-side aggregate.
-      wagers3dUsd: ledgerRows.find((r) => r.creator_user_id === id)
-        ? toNumber(
-            ledgerRows.find((r) => r.creator_user_id === id)!.wagers_3d,
-          )
+      wagers3dUsd: lrById.get(id)
+        ? toNumber(lrById.get(id)!.wagers_3d)
         : 0,
       pnlByPeriod: pnl,
+      lifetimePnl,
     });
   }
   return result;
