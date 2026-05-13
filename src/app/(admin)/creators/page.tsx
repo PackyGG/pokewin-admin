@@ -1,4 +1,4 @@
-import { AlertTriangle, Megaphone, Users } from "lucide-react";
+import { AlertTriangle, CalendarCheck, Megaphone, Radio, Users } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
 import { FadeIn } from "@/components/fade-in";
@@ -21,6 +21,10 @@ import {
   getCodeAndWagerByUser,
   type CreatorCodeAndWager,
 } from "./_queries/code-and-wager-by-user";
+import {
+  getCreatorsGlobalStats,
+  type CreatorsGlobalStats,
+} from "./_queries/creators-stats";
 import {
   CreatorCardGrid,
   type CreatorWithSocials,
@@ -47,11 +51,17 @@ export default async function CreatorsPage({
   let result: CreatorsListPage | null = null;
   let socialsByUser: Map<string, CreatorSocialSummary[]> = new Map();
   let codeAndWagerByUser: Map<string, CreatorCodeAndWager> = new Map();
+  // Global counts for the KPI strip — independent from the paginated
+  // list so the tiles don't shift when the admin types in the search
+  // box. Best-effort: a stats fetch failure falls back to nullish so
+  // the tiles render "—" instead of crashing the whole page.
+  let stats: CreatorsGlobalStats | null = null;
   let loadError: { title: string; detail: string } | null = null;
   try {
-    // Wave 1 — creators list + socials (independent). Socials is
-    // best-effort; backend hiccup falls back to empty.
-    const [creators, socials] = await Promise.all([
+    // Wave 1 — creators list + socials + global stats (independent).
+    // Socials + stats are best-effort; backend hiccup falls back to
+    // empty / null.
+    const [creators, socials, globalStats] = await Promise.all([
       listCreatorsForPage(params),
       getApprovedSocialsByUser().catch((e) => {
         console.error(
@@ -60,9 +70,17 @@ export default async function CreatorsPage({
         );
         return new Map<string, CreatorSocialSummary[]>();
       }),
+      getCreatorsGlobalStats().catch((e) => {
+        console.error(
+          "[creators] global stats fetch failed (rendering tiles empty):",
+          e,
+        );
+        return null;
+      }),
     ]);
     result = creators;
     socialsByUser = socials;
+    stats = globalStats;
 
     // Wave 2 — code + lifetime wager from the main DB, keyed on the
     // user IDs we just got from the backend list. Best-effort too —
@@ -129,19 +147,35 @@ export default async function CreatorsPage({
       </PageHero>
 
       {result && (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-2">
+        // KPI strip — 3 global signals: total creators, how many
+        // have an active/scheduled deal right now, and how many are
+        // live on-stream right now. All three are GLOBAL (not
+        // affected by search / pagination), so the numbers stay
+        // stable as the admin types in the search box.
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <KpiTile
             label="Total Creators"
-            value={formatNumber(result.total)}
+            value={formatNumber(stats?.totalCreators ?? result.total)}
             icon={Megaphone}
             accent="pink"
           />
           <KpiTile
-            label="On This Page"
-            value={String(result.data.length)}
-            sub={`Page ${result.page} of ${result.totalPages}`}
-            icon={Users}
-            accent="purple"
+            label="Active Deals"
+            value={
+              stats ? formatNumber(stats.activeDealCount) : "—"
+            }
+            sub="Active or scheduled this week"
+            icon={CalendarCheck}
+            accent="emerald"
+          />
+          <KpiTile
+            label="Live Now"
+            value={stats ? formatNumber(stats.liveCount) : "—"}
+            sub="Currently streaming with an active session"
+            icon={Radio}
+            // Rose to read "active broadcasting in progress" —
+            // matches the Live badge color elsewhere on the page.
+            accent="rose"
           />
         </div>
       )}
