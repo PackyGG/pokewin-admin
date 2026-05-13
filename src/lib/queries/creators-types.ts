@@ -59,8 +59,51 @@ export type CreatorPnlPeriod = {
   pnl: number;
 };
 
+/**
+ * All-time House P&L for a single creator's referrals. Same canonical
+ * formula as `CreatorPnlPeriod.pnl`, but evaluated as a SNAPSHOT
+ * (not a delta over a window):
+ *
+ *   lifetimePnl = totalDeposits − totalWithdrawals − currentBalance
+ *               − currentInventory − currentVouchers
+ *
+ * This is the natural reading of "how much have we made off this
+ * creator's affiliates lifetime?" — cumulative cash inflow minus
+ * cumulative cash outflow minus what we currently owe.
+ *
+ * Same staff + blacklist exclusions as the windowed query.
+ */
+export type CreatorLifetimePnl = {
+  /** Sum of every completed deposit from the referred-user pool. */
+  totalDeposits: number;
+  /**
+   * Sum of every completed withdrawal — combines:
+   *   • card_withdrawal_requests (status completed/shipped)
+   *   • ledger admin_balance_adjustment rows tagged "Manual withdrawal:%"
+   */
+  totalWithdrawals: number;
+  /**
+   * Current on-site balance (available + locked) for the referred-user
+   * pool — house liability snapshot.
+   */
+  currentBalance: number;
+  /** Current unsold-inventory liability snapshot. */
+  currentInventory: number;
+  /** Current unclaimed-voucher liability snapshot. */
+  currentVouchers: number;
+  /** lifetime PnL — house POV: positive = house made money. */
+  pnl: number;
+};
+
 export type CreatorPnlData = {
   byPeriod: CreatorPnlPeriod[];
+  /**
+   * All-time PnL for the creator's affiliates. Computed as a single
+   * balance-sheet snapshot rather than a windowed delta so it
+   * matches the dashboard's lifetime P&L semantics for the same
+   * user pool. Surfaces as the hero tile on /creators/[userId].
+   */
+  lifetime: CreatorLifetimePnl;
 };
 
 export type CreatorLimits = {

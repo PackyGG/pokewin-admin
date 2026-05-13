@@ -1,6 +1,10 @@
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import type { CreatorPnlData, CreatorPnlPeriod } from "./creators-types";
+import type {
+  CreatorLifetimePnl,
+  CreatorPnlData,
+  CreatorPnlPeriod,
+} from "./creators-types";
 
 /**
  * Per-creator House P&L, computed as a windowed analog of the canonical
@@ -80,7 +84,7 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
   const db = await getDb();
   const REFERRED_USERS_SQL = await buildReferredUsersSql();
 
-  const [ledgerRows, cardWithdrawalRows, inventoryRows, voucherRows] =
+  const [ledgerRows, cardWithdrawalRows, inventoryRows, voucherRows, lifetimeRows] =
     await Promise.all([
       // Ledger-derived components per window:
       //   deposits           = SUM(amount where type='deposit')
@@ -213,6 +217,70 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
           GROUP BY p.period`,
         userId,
       ),
+
+      // Lifetime snapshot — single row, six aggregates. Same formula
+      // as the per-period rows but evaluated as a balance-sheet
+      // SNAPSHOT, not a delta:
+      //
+      //   pnl = totalDeposits
+      //       − totalWithdrawals (manual + card)
+      //       − currentBalance (available + locked, RIGHT NOW)
+      //       − currentInventory (unsold + unexchanged, RIGHT NOW)
+      //       − currentVouchers (unclaimed, RIGHT NOW)
+      //
+      // Independent from the per-period query above — it doesn't share
+      // the 30-day window hint, because lifetime needs to scan the
+      // full history. Six correlated subqueries against the same
+      // referred-user pool; one round-trip.
+      db.$queryRawUnsafe<
+        {
+          total_deposits: string;
+          manual_withdrawals: string;
+          card_withdrawals: string;
+          current_balance: string;
+          current_inventory: string;
+          current_vouchers: string;
+        }[]
+      >(
+        `SELECT
+            (SELECT COALESCE(SUM(CASE WHEN lt.type = 'deposit'
+                                       THEN lt.amount::numeric
+                                       ELSE 0 END), 0)::text
+               FROM ledger_transactions lt
+              WHERE lt.user_id IN (${REFERRED_USERS_SQL})
+                AND lt.status = 'completed'
+            ) AS total_deposits,
+            (SELECT COALESCE(SUM(CASE WHEN lt.type = 'admin_balance_adjustment'
+                                       AND lt.balance_after < lt.balance_before
+                                       AND lt.description ILIKE 'Manual withdrawal:%'
+                                       THEN lt.amount::numeric
+                                       ELSE 0 END), 0)::text
+               FROM ledger_transactions lt
+              WHERE lt.user_id IN (${REFERRED_USERS_SQL})
+                AND lt.status = 'completed'
+            ) AS manual_withdrawals,
+            (SELECT COALESCE(SUM(cwr.total_value_usd::numeric), 0)::text
+               FROM card_withdrawal_requests cwr
+              WHERE cwr.user_id IN (${REFERRED_USERS_SQL})
+                AND cwr.status IN ('completed', 'shipped')
+            ) AS card_withdrawals,
+            (SELECT COALESCE(SUM(b.available_balance::numeric + b.locked_balance::numeric), 0)::text
+               FROM balances b
+              WHERE b.user_id IN (${REFERRED_USERS_SQL})
+            ) AS current_balance,
+            (SELECT COALESCE(SUM(ui.value_at_obtained::numeric), 0)::text
+               FROM user_inventory ui
+              WHERE ui.user_id IN (${REFERRED_USERS_SQL})
+                AND ui.sold_at IS NULL
+                AND ui.exchanged_at IS NULL
+            ) AS current_inventory,
+            (SELECT COALESCE(SUM(v.value::numeric), 0)::text
+               FROM vouchers v
+              WHERE v.user_id IN (${REFERRED_USERS_SQL})
+                AND v.claimed_at IS NULL
+            ) AS current_vouchers`,
+        userId,
+      ),
     ]);
 
   const ledgerByPeriod = new Map(ledgerRows.map((r) => [r.period, r]));
@@ -252,5 +320,30 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
     };
   });
 
-  return { byPeriod };
+  // Lifetime snapshot — single row from the all-time aggregate
+  // query. If somehow empty (no referred users), default everything
+  // to 0 so the panel still renders cleanly.
+  const lr = lifetimeRows[0];
+  const totalDeposits = Number(lr?.total_deposits ?? 0);
+  const totalWithdrawals =
+    Number(lr?.manual_withdrawals ?? 0) +
+    Number(lr?.card_withdrawals ?? 0);
+  const currentBalance = Number(lr?.current_balance ?? 0);
+  const currentInventory = Number(lr?.current_inventory ?? 0);
+  const currentVouchers = Number(lr?.current_vouchers ?? 0);
+  const lifetime: CreatorLifetimePnl = {
+    totalDeposits,
+    totalWithdrawals,
+    currentBalance,
+    currentInventory,
+    currentVouchers,
+    pnl:
+      totalDeposits -
+      totalWithdrawals -
+      currentBalance -
+      currentInventory -
+      currentVouchers,
+  };
+
+  return { byPeriod, lifetime };
 }
