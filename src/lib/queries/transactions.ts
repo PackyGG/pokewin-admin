@@ -1,7 +1,9 @@
 import { getDb } from "@/lib/db";
+import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
+import type { UserTagValue } from "@/lib/queries/user-tags";
 
 export type TransactionListItem = {
   id: string;
@@ -53,6 +55,14 @@ export type TransactionListItem = {
    * userDeposit24h. Null when not rendered.
    */
   userDeposit3d: number | null;
+  /**
+   * Admin-set VIP tags on this user, fetched alongside the
+   * deposits page so the row can show "Confirmed VIP" inline next
+   * to the username. Empty array when not populated (other views),
+   * empty array also when the user has no tags. Cross-DB lookup
+   * against admin_user_tags.
+   */
+  userTags: UserTagValue[];
 };
 
 /**
@@ -230,12 +240,18 @@ export async function getDepositTransactions(params: {
 
   const total = Number(countResult[0]?.total ?? "0");
 
-  // Per-user 24h / 3d deposit totals for THIS page's users. Single
-  // GROUP BY against ledger_transactions — one round-trip regardless
-  // of how many users are on the page. We aggregate only `deposit`
-  // rows (no bonuses, no shipping fees) so the totals reflect actual
-  // money the user paid in, matching the page's "amount" column
-  // semantics for the headline number.
+  // Per-user 24h / 3d deposit totals + VIP tags for THIS page's
+  // users. Both lookups share the same userIds set; we run them in
+  // parallel so the deposits-list latency stays unchanged.
+  //
+  // The totals query is a single GROUP BY against ledger_transactions
+  // — one round-trip regardless of page size. Aggregates only
+  // `deposit` rows (no bonuses, no shipping fees) so the totals
+  // reflect actual money the user paid in.
+  //
+  // The tags query is a single findMany against admin_user_tags
+  // (separate Postgres cluster — admin DB). Returns oldest-first so
+  // the badge order is stable across renders.
   const pageUserIds = [...new Set(rows.map((r) => r.user_id))];
   type UserDepositTotalsRow = {
     user_id: string;
@@ -243,6 +259,7 @@ export async function getDepositTransactions(params: {
     total_3d: string;
   };
   let userTotalsMap = new Map<string, { d24h: number; d3d: number }>();
+  const userTagsMap = new Map<string, UserTagValue[]>();
   if (pageUserIds.length > 0) {
     // Inline the user IDs via positional params so the prepared
     // statement can plan the IN list well. They came from `t.user_id`
@@ -251,33 +268,57 @@ export async function getDepositTransactions(params: {
     const placeholders = pageUserIds
       .map((_, i) => `$${i + 1}`)
       .join(",");
-    const userTotalsRows = await db.$queryRawUnsafe<UserDepositTotalsRow[]>(
-      `
-        SELECT
-          user_id,
-          COALESCE(
-            SUM(CASE WHEN created_at >= NOW() - INTERVAL '24 hours' THEN amount::numeric ELSE 0 END),
-            0
-          )::text AS total_24h,
-          COALESCE(
-            SUM(CASE WHEN created_at >= NOW() - INTERVAL '3 days' THEN amount::numeric ELSE 0 END),
-            0
-          )::text AS total_3d
-        FROM ledger_transactions
-        WHERE type = 'deposit'
-          AND status = 'completed'
-          AND user_id IN (${placeholders})
-          AND created_at >= NOW() - INTERVAL '3 days'
-        GROUP BY user_id
-      `,
-      ...pageUserIds,
-    );
+    const [userTotalsRows, tagRows] = await Promise.all([
+      db.$queryRawUnsafe<UserDepositTotalsRow[]>(
+        `
+          SELECT
+            user_id,
+            COALESCE(
+              SUM(CASE WHEN created_at >= NOW() - INTERVAL '24 hours' THEN amount::numeric ELSE 0 END),
+              0
+            )::text AS total_24h,
+            COALESCE(
+              SUM(CASE WHEN created_at >= NOW() - INTERVAL '3 days' THEN amount::numeric ELSE 0 END),
+              0
+            )::text AS total_3d
+          FROM ledger_transactions
+          WHERE type = 'deposit'
+            AND status = 'completed'
+            AND user_id IN (${placeholders})
+            AND created_at >= NOW() - INTERVAL '3 days'
+          GROUP BY user_id
+        `,
+        ...pageUserIds,
+      ),
+      // Cross-DB lookup (admin DB) — same userIds, different cluster.
+      // Wrapped in try/catch so an admin-DB blip doesn't take down the
+      // whole deposits page — tags are a nice-to-have, the ledger
+      // rows are the page's job.
+      adminDb.admin_user_tags
+        .findMany({
+          where: { target_user_id: { in: pageUserIds } },
+          select: { target_user_id: true, tag: true },
+          orderBy: { created_at: "asc" },
+        })
+        .catch((err) => {
+          console.error(
+            "[getDepositTransactions] tag lookup failed (rendering without tags):",
+            err,
+          );
+          return [] as { target_user_id: string; tag: string }[];
+        }),
+    ]);
     userTotalsMap = new Map(
       userTotalsRows.map((r) => [
         r.user_id,
         { d24h: Number(r.total_24h), d3d: Number(r.total_3d) },
       ]),
     );
+    for (const t of tagRows) {
+      const existing = userTagsMap.get(t.target_user_id) ?? [];
+      existing.push(t.tag as UserTagValue);
+      userTagsMap.set(t.target_user_id, existing);
+    }
   }
 
   const data: TransactionListItem[] = rows.map((r) => {
@@ -315,6 +356,9 @@ export async function getDepositTransactions(params: {
       // the result set).
       userDeposit24h: userTotals?.d24h ?? 0,
       userDeposit3d: userTotals?.d3d ?? 0,
+      // VIP tags on this user — empty array when none set or the
+      // admin-DB lookup failed (logged + degraded gracefully).
+      userTags: userTagsMap.get(r.user_id) ?? [],
       // Deposits/withdrawals can't be borrowed — null both fields so
       // the BorrowBadge cell renders empty.
       borrowPercentage: null,
@@ -518,6 +562,8 @@ export async function getTransactions(params: {
         // here so the type contract stays consistent across views.
         userDeposit24h: null,
         userDeposit3d: null,
+        // Tags only fetched on the deposits-specific path.
+        userTags: [],
       };
     }),
     total,
