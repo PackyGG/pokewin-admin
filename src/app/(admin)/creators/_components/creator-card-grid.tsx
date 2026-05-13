@@ -108,9 +108,9 @@ export type CreatorWithSocials = CreatorListItem & {
   /**
    * Per-period House P&L from this creator's referrals — same
    * canonical balance-sheet formula as the dashboard's Lifetime PnL,
-   * evaluated as deltas over each window (1d / 3d / 7d / 14d / 30d):
-   *
-   *   pnl = deposits − withdrawals − balanceChange − inventoryChange − voucherChange
+   * evaluated as a DELTA over each window. Trimmed to 1d (the only
+   * window the strip displays). 3d also kept since the MomentumRow
+   * on the same card reads from it.
    *
    * Referred-user pool excludes admin / support / creator roles AND
    * the creator's own user_id (so other streamers' on-site activity
@@ -121,9 +121,21 @@ export type CreatorWithSocials = CreatorListItem & {
   pnlByPeriod: {
     "1d": CreatorPnlPeriodCell;
     "3d": CreatorPnlPeriodCell;
-    "7d": CreatorPnlPeriodCell;
-    "14d": CreatorPnlPeriodCell;
-    "30d": CreatorPnlPeriodCell;
+  } | null;
+  /**
+   * All-time House P&L from this creator's referrals. Snapshot:
+   *   pnl = totalDeposits − totalWithdrawals
+   *       − currentBalance − currentInventory − currentVouchers
+   * Drives the "Lifetime" tile on the per-card PnL strip. Null only
+   * when the batched lifetime query failed (best-effort).
+   */
+  lifetimePnl: {
+    totalDeposits: number;
+    totalWithdrawals: number;
+    currentBalance: number;
+    currentInventory: number;
+    currentVouchers: number;
+    pnl: number;
   } | null;
 };
 
@@ -252,13 +264,18 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
           wagers3dUsd={creator.wagers3dUsd}
         />
 
-        {/* PNL STRIP — per-period GGR (wagers − payouts) from this
-            creator's referrals across 1d / 3d / 7d / 14d / 30d. House
-            POV: positive = we made money (emerald), negative = we lost
-            money (rose). Hidden when the batched query failed (null
-            input) so the card doesn't render dashes for everyone. */}
-        {creator.pnlByPeriod && (
-          <PnlStrip pnlByPeriod={creator.pnlByPeriod} />
+        {/* PNL STRIP — 1d window + lifetime snapshot from this
+            creator's referrals. Same canonical balance-sheet formula
+            as the dashboard's lifetime PnL — evaluated as a delta
+            (1d) and a snapshot (Lifetime). House POV: positive =
+            we made money (emerald), negative = we lost money (rose).
+            Hidden when both queries failed so the card doesn't
+            render dashes for everyone. */}
+        {(creator.pnlByPeriod || creator.lifetimePnl) && (
+          <PnlStrip
+            pnlByPeriod={creator.pnlByPeriod}
+            lifetimePnl={creator.lifetimePnl}
+          />
         )}
 
         {/* SOCIALS */}
@@ -524,74 +541,83 @@ function MomentumRow({
 // and the creator's own user_id, so other streamers' on-site activity
 // doesn't skew the number.
 //
-// Compact layout: 5-up grid, divider-separated, label above value.
-// Tabular nums so the dollar amounts line up across the row.
+// Compact layout: 2-up grid (1d + Lifetime), divider-separated, label
+// above value. Lifetime takes the visual weight (admins asked for
+// "easy to read" — and the all-time number is the natural anchor).
+// 1d sits next to it to call out recent activity.
 function PnlStrip({
   pnlByPeriod,
+  lifetimePnl,
 }: {
-  pnlByPeriod: NonNullable<CreatorWithSocials["pnlByPeriod"]>;
+  pnlByPeriod: NonNullable<CreatorWithSocials["pnlByPeriod"]> | null;
+  lifetimePnl: NonNullable<CreatorWithSocials["lifetimePnl"]> | null;
 }) {
-  const periods: Array<{
-    key: keyof typeof pnlByPeriod;
-    label: string;
-  }> = [
-    { key: "1d", label: "1d" },
-    { key: "3d", label: "3d" },
-    { key: "7d", label: "7d" },
-    { key: "14d", label: "2w" },
-    { key: "30d", label: "1m" },
-  ];
+  // 1d cell — falls back to a flat-zero placeholder when the windowed
+  // query failed (per the existing best-effort pattern). Same for
+  // lifetime.
+  const d1 = pnlByPeriod?.["1d"] ?? null;
+  const life = lifetimePnl;
+
+  function color(v: number): string {
+    if (v > 0) return "text-emerald-600 dark:text-emerald-400";
+    if (v < 0) return "text-rose-600 dark:text-rose-400";
+    return "text-muted-foreground/60";
+  }
+
+  const d1Tooltip = d1
+    ? `1d: deposits ${formatCurrency(d1.deposits)} ` +
+      `− withdrawals ${formatCurrency(d1.withdrawals)} ` +
+      `− balance Δ ${formatCurrency(d1.balanceChange)} ` +
+      `− inventory Δ ${formatCurrency(d1.inventoryChange)} ` +
+      `− voucher Δ ${formatCurrency(d1.voucherChange)}`
+    : undefined;
+
+  const lifeTooltip = life
+    ? `Lifetime: deposits ${formatCurrency(life.totalDeposits)} ` +
+      `− withdrawals ${formatCurrency(life.totalWithdrawals)} ` +
+      `− current balance ${formatCurrency(life.currentBalance)} ` +
+      `− current inventory ${formatCurrency(life.currentInventory)} ` +
+      `− current vouchers ${formatCurrency(life.currentVouchers)}`
+    : undefined;
+
   return (
     <div>
       <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
         <span>PnL</span>
         <span
           className="text-muted-foreground/60 normal-case"
-          title="Same balance-sheet formula as the dashboard's Lifetime PnL, evaluated per window. Positive = we made money, negative = we lost money."
+          title="Same balance-sheet formula as the dashboard's Lifetime PnL. 1d is the windowed delta, Lifetime is the all-time snapshot. Positive = we made money."
         >
           (house POV)
         </span>
       </div>
-      <div className="grid grid-cols-5 divide-x divide-border/60">
-        {periods.map(({ key, label }) => {
-          const cell = pnlByPeriod[key];
-          const v = cell.pnl;
-          const color =
-            v > 0
-              ? "text-emerald-600 dark:text-emerald-400"
-              : v < 0
-                ? "text-rose-600 dark:text-rose-400"
-                : "text-muted-foreground/60";
-          // Full breakdown so admins can see why a number is the
-          // way it is — particularly helps when inventory or
-          // balance change dominates (a referral pulled a big
-          // card but didn't sell yet, etc.).
-          const tooltip =
-            `${label}: deposits ${formatCurrency(cell.deposits)} ` +
-            `− withdrawals ${formatCurrency(cell.withdrawals)} ` +
-            `− balance Δ ${formatCurrency(cell.balanceChange)} ` +
-            `− inventory Δ ${formatCurrency(cell.inventoryChange)} ` +
-            `− voucher Δ ${formatCurrency(cell.voucherChange)}`;
-          return (
-            <div
-              key={key}
-              className="min-w-0 px-2 first:pl-0 last:pr-0"
-              title={tooltip}
-            >
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
-                {label}
-              </div>
-              <div
-                className={cn(
-                  "truncate text-xs font-semibold tabular-nums",
-                  color,
-                )}
-              >
-                {v === 0 ? "—" : formatCurrency(v)}
-              </div>
-            </div>
-          );
-        })}
+      <div className="grid grid-cols-2 divide-x divide-border/60">
+        <div className="min-w-0 pr-3" title={d1Tooltip}>
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
+            1d
+          </div>
+          <div
+            className={cn(
+              "truncate text-xs font-semibold tabular-nums",
+              color(d1?.pnl ?? 0),
+            )}
+          >
+            {!d1 || d1.pnl === 0 ? "—" : formatCurrency(d1.pnl)}
+          </div>
+        </div>
+        <div className="min-w-0 pl-3" title={lifeTooltip}>
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
+            Lifetime
+          </div>
+          <div
+            className={cn(
+              "truncate text-sm font-bold tabular-nums",
+              color(life?.pnl ?? 0),
+            )}
+          >
+            {!life || life.pnl === 0 ? "—" : formatCurrency(life.pnl)}
+          </div>
+        </div>
       </div>
     </div>
   );
