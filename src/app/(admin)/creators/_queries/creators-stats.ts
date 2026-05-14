@@ -26,39 +26,64 @@ export type CreatorsGlobalStats = {
  * paginated list query so the stats don't change when the user types
  * in the search box.
  *
- * Fetches all creators in one backend call with a defensive limit
- * cap; the platform's creator pool is bounded (well under 1k today),
- * so a single round-trip is fine. Bump the cap if we ever cross it.
+ * The backend caps `limit` at 100 per request (validation rejects
+ * anything bigger with HTTP 422 — earlier code that asked for 1000
+ * silently 422'd and the KPI tiles rendered "—"). We page through
+ * `total` in 100-row chunks; with parallelism so the round-trips
+ * overlap. A hard upper bound on the number of pages prevents a
+ * runaway loop if `total` is reported wrong.
  */
-const STATS_LIMIT_CAP = 1000;
+const PAGE_SIZE = 100;
+const MAX_PAGES = 50; // 5,000 creators — way above current/projected pool.
 
 export async function getCreatorsGlobalStats(): Promise<CreatorsGlobalStats> {
-  const { data, total } = await creatorsApi.list({
+  // First page also tells us the absolute total. Once we know the
+  // total we can request the remaining pages in parallel.
+  const firstPage = await creatorsApi.list({
     // No search filter — these are global counts. If the user types
     // in the search box, the KPI tiles should stay stable.
     offset: 0,
-    limit: STATS_LIMIT_CAP,
+    limit: PAGE_SIZE,
   });
 
+  const pagesNeeded = Math.min(
+    MAX_PAGES,
+    Math.ceil(firstPage.total / PAGE_SIZE),
+  );
+
+  // Build the list of additional pages (skip page 0, we already have it).
+  const remainingPagePromises: Promise<typeof firstPage>[] = [];
+  for (let p = 1; p < pagesNeeded; p++) {
+    remainingPagePromises.push(
+      creatorsApi.list({ offset: p * PAGE_SIZE, limit: PAGE_SIZE }),
+    );
+  }
+  const remainingPages = await Promise.all(remainingPagePromises);
+
+  // Count predicates across every page we fetched.
   let activeDealCount = 0;
   let liveCount = 0;
-  for (const c of data) {
-    if (
-      c.current_deal?.status === "active" ||
-      c.current_deal?.status === "scheduled"
-    ) {
-      activeDealCount += 1;
+  const tallyPage = (rows: typeof firstPage.data) => {
+    for (const c of rows) {
+      if (
+        c.current_deal?.status === "active" ||
+        c.current_deal?.status === "scheduled"
+      ) {
+        activeDealCount += 1;
+      }
+      if (c.active_session_id !== null) {
+        liveCount += 1;
+      }
     }
-    if (c.active_session_id !== null) {
-      liveCount += 1;
-    }
-  }
+  };
+  tallyPage(firstPage.data);
+  for (const pg of remainingPages) tallyPage(pg.data);
 
   return {
     // `total` from the backend is the absolute count (not affected
-    // by the limit). Use it directly so the tile stays accurate
-    // even if the creator pool grows past STATS_LIMIT_CAP.
-    totalCreators: total,
+    // by per-page paging). Use it directly so the tile stays
+    // accurate even if MAX_PAGES caps the count traversal.
+    totalCreators: firstPage.total,
     activeDealCount,
     liveCount,
   };
