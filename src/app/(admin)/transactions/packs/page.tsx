@@ -1,9 +1,13 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { Package } from "lucide-react";
-import { getTransactions } from "@/lib/queries/transactions";
+import {
+  getTransactions,
+  type TransactionSortMode,
+} from "@/lib/queries/transactions";
 import { requirePageAccess } from "@/lib/dal";
 import { TransactionsDataTable } from "../data-table";
+import { columns as packColumns } from "./columns";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -21,6 +25,9 @@ const STATUS_TABS = [
 ];
 
 const TYPES = ["pack_opening"];
+// Whitelist of accepted `sortBy` values so a bad URL falls through
+// to recency-order rather than 500'ing in the query layer.
+const SORT_MODES: TransactionSortMode[] = ["recent", "pack_multiplier"];
 
 export default async function PackTransactionsPage({
   searchParams,
@@ -32,6 +39,10 @@ export default async function PackTransactionsPage({
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
   const tab = params.tab || "all";
+  const rawSort = params.sortBy;
+  const sortBy: TransactionSortMode = (
+    rawSort && (SORT_MODES as string[]).includes(rawSort) ? rawSort : "recent"
+  ) as TransactionSortMode;
 
   const result = await getTransactions({
     page,
@@ -39,6 +50,7 @@ export default async function PackTransactionsPage({
     search: params.search,
     types: TYPES,
     status: tab === "all" ? undefined : tab,
+    sortBy,
   });
 
   return (
@@ -77,10 +89,28 @@ export default async function PackTransactionsPage({
         <Suspense fallback={<Skeleton className="h-10 w-full" />}>
           <DataTableToolbar
             searchPlaceholder="Search by user ID, username, or transaction ID..."
+            filters={[
+              {
+                // Sort dropdown — "Highest Multiplier" runs an SQL
+                // CTE that ranks completed pack openings by
+                // `payout / bet`. Surfaces the lucky $0.10 → $1k
+                // pulls at the top.
+                name: "Sort",
+                paramKey: "sortBy",
+                allLabel: "Recent",
+                options: [
+                  { label: "Recent", value: "recent" },
+                  {
+                    label: "Highest Multiplier",
+                    value: "pack_multiplier",
+                  },
+                ],
+              },
+            ]}
           />
         </Suspense>
         <FadeIn>
-          <TransactionsDataTable data={result.data} />
+          <TransactionsDataTable data={result.data} columns={packColumns} />
         </FadeIn>
         <DataTablePagination
           page={result.page}

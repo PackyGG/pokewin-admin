@@ -63,6 +63,14 @@ export type TransactionListItem = {
    * against admin_user_tags.
    */
   userTags: UserTagValue[];
+  /**
+   * Game-session multiplier: `payout / bet`. Populated for pack-
+   * opening + battle-bet rows (any row whose linked game_session
+   * has card-value PF results). Null on rows where it doesn't apply
+   * (deposits, withdrawals, manual adjustments). Used by the
+   * "Highest Multiplier" sort filter on /transactions/packs.
+   */
+  multiplier: number | null;
 };
 
 /**
@@ -363,6 +371,9 @@ export async function getDepositTransactions(params: {
       // the BorrowBadge cell renders empty.
       borrowPercentage: null,
       borrowedAmountUsd: null,
+      // Multiplier is a game-session concept — doesn't apply to
+      // deposit / withdrawal / shipping-fee rows.
+      multiplier: null,
     };
   });
 
@@ -375,6 +386,22 @@ export async function getDepositTransactions(params: {
   };
 }
 
+/**
+ * Sort modes for the ledger transactions list.
+ *   • recent           — newest first (default site-wide behaviour).
+ *   • pack_multiplier  — pack-openings sorted by `payout / bet`
+ *                        DESC. Forces `types = ['pack_opening']`
+ *                        because multiplier is a game-session
+ *                        concept; admins typically reach this from
+ *                        /transactions/packs. Uses a SQL CTE pre-
+ *                        cap (top 500 by multiplier) then loads
+ *                        full rows for those IDs. Same pattern as
+ *                        the /battles "Biggest Hit" sort.
+ */
+export type TransactionSortMode = "recent" | "pack_multiplier";
+
+const PACK_MULTIPLIER_CAP = 500;
+
 export async function getTransactions(params: {
   page?: number;
   perPage?: number;
@@ -384,8 +411,19 @@ export async function getTransactions(params: {
   status?: string;
   minAmount?: number;
   maxAmount?: number;
+  sortBy?: TransactionSortMode;
 }): Promise<PaginatedResult<TransactionListItem>> {
-  const { page = 1, perPage = 20, search, type, types, status, minAmount, maxAmount } = params;
+  const {
+    page = 1,
+    perPage = 20,
+    search,
+    type,
+    types,
+    status,
+    minAmount,
+    maxAmount,
+    sortBy = "recent",
+  } = params;
   const db = await getDb();
 
   const where: Prisma.ledger_transactionsWhereInput = {};
@@ -419,44 +457,121 @@ export async function getTransactions(params: {
   // wide JSON `metadata` column plus blockchain/fireblocks/source/dest
   // columns that the table cells don't render. The page only renders the
   // fields below; everything else is detail-page concerns.
-  const [transactions, total] = await Promise.all([
-    db.ledger_transactions.findMany({
-      where,
-      orderBy: { created_at: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
+  const SELECT = {
+    id: true,
+    user_id: true,
+    type: true,
+    balance_before: true,
+    balance_after: true,
+    status: true,
+    description: true,
+    created_at: true,
+    crypto_asset: true,
+    crypto_amount: true,
+    user: { select: { username: true, image: true } },
+    game_sessions_ledger_transactions_game_session_idTogame_sessions: {
       select: {
-        id: true,
-        user_id: true,
-        type: true,
-        balance_before: true,
-        balance_after: true,
-        status: true,
-        description: true,
-        created_at: true,
-        crypto_asset: true,
-        crypto_amount: true,
-        user: { select: { username: true, image: true } },
-        game_sessions_ledger_transactions_game_session_idTogame_sessions: {
+        bet_amount: true,
+        provably_fair_results: {
+          // result_metadata carries the per-result `borrow_percentage`
+          // for solo pack opens; for battle rows it's stored on the
+          // battle (separate join below). battle_id distinguishes the
+          // two so we don't accidentally double-attribute.
           select: {
-            bet_amount: true,
-            provably_fair_results: {
-              // result_metadata carries the per-result `borrow_percentage`
-              // for solo pack opens; for battle rows it's stored on the
-              // battle (separate join below). battle_id distinguishes the
-              // two so we don't accidentally double-attribute.
-              select: {
-                battle_id: true,
-                result_metadata: true,
-                user_inventory: { select: { value_at_obtained: true } },
-              },
-            },
+            battle_id: true,
+            result_metadata: true,
+            user_inventory: { select: { value_at_obtained: true } },
           },
         },
       },
-    }),
-    db.ledger_transactions.count({ where }),
-  ]);
+    },
+  } as const;
+
+  let transactions: Prisma.ledger_transactionsGetPayload<{
+    select: typeof SELECT;
+  }>[];
+  let total: number;
+
+  if (sortBy === "pack_multiplier") {
+    // SQL CTE pre-cap by computed multiplier (payout / bet). Same
+    // pattern as /battles "Biggest Hit": compute the metric in SQL,
+    // pull the top N IDs, then load the full rows. Without this,
+    // sorting by a derived field would require pulling every
+    // pack_opening row into memory.
+    //
+    // bet     = lt.amount (positive — debits are stored absolute in
+    //           this DB; the sign lives in balance_after-before).
+    // payout  = SUM(user_inventory.value_at_obtained) for the PF
+    //           results on the linked game_session. Cards sold/
+    //           exchanged BEFORE the snapshot still show up because
+    //           the user_inventory row stays — its sold_at/
+    //           exchanged_at columns are timestamps, not deletes.
+    //
+    // The CTE deliberately ignores status filter / search / minAmount
+    // — those are applied in the secondary findMany so combining
+    // them with the multiplier sort still narrows the result set
+    // honestly (potentially fewer than perPage rows on a narrow
+    // search, which is fine for the "find the biggest hit matching X"
+    // use case).
+    const topRows = await db.$queryRaw<{ id: string }[]>`
+      WITH pack_multipliers AS (
+        SELECT
+          lt.id,
+          lt.amount::numeric AS bet,
+          COALESCE(SUM(COALESCE(ui.value_at_obtained::numeric, 0)), 0) AS payout
+        FROM ledger_transactions lt
+        LEFT JOIN game_sessions gs ON gs.id = lt.game_session_id AND gs.game_type = 'pack'
+        LEFT JOIN provably_fair_results pf ON pf.game_session_id = gs.id
+        LEFT JOIN user_inventory ui ON ui.id = pf.inventory_item_id
+        WHERE lt.type = 'pack_opening'
+          AND lt.status = 'completed'
+          AND lt.amount::numeric > 0
+        GROUP BY lt.id, lt.amount
+      )
+      SELECT id::text AS id
+      FROM pack_multipliers
+      WHERE payout > 0
+      ORDER BY (payout / bet) DESC NULLS LAST
+      LIMIT ${PACK_MULTIPLIER_CAP}
+    `;
+    const topIds = topRows.map((r) => r.id);
+
+    // Apply the user's WHERE filters (search / status / minAmount)
+    // ON TOP of the pre-capped ID list — keeps the sort honest if
+    // the admin combines it with other filters.
+    const filterWhere: Prisma.ledger_transactionsWhereInput = {
+      ...where,
+      id: { in: topIds },
+    };
+    const [found, totalCount] = await Promise.all([
+      topIds.length === 0
+        ? Promise.resolve([])
+        : db.ledger_transactions.findMany({
+            where: filterWhere,
+            select: SELECT,
+          }),
+      db.ledger_transactions.count({ where: filterWhere }),
+    ]);
+    // Reorder to match the SQL CTE's multiplier order.
+    const byId = new Map(found.map((t) => [t.id, t]));
+    const orderedFull = topIds
+      .map((id) => byId.get(id))
+      .filter((t): t is NonNullable<typeof t> => t != null);
+    const sliceStart = (page - 1) * perPage;
+    transactions = orderedFull.slice(sliceStart, sliceStart + perPage);
+    total = totalCount;
+  } else {
+    [transactions, total] = await Promise.all([
+      db.ledger_transactions.findMany({
+        where,
+        orderBy: { created_at: "desc" },
+        skip: (page - 1) * perPage,
+        take: perPage,
+        select: SELECT,
+      }),
+      db.ledger_transactions.count({ where }),
+    ]);
+  }
 
   // Battle borrow lookup — for any battle_bet / battle_sponsorship row
   // that has a linked PF result with a battle_id, we need the
@@ -505,6 +620,7 @@ export async function getTransactions(params: {
       let payout: number | null = null;
       let borrowPercentage: number | null = null;
       let borrowedAmountUsd: number | null = null;
+      let multiplier: number | null = null;
       if (gs) {
         const cost = toNumber(gs.bet_amount);
         payout = gs.provably_fair_results.reduce(
@@ -513,6 +629,12 @@ export async function getTransactions(params: {
         );
         if (cost > 0) {
           houseEdge = ((cost - payout) / cost) * 100;
+          // `payout / bet` — from the user's POV, what they got back
+          // vs what they paid in for this game session. >1 means they
+          // hit, <1 means the house kept some. Surfaced on the
+          // packs transactions page for the "Highest Multiplier"
+          // sort.
+          multiplier = payout / cost;
         }
         // Borrow %: pull from the linked battle for battle rows, else
         // from the first PF result's metadata for solo opens. All PF
@@ -564,6 +686,7 @@ export async function getTransactions(params: {
         userDeposit3d: null,
         // Tags only fetched on the deposits-specific path.
         userTags: [],
+        multiplier,
       };
     }),
     total,
