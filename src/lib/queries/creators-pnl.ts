@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { WAGER_TYPES_SQL } from "./_wager-payout-types";
 import type {
   CreatorLifetimePnl,
   CreatorPnlData,
@@ -237,6 +238,7 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
           total_deposits: string;
           manual_withdrawals: string;
           card_withdrawals: string;
+          total_wagered: string;
           current_balance: string;
           current_inventory: string;
           current_vouchers: string;
@@ -264,6 +266,12 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
               WHERE cwr.user_id IN (${REFERRED_USERS_SQL})
                 AND cwr.status IN ('completed', 'shipped')
             ) AS card_withdrawals,
+            (SELECT COALESCE(SUM(lt.amount::numeric), 0)::text
+               FROM ledger_transactions lt
+              WHERE lt.user_id IN (${REFERRED_USERS_SQL})
+                AND lt.status = 'completed'
+                AND lt.type IN ${WAGER_TYPES_SQL}
+            ) AS total_wagered,
             (SELECT COALESCE(SUM(b.available_balance::numeric + b.locked_balance::numeric), 0)::text
                FROM balances b
               WHERE b.user_id IN (${REFERRED_USERS_SQL})
@@ -328,12 +336,14 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
   const totalWithdrawals =
     Number(lr?.manual_withdrawals ?? 0) +
     Number(lr?.card_withdrawals ?? 0);
+  const totalWagered = Number(lr?.total_wagered ?? 0);
   const currentBalance = Number(lr?.current_balance ?? 0);
   const currentInventory = Number(lr?.current_inventory ?? 0);
   const currentVouchers = Number(lr?.current_vouchers ?? 0);
   const lifetime: CreatorLifetimePnl = {
     totalDeposits,
     totalWithdrawals,
+    totalWagered,
     currentBalance,
     currentInventory,
     currentVouchers,
