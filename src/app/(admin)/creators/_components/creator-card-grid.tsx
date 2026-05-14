@@ -190,6 +190,12 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
     creator.username ?? creator.email ?? creator.id.slice(0, 8);
   const live = creator.active_session_id !== null;
   const deal = creator.current_deal;
+  // "Active" = has a deal in the active state. Distinct from "Live"
+  // (currently streaming via `active_session_id`). A creator can be
+  // Active (deal in progress this week) without being Live (not on
+  // stream right now), so both indicators can co-exist. Scheduled
+  // deals NOT counted here — they're not active yet.
+  const hasActiveDeal = deal?.status === "active";
   const initials = display.slice(0, 2).toUpperCase();
 
   return (
@@ -224,6 +230,26 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
               >
                 {display}
               </Link>
+              {/* "Active" deal indicator — steady emerald dot. Renders
+                  whenever the creator has a deal currently in the
+                  active state (this week's deal is running). Visually
+                  distinct from the pulsing "Live" badge below so
+                  both can show side-by-side on a creator who has a
+                  live deal AND is mid-stream. */}
+              {hasActiveDeal && (
+                <span
+                  className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
+                  title="Deal is currently active this week"
+                >
+                  <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
+                  Active
+                </span>
+              )}
+              {/* "Live" streaming indicator — pulsing emerald dot.
+                  Fires when the creator has an open session (kick
+                  stream / deal-day session started). Separate signal
+                  from "Active deal" — a creator can have an active
+                  deal without being live, and vice versa. */}
               {live && (
                 <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
                   <span className="relative flex size-1.5">
