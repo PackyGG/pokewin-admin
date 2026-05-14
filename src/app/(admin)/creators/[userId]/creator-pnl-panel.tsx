@@ -1,4 +1,4 @@
-import { Info, LineChart, TrendingDown, TrendingUp } from "lucide-react";
+import { Coins, Info, LineChart, TrendingDown, TrendingUp } from "lucide-react";
 
 import { getCreatorPnl } from "@/lib/queries/creators";
 import { SectionHeading, StatPanel, PanelRow } from "@/components/modern-panels";
@@ -81,7 +81,9 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
         }
         accent={lifetimeAccent}
       >
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          {/* Left: PnL hero. The big number admins came here to read,
+              colour + sign carry the win/loss state. */}
           <div className="space-y-1">
             <div
               className={cn(
@@ -106,6 +108,26 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
               </span>
             </p>
           </div>
+          {/* Right: Lifetime Wagered — the volume figure that produced
+              the PnL on the left. Neutral colour (cyan accent on the
+              label icon) — wager volume itself isn't a win/loss
+              signal, just scale. Hidden when no wagers exist so the
+              tile stays clean for brand-new creators with no
+              activity. */}
+          {data.lifetime.totalWagered > 0 && (
+            <div
+              className="space-y-1 text-left sm:text-right"
+              title="Sum of every completed wager (pack opens + battle bets + battle sponsorships + withdrawal shipping fees) from this creator's referred users — lifetime."
+            >
+              <div className="text-xl font-bold tabular-nums leading-none sm:text-2xl">
+                {formatCurrency(data.lifetime.totalWagered)}
+              </div>
+              <p className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                <Coins className="size-3" />
+                Lifetime Wagered
+              </p>
+            </div>
+          )}
         </div>
         {/* Prominent disclaimer about what THIS number does NOT
             include — admins were misreading the result as "total

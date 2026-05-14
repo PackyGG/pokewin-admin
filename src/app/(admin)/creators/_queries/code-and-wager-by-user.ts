@@ -151,6 +151,7 @@ const EMPTY_PNL: CreatorCodeAndWager["pnlByPeriod"] = {
 const EMPTY_LIFETIME: CreatorLifetimePnl = {
   totalDeposits: 0,
   totalWithdrawals: 0,
+  totalWagered: 0,
   currentBalance: 0,
   currentInventory: 0,
   currentVouchers: 0,
@@ -640,6 +641,15 @@ export async function getCodeAndWagerByUser(
     return {
       totalDeposits,
       totalWithdrawals,
+      // Lifetime wager isn't part of the list-page batched fetch
+      // (the per-card UI doesn't render it — only the detail page's
+      // hero tile does). The list cards already surface a
+      // wagerVolumeUsd from the precomputed
+      // affiliate_accounts.total_wager_volume_usd counter. Keep 0
+      // here to satisfy the type contract; if a future list-card
+      // change wants to render this number, add the batched ledger
+      // SUM alongside the existing lifetime queries.
+      totalWagered: 0,
       currentBalance,
       currentInventory,
       currentVouchers,

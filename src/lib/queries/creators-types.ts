@@ -83,6 +83,17 @@ export type CreatorLifetimePnl = {
    */
   totalWithdrawals: number;
   /**
+   * Lifetime gross wager volume from the referred-user pool. Sum of
+   * every completed ledger transaction of a wager type (`pack_opening`,
+   * `battle_bet`, `battle_sponsorship`, `withdrawal_shipping_fee` — same
+   * canonical set defined in `_wager-payout-types.ts`).
+   *
+   * NOT used in the PnL formula itself — pure volume figure. Surfaced
+   * next to the PnL on the All-time hero so admins can see "we made
+   * $X off $Y of wagers" at a glance.
+   */
+  totalWagered: number;
+  /**
    * Current on-site balance (available + locked) for the referred-user
    * pool — house liability snapshot.
    */

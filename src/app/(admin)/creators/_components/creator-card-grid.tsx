@@ -128,10 +128,17 @@ export type CreatorWithSocials = CreatorListItem & {
    *       − currentBalance − currentInventory − currentVouchers
    * Drives the "Lifetime" tile on the per-card PnL strip. Null only
    * when the batched lifetime query failed (best-effort).
+   *
+   * `totalWagered` mirrors the same field on
+   * `lib/queries/creators-types.ts:CreatorLifetimePnl` but is
+   * always 0 on the list-page path — the per-card UI doesn't render
+   * it (wagerVolumeUsd from affiliate_accounts is shown separately).
+   * Field is kept for type-shape parity with the detail page.
    */
   lifetimePnl: {
     totalDeposits: number;
     totalWithdrawals: number;
+    totalWagered: number;
     currentBalance: number;
     currentInventory: number;
     currentVouchers: number;
