@@ -43,10 +43,12 @@ import { parseCreatorDetailSearchParams } from "./_lib/search-params";
 import { getCreatorDealData } from "./_queries/get-creator-deal-data";
 import { DealTabs } from "./_components/deal-tabs";
 import { DealsTab } from "./_components/deals-tab";
+import { DealsSubTabs } from "./_components/deals-sub-tabs";
 import { SessionsTab } from "./_components/sessions-tab";
 import { PendingTab } from "./_components/pending-tab";
 import { DealFormDialog } from "./_components/deal-form-dialog";
 import { ApiKeyDialog } from "./_components/api-key-dialog";
+import { listMultiplierDealsForCreator } from "../multiplier-actions";
 
 export const metadata = { title: "Creator Detail" };
 
@@ -64,8 +66,10 @@ export default async function CreatorDetailPage({
   // Header data still comes from the legacy query for now — it carries
   // the profile fields (username/email/code/role/socials) the backend's
   // admin API doesn't expose yet. Deal data is fetched fresh from the
-  // backend in parallel with per-tab pagination/filters.
-  const [profile, dealData] = await Promise.all([
+  // backend in parallel with per-tab pagination/filters. Multiplier
+  // deals come in as a separate page-1 slice (25 most recent) — they're
+  // rendered as grouped sections rather than a paginated table.
+  const [profile, dealData, multiplierDealsPage] = await Promise.all([
     getCreatorDetail(userId),
     getCreatorDealData(userId, {
       dealsPage: sp.dealsPage,
@@ -75,9 +79,15 @@ export default async function CreatorDetailPage({
       sessionsStatus: sp.sessionsStatus,
       pendingStatus: sp.pendingStatus,
     }),
+    listMultiplierDealsForCreator(userId, { offset: 0, limit: 25 }).catch(
+      () => null,
+    ),
   ]);
 
   if (!profile) notFound();
+
+  const multiplierDeals = multiplierDealsPage?.data ?? [];
+  const multiplierCount = multiplierDealsPage?.total ?? 0;
 
   // Non-blocking: socials cache refresh for header display.
   refreshStaleSocials(userId).catch(() => {});
@@ -278,12 +288,22 @@ export default async function CreatorDetailPage({
             <DealTabs
               value={sp.tab}
               counts={{
-                deals: deals.total,
+                deals: deals.total + multiplierCount,
                 sessions: sessions.total,
                 pending: pending.length,
               }}
               action={<DealFormDialog userId={profile.userId} />}
-              dealsPanel={<DealsTab userId={profile.userId} deals={deals} />}
+              dealsPanel={
+                <DealsSubTabs
+                  userId={profile.userId}
+                  fillCount={deals.total}
+                  multiplierCount={multiplierCount}
+                  fillPanel={
+                    <DealsTab userId={profile.userId} deals={deals} />
+                  }
+                  multiplierDeals={multiplierDeals}
+                />
+              }
               sessionsPanel={
                 <SessionsTab
                   userId={profile.userId}
