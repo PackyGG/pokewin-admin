@@ -53,6 +53,7 @@ export const AnyNull = runtime.AnyNull
 export const ModelName = {
   admin_users: 'admin_users',
   admin_giveaway_actions: 'admin_giveaway_actions',
+  admin_user_tags: 'admin_user_tags',
   excluded_users: 'excluded_users',
   admin_roles: 'admin_roles',
   admin_sessions: 'admin_sessions',
@@ -71,7 +72,6 @@ export const ModelName = {
   admin_settings: 'admin_settings',
   admin_shifts: 'admin_shifts',
   admin_shift_assignments: 'admin_shift_assignments',
-  creator_deal_estimates: 'creator_deal_estimates',
   salary_employees: 'salary_employees',
   salary_payouts: 'salary_payouts'
 } as const
@@ -128,6 +128,17 @@ export const Admin_giveaway_actionsScalarFieldEnum = {
 } as const
 
 export type Admin_giveaway_actionsScalarFieldEnum = (typeof Admin_giveaway_actionsScalarFieldEnum)[keyof typeof Admin_giveaway_actionsScalarFieldEnum]
+
+
+export const Admin_user_tagsScalarFieldEnum = {
+  id: 'id',
+  target_user_id: 'target_user_id',
+  tag: 'tag',
+  set_by_admin_id: 'set_by_admin_id',
+  created_at: 'created_at'
+} as const
+
+export type Admin_user_tagsScalarFieldEnum = (typeof Admin_user_tagsScalarFieldEnum)[keyof typeof Admin_user_tagsScalarFieldEnum]
 
 
 export const Excluded_usersScalarFieldEnum = {
@@ -398,29 +409,6 @@ export const Admin_shift_assignmentsScalarFieldEnum = {
 } as const
 
 export type Admin_shift_assignmentsScalarFieldEnum = (typeof Admin_shift_assignmentsScalarFieldEnum)[keyof typeof Admin_shift_assignmentsScalarFieldEnum]
-
-
-export const Creator_deal_estimatesScalarFieldEnum = {
-  id: 'id',
-  name: 'name',
-  daily_fill_usd: 'daily_fill_usd',
-  withdrawal_cap_usd: 'withdrawal_cap_usd',
-  withdrawal_percent: 'withdrawal_percent',
-  leaderboard_cost_usd: 'leaderboard_cost_usd',
-  packy_paid_percent: 'packy_paid_percent',
-  deal_length_weeks: 'deal_length_weeks',
-  video_amount_usd: 'video_amount_usd',
-  video_percent: 'video_percent',
-  video_fills_per_week: 'video_fills_per_week',
-  tip_balance_usd: 'tip_balance_usd',
-  battle_balance_usd: 'battle_balance_usd',
-  notes: 'notes',
-  created_at: 'created_at',
-  updated_at: 'updated_at',
-  created_by_id: 'created_by_id'
-} as const
-
-export type Creator_deal_estimatesScalarFieldEnum = (typeof Creator_deal_estimatesScalarFieldEnum)[keyof typeof Creator_deal_estimatesScalarFieldEnum]
 
 
 export const Salary_employeesScalarFieldEnum = {
