@@ -1,10 +1,17 @@
-import { AlertTriangle, CalendarCheck, Megaphone, Radio, Users } from "lucide-react";
+import {
+  AlertTriangle,
+  CalendarCheck,
+  LineChart,
+  Megaphone,
+  Radio,
+  Users,
+} from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
 import { FadeIn } from "@/components/fade-in";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
-import { formatNumber } from "@/lib/utils/format";
+import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { BackendApiError, BackendNetworkError } from "@/lib/backend-api";
 import { PageHero, KpiTile, SectionHeading } from "@/components/modern-panels";
 
@@ -147,18 +154,48 @@ export default async function CreatorsPage({
       </PageHero>
 
       {result && (
-        // KPI strip — 3 global signals: total creators, how many
-        // have an active/scheduled deal right now, and how many are
-        // live on-stream right now. All three are GLOBAL (not
-        // affected by search / pagination), so the numbers stay
-        // stable as the admin types in the search box.
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        // KPI strip — 4 global signals: total creators, how many
+        // have an active/scheduled deal right now, how many are
+        // live on-stream right now, and the combined lifetime
+        // House P&L across every creator's referred-user pool.
+        // All four are GLOBAL (not affected by search / pagination),
+        // so the numbers stay stable as the admin types in the
+        // search box.
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <KpiTile
             label="Total Creators"
             value={formatNumber(stats?.totalCreators ?? result.total)}
             icon={Megaphone}
             accent="pink"
           />
+          {/* Combined lifetime PnL — sits next to Total Creators per
+              admin spec. Color flips with the sign (emerald = house
+              gain, rose = house loss). Falls back to "—" if the
+              query failed so the tile doesn't render blank. */}
+          {(() => {
+            const pnl = stats?.lifetimePnl?.pnl;
+            const accent: "emerald" | "rose" | "blue" =
+              pnl == null
+                ? "blue"
+                : pnl > 0
+                  ? "emerald"
+                  : pnl < 0
+                    ? "rose"
+                    : "blue";
+            return (
+              <KpiTile
+                label="Global PnL"
+                value={
+                  pnl == null
+                    ? "—"
+                    : `${pnl > 0 ? "+" : ""}${formatCurrency(pnl)}`
+                }
+                sub="All creators' affiliates combined, lifetime"
+                icon={LineChart}
+                accent={accent}
+              />
+            );
+          })()}
           <KpiTile
             label="Active Deals"
             value={
