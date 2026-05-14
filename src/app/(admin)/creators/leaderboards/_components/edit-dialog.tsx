@@ -237,8 +237,8 @@ export function EditDialog({ open, onOpenChange, leaderboard }: Props) {
         if (startChanged) payload.start_date = startISO;
         if (endChanged) payload.end_date = endISO;
         if (tiersChanged) {
-            if (newTiersSorted.length === 0) {
-                toast.error("At least one prize tier is required");
+            if (newTiersSorted.length < 5) {
+                toast.error("At least 5 prize tiers are required");
                 return;
             }
             if (tierSumExceeds) {

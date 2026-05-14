@@ -117,7 +117,7 @@ const createSchema = z.object({
                 prize_amount_usd: z.number().positive(),
             }),
         )
-        .min(1, "At least one prize tier is required"),
+        .min(5, "At least 5 prize tiers are required"),
 });
 
 const editSchema = z.object({
@@ -133,7 +133,7 @@ const editSchema = z.object({
                 prize_amount_usd: z.number().positive(),
             }),
         )
-        .min(1)
+        .min(5)
         .optional(),
 });
 

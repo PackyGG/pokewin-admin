@@ -275,8 +275,8 @@ export function CreateDialog({ trigger, fixedCreatorUserId }: Props) {
             )
             .sort((a, b) => a.position - b.position);
 
-        if (tiersParsed.length === 0) {
-            toast.error("At least one prize tier is required");
+        if (tiersParsed.length < 5) {
+            toast.error("At least 5 prize tiers are required");
             return;
         }
         if (tierSumExceeds) {
