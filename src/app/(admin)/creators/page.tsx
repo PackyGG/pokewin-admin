@@ -32,11 +32,13 @@ import {
   getCreatorsGlobalStats,
   type CreatorsGlobalStats,
 } from "./_queries/creators-stats";
+import { fetchAllCreatorsSortedByLifetimePnl } from "./_queries/creators-by-lifetime-pnl";
 import {
   CreatorCardGrid,
   type CreatorWithSocials,
 } from "./_components/creator-card-grid";
 import { AddCreatorDialog } from "./_components/add-creator-dialog";
+import { CreatorsSortControl } from "./_components/creators-sort-control";
 
 export const metadata = { title: "Creators" };
 
@@ -65,11 +67,11 @@ export default async function CreatorsPage({
   let stats: CreatorsGlobalStats | null = null;
   let loadError: { title: string; detail: string } | null = null;
   try {
-    // Wave 1 — creators list + socials + global stats (independent).
-    // Socials + stats are best-effort; backend hiccup falls back to
-    // empty / null.
-    const [creators, socials, globalStats] = await Promise.all([
-      listCreatorsForPage(params),
+    // Wave 1 — socials + global stats are needed for every sort mode.
+    // The creators list itself diverges by sortBy: "recent" uses the
+    // cheap backend-paginated fetch; pnl_* forces a full pool walk
+    // because PnL isn't a backend-side sortable field.
+    const [socials, globalStats] = await Promise.all([
       getApprovedSocialsByUser().catch((e) => {
         console.error(
           "[creators] socials fetch failed (rendering without):",
@@ -85,23 +87,61 @@ export default async function CreatorsPage({
         return null;
       }),
     ]);
-    result = creators;
     socialsByUser = socials;
     stats = globalStats;
 
-    // Wave 2 — code + lifetime wager from the main DB, keyed on the
-    // user IDs we just got from the backend list. Best-effort too —
-    // if main DB blows up the cards still render with the rest of
-    // the data and just show "—" for code/wager.
-    codeAndWagerByUser = await getCodeAndWagerByUser(
-      creators.data.map((c) => c.id),
-    ).catch((e) => {
-      console.error(
-        "[creators] code+wager fetch failed (rendering without):",
-        e,
-      );
-      return new Map<string, CreatorCodeAndWager>();
-    });
+    if (params.sortBy === "pnl_desc" || params.sortBy === "pnl_asc") {
+      // Heavy path — sort by lifetime PnL. fetchAll handles backend
+      // pagination + PnL batch fetch + sort; we slice client-side
+      // for pagination here so the existing DataTablePagination
+      // numbers stay accurate.
+      const sortedAll = await fetchAllCreatorsSortedByLifetimePnl({
+        direction: params.sortBy === "pnl_desc" ? "desc" : "asc",
+        search: params.search,
+      });
+      const start = (params.page - 1) * params.perPage;
+      const pageRows = sortedAll.data.slice(start, start + params.perPage);
+      const total = sortedAll.total;
+      // The lifetimePnl number we surface in `lifetimePnl` (full
+      // CreatorLifetimePnl object) still needs the rest of the
+      // code+wager shape so the cards render fully. Reuse the same
+      // batched helper on just the page's IDs.
+      const codeAndWager = await getCodeAndWagerByUser(
+        pageRows.map((c) => c.id),
+      ).catch((e) => {
+        console.error(
+          "[creators] code+wager fetch failed (rendering without):",
+          e,
+        );
+        return new Map<string, CreatorCodeAndWager>();
+      });
+      codeAndWagerByUser = codeAndWager;
+      result = {
+        data: pageRows,
+        total,
+        page: params.page,
+        perPage: params.perPage,
+        totalPages: Math.max(1, Math.ceil(total / params.perPage)),
+      };
+    } else {
+      // Default path — backend-paginated 20-row fetch. Cheap.
+      const creators = await listCreatorsForPage(params);
+      result = creators;
+
+      // Wave 2 — code + lifetime wager from the main DB, keyed on
+      // the user IDs we just got from the backend list. Best-effort
+      // too — if main DB blows up the cards still render with the
+      // rest of the data and just show "—" for code/wager.
+      codeAndWagerByUser = await getCodeAndWagerByUser(
+        creators.data.map((c) => c.id),
+      ).catch((e) => {
+        console.error(
+          "[creators] code+wager fetch failed (rendering without):",
+          e,
+        );
+        return new Map<string, CreatorCodeAndWager>();
+      });
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (err instanceof BackendNetworkError) {
@@ -149,7 +189,14 @@ export default async function CreatorsPage({
               </p>
             </div>
           </div>
-          <AddCreatorDialog />
+          <div className="flex items-center gap-2">
+            {/* Sort by lifetime PnL (Highest / Lowest) or default
+                creation-order. Lifetime PnL sort fetches every
+                creator + their PnL into memory and slices client-
+                side — see fetchAllCreatorsSortedByLifetimePnl. */}
+            <CreatorsSortControl />
+            <AddCreatorDialog />
+          </div>
         </div>
       </PageHero>
 
@@ -254,13 +301,12 @@ export default async function CreatorsPage({
                   lifetimePnl: cw?.lifetimePnl ?? null,
                 };
               })
-              // Pin creators with an active or scheduled deal to the top of
-              // the page. The backend's /admin/creators endpoint doesn't
-              // expose a sort param yet, so this is a per-page client-side
-              // re-order — within a page it surfaces "who has a deal right
-              // now". Stable Array.prototype.sort preserves the backend's
-              // creation-order tiebreak.
+              // Pin creators with an active or scheduled deal to the
+              // top of the page — ONLY in the default "recent" sort.
+              // When the user is explicitly sorting by PnL, this
+              // re-order would scramble the PnL ranking.
               .sort((a, b) => {
+                if (params.sortBy !== "recent") return 0;
                 const aActive =
                   a.current_deal?.status === "active" ||
                   a.current_deal?.status === "scheduled"
