@@ -1,4 +1,4 @@
-import { Infinity as InfinityIcon, LineChart, TrendingDown, TrendingUp } from "lucide-react";
+import { Info, LineChart, TrendingDown, TrendingUp } from "lucide-react";
 
 import { getCreatorPnl } from "@/lib/queries/creators";
 import { SectionHeading, StatPanel, PanelRow } from "@/components/modern-panels";
@@ -64,10 +64,21 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
           to scan ("how much have we made off this creator
           lifetime"). Spans full width, larger heading, breakdown
           rows below the hero number. Period tiles below stay for
-          drill-in on shorter horizons. */}
+          drill-in on shorter horizons.
+
+          The icon flips with the result — TrendingUp when we won
+          (emerald), TrendingDown when we lost (rose), LineChart on
+          zero. Matches the per-period tiles below so win/loss is
+          obvious at a glance even before reading the colour. */}
       <StatPanel
         title="All-time"
-        icon={InfinityIcon}
+        icon={
+          isLifetimeWin
+            ? TrendingUp
+            : isLifetimeLoss
+              ? TrendingDown
+              : LineChart
+        }
         accent={lifetimeAccent}
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -89,8 +100,26 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
             </div>
             <p className="text-xs text-muted-foreground">
               Lifetime House P&amp;L from this creator&apos;s affiliates
+              <br />
+              <span className="text-[10px]">
+                Positive (emerald) = we won · Negative (rose) = we lost
+              </span>
             </p>
           </div>
+        </div>
+        {/* Prominent disclaimer about what THIS number does NOT
+            include — admins were misreading the result as "total
+            creator profitability". Affiliates PnL is ONLY the
+            referrals-side P&L; commission / tips / fills paid TO
+            the creator live on the FinancialsCard. */}
+        <div className="mt-3 flex items-start gap-2 rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
+          <Info className="size-3.5 shrink-0 mt-0.5" />
+          <span>
+            Affiliates only — excludes creator deal cost (commission,
+            tips, fills, weekly fills). Combine with the
+            FinancialsCard&apos;s deal cost to get net creator
+            economics.
+          </span>
         </div>
         {/* Snapshot components — currentBalance / currentInventory /
             currentVouchers are RIGHT-NOW values (liability), not
