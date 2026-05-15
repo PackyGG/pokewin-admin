@@ -46,8 +46,13 @@ const html = await res.text();
 
 // Assertions. The online indicator rendered an aria-label "Live users
 // online" — its absence proves the top-bar count is gone. "Live
-// Deposits" is the new card's internal header; "Live Pulls" must be
-// gone entirely.
+// Deposits" is the deposits card's internal header; "Live Pulls" must
+// be gone entirely. "Packs opened" is unique to the Recent Activity
+// 24h stats strip — the 30-day chart legend says "Packs", not "Packs
+// opened" — and the three strip cells are unconditional siblings, so
+// that one label proves the whole strip rendered. The old
+// Activity24hCard rendered a "24h Activity" CardTitle; its absence
+// proves the tile was removed from the top.
 const checks = [
   ["HTTP 200", res.status === 200],
   ["Deposits feed present (Live Deposits)", html.includes("Live Deposits")],
@@ -57,6 +62,8 @@ const checks = [
     "Online-users indicator removed",
     !html.includes("Live users online") && !html.includes("aria-label=\"Live users online\""),
   ],
+  ["Recent Activity 24h stats strip present", html.includes("Packs opened")],
+  ["Old 24h Activity tile removed from top", !html.includes("24h Activity")],
 ];
 
 let allOk = true;

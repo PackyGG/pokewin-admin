@@ -337,6 +337,7 @@ async function dashboardStatsInner() {
     totalInventoryValue,
     packsOpened24h,
     battlesPlayed24h,
+    signups24h,
   ] = await Promise.all([
     // STAFF_ROLES (admin + support) excluded from every user count so the
     // KPI strip reads only real customers — matches staffRelation
@@ -499,6 +500,13 @@ async function dashboardStatsInner() {
         user: staffRelation,
       },
     }),
+    // Rolling-24h signup count — real users created in the last 24h.
+    // Pairs with packsOpened24h / battlesPlayed24h for the Recent
+    // Activity stats strip. staffRoleDirect (filter directly on the
+    // user table) matches the usersToday / Week / Month counts above.
+    db.user.count({
+      where: { ...staffRoleDirect, created_at: { gte: rolling24h } },
+    }),
   ]);
 
   const totalWagered = toNumber(balanceAggregates._sum?.total_wagered);
@@ -632,10 +640,11 @@ async function dashboardStatsInner() {
     activity: {
       totalPacksOpened: Number(activityTotals._sum?.opened_packs_count ?? 0),
       totalBattlesPlayed: Number(activityTotals._sum?.battles_played ?? 0),
-      // Rolling 24h counts — drive the "24h Activity" dashboard tile.
+      // Rolling 24h counts — drive the Recent Activity stats strip.
       // Real users only; admins / support / blacklisted accounts excluded.
       packsOpened24h,
       battlesPlayed24h,
+      signups24h,
     },
     dailyWagers: dailyWagers.map((d) => ({
       date: new Date(d.date).toISOString().split("T")[0],
