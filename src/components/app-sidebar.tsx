@@ -41,6 +41,7 @@ import {
   ChevronRight,
   FlaskConical,
   Ban,
+  Scale,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -101,6 +102,7 @@ const ICONS: Record<string, LucideIcon> = {
   Coins,
   FlaskConical,
   Ban,
+  Scale,
 };
 
 type NavItem = {
@@ -132,6 +134,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Dashboard", href: "/dashboard", icon: "LayoutDashboard" },
       { label: "Analytics", href: "/analytics", icon: "BarChart3" },
+      { label: "P&L", href: "/pnl", icon: "Scale" },
       // Top-level shortcut to the all-types ledger. The narrower
       // sub-views (Packs / Battles / Rewards) still live under the
       // Transactions group below — this entry is the catch-all entry

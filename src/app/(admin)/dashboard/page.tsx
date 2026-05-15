@@ -15,6 +15,7 @@ import { formatCurrency } from "@/lib/utils/format";
 import { StatCard } from "./stat-card";
 import {
   PnlStatCard,
+  Ggr24hStatCard,
   GgrStatCard,
   WagerStatCard,
   DepositsStatCard,
@@ -63,10 +64,12 @@ export default async function DashboardPage() {
           Mobile-first grid: ONE column at <sm so each card is full-
           width and the dollar value never truncates (these cards
           contain a 5-chip period selector + a hero currency value;
-          squeezing 2-up at 380px crushed both). 2-up at sm, 3 at md,
-          5 at lg. */}
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-5">
+          squeezing 2-up at 380px crushed both). 2-up at sm, 3 at lg,
+          6 at xl. PnL + 24h GGR (both selector-less) lead the row as
+          the "house profit" pair. */}
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-6">
         <PnlStatCard pnl={stats.realizedPnl} />
+        <Ggr24hStatCard ggr24h={stats.ggr["24h"]} />
         <GgrStatCard ggr={stats.ggr} />
         <WagerStatCard wagers={stats.wagers} />
         <DepositsStatCard

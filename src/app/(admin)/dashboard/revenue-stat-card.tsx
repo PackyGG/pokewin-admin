@@ -54,6 +54,46 @@ export function PnlStatCard({ pnl }: { pnl: number }) {
   );
 }
 
+// 24h GGR — the rolling-24h gaming margin (wagers − payouts), as a
+// fixed-window companion to the lifetime PnL card. GGR is the closest
+// period-bounded "house profit" number; a true 24h realized-PnL would
+// need historical balance-sheet snapshots, which aren't recorded. No
+// range selector — this box is the always-24h glance that pairs with
+// PnL; the selectable GGR card below covers every other window.
+//
+// Same house-POV coloring as PnlStatCard: house up = emerald, down = rose.
+export function Ggr24hStatCard({ ggr24h }: { ggr24h: number }) {
+  const isProfit = ggr24h >= 0;
+
+  return (
+    <Card className={cn(isProfit ? "bg-emerald-500/10" : "bg-rose-500/10")}>
+      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <CardTitle className="text-card-title text-muted-foreground">
+            GGR
+          </CardTitle>
+          <span className="hidden text-tiny text-muted-foreground sm:inline">
+            24h
+          </span>
+        </div>
+        {isProfit ? (
+          <TrendingUp className="size-4 shrink-0 text-emerald-400" />
+        ) : (
+          <TrendingDown className="size-4 shrink-0 text-rose-400" />
+        )}
+      </CardHeader>
+      <CardContent>
+        <div className="text-stat-value truncate">
+          <span className={isProfit ? "text-emerald-400" : "text-rose-400"}>
+            {isProfit ? "+" : ""}
+            <AnimatedNumber value={ggr24h} format="currency" />
+          </span>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // Gaming margin (GGR = wagers − payouts) per period. Keeps the range selector
 // because GGR is inherently a time-window metric, unlike realized P&L which
 // is a balance-sheet snapshot.
