@@ -338,6 +338,7 @@ async function dashboardStatsInner() {
     packsOpened24h,
     battlesPlayed24h,
     signups24h,
+    ftdResult,
   ] = await Promise.all([
     // STAFF_ROLES (admin + support) excluded from every user count so the
     // KPI strip reads only real customers — matches staffRelation
@@ -507,6 +508,24 @@ async function dashboardStatsInner() {
     db.user.count({
       where: { ...staffRoleDirect, created_at: { gte: rolling24h } },
     }),
+    // Rolling-24h FTD count — first-time depositors. Counts real users
+    // whose EARLIEST completed deposit landed in the last 24h. Same
+    // "first deposit" definition the fraud scorer uses (MIN(created_at)
+    // over completed deposit rows). A user depositing again today after
+    // an older deposit is NOT an FTD — only the very first one counts.
+    db.$queryRaw<{ count: string }[]>`
+      SELECT COUNT(*)::text AS count FROM (
+        SELECT user_id
+        FROM ledger_transactions
+        WHERE type = 'deposit' AND status = 'completed'
+          AND user_id IN (
+            SELECT id FROM "user"
+            WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+          )
+        GROUP BY user_id
+        HAVING MIN(created_at) >= ${rolling24h}
+      ) ftd
+    `,
   ]);
 
   const totalWagered = toNumber(balanceAggregates._sum?.total_wagered);
@@ -630,6 +649,9 @@ async function dashboardStatsInner() {
       // uniqueDepositors 1.
       uniqueDepositors: Number(uniqueDepositorsResult[0]?.count ?? 0),
       avgSessionValue: Number(avgSessionValueResult[0]?.avg_session_value ?? 0),
+      // First-time depositors in the rolling last 24h — the 24h
+      // counterpart to uniqueDepositors (lifetime distinct depositors).
+      ftds24h: Number(ftdResult[0]?.count ?? 0),
     },
     packs: {
       totalOpenings: Number(packStats._sum.total_openings ?? 0),
