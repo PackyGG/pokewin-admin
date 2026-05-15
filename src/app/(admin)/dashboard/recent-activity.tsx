@@ -238,12 +238,12 @@ export function RecentActivity({
         aria-hidden
         className="pointer-events-none absolute -right-24 -top-24 size-60 rounded-full bg-blue-500/10 blur-3xl"
       />
-      {/* Rolling-24h stats strip — signups + packs + battles. Same
-          "headline number on the card" idea as the Live Deposits 24h
-          hero on the right. These are volume counts, not money, so
-          they carry no house-POV direction — numbers + icons stay
-          neutral (a green "Packs opened" would falsely read as a
-          house gain). */}
+      {/* Rolling-24h stats strip — signups + packs + battles. Each
+          cell mirrors the Live Deposits card header: icon chip +
+          uppercase label, count below. Blue chips tie into this
+          card's blue theme. Counts are volume, not money, so the
+          numbers stay neutral — no emerald/rose (a green count would
+          misread as a house gain). */}
       <div className="relative grid grid-cols-3 divide-x divide-border/60 border-b border-border/60">
         <ActivityStat icon={UserPlus} label="Signups" value={signups24h} />
         <ActivityStat
@@ -350,10 +350,9 @@ function ActivityRow({
   );
 }
 
-// One cell of the rolling-24h stats strip: a count on top, an
-// icon + label underneath. Mirrors the Activity24hCard cell layout
-// (text-stat-value / text-stat-label) so the relocated metrics keep
-// their familiar look.
+// One cell of the rolling-24h stats strip. Title row (icon chip +
+// uppercase label) on top, count below — the same vocabulary as the
+// Live Deposits card header so the two cards read as a set.
 function ActivityStat({
   icon: Icon,
   label,
@@ -364,14 +363,20 @@ function ActivityStat({
   value: number;
 }) {
   return (
-    <div className="min-w-0 px-3 py-3 sm:px-4">
-      <div className="truncate text-stat-value">
-        <AnimatedNumber value={value} format="number" />
+    <div className="flex min-w-0 flex-col gap-2 p-4">
+      <div className="flex items-center gap-2">
+        <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-blue-500/10">
+          <Icon className="size-3.5 text-blue-500" />
+        </div>
+        <span className="truncate text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          {label}
+        </span>
       </div>
-      <p className="text-stat-label mt-0.5 flex items-center gap-1">
-        <Icon className="size-3 shrink-0" />
-        <span className="truncate">{label}</span>
-      </p>
+      <AnimatedNumber
+        value={value}
+        format="number"
+        className="text-2xl font-bold tabular-nums"
+      />
     </div>
   );
 }
