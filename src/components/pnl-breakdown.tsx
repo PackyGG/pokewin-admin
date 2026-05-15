@@ -21,8 +21,8 @@ import { cn } from "@/lib/utils";
  *                  − unclaimed rakeback
  *
  * Each row links to the surface where that term can be drilled into.
- * Shared by the Analytics → Overview tab and the dedicated /pnl page
- * so the two never drift. Server component — no client JS.
+ * Rendered on the Analytics → Overview tab. Server component — no
+ * client JS.
  */
 
 type Row = {

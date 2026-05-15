@@ -233,6 +233,5 @@ function TopPackRow({
   );
 }
 
-// P&L Breakdown panel ("Where the P&L comes from") now lives in the
-// shared component src/components/pnl-breakdown.tsx so the dedicated
-// /pnl page and this tab render the exact same breakdown.
+// P&L Breakdown panel ("Where the P&L comes from") lives in the
+// shared component src/components/pnl-breakdown.tsx.
