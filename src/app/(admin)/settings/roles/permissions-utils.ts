@@ -556,6 +556,39 @@ export const CAPABILITIES: CapabilityDef[] = [
     group: "Creators",
   },
 
+  // ── Multiplier deals (parallel program, separate capabilities) ─────
+  // Split into four keys so the "Review" action — which moves real money
+  // at settlement — is gated independently of the offer-management
+  // actions. Existing creator-deal capabilities don't carry over; admins
+  // must be explicitly granted multiplier permissions.
+  {
+    key: "__can_create_multiplier_deal",
+    label: "Create Multiplier Deal",
+    description:
+      "Create a multiplier deal offer for a creator (covers cancel of pending offers)",
+    group: "Creators",
+  },
+  {
+    key: "__can_update_multiplier_deal",
+    label: "Update Multiplier Deal",
+    description: "Edit a pending_deposit multiplier deal's contract terms",
+    group: "Creators",
+  },
+  {
+    key: "__can_force_end_multiplier_stream",
+    label: "Force-End Multiplier Stream",
+    description:
+      "Force-end a live multiplier stream (bypasses VOD requirement; deal moves to flagged)",
+    group: "Creators",
+  },
+  {
+    key: "__can_review_multiplier_deal",
+    label: "Review Multiplier Deal",
+    description:
+      "Approve, reject, or manually flag a multiplier deal at settlement — moves real money (voucher creation or deposit refund/forfeit)",
+    group: "Creators",
+  },
+
   // ── Employees (expense tracking + shift planning) ──────────────────
   {
     key: "__can_create_expense",

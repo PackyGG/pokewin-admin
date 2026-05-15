@@ -23,3 +23,14 @@ export type {
   CreatorSocialResponse,
   AdminCreatorSocial,
 } from "./creators";
+export { multiplierDealsApi } from "./multiplier-deals";
+export type {
+  MultiplierDealStatus,
+  MultiplierDealResponse,
+  MultiplierFlagEntry,
+  CreateMultiplierDealInput,
+  UpdateMultiplierDealInput,
+  ApproveMultiplierDealInput,
+  RejectMultiplierDealInput,
+  FlagMultiplierDealInput,
+} from "./multiplier-deals";
