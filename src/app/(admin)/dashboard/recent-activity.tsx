@@ -7,10 +7,12 @@ import {
   ArrowUpCircle,
   Circle,
   Gift,
+  Package,
   Swords,
   UserPlus,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { BorrowBadge } from "@/components/borrow-badge";
@@ -113,7 +115,19 @@ const TYPE_LABELS: Record<string, string> = {
   signup: "New signup",
 };
 
-export function RecentActivity({ initial }: { initial: LiveActivityItem[] }) {
+export function RecentActivity({
+  initial,
+  signups24h,
+  packsOpened24h,
+  battlesPlayed24h,
+}: {
+  initial: LiveActivityItem[];
+  /** Rolling-24h counts for the stats strip at the top of the card.
+   *  Refreshed by the dashboard's 60s router.refresh(). */
+  signups24h: number;
+  packsOpened24h: number;
+  battlesPlayed24h: number;
+}) {
   const [items, setItems] = React.useState<LiveActivityItem[]>(() =>
     initial.slice(0, MAX_ITEMS),
   );
@@ -224,6 +238,21 @@ export function RecentActivity({ initial }: { initial: LiveActivityItem[] }) {
         aria-hidden
         className="pointer-events-none absolute -right-24 -top-24 size-60 rounded-full bg-blue-500/10 blur-3xl"
       />
+      {/* Rolling-24h stats strip — signups + packs + battles. Same
+          "headline number on the card" idea as the Live Deposits 24h
+          hero on the right. These are volume counts, not money, so
+          they carry no house-POV direction — numbers + icons stay
+          neutral (a green "Packs opened" would falsely read as a
+          house gain). */}
+      <div className="relative grid grid-cols-3 divide-x divide-border/60 border-b border-border/60">
+        <ActivityStat icon={UserPlus} label="Signups" value={signups24h} />
+        <ActivityStat
+          icon={Package}
+          label="Packs opened"
+          value={packsOpened24h}
+        />
+        <ActivityStat icon={Swords} label="Battles" value={battlesPlayed24h} />
+      </div>
       <div className="relative max-h-[40rem] overflow-y-auto">
         {items.length === 0 ? (
           <EmptyState label="Waiting for activity..." />
@@ -318,6 +347,32 @@ function ActivityRow({
         )}
       </div>
     </li>
+  );
+}
+
+// One cell of the rolling-24h stats strip: a count on top, an
+// icon + label underneath. Mirrors the Activity24hCard cell layout
+// (text-stat-value / text-stat-label) so the relocated metrics keep
+// their familiar look.
+function ActivityStat({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: number;
+}) {
+  return (
+    <div className="min-w-0 px-3 py-3 sm:px-4">
+      <div className="truncate text-stat-value">
+        <AnimatedNumber value={value} format="number" />
+      </div>
+      <p className="text-stat-label mt-0.5 flex items-center gap-1">
+        <Icon className="size-3 shrink-0" />
+        <span className="truncate">{label}</span>
+      </p>
+    </div>
   );
 }
 

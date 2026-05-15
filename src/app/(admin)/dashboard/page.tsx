@@ -24,7 +24,6 @@ import { AutoRefresh } from "./auto-refresh";
 import { WagerChart, DepositsChart, SignupsChart } from "./charts";
 import { RecentActivity, RecentActivityLivePulse } from "./recent-activity";
 import { LiveDeposits } from "./live-deposits";
-import { Activity24hCard } from "./activity-24h-card";
 import { PageHero, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
@@ -42,7 +41,8 @@ export default async function DashboardPage() {
   return (
     <div className="space-y-6">
       {/* Dashboard polls at 60s — KPIs settle slowly and the live
-          feeds (RecentActivity SSE, LivePulls WS) update independently. */}
+          feeds (RecentActivity SSE, LiveDeposits polling) update
+          independently. */}
       <AutoRefresh intervalMs={60_000} />
 
       <PageHero>
@@ -77,18 +77,9 @@ export default async function DashboardPage() {
       </div>
 
       {/* Secondary stats — all-time / snapshot. These are simpler
-          (no period chips) so they tolerate 2-up on phone, then
-          widen up to 6 across (5 single-metric + the 24h Activity
-          tile which packs 2 metrics in one card). */}
-      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-6">
-        {/* 24h Activity — packs opened + battles played in one tile.
-            Sits first in the secondary row so it's the most prominent
-            "what happened today" signal, matching the rolling-24h
-            framing of the primary cards above. */}
-        <Activity24hCard
-          packsOpened={stats.activity.packsOpened24h}
-          battlesPlayed={stats.activity.battlesPlayed24h}
-        />
+          (no period chips) so they tolerate 2-up on phone, 3-up at
+          sm, then 5 across at lg+. */}
+      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-5">
         <StatCard
           title="Total Users"
           animatedValue={stats.users.total}
@@ -182,7 +173,12 @@ export default async function DashboardPage() {
             action={<RecentActivityLivePulse />}
           />
           <FadeIn>
-            <RecentActivity initial={liveActivity} />
+            <RecentActivity
+              initial={liveActivity}
+              signups24h={stats.activity.signups24h}
+              packsOpened24h={stats.activity.packsOpened24h}
+              battlesPlayed24h={stats.activity.battlesPlayed24h}
+            />
           </FadeIn>
         </div>
         <div className="space-y-3">
