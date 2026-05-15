@@ -159,6 +159,7 @@ const BALANCE_ADJUST_REASONS = [
   { value: "giveaway", label: "Giveaway" },
   { value: "bonus", label: "Bonus" },
   { value: "challenge", label: "Challenge" },
+  { value: "reload", label: "Reload" },
   { value: "lossback", label: "Lossback" },
   { value: "streamer", label: "Streamer" },
   { value: "other", label: "Other" },
