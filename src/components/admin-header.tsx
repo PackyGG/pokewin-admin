@@ -21,7 +21,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Separator } from "@/components/ui/separator";
-import { LiveIndicator } from "@/components/live-indicator";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -327,13 +326,6 @@ export function AdminHeader({
         <RotateCw className="size-4 sm:size-3.5" />
       </Button>
       <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-3">
-        {/* Live-users indicator collapses to icon-only on phones (the
-            number wraps the chip past 360px). The full chip with count
-            returns at sm+. */}
-        <div className="hidden sm:contents">
-          <LiveIndicator />
-          <Separator orientation="vertical" className="!self-auto h-5" />
-        </div>
         {/* Avatar + name now opens a dropdown with quick-access theme +
             timezone pickers alongside the profile link and logout. The
             whole cluster is the trigger so the click target stays as
