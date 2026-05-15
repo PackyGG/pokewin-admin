@@ -92,6 +92,20 @@ export default async function DashboardPage() {
           icon={Users}
           color="blue"
         />
+        {/* FTDs — first-time depositors in the rolling last 24h: real
+            users whose first-ever completed deposit landed today. The
+            "new money today" lead-in to the lifetime Depositors tile.
+            Subtitle carries the summed + average first-deposit value.
+            Amber accent — its own identity color, warm against the
+            cool-toned Total Users / Depositors neighbours. */}
+        <StatCard
+          title="FTDs (24h)"
+          animatedValue={stats.financials.ftds24h}
+          formatKind="number"
+          subtitle={`${formatCurrency(stats.financials.ftdTotal24h)} total · ${formatCurrency(stats.financials.ftdAvg24h)} avg`}
+          icon={HandCoins}
+          color="amber"
+        />
         {/* Distinct depositors = how many real users have completed at
             least one deposit. Different from "Total Users" (signups,
             many of whom never deposit) and from "Avg Deposit" (per-
@@ -111,18 +125,6 @@ export default async function DashboardPage() {
           }
           icon={BadgeDollarSign}
           color="purple"
-        />
-        {/* FTDs — first-time depositors in the rolling last 24h: real
-            users whose first-ever completed deposit landed today. Sits
-            next to Depositors (lifetime distinct) as the "new money
-            today" counterpart. Emerald = deposit / house-gain accent. */}
-        <StatCard
-          title="FTDs (24h)"
-          animatedValue={stats.financials.ftds24h}
-          formatKind="number"
-          subtitle="First-time depositors, last 24h"
-          icon={HandCoins}
-          color="emerald"
         />
         {/* Users Total Balance is a HOUSE LIABILITY but we accent it orange
             (not rose) so it's visually distinct from the Withdrawals / PnL

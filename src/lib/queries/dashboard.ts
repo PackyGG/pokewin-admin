@@ -508,23 +508,31 @@ async function dashboardStatsInner() {
     db.user.count({
       where: { ...staffRoleDirect, created_at: { gte: rolling24h } },
     }),
-    // Rolling-24h FTD count — first-time depositors. Counts real users
-    // whose EARLIEST completed deposit landed in the last 24h. Same
-    // "first deposit" definition the fraud scorer uses (MIN(created_at)
-    // over completed deposit rows). A user depositing again today after
-    // an older deposit is NOT an FTD — only the very first one counts.
-    db.$queryRaw<{ count: string }[]>`
-      SELECT COUNT(*)::text AS count FROM (
-        SELECT user_id
+    // Rolling-24h FTDs — first-time depositors. Each real user's
+    // earliest completed deposit (DISTINCT ON … ORDER BY created_at) is
+    // their "FTD"; we keep those whose first deposit landed in the last
+    // 24h and return BOTH the headcount and the summed first-deposit
+    // value (so the dashboard tile can show total + average alongside
+    // the count). A user depositing again today after an older deposit
+    // is NOT an FTD — only the very first deposit counts. Same "first
+    // deposit" definition the fraud scorer uses.
+    db.$queryRaw<{ count: string; total: string }[]>`
+      WITH first_deposits AS (
+        SELECT DISTINCT ON (user_id)
+          user_id, amount::numeric AS amount, created_at
         FROM ledger_transactions
         WHERE type = 'deposit' AND status = 'completed'
           AND user_id IN (
             SELECT id FROM "user"
             WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
           )
-        GROUP BY user_id
-        HAVING MIN(created_at) >= ${rolling24h}
-      ) ftd
+        ORDER BY user_id, created_at ASC
+      )
+      SELECT
+        COUNT(*)::text AS count,
+        COALESCE(SUM(amount), 0)::text AS total
+      FROM first_deposits
+      WHERE created_at >= ${rolling24h}
     `,
   ]);
 
@@ -551,6 +559,11 @@ async function dashboardStatsInner() {
   // aggregates CTE (column `deposit_count_all`) so we don't pay a
   // dedicated `ledger_transactions.count()` round-trip just for this.
   const depositCount = num(pa.deposit_count_all);
+  // FTD headcount + summed first-deposit value for the rolling 24h.
+  // Average is derived (total / count) — mirrors how avgDeposit is
+  // computed below, and avoids a NaN when there are zero FTDs.
+  const ftdCount = Number(ftdResult[0]?.count ?? 0);
+  const ftdTotal = Number(ftdResult[0]?.total ?? 0);
 
   return {
     users: {
@@ -649,9 +662,12 @@ async function dashboardStatsInner() {
       // uniqueDepositors 1.
       uniqueDepositors: Number(uniqueDepositorsResult[0]?.count ?? 0),
       avgSessionValue: Number(avgSessionValueResult[0]?.avg_session_value ?? 0),
-      // First-time depositors in the rolling last 24h — the 24h
+      // First-time depositors in the rolling last 24h: count, the
+      // summed value of those first deposits, and the average. The 24h
       // counterpart to uniqueDepositors (lifetime distinct depositors).
-      ftds24h: Number(ftdResult[0]?.count ?? 0),
+      ftds24h: ftdCount,
+      ftdTotal24h: ftdTotal,
+      ftdAvg24h: ftdCount > 0 ? ftdTotal / ftdCount : 0,
     },
     packs: {
       totalOpenings: Number(packStats._sum.total_openings ?? 0),
