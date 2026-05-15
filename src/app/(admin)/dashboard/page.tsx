@@ -7,6 +7,7 @@ import {
   Activity,
   LineChart,
   BadgeDollarSign,
+  HandCoins,
 } from "lucide-react";
 import { getDashboardStats } from "@/lib/queries/dashboard";
 import { getLiveActivity, getLiveDeposits } from "@/lib/queries/dashboard-live";
@@ -81,8 +82,8 @@ export default async function DashboardPage() {
 
       {/* Secondary stats — all-time / snapshot. These are simpler
           (no period chips) so they tolerate 2-up on phone, 3-up at
-          sm, then 5 across at lg+. */}
-      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-5">
+          sm, then 6 across at lg+. */}
+      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-6">
         <StatCard
           title="Total Users"
           animatedValue={stats.users.total}
@@ -110,6 +111,18 @@ export default async function DashboardPage() {
           }
           icon={BadgeDollarSign}
           color="purple"
+        />
+        {/* FTDs — first-time depositors in the rolling last 24h: real
+            users whose first-ever completed deposit landed today. Sits
+            next to Depositors (lifetime distinct) as the "new money
+            today" counterpart. Emerald = deposit / house-gain accent. */}
+        <StatCard
+          title="FTDs (24h)"
+          animatedValue={stats.financials.ftds24h}
+          formatKind="number"
+          subtitle="First-time depositors, last 24h"
+          icon={HandCoins}
+          color="emerald"
         />
         {/* Users Total Balance is a HOUSE LIABILITY but we accent it orange
             (not rose) so it's visually distinct from the Withdrawals / PnL
