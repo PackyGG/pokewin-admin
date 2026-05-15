@@ -17,6 +17,7 @@ const colorMap = {
   orange: { bg: "bg-orange-500/10", icon: "text-orange-400" },
   pink: { bg: "bg-pink-500/10", icon: "text-pink-400" },
   cyan: { bg: "bg-cyan-500/10", icon: "text-cyan-400" },
+  amber: { bg: "bg-amber-500/10", icon: "text-amber-400" },
 } as const;
 
 export type StatCardColor = keyof typeof colorMap;
