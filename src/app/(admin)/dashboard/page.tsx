@@ -6,11 +6,10 @@ import {
   LayoutDashboard,
   Activity,
   LineChart,
-  Sparkles,
   BadgeDollarSign,
 } from "lucide-react";
 import { getDashboardStats } from "@/lib/queries/dashboard";
-import { getLiveActivity } from "@/lib/queries/dashboard-live";
+import { getLiveActivity, getLiveDeposits } from "@/lib/queries/dashboard-live";
 import { requirePageAccess } from "@/lib/dal";
 import { formatCurrency } from "@/lib/utils/format";
 import { StatCard } from "./stat-card";
@@ -24,7 +23,7 @@ import {
 import { AutoRefresh } from "./auto-refresh";
 import { WagerChart, DepositsChart, SignupsChart } from "./charts";
 import { RecentActivity, RecentActivityLivePulse } from "./recent-activity";
-import { LivePulls } from "./live-pulls";
+import { LiveDeposits } from "./live-deposits";
 import { Activity24hCard } from "./activity-24h-card";
 import { PageHero, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
@@ -34,9 +33,10 @@ export const metadata = { title: "Dashboard" };
 export default async function DashboardPage() {
   await requirePageAccess("/dashboard");
 
-  const [stats, liveActivity] = await Promise.all([
+  const [stats, liveActivity, liveDeposits] = await Promise.all([
     getDashboardStats(),
     getLiveActivity({ sinceCreatedAt: null, limit: 50 }),
+    getLiveDeposits({ sinceCreatedAt: null, limit: 20 }),
   ]);
 
   return (
@@ -170,8 +170,8 @@ export default async function DashboardPage() {
       </div>
 
       {/* Live feeds — Recent Activity (SSE, dashboard-side ledger events) on
-          the left, Live Pulls (packy.gg WS) on the right. Stacks to a
-          single column on smaller screens so the pulls card keeps a
+          the left, Live Deposits (3s polling) on the right. Stacks to a
+          single column on smaller screens so the deposits card keeps a
           usable width. Both cards manage their own height cap via
           internal scroll so the grid stays symmetric. */}
       <div className="grid gap-3 sm:gap-4 xl:grid-cols-2">
@@ -186,9 +186,12 @@ export default async function DashboardPage() {
           </FadeIn>
         </div>
         <div className="space-y-3">
-          <SectionHeading icon={Sparkles} title="Live Pulls" />
+          <SectionHeading icon={Wallet} title="Deposits" />
           <FadeIn>
-            <LivePulls />
+            <LiveDeposits
+              initial={liveDeposits.items}
+              initialTotal24h={liveDeposits.total24h}
+            />
           </FadeIn>
         </div>
       </div>
