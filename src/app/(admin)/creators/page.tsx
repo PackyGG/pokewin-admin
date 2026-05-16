@@ -4,6 +4,7 @@ import {
   LineChart,
   Megaphone,
   Radio,
+  Trophy,
   Users,
   Wallet,
 } from "lucide-react";
@@ -34,6 +35,7 @@ import {
   type CreatorsGlobalStats,
 } from "./_queries/creators-stats";
 import { getDealCapUsageByUser } from "./_queries/deal-cap-by-user";
+import { getLeaderboardCostTotal } from "./_queries/leaderboard-cost";
 import { fetchAllCreatorsSortedByLifetimePnl } from "./_queries/creators-by-lifetime-pnl";
 import {
   CreatorCardGrid,
@@ -67,13 +69,16 @@ export default async function CreatorsPage({
   // box. Best-effort: a stats fetch failure falls back to nullish so
   // the tiles render "—" instead of crashing the whole page.
   let stats: CreatorsGlobalStats | null = null;
+  // Combined cost of every approved creator leaderboard (net of
+  // refunds). Independent best-effort fetch — null → tile shows "—".
+  let leaderboardCost: number | null = null;
   let loadError: { title: string; detail: string } | null = null;
   try {
     // Wave 1 — socials + global stats are needed for every sort mode.
     // The creators list itself diverges by sortBy: "recent" uses the
     // cheap backend-paginated fetch; pnl_* forces a full pool walk
     // because PnL isn't a backend-side sortable field.
-    const [socials, globalStats] = await Promise.all([
+    const [socials, globalStats, lbCost] = await Promise.all([
       getApprovedSocialsByUser().catch((e) => {
         console.error(
           "[creators] socials fetch failed (rendering without):",
@@ -88,9 +93,17 @@ export default async function CreatorsPage({
         );
         return null;
       }),
+      getLeaderboardCostTotal().catch((e) => {
+        console.error(
+          "[creators] leaderboard cost fetch failed (tile renders '—'):",
+          e,
+        );
+        return null;
+      }),
     ]);
     socialsByUser = socials;
     stats = globalStats;
+    leaderboardCost = lbCost;
 
     if (params.sortBy === "pnl_desc" || params.sortBy === "pnl_asc") {
       // Heavy path — sort by lifetime PnL. fetchAll handles backend
@@ -227,13 +240,14 @@ export default async function CreatorsPage({
       </PageHero>
 
       {result && (
-        // KPI strip — 5 global signals: total creators, the combined
+        // KPI strip — 6 global signals: total creators, the combined
         // lifetime House P&L, how much their deals have converted
-        // (withdraw-cap usage), how many have an active/scheduled deal,
-        // and how many are live on-stream right now. All GLOBAL (not
-        // affected by search / pagination), so the numbers stay stable
-        // as the admin types in the search box.
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        // (withdraw-cap usage), the total cost of their leaderboards,
+        // how many have an active/scheduled deal, and how many are
+        // live on-stream right now. All GLOBAL (not affected by
+        // search / pagination), so the numbers stay stable as the
+        // admin types in the search box.
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           <KpiTile
             label="Total Creators"
             value={formatNumber(stats?.totalCreators ?? result.total)}
@@ -278,6 +292,21 @@ export default async function CreatorsPage({
             sub="Withdrawn against active deal caps"
             icon={Wallet}
             accent="blue"
+          />
+          {/* Leaderboard Cost — combined prize pool of every approved
+              creator leaderboard, net of refunds. Rose: prize money
+              paid out to users is a house cost (matches the rose
+              total-prize coloring on /creators/leaderboards). */}
+          <KpiTile
+            label="Leaderboard Cost"
+            value={
+              leaderboardCost != null
+                ? formatCurrency(leaderboardCost)
+                : "—"
+            }
+            sub="Approved leaderboard prizes, net of refunds"
+            icon={Trophy}
+            accent="rose"
           />
           <KpiTile
             label="Active Deals"
