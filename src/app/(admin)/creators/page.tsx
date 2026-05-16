@@ -332,9 +332,11 @@ export default async function CreatorsPage({
             accent="blue"
           />
           {/* Leaderboard Cost — combined prize pool of every approved
-              creator leaderboard, net of refunds. Rose: prize money
-              paid out to users is a house cost (matches the rose
-              total-prize coloring on /creators/leaderboards). */}
+              creator leaderboard, net of refunds, each weighted by its
+              admin-set sponsored % (set inline on /creators/leaderboards;
+              defaults to 100%). Rose: prize money paid out to users is a
+              house cost (matches the rose total-prize coloring on the
+              leaderboards table). */}
           <KpiTile
             label="Leaderboard Cost"
             value={
@@ -342,7 +344,7 @@ export default async function CreatorsPage({
                 ? formatCurrency(leaderboardCost)
                 : "—"
             }
-            sub="Approved leaderboard prizes, net of refunds"
+            sub="Approved leaderboard prizes × sponsored %"
             icon={Trophy}
             accent="rose"
           />
