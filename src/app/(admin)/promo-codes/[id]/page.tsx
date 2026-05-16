@@ -177,6 +177,14 @@ export default async function PromoCodeDetailPage({
             }
           />
           <PanelRow
+            label="Max Account Age"
+            value={
+              data.maximumAccountAgeHours > 0
+                ? `${data.maximumAccountAgeHours} hours (new signups only)`
+                : "None"
+            }
+          />
+          <PanelRow
             label="Min Deposit (all-time)"
             value={
               data.minimumDepositAmount > 0

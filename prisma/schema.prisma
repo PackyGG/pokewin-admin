@@ -502,6 +502,7 @@ model promo_codes {
   minimum_wager_amount     Decimal                  @default(0) @db.Decimal(20, 2)
   wager_period_days        Int                      @default(0)
   minimum_account_age_days Int                      @default(0)
+  maximum_account_age_hours Int                     @default(0)
   minimum_deposit_amount   Decimal                  @default(0) @db.Decimal(20, 2)
   required_affiliate_code  String?
   requires_discord         Boolean                  @default(true)
