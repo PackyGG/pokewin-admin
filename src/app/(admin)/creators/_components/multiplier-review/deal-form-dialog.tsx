@@ -719,7 +719,7 @@ export function MultiplierDealFormDialog(props: Props) {
                   </div>
                   <p className="text-[11px] text-muted-foreground">
                     Creator paste VOD URL at end-stream. Missing VOD is
-                    only an audit flag, doesn't block payout.
+                    only an audit flag, doesn&apos;t block payout.
                   </p>
                 </div>
               </FieldGroup>
