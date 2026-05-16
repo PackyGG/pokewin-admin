@@ -194,7 +194,7 @@ function ContractSection({ deal }: { deal: MultiplierDealResponse }) {
   return (
     <Section title="Contract">
       <Row
-        label="Required deposit"
+        label="Minimum deposit"
         value={formatStringUsd(deal.required_deposit_usd)}
       />
       <Row
@@ -290,9 +290,9 @@ function LifecycleSection({ deal }: { deal: MultiplierDealResponse }) {
 
 function FundingSection({ deal }: { deal: MultiplierDealResponse }) {
   return (
-    <Section title="Funding Snapshot">
+    <Section title="Funding (cumulative)">
       <Row
-        label="User deposit"
+        label="User contribution"
         value={formatStringUsd(deal.user_funding_usd)}
       />
       <Row
