@@ -5,6 +5,7 @@ import {
   getAllCreatorsLifetimePnl,
   type AllCreatorsLifetimePnl,
 } from "./all-creators-lifetime-pnl";
+import { getDealCapUsageByUser } from "./deal-cap-by-user";
 
 export type CreatorsGlobalStats = {
   /** Total creator accounts on the platform. */
@@ -32,6 +33,15 @@ export type CreatorsGlobalStats = {
    * tile falls back to "—".
    */
   lifetimePnl: AllCreatorsLifetimePnl | null;
+  /**
+   * Total "Converted" — combined withdraw-cap usage
+   * (`withdraw_cap_used_usd`) across every creator with an active or
+   * scheduled deal: how much those deals have actually paid out
+   * against their withdraw caps. Best-effort — a creator whose deal
+   * fetch fails is skipped, so this can be a slight under-count
+   * rather than crash the tile.
+   */
+  convertedTotal: number;
 };
 
 /**
@@ -88,9 +98,12 @@ export async function getCreatorsGlobalStats(): Promise<CreatorsGlobalStats> {
   }
   const remainingPages = await Promise.all(remainingPagePromises);
 
-  // Count predicates across every page we fetched.
+  // Count predicates across every page we fetched. `activeDeals`
+  // collects the (creator, deal) id pairs whose deal is active or
+  // scheduled — the set we resolve withdraw-cap usage for below.
   let activeDealCount = 0;
   let liveCount = 0;
+  const activeDeals: { userId: string; dealId: string }[] = [];
   const tallyPage = (rows: typeof firstPage.data) => {
     for (const c of rows) {
       if (
@@ -98,6 +111,7 @@ export async function getCreatorsGlobalStats(): Promise<CreatorsGlobalStats> {
         c.current_deal?.status === "scheduled"
       ) {
         activeDealCount += 1;
+        activeDeals.push({ userId: c.id, dealId: c.current_deal.id });
       }
       if (c.active_session_id !== null) {
         liveCount += 1;
@@ -107,6 +121,14 @@ export async function getCreatorsGlobalStats(): Promise<CreatorsGlobalStats> {
   tallyPage(firstPage.data);
   for (const pg of remainingPages) tallyPage(pg.data);
 
+  // "Converted" — sum withdraw-cap usage across every active/scheduled
+  // deal. Bounded by activeDealCount (weekly deals — a small set), so
+  // the per-deal getDeal fan-out stays modest. Best-effort inside
+  // getDealCapUsageByUser: a failed fetch is skipped, not thrown.
+  const capUsageByUser = await getDealCapUsageByUser(activeDeals);
+  let convertedTotal = 0;
+  for (const used of capUsageByUser.values()) convertedTotal += used;
+
   return {
     // `total` from the backend is the absolute count (not affected
     // by per-page paging). Use it directly so the tile stays
@@ -115,5 +137,6 @@ export async function getCreatorsGlobalStats(): Promise<CreatorsGlobalStats> {
     activeDealCount,
     liveCount,
     lifetimePnl,
+    convertedTotal,
   };
 }

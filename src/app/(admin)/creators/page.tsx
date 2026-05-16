@@ -5,6 +5,7 @@ import {
   Megaphone,
   Radio,
   Users,
+  Wallet,
 } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
@@ -32,6 +33,7 @@ import {
   getCreatorsGlobalStats,
   type CreatorsGlobalStats,
 } from "./_queries/creators-stats";
+import { getDealCapUsageByUser } from "./_queries/deal-cap-by-user";
 import { fetchAllCreatorsSortedByLifetimePnl } from "./_queries/creators-by-lifetime-pnl";
 import {
   CreatorCardGrid,
@@ -174,6 +176,30 @@ export default async function CreatorsPage({
     console.error("[creators] listCreatorsForPage failed:", err);
   }
 
+  // Per-card "Converted" — withdraw-cap usage for each visible
+  // creator's active/scheduled deal. The lite `current_deal` doesn't
+  // carry the cap fields, so we resolve each deal by id. Best-effort:
+  // a failure leaves the map empty and the cards render "—". Only the
+  // page's rows are fetched, so the fan-out is bounded by perPage.
+  let dealCapByUser = new Map<string, number>();
+  if (result) {
+    const pageActiveDeals = result.data
+      .filter(
+        (c) =>
+          c.current_deal != null &&
+          (c.current_deal.status === "active" ||
+            c.current_deal.status === "scheduled"),
+      )
+      .map((c) => ({ userId: c.id, dealId: c.current_deal!.id }));
+    dealCapByUser = await getDealCapUsageByUser(pageActiveDeals).catch((e) => {
+      console.error(
+        "[creators] deal-cap fetch failed (cards render '—'):",
+        e,
+      );
+      return new Map<string, number>();
+    });
+  }
+
   return (
     <div className="space-y-6">
       <PageHero>
@@ -201,14 +227,13 @@ export default async function CreatorsPage({
       </PageHero>
 
       {result && (
-        // KPI strip — 4 global signals: total creators, how many
-        // have an active/scheduled deal right now, how many are
-        // live on-stream right now, and the combined lifetime
-        // House P&L across every creator's referred-user pool.
-        // All four are GLOBAL (not affected by search / pagination),
-        // so the numbers stay stable as the admin types in the
-        // search box.
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        // KPI strip — 5 global signals: total creators, the combined
+        // lifetime House P&L, how much their deals have converted
+        // (withdraw-cap usage), how many have an active/scheduled deal,
+        // and how many are live on-stream right now. All GLOBAL (not
+        // affected by search / pagination), so the numbers stay stable
+        // as the admin types in the search box.
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
           <KpiTile
             label="Total Creators"
             value={formatNumber(stats?.totalCreators ?? result.total)}
@@ -243,6 +268,17 @@ export default async function CreatorsPage({
               />
             );
           })()}
+          {/* Converted — combined withdraw-cap usage across every
+              active/scheduled deal. Sits next to Global PnL per admin
+              spec. Neutral (blue) accent — it's a deal-throughput
+              figure, not a house-POV gain/loss direction. */}
+          <KpiTile
+            label="Converted"
+            value={stats ? formatCurrency(stats.convertedTotal) : "—"}
+            sub="Withdrawn against active deal caps"
+            icon={Wallet}
+            accent="blue"
+          />
           <KpiTile
             label="Active Deals"
             value={
@@ -299,6 +335,9 @@ export default async function CreatorsPage({
                   wagers3dUsd: cw?.wagers3dUsd ?? 0,
                   pnlByPeriod: cw?.pnlByPeriod ?? null,
                   lifetimePnl: cw?.lifetimePnl ?? null,
+                  // null = no active/scheduled deal, or the deal fetch
+                  // failed → the card's Converted stat renders "—".
+                  convertedUsd: dealCapByUser.get(c.id) ?? null,
                 };
               })
               // Pin creators with an active or scheduled deal to the

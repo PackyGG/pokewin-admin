@@ -144,6 +144,13 @@ export type CreatorWithSocials = CreatorListItem & {
     currentVouchers: number;
     pnl: number;
   } | null;
+  /**
+   * "Converted" — withdraw-cap usage (`withdraw_cap_used_usd`) on this
+   * creator's active/scheduled deal: how much they've withdrawn
+   * against the deal's withdraw cap. null when the creator has no
+   * such deal, or the per-deal fetch failed → the card shows "—".
+   */
+  convertedUsd: number | null;
 };
 
 type CreatorPnlPeriodCell = {
@@ -280,12 +287,13 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
         {/* DEAL — borderless, just type + a clean progress bar */}
         <DealSummary deal={deal} />
 
-        {/* STATS — single 4-up row, divider-separated, no inner borders */}
+        {/* STATS — single 5-up row, divider-separated, no inner borders */}
         <StatsStrip
           code={creator.code}
           wagerVolumeUsd={creator.wagerVolumeUsd}
           signups={creator.signups}
           ftds={creator.ftds}
+          convertedUsd={creator.convertedUsd}
         />
 
         {/* MOMENTUM — last 3 days. Reads as a thin support line under
@@ -318,25 +326,27 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
   );
 }
 
-// Single 4-up stats strip replacing the old 2x2-bordered-tile layout.
+// Single 5-up stats strip replacing the old 2x2-bordered-tile layout.
 // Borderless — just type + spacing + subtle vertical hairlines on
 // desktop. Cleaner, more scannable, and reads as a single row of
-// information rather than four separate boxes.
+// information rather than separate boxes.
 function StatsStrip({
   code,
   wagerVolumeUsd,
   signups,
   ftds,
+  convertedUsd,
 }: {
   code: string | null;
   wagerVolumeUsd: number;
   signups: number;
   ftds: number;
+  convertedUsd: number | null;
 }) {
   const conv =
     signups > 0 ? Math.min(100, (ftds / signups) * 100).toFixed(0) : null;
   return (
-    <div className="grid grid-cols-2 gap-x-3 gap-y-3 sm:grid-cols-4 sm:divide-x sm:divide-border/60">
+    <div className="grid grid-cols-2 gap-x-3 gap-y-3 sm:grid-cols-5 sm:divide-x sm:divide-border/60">
       <Stat label="Code">
         {code ? (
           <span
@@ -374,6 +384,21 @@ function StatsStrip({
       >
         <span className="block truncate text-sm font-semibold tabular-nums">
           {ftds > 0 ? formatNumber(ftds) : "—"}
+        </span>
+      </Stat>
+      {/* Converted — how much the creator's active deal has withdrawn
+          against its withdraw cap (`withdraw_cap_used_usd`). Neutral
+          color: it's a deal-throughput figure, not a house gain/loss. */}
+      <Stat label="Converted">
+        <span
+          className="block truncate text-sm font-semibold tabular-nums"
+          title={
+            convertedUsd != null
+              ? `${convertedUsd} USD withdrawn against this deal's withdraw cap`
+              : "No active deal"
+          }
+        >
+          {convertedUsd != null ? formatCurrency(convertedUsd) : "—"}
         </span>
       </Stat>
     </div>
