@@ -504,6 +504,8 @@ model promo_codes {
   minimum_account_age_days Int                      @default(0)
   maximum_account_age_hours Int                     @default(0)
   minimum_deposit_amount   Decimal                  @default(0) @db.Decimal(20, 2)
+  minimum_recent_deposit_amount Decimal             @default(0) @db.Decimal(20, 2)
+  recent_deposit_period_minutes Int                 @default(0)
   required_affiliate_code  String?
   requires_discord         Boolean                  @default(true)
   max_uses                 Int                      @default(1)

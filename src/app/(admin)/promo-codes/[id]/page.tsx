@@ -193,6 +193,15 @@ export default async function PromoCodeDetailPage({
             }
           />
           <PanelRow
+            label="Min Recent Deposit"
+            value={
+              data.minimumRecentDepositAmount > 0 &&
+              data.recentDepositPeriodMinutes > 0
+                ? `${formatCurrency(data.minimumRecentDepositAmount)} in last ${data.recentDepositPeriodMinutes} min`
+                : "None"
+            }
+          />
+          <PanelRow
             label="Required Affiliate Code"
             value={data.requiredAffiliateCode ?? "None"}
           />
