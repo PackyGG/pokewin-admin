@@ -6,6 +6,7 @@ import {
   type AllCreatorsLifetimePnl,
 } from "./all-creators-lifetime-pnl";
 import { getDealCapUsageByUser } from "./deal-cap-by-user";
+import { getWithdrawnFromConvertedByDeal } from "./withdrawn-from-converted-by-deal";
 
 export type CreatorsGlobalStats = {
   /** Total creator accounts on the platform. */
@@ -36,12 +37,25 @@ export type CreatorsGlobalStats = {
   /**
    * Total "Converted" — combined withdraw-cap usage
    * (`withdraw_cap_used_usd`) across every creator with an active or
-   * scheduled deal: how much those deals have actually paid out
-   * against their withdraw caps. Best-effort — a creator whose deal
-   * fetch fails is skipped, so this can be a slight under-count
-   * rather than crash the tile.
+   * scheduled deal: how much stream earnings have been converted into
+   * payout vouchers (against the deals' withdraw caps). Best-effort —
+   * a creator whose deal fetch fails is skipped, so this can be a
+   * slight under-count rather than crash the tile.
    */
   convertedTotal: number;
+  /**
+   * Of `convertedTotal` (payout vouchers minted from conversion), how
+   * much has actually left the platform via a completed
+   * card_withdrawal_requests row, summed across every active/
+   * scheduled deal in scope.
+   */
+  withdrawnFromConvertedTotal: number;
+  /**
+   * Same scope as `withdrawnFromConvertedTotal`, but for in-flight
+   * withdraw requests (pending / processing / shipped) — i.e.
+   * already requested but not yet terminal.
+   */
+  withdrawPendingFromConvertedTotal: number;
 };
 
 /**
@@ -125,9 +139,32 @@ export async function getCreatorsGlobalStats(): Promise<CreatorsGlobalStats> {
   // deal. Bounded by activeDealCount (weekly deals — a small set), so
   // the per-deal getDeal fan-out stays modest. Best-effort inside
   // getDealCapUsageByUser: a failed fetch is skipped, not thrown.
-  const capUsageByUser = await getDealCapUsageByUser(activeDeals);
+  //
+  // "Withdrawn from converted" runs in parallel — single DB round-trip
+  // against the admin's main DB (vouchers join card_withdrawal_requests),
+  // grouped by deal. A failure leaves the totals at 0 so the tile
+  // still shows the converted total and just drops the breakdown.
+  const [capUsageByUser, withdrawnByUser] = await Promise.all([
+    getDealCapUsageByUser(activeDeals),
+    getWithdrawnFromConvertedByDeal(activeDeals).catch((err) => {
+      console.error(
+        "[creators-stats] withdrawn-from-converted query failed (sub-line hidden):",
+        err,
+      );
+      return new Map<
+        string,
+        { withdrawnUsd: number; withdrawPendingUsd: number }
+      >();
+    }),
+  ]);
   let convertedTotal = 0;
   for (const used of capUsageByUser.values()) convertedTotal += used;
+  let withdrawnFromConvertedTotal = 0;
+  let withdrawPendingFromConvertedTotal = 0;
+  for (const row of withdrawnByUser.values()) {
+    withdrawnFromConvertedTotal += row.withdrawnUsd;
+    withdrawPendingFromConvertedTotal += row.withdrawPendingUsd;
+  }
 
   return {
     // `total` from the backend is the absolute count (not affected
@@ -138,5 +175,7 @@ export async function getCreatorsGlobalStats(): Promise<CreatorsGlobalStats> {
     liveCount,
     lifetimePnl,
     convertedTotal,
+    withdrawnFromConvertedTotal,
+    withdrawPendingFromConvertedTotal,
   };
 }

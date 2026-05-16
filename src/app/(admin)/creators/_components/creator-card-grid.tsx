@@ -145,12 +145,27 @@ export type CreatorWithSocials = CreatorListItem & {
     pnl: number;
   } | null;
   /**
-   * "Converted" — withdraw-cap usage (`withdraw_cap_used_usd`) on this
-   * creator's active/scheduled deal: how much they've withdrawn
-   * against the deal's withdraw cap. null when the creator has no
-   * such deal, or the per-deal fetch failed → the card shows "—".
+   * "Converted" — cap-usage (`withdraw_cap_used_usd`) on this
+   * creator's active/scheduled deal: how much of stream earnings have
+   * been converted into payout vouchers (against the deal's withdraw
+   * cap). Note the name is a slight misnomer — this is "converted",
+   * NOT necessarily "withdrawn off-platform". The withdraw-vs-still-
+   * playing breakdown lives in `withdrawnFromConverted` below.
+   * null when the creator has no such deal, or the per-deal fetch
+   * failed → the card shows "—".
    */
   convertedUsd: number | null;
+  /**
+   * Of `convertedUsd` (payout vouchers minted from conversion), how
+   * much has actually left the platform via a card_withdrawal_requests
+   * row. Split into completed vs in-flight. null when the join failed
+   * OR the creator has no withdraw activity tied to conversion
+   * vouchers on this deal → the sub-line under Converted is hidden.
+   */
+  withdrawnFromConverted: {
+    withdrawnUsd: number;
+    withdrawPendingUsd: number;
+  } | null;
 };
 
 type CreatorPnlPeriodCell = {
@@ -294,6 +309,7 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
           signups={creator.signups}
           ftds={creator.ftds}
           convertedUsd={creator.convertedUsd}
+          withdrawnFromConverted={creator.withdrawnFromConverted}
         />
 
         {/* MOMENTUM — last 3 days. Reads as a thin support line under
@@ -336,12 +352,17 @@ function StatsStrip({
   signups,
   ftds,
   convertedUsd,
+  withdrawnFromConverted,
 }: {
   code: string | null;
   wagerVolumeUsd: number;
   signups: number;
   ftds: number;
   convertedUsd: number | null;
+  withdrawnFromConverted: {
+    withdrawnUsd: number;
+    withdrawPendingUsd: number;
+  } | null;
 }) {
   const conv =
     signups > 0 ? Math.min(100, (ftds / signups) * 100).toFixed(0) : null;
@@ -386,20 +407,50 @@ function StatsStrip({
           {ftds > 0 ? formatNumber(ftds) : "—"}
         </span>
       </Stat>
-      {/* Converted — how much the creator's active deal has withdrawn
-          against its withdraw cap (`withdraw_cap_used_usd`). Neutral
-          color: it's a deal-throughput figure, not a house gain/loss. */}
+      {/* Converted — how much of stream earnings have been converted
+          into payout vouchers (against the deal's withdraw cap, via
+          `withdraw_cap_used_usd`). Neutral color: deal throughput,
+          not a house gain/loss.
+
+          Sub-line shows of that converted amount, how much actually
+          left the platform (completed card_withdrawal_requests) and
+          how much is in flight (pending/processing/shipped). Hidden
+          when there's no withdraw activity for this deal so dormant
+          creators stay visually quiet. */}
       <Stat label="Converted">
         <span
           className="block truncate text-sm font-semibold tabular-nums"
           title={
             convertedUsd != null
-              ? `${convertedUsd} USD withdrawn against this deal's withdraw cap`
+              ? `${convertedUsd} USD converted into payout vouchers (counted against this deal's withdraw cap)`
               : "No active deal"
           }
         >
           {convertedUsd != null ? formatCurrency(convertedUsd) : "—"}
         </span>
+        {convertedUsd != null &&
+          withdrawnFromConverted != null &&
+          (withdrawnFromConverted.withdrawnUsd > 0 ||
+            withdrawnFromConverted.withdrawPendingUsd > 0) && (
+            <span
+              className="mt-0.5 block truncate font-mono text-[10px] text-muted-foreground/80"
+              title={
+                `${withdrawnFromConverted.withdrawnUsd} USD withdrawn off-platform` +
+                (withdrawnFromConverted.withdrawPendingUsd > 0
+                  ? ` · ${withdrawnFromConverted.withdrawPendingUsd} USD in flight (pending/processing/shipped)`
+                  : "")
+              }
+            >
+              ↳ {formatCurrency(withdrawnFromConverted.withdrawnUsd)} withdrawn
+              {withdrawnFromConverted.withdrawPendingUsd > 0 && (
+                <>
+                  {" "}
+                  · +{formatCurrency(withdrawnFromConverted.withdrawPendingUsd)}{" "}
+                  in flight
+                </>
+              )}
+            </span>
+          )}
       </Stat>
     </div>
   );
