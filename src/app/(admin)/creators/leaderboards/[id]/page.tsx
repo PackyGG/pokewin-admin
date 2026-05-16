@@ -24,6 +24,7 @@ import {
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { getAffiliateLeaderboardRankings } from "@/lib/queries/creators";
+import { getLeaderboardSponsorshipMap } from "../../_queries/leaderboard-sponsorship";
 
 import { DetailActions } from "../_components/detail-actions";
 
@@ -59,7 +60,7 @@ export default async function AffiliateLeaderboardDetailPage({
         throw err;
     }
     const db = await getDb();
-    const [creator, rankings] = await Promise.all([
+    const [creator, rankings, sponsorshipMap] = await Promise.all([
         db.user.findUnique({
             where: { id: lb.creator_user_id },
             select: { id: true, username: true, email: true },
@@ -79,7 +80,14 @@ export default async function AffiliateLeaderboardDetailPage({
             console.error("[leaderboard] rankings query failed", err);
             return [];
         }),
+        // Admin-side sponsored % so the Edit dialog can pre-fill it.
+        // Best-effort — a failure just defaults the field to 100%.
+        getLeaderboardSponsorshipMap([id]).catch((err) => {
+            console.error("[leaderboard] sponsorship query failed", err);
+            return new Map<string, number>();
+        }),
     ]);
+    const currentSponsoredPct = sponsorshipMap.get(id) ?? null;
 
     return (
         <div className="space-y-6">
@@ -110,7 +118,10 @@ export default async function AffiliateLeaderboardDetailPage({
                             </div>
                         </div>
                     </div>
-                    <DetailActions row={lb} />
+                    <DetailActions
+                        row={lb}
+                        currentSponsoredPct={currentSponsoredPct}
+                    />
                 </div>
             </PageHero>
 

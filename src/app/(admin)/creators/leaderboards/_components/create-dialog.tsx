@@ -22,6 +22,7 @@ import {
     createLeaderboard,
     getCreatorCodes,
     searchCreators,
+    setLeaderboardSponsorship,
     type CreatorSearchResult,
 } from "../actions";
 
@@ -50,6 +51,8 @@ export function CreateDialog({ trigger, fixedCreatorUserId }: Props) {
     const [tiers, setTiers] = useState<Array<{ position: string; amount: string }>>([
         { position: "1", amount: "" },
     ]);
+    // Sponsored % — admin-side cost-math annotation. Default 100%.
+    const [sponsoredPct, setSponsoredPct] = useState("100");
 
     const totalPool = Number(siteBonus) || 0;
     const tierSum = tiers.reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
@@ -67,6 +70,7 @@ export function CreateDialog({ trigger, fixedCreatorUserId }: Props) {
         setStartDate("");
         setEndDate("");
         setTiers([{ position: "1", amount: "" }]);
+        setSponsoredPct("100");
     };
 
     useEffect(() => {
@@ -188,6 +192,16 @@ export function CreateDialog({ trigger, fixedCreatorUserId }: Props) {
             return;
         }
 
+        const sponsoredPctNum = Number(sponsoredPct);
+        if (
+            !Number.isFinite(sponsoredPctNum) ||
+            sponsoredPctNum < 0 ||
+            sponsoredPctNum > 100
+        ) {
+            toast.error("Sponsored % must be between 0 and 100");
+            return;
+        }
+
         startTransition(async () => {
             const r = await createLeaderboard({
                 creator_user_id: creatorUserId.trim(),
@@ -201,6 +215,20 @@ export function CreateDialog({ trigger, fixedCreatorUserId }: Props) {
             if (!r.success) {
                 toast.error(r.error);
                 return;
+            }
+            // Sponsored % — admin-side cost annotation. Only persisted
+            // when it differs from the 100% default; needs the new
+            // leaderboard's id, returned by createLeaderboard.
+            if (r.data?.id && sponsoredPctNum !== 100) {
+                const sr = await setLeaderboardSponsorship(
+                    r.data.id,
+                    sponsoredPctNum,
+                );
+                if (!sr.success) {
+                    toast.error(
+                        `Leaderboard created, but sponsored % not saved: ${sr.error}`,
+                    );
+                }
             }
             toast.success("Leaderboard created");
             setOpen(false);
@@ -426,6 +454,31 @@ export function CreateDialog({ trigger, fixedCreatorUserId }: Props) {
                                 <Plus className="size-4 mr-1" /> Add tier
                             </Button>
                         </div>
+                    </div>
+
+                    {/* Sponsored % — admin-side cost-accounting input.
+                        Saved to the admin DB after the leaderboard is
+                        created; it weights this leaderboard in the
+                        /creators Leaderboard Cost KPI. */}
+                    <div className="space-y-2">
+                        <Label htmlFor="sponsored_pct">
+                            Sponsored % (cost math only)
+                        </Label>
+                        <Input
+                            id="sponsored_pct"
+                            type="number"
+                            min={0}
+                            max={100}
+                            step="1"
+                            value={sponsoredPct}
+                            onChange={(e) => setSponsoredPct(e.target.value)}
+                            placeholder="100"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                            Share of this leaderboard counted in the
+                            /creators Leaderboard Cost KPI. Doesn&apos;t
+                            change the leaderboard itself. Default 100%.
+                        </p>
                     </div>
 
                     <DialogFooter>
