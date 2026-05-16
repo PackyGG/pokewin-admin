@@ -20,7 +20,19 @@ const createPromoCodeSchema = z.object({
   minimumWagerAmount: z.number().finite().nonnegative().max(10_000_000),
   wagerPeriodDays: z.number().int().nonnegative().max(3650),
   minimumAccountAgeDays: z.number().int().nonnegative().max(3650),
+  // Brand-new-signup gate. 0 = no maximum. Up to 30 days expressed in hours
+  // so admins can express sub-day windows (e.g. 24 = "first 24 hours").
+  maximumAccountAgeHours: z.number().int().nonnegative().max(720),
   minimumDepositAmount: z.number().finite().nonnegative().max(10_000_000),
+  // Windowed deposit gate. Both must be > 0 to enable; either at 0 disables.
+  // Window capped at 30 days expressed in minutes (43_200) so admins can pick
+  // anything from "60" (1h) to multi-day windows without DB churn.
+  minimumRecentDepositAmount: z
+    .number()
+    .finite()
+    .nonnegative()
+    .max(10_000_000),
+  recentDepositPeriodMinutes: z.number().int().nonnegative().max(43_200),
   // Trim+uppercase here so the DB stores the canonical form. The
   // backend matches case-insensitively but normalising at write time
   // means the admin UI always shows the same shape on read-back.
@@ -67,7 +79,10 @@ export async function createPromoCode(
       minimum_wager_amount: v.minimumWagerAmount,
       wager_period_days: v.wagerPeriodDays,
       minimum_account_age_days: v.minimumAccountAgeDays,
+      maximum_account_age_hours: v.maximumAccountAgeHours,
       minimum_deposit_amount: v.minimumDepositAmount,
+      minimum_recent_deposit_amount: v.minimumRecentDepositAmount,
+      recent_deposit_period_minutes: v.recentDepositPeriodMinutes,
       required_affiliate_code: v.requiredAffiliateCode,
       requires_discord: v.requiresDiscord,
       max_uses: v.maxUses,

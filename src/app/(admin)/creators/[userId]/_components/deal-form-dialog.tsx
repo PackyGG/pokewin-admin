@@ -61,6 +61,10 @@ type FormState = {
   max_sponsorship_per_stream_usd: string;
   allow_site_leaderboards: boolean;
   allow_code_leaderboards: boolean;
+  // Admin overrides for usage counters. Edit-only — patched only when
+  // the admin explicitly changes the value from its loaded baseline.
+  fills_used: string;
+  withdraw_cap_used_usd: string;
 };
 
 /**
@@ -85,6 +89,8 @@ const buildCreateDefaults = (): FormState => {
     max_sponsorship_per_stream_usd: "200",
     allow_site_leaderboards: false,
     allow_code_leaderboards: false,
+    fills_used: "",
+    withdraw_cap_used_usd: "",
   };
 };
 
@@ -102,6 +108,11 @@ const buildEditDefaults = (deal: CreatorDealResponse): FormState => ({
   max_sponsorship_per_stream_usd: String(deal.max_sponsorship_per_stream_usd),
   allow_site_leaderboards: deal.allow_site_leaderboards,
   allow_code_leaderboards: deal.allow_code_leaderboards,
+  fills_used: String(deal.fills_used),
+  // withdraw_cap_used_usd arrives as a decimal string from the backend; pass
+  // through verbatim so we don't drop a trailing zero like "1.20" → "1.2"
+  // and falsely trigger a "changed" diff in computePatch.
+  withdraw_cap_used_usd: String(deal.withdraw_cap_used_usd),
 });
 
 /**
@@ -204,6 +215,28 @@ function computePatch(
   }
   if (form.allow_code_leaderboards !== deal.allow_code_leaderboards) {
     patch.allow_code_leaderboards = form.allow_code_leaderboards;
+  }
+
+  // Override fields — only send when the admin actually changed them.
+  // Empty input = "don't touch"; we never explicitly send the loaded
+  // baseline back, which would log a no-op audit entry every save.
+  const fillsUsedTrim = form.fills_used.trim();
+  if (fillsUsedTrim !== "") {
+    const fillsUsed = parseInt(fillsUsedTrim, 10);
+    if (Number.isFinite(fillsUsed) && fillsUsed !== deal.fills_used) {
+      patch.fills_used = fillsUsed;
+    }
+  }
+
+  const capUsedTrim = form.withdraw_cap_used_usd.trim();
+  if (capUsedTrim !== "") {
+    const capUsed = parseFloat(capUsedTrim);
+    if (
+      Number.isFinite(capUsed) &&
+      capUsed !== Number(deal.withdraw_cap_used_usd)
+    ) {
+      patch.withdraw_cap_used_usd = capUsed;
+    }
   }
 
   return patch;
@@ -353,6 +386,42 @@ export function DealFormDialog(props: Props) {
         "Per-stream sponsorship cap must be >= per-battle sponsorship cap",
       );
       return;
+    }
+
+    // Override field validation — only checks the values the admin actually
+    // typed. Empty inputs are "leave as-is" and skipped. The backend
+    // re-checks these same invariants under transaction locks; the
+    // client-side check is purely to give a fast error before round-trip.
+    if (mode === "edit" && deal) {
+      const fillsUsedTrim = form.fills_used.trim();
+      if (fillsUsedTrim !== "") {
+        const fillsUsedOverride = parseInt(fillsUsedTrim, 10);
+        if (!Number.isFinite(fillsUsedOverride) || fillsUsedOverride < 0) {
+          toast.error("Fills used override must be 0 or a positive integer");
+          return;
+        }
+        if (fillsUsedOverride > fillsAllowed) {
+          toast.error(
+            `Fills used override (${fillsUsedOverride}) can't exceed fills allowed (${fillsAllowed})`,
+          );
+          return;
+        }
+      }
+
+      const capUsedTrim = form.withdraw_cap_used_usd.trim();
+      if (capUsedTrim !== "") {
+        const capUsedOverride = parseFloat(capUsedTrim);
+        if (!Number.isFinite(capUsedOverride) || capUsedOverride < 0) {
+          toast.error("Withdraw cap used override must be 0 or greater");
+          return;
+        }
+        if (totalCapUsd !== null && capUsedOverride > totalCapUsd) {
+          toast.error(
+            `Cap used override ($${capUsedOverride.toFixed(2)}) can't exceed total cap ($${totalCapUsd.toFixed(2)})`,
+          );
+          return;
+        }
+      }
     }
 
     startTransition(async () => {
@@ -678,6 +747,67 @@ export function DealFormDialog(props: Props) {
               />
             </div>
           </Section>
+
+          {mode === "edit" && deal && (
+            <>
+              <Separator />
+              <Section
+                title="Usage overrides (admin)"
+                description="Manually correct fill / cap state — e.g. a fill expired by mistake or a payout was wrongly applied. Leave a field empty to keep its current value. These changes bypass normal increment paths; only use when you know what you're doing."
+              >
+                <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-[11px] leading-snug text-amber-700 dark:text-amber-300">
+                  Current: <strong>{deal.fills_used}</strong> /{" "}
+                  {deal.fills_allowed} fills used · cap used{" "}
+                  <strong>${Number(deal.withdraw_cap_used_usd).toFixed(2)}</strong>
+                  {deal.total_withdraw_cap_usd !== null && (
+                    <>
+                      {" "}of ${Number(deal.total_withdraw_cap_usd).toFixed(2)}
+                    </>
+                  )}
+                  .
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field
+                    label="Override fills used"
+                    htmlFor="override_fills_used"
+                    hint={`Current: ${deal.fills_used}. Must be 0..${deal.fills_allowed} (or whatever fills_allowed is set to above).`}
+                  >
+                    <Input
+                      id="override_fills_used"
+                      type="number"
+                      min={0}
+                      step={1}
+                      placeholder={String(deal.fills_used)}
+                      value={form.fills_used}
+                      onChange={(e) => update("fills_used", e.target.value)}
+                    />
+                  </Field>
+                  <Field
+                    label="Override cap used"
+                    htmlFor="override_cap_used"
+                    suffix="USD"
+                    hint={
+                      deal.total_withdraw_cap_usd !== null
+                        ? `Current: $${Number(deal.withdraw_cap_used_usd).toFixed(2)}. Cannot exceed total cap.`
+                        : `Current: $${Number(deal.withdraw_cap_used_usd).toFixed(2)}. Deal is uncapped — only used as a visibility counter.`
+                    }
+                  >
+                    <Input
+                      id="override_cap_used"
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      placeholder={Number(deal.withdraw_cap_used_usd).toFixed(2)}
+                      value={form.withdraw_cap_used_usd}
+                      onChange={(e) =>
+                        update("withdraw_cap_used_usd", e.target.value)
+                      }
+                    />
+                  </Field>
+                </div>
+              </Section>
+            </>
+          )}
         </form>
 
         <DialogFooter>

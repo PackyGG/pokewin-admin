@@ -10,12 +10,16 @@ import { approveLeaderboard, cancelLeaderboard } from "../actions";
 import { RejectDialog } from "./reject-dialog";
 import { EditDialog } from "./edit-dialog";
 import { SponsorDialog } from "./sponsor-dialog";
+import { HardDeleteDialog } from "./hard-delete-dialog";
 
 type Row = {
     id: string;
     title: string;
+    creator_user_id: string;
+    co_creator_user_ids: string[];
     approval_status: "pending" | "approved" | "rejected";
     cancelled_at: string | null;
+    created_at: string;
     creator_prize_usd: string;
     site_bonus_usd: string;
     total_prize_usd: string;
@@ -24,6 +28,11 @@ type Row = {
     end_date: string;
     prize_tiers: Array<{ position: number; prize_amount_usd: string }>;
 };
+
+// Mirror of the backend hard-delete window. Kept in sync manually — backend
+// is the source of truth and will reject any out-of-window request, this
+// constant just gates the button visibility client-side.
+const HARD_DELETE_WINDOW_MS = 60 * 60 * 1000;
 
 export function DetailActions({
     row,
@@ -38,8 +47,11 @@ export function DetailActions({
     const [rejectOpen, setRejectOpen] = useState(false);
     const [editOpen, setEditOpen] = useState(false);
     const [sponsorOpen, setSponsorOpen] = useState(false);
+    const [hardDeleteOpen, setHardDeleteOpen] = useState(false);
 
     const isCancelled = row.cancelled_at !== null;
+    const ageMs = Date.now() - new Date(row.created_at).getTime();
+    const withinHardDeleteWindow = ageMs >= 0 && ageMs <= HARD_DELETE_WINDOW_MS;
 
     function confirmApprove(): void {
         // Approval credits the creator's funded prize against the active leaderboard
@@ -114,6 +126,20 @@ export function DetailActions({
                 </>
             )}
 
+            {/* Hard delete is only offered for the first hour after creation.
+                Past that the backend rejects the request, so we hide the
+                button entirely instead of letting users hit a 403. */}
+            {withinHardDeleteWindow && !isCancelled && (
+                <Button
+                    variant="destructive"
+                    disabled={isPending}
+                    onClick={() => setHardDeleteOpen(true)}
+                    title="Hard delete (within 1 hour of creation)"
+                >
+                    Hard Delete
+                </Button>
+            )}
+
             <RejectDialog
                 open={rejectOpen}
                 onOpenChange={setRejectOpen}
@@ -132,6 +158,12 @@ export function DetailActions({
                 leaderboardId={row.id}
                 leaderboardTitle={row.title}
                 currentTotalPrizeUsd={(Number(row.creator_prize_usd) + Number(row.site_bonus_usd)).toFixed(2)}
+            />
+            <HardDeleteDialog
+                open={hardDeleteOpen}
+                onOpenChange={setHardDeleteOpen}
+                leaderboardId={row.id}
+                leaderboardTitle={row.title}
             />
         </div>
     );

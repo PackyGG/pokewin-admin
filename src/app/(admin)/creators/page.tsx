@@ -35,6 +35,10 @@ import {
   type CreatorsGlobalStats,
 } from "./_queries/creators-stats";
 import { getDealCapUsageByUser } from "./_queries/deal-cap-by-user";
+import {
+  getWithdrawnFromConvertedByDeal,
+  type WithdrawnFromConverted,
+} from "./_queries/withdrawn-from-converted-by-deal";
 import { getLeaderboardCostTotal } from "./_queries/leaderboard-cost";
 import { fetchAllCreatorsSortedByLifetimePnl } from "./_queries/creators-by-lifetime-pnl";
 import {
@@ -194,7 +198,16 @@ export default async function CreatorsPage({
   // carry the cap fields, so we resolve each deal by id. Best-effort:
   // a failure leaves the map empty and the cards render "—". Only the
   // page's rows are fetched, so the fan-out is bounded by perPage.
+  //
+  // Withdrawn-from-converted is the sub-breakdown shown under the
+  // Converted stat: of the amount the creator converted into payout
+  // vouchers, how much actually left the platform via a withdraw
+  // request vs is still sitting on-platform (continued play / sold).
+  // Single batched DB round-trip (admin's own DB connection — no
+  // backend round-trip per deal). Best-effort: a failure leaves the
+  // map empty and the sub-line just isn't rendered.
   let dealCapByUser = new Map<string, number>();
+  let withdrawnFromConvertedByUser = new Map<string, WithdrawnFromConverted>();
   if (result) {
     const pageActiveDeals = result.data
       .filter(
@@ -204,13 +217,24 @@ export default async function CreatorsPage({
             c.current_deal.status === "scheduled"),
       )
       .map((c) => ({ userId: c.id, dealId: c.current_deal!.id }));
-    dealCapByUser = await getDealCapUsageByUser(pageActiveDeals).catch((e) => {
-      console.error(
-        "[creators] deal-cap fetch failed (cards render '—'):",
-        e,
-      );
-      return new Map<string, number>();
-    });
+    const [capUsage, withdrawn] = await Promise.all([
+      getDealCapUsageByUser(pageActiveDeals).catch((e) => {
+        console.error(
+          "[creators] deal-cap fetch failed (cards render '—'):",
+          e,
+        );
+        return new Map<string, number>();
+      }),
+      getWithdrawnFromConvertedByDeal(pageActiveDeals).catch((e) => {
+        console.error(
+          "[creators] withdrawn-from-converted fetch failed (sub-line hidden):",
+          e,
+        );
+        return new Map<string, WithdrawnFromConverted>();
+      }),
+    ]);
+    dealCapByUser = capUsage;
+    withdrawnFromConvertedByUser = withdrawn;
   }
 
   return (
@@ -282,14 +306,28 @@ export default async function CreatorsPage({
               />
             );
           })()}
-          {/* Converted — combined withdraw-cap usage across every
-              active/scheduled deal. Sits next to Global PnL per admin
-              spec. Neutral (blue) accent — it's a deal-throughput
-              figure, not a house-POV gain/loss direction. */}
+          {/* Converted — combined cap-usage across every active/
+              scheduled deal: how much stream earnings have been
+              converted into payout vouchers. Sits next to Global PnL
+              per admin spec. Neutral (blue) accent — it's a deal-
+              throughput figure, not a house-POV gain/loss direction.
+
+              Sub-line shows of that converted total, how much has
+              actually walked out via a completed withdraw request
+              (+ in-flight pending/processing/shipped when non-zero).
+              Falls back to the static "Withdrawn against active deal
+              caps" label when stats failed to load. */}
           <KpiTile
             label="Converted"
             value={stats ? formatCurrency(stats.convertedTotal) : "—"}
-            sub="Withdrawn against active deal caps"
+            sub={
+              stats
+                ? `${formatCurrency(stats.withdrawnFromConvertedTotal)} withdrawn` +
+                  (stats.withdrawPendingFromConvertedTotal > 0
+                    ? ` · +${formatCurrency(stats.withdrawPendingFromConvertedTotal)} in flight`
+                    : "")
+                : "Converted to payout vouchers"
+            }
             icon={Wallet}
             accent="blue"
           />
@@ -369,6 +407,11 @@ export default async function CreatorsPage({
                   // null = no active/scheduled deal, or the deal fetch
                   // failed → the card's Converted stat renders "—".
                   convertedUsd: dealCapByUser.get(c.id) ?? null,
+                  // null = no withdraw activity tied to this deal's
+                  // conversion vouchers (or the join failed) → the
+                  // card hides the sub-line.
+                  withdrawnFromConverted:
+                    withdrawnFromConvertedByUser.get(c.id) ?? null,
                 };
               })
               // Pin creators with an active or scheduled deal to the

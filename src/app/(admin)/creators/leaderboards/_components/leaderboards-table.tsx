@@ -66,6 +66,9 @@ function LeaderboardMobileCard({
             {creator
               ? creator.username ?? creator.email ?? r.creator_user_id.slice(0, 8)
               : r.creator_user_id.slice(0, 12)}
+            {r.co_creator_user_ids?.length > 0 && (
+              <span className="ml-1">+{r.co_creator_user_ids.length} co-creator{r.co_creator_user_ids.length > 1 ? "s" : ""}</span>
+            )}
           </div>
           <div className="mt-1 flex items-center gap-1.5 flex-wrap">
             <Badge
@@ -213,6 +216,11 @@ export function LeaderboardsTable({
                         <span className="text-xs text-muted-foreground font-mono">
                           {r.creator_user_id}
                         </span>
+                      )}
+                      {r.co_creator_user_ids?.length > 0 && (
+                        <Badge variant="outline" className="mt-1 text-[10px]">
+                          +{r.co_creator_user_ids.length} co-creator{r.co_creator_user_ids.length > 1 ? "s" : ""}
+                        </Badge>
                       )}
                     </TableCell>
                     <TableCell>

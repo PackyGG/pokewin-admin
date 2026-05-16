@@ -14,6 +14,7 @@ export type PrizeTier = {
 export type LeaderboardAdminRow = {
   id: string;
   creator_user_id: string;
+  co_creator_user_ids: string[];
   title: string;
   affiliate_codes: string[];
   creator_prize_usd: string;
@@ -40,6 +41,9 @@ export type LeaderboardAdminRow = {
 export type ListQuery = {
   status?: ApprovalStatus;
   creator_user_id?: string;
+  // Cancelled leaderboards are excluded by default. Set true to include
+  // them in the listing (e.g. for refund history review).
+  include_cancelled?: boolean;
   offset?: number;
   limit?: number;
 };
@@ -58,6 +62,7 @@ export type SponsorInput = { additional_bonus_usd: number };
 export type EditInput = {
   title?: string;
   affiliate_codes?: string[];
+  co_creator_user_ids?: string[];
   start_date?: string;
   end_date?: string;
   prize_tiers?: Array<{ position: number; prize_amount_usd: number }>;
@@ -65,6 +70,7 @@ export type EditInput = {
 
 export type CreateInput = {
   creator_user_id: string;
+  co_creator_user_ids?: string[];
   title: string;
   affiliate_codes: string[];
   site_bonus_usd: number;
@@ -145,4 +151,25 @@ export const affiliateLeaderboardsApi = {
         { headers: adminHeaders(adminUserId) },
       )
       .then((r) => r.data),
+
+  hardDelete: (
+    id: string,
+    input: HardDeleteInput,
+    adminUserId: string,
+  ) =>
+    backendApi
+      .delete<Success<HardDeleteResult>>(
+        `${BASE}/${encodeURIComponent(id)}`,
+        input,
+        { headers: adminHeaders(adminUserId) },
+      )
+      .then((r) => r.data),
+};
+
+export type HardDeleteInput = { confirmation_id: string };
+
+export type HardDeleteResult = {
+  deleted_id: string;
+  previous_status: ApprovalStatus;
+  refund_amount_usd: string;
 };

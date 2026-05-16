@@ -37,21 +37,21 @@ const keyFor = (env: DbEnv): string | undefined =>
 /**
  * Pick the effective env for the backend-api client.
  *
+ * The cookie is authoritative — same contract as the main-DB
+ * Prisma client (`getDb()` in @/lib/db). Pages that mix the two
+ * data sources would otherwise show data from different envs in
+ * the same response (e.g. creators list from dev, social data
+ * from prod) when the admin toggles env locally.
+ *
  * Precedence:
- *   1. During local dev (NODE_ENV !== 'production'), prefer the 'dev'
- *      backend when configured. The admin's main-DB cookie defaults to
- *      'prod', but the prod backend may not even be reachable from a
- *      developer's machine — admin_db_env=prod + backend=prod is a
- *      deploy concern, not a local one.
- *   2. Otherwise honor the cookie-requested env if configured.
- *   3. Fall back to whichever env IS configured.
- *   4. If nothing is configured, return the request unchanged so the
- *      downstream resolvers throw a diagnostic error.
+ *   1. Honor the cookie-requested env if configured.
+ *   2. Fall back to whichever env IS configured (recovery path
+ *      for a missing config — better to talk to the other env
+ *      than 500 the page).
+ *   3. If nothing is configured, return the request unchanged so
+ *      the downstream resolvers throw a diagnostic error.
  */
 const resolveEffectiveEnv = (requested: DbEnv): DbEnv => {
-  const isLocalDev = process.env.NODE_ENV !== "production";
-  if (isLocalDev && urlFor("dev") && keyFor("dev")) return "dev";
-
   if (urlFor(requested) && keyFor(requested)) return requested;
   const other: DbEnv = requested === "dev" ? "prod" : "dev";
   if (urlFor(other) && keyFor(other)) return other;

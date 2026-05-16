@@ -49,6 +49,9 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Creators", label: "Analytics", key: "/creators/analytics" },
   { group: "Creators", label: "Settings", key: "/creators/settings" },
   { group: "Creators", label: "Leaderboards", key: "/creators/leaderboards" },
+  // Multiplier Review hidden from navigation — settlement is now automatic
+  // at end-stream so the queue is always empty for new deals. Page still
+  // exists at /creators/multiplier-review for clearing legacy stuck deals.
   // Moderation
   { group: "Moderation", label: "Chat", key: "/chat" },
   // Security

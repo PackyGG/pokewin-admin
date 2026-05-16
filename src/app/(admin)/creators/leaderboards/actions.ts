@@ -105,6 +105,7 @@ const sponsorSchema = z.object({
 
 const createSchema = z.object({
     creator_user_id: z.string().trim().min(1, "Creator user id is required"),
+    co_creator_user_ids: z.array(z.string().trim().min(1)).default([]),
     title: z.string().trim().min(1).max(100),
     affiliate_codes: z.array(z.string()).default([]),
     site_bonus_usd: z.number().positive("Total prize pool must be positive"),
@@ -117,12 +118,13 @@ const createSchema = z.object({
                 prize_amount_usd: z.number().positive(),
             }),
         )
-        .min(1, "At least one prize tier is required"),
+        .min(5, "At least 5 prize tiers are required"),
 });
 
 const editSchema = z.object({
     title: z.string().trim().min(1).max(100).optional(),
     affiliate_codes: z.array(z.string()).optional(),
+    co_creator_user_ids: z.array(z.string().trim().min(1)).optional(),
     start_date: z.string().optional(),
     end_date: z.string().optional(),
     prize_tiers: z
@@ -132,7 +134,7 @@ const editSchema = z.object({
                 prize_amount_usd: z.number().positive(),
             }),
         )
-        .min(1)
+        .min(5)
         .optional(),
 });
 
@@ -440,6 +442,70 @@ export async function sponsorLeaderboard(
     return { success: true };
 }
 
+const hardDeleteSchema = z.object({
+    confirmation_id: z.string().uuid("Confirmation id must be the leaderboard's UUID"),
+});
+
+export async function hardDeleteLeaderboard(
+    id: string,
+    input: { confirmation_id: string },
+): Promise<ActionResult<{ refund_amount_usd: string; previous_status: string }>> {
+    const session = await requirePageAccess(PAGE_KEY);
+    const parsedId = idSchema.safeParse(id);
+    if (!parsedId.success) {
+        return { success: false, error: parsedId.error.issues[0]?.message ?? "Invalid id" };
+    }
+    const parsed = hardDeleteSchema.safeParse(input);
+    if (!parsed.success) {
+        return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+    // Local guard so a typo in the dialog can't reach the backend with a
+    // valid-looking-but-wrong UUID. Backend also enforces the same check.
+    if (parsed.data.confirmation_id !== parsedId.data) {
+        return {
+            success: false,
+            error: "Confirmation id must exactly match the leaderboard id",
+        };
+    }
+    await requireCapability(session, "__can_approve_leaderboard", "hard-delete creator leaderboards");
+
+    let result;
+    try {
+        result = await affiliateLeaderboardsApi.hardDelete(
+            parsedId.data,
+            { confirmation_id: parsed.data.confirmation_id },
+            session.userId,
+        );
+    } catch (err) {
+        return { success: false, error: toErrorMessage(err) };
+    }
+
+    try {
+        await createAdminAuditEvent({
+            adminUserId: session.userId,
+            eventType: "affiliate_leaderboard_hard_deleted",
+            metadata: {
+                leaderboard_id: parsedId.data,
+                previous_status: result.previous_status,
+                refund_amount_usd: result.refund_amount_usd,
+            },
+        });
+    } catch (err) {
+        logAuditFailure("hardDeleteLeaderboard", err);
+    }
+
+    // The detail page no longer exists post-delete, but revalidating the list
+    // is essential so the row disappears immediately on return.
+    revalidatePath(PAGE_KEY);
+    return {
+        success: true,
+        data: {
+            refund_amount_usd: result.refund_amount_usd,
+            previous_status: result.previous_status,
+        },
+    };
+}
+
 export async function cancelLeaderboard(id: string): Promise<ActionResult> {
     const session = await requirePageAccess(PAGE_KEY);
     const parsedId = idSchema.safeParse(id);
@@ -480,6 +546,7 @@ function extractEditedFields(
     const out: Record<string, unknown> = {};
     if (edited.title !== undefined) out.title = row.title;
     if (edited.affiliate_codes !== undefined) out.affiliate_codes = row.affiliate_codes;
+    if (edited.co_creator_user_ids !== undefined) out.co_creator_user_ids = row.co_creator_user_ids;
     if (edited.start_date !== undefined) out.start_date = row.start_date;
     if (edited.end_date !== undefined) out.end_date = row.end_date;
     if (edited.prize_tiers !== undefined) out.prize_tiers = row.prize_tiers;

@@ -1,7 +1,5 @@
 import "server-only";
 
-import { isAddress as ethersIsAddress } from "ethers";
-
 /**
  * What used to be a full ethers + USDT contract module. The auto-
  * payment system was removed (motha sends USDT manually from their
@@ -12,9 +10,11 @@ import { isAddress as ethersIsAddress } from "ethers";
  * have to repeat the URL prefix.
  */
 
-/** Mainnet Ethereum address validator (delegates to ethers' checksum). */
+const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
+
+/** Mainnet Ethereum address format validator. */
 export function isAddress(value: string): boolean {
-  return ethersIsAddress(value.trim());
+  return ETH_ADDRESS_RE.test(value.trim());
 }
 
 /** Build a mainnet Etherscan URL for an address. */

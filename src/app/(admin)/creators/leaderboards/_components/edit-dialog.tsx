@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, X } from "lucide-react";
 
 import {
     Dialog,
@@ -17,19 +17,37 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 
-import { editLeaderboard, setLeaderboardSponsorship } from "../actions";
+import {
+    editLeaderboard,
+    searchCreators,
+    setLeaderboardSponsorship,
+    type CreatorSearchResult,
+} from "../actions";
 
 type Tier = { position: number; prize_amount_usd: string };
 
 type Leaderboard = {
     id: string;
     title: string;
+    creator_user_id: string;
+    co_creator_user_ids: string[];
     affiliate_codes: string[];
     creator_prize_usd: string;
     site_bonus_usd: string;
     start_date: string;
     end_date: string;
     prize_tiers: Tier[];
+};
+
+// Lightweight display row built from the existing co_creator_user_ids array.
+// We don't have usernames/emails at mount time; the edit dialog hydrates them
+// lazily via searchCreators when admin opens the add picker. Until then we
+// just show the truncated user id so the chip is still removable.
+type CoCreatorChip = {
+    userId: string;
+    username: string | null;
+    email: string | null;
+    affiliateCode: string | null;
 };
 
 type Props = {
@@ -84,6 +102,22 @@ export function EditDialog({
     const [sponsoredPct, setSponsoredPct] = useState(
         String(currentSponsoredPct ?? 100),
     );
+
+    // Co-creators editing: seed from the row's existing array, then let the
+    // admin add/remove via the same search picker used in create-dialog.
+    const [coCreators, setCoCreators] = useState<CoCreatorChip[]>(
+        leaderboard.co_creator_user_ids.map((id) => ({
+            userId: id,
+            username: null,
+            email: null,
+            affiliateCode: null,
+        })),
+    );
+    const [coCreatorQuery, setCoCreatorQuery] = useState("");
+    const [coCreatorResults, setCoCreatorResults] = useState<CreatorSearchResult[]>([]);
+    const [coSearchOpen, setCoSearchOpen] = useState(false);
+    const [isCoSearching, setIsCoSearching] = useState(false);
+    const coSearchSeqRef = useRef(0);
     const [isPending, startTransition] = useTransition();
     const router = useRouter();
 
@@ -91,6 +125,73 @@ export function EditDialog({
 
     const tierSum = tiers.reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
     const tierSumExceeds = tierSum > totalPool + 1e-6;
+
+    useEffect(() => {
+        const trimmed = coCreatorQuery.trim();
+        if (trimmed.length < 2) {
+            setCoCreatorResults([]);
+            setIsCoSearching(false);
+            return;
+        }
+
+        const seq = ++coSearchSeqRef.current;
+        setIsCoSearching(true);
+        const handle = setTimeout(async () => {
+            try {
+                const results = await searchCreators(trimmed);
+                if (seq !== coSearchSeqRef.current) return;
+                setCoCreatorResults(results);
+            } catch {
+                if (seq !== coSearchSeqRef.current) return;
+                setCoCreatorResults([]);
+            } finally {
+                if (seq === coSearchSeqRef.current) setIsCoSearching(false);
+            }
+        }, 200);
+
+        return () => clearTimeout(handle);
+    }, [coCreatorQuery]);
+
+    const addCoCreator = (c: CreatorSearchResult) => {
+        if (c.userId === leaderboard.creator_user_id) return;
+        if (coCreators.some((existing) => existing.userId === c.userId)) return;
+        setCoCreators((prev) => [
+            ...prev,
+            {
+                userId: c.userId,
+                username: c.username,
+                email: c.email,
+                affiliateCode: c.affiliateCode,
+            },
+        ]);
+        setCoCreatorQuery("");
+        setCoCreatorResults([]);
+        setCoSearchOpen(false);
+
+        // Merge this creator's codes into the codes input (dedup case-insensitive)
+        // so admins don't have to copy them by hand.
+        if (c.codes.length > 0) {
+            setCodesText((prev) => {
+                const existing = prev
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter((s) => s.length > 0);
+                const seen = new Set(existing.map((s) => s.toUpperCase()));
+                const merged = [...existing];
+                for (const code of c.codes) {
+                    if (!seen.has(code.toUpperCase())) {
+                        seen.add(code.toUpperCase());
+                        merged.push(code);
+                    }
+                }
+                return merged.join(", ");
+            });
+        }
+    };
+
+    const removeCoCreator = (userId: string) => {
+        setCoCreators((prev) => prev.filter((c) => c.userId !== userId));
+    };
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -133,9 +234,15 @@ export function EditDialog({
         const newTiersSorted = [...tiersParsed].sort((a, b) => a.position - b.position);
         const tiersChanged = JSON.stringify(originalTiers) !== JSON.stringify(newTiersSorted);
 
+        const coCreatorIds = coCreators.map((c) => c.userId);
+        const coCreatorsChanged =
+            JSON.stringify([...coCreatorIds].sort())
+                !== JSON.stringify([...leaderboard.co_creator_user_ids].sort());
+
         const payload: {
             title?: string;
             affiliate_codes?: string[];
+            co_creator_user_ids?: string[];
             start_date?: string;
             end_date?: string;
             prize_tiers?: Array<{ position: number; prize_amount_usd: number }>;
@@ -143,11 +250,12 @@ export function EditDialog({
 
         if (titleChanged) payload.title = title.trim();
         if (codesChanged) payload.affiliate_codes = codesParsed;
+        if (coCreatorsChanged) payload.co_creator_user_ids = coCreatorIds;
         if (startChanged) payload.start_date = startISO;
         if (endChanged) payload.end_date = endISO;
         if (tiersChanged) {
-            if (newTiersSorted.length === 0) {
-                toast.error("At least one prize tier is required");
+            if (newTiersSorted.length < 5) {
+                toast.error("At least 5 prize tiers are required");
                 return;
             }
             if (tierSumExceeds) {
@@ -247,6 +355,92 @@ export function EditDialog({
                             onChange={(e) => setCodesText(e.target.value)}
                             placeholder="zog, packy"
                         />
+                    </div>
+
+                    <div className="space-y-2">
+                        <Label htmlFor="co_creator_search">
+                            Co-creators (their codes also count toward this leaderboard)
+                        </Label>
+                        {coCreators.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5">
+                                {coCreators.map((c) => (
+                                    <div
+                                        key={c.userId}
+                                        className="inline-flex items-center gap-1 rounded-md border bg-muted/40 px-2 py-1 text-xs"
+                                    >
+                                        <span className="font-medium">
+                                            {c.username ?? c.email ?? c.userId.slice(0, 12)}
+                                        </span>
+                                        {c.affiliateCode && (
+                                            <span className="text-muted-foreground font-mono">
+                                                · {c.affiliateCode}
+                                            </span>
+                                        )}
+                                        <button
+                                            type="button"
+                                            onClick={() => removeCoCreator(c.userId)}
+                                            className="ml-1 text-muted-foreground hover:text-foreground"
+                                            aria-label="Remove co-creator"
+                                        >
+                                            <X className="size-3" />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        <div className="relative">
+                            <Input
+                                id="co_creator_search"
+                                value={coCreatorQuery}
+                                onChange={(e) => {
+                                    setCoCreatorQuery(e.target.value);
+                                    setCoSearchOpen(true);
+                                }}
+                                onFocus={() => setCoSearchOpen(true)}
+                                placeholder="Search to add a co-creator..."
+                                autoComplete="off"
+                            />
+                            {coSearchOpen && coCreatorQuery.trim().length >= 2 && (
+                                <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover shadow-md">
+                                    {isCoSearching ? (
+                                        <div className="px-3 py-2 text-sm text-muted-foreground">
+                                            Searching…
+                                        </div>
+                                    ) : coCreatorResults.length === 0 ? (
+                                        <div className="px-3 py-2 text-sm text-muted-foreground">
+                                            No creators match.
+                                        </div>
+                                    ) : (
+                                        <ul className="max-h-60 overflow-auto py-1">
+                                            {coCreatorResults
+                                                .filter(
+                                                    (c) =>
+                                                        c.userId !== leaderboard.creator_user_id &&
+                                                        !coCreators.some((x) => x.userId === c.userId),
+                                                )
+                                                .map((c) => (
+                                                    <li key={c.userId}>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => addCoCreator(c)}
+                                                            className="flex w-full flex-col items-start px-3 py-2 text-left hover:bg-muted/60"
+                                                        >
+                                                            <span className="text-sm font-medium">
+                                                                {c.username ?? c.email ?? "(no username)"}
+                                                            </span>
+                                                            <span className="text-xs text-muted-foreground font-mono">
+                                                                {c.affiliateCode
+                                                                    ? `${c.affiliateCode} · ${c.userId.slice(0, 12)}…`
+                                                                    : `${c.userId.slice(0, 12)}…`}
+                                                            </span>
+                                                        </button>
+                                                    </li>
+                                                ))}
+                                        </ul>
+                                    )}
+                                </div>
+                            )}
+                        </div>
                     </div>
 
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

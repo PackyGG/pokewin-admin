@@ -60,9 +60,12 @@ export default async function AffiliateLeaderboardDetailPage({
         throw err;
     }
     const db = await getDb();
-    const [creator, rankings, sponsorshipMap] = await Promise.all([
-        db.user.findUnique({
-            where: { id: lb.creator_user_id },
+    const participatingCreatorIds = [lb.creator_user_id, ...(lb.co_creator_user_ids ?? [])];
+    const [creators, rankings, sponsorshipMap] = await Promise.all([
+        // Hydrate the primary creator plus every co-creator in one query so we
+        // can render names alongside each id on the definition card.
+        db.user.findMany({
+            where: { id: { in: participatingCreatorIds } },
             select: { id: true, username: true, email: true },
         }),
         // Live standings — computed against the main DB (this
@@ -71,6 +74,7 @@ export default async function AffiliateLeaderboardDetailPage({
         // page — the rest of the leaderboard config still renders.
         getAffiliateLeaderboardRankings({
             creatorUserId: lb.creator_user_id,
+            coCreatorUserIds: lb.co_creator_user_ids ?? [],
             affiliateCodes: lb.affiliate_codes,
             startDate: new Date(lb.start_date),
             endDate: new Date(lb.end_date),
@@ -87,6 +91,13 @@ export default async function AffiliateLeaderboardDetailPage({
             return new Map<string, number>();
         }),
     ]);
+    const creatorById = new Map(creators.map((c) => [c.id, c]));
+    const creator = creatorById.get(lb.creator_user_id) ?? null;
+    const coCreatorRows = (lb.co_creator_user_ids ?? []).map((id) => ({
+        id,
+        username: creatorById.get(id)?.username ?? null,
+        email: creatorById.get(id)?.email ?? null,
+    }));
     const currentSponsoredPct = sponsorshipMap.get(id) ?? null;
 
     return (
@@ -141,6 +152,21 @@ export default async function AffiliateLeaderboardDetailPage({
                                 </div>
                             }
                         />
+                        {coCreatorRows.length > 0 && (
+                            <DefRow
+                                label="Co-creators"
+                                value={
+                                    <div className="flex flex-col gap-1">
+                                        {coCreatorRows.map((c) => (
+                                            <div key={c.id} className="flex flex-col">
+                                                <span>{c.username ?? c.email ?? "(no username)"}</span>
+                                                <span className="text-xs text-muted-foreground font-mono">{c.id}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                }
+                            />
+                        )}
                         <DefRow
                             label="Affiliate codes"
                             value={

@@ -177,10 +177,27 @@ export default async function PromoCodeDetailPage({
             }
           />
           <PanelRow
+            label="Max Account Age"
+            value={
+              data.maximumAccountAgeHours > 0
+                ? `${data.maximumAccountAgeHours} hours (new signups only)`
+                : "None"
+            }
+          />
+          <PanelRow
             label="Min Deposit (all-time)"
             value={
               data.minimumDepositAmount > 0
                 ? formatCurrency(data.minimumDepositAmount)
+                : "None"
+            }
+          />
+          <PanelRow
+            label="Min Recent Deposit"
+            value={
+              data.minimumRecentDepositAmount > 0 &&
+              data.recentDepositPeriodMinutes > 0
+                ? `${formatCurrency(data.minimumRecentDepositAmount)} in last ${data.recentDepositPeriodMinutes} min`
                 : "None"
             }
           />
