@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 
 import { LeaderboardsTable } from "./_components/leaderboards-table";
 import { CreateDialog } from "./_components/create-dialog";
+import { getLeaderboardSponsorshipMap } from "../_queries/leaderboard-sponsorship";
 
 export const metadata = { title: "Affiliate Leaderboards" };
 
@@ -67,6 +68,18 @@ export default async function AffiliateLeaderboardsPage({
           })
         : [];
     const creatorMap = new Map(creators.map((c) => [c.id, c]));
+
+    // Admin-side sponsored % per leaderboard (admin DB). Best-effort —
+    // a failure just renders every row at the 100% default.
+    const sponsorshipMap = await getLeaderboardSponsorshipMap(
+        rows.map((r) => r.id),
+    ).catch((e) => {
+        console.error(
+            "[leaderboards] sponsorship fetch failed (rows show 100%):",
+            e,
+        );
+        return new Map<string, number>();
+    });
 
     const hasNext = offset + PAGE_LIMIT < total;
     const hasPrev = offset > 0;
@@ -130,7 +143,11 @@ export default async function AffiliateLeaderboardsPage({
                 </div>
 
                 <FadeIn>
-                    <LeaderboardsTable rows={rows} creatorMap={creatorMap} />
+                    <LeaderboardsTable
+                        rows={rows}
+                        creatorMap={creatorMap}
+                        sponsorshipMap={sponsorshipMap}
+                    />
                 </FadeIn>
 
                 <div className="flex items-center justify-between text-sm text-muted-foreground">

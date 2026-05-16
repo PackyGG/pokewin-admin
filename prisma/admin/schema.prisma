@@ -562,3 +562,24 @@ model salary_payouts {
   @@index([status])
   @@index([created_at(sort: Desc)])
 }
+
+// Admin-side "sponsored %" annotation on a creator (affiliate)
+// leaderboard. Purely a cost-accounting input — it does NOT touch the
+// backend leaderboard in any way. The /creators "Leaderboard Cost" KPI
+// counts each approved leaderboard's prize pool × this percentage;
+// leaderboards with no row default to 100% (full cost).
+model admin_leaderboard_sponsorship {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // packy.gg backend affiliate-leaderboard id (uuid string — separate
+  // system, can't be an FK). One row per leaderboard; the
+  // setLeaderboardSponsorship upsert keys on this.
+  leaderboard_id       String   @unique
+  // 0–100. Share of this leaderboard's cost the house sponsored.
+  // Range is enforced server-side in the action (Zod).
+  sponsored_percentage Decimal  @db.Decimal(5, 2)
+  // admin_users.id of whoever last set it (plain column — no FK, so
+  // adding this table doesn't touch the admin_users model).
+  set_by_admin_id      String   @db.Uuid
+  created_at           DateTime @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime @default(now()) @db.Timestamptz(6)
+}

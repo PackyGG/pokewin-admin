@@ -13,6 +13,7 @@ import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { getDb } from "@/lib/db";
+import { adminDb } from "@/lib/admin-db";
 
 export type CreatorSearchResult = {
     userId: string;
@@ -133,6 +134,14 @@ const editSchema = z.object({
         )
         .min(1)
         .optional(),
+});
+
+// Admin-side "sponsored %" — a cost-accounting annotation, 0–100.
+const sponsorshipSchema = z.object({
+    sponsored_percentage: z
+        .number()
+        .min(0, "Sponsored % must be 0 or more")
+        .max(100, "Sponsored % must be 100 or less"),
 });
 
 function toErrorMessage(err: unknown): string {
@@ -306,6 +315,74 @@ export async function editLeaderboard(
     }
 
     revalidate(parsedId.data);
+    return { success: true };
+}
+
+/**
+ * Set the admin-side "sponsored %" annotation on a leaderboard.
+ *
+ * This is PURELY a cost-accounting input for the /creators
+ * "Leaderboard Cost" KPI — it does NOT touch the backend leaderboard
+ * (no prize change, no API call). Upserts the admin-DB row keyed by
+ * leaderboard id. Editable for any leaderboard regardless of status,
+ * since it's our own annotation, not a backend field.
+ */
+export async function setLeaderboardSponsorship(
+    leaderboardId: string,
+    sponsoredPercentage: number,
+): Promise<ActionResult> {
+    const session = await requirePageAccess(PAGE_KEY);
+    const parsedId = idSchema.safeParse(leaderboardId);
+    if (!parsedId.success) {
+        return { success: false, error: parsedId.error.issues[0]?.message ?? "Invalid id" };
+    }
+    const parsed = sponsorshipSchema.safeParse({
+        sponsored_percentage: sponsoredPercentage,
+    });
+    if (!parsed.success) {
+        return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+    await requireCapability(
+        session,
+        "__can_update_creator_deal",
+        "edit creator leaderboards",
+    );
+
+    try {
+        await adminDb.admin_leaderboard_sponsorship.upsert({
+            where: { leaderboard_id: parsedId.data },
+            create: {
+                leaderboard_id: parsedId.data,
+                sponsored_percentage: parsed.data.sponsored_percentage,
+                set_by_admin_id: session.userId,
+            },
+            update: {
+                sponsored_percentage: parsed.data.sponsored_percentage,
+                set_by_admin_id: session.userId,
+                updated_at: new Date(),
+            },
+        });
+    } catch (err) {
+        return { success: false, error: toErrorMessage(err) };
+    }
+
+    try {
+        await createAdminAuditEvent({
+            adminUserId: session.userId,
+            eventType: "affiliate_leaderboard_sponsorship_set",
+            metadata: {
+                leaderboard_id: parsedId.data,
+                sponsored_percentage: parsed.data.sponsored_percentage,
+            },
+        });
+    } catch (err) {
+        logAuditFailure("setLeaderboardSponsorship", err);
+    }
+
+    revalidate(parsedId.data);
+    // The /creators "Leaderboard Cost" KPI weights by this %, so it
+    // must recompute too.
+    revalidatePath("/creators");
     return { success: true };
 }
 
