@@ -170,11 +170,11 @@ export default async function CreatorDetailPage({
           <Info className="size-4 mt-0.5 text-amber-500 shrink-0" />
           <div>
             <div className="font-medium text-amber-500">
-              Bu kullanıcının affiliate hesabı yok
+              This user has no affiliate account
             </div>
             <div className="mt-0.5 text-muted-foreground">
-              Henüz creator olarak provision edilmemiş — affiliate code, deal,
-              click ve signup metrikleri boş gözükecek.
+              Not yet provisioned as a creator — affiliate code, deal, click,
+              and signup metrics will appear empty.
             </div>
           </div>
         </div>
