@@ -68,38 +68,72 @@ type FormState = {
   min_bet_count: string;
   min_wager_to_funding_ratio_pct: string;
   kick_vod_required: boolean;
+  auto_renew: boolean;
   terms_text: string;
   terms_version: string;
 };
 
+/**
+ * Derive withdrawable percentage from the multiplier. The two are bound:
+ *   withdrawable_pct = 100 / multiplier_x   (e.g. 5x → 20%, 10x → 10%)
+ * so a creator's max payout exactly offsets the platform's inflation
+ * (creator can recover their own deposit at best, never the inflation).
+ * Returns "" when multiplier is invalid so callers can fall back gracefully.
+ */
+function deriveWithdrawablePct(multiplierX: string): string {
+  const m = parseFloat(multiplierX);
+  if (!Number.isFinite(m) || m <= 0) return "";
+  const pct = 100 / m;
+  return Number.isInteger(pct) ? pct.toString() : pct.toFixed(2);
+}
+
 const buildCreateDefaults = (): FormState => ({
-  required_deposit_usd: "200",
+  required_deposit_usd: "5",
   multiplier_x: "5",
-  withdrawable_pct: "20",
+  withdrawable_pct: deriveWithdrawablePct("5"),
   wager_req_pct: "100",
   max_total_wager_usd: "",
   max_payout_usd: "",
-  min_session_duration_seconds: "1800",
-  min_bet_count: "20",
-  min_wager_to_funding_ratio_pct: "50",
-  kick_vod_required: true,
+  min_session_duration_seconds: "0",
+  min_bet_count: "0",
+  min_wager_to_funding_ratio_pct: "0",
+  kick_vod_required: false,
+  auto_renew: true,
   terms_text:
-    "Growth Program Agreement v1.0\n\n" +
-    "1. Activating this deal locks your deposit into the program.\n" +
-    "2. Your spendable balance is inflated by the multiplier for the stream.\n" +
-    "3. At end-of-stream, only the configured percentage is withdrawable, " +
-    "and only after admin review.\n" +
-    "4. You must wager at least the configured fraction of your loaded " +
-    "balance to unlock payout.\n" +
-    "5. Abuse of the program (low duration, missing VOD, suspicious " +
-    "wager patterns) may result in deal rejection and forfeiture of funds.\n",
+    "Packy Multiplier Deal Agreement v1.0\n\n" +
+    "1. Starting a session pulls your full available wallet balance into " +
+    "the deal. Your spendable stream balance becomes (wallet × multiplier).\n" +
+    "2. While streaming, any crypto deposit at or above the minimum-deposit " +
+    "floor is also inflated by the multiplier and added to your stream " +
+    "balance. Deposits below the floor land in your wallet normally.\n" +
+    "3. You must wager the configured wager requirement against your " +
+    "current total loaded amount before you can end the session. Top-ups " +
+    "grow both your stream balance and the wager target. End-stream is " +
+    "locked until you reach the target, unless your remaining inflated " +
+    "balance falls below 10% of total loaded (effective bust), in which " +
+    "case you can end early with whatever payout remains.\n" +
+    "4. When you end the stream, the configured withdrawable percentage of " +
+    "your ending stream balance is issued as a payout voucher in your " +
+    "inventory — automatic and immediate.\n" +
+    "5. The remaining percentage of the ending balance, and any inflation " +
+    "you did not spend, are forfeited to the platform.\n" +
+    "6. Stream activity (duration, bet count, wager-to-funding ratio, Kick " +
+    "VOD when required) is logged for audit. Anomalous patterns may " +
+    "trigger follow-up platform review.\n",
   terms_version: "v1.0",
 });
 
 const buildEditDefaults = (deal: MultiplierDealResponse): FormState => ({
   required_deposit_usd: String(deal.required_deposit_usd),
   multiplier_x: (deal.multiplier_bps / 10000).toString(),
-  withdrawable_pct: (deal.withdrawable_bps / 100).toString(),
+  // Always derive from multiplier — the binding is enforced at the form
+  // level, so any existing deal whose withdrawable_bps was set out-of-band
+  // (e.g. via API or admin override before this rule) will get its
+  // withdrawable normalized to the formula on next save. computePatch
+  // will emit the corrected bps if it differs.
+  withdrawable_pct: deriveWithdrawablePct(
+    (deal.multiplier_bps / 10000).toString(),
+  ),
   wager_req_pct: (deal.wager_requirement_bps / 100).toString(),
   max_total_wager_usd: deal.max_total_wager_usd ?? "",
   max_payout_usd: deal.max_payout_usd ?? "",
@@ -109,6 +143,7 @@ const buildEditDefaults = (deal: MultiplierDealResponse): FormState => ({
     deal.min_wager_to_funding_ratio_bps / 100
   ).toString(),
   kick_vod_required: deal.kick_vod_required,
+  auto_renew: deal.auto_renew,
   terms_text: deal.terms_text,
   terms_version: deal.terms_version,
 });
@@ -216,6 +251,10 @@ function computePatch(
     patch.kick_vod_required = form.kick_vod_required;
   }
 
+  if (form.auto_renew !== deal.auto_renew) {
+    patch.auto_renew = form.auto_renew;
+  }
+
   if (form.terms_text !== deal.terms_text) {
     patch.terms_text = form.terms_text;
   }
@@ -247,7 +286,16 @@ export function MultiplierDealFormDialog(props: Props) {
   }
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
-    setForm((prev) => ({ ...prev, [key]: value }));
+    setForm((prev) => {
+      const next = { ...prev, [key]: value };
+      // Withdrawable is bound to multiplier (100 / multiplier_x). Recompute
+      // whenever multiplier changes so the displayed percent + the value
+      // sent on submit stay in sync.
+      if (key === "multiplier_x") {
+        next.withdrawable_pct = deriveWithdrawablePct(value as string);
+      }
+      return next;
+    });
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -255,47 +303,40 @@ export function MultiplierDealFormDialog(props: Props) {
 
     const requiredDeposit = parseFloat(form.required_deposit_usd);
     const multiplier = parseFloat(form.multiplier_x);
+    // Withdrawable is derived from multiplier — no separate validation
+    // (the value is computed, not user-input).
     const withdrawablePct = parseFloat(form.withdrawable_pct);
     const wagerReqPct = parseFloat(form.wager_req_pct);
-    const minDuration = parseInt(form.min_session_duration_seconds, 10);
-    const minBet = parseInt(form.min_bet_count, 10);
-    const minWagerRatioPct = parseFloat(form.min_wager_to_funding_ratio_pct);
+    // Activity-floor fields are optional; treat blank/NaN as 0.
+    const minDuration =
+      parseInt(form.min_session_duration_seconds, 10) || 0;
+    const minBet = parseInt(form.min_bet_count, 10) || 0;
+    const minWagerRatioPct =
+      parseFloat(form.min_wager_to_funding_ratio_pct) || 0;
 
     // Numeric validation. Backend re-validates under transaction locks so
     // these client checks are purely to fail fast with a friendly toast.
     if (!Number.isFinite(requiredDeposit) || requiredDeposit <= 0) {
-      toast.error("Required deposit must be greater than 0");
+      toast.error("Minimum deposit must be greater than 0");
       return;
     }
     if (!Number.isFinite(multiplier) || multiplier < 1) {
       toast.error("Multiplier must be 1x or higher");
       return;
     }
-    if (
-      !Number.isFinite(withdrawablePct) ||
-      withdrawablePct < 0 ||
-      withdrawablePct > 100
-    ) {
-      toast.error("Withdrawable percentage must be between 0 and 100");
-      return;
-    }
     if (!Number.isFinite(wagerReqPct) || wagerReqPct < 0) {
       toast.error("Wager requirement must be 0 or greater");
       return;
     }
-    if (!Number.isFinite(minDuration) || minDuration < 0) {
-      toast.error("Min session duration must be 0 seconds or more");
+    if (minDuration < 0) {
+      toast.error("Min session duration cannot be negative");
       return;
     }
-    if (!Number.isFinite(minBet) || minBet < 0) {
-      toast.error("Min bet count must be 0 or more");
+    if (minBet < 0) {
+      toast.error("Min bet count cannot be negative");
       return;
     }
-    if (
-      !Number.isFinite(minWagerRatioPct) ||
-      minWagerRatioPct < 0 ||
-      minWagerRatioPct > 100
-    ) {
+    if (minWagerRatioPct < 0 || minWagerRatioPct > 100) {
       toast.error("Min wager / loaded ratio must be 0–100%");
       return;
     }
@@ -354,6 +395,7 @@ export function MultiplierDealFormDialog(props: Props) {
               minWagerRatioPct * 100,
             ),
             kick_vod_required: form.kick_vod_required,
+            auto_renew: form.auto_renew,
             terms_text: form.terms_text,
             terms_version: form.terms_version,
           });
@@ -381,8 +423,23 @@ export function MultiplierDealFormDialog(props: Props) {
   const submitLabel = mode === "edit" ? "Save changes" : "Create offer";
   const pendingLabel = mode === "edit" ? "Saving…" : "Creating…";
 
-  // Live preview of total_loaded = deposit × multiplier. Pure UI math; the
-  // backend recomputes at activation.
+  // Expand the "Optional advanced" section by default when any of its
+  // fields holds a non-default value — so an admin opening an existing
+  // deal with custom caps / activity floor notices them. New offers
+  // start collapsed since defaults are all zero/empty.
+  const optionalDefaultOpen =
+    form.max_total_wager_usd.trim() !== "" ||
+    form.max_payout_usd.trim() !== "" ||
+    (parseInt(form.min_session_duration_seconds, 10) || 0) > 0 ||
+    (parseInt(form.min_bet_count, 10) || 0) > 0 ||
+    (parseFloat(form.min_wager_to_funding_ratio_pct) || 0) > 0 ||
+    form.kick_vod_required;
+
+  // Live preview at the minimum-deposit threshold. Pure UI math; the
+  // backend pulls the creator's ENTIRE available_balance at activation
+  // (and inflates each subsequent qualifying top-up the same way), so
+  // this is the floor case — actual loaded amounts will typically be
+  // higher.
   const requiredDepositNum = parseFloat(form.required_deposit_usd);
   const multiplierNum = parseFloat(form.multiplier_x);
   const previewLoaded =
@@ -426,9 +483,34 @@ export function MultiplierDealFormDialog(props: Props) {
           onSubmit={handleSubmit}
           className="space-y-4 py-2"
         >
+          {/* Renewal — top of form. Most-common toggle for setting up a
+              long-running creator program. */}
+          <FieldGroup title="Renewal" cols={1}>
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Auto-renew on settle</Label>
+                <Switch
+                  checked={form.auto_renew}
+                  onCheckedChange={(v) => update("auto_renew", v)}
+                />
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                When on, the contract is cloned into a fresh
+                pending_deposit offer in the same transaction the creator
+                ends their stream — they can deposit again immediately
+                under the same terms. Off = one-shot offer. Patchable any
+                time before terminal status; flip off mid-stream to break
+                the chain after the current settle.
+              </p>
+            </div>
+          </FieldGroup>
+
           {/* Contract — core financial parameters */}
           <FieldGroup title="Contract">
-            <Field label="Required deposit ($)" hint="Creator's own funds">
+            <Field
+              label="Minimum deposit ($)"
+              hint="Wallet floor to start a session AND per-deposit floor for top-up routing during a live session. Below this, deposits go to wallet normally."
+            >
               <Input
                 type="number"
                 step="0.01"
@@ -442,7 +524,7 @@ export function MultiplierDealFormDialog(props: Props) {
             </Field>
             <Field
               label="Multiplier (x)"
-              hint="5 → balance × 5 at activation"
+              hint="5 → balance × 5 at activation. Withdrawable auto-derives from this."
             >
               <Input
                 type="number"
@@ -455,23 +537,23 @@ export function MultiplierDealFormDialog(props: Props) {
             </Field>
             <Field
               label="Withdrawable (%)"
-              hint="Fraction of ending balance paid out at approve"
+              hint="Auto-computed: 100 ÷ multiplier. Creator's max payout exactly offsets the platform inflation."
             >
               <Input
-                type="number"
-                step="1"
-                min="0"
-                max="100"
-                value={form.withdrawable_pct}
-                onChange={(e) =>
-                  update("withdrawable_pct", e.target.value)
+                type="text"
+                value={
+                  form.withdrawable_pct === ""
+                    ? "—"
+                    : `${form.withdrawable_pct}%`
                 }
-                required
+                disabled
+                readOnly
+                className="bg-muted/40"
               />
             </Field>
             <Field
               label="Wager requirement (%)"
-              hint="Of total loaded — 100 = must wager once through"
+              hint="Of total loaded — 100 = must wager once through. Top-ups grow the target."
             >
               <Input
                 type="number"
@@ -484,9 +566,15 @@ export function MultiplierDealFormDialog(props: Props) {
             </Field>
           </FieldGroup>
 
-          {/* Live preview */}
+          {/* Live preview — sample case at the minimum deposit threshold.
+              At activation the creator's entire wallet is pulled; this
+              shows what the math looks like for a wallet exactly at the
+              floor. Top-ups at the floor amount produce the same numbers. */}
           {previewLoaded !== null && (
             <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+              <div className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+                Sample @ minimum deposit
+              </div>
               <div className="grid grid-cols-3 gap-x-4 text-center">
                 <div>
                   <div className="text-xs text-muted-foreground">
@@ -516,94 +604,127 @@ export function MultiplierDealFormDialog(props: Props) {
             </div>
           )}
 
-          {/* Caps */}
-          <FieldGroup title="Caps (optional — empty = uncapped)">
-            <Field
-              label="Max total wager ($)"
-              hint="Hard ceiling on lifetime wager during stream"
-            >
-              <Input
-                type="number"
-                step="0.01"
-                min="0"
-                value={form.max_total_wager_usd}
-                onChange={(e) =>
-                  update("max_total_wager_usd", e.target.value)
-                }
-                placeholder="No cap"
-              />
-            </Field>
-            <Field
-              label="Max payout ($)"
-              hint="Hard ceiling on voucher value at approve"
-            >
-              <Input
-                type="number"
-                step="0.01"
-                min="0"
-                value={form.max_payout_usd}
-                onChange={(e) => update("max_payout_usd", e.target.value)}
-                placeholder="No cap"
-              />
-            </Field>
-          </FieldGroup>
+          {/* Optional advanced — caps + activity-floor + Kick VOD all
+              collapsed by default. Activity-floor thresholds are
+              audit-only flags (never block settlement, never block
+              end-stream); caps are hard ceilings that admin can opt in
+              to. Defaults are 0/empty so an admin who doesn't expand the
+              panel just gets a vanilla deal. */}
+          <details
+            className="group rounded-lg border bg-muted/20 px-3 py-2"
+            open={optionalDefaultOpen}
+          >
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground [&::-webkit-details-marker]:hidden">
+              <span>Optional advanced</span>
+              <span className="text-[10px] text-muted-foreground/70 group-open:hidden">
+                Click to expand
+              </span>
+            </summary>
 
-          {/* Activity floor */}
-          <FieldGroup title="Activity floor (auto-flag thresholds)">
-            <Field
-              label="Min duration (seconds)"
-              hint="1800 = 30 minutes"
-            >
-              <Input
-                type="number"
-                step="60"
-                min="0"
-                value={form.min_session_duration_seconds}
-                onChange={(e) =>
-                  update("min_session_duration_seconds", e.target.value)
-                }
-                required
-              />
-            </Field>
-            <Field label="Min bet count">
-              <Input
-                type="number"
-                step="1"
-                min="0"
-                value={form.min_bet_count}
-                onChange={(e) => update("min_bet_count", e.target.value)}
-                required
-              />
-            </Field>
-            <Field
-              label="Min wager / loaded (%)"
-              hint="Below this triggers LOW_WAGER_RATIO flag"
-            >
-              <Input
-                type="number"
-                step="1"
-                min="0"
-                max="100"
-                value={form.min_wager_to_funding_ratio_pct}
-                onChange={(e) =>
-                  update("min_wager_to_funding_ratio_pct", e.target.value)
-                }
-                required
-              />
-            </Field>
-            <div className="space-y-1">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs">Kick VOD required</Label>
-                <Switch
-                  checked={form.kick_vod_required}
-                  onCheckedChange={(v) => update("kick_vod_required", v)}
-                />
-              </div>
-              <p className="text-[11px] text-muted-foreground">
-                Creator must paste VOD URL at end-stream
-              </p>
+            <div className="mt-3 space-y-4">
+              {/* Caps */}
+              <FieldGroup title="Caps (empty = uncapped)">
+                <Field
+                  label="Max total wager ($)"
+                  hint="Hard ceiling on lifetime wager during stream"
+                >
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={form.max_total_wager_usd}
+                    onChange={(e) =>
+                      update("max_total_wager_usd", e.target.value)
+                    }
+                    placeholder="No cap"
+                  />
+                </Field>
+                <Field
+                  label="Max payout ($)"
+                  hint="Hard ceiling on voucher value at settle"
+                >
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={form.max_payout_usd}
+                    onChange={(e) =>
+                      update("max_payout_usd", e.target.value)
+                    }
+                    placeholder="No cap"
+                  />
+                </Field>
+              </FieldGroup>
+
+              {/* Activity floor — audit-only flags, do not block payout */}
+              <FieldGroup title="Activity floor (audit flags)">
+                <Field
+                  label="Min duration (seconds)"
+                  hint="0 = no floor. 1800 = 30 minutes."
+                >
+                  <Input
+                    type="number"
+                    step="60"
+                    min="0"
+                    value={form.min_session_duration_seconds}
+                    onChange={(e) =>
+                      update(
+                        "min_session_duration_seconds",
+                        e.target.value,
+                      )
+                    }
+                  />
+                </Field>
+                <Field
+                  label="Min bet count"
+                  hint="0 = no floor"
+                >
+                  <Input
+                    type="number"
+                    step="1"
+                    min="0"
+                    value={form.min_bet_count}
+                    onChange={(e) =>
+                      update("min_bet_count", e.target.value)
+                    }
+                  />
+                </Field>
+                <Field
+                  label="Min wager / loaded (%)"
+                  hint="0 = no floor. Below this triggers LOW_WAGER_RATIO audit flag at end-stream."
+                >
+                  <Input
+                    type="number"
+                    step="1"
+                    min="0"
+                    max="100"
+                    value={form.min_wager_to_funding_ratio_pct}
+                    onChange={(e) =>
+                      update(
+                        "min_wager_to_funding_ratio_pct",
+                        e.target.value,
+                      )
+                    }
+                  />
+                </Field>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs">Kick VOD required</Label>
+                    <Switch
+                      checked={form.kick_vod_required}
+                      onCheckedChange={(v) =>
+                        update("kick_vod_required", v)
+                      }
+                    />
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Creator paste VOD URL at end-stream. Missing VOD is
+                    only an audit flag, doesn&apos;t block payout.
+                  </p>
+                </div>
+              </FieldGroup>
             </div>
-          </FieldGroup>
+          </details>
 
           <Separator />
 

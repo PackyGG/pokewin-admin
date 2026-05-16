@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import {
-  CheckCircle2,
   ChevronRight,
   CircleDot,
   Clock,
@@ -10,7 +9,6 @@ import {
   Pencil,
   PowerOff,
   Trash2,
-  XCircle,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -29,9 +27,6 @@ import { MultiplierDealDetailDrawer } from "../../_components/multiplier-review/
 import { MultiplierDealFormDialog } from "../../_components/multiplier-review/deal-form-dialog";
 import { MultiplierCancelDialog } from "../../_components/multiplier-review/cancel-dialog";
 import { MultiplierForceEndDialog } from "../../_components/multiplier-review/force-end-dialog";
-import { MultiplierApproveDialog } from "../../_components/multiplier-review/approve-dialog";
-import { MultiplierRejectDialog } from "../../_components/multiplier-review/reject-dialog";
-import { MultiplierFlagDialog } from "../../_components/multiplier-review/flag-dialog";
 
 type Props = {
   userId: string;
@@ -46,8 +41,9 @@ type Props = {
  *     hasn't activated. Actions: edit / cancel.
  *   - Active      (live)                       — stream running.
  *     Actions: force-end + detail.
- *   - In Review   (pending_review / flagged)   — awaiting settlement.
- *     Actions: approve / reject / flag.
+ *   - In Review   (pending_review / flagged)   — legacy / stuck deals
+ *     from before auto-settlement. Read-only here; new deals never land
+ *     in this state. Clean-up via API only.
  *   - History     (terminal statuses)          — read-only.
  *
  * Sections are only shown when they have rows; an empty list shows the
@@ -334,49 +330,10 @@ function DealRow({
             }
           />
         )}
-        {isReviewable && (
-          <>
-            <MultiplierFlagDialog
-              deal={deal}
-              trigger={
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-7 text-orange-500 hover:text-orange-600"
-                  aria-label="Flag deal"
-                >
-                  <Flag className="size-3.5" />
-                </Button>
-              }
-            />
-            <MultiplierRejectDialog
-              deal={deal}
-              trigger={
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-7 text-rose-500 hover:text-rose-600"
-                  aria-label="Reject deal"
-                >
-                  <XCircle className="size-3.5" />
-                </Button>
-              }
-            />
-            <MultiplierApproveDialog
-              deal={deal}
-              trigger={
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-7 text-violet-500 hover:text-violet-600"
-                  aria-label="Approve deal"
-                >
-                  <CheckCircle2 className="size-3.5" />
-                </Button>
-              }
-            />
-          </>
-        )}
+        {/* In Review rows are read-only: auto-settlement issues the
+            voucher inline at end-stream, so no approve/reject/flag
+            buttons here. Legacy stuck deals (rare) are cleared via the
+            backend admin API directly. */}
       </div>
     </div>
   );
