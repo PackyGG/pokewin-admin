@@ -68,6 +68,7 @@ type FormState = {
   min_bet_count: string;
   min_wager_to_funding_ratio_pct: string;
   kick_vod_required: boolean;
+  auto_renew: boolean;
   terms_text: string;
   terms_version: string;
 };
@@ -83,6 +84,7 @@ const buildCreateDefaults = (): FormState => ({
   min_bet_count: "20",
   min_wager_to_funding_ratio_pct: "50",
   kick_vod_required: true,
+  auto_renew: true,
   terms_text:
     "Growth Program Agreement v1.0\n\n" +
     "1. Activating this deal locks your deposit into the program.\n" +
@@ -109,6 +111,7 @@ const buildEditDefaults = (deal: MultiplierDealResponse): FormState => ({
     deal.min_wager_to_funding_ratio_bps / 100
   ).toString(),
   kick_vod_required: deal.kick_vod_required,
+  auto_renew: deal.auto_renew,
   terms_text: deal.terms_text,
   terms_version: deal.terms_version,
 });
@@ -214,6 +217,10 @@ function computePatch(
 
   if (form.kick_vod_required !== deal.kick_vod_required) {
     patch.kick_vod_required = form.kick_vod_required;
+  }
+
+  if (form.auto_renew !== deal.auto_renew) {
+    patch.auto_renew = form.auto_renew;
   }
 
   if (form.terms_text !== deal.terms_text) {
@@ -354,6 +361,7 @@ export function MultiplierDealFormDialog(props: Props) {
               minWagerRatioPct * 100,
             ),
             kick_vod_required: form.kick_vod_required,
+            auto_renew: form.auto_renew,
             terms_text: form.terms_text,
             terms_version: form.terms_version,
           });
@@ -601,6 +609,27 @@ export function MultiplierDealFormDialog(props: Props) {
               </div>
               <p className="text-[11px] text-muted-foreground">
                 Creator must paste VOD URL at end-stream
+              </p>
+            </div>
+          </FieldGroup>
+
+          {/* Renewal */}
+          <FieldGroup title="Renewal" cols={1}>
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Auto-renew on settle</Label>
+                <Switch
+                  checked={form.auto_renew}
+                  onCheckedChange={(v) => update("auto_renew", v)}
+                />
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                When on, the contract is cloned into a fresh
+                pending_deposit offer in the same transaction the creator
+                ends their stream — they can deposit again immediately
+                under the same terms. Off = one-shot offer. Patchable any
+                time before terminal status; flip off mid-stream to break
+                the chain after the current settle.
               </p>
             </div>
           </FieldGroup>

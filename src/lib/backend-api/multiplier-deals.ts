@@ -51,6 +51,7 @@ export type MultiplierDealResponse = {
   min_bet_count: number;
   min_wager_to_funding_ratio_bps: number;
   kick_vod_required: boolean;
+  auto_renew: boolean;
 
   // TOS snapshot
   terms_text: string;
@@ -114,6 +115,7 @@ export type CreateMultiplierDealInput = {
   min_bet_count?: number;
   min_wager_to_funding_ratio_bps?: number;
   kick_vod_required?: boolean;
+  auto_renew?: boolean;
   terms_text: string;
   terms_version: string;
 };
@@ -131,6 +133,7 @@ export type UpdateMultiplierDealInput = {
     min_bet_count: number;
     min_wager_to_funding_ratio_bps: number;
     kick_vod_required: boolean;
+    auto_renew: boolean;
     terms_text: string;
     terms_version: string;
   }>;

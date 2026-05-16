@@ -235,6 +235,16 @@ function ContractSection({ deal }: { deal: MultiplierDealResponse }) {
         label="Kick VOD required"
         value={deal.kick_vod_required ? "Yes" : "No"}
       />
+      <Row
+        label="Auto-renew"
+        value={
+          deal.auto_renew ? (
+            <span className="text-emerald-500">On</span>
+          ) : (
+            <span className="text-muted-foreground">Off</span>
+          )
+        }
+      />
     </Section>
   );
 }
