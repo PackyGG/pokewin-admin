@@ -248,32 +248,30 @@ export async function deleteRacePrizeTier(id: string) {
  *
  * Enforces "one active period per race_type" via the partial unique index
  * on the table; the previous active period (if any) must be ended first.
+ *
+ * Daily/weekly periods are always snapped to UTC midnight server-side —
+ * the admin doesn't pick times. Drifted off-day boundaries caused
+ * production claim failures (May 2026 incident: late rollover stamped
+ * starts_at=02:37, getEndedByStart's exact-timestamp eq() stopped matching
+ * the snapshot's date-typed period_start, and 10 winners couldn't claim).
+ * Monthly still accepts explicit dates because admins schedule custom
+ * 10th-to-10th cadences.
  */
 export async function startRacePeriod(params: {
   raceType: string;
-  startsAt: string;
-  endsAt: string;
   autoRenew: boolean;
+  // Monthly only: 'YYYY-MM-DD' (interpreted as UTC midnight). Ignored for
+  // daily/weekly, which always snap to today's UTC midnight + standard span.
+  monthlyStartDate?: string;
+  monthlyEndDate?: string;
 }) {
   const db = await getDb();
   const session = await requireAdmin();
 
-  const { raceType, startsAt, endsAt, autoRenew } = params;
+  const { raceType, autoRenew, monthlyStartDate, monthlyEndDate } = params;
 
   if (!VALID_RACE_TYPES.has(raceType as race_type)) {
     throw new Error("Invalid race type (must be daily, weekly, or monthly)");
-  }
-
-  const startsAtDate = new Date(startsAt);
-  const endsAtDate = new Date(endsAt);
-  if (Number.isNaN(startsAtDate.getTime())) {
-    throw new Error("Invalid start date");
-  }
-  if (Number.isNaN(endsAtDate.getTime())) {
-    throw new Error("Invalid end date");
-  }
-  if (endsAtDate <= startsAtDate) {
-    throw new Error("End date must be after start date");
   }
 
   await requireCapability(
@@ -281,6 +279,39 @@ export async function startRacePeriod(params: {
     "__can_manage_race_periods",
     "manage race periods",
   );
+
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const todayUtcMidnight = () => {
+    const d = new Date();
+    d.setUTCHours(0, 0, 0, 0);
+    return d;
+  };
+
+  let startsAtDate: Date;
+  let endsAtDate: Date;
+
+  if (raceType === "daily") {
+    startsAtDate = todayUtcMidnight();
+    endsAtDate = new Date(startsAtDate.getTime() + DAY_MS);
+  } else if (raceType === "weekly") {
+    startsAtDate = todayUtcMidnight();
+    endsAtDate = new Date(startsAtDate.getTime() + 7 * DAY_MS);
+  } else {
+    if (!monthlyStartDate || !monthlyEndDate) {
+      throw new Error("Monthly race requires start and end dates");
+    }
+    startsAtDate = new Date(`${monthlyStartDate}T00:00:00.000Z`);
+    endsAtDate = new Date(`${monthlyEndDate}T00:00:00.000Z`);
+    if (Number.isNaN(startsAtDate.getTime())) {
+      throw new Error("Invalid start date");
+    }
+    if (Number.isNaN(endsAtDate.getTime())) {
+      throw new Error("Invalid end date");
+    }
+    if (endsAtDate <= startsAtDate) {
+      throw new Error("End date must be after start date");
+    }
+  }
 
   // Reject if an active period already exists for this type. A clearer
   // error than waiting for the partial unique index to fire.
