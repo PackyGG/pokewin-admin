@@ -3,13 +3,10 @@
 import { useState } from "react";
 import {
   AlertTriangle,
-  CheckCircle2,
   Clock,
   ExternalLink,
-  Flag,
   PowerOff,
   Trash2,
-  XCircle,
 } from "lucide-react";
 
 import {
@@ -25,9 +22,6 @@ import { Separator } from "@/components/ui/separator";
 import type { MultiplierDealResponse } from "@/lib/backend-api";
 import { formatDateTime, formatRelative } from "@/lib/utils/format";
 
-import { MultiplierApproveDialog } from "./approve-dialog";
-import { MultiplierRejectDialog } from "./reject-dialog";
-import { MultiplierFlagDialog } from "./flag-dialog";
 import { MultiplierForceEndDialog } from "./force-end-dialog";
 import { MultiplierCancelDialog } from "./cancel-dialog";
 import {
@@ -48,14 +42,15 @@ type Props = {
 
 /**
  * Side drawer showing every meaningful field of a single multiplier deal
- * with all action buttons embedded. Used identically on the creator
- * detail page (in the multiplier subtab) and on the global review queue
- * page — the only state it owns is the open/close toggle.
+ * with action buttons embedded for the offer + live phases. Used on the
+ * creator detail page and the (legacy) review queue page — the only
+ * state it owns is the open/close toggle.
  *
  * Action buttons surface contextually:
- *   - pending_deposit/funded → Edit (placeholder), Cancel
- *   - live                   → Force-end
- *   - pending_review/flagged → Approve, Reject, Flag (additional manual)
+ *   - pending_deposit/funded → Cancel
+ *   - live                   → Force-end (auto-settles)
+ *   - pending_review/flagged → read-only (legacy / stuck deals; clean-up
+ *                              via backend admin API directly)
  *   - terminal               → read-only
  *
  * The `onActionSuccess` callback is fired after any mutation succeeds so
@@ -73,8 +68,6 @@ export function MultiplierDealDetailDrawer({
   const isOffer =
     deal.status === "pending_deposit" || deal.status === "funded";
   const isLive = deal.status === "live";
-  const isReviewable =
-    deal.status === "pending_review" || deal.status === "flagged";
 
   const handleSuccess = () => {
     onActionSuccess?.();
@@ -147,40 +140,9 @@ export function MultiplierDealDetailDrawer({
                 onSuccess={handleSuccess}
               />
             )}
-            {isReviewable && (
-              <>
-                <MultiplierFlagDialog
-                  deal={deal}
-                  trigger={
-                    <Button variant="ghost" size="sm">
-                      <Flag className="mr-1.5 size-3.5" />
-                      Flag
-                    </Button>
-                  }
-                  onSuccess={onActionSuccess}
-                />
-                <MultiplierRejectDialog
-                  deal={deal}
-                  trigger={
-                    <Button variant="destructive" size="sm">
-                      <XCircle className="mr-1.5 size-3.5" />
-                      Reject
-                    </Button>
-                  }
-                  onSuccess={handleSuccess}
-                />
-                <MultiplierApproveDialog
-                  deal={deal}
-                  trigger={
-                    <Button size="sm">
-                      <CheckCircle2 className="mr-1.5 size-3.5" />
-                      Approve
-                    </Button>
-                  }
-                  onSuccess={handleSuccess}
-                />
-              </>
-            )}
+            {/* Approve / Reject / Flag actions removed — settlement is
+                automatic at end-stream. Backend endpoints remain available
+                for emergency clean-up of legacy stuck deals. */}
           </div>
         </div>
       </SheetContent>
