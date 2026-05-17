@@ -7,7 +7,7 @@ import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { require2FA } from "@/lib/require-2fa";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
-import { ALL_PAGE_KEYS } from "@/lib/admin-pages";
+import { sanitizePermissionKeys } from "@/app/(admin)/settings/roles/permissions-utils";
 
 export async function forceExpireAllSessions(adminUserId: string) {
   const session = await requireAdmin();
@@ -33,7 +33,7 @@ export async function forceExpireAllSessions(adminUserId: string) {
 
 export async function updateUserPermissions(
   userId: string,
-  pages: string[],
+  permissions: string[],
   totpCode: string,
 ) {
   const session = await requireAdmin();
@@ -48,18 +48,22 @@ export async function updateUserPermissions(
     throw new Error("Cannot set permissions for admin users");
   }
 
-  const validPages = pages.filter((p) => ALL_PAGE_KEYS.includes(p));
+  // `allowed_pages` holds the full effective permission set — page
+  // routes AND `__can_*` capability flags. Sanitize against the combined
+  // catalog so a stale / unknown key can't be persisted. The previous
+  // page-only filter here silently wiped every capability flag on save.
+  const validKeys = sanitizePermissionKeys(permissions);
 
   await adminDb.admin_users.update({
     where: { id: userId },
-    data: { allowed_pages: validPages },
+    data: { allowed_pages: validKeys },
     select: { id: true },
   });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "user_permissions_updated",
-    metadata: { target_admin_id: userId, pages: validPages },
+    metadata: { target_admin_id: userId, permissions: validKeys },
   });
 
   revalidatePath(`/admin-users/${userId}`);

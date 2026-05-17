@@ -4,125 +4,109 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { adminDb } from "@/lib/admin-db";
 import { requireAdmin } from "@/lib/dal";
-import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import {
-  ALL_CAPABILITY_KEYS,
-  isCapabilityKey,
-  SYSTEM_ROLES,
-} from "@/lib/permissions";
+  ALL_PERMISSION_KEYS,
+  sanitizePermissionKeys,
+  materializeAllowedPages,
+} from "@/app/(admin)/settings/roles/permissions-utils";
 
 // ---------------------------------------------------------------------------
-// admin_roles is a new model (see prisma/admin/schema.prisma). The generated
-// Prisma client will only know about it after `npm run admin:migrate` +
-// `prisma generate`. Until then we use raw SQL so this module compiles.
-// Post-migration these helpers can be rewritten to use adminDb.admin_roles.*.
+// Custom roles = named, reusable permission presets.
+//
+// A role's `capabilities` array uses the SAME vocabulary as a user's
+// `allowed_pages`: page routes ("/users") + `__can_*` capability flags.
+// Assigning a role materializes its preset into the user's allowed_pages;
+// editing a role re-pushes the baseline to assigned users while keeping
+// each user's per-user adjustments (see materializeAllowedPages).
+//
+// `allowed_pages` remains the single source of truth that every gate
+// (requirePageAccess / requireCapability) reads — roles are a convenience
+// layer on top, never a parallel enforcement path.
 // ---------------------------------------------------------------------------
 
 export type RoleRow = {
   id: string;
   name: string;
   description: string | null;
-  is_system: boolean;
+  /** Legacy permission keys: page routes + `__can_*` capability flags. */
   capabilities: string[];
   created_at: string;
   updated_at: string;
+  /** How many admin users currently have this role assigned. */
   user_count: number;
 };
 
-type RawRoleRow = {
-  id: string;
-  name: string;
-  description: string | null;
-  is_system: boolean;
-  capabilities: string[];
-  created_at: Date;
-  updated_at: Date;
-  user_count: bigint;
-};
+// Enum-role names are reserved so a custom role can't be confused with a
+// built-in role (those are managed on /settings/roles).
+const RESERVED_NAMES: ReadonlySet<string> = new Set([
+  "admin",
+  "support",
+  "marketing",
+  "creator",
+  "pack_creator",
+]);
 
-const SYSTEM_NAMES: ReadonlySet<string> = new Set(SYSTEM_ROLES.map((r) => r.name));
-
-function serialize(row: RawRoleRow): RoleRow {
-  return {
-    id: row.id,
-    name: row.name,
-    description: row.description,
-    is_system: row.is_system,
-    capabilities: row.capabilities,
-    created_at: row.created_at.toISOString(),
-    updated_at: row.updated_at.toISOString(),
-    user_count: Number(row.user_count),
-  };
+function isUniqueViolation(err: unknown): boolean {
+  const code = (err as { code?: string })?.code;
+  if (code === "P2002") return true;
+  const msg = err instanceof Error ? err.message.toLowerCase() : "";
+  return msg.includes("unique") || msg.includes("duplicate");
 }
 
-/**
- * Detect pre-migration errors so roles pages degrade gracefully.
- * Postgres codes:
- *   42P01 — undefined_table (admin_roles doesn't exist yet)
- *   42703 — undefined_column (role_id not added to admin_users yet)
- * Prisma maps both to its own P-codes or exposes the pg code on .meta.
- */
-function isMissingRolesSchema(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const code = (err as { code?: string }).code;
-  if (code === "P2021" || code === "P2022") return true;
-  const pgCode = (err as { meta?: { code?: string } })?.meta?.code;
-  if (pgCode === "42P01" || pgCode === "42703") return true;
-  return /(relation .* does not exist|column .* does not exist)/i.test(err.message);
-}
+// ---------------------------------------------------------------------------
+// Reads
+// ---------------------------------------------------------------------------
 
 export async function listRoles(): Promise<RoleRow[]> {
   await requireAdmin();
-  try {
-    const rows = await adminDb.$queryRawUnsafe<RawRoleRow[]>(
-      `SELECT r.id::text AS id,
-              r.name,
-              r.description,
-              r.is_system,
-              r.capabilities,
-              r.created_at,
-              r.updated_at,
-              COUNT(u.id) AS user_count
-         FROM admin_roles r
-         LEFT JOIN admin_users u ON u.role_id = r.id
-         GROUP BY r.id
-         ORDER BY r.is_system DESC, r.name ASC`,
-    );
-    return rows.map(serialize);
-  } catch (err) {
-    // Pre-migration: admin_roles table or role_id column not yet applied.
-    // Return empty list so the page renders a "run the migration" state
-    // instead of a 500.
-    if (isMissingRolesSchema(err)) return [];
-    throw err;
-  }
+  const roles = await adminDb.admin_roles.findMany({
+    orderBy: { name: "asc" },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      capabilities: true,
+      created_at: true,
+      updated_at: true,
+      _count: { select: { admin_users: true } },
+    },
+  });
+  return roles.map((r) => ({
+    id: r.id,
+    name: r.name,
+    description: r.description,
+    capabilities: r.capabilities,
+    created_at: r.created_at.toISOString(),
+    updated_at: r.updated_at.toISOString(),
+    user_count: r._count.admin_users,
+  }));
 }
 
 export async function getRole(id: string): Promise<RoleRow | null> {
   await requireAdmin();
-  try {
-    const rows = await adminDb.$queryRawUnsafe<RawRoleRow[]>(
-      `SELECT r.id::text AS id,
-              r.name,
-              r.description,
-              r.is_system,
-              r.capabilities,
-              r.created_at,
-              r.updated_at,
-              COUNT(u.id) AS user_count
-         FROM admin_roles r
-         LEFT JOIN admin_users u ON u.role_id = r.id
-         WHERE r.id = $1::uuid
-         GROUP BY r.id`,
-      id,
-    );
-    return rows.length > 0 ? serialize(rows[0]) : null;
-  } catch (err) {
-    // Same pre-migration fallback as listRoles.
-    if (isMissingRolesSchema(err)) return null;
-    throw err;
-  }
+  const r = await adminDb.admin_roles.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      capabilities: true,
+      created_at: true,
+      updated_at: true,
+      _count: { select: { admin_users: true } },
+    },
+  });
+  if (!r) return null;
+  return {
+    id: r.id,
+    name: r.name,
+    description: r.description,
+    capabilities: r.capabilities,
+    created_at: r.created_at.toISOString(),
+    updated_at: r.updated_at.toISOString(),
+    user_count: r._count.admin_users,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -138,8 +122,9 @@ const roleNameSchema = z
 
 const capabilitiesSchema = z
   .array(z.string())
-  .max(ALL_CAPABILITY_KEYS.length)
-  .transform((arr) => Array.from(new Set(arr.filter(isCapabilityKey))));
+  .max(ALL_PERMISSION_KEYS.length)
+  // Drop anything that isn't a recognized page route / `__can_*` key.
+  .transform((arr) => sanitizePermissionKeys(arr));
 
 const createRoleSchema = z.object({
   name: roleNameSchema,
@@ -167,42 +152,41 @@ export async function createRole(
   const session = await requireAdmin();
   const parsed = createRoleSchema.safeParse(input);
   if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
   }
 
-  await requireCapability(session, "__can_create_admin_role", "create admin roles");
-
   const { name, description, capabilities } = parsed.data;
-
-  if (SYSTEM_NAMES.has(name.toLowerCase())) {
-    return { ok: false, error: "Cannot use a reserved system role name" };
+  if (RESERVED_NAMES.has(name.toLowerCase())) {
+    return { ok: false, error: "That name is reserved for a built-in role" };
   }
 
   try {
-    const rows = await adminDb.$queryRawUnsafe<{ id: string }[]>(
-      `INSERT INTO admin_roles (name, description, is_system, capabilities)
-       VALUES ($1, $2, FALSE, $3)
-       RETURNING id::text AS id`,
-      name,
-      description ?? null,
-      capabilities,
-    );
-    const id = rows[0].id;
+    const role = await adminDb.admin_roles.create({
+      data: {
+        name,
+        description: description ?? null,
+        is_system: false,
+        capabilities,
+      },
+      select: { id: true },
+    });
 
     await createAdminAuditEvent({
       adminUserId: session.userId,
       eventType: "admin_role_created",
-      metadata: { role_id: id, name, capabilities_count: capabilities.length },
+      metadata: { role_id: role.id, name, capabilities_count: capabilities.length },
     });
 
     revalidatePath("/admin-users/roles");
-    return { ok: true, id };
+    return { ok: true, id: role.id };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("unique") || msg.includes("duplicate")) {
+    if (isUniqueViolation(err)) {
       return { ok: false, error: "A role with that name already exists" };
     }
-    return { ok: false, error: msg };
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -212,79 +196,95 @@ export async function updateRole(
   const session = await requireAdmin();
   const parsed = updateRoleSchema.safeParse(input);
   if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
   }
-
-  await requireCapability(session, "__can_update_admin_role", "update admin roles");
 
   const { id, name, description, capabilities } = parsed.data;
 
-  const existing = await getRole(id);
+  const existing = await adminDb.admin_roles.findUnique({
+    where: { id },
+    select: { id: true, name: true, capabilities: true },
+  });
   if (!existing) return { ok: false, error: "Role not found" };
-  if (existing.is_system) {
-    return { ok: false, error: "System roles cannot be edited" };
+
+  if (
+    name.toLowerCase() !== existing.name.toLowerCase() &&
+    RESERVED_NAMES.has(name.toLowerCase())
+  ) {
+    return { ok: false, error: "That name is reserved for a built-in role" };
   }
 
-  if (name.toLowerCase() !== existing.name.toLowerCase() && SYSTEM_NAMES.has(name.toLowerCase())) {
-    return { ok: false, error: "Cannot use a reserved system role name" };
-  }
+  // Refresh the role baseline for every assigned user. Each user's
+  // per-user adjustments (grants/revokes layered on the OLD preset) are
+  // preserved by diffing their current allowed_pages against the old
+  // capabilities — see materializeAllowedPages.
+  const assigned = await adminDb.admin_users.findMany({
+    where: { role_id: id },
+    select: { id: true, allowed_pages: true },
+  });
 
   try {
-    await adminDb.$executeRawUnsafe(
-      `UPDATE admin_roles
-          SET name = $1,
-              description = $2,
-              capabilities = $3,
-              updated_at = NOW()
-        WHERE id = $4::uuid`,
-      name,
-      description ?? null,
-      capabilities,
-      id,
-    );
-
-    await createAdminAuditEvent({
-      adminUserId: session.userId,
-      eventType: "admin_role_updated",
-      metadata: {
-        role_id: id,
-        name,
-        capabilities_count: capabilities.length,
-      },
-    });
-
-    revalidatePath("/admin-users/roles");
-    revalidatePath(`/admin-users/roles/${id}`);
-    revalidatePath("/", "layout");
-    return { ok: true };
+    await adminDb.$transaction([
+      adminDb.admin_roles.update({
+        where: { id },
+        data: { name, description: description ?? null, capabilities },
+      }),
+      ...assigned.map((u) =>
+        adminDb.admin_users.update({
+          where: { id: u.id },
+          data: {
+            allowed_pages: materializeAllowedPages(
+              capabilities,
+              u.allowed_pages,
+              existing.capabilities,
+            ),
+          },
+          select: { id: true },
+        }),
+      ),
+    ]);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("unique") || msg.includes("duplicate")) {
+    if (isUniqueViolation(err)) {
       return { ok: false, error: "A role with that name already exists" };
     }
-    return { ok: false, error: msg };
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "admin_role_updated",
+    metadata: {
+      role_id: id,
+      name,
+      capabilities_count: capabilities.length,
+      users_refreshed: assigned.length,
+    },
+  });
+
+  revalidatePath("/admin-users/roles");
+  revalidatePath(`/admin-users/roles/${id}`);
+  revalidatePath("/", "layout");
+  return { ok: true };
 }
 
 export async function deleteRole(
   id: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const session = await requireAdmin();
-  await requireCapability(session, "__can_delete_admin_role", "delete admin roles");
 
-  const existing = await getRole(id);
+  const existing = await adminDb.admin_roles.findUnique({
+    where: { id },
+    select: { id: true, name: true },
+  });
   if (!existing) return { ok: false, error: "Role not found" };
-  if (existing.is_system) {
-    return { ok: false, error: "System roles cannot be deleted" };
-  }
-  if (existing.user_count > 0) {
-    return {
-      ok: false,
-      error: `Role is still assigned to ${existing.user_count} user(s)`,
-    };
-  }
 
-  await adminDb.$executeRawUnsafe(`DELETE FROM admin_roles WHERE id = $1::uuid`, id);
+  // FK is onDelete: SetNull — assigned users keep their current
+  // allowed_pages (their effective permissions are unchanged), they just
+  // lose the role link and become purely per-user managed.
+  await adminDb.admin_roles.delete({ where: { id }, select: { id: true } });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -293,32 +293,68 @@ export async function deleteRole(
   });
 
   revalidatePath("/admin-users/roles");
+  revalidatePath("/", "layout");
   return { ok: true };
 }
 
 /**
- * Assign a role to an admin user. Pass `null` to clear the role (user
- * falls back to system-role defaults based on the admin_role enum).
+ * Assign a role to an admin user (or pass `null` to clear it).
+ *
+ * The user's `allowed_pages` is recomputed: the new role becomes the
+ * baseline, the user's existing per-user adjustments are kept. Clearing
+ * a role strips the role's contribution and leaves only the manual
+ * grants. Real admins are rejected — they have full access regardless.
  */
 export async function assignRoleToAdminUser(
   adminUserId: string,
   roleId: string | null,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const session = await requireAdmin();
-  await requireCapability(session, "__can_assign_admin_role", "assign admin roles");
 
-  if (roleId) {
-    const exists = await adminDb.$queryRawUnsafe<{ id: string }[]>(
-      `SELECT id::text AS id FROM admin_roles WHERE id = $1::uuid`,
-      roleId,
-    );
-    if (exists.length === 0) return { ok: false, error: "Role not found" };
+  const target = await adminDb.admin_users.findUnique({
+    where: { id: adminUserId },
+    select: { id: true, role: true, role_id: true, allowed_pages: true },
+  });
+  if (!target) return { ok: false, error: "Admin user not found" };
+  if (target.role === "admin") {
+    return {
+      ok: false,
+      error: "Admin users already have full access — roles don't apply",
+    };
   }
 
-  await adminDb.$executeRawUnsafe(
-    `UPDATE admin_users SET role_id = ${roleId ? "$2::uuid" : "NULL"}, updated_at = NOW() WHERE id = $1::uuid`,
-    ...(roleId ? [adminUserId, roleId] : [adminUserId]),
+  // Old preset (the role they're currently on, if any).
+  let oldPreset: string[] = [];
+  if (target.role_id) {
+    const oldRole = await adminDb.admin_roles.findUnique({
+      where: { id: target.role_id },
+      select: { capabilities: true },
+    });
+    oldPreset = oldRole?.capabilities ?? [];
+  }
+
+  // New preset (the role being assigned, if any).
+  let newPreset: string[] = [];
+  if (roleId) {
+    const newRole = await adminDb.admin_roles.findUnique({
+      where: { id: roleId },
+      select: { capabilities: true },
+    });
+    if (!newRole) return { ok: false, error: "Role not found" };
+    newPreset = newRole.capabilities;
+  }
+
+  const newAllowed = materializeAllowedPages(
+    newPreset,
+    target.allowed_pages,
+    oldPreset,
   );
+
+  await adminDb.admin_users.update({
+    where: { id: adminUserId },
+    data: { role_id: roleId, allowed_pages: newAllowed },
+    select: { id: true },
+  });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,

@@ -1,10 +1,9 @@
 "use client";
 
-import { Fragment, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,55 +14,51 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ADMIN_PAGES } from "@/lib/admin-pages";
 import { updateUserPermissions } from "./actions";
+import { PermissionPicker } from "../_components/permission-picker";
 import type { AdminUserDetail } from "@/lib/queries/admin-users";
 
 /* ── Permissions Section ──
  *
- * Permission edits used to auto-save on every toggle. That worked when
- * the action was a free pass, but `updateUserPermissions` now requires
- * TOTP — prompting on every flip would be unusable. The UI now stages
- * pending changes locally and only persists them when the operator
- * confirms with their 2FA code in a single Save dialog.
+ * Edits the user's EFFECTIVE permission set — page access AND `__can_*`
+ * action capabilities — stored in `allowed_pages`. When the user has a
+ * role assigned, that role is the baseline and toggles differing from it
+ * are flagged as per-user overrides (the "role + adjustments" model).
+ *
+ * `updateUserPermissions` requires TOTP, so changes are staged locally
+ * and only persisted once the operator confirms with a 2FA code.
  */
 export function PermissionsSection({ detail }: { detail: AdminUserDetail }) {
-  // The "saved" baseline (mirrors the server). `pages` is the staged
-  // working copy that the toggles mutate. `dirty` derives from the diff.
-  const [savedPages, setSavedPages] = useState<string[]>(detail.allowedPages);
-  const [pages, setPages] = useState<string[]>(detail.allowedPages);
+  // `savedKeys` mirrors the server; `selected` is the staged working copy.
+  const [savedKeys, setSavedKeys] = useState<string[]>(detail.allowedPages);
+  const [selected, setSelected] = useState<Set<string>>(
+    () => new Set(detail.allowedPages),
+  );
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [totpCode, setTotpCode] = useState("");
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
-  const groups = ADMIN_PAGES.reduce<Record<string, typeof ADMIN_PAGES>>((acc, page) => {
-    (acc[page.group] ??= []).push(page);
-    return acc;
-  }, {});
+  // Role baseline — null when no role is assigned.
+  const baseline =
+    detail.roleCapabilities != null
+      ? new Set(detail.roleCapabilities)
+      : null;
 
-  // Equality check by content — array order isn't meaningful for the
-  // server (it dedupes/filters), so we compare set membership.
+  const savedSet = new Set(savedKeys);
   const isDirty =
-    pages.length !== savedPages.length ||
-    pages.some((p) => !savedPages.includes(p));
+    selected.size !== savedSet.size ||
+    [...selected].some((k) => !savedSet.has(k));
 
-  function toggle(key: string) {
-    const next = pages.includes(key) ? pages.filter((p) => p !== key) : [...pages, key];
-    setPages(next);
-  }
-
-  function toggleGroup(group: string) {
-    const groupKeys = groups[group].map((p) => p.key);
-    const allChecked = groupKeys.every((k) => pages.includes(k));
-    const next = allChecked
-      ? pages.filter((p) => !groupKeys.includes(p))
-      : Array.from(new Set([...pages, ...groupKeys]));
-    setPages(next);
-  }
+  // Count of toggles that diverge from the assigned role.
+  const overrideCount = baseline
+    ? [...new Set([...selected, ...baseline])].filter(
+        (k) => selected.has(k) !== baseline.has(k),
+      ).length
+    : 0;
 
   function discard() {
-    setPages(savedPages);
+    setSelected(new Set(savedKeys));
     setTotpCode("");
     setConfirmOpen(false);
   }
@@ -75,10 +70,9 @@ export function PermissionsSection({ detail }: { detail: AdminUserDetail }) {
     }
     startTransition(async () => {
       try {
-        await updateUserPermissions(detail.id, pages, totpCode.trim());
+        await updateUserPermissions(detail.id, [...selected], totpCode.trim());
         toast.success("Permissions updated");
-        // Pin the new baseline so the dirty flag clears.
-        setSavedPages(pages);
+        setSavedKeys([...selected]);
         setConfirmOpen(false);
         setTotpCode("");
         router.refresh();
@@ -92,10 +86,20 @@ export function PermissionsSection({ detail }: { detail: AdminUserDetail }) {
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="text-base">Permissions</CardTitle>
+      <CardHeader className="flex flex-row items-start justify-between gap-2">
+        <div className="min-w-0">
+          <CardTitle className="text-base">Permissions</CardTitle>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {detail.roleName
+              ? `Baseline from role "${detail.roleName}"` +
+                (overrideCount > 0
+                  ? ` · ${overrideCount} per-user override${overrideCount === 1 ? "" : "s"}`
+                  : " · no overrides")
+              : "No role assigned — permissions are fully per-user."}
+          </p>
+        </div>
         {isDirty && (
-          <div className="flex gap-2">
+          <div className="flex shrink-0 gap-2">
             <Button
               size="sm"
               variant="ghost"
@@ -115,51 +119,14 @@ export function PermissionsSection({ detail }: { detail: AdminUserDetail }) {
         )}
       </CardHeader>
       <CardContent>
-        <div className="rounded-md border">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b bg-muted/50">
-                <th className="px-4 py-2 text-left text-sm font-medium">Page</th>
-                <th className="px-4 py-2 text-center text-sm font-medium w-24">Access</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Object.entries(groups).map(([group, groupPages]) => {
-                const groupKeys = groupPages.map((p) => p.key);
-                const allChecked = groupKeys.every((k) => pages.includes(k));
-                return (
-                  <Fragment key={group}>
-                    <tr className="border-b bg-muted/30">
-                      <td className="px-4 py-2 text-sm font-semibold">{group}</td>
-                      <td className="px-4 py-2 text-center">
-                        <Switch
-                          size="sm"
-                          checked={allChecked}
-                          disabled={isPending}
-                          onCheckedChange={() => toggleGroup(group)}
-                        />
-                      </td>
-                    </tr>
-                    {groupPages.map((page) => (
-                      <tr key={page.key} className="border-b">
-                        <td className="px-4 py-2 pl-8 text-sm text-muted-foreground">{page.label}</td>
-                        <td className="px-4 py-2 text-center">
-                          <Switch
-                            size="sm"
-                            checked={pages.includes(page.key)}
-                            disabled={isPending}
-                            onCheckedChange={() => toggle(page.key)}
-                          />
-                        </td>
-                      </tr>
-                    ))}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <PermissionPicker
+          selected={selected}
+          onChange={setSelected}
+          disabled={isPending}
+          baseline={baseline}
+        />
       </CardContent>
+
       <Dialog
         open={confirmOpen}
         onOpenChange={(v) => {
@@ -173,8 +140,8 @@ export function PermissionsSection({ detail }: { detail: AdminUserDetail }) {
           </DialogHeader>
           <div className="space-y-3 py-2">
             <p className="text-sm text-muted-foreground">
-              Granting or revoking permissions can change what this admin
-              can do across the panel. Enter your 2FA code to confirm.
+              Granting or revoking permissions changes what this admin can do
+              across the panel. Enter your 2FA code to confirm.
             </p>
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">2FA Code</Label>

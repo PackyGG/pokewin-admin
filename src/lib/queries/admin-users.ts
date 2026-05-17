@@ -11,6 +11,8 @@ export async function getAdminUserDetail(id: string) {
       email: true,
       username: true,
       role: true,
+      role_id: true,
+      custom_role: { select: { id: true, name: true, capabilities: true } },
       totp_enabled: true,
       is_active: true,
       allowed_pages: true,
@@ -36,6 +38,13 @@ export async function getAdminUserDetail(id: string) {
     email: user.email,
     username: user.username,
     role: user.role,
+    // Assigned custom-role preset (admin_roles). null = no preset; the
+    // user's allowed_pages are then purely per-user. roleName +
+    // roleCapabilities are carried for display so the profile's
+    // permission editor can flag per-user overrides vs the role baseline.
+    roleId: user.role_id,
+    roleName: user.custom_role?.name ?? null,
+    roleCapabilities: user.custom_role?.capabilities ?? null,
     totpEnabled: user.totp_enabled,
     isActive: user.is_active,
     allowedPages: user.allowed_pages,

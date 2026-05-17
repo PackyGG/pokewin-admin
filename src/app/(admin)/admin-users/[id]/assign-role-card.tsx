@@ -2,7 +2,9 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { toast } from "sonner";
+import { KeyRound } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,27 +20,27 @@ import {
   type RoleRow,
 } from "../roles/actions";
 
+const NONE = "__none__";
+
 /**
- * Standalone "Assign custom role" card. Designed to be dropped into the
- * admin-user detail page (e.g. the Management tab in admin-user-tabs.tsx).
- *
- * Uses the NEW granular-permissions system: sets admin_users.role_id via
- * assignRoleToAdminUser(). Independent of the legacy enum `role` column.
- *
- * Gracefully no-ops with a hint message before `admin:migrate` + `admin:seed`.
+ * "Role" card on the admin-user profile. Assigning a role materializes
+ * its permission preset into the user's allowed_pages (the baseline);
+ * the Permissions editor below then layers per-user grants/revokes on
+ * top. Clearing the role keeps those manual grants. Hidden for real
+ * admins (they have full access regardless).
  */
 export function AssignRoleCard({
   adminUserId,
   currentRoleId,
 }: {
   adminUserId: string;
-  /** The current admin_users.role_id (null if unset). */
+  /** The user's current admin_users.role_id (null if none). */
   currentRoleId: string | null;
 }) {
   const router = useRouter();
   const [roles, setRoles] = useState<RoleRow[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const [selected, setSelected] = useState<string>(currentRoleId ?? "__none__");
+  const [selected, setSelected] = useState<string>(currentRoleId ?? NONE);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -50,19 +52,23 @@ export function AssignRoleCard({
       .catch(() => setLoaded(true));
   }, []);
 
-  const dirty = (selected === "__none__" ? null : selected) !== currentRoleId;
+  const dirty = (selected === NONE ? null : selected) !== currentRoleId;
 
   function handleSave() {
     startTransition(async () => {
       const result = await assignRoleToAdminUser(
         adminUserId,
-        selected === "__none__" ? null : selected,
+        selected === NONE ? null : selected,
       );
       if (!result.ok) {
         toast.error(result.error);
         return;
       }
-      toast.success("Custom role assigned");
+      toast.success(
+        selected === NONE
+          ? "Role cleared — manual grants kept"
+          : "Role assigned — permissions below refreshed",
+      );
       router.refresh();
     });
   }
@@ -70,42 +76,47 @@ export function AssignRoleCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Custom Role</CardTitle>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <KeyRound className="size-4 text-amber-500" />
+          Role
+        </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-xs text-muted-foreground">
-          Granular role assignment. Takes precedence over the enum role when set.
-          Clear to fall back to system defaults.
+          A role fills this admin&apos;s permissions as a baseline. You can
+          then grant or revoke individual permissions below — those
+          adjustments survive a later role change.
         </p>
         {loaded && roles.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No roles available. Run{" "}
-            <code className="text-xs">npm run admin:migrate</code> and{" "}
-            <code className="text-xs">npm run admin:seed</code>, then visit{" "}
-            <code className="text-xs">/admin-users/roles</code>.
+            No roles yet.{" "}
+            <Link
+              href="/admin-users/roles"
+              className="text-blue-400 hover:underline"
+            >
+              Create one
+            </Link>{" "}
+            to assign it here.
           </p>
         ) : (
           <>
             <Select
               value={selected}
-              onValueChange={(v) => setSelected(v ?? "__none__")}
+              onValueChange={(v) => setSelected(v ?? NONE)}
               disabled={!loaded || isPending}
             >
               <SelectTrigger>
                 <SelectValue placeholder="Select role" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="__none__">
+                <SelectItem value={NONE}>
                   <span className="text-muted-foreground">
-                    None (system defaults)
+                    No role (manual only)
                   </span>
                 </SelectItem>
                 {roles.map((r) => (
                   <SelectItem key={r.id} value={r.id}>
                     {r.name}
-                    {r.is_system ? (
-                      <span className="text-xs text-muted-foreground"> (system)</span>
-                    ) : null}
                   </SelectItem>
                 ))}
               </SelectContent>
