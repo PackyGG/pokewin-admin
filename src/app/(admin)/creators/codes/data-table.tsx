@@ -25,7 +25,7 @@ function CodeMobileCard({ code }: { code: CodeListItem }) {
   const router = useRouter();
   return (
     <MobileCard
-      onClick={() => router.push(`/creators/codes/${code.code}`)}
+      onClick={() => router.push(`/creators/${code.ownerUserId}`)}
       leading={
         <div className="flex size-9 items-center justify-center rounded-md bg-amber-500/10 shrink-0">
           <Tag className="size-4 text-amber-500" />
