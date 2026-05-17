@@ -3,6 +3,8 @@ import "server-only";
 import { cache } from "react";
 
 import { adminDb } from "@/lib/admin-db";
+import { getDb } from "@/lib/db";
+import { toNumber } from "@/lib/utils/decimal";
 
 /**
  * Cached read of the excluded-users blacklist. Returns the bare list
@@ -35,6 +37,11 @@ export const getExcludedUserIds = cache(async (): Promise<string[]> => {
  * Includes the admin who added each entry, so the table can show
  * "added by X on date Y, reason Z".
  *
+ * `totalDeposited` is the user's lifetime deposit total
+ * (`balances.total_deposited` in the main game DB) — surfaced next to
+ * the user ID so an operator can gauge how much volume the exclusion
+ * removes from analytics.
+ *
  * Not cached — the page wants live data after add / remove server
  * actions revalidate the route.
  */
@@ -43,6 +50,7 @@ export type ExcludedUserRow = {
   reason: string | null;
   excludedByUsername: string;
   createdAt: string;
+  totalDeposited: number;
 };
 
 export async function getExcludedUsersForPage(): Promise<ExcludedUserRow[]> {
@@ -52,10 +60,30 @@ export async function getExcludedUsersForPage(): Promise<ExcludedUserRow[]> {
       admin_user: { select: { username: true } },
     },
   });
+
+  // The blacklist lives in the admin DB, but each user's lifetime
+  // deposit total lives on `balances` in the main game DB. No cross-DB
+  // joins — pull the balances rows separately in a single batched
+  // query and merge by user_id. A user with no balances row (never
+  // deposited / no balance ever created) maps to 0.
+  const userIds = rows.map((r) => r.user_id);
+  const depositByUserId = new Map<string, number>();
+  if (userIds.length > 0) {
+    const db = await getDb();
+    const balanceRows = await db.balances.findMany({
+      where: { user_id: { in: userIds } },
+      select: { user_id: true, total_deposited: true },
+    });
+    for (const b of balanceRows) {
+      depositByUserId.set(b.user_id, toNumber(b.total_deposited));
+    }
+  }
+
   return rows.map((r) => ({
     userId: r.user_id,
     reason: r.reason,
     excludedByUsername: r.admin_user?.username ?? "(unknown)",
     createdAt: r.created_at.toISOString(),
+    totalDeposited: depositByUserId.get(r.user_id) ?? 0,
   }));
 }
