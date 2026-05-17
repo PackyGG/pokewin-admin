@@ -25,7 +25,7 @@ import { getDb } from "@/lib/db";
  * double-count.
  *
  * Keyed on `user_id` (not deal_id) so callers can `.get(creatorId)`
- * exactly like the sibling `getDealCapUsageByUser` helper.
+ * exactly like the sibling `getDealCapInfoByUser` helper.
  *
  * Single round-trip; passing N deals = one query with two arrays.
  */

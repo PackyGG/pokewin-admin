@@ -168,23 +168,23 @@ export type CreatorWithSocials = CreatorListItem & {
   } | null;
   /**
    * 2-week MAX cost projections — worst-case house spend over the
-   * next fortnight. `deal2wkMaxUsd` = the active deal's withdrawal
-   * ceiling scaled to 14 days + the per-deal leaderboard payout.
-   * `leaderboard2wkMaxUsd` = the sponsored-weighted prize of every
-   * affiliate leaderboard running in the next 14 days. null when the
-   * creator has nothing to project → the card hides the row.
+   * next fortnight. `deal2wkMaxUsd` = the active deal's total withdraw
+   * cap (`total_withdraw_cap_usd`) — the most the creator can ever
+   * withdraw on it. `leaderboard2wkMaxUsd` = the sponsored-weighted
+   * prize of every affiliate leaderboard running in the next 14 days.
+   * null when the creator has nothing to project → the card hides the
+   * row.
    */
   deal2wkMaxUsd: number | null;
   leaderboard2wkMaxUsd: number | null;
   /**
    * Chips beside the creator's name. `withdrawalCapUsd` = the active
-   * deal's largest withdrawal limit ("max cap for withdrawal"),
-   * `withdrawalCapResetDays` = its reset window. `leaderboardSponsored
-   * Pct` = the blended "% we pay" across the creator's leaderboards
-   * running in the next 14 days. null when not applicable.
+   * deal's withdraw cap (`total_withdraw_cap_usd`) — the "max cap for
+   * withdrawal". `leaderboardSponsoredPct` = the blended "% we pay"
+   * across the creator's leaderboards running in the next 14 days.
+   * null when not applicable.
    */
   withdrawalCapUsd: number | null;
-  withdrawalCapResetDays: number | null;
   leaderboardSponsoredPct: number | null;
 };
 
@@ -309,11 +309,6 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
                   title="Max withdrawal cap on the creator's active deal"
                 >
                   Cap {formatCurrency(creator.withdrawalCapUsd)}
-                  {creator.withdrawalCapResetDays != null && (
-                    <span className="text-rose-600/70 dark:text-rose-400/70">
-                      /{creator.withdrawalCapResetDays}d
-                    </span>
-                  )}
                 </span>
               )}
               {/* Leaderboard — the blended % the house sponsors of this
@@ -697,8 +692,8 @@ function MomentumRow({
 }
 
 // 2-week max-cost row — worst-case house spend over the next fortnight.
-//   Deal        = the active deal's withdrawal ceiling scaled to 14d
-//                 + the per-deal leaderboard payout.
+//   Deal        = the active deal's total withdraw cap — the most the
+//                 creator can ever withdraw on it.
 //   Leaderboard = sponsored-weighted prize of affiliate leaderboards
 //                 whose run window overlaps the next 14d.
 // Both are money the house pays out → rose (house loss) per CLAUDE.md.
