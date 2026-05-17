@@ -27,7 +27,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatDateTime } from "@/lib/utils/format";
+import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 
 import type { ExcludedUserRow } from "@/lib/excluded-users/fetch";
 
@@ -139,6 +139,7 @@ export function ExcludedUsersClient({
           <TableHeader>
             <TableRow>
               <TableHead>User ID</TableHead>
+              <TableHead className="text-right">Total Deposited</TableHead>
               <TableHead>Reason</TableHead>
               <TableHead>Excluded by</TableHead>
               <TableHead>Added</TableHead>
@@ -149,7 +150,7 @@ export function ExcludedUsersClient({
             {initial.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={5}
+                  colSpan={6}
                   className="h-24 text-center text-sm text-muted-foreground"
                 >
                   No excluded users yet.
@@ -160,6 +161,15 @@ export function ExcludedUsersClient({
                 <TableRow key={row.userId}>
                   <TableCell className="font-mono text-xs">
                     {row.userId}
+                  </TableCell>
+                  <TableCell className="text-right font-mono text-xs tabular-nums">
+                    {row.totalDeposited > 0 ? (
+                      <span className="text-emerald-600 dark:text-emerald-400">
+                        {formatCurrency(row.totalDeposited)}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {row.reason ?? "—"}
