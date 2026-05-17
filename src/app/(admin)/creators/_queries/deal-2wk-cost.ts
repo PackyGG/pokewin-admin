@@ -14,8 +14,25 @@ const LB_OCCURRENCES: Record<string, number> = {
   monthly: 1,
 };
 
+export type Deal2wkInfo = {
+  /**
+   * 2-week max cost: the withdrawal ceiling (scaled to 14 days) plus
+   * the per-deal leaderboard payout, summed across the creator's
+   * active deals.
+   */
+  twoWeekMaxUsd: number;
+  /**
+   * The largest withdrawal-limit cap (`currency_limit_amount`) across
+   * the creator's active deals — surfaced as the "max cap for
+   * withdrawal" chip. null when no active deal sets a currency limit.
+   */
+  capUsd: number | null;
+  /** Reset window (days) of the deal that owns `capUsd`. */
+  capResetDays: number | null;
+};
+
 /**
- * Per-creator "2-week max cost" from their ACTIVE creator_deals.
+ * Per-creator deal cost info from their ACTIVE creator_deals.
  *
  * For each active deal:
  *   withdrawal ceiling = currency_limit_amount × ceil(14 / reset_days)
@@ -27,13 +44,14 @@ const LB_OCCURRENCES: Record<string, number> = {
  *
  *   deal 2-week max = withdrawal ceiling + per-deal leaderboard
  *
- * Summed across all of a creator's active deals. Creators with no
- * active deal are absent from the returned map — callers render "—".
+ * `twoWeekMaxUsd` is summed across all of a creator's active deals;
+ * `capUsd` is the single largest withdrawal limit among them. Creators
+ * with no active deal are absent from the map — callers render "—".
  */
 export async function getDeal2wkCostByUser(
   userIds: string[],
-): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
+): Promise<Map<string, Deal2wkInfo>> {
+  const out = new Map<string, Deal2wkInfo>();
   if (userIds.length === 0) return out;
 
   const deals = await adminDb.creator_deals.findMany({
@@ -71,10 +89,24 @@ export async function getDeal2wkCostByUser(
     }
 
     const dealCost = withdrawalCeiling + leaderboardPart;
-    out.set(
-      d.target_user_id,
-      (out.get(d.target_user_id) ?? 0) + dealCost,
-    );
+
+    const prev = out.get(d.target_user_id) ?? {
+      twoWeekMaxUsd: 0,
+      capUsd: null,
+      capResetDays: null,
+    };
+    const next: Deal2wkInfo = {
+      twoWeekMaxUsd: prev.twoWeekMaxUsd + dealCost,
+      capUsd: prev.capUsd,
+      capResetDays: prev.capResetDays,
+    };
+    // Surface the LARGEST withdrawal cap among the creator's active
+    // deals (most creators have just one). Keep that deal's reset days.
+    if (d.currency_limit_amount != null && limit > (prev.capUsd ?? -1)) {
+      next.capUsd = limit;
+      next.capResetDays = d.currency_limit_reset_days ?? null;
+    }
+    out.set(d.target_user_id, next);
   }
 
   return out;

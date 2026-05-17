@@ -94,20 +94,31 @@ export async function getLeaderboardCostTotal(): Promise<number> {
 
 const WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 
+export type Lb2wkInfo = {
+  /** Sponsored-weighted leaderboard cost over the next 14 days. */
+  costUsd: number;
+  /**
+   * Blended "% we pay" across the creator's in-window leaderboards:
+   * costUsd / (Σ net prize) × 100. For a single leaderboard this is
+   * just its sponsored %. 0 when there's no in-window prize.
+   */
+  effectivePct: number;
+};
+
 /**
- * Per-creator leaderboard cost over the next 14 days: the sponsored-
- * weighted prize of every APPROVED affiliate leaderboard (owned by the
- * creator as the primary owner) whose run window overlaps
- * [now, now + 14d].
+ * Per-creator leaderboard info over the next 14 days, computed from
+ * every APPROVED affiliate leaderboard (owned by the creator as the
+ * primary owner) whose run window overlaps [now, now + 14d].
  *
- *   cost = Σ (total_prize_usd − refund_amount_usd) × (sponsored% / 100)
+ *   costUsd      = Σ (total_prize_usd − refund) × (sponsored% / 100)
+ *   effectivePct = costUsd / Σ (total_prize_usd − refund) × 100
  *
  * Keyed by `creator_user_id` (the primary owner — co-creators don't
  * fund the board). Creators with no leaderboard in the window are
  * absent from the map; callers render "—".
  */
 export async function getLeaderboard2wkCostByUser(): Promise<
-  Map<string, number>
+  Map<string, Lb2wkInfo>
 > {
   const all = await fetchAllApprovedLeaderboards();
 
@@ -135,13 +146,25 @@ export async function getLeaderboard2wkCostByUser(): Promise<
     sponsorship = new Map();
   }
 
-  const out = new Map<string, number>();
+  // Track sponsored-weighted cost AND raw net prize per creator so the
+  // blended "% we pay" can be derived (cost / raw prize).
+  const costByCreator = new Map<string, number>();
+  const rawByCreator = new Map<string, number>();
   for (const lb of inWindow) {
     const prize = Number(lb.total_prize_usd) || 0;
     const refund = Number(lb.refund_amount_usd) || 0;
+    const net = prize - refund;
     const pct = Math.min(100, Math.max(0, sponsorship.get(lb.id) ?? 100));
-    const cost = (prize - refund) * (pct / 100);
-    out.set(lb.creator_user_id, (out.get(lb.creator_user_id) ?? 0) + cost);
+    const cid = lb.creator_user_id;
+    costByCreator.set(cid, (costByCreator.get(cid) ?? 0) + net * (pct / 100));
+    rawByCreator.set(cid, (rawByCreator.get(cid) ?? 0) + net);
+  }
+
+  const out = new Map<string, Lb2wkInfo>();
+  for (const [cid, costUsd] of costByCreator) {
+    const raw = rawByCreator.get(cid) ?? 0;
+    const effectivePct = raw > 0 ? (costUsd / raw) * 100 : 0;
+    out.set(cid, { costUsd, effectivePct });
   }
   return out;
 }
