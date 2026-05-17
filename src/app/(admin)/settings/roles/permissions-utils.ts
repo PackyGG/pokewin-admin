@@ -7,6 +7,8 @@
 // String[] column — prefixed with "__" so they don't collide with page
 // routes. This avoids DB migrations entirely.
 
+import { ALL_PAGE_KEYS } from "@/lib/admin-pages";
+
 // ---------------------------------------------------------------------------
 // Capability definitions
 // ---------------------------------------------------------------------------
@@ -890,4 +892,61 @@ function parseBalanceLimitLegacy(
 ): { period: "daily" | "weekly"; amount: number } | null {
   if (capKey !== "__can_adjust_balance") return null;
   return parseBalanceLimit(pages);
+}
+
+// ---------------------------------------------------------------------------
+// Unified permission catalog — pages + capabilities in one vocabulary.
+//
+// `allowed_pages` (and `admin_roles.capabilities`, which now uses the same
+// format) holds two kinds of entry:
+//   • page routes      — "/dashboard", "/users", …   (from ADMIN_PAGES)
+//   • capability flags — "__can_ban_users", …         (from CAPABILITIES)
+// These helpers validate against that combined set and recompute a user's
+// effective permissions when their assigned role preset changes.
+// ---------------------------------------------------------------------------
+
+/** Every valid permission key — page routes ∪ capability flags. */
+export const ALL_PERMISSION_KEYS: readonly string[] = [
+  ...ALL_PAGE_KEYS,
+  ...CAPABILITY_KEYS,
+];
+
+const PERMISSION_KEY_SET: ReadonlySet<string> = new Set(ALL_PERMISSION_KEYS);
+
+/** True for a recognized page route or `__can_*` capability key. */
+export function isPermissionKey(key: string): boolean {
+  return PERMISSION_KEY_SET.has(key);
+}
+
+/** Keep only recognized permission keys, de-duplicated (drops stale entries). */
+export function sanitizePermissionKeys(keys: string[]): string[] {
+  return Array.from(new Set(keys.filter(isPermissionKey)));
+}
+
+/**
+ * Recompute a user's effective `allowed_pages` when their role preset
+ * changes — either the role was re-assigned, or the role itself edited.
+ *
+ * "Role + adjustments" model: effective = role preset, plus per-user
+ * grants, minus per-user revokes. The adjustment delta is derived by
+ * diffing the user's CURRENT allowed_pages against the OLD preset:
+ *   extra  = currentAllowed \ oldPreset   (granted manually on top)
+ *   denied = oldPreset \ currentAllowed   (revoked manually)
+ * New effective = (newPreset ∪ extra) \ denied.
+ *
+ * With no previous role (oldPreset = []), the user's whole current set
+ * becomes "extra" and merges onto the new preset — nothing is lost.
+ */
+export function materializeAllowedPages(
+  newPreset: string[],
+  currentAllowed: string[],
+  oldPreset: string[],
+): string[] {
+  const oldSet = new Set(oldPreset);
+  const curSet = new Set(currentAllowed);
+  const extra = currentAllowed.filter((k) => !oldSet.has(k));
+  const denied = new Set(oldPreset.filter((k) => !curSet.has(k)));
+  const out = new Set<string>([...newPreset, ...extra]);
+  for (const d of denied) out.delete(d);
+  return Array.from(out);
 }

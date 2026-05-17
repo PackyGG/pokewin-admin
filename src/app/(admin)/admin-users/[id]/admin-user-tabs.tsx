@@ -8,6 +8,7 @@ import { ProfileCard, Row, StatsCards } from "./profile-card";
 import { BalanceLimitsCard, LimitRow, type BalanceLimit } from "./balance-limits-card";
 import { ManagementActions, ChangeRoleDialog } from "./management-actions";
 import { LinkMainUserCard } from "./link-main-user-card";
+import { AssignRoleCard } from "./assign-role-card";
 import { PermissionsSection } from "./permissions-section";
 import {
   AuditEventsTable,
@@ -59,7 +60,13 @@ export function AdminUserTabs({ detail, auditStats, auditEvents, balanceLimits, 
         <LinkMainUserCard detail={detail} />
       )}
       {isCurrentUserAdmin && detail.role !== "admin" && (
-        <PermissionsSection detail={detail} />
+        <>
+          <AssignRoleCard
+            adminUserId={detail.id}
+            currentRoleId={detail.roleId}
+          />
+          <PermissionsSection detail={detail} />
+        </>
       )}
       <AuditEventsTable
         auditEvents={auditEvents}

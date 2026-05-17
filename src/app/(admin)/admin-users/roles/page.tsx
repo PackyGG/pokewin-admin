@@ -1,7 +1,6 @@
 import Link from "next/link";
-import { KeyRound, Lock, Settings, Users } from "lucide-react";
+import { KeyRound, Users } from "lucide-react";
 import { requireAdmin } from "@/lib/dal";
-import { Badge } from "@/components/ui/badge";
 import { formatDateTime } from "@/lib/utils/format";
 import { PageHero, SectionHeading, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
@@ -14,8 +13,6 @@ export default async function AdminRolesPage() {
   await requireAdmin();
   const roles = await listRoles();
 
-  const systemCount = roles.filter((r) => r.is_system).length;
-  const customCount = roles.length - systemCount;
   const totalUsers = roles.reduce((acc, r) => acc + r.user_count, 0);
 
   return (
@@ -29,8 +26,8 @@ export default async function AdminRolesPage() {
             <div>
               <h1 className="text-2xl font-bold leading-tight">Admin Roles</h1>
               <p className="text-sm text-muted-foreground">
-                System roles are read-only. Custom roles can be edited and
-                deleted freely.
+                Reusable permission presets. Assign a role to an admin on
+                their profile, then fine-tune per user from there.
               </p>
             </div>
           </div>
@@ -38,24 +35,12 @@ export default async function AdminRolesPage() {
         </div>
       </PageHero>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3">
         <KpiTile
           label="Total Roles"
           value={String(roles.length)}
           icon={KeyRound}
           accent="amber"
-        />
-        <KpiTile
-          label="System"
-          value={String(systemCount)}
-          icon={Lock}
-          accent="blue"
-        />
-        <KpiTile
-          label="Custom"
-          value={String(customCount)}
-          icon={Settings}
-          accent="purple"
         />
         <KpiTile
           label="Assigned Admins"
@@ -67,26 +52,28 @@ export default async function AdminRolesPage() {
 
       <div className="space-y-3">
         <SectionHeading icon={KeyRound} title="All Roles" />
-        <FadeIn className="rounded-md border overflow-hidden">
+        <FadeIn className="overflow-hidden rounded-md border">
           <table className="w-full">
             <thead>
               <tr className="border-b bg-muted/50">
                 <th className="px-4 py-3 text-left text-sm font-medium">Name</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">Type</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">Capabilities</th>
+                <th className="px-4 py-3 text-left text-sm font-medium">
+                  Permissions
+                </th>
                 <th className="px-4 py-3 text-left text-sm font-medium">Users</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">Updated</th>
+                <th className="px-4 py-3 text-left text-sm font-medium">
+                  Updated
+                </th>
               </tr>
             </thead>
             <tbody>
               {roles.length === 0 && (
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={4}
                     className="px-4 py-8 text-center text-sm text-muted-foreground"
                   >
-                    No roles yet. Run <code>npm run admin:migrate</code> and{" "}
-                    <code>npm run admin:seed</code> to create the built-in roles.
+                    No roles yet. Create your first role to get started.
                   </td>
                 </tr>
               )}
@@ -100,21 +87,9 @@ export default async function AdminRolesPage() {
                       {role.name}
                     </Link>
                     {role.description && (
-                      <p className="text-xs text-muted-foreground mt-0.5">
+                      <p className="mt-0.5 text-xs text-muted-foreground">
                         {role.description}
                       </p>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    {role.is_system ? (
-                      <Badge
-                        variant="outline"
-                        className="bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30"
-                      >
-                        System
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline">Custom</Badge>
                     )}
                   </td>
                   <td className="px-4 py-3 text-sm text-muted-foreground">
