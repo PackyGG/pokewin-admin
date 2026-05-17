@@ -34,11 +34,10 @@ import {
   getCreatorsGlobalStats,
   type CreatorsGlobalStats,
 } from "./_queries/creators-stats";
-import { getDealCapUsageByUser } from "./_queries/deal-cap-by-user";
 import {
-  getDeal2wkCostByUser,
-  type Deal2wkInfo,
-} from "./_queries/deal-2wk-cost";
+  getDealCapInfoByUser,
+  type DealCapInfo,
+} from "./_queries/deal-cap-by-user";
 import {
   getWithdrawnFromConvertedByDeal,
   type WithdrawnFromConverted,
@@ -201,11 +200,13 @@ export default async function CreatorsPage({
     console.error("[creators] listCreatorsForPage failed:", err);
   }
 
-  // Per-card "Converted" — withdraw-cap usage for each visible
-  // creator's active/scheduled deal. The lite `current_deal` doesn't
-  // carry the cap fields, so we resolve each deal by id. Best-effort:
-  // a failure leaves the map empty and the cards render "—". Only the
-  // page's rows are fetched, so the fan-out is bounded by perPage.
+  // Per-card deal cap info — resolved from the backend deal of each
+  // visible creator's active/scheduled deal. The lite `current_deal`
+  // doesn't carry the cap fields, so we resolve each deal by id. Yields
+  // both `usedUsd` ("Converted") and `totalCapUsd` (the "Cap" chip +
+  // the deal side of the "2-Week Max Cost" row). Best-effort: a failure
+  // leaves the map empty and the cards render "—". Only the page's rows
+  // are fetched, so the fan-out is bounded by perPage.
   //
   // Withdrawn-from-converted is the sub-breakdown shown under the
   // Converted stat: of the amount the creator converted into payout
@@ -214,13 +215,10 @@ export default async function CreatorsPage({
   // Single batched DB round-trip (admin's own DB connection — no
   // backend round-trip per deal). Best-effort: a failure leaves the
   // map empty and the sub-line just isn't rendered.
-  let dealCapByUser = new Map<string, number>();
+  let dealCapByUser = new Map<string, DealCapInfo>();
   let withdrawnFromConvertedByUser = new Map<string, WithdrawnFromConverted>();
-  // 2-week max-cost projections per creator: deal (withdrawal ceiling +
-  // per-deal leaderboard) and affiliate leaderboards overlapping the
-  // next 14 days. Best-effort — a failure leaves the map empty and the
-  // card row renders "—".
-  let deal2wkByUser = new Map<string, Deal2wkInfo>();
+  // Affiliate-leaderboard 2-week cost per creator. Best-effort — a
+  // failure leaves the map empty and the card row renders "—".
   let leaderboard2wkByUser = new Map<string, Lb2wkInfo>();
   if (result) {
     const pageActiveDeals = result.data
@@ -231,14 +229,13 @@ export default async function CreatorsPage({
             c.current_deal.status === "scheduled"),
       )
       .map((c) => ({ userId: c.id, dealId: c.current_deal!.id }));
-    const pageUserIds = result.data.map((c) => c.id);
-    const [capUsage, withdrawn, deal2wk, lb2wk] = await Promise.all([
-      getDealCapUsageByUser(pageActiveDeals).catch((e) => {
+    const [capInfo, withdrawn, lb2wk] = await Promise.all([
+      getDealCapInfoByUser(pageActiveDeals).catch((e) => {
         console.error(
           "[creators] deal-cap fetch failed (cards render '—'):",
           e,
         );
-        return new Map<string, number>();
+        return new Map<string, DealCapInfo>();
       }),
       getWithdrawnFromConvertedByDeal(pageActiveDeals).catch((e) => {
         console.error(
@@ -246,13 +243,6 @@ export default async function CreatorsPage({
           e,
         );
         return new Map<string, WithdrawnFromConverted>();
-      }),
-      getDeal2wkCostByUser(pageUserIds).catch((e) => {
-        console.error(
-          "[creators] deal 2-week cost fetch failed (cards render '—'):",
-          e,
-        );
-        return new Map<string, Deal2wkInfo>();
       }),
       getLeaderboard2wkCostByUser().catch((e) => {
         console.error(
@@ -262,9 +252,8 @@ export default async function CreatorsPage({
         return new Map<string, Lb2wkInfo>();
       }),
     ]);
-    dealCapByUser = capUsage;
+    dealCapByUser = capInfo;
     withdrawnFromConvertedByUser = withdrawn;
-    deal2wkByUser = deal2wk;
     leaderboard2wkByUser = lb2wk;
   }
 
@@ -437,26 +426,26 @@ export default async function CreatorsPage({
                   lifetimePnl: cw?.lifetimePnl ?? null,
                   // null = no active/scheduled deal, or the deal fetch
                   // failed → the card's Converted stat renders "—".
-                  convertedUsd: dealCapByUser.get(c.id) ?? null,
+                  convertedUsd: dealCapByUser.get(c.id)?.usedUsd ?? null,
                   // null = no withdraw activity tied to this deal's
                   // conversion vouchers (or the join failed) → the
                   // card hides the sub-line.
                   withdrawnFromConverted:
                     withdrawnFromConvertedByUser.get(c.id) ?? null,
-                  // 2-week max-cost projections. null when the creator
-                  // has no active deal / no leaderboard in the next
-                  // 14 days → the card's "2-Week Max Cost" row hides.
+                  // 2-week max-cost projections. Deal side = the active
+                  // deal's total withdraw cap (worst-case payout);
+                  // leaderboard side = the sponsored-weighted prize of
+                  // affiliate leaderboards in the next 14 days. null →
+                  // the card's "2-Week Max Cost" row hides that side.
                   deal2wkMaxUsd:
-                    deal2wkByUser.get(c.id)?.twoWeekMaxUsd ?? null,
+                    dealCapByUser.get(c.id)?.totalCapUsd ?? null,
                   leaderboard2wkMaxUsd:
                     leaderboard2wkByUser.get(c.id)?.costUsd ?? null,
-                  // Chips beside the name: the active deal's withdrawal
+                  // Chips beside the name: the active deal's withdraw
                   // cap, and the blended leaderboard sponsored % ("the
                   // % we pay") + its dollar cost.
                   withdrawalCapUsd:
-                    deal2wkByUser.get(c.id)?.capUsd ?? null,
-                  withdrawalCapResetDays:
-                    deal2wkByUser.get(c.id)?.capResetDays ?? null,
+                    dealCapByUser.get(c.id)?.totalCapUsd ?? null,
                   leaderboardSponsoredPct:
                     leaderboard2wkByUser.get(c.id)?.effectivePct ?? null,
                 };

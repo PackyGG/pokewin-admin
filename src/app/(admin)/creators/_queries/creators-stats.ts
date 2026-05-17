@@ -5,7 +5,7 @@ import {
   getAllCreatorsLifetimePnl,
   type AllCreatorsLifetimePnl,
 } from "./all-creators-lifetime-pnl";
-import { getDealCapUsageByUser } from "./deal-cap-by-user";
+import { getDealCapInfoByUser } from "./deal-cap-by-user";
 import { getWithdrawnFromConvertedByDeal } from "./withdrawn-from-converted-by-deal";
 
 export type CreatorsGlobalStats = {
@@ -138,14 +138,14 @@ export async function getCreatorsGlobalStats(): Promise<CreatorsGlobalStats> {
   // "Converted" — sum withdraw-cap usage across every active/scheduled
   // deal. Bounded by activeDealCount (weekly deals — a small set), so
   // the per-deal getDeal fan-out stays modest. Best-effort inside
-  // getDealCapUsageByUser: a failed fetch is skipped, not thrown.
+  // getDealCapInfoByUser: a failed fetch is skipped, not thrown.
   //
   // "Withdrawn from converted" runs in parallel — single DB round-trip
   // against the admin's main DB (vouchers join card_withdrawal_requests),
   // grouped by deal. A failure leaves the totals at 0 so the tile
   // still shows the converted total and just drops the breakdown.
-  const [capUsageByUser, withdrawnByUser] = await Promise.all([
-    getDealCapUsageByUser(activeDeals),
+  const [capInfoByUser, withdrawnByUser] = await Promise.all([
+    getDealCapInfoByUser(activeDeals),
     getWithdrawnFromConvertedByDeal(activeDeals).catch((err) => {
       console.error(
         "[creators-stats] withdrawn-from-converted query failed (sub-line hidden):",
@@ -158,7 +158,7 @@ export async function getCreatorsGlobalStats(): Promise<CreatorsGlobalStats> {
     }),
   ]);
   let convertedTotal = 0;
-  for (const used of capUsageByUser.values()) convertedTotal += used;
+  for (const info of capInfoByUser.values()) convertedTotal += info.usedUsd;
   let withdrawnFromConvertedTotal = 0;
   let withdrawPendingFromConvertedTotal = 0;
   for (const row of withdrawnByUser.values()) {
