@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PageHero } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { ExportUsersButton } from "./export-dialog";
+import { SortByNetHoldingsButton } from "./sort-net-holdings-button";
 
 export const metadata = { title: "Users" };
 
@@ -79,6 +80,7 @@ export default async function UsersPage({
               },
             ]}
           >
+            <SortByNetHoldingsButton />
             <ExportUsersButton />
           </DataTableToolbar>
         </Suspense>

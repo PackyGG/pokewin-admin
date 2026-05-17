@@ -21,6 +21,7 @@
 
 import * as React from "react";
 import { useMemo, useState, useEffect } from "react";
+import Link from "next/link";
 import {
   Wallet,
   TrendingUp,
@@ -39,8 +40,10 @@ import {
   Calendar,
   MapPin,
   Link2,
+  Megaphone,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
@@ -267,16 +270,39 @@ export function UserViewModern({
                     naturally close to the name without taking extra space. */}
                 <div className="flex flex-wrap items-center gap-1.5">
                   <EditIdentityButton user={user} />
-                  {canChangeUserRoles && (
-                    <ChangeRoleDialog userId={user.id} currentRole={user.role} />
+                  {/* Quick-link to the creator detail page. Only shown
+                      when the viewed user is an on-site creator — the
+                      /creators/<id> route shares the same main-site
+                      user id space as /users/<id>. */}
+                  {user.role === "creator" && (
+                    <Link
+                      href={`/creators/${user.id}`}
+                      className={cn(
+                        buttonVariants({ variant: "outline", size: "sm" }),
+                        "border-purple-500/40 text-purple-600 dark:text-purple-400 hover:bg-purple-500/10",
+                      )}
+                    >
+                      <Megaphone className="size-3.5" />
+                      Creator page
+                    </Link>
                   )}
-                  {/* Quick escape hatch when /creators backend demote
-                      gets stuck — only renders for current creators. */}
+                  {/* Site-role controls — changes the user's role on the
+                      game platform (user / creator / support / admin),
+                      NOT their admin-panel access. Grouped + labelled so
+                      the distinction is unmistakable. */}
                   {canChangeUserRoles && (
-                    <ResetRoleToUserButton
-                      userId={user.id}
-                      currentRole={user.role}
-                    />
+                    <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-dashed border-border/70 px-2 py-1">
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Site role
+                      </span>
+                      <ChangeRoleDialog userId={user.id} currentRole={user.role} />
+                      {/* Quick escape hatch when /creators backend demote
+                          gets stuck — only renders for current creators. */}
+                      <ResetRoleToUserButton
+                        userId={user.id}
+                        currentRole={user.role}
+                      />
+                    </div>
                   )}
                   <UserAdminActions
                     user={user}
@@ -287,6 +313,11 @@ export function UserViewModern({
                     capabilities={capabilities}
                   />
                 </div>
+                {canChangeUserRoles && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Role on the game platform — not admin-panel access.
+                  </p>
+                )}
                 <p className="text-xs text-muted-foreground truncate">
                   {user.email}
                   {user.emailVerified && (
