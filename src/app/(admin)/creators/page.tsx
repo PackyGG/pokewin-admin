@@ -35,11 +35,15 @@ import {
   type CreatorsGlobalStats,
 } from "./_queries/creators-stats";
 import { getDealCapUsageByUser } from "./_queries/deal-cap-by-user";
+import { getDeal2wkCostByUser } from "./_queries/deal-2wk-cost";
 import {
   getWithdrawnFromConvertedByDeal,
   type WithdrawnFromConverted,
 } from "./_queries/withdrawn-from-converted-by-deal";
-import { getLeaderboardCostTotal } from "./_queries/leaderboard-cost";
+import {
+  getLeaderboardCostTotal,
+  getLeaderboard2wkCostByUser,
+} from "./_queries/leaderboard-cost";
 import { fetchAllCreatorsSortedByLifetimePnl } from "./_queries/creators-by-lifetime-pnl";
 import {
   CreatorCardGrid,
@@ -208,6 +212,12 @@ export default async function CreatorsPage({
   // map empty and the sub-line just isn't rendered.
   let dealCapByUser = new Map<string, number>();
   let withdrawnFromConvertedByUser = new Map<string, WithdrawnFromConverted>();
+  // 2-week max-cost projections per creator: deal (withdrawal ceiling +
+  // per-deal leaderboard) and affiliate leaderboards overlapping the
+  // next 14 days. Best-effort — a failure leaves the map empty and the
+  // card row renders "—".
+  let deal2wkByUser = new Map<string, number>();
+  let leaderboard2wkByUser = new Map<string, number>();
   if (result) {
     const pageActiveDeals = result.data
       .filter(
@@ -217,7 +227,8 @@ export default async function CreatorsPage({
             c.current_deal.status === "scheduled"),
       )
       .map((c) => ({ userId: c.id, dealId: c.current_deal!.id }));
-    const [capUsage, withdrawn] = await Promise.all([
+    const pageUserIds = result.data.map((c) => c.id);
+    const [capUsage, withdrawn, deal2wk, lb2wk] = await Promise.all([
       getDealCapUsageByUser(pageActiveDeals).catch((e) => {
         console.error(
           "[creators] deal-cap fetch failed (cards render '—'):",
@@ -232,9 +243,25 @@ export default async function CreatorsPage({
         );
         return new Map<string, WithdrawnFromConverted>();
       }),
+      getDeal2wkCostByUser(pageUserIds).catch((e) => {
+        console.error(
+          "[creators] deal 2-week cost fetch failed (cards render '—'):",
+          e,
+        );
+        return new Map<string, number>();
+      }),
+      getLeaderboard2wkCostByUser().catch((e) => {
+        console.error(
+          "[creators] leaderboard 2-week cost fetch failed (cards render '—'):",
+          e,
+        );
+        return new Map<string, number>();
+      }),
     ]);
     dealCapByUser = capUsage;
     withdrawnFromConvertedByUser = withdrawn;
+    deal2wkByUser = deal2wk;
+    leaderboard2wkByUser = lb2wk;
   }
 
   return (
@@ -412,6 +439,12 @@ export default async function CreatorsPage({
                   // card hides the sub-line.
                   withdrawnFromConverted:
                     withdrawnFromConvertedByUser.get(c.id) ?? null,
+                  // 2-week max-cost projections. null when the creator
+                  // has no active deal / no leaderboard in the next
+                  // 14 days → the card's "2-Week Max Cost" row hides.
+                  deal2wkMaxUsd: deal2wkByUser.get(c.id) ?? null,
+                  leaderboard2wkMaxUsd:
+                    leaderboard2wkByUser.get(c.id) ?? null,
                 };
               })
               // Pin creators with an active or scheduled deal to the
