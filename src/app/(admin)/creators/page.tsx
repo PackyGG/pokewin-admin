@@ -35,7 +35,10 @@ import {
   type CreatorsGlobalStats,
 } from "./_queries/creators-stats";
 import { getDealCapUsageByUser } from "./_queries/deal-cap-by-user";
-import { getDeal2wkCostByUser } from "./_queries/deal-2wk-cost";
+import {
+  getDeal2wkCostByUser,
+  type Deal2wkInfo,
+} from "./_queries/deal-2wk-cost";
 import {
   getWithdrawnFromConvertedByDeal,
   type WithdrawnFromConverted,
@@ -43,6 +46,7 @@ import {
 import {
   getLeaderboardCostTotal,
   getLeaderboard2wkCostByUser,
+  type Lb2wkInfo,
 } from "./_queries/leaderboard-cost";
 import { fetchAllCreatorsSortedByLifetimePnl } from "./_queries/creators-by-lifetime-pnl";
 import {
@@ -216,8 +220,8 @@ export default async function CreatorsPage({
   // per-deal leaderboard) and affiliate leaderboards overlapping the
   // next 14 days. Best-effort — a failure leaves the map empty and the
   // card row renders "—".
-  let deal2wkByUser = new Map<string, number>();
-  let leaderboard2wkByUser = new Map<string, number>();
+  let deal2wkByUser = new Map<string, Deal2wkInfo>();
+  let leaderboard2wkByUser = new Map<string, Lb2wkInfo>();
   if (result) {
     const pageActiveDeals = result.data
       .filter(
@@ -248,14 +252,14 @@ export default async function CreatorsPage({
           "[creators] deal 2-week cost fetch failed (cards render '—'):",
           e,
         );
-        return new Map<string, number>();
+        return new Map<string, Deal2wkInfo>();
       }),
       getLeaderboard2wkCostByUser().catch((e) => {
         console.error(
           "[creators] leaderboard 2-week cost fetch failed (cards render '—'):",
           e,
         );
-        return new Map<string, number>();
+        return new Map<string, Lb2wkInfo>();
       }),
     ]);
     dealCapByUser = capUsage;
@@ -442,9 +446,19 @@ export default async function CreatorsPage({
                   // 2-week max-cost projections. null when the creator
                   // has no active deal / no leaderboard in the next
                   // 14 days → the card's "2-Week Max Cost" row hides.
-                  deal2wkMaxUsd: deal2wkByUser.get(c.id) ?? null,
+                  deal2wkMaxUsd:
+                    deal2wkByUser.get(c.id)?.twoWeekMaxUsd ?? null,
                   leaderboard2wkMaxUsd:
-                    leaderboard2wkByUser.get(c.id) ?? null,
+                    leaderboard2wkByUser.get(c.id)?.costUsd ?? null,
+                  // Chips beside the name: the active deal's withdrawal
+                  // cap, and the blended leaderboard sponsored % ("the
+                  // % we pay") + its dollar cost.
+                  withdrawalCapUsd:
+                    deal2wkByUser.get(c.id)?.capUsd ?? null,
+                  withdrawalCapResetDays:
+                    deal2wkByUser.get(c.id)?.capResetDays ?? null,
+                  leaderboardSponsoredPct:
+                    leaderboard2wkByUser.get(c.id)?.effectivePct ?? null,
                 };
               })
               // Pin creators with an active or scheduled deal to the

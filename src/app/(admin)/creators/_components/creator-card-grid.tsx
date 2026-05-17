@@ -176,6 +176,16 @@ export type CreatorWithSocials = CreatorListItem & {
    */
   deal2wkMaxUsd: number | null;
   leaderboard2wkMaxUsd: number | null;
+  /**
+   * Chips beside the creator's name. `withdrawalCapUsd` = the active
+   * deal's largest withdrawal limit ("max cap for withdrawal"),
+   * `withdrawalCapResetDays` = its reset window. `leaderboardSponsored
+   * Pct` = the blended "% we pay" across the creator's leaderboards
+   * running in the next 14 days. null when not applicable.
+   */
+  withdrawalCapUsd: number | null;
+  withdrawalCapResetDays: number | null;
+  leaderboardSponsoredPct: number | null;
 };
 
 type CreatorPnlPeriodCell = {
@@ -289,6 +299,38 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
                     <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
                   </span>
                   Live
+                </span>
+              )}
+              {/* Withdrawal cap — the max the creator can pull against
+                  their active deal. Rose: house cost exposure. */}
+              {creator.withdrawalCapUsd != null && (
+                <span
+                  className="inline-flex items-center gap-0.5 rounded-full border border-rose-500/30 bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-medium text-rose-600 dark:text-rose-400"
+                  title="Max withdrawal cap on the creator's active deal"
+                >
+                  Cap {formatCurrency(creator.withdrawalCapUsd)}
+                  {creator.withdrawalCapResetDays != null && (
+                    <span className="text-rose-600/70 dark:text-rose-400/70">
+                      /{creator.withdrawalCapResetDays}d
+                    </span>
+                  )}
+                </span>
+              )}
+              {/* Leaderboard — the blended % the house sponsors of this
+                  creator's leaderboards running in the next 14 days,
+                  plus our dollar cost. */}
+              {creator.leaderboardSponsoredPct != null && (
+                <span
+                  className="inline-flex items-center gap-0.5 rounded-full border border-rose-500/30 bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-medium text-rose-600 dark:text-rose-400"
+                  title="Leaderboard: the % we sponsor + our 14-day leaderboard cost"
+                >
+                  LB {Math.round(creator.leaderboardSponsoredPct)}%
+                  {creator.leaderboard2wkMaxUsd != null && (
+                    <span className="text-rose-600/70 dark:text-rose-400/70">
+                      {" · "}
+                      {formatCurrency(creator.leaderboard2wkMaxUsd)}
+                    </span>
+                  )}
                 </span>
               )}
             </div>
