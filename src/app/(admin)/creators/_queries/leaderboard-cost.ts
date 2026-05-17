@@ -13,27 +13,11 @@ const PAGE_SIZE = 100;
 const MAX_PAGES = 50;
 
 /**
- * Total committed cost of creator (affiliate) leaderboards, weighted
- * by each leaderboard's admin-side "sponsored %".
- *
- *   cost = Σ (total_prize_usd − refund_amount_usd) × (sponsored% / 100)
- *          over APPROVED rows
- *
- * `total_prize_usd` = creator prize + site bonus — the same figure the
- * /creators/leaderboards table surfaces as the (rose-colored) cost.
- *
- * Approved-only: a rejected leaderboard never runs ($0) and a pending
- * one isn't a committed spend yet. Refunds (cancelled leaderboards)
- * are subtracted so a cancelled-and-refunded board doesn't inflate the
- * figure.
- *
- * The sponsored % is an admin annotation (admin_leaderboard_sponsorship
- * — purely a cost-accounting input, set inline on /creators/leaderboards).
- * Leaderboards with no annotation default to 100% (full cost).
+ * Fetch every APPROVED affiliate leaderboard, first-page-then-parallel.
+ * Shared by getLeaderboardCostTotal (global KPI) and
+ * getLeaderboard2wkCostByUser (per-creator 14-day cost).
  */
-export async function getLeaderboardCostTotal(): Promise<number> {
-  // Collect every approved leaderboard first — we can't weight + sum
-  // until we also have the sponsorship map for the full id set.
+async function fetchAllApprovedLeaderboards(): Promise<LeaderboardAdminRow[]> {
   const firstPage = await affiliateLeaderboardsApi.list({
     status: "approved",
     offset: 0,
@@ -58,6 +42,30 @@ export async function getLeaderboardCostTotal(): Promise<number> {
   for (const page of await Promise.all(rest)) {
     all.push(...page.leaderboards);
   }
+  return all;
+}
+
+/**
+ * Total committed cost of creator (affiliate) leaderboards, weighted
+ * by each leaderboard's admin-side "sponsored %".
+ *
+ *   cost = Σ (total_prize_usd − refund_amount_usd) × (sponsored% / 100)
+ *          over APPROVED rows
+ *
+ * `total_prize_usd` = creator prize + site bonus — the same figure the
+ * /creators/leaderboards table surfaces as the (rose-colored) cost.
+ *
+ * Approved-only: a rejected leaderboard never runs ($0) and a pending
+ * one isn't a committed spend yet. Refunds (cancelled leaderboards)
+ * are subtracted so a cancelled-and-refunded board doesn't inflate the
+ * figure.
+ *
+ * The sponsored % is an admin annotation (admin_leaderboard_sponsorship
+ * — purely a cost-accounting input, set inline on /creators/leaderboards).
+ * Leaderboards with no annotation default to 100% (full cost).
+ */
+export async function getLeaderboardCostTotal(): Promise<number> {
+  const all = await fetchAllApprovedLeaderboards();
 
   // Sponsored % per leaderboard. Resilient: if the admin-DB lookup
   // blips, treat every leaderboard as 100% (un-weighted total) rather
@@ -82,4 +90,58 @@ export async function getLeaderboardCostTotal(): Promise<number> {
     total += (prize - refund) * (pct / 100);
   }
   return total;
+}
+
+const WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+
+/**
+ * Per-creator leaderboard cost over the next 14 days: the sponsored-
+ * weighted prize of every APPROVED affiliate leaderboard (owned by the
+ * creator as the primary owner) whose run window overlaps
+ * [now, now + 14d].
+ *
+ *   cost = Σ (total_prize_usd − refund_amount_usd) × (sponsored% / 100)
+ *
+ * Keyed by `creator_user_id` (the primary owner — co-creators don't
+ * fund the board). Creators with no leaderboard in the window are
+ * absent from the map; callers render "—".
+ */
+export async function getLeaderboard2wkCostByUser(): Promise<
+  Map<string, number>
+> {
+  const all = await fetchAllApprovedLeaderboards();
+
+  const now = Date.now();
+  const windowEnd = now + WINDOW_MS;
+  // A leaderboard is "in the next 2 weeks" if its run window overlaps
+  // [now, now+14d]: it starts on/before the window end AND ends
+  // on/after now.
+  const inWindow = all.filter((lb) => {
+    const start = new Date(lb.start_date).getTime();
+    const end = new Date(lb.end_date).getTime();
+    return start <= windowEnd && end >= now;
+  });
+
+  let sponsorship: Map<string, number>;
+  try {
+    sponsorship = await getLeaderboardSponsorshipMap(
+      inWindow.map((lb) => lb.id),
+    );
+  } catch (e) {
+    console.error(
+      "[leaderboard-2wk] sponsorship lookup failed (treating all as 100%):",
+      e,
+    );
+    sponsorship = new Map();
+  }
+
+  const out = new Map<string, number>();
+  for (const lb of inWindow) {
+    const prize = Number(lb.total_prize_usd) || 0;
+    const refund = Number(lb.refund_amount_usd) || 0;
+    const pct = Math.min(100, Math.max(0, sponsorship.get(lb.id) ?? 100));
+    const cost = (prize - refund) * (pct / 100);
+    out.set(lb.creator_user_id, (out.get(lb.creator_user_id) ?? 0) + cost);
+  }
+  return out;
 }

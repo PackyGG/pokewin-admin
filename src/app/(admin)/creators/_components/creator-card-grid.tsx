@@ -166,6 +166,16 @@ export type CreatorWithSocials = CreatorListItem & {
     withdrawnUsd: number;
     withdrawPendingUsd: number;
   } | null;
+  /**
+   * 2-week MAX cost projections — worst-case house spend over the
+   * next fortnight. `deal2wkMaxUsd` = the active deal's withdrawal
+   * ceiling scaled to 14 days + the per-deal leaderboard payout.
+   * `leaderboard2wkMaxUsd` = the sponsored-weighted prize of every
+   * affiliate leaderboard running in the next 14 days. null when the
+   * creator has nothing to project → the card hides the row.
+   */
+  deal2wkMaxUsd: number | null;
+  leaderboard2wkMaxUsd: number | null;
 };
 
 type CreatorPnlPeriodCell = {
@@ -301,6 +311,13 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
 
         {/* DEAL — borderless, just type + a clean progress bar */}
         <DealSummary deal={deal} />
+
+        {/* 2-WEEK MAX COST — worst-case house spend over the next
+            fortnight from this creator's deal + affiliate leaderboards. */}
+        <TwoWeekCostRow
+          dealUsd={creator.deal2wkMaxUsd}
+          leaderboardUsd={creator.leaderboard2wkMaxUsd}
+        />
 
         {/* STATS — single 5-up row, divider-separated, no inner borders */}
         <StatsStrip
@@ -631,6 +648,45 @@ function MomentumRow({
         Wagers{" "}
         <span className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
           {wagers3dUsd > 0 ? formatCurrency(wagers3dUsd) : "—"}
+        </span>
+      </span>
+    </div>
+  );
+}
+
+// 2-week max-cost row — worst-case house spend over the next fortnight.
+//   Deal        = the active deal's withdrawal ceiling scaled to 14d
+//                 + the per-deal leaderboard payout.
+//   Leaderboard = sponsored-weighted prize of affiliate leaderboards
+//                 whose run window overlaps the next 14d.
+// Both are money the house pays out → rose (house loss) per CLAUDE.md.
+// Hidden when the creator has neither so dormant cards stay quiet.
+function TwoWeekCostRow({
+  dealUsd,
+  leaderboardUsd,
+}: {
+  dealUsd: number | null;
+  leaderboardUsd: number | null;
+}) {
+  const hasAny = (dealUsd ?? 0) > 0 || (leaderboardUsd ?? 0) > 0;
+  if (!hasAny) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+      <span className="font-semibold uppercase tracking-wider text-muted-foreground">
+        2-Week Max Cost
+      </span>
+      <span className="text-muted-foreground">
+        Deal{" "}
+        <span className="font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+          {dealUsd != null && dealUsd > 0 ? formatCurrency(dealUsd) : "—"}
+        </span>
+      </span>
+      <span className="text-muted-foreground">
+        Leaderboard{" "}
+        <span className="font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+          {leaderboardUsd != null && leaderboardUsd > 0
+            ? formatCurrency(leaderboardUsd)
+            : "—"}
         </span>
       </span>
     </div>
