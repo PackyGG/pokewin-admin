@@ -115,10 +115,19 @@ export function GgrStatCard({ ggr }: { ggr: Record<string, number> }) {
 // Wagers = money the user sent into the house treasury for a bet.
 // Always positive, so we give it a purple identity color to differentiate
 // from the other period cards (Deposits/GGR/PnL/Withdrawals).
+//
+// Reused for two cards on the dashboard: the default "Total Wager" (player
+// wager — creator deal-fill spend is a separate ledger type, not counted)
+// and a "Raw Wager" variant that also counts creator_fill_spend_battle.
+// `caption` carries the small muted hint that distinguishes the pair.
 export function WagerStatCard({
   wagers,
+  title = "Total Wager",
+  caption,
 }: {
   wagers: Record<string, number>;
+  title?: string;
+  caption?: string;
 }) {
   const [selected, setSelected] = useState<string>("24h");
 
@@ -127,8 +136,13 @@ export function WagerStatCard({
       <CardHeader className="flex flex-col gap-2 pb-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <CardTitle className="text-card-title text-muted-foreground">
-            Total Wager
+            {title}
           </CardTitle>
+          {caption && (
+            <span className="hidden text-tiny text-muted-foreground sm:inline">
+              {caption}
+            </span>
+          )}
           <div className="flex flex-wrap gap-0.5">
             {ranges.map((r) => (
               <button

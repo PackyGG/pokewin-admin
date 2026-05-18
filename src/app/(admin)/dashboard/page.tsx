@@ -64,12 +64,20 @@ export default async function DashboardPage() {
           Mobile-first grid: ONE column at <sm so each card is full-
           width and the dollar value never truncates (these cards
           contain a 5-chip period selector + a hero currency value;
-          squeezing 2-up at 380px crushed both). 2-up at sm, 3 at md,
-          5 at lg. */}
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-5">
+          squeezing 2-up at 380px crushed both). 2-up at sm, 3 at lg,
+          6 across at xl. */}
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-6">
         <PnlStatCard pnl={stats.realizedPnl} />
         <GgrStatCard ggr={stats.ggr} />
-        <WagerStatCard wagers={stats.wagers} />
+        {/* Two wager cards: "Total Wager" is the player figure (creator
+            deal-fill battle spend is a separate ledger type, omitted);
+            "Raw Wager" adds creator_fill_spend_battle back in. */}
+        <WagerStatCard wagers={stats.wagers} caption="excl. creator fill" />
+        <WagerStatCard
+          wagers={stats.wagersRaw}
+          title="Raw Wager"
+          caption="incl. creator fill"
+        />
         <DepositsStatCard
           deposits={stats.deposits}
           depositCounts={stats.depositCounts}
