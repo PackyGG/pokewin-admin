@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Users } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Users } from "lucide-react";
 
 import {
   getCreatorHeader,
@@ -43,9 +43,15 @@ export default async function CreatorUsersPage({
   const profile = await getCreatorHeader(userId);
   if (!profile) notFound();
 
-  const referrals = profile.code
+  // getCodeReferrals returns a discriminated result so a failed /
+  // timed-out lookup is distinguishable from a genuinely empty code.
+  // referralsResult is null only when the creator has no code at all.
+  const referralsResult = profile.code
     ? await getCodeReferrals(profile.code, 200)
-    : [];
+    : null;
+  const loadFailed = referralsResult !== null && !referralsResult.ok;
+  const referrals =
+    referralsResult && referralsResult.ok ? referralsResult.referrals : [];
 
   return (
     <div className="space-y-6">
@@ -155,7 +161,22 @@ export default async function CreatorUsersPage({
                     </TableCell>
                   </TableRow>
                 ))}
-                {referrals.length === 0 && (
+                {loadFailed && (
+                  <TableRow>
+                    <TableCell colSpan={4} className="h-24 text-center">
+                      <div className="flex flex-col items-center gap-1 text-sm">
+                        <span className="flex items-center gap-1.5 font-medium text-amber-600 dark:text-amber-400">
+                          <AlertTriangle className="size-4" />
+                          Couldn&apos;t load users for this code
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          The lookup timed out — refresh the page to try again.
+                        </span>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )}
+                {!loadFailed && referrals.length === 0 && (
                   <TableRow>
                     <TableCell
                       colSpan={4}

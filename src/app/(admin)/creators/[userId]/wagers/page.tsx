@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import {
   Activity,
+  AlertTriangle,
   ArrowLeft,
   Coins,
   Package,
@@ -74,9 +75,14 @@ export default async function CreatorWagersPage({
   const profile = await getCreatorHeader(userId);
   if (!profile) notFound();
 
-  const wagers = profile.code
+  // getRecentWagersOnCode returns a discriminated result so a failed /
+  // timed-out lookup is distinguishable from a genuinely empty feed.
+  // wagersResult is null only when the creator has no code at all.
+  const wagersResult = profile.code
     ? await getRecentWagersOnCode(profile.code, 100)
-    : [];
+    : null;
+  const loadFailed = wagersResult !== null && !wagersResult.ok;
+  const wagers = wagersResult && wagersResult.ok ? wagersResult.wagers : [];
 
   return (
     <div className="space-y-6">
@@ -182,7 +188,22 @@ export default async function CreatorWagersPage({
                     </TableRow>
                   );
                 })}
-                {wagers.length === 0 && (
+                {loadFailed && (
+                  <TableRow>
+                    <TableCell colSpan={4} className="h-24 text-center">
+                      <div className="flex flex-col items-center gap-1 text-sm">
+                        <span className="flex items-center gap-1.5 font-medium text-amber-600 dark:text-amber-400">
+                          <AlertTriangle className="size-4" />
+                          Couldn&apos;t load wagers for this code
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          The lookup timed out — refresh the page to try again.
+                        </span>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )}
+                {!loadFailed && wagers.length === 0 && (
                   <TableRow>
                     <TableCell
                       colSpan={4}

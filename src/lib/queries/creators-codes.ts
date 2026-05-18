@@ -586,6 +586,27 @@ export async function getCodeAnalytics(code: string) {
   };
 }
 
+export type CodeReferral = {
+  referredUserId: string;
+  referredUsername: string | null;
+  referredEmail: string | null;
+  lastActivityAt: string;
+  totalWagersUsd: number;
+  totalCommissionUsd: number;
+};
+
+/**
+ * Discriminated result for getCodeReferrals. `ok: false` means the
+ * query failed (timeout / DB blip) — distinct from a successful read
+ * that genuinely found no users (`ok: true, referrals: []`). The old
+ * version funnelled every failure through `safe()` into an empty
+ * array, so the page rendered a broken lookup identically to a quiet
+ * code and the admin had no way to tell them apart.
+ */
+export type CodeReferralsResult =
+  | { ok: true; referrals: CodeReferral[] }
+  | { ok: false };
+
 // Slim referrals query for the creator detail page. Returns ONLY the
 // columns that side panel actually renders (user, total wagers, total
 // commission, last activity) — no per-row correlated subqueries for
@@ -594,7 +615,17 @@ export async function getCodeAnalytics(code: string) {
 // 9 parallel queries and the usages query alone runs ~3 subqueries
 // per row, which is why /creators/[id] was waiting on data the page
 // then threw away. Use this when you only need the referrals list.
-export async function getCodeReferrals(code: string, limit: number = 50) {
+//
+// Deliberately NOT wrapped in `safe()`: a failure is surfaced to the
+// caller as `{ ok: false }` so the page can render an explicit error
+// state instead of a misleading empty table. NOTE: affiliate_code_usages
+// has no index beyond its PK, so `WHERE UPPER(code) = $1` is a
+// sequential scan — on a large production table that is the likely
+// source of the intermittent timeouts this result type now surfaces.
+export async function getCodeReferrals(
+  code: string,
+  limit: number = 50,
+): Promise<CodeReferralsResult> {
   const db = await getDb();
   const uppercaseCode = code.toUpperCase();
   const safeLimit = Math.max(1, Math.min(Math.floor(limit), 200));
@@ -604,8 +635,8 @@ export async function getCodeReferrals(code: string, limit: number = 50) {
       ? `AND u.id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
       : "";
 
-  const rows = await safe(
-    db.$queryRawUnsafe<
+  try {
+    const rows = await db.$queryRawUnsafe<
       {
         referred_user_id: string;
         referred_username: string | null;
@@ -629,26 +660,43 @@ export async function getCodeReferrals(code: string, limit: number = 50) {
         ORDER BY MAX(acu.created_at) DESC
         LIMIT ${safeLimit}`,
       uppercaseCode,
-    ),
-    [] as {
-      referred_user_id: string;
-      referred_username: string | null;
-      referred_email: string | null;
-      last_activity: Date;
-      total_wagers: string;
-      total_commission: string;
-    }[],
-  );
+    );
 
-  return rows.map((r) => ({
-    referredUserId: r.referred_user_id,
-    referredUsername: r.referred_username,
-    referredEmail: r.referred_email,
-    lastActivityAt: r.last_activity.toISOString(),
-    totalWagersUsd: toNumber(r.total_wagers),
-    totalCommissionUsd: toNumber(r.total_commission),
-  }));
+    return {
+      ok: true,
+      referrals: rows.map((r) => ({
+        referredUserId: r.referred_user_id,
+        referredUsername: r.referred_username,
+        referredEmail: r.referred_email,
+        lastActivityAt: r.last_activity.toISOString(),
+        totalWagersUsd: toNumber(r.total_wagers),
+        totalCommissionUsd: toNumber(r.total_commission),
+      })),
+    };
+  } catch (err) {
+    console.error("[creators-codes] getCodeReferrals failed:", err);
+    return { ok: false };
+  }
 }
+
+export type RecentWagerOnCode = {
+  id: string;
+  userId: string;
+  username: string | null;
+  email: string | null;
+  type: "pack_opening" | "battle_bet" | "battle_sponsorship";
+  amountUsd: number;
+  createdAt: string;
+};
+
+/**
+ * Discriminated result for getRecentWagersOnCode — same contract as
+ * CodeReferralsResult. `ok: false` = the query failed; the caller
+ * shows an error state instead of a misleading empty feed.
+ */
+export type RecentWagersResult =
+  | { ok: true; wagers: RecentWagerOnCode[] }
+  | { ok: false };
 
 // Recent wager events from users tied to this affiliate code. Used by
 // the creator detail page to surface a chronological feed of activity
@@ -666,10 +714,13 @@ export async function getCodeReferrals(code: string, limit: number = 50) {
 // feed. amount is stored as a negative number (debit from the user's
 // balance), so we ABS it for display — the table reads as
 // "user X bet $Y" not "user X bet -$Y".
+//
+// Like getCodeReferrals, NOT wrapped in `safe()`: a failure returns
+// `{ ok: false }` so the page can render an explicit error state.
 export async function getRecentWagersOnCode(
   code: string,
   limit: number = 25,
-) {
+): Promise<RecentWagersResult> {
   const db = await getDb();
   const uppercaseCode = code.toUpperCase();
   // Cap and floor the limit so a buggy caller can't fetch the world.
@@ -680,8 +731,8 @@ export async function getRecentWagersOnCode(
       ? `AND u.id NOT IN (${excludedRecent.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
       : "";
 
-  const rows = await safe(
-    db.$queryRawUnsafe<
+  try {
+    const rows = await db.$queryRawUnsafe<
       {
         id: string;
         user_id: string;
@@ -715,27 +766,24 @@ export async function getRecentWagersOnCode(
        ORDER BY lt.created_at DESC
        LIMIT ${safeLimit}`,
       uppercaseCode,
-    ),
-    [] as {
-      id: string;
-      user_id: string;
-      username: string | null;
-      email: string | null;
-      type: string;
-      amount: string;
-      created_at: Date;
-    }[],
-  );
+    );
 
-  return rows.map((r) => ({
-    id: r.id,
-    userId: r.user_id,
-    username: r.username,
-    email: r.email,
-    type: r.type as "pack_opening" | "battle_bet" | "battle_sponsorship",
-    // amount is negative on the user's ledger (money leaving their
-    // balance); display as a positive bet figure.
-    amountUsd: Math.abs(toNumber(r.amount)),
-    createdAt: r.created_at.toISOString(),
-  }));
+    return {
+      ok: true,
+      wagers: rows.map((r) => ({
+        id: r.id,
+        userId: r.user_id,
+        username: r.username,
+        email: r.email,
+        type: r.type as "pack_opening" | "battle_bet" | "battle_sponsorship",
+        // amount is negative on the user's ledger (money leaving their
+        // balance); display as a positive bet figure.
+        amountUsd: Math.abs(toNumber(r.amount)),
+        createdAt: r.created_at.toISOString(),
+      })),
+    };
+  } catch (err) {
+    console.error("[creators-codes] getRecentWagersOnCode failed:", err);
+    return { ok: false };
+  }
 }
