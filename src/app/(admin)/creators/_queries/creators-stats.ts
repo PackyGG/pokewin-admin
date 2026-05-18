@@ -12,6 +12,13 @@ export type CreatorsGlobalStats = {
   /** Total creator accounts on the platform. */
   totalCreators: number;
   /**
+   * Count of creators with at least one fill (weekly) deal —
+   * `total_deals_count > 0` on the backend creator-list row. Fill and
+   * multiplier are the two creator-deal programs; this is the "Fill
+   * Creators" KPI, paired with the separate multiplier-creator count.
+   */
+  fillCreatorCount: number;
+  /**
    * Count of creators whose `current_deal` is either ACTIVE (running
    * right now) or SCHEDULED (signed off and queued to start). Matches
    * the highlighted "Active" badge admins already see on each card —
@@ -117,6 +124,9 @@ export async function getCreatorsGlobalStats(): Promise<CreatorsGlobalStats> {
   // scheduled — the set we resolve withdraw-cap usage for below.
   let activeDealCount = 0;
   let liveCount = 0;
+  // Creators with ≥1 fill (weekly) deal — total_deals_count is the
+  // backend's lifetime fill-deal count for the creator.
+  let fillCreatorCount = 0;
   const activeDeals: { userId: string; dealId: string }[] = [];
   const tallyPage = (rows: typeof firstPage.data) => {
     for (const c of rows) {
@@ -129,6 +139,9 @@ export async function getCreatorsGlobalStats(): Promise<CreatorsGlobalStats> {
       }
       if (c.active_session_id !== null) {
         liveCount += 1;
+      }
+      if (c.total_deals_count > 0) {
+        fillCreatorCount += 1;
       }
     }
   };
@@ -171,6 +184,7 @@ export async function getCreatorsGlobalStats(): Promise<CreatorsGlobalStats> {
     // by per-page paging). Use it directly so the tile stays
     // accurate even if MAX_PAGES caps the count traversal.
     totalCreators: firstPage.total,
+    fillCreatorCount,
     activeDealCount,
     liveCount,
     lifetimePnl,

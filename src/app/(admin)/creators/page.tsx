@@ -7,6 +7,7 @@ import {
   Trophy,
   Users,
   Wallet,
+  Zap,
 } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
@@ -34,6 +35,7 @@ import {
   getCreatorsGlobalStats,
   type CreatorsGlobalStats,
 } from "./_queries/creators-stats";
+import { getMultiplierCreatorCount } from "./_queries/multiplier-creator-count";
 import {
   getDealCapInfoByUser,
   type DealCapInfo,
@@ -83,13 +85,16 @@ export default async function CreatorsPage({
   // Combined cost of every approved creator leaderboard (net of
   // refunds). Independent best-effort fetch — null → tile shows "—".
   let leaderboardCost: number | null = null;
+  // Count of creators with a multiplier deal — its own best-effort
+  // backend fan-out (5-min cached). null → the tile renders "—".
+  let multiplierCreatorCount: number | null = null;
   let loadError: { title: string; detail: string } | null = null;
   try {
     // Wave 1 — socials + global stats are needed for every sort mode.
     // The creators list itself diverges by sortBy: "recent" uses the
     // cheap backend-paginated fetch; pnl_* forces a full pool walk
     // because PnL isn't a backend-side sortable field.
-    const [socials, globalStats, lbCost] = await Promise.all([
+    const [socials, globalStats, lbCost, multCount] = await Promise.all([
       getApprovedSocialsByUser().catch((e) => {
         console.error(
           "[creators] socials fetch failed (rendering without):",
@@ -111,10 +116,18 @@ export default async function CreatorsPage({
         );
         return null;
       }),
+      getMultiplierCreatorCount().catch((e) => {
+        console.error(
+          "[creators] multiplier creator count failed (tile renders '—'):",
+          e,
+        );
+        return null;
+      }),
     ]);
     socialsByUser = socials;
     stats = globalStats;
     leaderboardCost = lbCost;
+    multiplierCreatorCount = multCount;
 
     if (params.sortBy === "pnl_desc" || params.sortBy === "pnl_asc") {
       // Heavy path — sort by lifetime PnL. fetchAll handles backend
@@ -284,19 +297,35 @@ export default async function CreatorsPage({
       </PageHero>
 
       {result && (
-        // KPI strip — 6 global signals: total creators, the combined
-        // lifetime House P&L, how much their deals have converted
-        // (withdraw-cap usage), the total cost of their leaderboards,
-        // how many have an active/scheduled deal, and how many are
-        // live on-stream right now. All GLOBAL (not affected by
-        // search / pagination), so the numbers stay stable as the
-        // admin types in the search box.
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        // KPI strip — 7 global signals: fill-deal creators, multiplier-
+        // deal creators, the combined lifetime House P&L, deal
+        // conversion (withdraw-cap usage), leaderboard cost, active/
+        // scheduled deals, and live-on-stream count. All GLOBAL (not
+        // affected by search / pagination), so the numbers stay stable
+        // as the admin types in the search box.
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
+          {/* Fill Creators — creators with ≥1 fill (weekly) deal. Fill
+              and multiplier are the two creator-deal programs. */}
           <KpiTile
-            label="Total Creators"
-            value={formatNumber(stats?.totalCreators ?? result.total)}
+            label="Fill Creators"
+            value={stats ? formatNumber(stats.fillCreatorCount) : "—"}
+            sub="Creators with a fill deal"
             icon={Megaphone}
             accent="pink"
+          />
+          {/* Multiplier Creators — creators with ≥1 multiplier deal
+              (any status). A separate backend program from fill deals;
+              its count is a best-effort, 5-min-cached fan-out. */}
+          <KpiTile
+            label="Multiplier Creators"
+            value={
+              multiplierCreatorCount != null
+                ? formatNumber(multiplierCreatorCount)
+                : "—"
+            }
+            sub="Creators with a multiplier deal"
+            icon={Zap}
+            accent="purple"
           />
           {/* Combined lifetime PnL — sits next to Total Creators per
               admin spec. Color flips with the sign (emerald = house
