@@ -1,10 +1,6 @@
 import "server-only";
 
 import { creatorsApi } from "@/lib/backend-api";
-import {
-  getAllCreatorsLifetimePnl,
-  type AllCreatorsLifetimePnl,
-} from "./all-creators-lifetime-pnl";
 import { getDealCapInfoByUser } from "./deal-cap-by-user";
 import { getWithdrawnFromConvertedByDeal } from "./withdrawn-from-converted-by-deal";
 
@@ -32,15 +28,6 @@ export type CreatorsGlobalStats = {
    * kick / start their stream session for the deal.
    */
   liveCount: number;
-  /**
-   * Combined House P&L across EVERY creator's referred-user pool —
-   * lifetime, balance-sheet snapshot. Same formula as the per-creator
-   * hero tile on /creators/[id], but the pool is the UNION of every
-   * creator's referrals (deduplicated so a user referred by multiple
-   * creators only counts once). Null on query failure so the KPI
-   * tile falls back to "—".
-   */
-  lifetimePnl: AllCreatorsLifetimePnl | null;
   /**
    * Total "Converted" — combined withdraw-cap usage
    * (`withdraw_cap_used_usd`) across every creator with an active or
@@ -82,28 +69,13 @@ const MAX_PAGES = 50; // 5,000 creators — way above current/projected pool.
 
 export async function getCreatorsGlobalStats(): Promise<CreatorsGlobalStats> {
   // First page also tells us the absolute total. Once we know the
-  // total we can request the remaining pages in parallel. The
-  // lifetime PnL query is independent — kicked off in parallel with
-  // the first page so the round-trips overlap.
-  const [firstPage, lifetimePnl] = await Promise.all([
-    creatorsApi.list({
-      // No search filter — these are global counts. If the user types
-      // in the search box, the KPI tiles should stay stable.
-      offset: 0,
-      limit: PAGE_SIZE,
-    }),
-    // Lifetime PnL hits the main game DB (not the creators backend),
-    // so it runs alongside the backend paginated walk below. Best-
-    // effort: a query failure here returns null and the KPI tile
-    // falls back to "—" rather than crashing the whole page.
-    getAllCreatorsLifetimePnl().catch((err) => {
-      console.error(
-        "[creators-stats] lifetime PnL query failed (tile will render '—'):",
-        err,
-      );
-      return null;
-    }),
-  ]);
+  // total we can request the remaining pages in parallel.
+  const firstPage = await creatorsApi.list({
+    // No search filter — these are global counts. If the user types
+    // in the search box, the KPI tiles should stay stable.
+    offset: 0,
+    limit: PAGE_SIZE,
+  });
 
   const pagesNeeded = Math.min(
     MAX_PAGES,
@@ -187,7 +159,6 @@ export async function getCreatorsGlobalStats(): Promise<CreatorsGlobalStats> {
     fillCreatorCount,
     activeDealCount,
     liveCount,
-    lifetimePnl,
     convertedTotal,
     withdrawnFromConvertedTotal,
     withdrawPendingFromConvertedTotal,

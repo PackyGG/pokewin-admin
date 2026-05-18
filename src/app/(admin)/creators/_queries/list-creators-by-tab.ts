@@ -3,7 +3,6 @@ import "server-only";
 import { creatorsApi, type CreatorListItem } from "@/lib/backend-api";
 import type { CreatorsSearchParams } from "../_lib/search-params";
 import type { CreatorsListPage } from "./list-creators";
-import { getCodeAndWagerByUser } from "./code-and-wager-by-user";
 import { getMultiplierCreatorIds } from "./multiplier-creator-count";
 
 /**
@@ -69,21 +68,10 @@ export async function getCreatorsListForTab(
     );
   }
 
-  // Sort. `recent` keeps the backend walk order (creation order). The
-  // pnl_* modes need lifetime PnL — batched in one round-trip across
-  // the filtered pool. Creators with no PnL sort last.
-  if (params.sortBy === "pnl_desc" || params.sortBy === "pnl_asc") {
-    const pnlMap = await getCodeAndWagerByUser(pool.map((c) => c.id));
-    const desc = params.sortBy === "pnl_desc";
-    pool = [...pool].sort((a, b) => {
-      const av = pnlMap.get(a.id)?.lifetimePnl?.pnl ?? null;
-      const bv = pnlMap.get(b.id)?.lifetimePnl?.pnl ?? null;
-      if (av == null && bv == null) return 0;
-      if (av == null) return 1;
-      if (bv == null) return -1;
-      return desc ? bv - av : av - bv;
-    });
-  }
+  // Sort. Only `recent` (backend walk order) is supported — the
+  // pnl_* modes were removed when the per-card PnL display was
+  // dropped from /creators (the per-(creator, user) cap that makes
+  // PnL correct lives on /creators/[id] only).
 
   // Paginate in memory.
   const total = pool.length;

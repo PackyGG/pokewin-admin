@@ -211,12 +211,19 @@ export function KpiTile({
   sub,
   icon: Icon,
   accent = "blue",
+  action,
 }: {
   label: string;
   value: string;
   sub?: string;
   icon: React.ElementType;
   accent?: AccentColor;
+  /**
+   * Optional slot rendered in the top-right corner of the tile. Used
+   * for drill-in popover triggers (e.g. the Global PnL tile on
+   * /creators surfaces a per-creator breakdown popover here).
+   */
+  action?: React.ReactNode;
 }) {
   const colors = TILE_COLORS[accent];
   return (
@@ -226,11 +233,14 @@ export function KpiTile({
         colors.bg,
       )}
     >
-      <div className="flex items-center gap-1.5 sm:gap-2">
-        <Icon className={cn("size-3.5 shrink-0 sm:size-4", colors.icon)} />
-        <span className="truncate text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[11px]">
-          {label}
-        </span>
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
+          <Icon className={cn("size-3.5 shrink-0 sm:size-4", colors.icon)} />
+          <span className="truncate text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[11px]">
+            {label}
+          </span>
+        </div>
+        {action && <div className="shrink-0">{action}</div>}
       </div>
       <p
         className={cn(

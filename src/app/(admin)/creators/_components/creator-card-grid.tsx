@@ -105,45 +105,10 @@ export type CreatorWithSocials = CreatorListItem & {
   deposits3dUsd: number;
   /** 3-day rolling wager volume — same source as deposits3dUsd. */
   wagers3dUsd: number;
-  /**
-   * Per-period House P&L from this creator's referrals — same
-   * canonical balance-sheet formula as the dashboard's Lifetime PnL,
-   * evaluated as a DELTA over each window. Trimmed to 1d (the only
-   * window the strip displays). 3d also kept since the MomentumRow
-   * on the same card reads from it.
-   *
-   * Referred-user pool excludes admin / support / creator roles AND
-   * the creator's own user_id (so other streamers' on-site activity
-   * doesn't skew the per-creator number). House POV: positive = we
-   * made money, negative = we lost money. null when batch query
-   * failed.
-   */
-  pnlByPeriod: {
-    "1d": CreatorPnlPeriodCell;
-    "3d": CreatorPnlPeriodCell;
-  } | null;
-  /**
-   * All-time House P&L from this creator's referrals. Snapshot:
-   *   pnl = totalDeposits − totalWithdrawals
-   *       − currentBalance − currentInventory − currentVouchers
-   * Drives the "Lifetime" tile on the per-card PnL strip. Null only
-   * when the batched lifetime query failed (best-effort).
-   *
-   * `totalWagered` mirrors the same field on
-   * `lib/queries/creators-types.ts:CreatorLifetimePnl` but is
-   * always 0 on the list-page path — the per-card UI doesn't render
-   * it (wagerVolumeUsd from affiliate_accounts is shown separately).
-   * Field is kept for type-shape parity with the detail page.
-   */
-  lifetimePnl: {
-    totalDeposits: number;
-    totalWithdrawals: number;
-    totalWagered: number;
-    currentBalance: number;
-    currentInventory: number;
-    currentVouchers: number;
-    pnl: number;
-  } | null;
+  // PnL fields (pnlByPeriod / lifetimePnl) removed from the list-page
+  // card — see comment at the (now-removed) PnlStrip call-site. Detail
+  // page /creators/[id] still surfaces the proper per-(creator, user)
+  // cap'd numbers.
   /**
    * "Converted" — cap-usage (`withdraw_cap_used_usd`) on this
    * creator's active/scheduled deal: how much of stream earnings have
@@ -188,14 +153,6 @@ export type CreatorWithSocials = CreatorListItem & {
   leaderboardSponsoredPct: number | null;
 };
 
-type CreatorPnlPeriodCell = {
-  deposits: number;
-  withdrawals: number;
-  balanceChange: number;
-  inventoryChange: number;
-  voucherChange: number;
-  pnl: number;
-};
 
 /**
  * Card-grid for /creators replacing the old wide-table layout. Each
@@ -375,19 +332,10 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
           wagers3dUsd={creator.wagers3dUsd}
         />
 
-        {/* PNL STRIP — 1d window + lifetime snapshot from this
-            creator's referrals. Same canonical balance-sheet formula
-            as the dashboard's lifetime PnL — evaluated as a delta
-            (1d) and a snapshot (Lifetime). House POV: positive =
-            we made money (emerald), negative = we lost money (rose).
-            Hidden when both queries failed so the card doesn't
-            render dashes for everyone. */}
-        {(creator.pnlByPeriod || creator.lifetimePnl) && (
-          <PnlStrip
-            pnlByPeriod={creator.pnlByPeriod}
-            lifetimePnl={creator.lifetimePnl}
-          />
-        )}
+        {/* PnL strip removed: the proper per-(creator, user) cap that
+            keeps a single non-code-depositing user from dragging a
+            creator's number into the red lives on /creators/[id]. The
+            per-card numbers without that cap were misleading. */}
 
         {/* SOCIALS */}
         <SocialsRow socials={creator.socials} />
@@ -726,101 +674,6 @@ function TwoWeekCostRow({
             : "—"}
         </span>
       </span>
-    </div>
-  );
-}
-
-// Per-period PnL strip — 5 mini-cells (1d / 3d / 7d / 14d / 30d),
-// each showing the House P&L from this creator's referrals in that
-// window. House POV: positive emerald, negative rose, zero muted "—".
-//
-// PnL formula (same as the dashboard's Lifetime PnL, evaluated as
-// deltas over the window):
-//
-//   pnl = deposits − withdrawals − balanceChange − inventoryChange − voucherChange
-//
-// Referred-user pool excludes admin / support / creator role accounts
-// and the creator's own user_id, so other streamers' on-site activity
-// doesn't skew the number.
-//
-// Compact layout: 2-up grid (1d + Lifetime), divider-separated, label
-// above value. Lifetime takes the visual weight (admins asked for
-// "easy to read" — and the all-time number is the natural anchor).
-// 1d sits next to it to call out recent activity.
-function PnlStrip({
-  pnlByPeriod,
-  lifetimePnl,
-}: {
-  pnlByPeriod: NonNullable<CreatorWithSocials["pnlByPeriod"]> | null;
-  lifetimePnl: NonNullable<CreatorWithSocials["lifetimePnl"]> | null;
-}) {
-  // 1d cell — falls back to a flat-zero placeholder when the windowed
-  // query failed (per the existing best-effort pattern). Same for
-  // lifetime.
-  const d1 = pnlByPeriod?.["1d"] ?? null;
-  const life = lifetimePnl;
-
-  function color(v: number): string {
-    if (v > 0) return "text-emerald-600 dark:text-emerald-400";
-    if (v < 0) return "text-rose-600 dark:text-rose-400";
-    return "text-muted-foreground/60";
-  }
-
-  const d1Tooltip = d1
-    ? `1d: deposits ${formatCurrency(d1.deposits)} ` +
-      `− withdrawals ${formatCurrency(d1.withdrawals)} ` +
-      `− balance Δ ${formatCurrency(d1.balanceChange)} ` +
-      `− inventory Δ ${formatCurrency(d1.inventoryChange)} ` +
-      `− voucher Δ ${formatCurrency(d1.voucherChange)}`
-    : undefined;
-
-  const lifeTooltip = life
-    ? `Lifetime: deposits ${formatCurrency(life.totalDeposits)} ` +
-      `− withdrawals ${formatCurrency(life.totalWithdrawals)} ` +
-      `− current balance ${formatCurrency(life.currentBalance)} ` +
-      `− current inventory ${formatCurrency(life.currentInventory)} ` +
-      `− current vouchers ${formatCurrency(life.currentVouchers)}`
-    : undefined;
-
-  return (
-    <div>
-      <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        <span>PnL</span>
-        <span
-          className="text-muted-foreground/60 normal-case"
-          title="Same balance-sheet formula as the dashboard's Lifetime PnL. 1d is the windowed delta, Lifetime is the all-time snapshot. Positive = we made money."
-        >
-          (house POV)
-        </span>
-      </div>
-      <div className="grid grid-cols-2 divide-x divide-border/60">
-        <div className="min-w-0 pr-3" title={d1Tooltip}>
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
-            1d
-          </div>
-          <div
-            className={cn(
-              "truncate text-xs font-semibold tabular-nums",
-              color(d1?.pnl ?? 0),
-            )}
-          >
-            {!d1 || d1.pnl === 0 ? "—" : formatCurrency(d1.pnl)}
-          </div>
-        </div>
-        <div className="min-w-0 pl-3" title={lifeTooltip}>
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
-            Lifetime
-          </div>
-          <div
-            className={cn(
-              "truncate text-sm font-bold tabular-nums",
-              color(life?.pnl ?? 0),
-            )}
-          >
-            {!life || life.pnl === 0 ? "—" : formatCurrency(life.pnl)}
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

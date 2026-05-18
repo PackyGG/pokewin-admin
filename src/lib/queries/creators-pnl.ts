@@ -1,50 +1,53 @@
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { WAGER_TYPES_SQL } from "./_wager-payout-types";
 import type {
   CreatorLifetimePnl,
   CreatorPnlData,
   CreatorPnlPeriod,
+  CreatorPnlPeriodUser,
 } from "./creators-types";
 
 /**
- * Per-creator House P&L, computed as a windowed analog of the canonical
- * lifetime formula on the dashboard / user-detail page:
+ * Per-creator House P&L with **coverage-aware code attribution**.
  *
- *   pnl = deposits − withdrawals − balanceChange − inventoryChange − voucherChange
+ *   pnl = deposits − cardWithdrawals
  *
- * Each component is the DELTA over the window (not a snapshot). Because
- * a user's lifetime PnL is exactly cash_in − cash_out − liability_now,
- * the windowed delta of that expression equals
- * lifetime_pnl(t_end) − lifetime_pnl(t_start) — i.e. the actual P&L
- * change attributable to the window.
+ * Why coverage attribution: the backend only writes an
+ * `affiliate_code_usages` row of `usage_type = 'deposit'` on the
+ * user's FIRST-EVER deposit (see fireblocks webhook.service:
+ * `if (depositCount !== 1) return`). Every subsequent deposit a user
+ * makes — even while still inside the same code's 7-day coverage
+ * window — is invisible to the acu attribution model. That made the
+ * old "sum acu.deposit_amount_usd" approach systematically
+ * under-count, and creators looked falsely negative when a user came
+ * back, deposited again (no code applied), played, and withdrew
+ * cards — the cards landed on the creator's books via the wager-session
+ * chain but the matching deposits weren't on the books to balance them.
  *
- * Sign convention notes:
- *   • `ledger_transactions.amount` is ALWAYS POSITIVE in this DB; the
- *     sign of the balance impact lives in `balance_after −
- *     balance_before`. So `balanceChange` sums the SIGNED delta, not
- *     the amount.
- *   • There is no `'withdrawal'` value in `ledger_transaction_type`.
- *     Real withdrawals on this platform come via:
- *       (a) `card_withdrawal_requests` (status completed/shipped) —
- *           physical cards or crypto sells leaving the house, and
- *       (b) `admin_balance_adjustment` rows tagged in description
- *           with `Manual withdrawal:%` (a manual cash-out by an admin).
- *     Both are summed into `withdrawals`.
+ * Reconstruction model:
+ *   A ledger deposit at time T by user U is attributed to creator A if
+ *   U has at least one `acu` row under creator A's code with
+ *   `created_at <= T AND created_at >= T - 7 days`. When U has multiple
+ *   acu rows in that window under different creators (code-switching),
+ *   the MOST RECENT acu row wins — that's the code that was active when
+ *   the deposit happened.
  *
- * Referred-user pool excludes:
- *   • admin / support — staff accounts (consistent with rest of analytics)
- *   • creator         — other streamer accounts; their on-site activity
- *                       isn't representative of "real referral" P&L the
- *                       admin wants to evaluate per creator
- *   • the creator's own user_id — defensive guard against self-references
- *     in affiliate_code_usages
+ * Card withdrawals stay matched via `inventory_item_ids` →
+ * `user_inventory.source_id` → acu wager session. Restricted to
+ * coverage-depositors (users with at least one coverage-attributed
+ * deposit under this creator) — keeps users who only wagered under the
+ * code without ever depositing during its coverage from dragging the
+ * P&L down via cardWD.
  *
- * Four parallel scans (ledger / card_withdrawals / inventory / vouchers)
- * each bucket their values across the same VALUES list of windows so the
- * per-period rows line up by period name in JS. All four queries scope
- * scan to ≤ 30 days back so user_inventory and ledger don't pull full
- * history.
+ * Wagered is sourced unchanged from `acu.wager_amount_usd` —
+ * `recordWagerUsage` is called on every wager that happens while a
+ * code is active, so wagers don't suffer the depositCount bug.
+ *
+ * Referred-user pool excludes admin / support / creator role accounts,
+ * the creator's own user_id, and the motha-managed blacklist.
+ *
+ * House POV: positive (emerald) = we kept value, negative (rose) =
+ * physical cards out exceeded cash deposited under coverage.
  */
 const PERIODS = ["24h", "3d", "7d", "14d", "30d"] as const;
 
@@ -59,300 +62,471 @@ const PERIOD_INTERVAL_CASE = `CASE p.period
   WHEN '30d' THEN INTERVAL '30 days'
 END`;
 
-// Built per-call so the admin-managed blacklist (cached via React
-// `cache()`) can append `AND u.id NOT IN (...)` to the referred-user
-// pool. Keeps the staff-role exclusion + the blacklist in lockstep
-// for every per-creator PnL aggregate below.
-async function buildReferredUsersSql(): Promise<string> {
+// Same period set with the interval inline — used by the per-user
+// breakdown queries that cross-join against each window.
+const PERIODS_WITH_INTERVAL_SQL = `(VALUES
+  ('24h', INTERVAL '24 hours'),
+  ('3d',  INTERVAL '3 days'),
+  ('7d',  INTERVAL '7 days'),
+  ('14d', INTERVAL '14 days'),
+  ('30d', INTERVAL '30 days')
+) AS p(period, intv)`;
+
+// Hard cap on rows surfaced in the per-period hover popover.
+const USERS_PER_PERIOD_CAP = 50;
+
+// SQL fragment: for a ledger row aliased `lt`, returns the
+// affiliate_user_id of the creator whose code's 7-day coverage window
+// covered the deposit at `lt.created_at`. Returns NULL if no covered
+// code (deposit happened outside any coverage window).
+//
+// "Most recent acu row before the deposit, within 7 days" matches the
+// backend's coverage semantics: `useAffiliateCode` sets
+// expires_at = NOW + 7d, so a code applied at T is covering through
+// T + 7d. The latest acu row picks the code-of-record at deposit time
+// when a user has switched codes.
+const COVERING_CREATOR_SQL = `(
+  SELECT acu_c.affiliate_user_id
+    FROM affiliate_code_usages acu_c
+   WHERE acu_c.referred_user_id = lt.user_id
+     AND acu_c.created_at <= lt.created_at
+     AND acu_c.created_at >= lt.created_at - INTERVAL '7 days'
+   ORDER BY acu_c.created_at DESC
+   LIMIT 1
+)`;
+
+async function buildBlacklistAnd(): Promise<string> {
   const excluded = await getExcludedUserIds();
-  const blacklistFrag =
-    excluded.length > 0
-      ? ` AND u.id NOT IN (${excluded
-          .map((id) => `'${id.replace(/'/g, "''")}'`)
-          .join(",")})`
-      : "";
-  return `
-    SELECT DISTINCT acu.referred_user_id
-      FROM affiliate_code_usages acu
-      JOIN "user" u ON u.id = acu.referred_user_id
-     WHERE acu.affiliate_user_id = $1
-       AND u.role NOT IN ('admin', 'support', 'creator')
-       AND u.id != $1${blacklistFrag}
-  `;
+  return excluded.length > 0
+    ? ` AND u.id NOT IN (${excluded
+        .map((id) => `'${id.replace(/'/g, "''")}'`)
+        .join(",")})`
+    : "";
 }
 
 export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
   const db = await getDb();
-  const REFERRED_USERS_SQL = await buildReferredUsersSql();
+  const blacklistAnd = await buildBlacklistAnd();
 
-  const [ledgerRows, cardWithdrawalRows, inventoryRows, voucherRows, lifetimeRows] =
-    await Promise.all([
-      // Ledger-derived components per window:
-      //   deposits           = SUM(amount where type='deposit')
-      //   manual_withdrawals = SUM(amount where type='admin_balance_adjustment'
-      //                            AND balance_after < balance_before
-      //                            AND description ILIKE 'Manual withdrawal:%')
-      //   bal_change         = SUM(balance_after − balance_before) — SIGNED.
-      //
-      // The balance at any time t equals the cumulative SIGNED delta of
-      // every completed ledger event up to t (= sum of balance_after −
-      // balance_before). So the change in balance over a window is the
-      // sum of those signed deltas inside the window.
-      db.$queryRawUnsafe<
-        {
-          period: string;
-          deposits: string;
-          manual_withdrawals: string;
-          bal_change: string;
-        }[]
-      >(
-        `SELECT p.period,
-                COALESCE(SUM(CASE WHEN lt.type = 'deposit'
-                                  THEN lt.amount::numeric
-                                  ELSE 0 END), 0)::text AS deposits,
-                COALESCE(SUM(CASE WHEN lt.type = 'admin_balance_adjustment'
-                                   AND lt.balance_after < lt.balance_before
-                                   AND lt.description ILIKE 'Manual withdrawal:%'
-                                  THEN lt.amount::numeric
-                                  ELSE 0 END), 0)::text AS manual_withdrawals,
-                COALESCE(SUM((lt.balance_after - lt.balance_before)::numeric), 0)::text AS bal_change
-           FROM ${PERIODS_VALUES_SQL}
-           LEFT JOIN ledger_transactions lt
-             ON lt.user_id IN (${REFERRED_USERS_SQL})
+  // Per-period coverage-attributed deposits. Source: ledger_transactions
+  // (the canonical record of every deposit) joined with the COVERING
+  // creator at the time of each deposit.
+  const depositRowsP = db.$queryRawUnsafe<
+    {
+      period: string;
+      deposits: string;
+    }[]
+  >(
+    `SELECT p.period,
+            COALESCE(SUM(CASE
+              WHEN lt.created_at >= NOW() - (${PERIOD_INTERVAL_CASE})
+                THEN lt.amount::numeric
+              ELSE 0
+            END), 0)::text AS deposits
+       FROM ${PERIODS_VALUES_SQL}
+       LEFT JOIN ledger_transactions lt
+         ON lt.type = 'deposit'
+        AND lt.status = 'completed'
+        AND lt.created_at >= NOW() - INTERVAL '30 days'
+       LEFT JOIN "user" u ON u.id = lt.user_id
+      WHERE lt.id IS NULL OR (
+            u.role NOT IN ('admin', 'support', 'creator')
+        AND u.id != $1${blacklistAnd}
+        AND $1 = ${COVERING_CREATOR_SQL}
+      )
+      GROUP BY p.period`,
+    userId,
+  );
+
+  // Per-period wagers — unchanged. acu.wager_amount_usd is correctly
+  // attributed at event time by the backend.
+  const wagerRowsP = db.$queryRawUnsafe<
+    {
+      period: string;
+      wagered: string;
+    }[]
+  >(
+    `SELECT p.period,
+            COALESCE(SUM(CASE
+              WHEN acu.created_at >= NOW() - (${PERIOD_INTERVAL_CASE})
+                THEN acu.wager_amount_usd::numeric
+              ELSE 0
+            END), 0)::text AS wagered
+       FROM ${PERIODS_VALUES_SQL}
+       LEFT JOIN affiliate_code_usages acu
+         ON acu.affiliate_user_id = $1
+        AND acu.usage_type::text = 'wager'
+        AND acu.created_at >= NOW() - INTERVAL '30 days'
+       LEFT JOIN "user" u ON u.id = acu.referred_user_id
+      WHERE acu.id IS NULL OR (
+            u.role NOT IN ('admin', 'support', 'creator')
+        AND u.id != $1${blacklistAnd}
+      )
+      GROUP BY p.period`,
+    userId,
+  );
+
+  // Per-period card withdrawals — value of inventory items that
+  // physically left the house in the window, where the item was
+  // obtained in a session wagered under this creator's code AND the
+  // withdrawing user has at least one coverage-attributed deposit
+  // under this creator (the depositor filter, redefined for the
+  // coverage model).
+  const cardWdRowsP = db.$queryRawUnsafe<
+    {
+      period: string;
+      card_withdrawals: string;
+    }[]
+  >(
+    `SELECT p.period,
+            COALESCE(SUM(CASE
+              WHEN COALESCE(cwr.shipped_at, cwr.completed_at)
+                   >= NOW() - (${PERIOD_INTERVAL_CASE})
+                THEN ui.value_at_obtained::numeric
+              ELSE 0
+            END), 0)::text AS card_withdrawals
+       FROM ${PERIODS_VALUES_SQL}
+       LEFT JOIN card_withdrawal_requests cwr
+         ON cwr.status IN ('completed', 'shipped')
+        AND COALESCE(cwr.shipped_at, cwr.completed_at)
+              >= NOW() - INTERVAL '30 days'
+       LEFT JOIN user_inventory ui
+         ON ui.id = ANY(cwr.inventory_item_ids)
+        AND ui.source_type::text IN ('pack', 'battle')
+        AND ui.user_id IN (
+          SELECT DISTINCT lt.user_id
+            FROM ledger_transactions lt
+           WHERE lt.type = 'deposit' AND lt.status = 'completed'
+             AND $1 = ${COVERING_CREATOR_SQL}
+        )
+        AND ui.source_id IN (
+          SELECT DISTINCT acu.game_session_id
+            FROM affiliate_code_usages acu
+            JOIN "user" u ON u.id = acu.referred_user_id
+           WHERE acu.affiliate_user_id = $1
+             AND acu.usage_type::text = 'wager'
+             AND acu.game_session_id IS NOT NULL
+             AND u.role NOT IN ('admin', 'support', 'creator')
+             AND u.id != $1${blacklistAnd}
+        )
+      GROUP BY p.period`,
+    userId,
+  );
+
+  // Lifetime aggregates — same shape as per-period, no window cap.
+  const lifetimeRowsP = db.$queryRawUnsafe<
+    {
+      total_deposits: string;
+      total_wagered: string;
+      total_card_withdrawals: string;
+    }[]
+  >(
+    `SELECT
+        (SELECT COALESCE(SUM(lt.amount::numeric), 0)::text
+           FROM ledger_transactions lt
+           JOIN "user" u ON u.id = lt.user_id
+          WHERE lt.type = 'deposit'
             AND lt.status = 'completed'
-            AND lt.created_at >= NOW() - (${PERIOD_INTERVAL_CASE})
-          GROUP BY p.period`,
-        userId,
-      ),
-
-      // Card withdrawals — physical cards / crypto sells leaving the
-      // house. Time-scoped by COALESCE(shipped_at, completed_at) to
-      // match the moment the value left our books.
-      db.$queryRawUnsafe<
-        {
-          period: string;
-          card_withdrawals: string;
-        }[]
-      >(
-        `SELECT p.period,
-                COALESCE(SUM(cwr.total_value_usd::numeric), 0)::text AS card_withdrawals
-           FROM ${PERIODS_VALUES_SQL}
-           LEFT JOIN card_withdrawal_requests cwr
-             ON cwr.user_id IN (${REFERRED_USERS_SQL})
-            AND cwr.status IN ('completed', 'shipped')
-            AND COALESCE(cwr.shipped_at, cwr.completed_at)
-                  >= NOW() - (${PERIOD_INTERVAL_CASE})
-          GROUP BY p.period`,
-        userId,
-      ),
-
-      // Inventory delta — value_at_obtained is the canonical valuation
-      // used by Platform-P&L on /users/[id], so per-creator P&L can't
-      // drift from per-user P&L for the same user pool.
-      //
-      // obtained: items added to inventory in window.
-      // disposed: items removed (sold OR exchanged) in window.
-      // An item obtained AND disposed in the same window contributes
-      // 0 net (which is correct — no liability change across the
-      // window).
-      db.$queryRawUnsafe<
-        {
-          period: string;
-          obtained: string;
-          disposed: string;
-        }[]
-      >(
-        `SELECT p.period,
-                COALESCE(SUM(CASE
-                  WHEN ui.obtained_at >= NOW() - (${PERIOD_INTERVAL_CASE})
-                    THEN ui.value_at_obtained::numeric
-                  ELSE 0
-                END), 0)::text AS obtained,
-                COALESCE(SUM(CASE
-                  WHEN ui.sold_at      >= NOW() - (${PERIOD_INTERVAL_CASE})
-                    OR ui.exchanged_at >= NOW() - (${PERIOD_INTERVAL_CASE})
-                    THEN ui.value_at_obtained::numeric
-                  ELSE 0
-                END), 0)::text AS disposed
-           FROM ${PERIODS_VALUES_SQL}
-           LEFT JOIN user_inventory ui
-             ON ui.user_id IN (${REFERRED_USERS_SQL})
-            AND (
-                  ui.obtained_at  >= NOW() - INTERVAL '30 days'
-               OR ui.sold_at      >= NOW() - INTERVAL '30 days'
-               OR ui.exchanged_at >= NOW() - INTERVAL '30 days'
+            AND u.role NOT IN ('admin', 'support', 'creator')
+            AND u.id != $1${blacklistAnd}
+            AND $1 = ${COVERING_CREATOR_SQL}
+        ) AS total_deposits,
+        (SELECT COALESCE(SUM(acu.wager_amount_usd::numeric), 0)::text
+           FROM affiliate_code_usages acu
+           JOIN "user" u ON u.id = acu.referred_user_id
+          WHERE acu.affiliate_user_id = $1
+            AND acu.usage_type::text = 'wager'
+            AND u.role NOT IN ('admin', 'support', 'creator')
+            AND u.id != $1${blacklistAnd}
+        ) AS total_wagered,
+        (SELECT COALESCE(SUM(ui.value_at_obtained::numeric), 0)::text
+           FROM card_withdrawal_requests cwr
+           JOIN user_inventory ui ON ui.id = ANY(cwr.inventory_item_ids)
+          WHERE cwr.status IN ('completed', 'shipped')
+            AND ui.source_type::text IN ('pack', 'battle')
+            AND ui.user_id IN (
+              SELECT DISTINCT lt.user_id
+                FROM ledger_transactions lt
+               WHERE lt.type = 'deposit' AND lt.status = 'completed'
+                 AND $1 = ${COVERING_CREATOR_SQL}
             )
-          GROUP BY p.period`,
-        userId,
-      ),
-
-      // Voucher delta — issued (created_at IN window) vs claimed
-      // (claimed_at IN window). A voucher created AND claimed in the
-      // same window contributes 0 net (which is correct — no
-      // liability change).
-      db.$queryRawUnsafe<
-        {
-          period: string;
-          issued: string;
-          claimed: string;
-        }[]
-      >(
-        `SELECT p.period,
-                COALESCE(SUM(CASE
-                  WHEN v.created_at >= NOW() - (${PERIOD_INTERVAL_CASE})
-                    THEN v.value::numeric
-                  ELSE 0
-                END), 0)::text AS issued,
-                COALESCE(SUM(CASE
-                  WHEN v.claimed_at >= NOW() - (${PERIOD_INTERVAL_CASE})
-                    THEN v.value::numeric
-                  ELSE 0
-                END), 0)::text AS claimed
-           FROM ${PERIODS_VALUES_SQL}
-           LEFT JOIN vouchers v
-             ON v.user_id IN (${REFERRED_USERS_SQL})
-            AND (
-                  v.created_at >= NOW() - INTERVAL '30 days'
-               OR v.claimed_at >= NOW() - INTERVAL '30 days'
+            AND ui.source_id IN (
+              SELECT DISTINCT acu.game_session_id
+                FROM affiliate_code_usages acu
+                JOIN "user" u ON u.id = acu.referred_user_id
+               WHERE acu.affiliate_user_id = $1
+                 AND acu.usage_type::text = 'wager'
+                 AND acu.game_session_id IS NOT NULL
+                 AND u.role NOT IN ('admin', 'support', 'creator')
+                 AND u.id != $1${blacklistAnd}
             )
-          GROUP BY p.period`,
-        userId,
-      ),
+        ) AS total_card_withdrawals`,
+    userId,
+  );
 
-      // Lifetime snapshot — single row, six aggregates. Same formula
-      // as the per-period rows but evaluated as a balance-sheet
-      // SNAPSHOT, not a delta:
-      //
-      //   pnl = totalDeposits
-      //       − totalWithdrawals (manual + card)
-      //       − currentBalance (available + locked, RIGHT NOW)
-      //       − currentInventory (unsold + unexchanged, RIGHT NOW)
-      //       − currentVouchers (unclaimed, RIGHT NOW)
-      //
-      // Independent from the per-period query above — it doesn't share
-      // the 30-day window hint, because lifetime needs to scan the
-      // full history. Six correlated subqueries against the same
-      // referred-user pool; one round-trip.
-      db.$queryRawUnsafe<
-        {
-          total_deposits: string;
-          manual_withdrawals: string;
-          card_withdrawals: string;
-          total_wagered: string;
-          current_balance: string;
-          current_inventory: string;
-          current_vouchers: string;
-        }[]
-      >(
-        `SELECT
-            (SELECT COALESCE(SUM(CASE WHEN lt.type = 'deposit'
-                                       THEN lt.amount::numeric
-                                       ELSE 0 END), 0)::text
-               FROM ledger_transactions lt
-              WHERE lt.user_id IN (${REFERRED_USERS_SQL})
-                AND lt.status = 'completed'
-            ) AS total_deposits,
-            (SELECT COALESCE(SUM(CASE WHEN lt.type = 'admin_balance_adjustment'
-                                       AND lt.balance_after < lt.balance_before
-                                       AND lt.description ILIKE 'Manual withdrawal:%'
-                                       THEN lt.amount::numeric
-                                       ELSE 0 END), 0)::text
-               FROM ledger_transactions lt
-              WHERE lt.user_id IN (${REFERRED_USERS_SQL})
-                AND lt.status = 'completed'
-            ) AS manual_withdrawals,
-            (SELECT COALESCE(SUM(cwr.total_value_usd::numeric), 0)::text
-               FROM card_withdrawal_requests cwr
-              WHERE cwr.user_id IN (${REFERRED_USERS_SQL})
-                AND cwr.status IN ('completed', 'shipped')
-            ) AS card_withdrawals,
-            (SELECT COALESCE(SUM(lt.amount::numeric), 0)::text
-               FROM ledger_transactions lt
-              WHERE lt.user_id IN (${REFERRED_USERS_SQL})
-                AND lt.status = 'completed'
-                AND lt.type IN ${WAGER_TYPES_SQL}
-            ) AS total_wagered,
-            (SELECT COALESCE(SUM(b.available_balance::numeric + b.locked_balance::numeric), 0)::text
-               FROM balances b
-              WHERE b.user_id IN (${REFERRED_USERS_SQL})
-            ) AS current_balance,
-            (SELECT COALESCE(SUM(ui.value_at_obtained::numeric), 0)::text
-               FROM user_inventory ui
-              WHERE ui.user_id IN (${REFERRED_USERS_SQL})
-                AND ui.sold_at IS NULL
-                AND ui.exchanged_at IS NULL
-            ) AS current_inventory,
-            (SELECT COALESCE(SUM(v.value::numeric), 0)::text
-               FROM vouchers v
-              WHERE v.user_id IN (${REFERRED_USERS_SQL})
-                AND v.claimed_at IS NULL
-            ) AS current_vouchers`,
-        userId,
-      ),
-    ]);
+  // Per-user-per-period coverage-attributed deposits.
+  const depositUserRowsP = db.$queryRawUnsafe<
+    {
+      user_id: string;
+      username: string | null;
+      image: string | null;
+      period: string;
+      amount: string;
+    }[]
+  >(
+    `SELECT lt.user_id AS user_id,
+            u.username,
+            u.image,
+            p.period,
+            SUM(lt.amount::numeric)::text AS amount
+       FROM ledger_transactions lt
+       JOIN "user" u ON u.id = lt.user_id
+       CROSS JOIN ${PERIODS_WITH_INTERVAL_SQL}
+      WHERE lt.type = 'deposit'
+        AND lt.status = 'completed'
+        AND lt.created_at >= NOW() - INTERVAL '30 days'
+        AND lt.created_at >= NOW() - p.intv
+        AND u.role NOT IN ('admin', 'support', 'creator')
+        AND u.id != $1${blacklistAnd}
+        AND $1 = ${COVERING_CREATOR_SQL}
+      GROUP BY lt.user_id, u.username, u.image, p.period
+     HAVING SUM(lt.amount::numeric) > 0`,
+    userId,
+  );
 
-  const ledgerByPeriod = new Map(ledgerRows.map((r) => [r.period, r]));
-  const cwByPeriod = new Map(cardWithdrawalRows.map((r) => [r.period, r]));
-  const invByPeriod = new Map(inventoryRows.map((r) => [r.period, r]));
-  const vchByPeriod = new Map(voucherRows.map((r) => [r.period, r]));
+  // Per-user-per-period wagers — unchanged from acu.
+  const wagerUserRowsP = db.$queryRawUnsafe<
+    {
+      user_id: string;
+      username: string | null;
+      image: string | null;
+      period: string;
+      amount: string;
+    }[]
+  >(
+    `SELECT acu.referred_user_id AS user_id,
+            u.username,
+            u.image,
+            p.period,
+            SUM(acu.wager_amount_usd::numeric)::text AS amount
+       FROM affiliate_code_usages acu
+       JOIN "user" u ON u.id = acu.referred_user_id
+       CROSS JOIN ${PERIODS_WITH_INTERVAL_SQL}
+      WHERE acu.affiliate_user_id = $1
+        AND acu.usage_type::text = 'wager'
+        AND acu.created_at >= NOW() - INTERVAL '30 days'
+        AND acu.created_at >= NOW() - p.intv
+        AND u.role NOT IN ('admin', 'support', 'creator')
+        AND u.id != $1${blacklistAnd}
+      GROUP BY acu.referred_user_id, u.username, u.image, p.period
+     HAVING SUM(acu.wager_amount_usd::numeric) > 0`,
+    userId,
+  );
+
+  // Per-user-per-period card withdrawals, with coverage-depositor
+  // filter for consistency with the headline.
+  const cardWdUserRowsP = db.$queryRawUnsafe<
+    {
+      user_id: string;
+      username: string | null;
+      image: string | null;
+      period: string;
+      amount: string;
+    }[]
+  >(
+    `SELECT ui.user_id AS user_id,
+            u.username,
+            u.image,
+            p.period,
+            SUM(ui.value_at_obtained::numeric)::text AS amount
+       FROM card_withdrawal_requests cwr
+       JOIN user_inventory ui ON ui.id = ANY(cwr.inventory_item_ids)
+       JOIN "user" u ON u.id = ui.user_id
+       CROSS JOIN ${PERIODS_WITH_INTERVAL_SQL}
+      WHERE cwr.status IN ('completed', 'shipped')
+        AND COALESCE(cwr.shipped_at, cwr.completed_at)
+              >= NOW() - INTERVAL '30 days'
+        AND COALESCE(cwr.shipped_at, cwr.completed_at)
+              >= NOW() - p.intv
+        AND ui.source_type::text IN ('pack', 'battle')
+        AND ui.user_id IN (
+          SELECT DISTINCT lt.user_id
+            FROM ledger_transactions lt
+           WHERE lt.type = 'deposit' AND lt.status = 'completed'
+             AND $1 = ${COVERING_CREATOR_SQL}
+        )
+        AND ui.source_id IN (
+          SELECT DISTINCT acu.game_session_id
+            FROM affiliate_code_usages acu
+            JOIN "user" u2 ON u2.id = acu.referred_user_id
+           WHERE acu.affiliate_user_id = $1
+             AND acu.usage_type::text = 'wager'
+             AND acu.game_session_id IS NOT NULL
+             AND u2.role NOT IN ('admin', 'support', 'creator')
+             AND u2.id != $1${blacklistAnd.replace(/\bu\.id\b/g, "u2.id")}
+        )
+        AND u.role NOT IN ('admin', 'support', 'creator')
+        AND u.id != $1${blacklistAnd}
+      GROUP BY ui.user_id, u.username, u.image, p.period
+     HAVING SUM(ui.value_at_obtained::numeric) > 0`,
+    userId,
+  );
+
+  // Coverage-depositor set — users with at least one coverage-attributed
+  // deposit under this creator. Drives the isDepositor flag on popover
+  // rows; redefined from the old "any acu deposit row" to align with
+  // the new ledger+coverage model.
+  const depositorIdsP = db.$queryRawUnsafe<{ user_id: string }[]>(
+    `SELECT DISTINCT lt.user_id AS user_id
+       FROM ledger_transactions lt
+      WHERE lt.type = 'deposit'
+        AND lt.status = 'completed'
+        AND $1 = ${COVERING_CREATOR_SQL}`,
+    userId,
+  );
+
+  const [
+    depositRows,
+    wagerRows,
+    cardWdRows,
+    lifetimeRows,
+    depositUserRows,
+    wagerUserRows,
+    cardWdUserRows,
+    depositorIdRows,
+  ] = await Promise.all([
+    depositRowsP,
+    wagerRowsP,
+    cardWdRowsP,
+    lifetimeRowsP,
+    depositUserRowsP,
+    wagerUserRowsP,
+    cardWdUserRowsP,
+    depositorIdsP,
+  ]);
+
+  const depositorIds = new Set(depositorIdRows.map((r) => r.user_id));
+
+  const depositsByPeriod = new Map(
+    depositRows.map((r) => [r.period, r.deposits]),
+  );
+  const wageredByPeriod = new Map(wagerRows.map((r) => [r.period, r.wagered]));
+  const cardWdByPeriod = new Map(
+    cardWdRows.map((r) => [r.period, r.card_withdrawals]),
+  );
+
+  type Bucket = {
+    username: string | null;
+    image: string | null;
+    deposits: number;
+    wagered: number;
+    cardWithdrawals: number;
+  };
+  const usersByPeriod = new Map<string, Map<string, Bucket>>();
+
+  function bump(
+    period: string,
+    userId: string,
+    username: string | null,
+    image: string | null,
+    field: "deposits" | "wagered" | "cardWithdrawals",
+    amount: number,
+  ) {
+    let perPeriod = usersByPeriod.get(period);
+    if (!perPeriod) {
+      perPeriod = new Map();
+      usersByPeriod.set(period, perPeriod);
+    }
+    let bucket = perPeriod.get(userId);
+    if (!bucket) {
+      bucket = {
+        username,
+        image,
+        deposits: 0,
+        wagered: 0,
+        cardWithdrawals: 0,
+      };
+      perPeriod.set(userId, bucket);
+    }
+    bucket[field] += amount;
+  }
+
+  for (const r of depositUserRows) {
+    bump(r.period, r.user_id, r.username, r.image, "deposits", Number(r.amount));
+  }
+  for (const r of wagerUserRows) {
+    bump(r.period, r.user_id, r.username, r.image, "wagered", Number(r.amount));
+  }
+  for (const r of cardWdUserRows) {
+    bump(
+      r.period,
+      r.user_id,
+      r.username,
+      r.image,
+      "cardWithdrawals",
+      Number(r.amount),
+    );
+  }
+
+  function buildUsers(period: string): CreatorPnlPeriodUser[] {
+    const perPeriod = usersByPeriod.get(period);
+    if (!perPeriod) return [];
+    const rows: CreatorPnlPeriodUser[] = [];
+    for (const [userId, b] of perPeriod) {
+      const isDepositor = depositorIds.has(userId);
+      // Non-depositors (no coverage-attributed deposit under this
+      // creator) don't contribute to PnL — the cardWD user query
+      // filters them out at the SQL level, so `b.cardWithdrawals` is
+      // always 0 for non-depositors. Force pnl=0 explicitly so the
+      // popover row reads as "excluded" rather than "happened to
+      // net 0".
+      const pnl = isDepositor ? b.deposits - b.cardWithdrawals : 0;
+      rows.push({
+        userId,
+        username: b.username,
+        image: b.image,
+        deposits: b.deposits,
+        wagered: b.wagered,
+        cardWithdrawals: b.cardWithdrawals,
+        pnl,
+        isDepositor,
+      });
+    }
+    rows.sort((a, b) => {
+      const d = Math.abs(b.pnl) - Math.abs(a.pnl);
+      if (d !== 0) return d;
+      const dep = b.deposits - a.deposits;
+      if (dep !== 0) return dep;
+      const wag = b.wagered - a.wagered;
+      if (wag !== 0) return wag;
+      return (a.username ?? "").localeCompare(b.username ?? "");
+    });
+    return rows.slice(0, USERS_PER_PERIOD_CAP);
+  }
 
   const byPeriod: CreatorPnlPeriod[] = PERIODS.map((period: PeriodKey) => {
-    const lr = ledgerByPeriod.get(period);
-    const cw = cwByPeriod.get(period);
-    const iv = invByPeriod.get(period);
-    const vc = vchByPeriod.get(period);
-
-    const deposits = Number(lr?.deposits ?? 0);
-    const manualWithdrawals = Number(lr?.manual_withdrawals ?? 0);
-    const cardWithdrawals = Number(cw?.card_withdrawals ?? 0);
-    const withdrawals = manualWithdrawals + cardWithdrawals;
-    const balanceChange = Number(lr?.bal_change ?? 0);
-    const inventoryChange =
-      Number(iv?.obtained ?? 0) - Number(iv?.disposed ?? 0);
-    const voucherChange = Number(vc?.issued ?? 0) - Number(vc?.claimed ?? 0);
-    const pnl =
-      deposits -
-      withdrawals -
-      balanceChange -
-      inventoryChange -
-      voucherChange;
-
+    const deposits = Number(depositsByPeriod.get(period) ?? 0);
+    const wagered = Number(wageredByPeriod.get(period) ?? 0);
+    const cardWithdrawals = Number(cardWdByPeriod.get(period) ?? 0);
     return {
       period,
       deposits,
-      withdrawals,
-      balanceChange,
-      inventoryChange,
-      voucherChange,
-      pnl,
+      wagered,
+      cardWithdrawals,
+      pnl: deposits - cardWithdrawals,
+      users: buildUsers(period),
     };
   });
 
-  // Lifetime snapshot — single row from the all-time aggregate
-  // query. If somehow empty (no referred users), default everything
-  // to 0 so the panel still renders cleanly.
   const lr = lifetimeRows[0];
   const totalDeposits = Number(lr?.total_deposits ?? 0);
-  const totalWithdrawals =
-    Number(lr?.manual_withdrawals ?? 0) +
-    Number(lr?.card_withdrawals ?? 0);
   const totalWagered = Number(lr?.total_wagered ?? 0);
-  const currentBalance = Number(lr?.current_balance ?? 0);
-  const currentInventory = Number(lr?.current_inventory ?? 0);
-  const currentVouchers = Number(lr?.current_vouchers ?? 0);
+  const totalCardWithdrawals = Number(lr?.total_card_withdrawals ?? 0);
   const lifetime: CreatorLifetimePnl = {
     totalDeposits,
-    totalWithdrawals,
     totalWagered,
-    currentBalance,
-    currentInventory,
-    currentVouchers,
-    pnl:
-      totalDeposits -
-      totalWithdrawals -
-      currentBalance -
-      currentInventory -
-      currentVouchers,
+    totalCardWithdrawals,
+    pnl: totalDeposits - totalCardWithdrawals,
   };
 
   return { byPeriod, lifetime };
