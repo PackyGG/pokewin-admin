@@ -19,10 +19,8 @@ import { BackendApiError, BackendNetworkError } from "@/lib/backend-api";
 import { PageHero, KpiTile, SectionHeading } from "@/components/modern-panels";
 
 import { parseCreatorsSearchParams } from "./_lib/search-params";
-import {
-  listCreatorsForPage,
-  type CreatorsListPage,
-} from "./_queries/list-creators";
+import { type CreatorsListPage } from "./_queries/list-creators";
+import { getCreatorsListForTab } from "./_queries/list-creators-by-tab";
 import {
   getApprovedSocialsByUser,
   type CreatorSocialSummary,
@@ -49,13 +47,13 @@ import {
   getLeaderboard2wkCostByUser,
   type Lb2wkInfo,
 } from "./_queries/leaderboard-cost";
-import { fetchAllCreatorsSortedByLifetimePnl } from "./_queries/creators-by-lifetime-pnl";
 import {
   CreatorCardGrid,
   type CreatorWithSocials,
 } from "./_components/creator-card-grid";
 import { AddCreatorDialog } from "./_components/add-creator-dialog";
 import { CreatorsSortControl } from "./_components/creators-sort-control";
+import { CreatorsTabSwitch } from "./_components/creators-tab-switch";
 
 export const metadata = { title: "Creators" };
 
@@ -129,58 +127,26 @@ export default async function CreatorsPage({
     leaderboardCost = lbCost;
     multiplierCreatorCount = multCount;
 
-    if (params.sortBy === "pnl_desc" || params.sortBy === "pnl_asc") {
-      // Heavy path — sort by lifetime PnL. fetchAll handles backend
-      // pagination + PnL batch fetch + sort; we slice client-side
-      // for pagination here so the existing DataTablePagination
-      // numbers stay accurate.
-      const sortedAll = await fetchAllCreatorsSortedByLifetimePnl({
-        direction: params.sortBy === "pnl_desc" ? "desc" : "asc",
-        search: params.search,
-      });
-      const start = (params.page - 1) * params.perPage;
-      const pageRows = sortedAll.data.slice(start, start + params.perPage);
-      const total = sortedAll.total;
-      // The lifetimePnl number we surface in `lifetimePnl` (full
-      // CreatorLifetimePnl object) still needs the rest of the
-      // code+wager shape so the cards render fully. Reuse the same
-      // batched helper on just the page's IDs.
-      const codeAndWager = await getCodeAndWagerByUser(
-        pageRows.map((c) => c.id),
-      ).catch((e) => {
-        console.error(
-          "[creators] code+wager fetch failed (rendering without):",
-          e,
-        );
-        return new Map<string, CreatorCodeAndWager>();
-      });
-      codeAndWagerByUser = codeAndWager;
-      result = {
-        data: pageRows,
-        total,
-        page: params.page,
-        perPage: params.perPage,
-        totalPages: Math.max(1, Math.ceil(total / params.perPage)),
-      };
-    } else {
-      // Default path — backend-paginated 20-row fetch. Cheap.
-      const creators = await listCreatorsForPage(params);
-      result = creators;
+    // Tab-aware fetch — a full creator-pool walk filtered to the active
+    // deal program (Fill / Multiplier), then search-filtered, sorted
+    // (recent / pnl) and sliced for pagination. Both tabs need the full
+    // walk because the backend's /admin/creators has no deal-program
+    // filter; getCreatorsGlobalStats already walks the pool for the KPI
+    // strip on this same render.
+    result = await getCreatorsListForTab(params, params.tab);
 
-      // Wave 2 — code + lifetime wager from the main DB, keyed on
-      // the user IDs we just got from the backend list. Best-effort
-      // too — if main DB blows up the cards still render with the
-      // rest of the data and just show "—" for code/wager.
-      codeAndWagerByUser = await getCodeAndWagerByUser(
-        creators.data.map((c) => c.id),
-      ).catch((e) => {
-        console.error(
-          "[creators] code+wager fetch failed (rendering without):",
-          e,
-        );
-        return new Map<string, CreatorCodeAndWager>();
-      });
-    }
+    // Code + lifetime wager from the main DB, keyed on the visible
+    // page's creator IDs. Best-effort — if the main DB blows up the
+    // cards still render and just show "—" for code/wager.
+    codeAndWagerByUser = await getCodeAndWagerByUser(
+      result.data.map((c) => c.id),
+    ).catch((e) => {
+      console.error(
+        "[creators] code+wager fetch failed (rendering without):",
+        e,
+      );
+      return new Map<string, CreatorCodeAndWager>();
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (err instanceof BackendNetworkError) {
@@ -287,9 +253,8 @@ export default async function CreatorsPage({
           </div>
           <div className="flex items-center gap-2">
             {/* Sort by lifetime PnL (Highest / Lowest) or default
-                creation-order. Lifetime PnL sort fetches every
-                creator + their PnL into memory and slices client-
-                side — see fetchAllCreatorsSortedByLifetimePnl. */}
+                creation-order. The list fetch walks the full creator
+                pool and sorts in memory — see getCreatorsListForTab. */}
             <CreatorsSortControl />
             <AddCreatorDialog />
           </div>
@@ -435,7 +400,11 @@ export default async function CreatorsPage({
       )}
 
       <div className="space-y-3">
-        <SectionHeading icon={Users} title="All Creators" />
+        <SectionHeading
+          icon={Users}
+          title="Creators"
+          action={<CreatorsTabSwitch />}
+        />
         <FadeIn className="space-y-4">
           <DataTableToolbar searchPlaceholder="Search by username or email..." />
           <CreatorCardGrid
