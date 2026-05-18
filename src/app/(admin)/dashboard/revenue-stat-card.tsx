@@ -116,10 +116,11 @@ export function GgrStatCard({ ggr }: { ggr: Record<string, number> }) {
 // Always positive, so we give it a purple identity color to differentiate
 // from the other period cards (Deposits/GGR/PnL/Withdrawals).
 //
-// Reused for two cards on the dashboard: the default "Total Wager" (player
-// wager — creator deal-fill spend is a separate ledger type, not counted)
-// and a "Raw Wager" variant that also counts creator_fill_spend_battle.
-// `caption` carries the small muted hint that distinguishes the pair.
+// Reused for two cards on the dashboard: the default "Total Wager"
+// (customer wager — creator accounts excluded, since creators wager
+// house-funded "sponsored" balance on their streams) and a "Raw Wager"
+// variant that includes creators. `caption` carries the muted hint
+// that distinguishes the pair.
 export function WagerStatCard({
   wagers,
   title = "Total Wager",
