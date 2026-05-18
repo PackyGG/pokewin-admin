@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import {
   AlertTriangle,
   CalendarCheck,
@@ -12,6 +13,7 @@ import {
 
 import { requirePageAccess } from "@/lib/dal";
 import { FadeIn } from "@/components/fade-in";
+import { Skeleton } from "@/components/ui/skeleton";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
@@ -52,8 +54,9 @@ import {
   type CreatorWithSocials,
 } from "./_components/creator-card-grid";
 import { AddCreatorDialog } from "./_components/add-creator-dialog";
-import { CreatorsSortControl } from "./_components/creators-sort-control";
 import { CreatorsTabSwitch } from "./_components/creators-tab-switch";
+import { GlobalPnlByCreatorPopover } from "./_components/global-pnl-by-creator-popover";
+import { getAllCreatorsLifetimePnl } from "./_queries/all-creators-lifetime-pnl";
 
 export const metadata = { title: "Creators" };
 
@@ -252,22 +255,23 @@ export default async function CreatorsPage({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {/* Sort by lifetime PnL (Highest / Lowest) or default
-                creation-order. The list fetch walks the full creator
-                pool and sorts in memory — see getCreatorsListForTab. */}
-            <CreatorsSortControl />
             <AddCreatorDialog />
           </div>
         </div>
       </PageHero>
 
       {result && (
-        // KPI strip — 7 global signals: fill-deal creators, multiplier-
-        // deal creators, the combined lifetime House P&L, deal
-        // conversion (withdraw-cap usage), leaderboard cost, active/
-        // scheduled deals, and live-on-stream count. All GLOBAL (not
-        // affected by search / pagination), so the numbers stay stable
-        // as the admin types in the search box.
+        // KPI strip — global signals: fill-deal creators, multiplier-
+        // deal creators, global lifetime PnL (coverage-aware), deal
+        // conversion (withdraw-cap usage), leaderboard cost,
+        // active/scheduled deals, and live-on-stream count. All GLOBAL
+        // (not affected by search / pagination).
+        //
+        // Global PnL is wrapped in Suspense because the
+        // ledger+coverage reconstruction is the heaviest query on this
+        // page (DISTINCT ON sort-merge over all completed deposits).
+        // Streaming it in lets the rest of the strip + the cards paint
+        // immediately instead of blocking the whole page TTFB.
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
           {/* Fill Creators — creators with ≥1 fill (weekly) deal. Fill
               and multiplier are the two creator-deal programs. */}
@@ -292,34 +296,14 @@ export default async function CreatorsPage({
             icon={Zap}
             accent="purple"
           />
-          {/* Combined lifetime PnL — sits next to Total Creators per
-              admin spec. Color flips with the sign (emerald = house
-              gain, rose = house loss). Falls back to "—" if the
-              query failed so the tile doesn't render blank. */}
-          {(() => {
-            const pnl = stats?.lifetimePnl?.pnl;
-            const accent: "emerald" | "rose" | "blue" =
-              pnl == null
-                ? "blue"
-                : pnl > 0
-                  ? "emerald"
-                  : pnl < 0
-                    ? "rose"
-                    : "blue";
-            return (
-              <KpiTile
-                label="Global PnL"
-                value={
-                  pnl == null
-                    ? "—"
-                    : `${pnl > 0 ? "+" : ""}${formatCurrency(pnl)}`
-                }
-                sub="All creators' affiliates combined, lifetime"
-                icon={LineChart}
-                accent={accent}
-              />
-            );
-          })()}
+          {/* Global PnL — coverage-aware aggregate across all
+              creators. Streamed via Suspense to keep page TTFB
+              snappy. Drill-in popover lives in the tile's top-right
+              action slot — opens on hover, sorted ascending by pnl so
+              the worst creator surfaces first. */}
+          <Suspense fallback={<GlobalPnlTileSkeleton />}>
+            <GlobalPnlTile />
+          </Suspense>
           {/* Converted — combined cap-usage across every active/
               scheduled deal: how much stream earnings have been
               converted into payout vouchers. Sits next to Global PnL
@@ -420,8 +404,6 @@ export default async function CreatorsPage({
                   ftds: cw?.ftds ?? 0,
                   deposits3dUsd: cw?.deposits3dUsd ?? 0,
                   wagers3dUsd: cw?.wagers3dUsd ?? 0,
-                  pnlByPeriod: cw?.pnlByPeriod ?? null,
-                  lifetimePnl: cw?.lifetimePnl ?? null,
                   // null = no active/scheduled deal, or the deal fetch
                   // failed → the card's Converted stat renders "—".
                   convertedUsd: dealCapByUser.get(c.id)?.usedUsd ?? null,
@@ -539,4 +521,63 @@ function networkErrorDetail(err: BackendNetworkError): string {
       break;
   }
   return `URL: ${err.url} · ${cause}.${hint}`;
+}
+
+// ─── Global PnL tile (streamed via Suspense) ──────────────────────
+//
+// The ledger+coverage reconstruction does a sort-merge join across all
+// completed deposits — heaviest query on this page. Rendered as its
+// own server component + Suspense fallback so it doesn't block the
+// rest of the strip + the cards from painting immediately.
+//
+// Best-effort: a query failure renders the tile in its empty state
+// rather than crashing the page.
+
+async function GlobalPnlTile() {
+  const lifetimePnl = await getAllCreatorsLifetimePnl().catch((err) => {
+    console.error(
+      "[creators] global lifetime PnL query failed (tile will render '—'):",
+      err,
+    );
+    return null;
+  });
+
+  const pnl = lifetimePnl?.pnl;
+  const byCreator = lifetimePnl?.byCreator ?? [];
+  const accent: "emerald" | "rose" | "blue" =
+    pnl == null ? "blue" : pnl > 0 ? "emerald" : pnl < 0 ? "rose" : "blue";
+
+  return (
+    <KpiTile
+      label="Global PnL"
+      value={
+        pnl == null
+          ? "—"
+          : `${pnl > 0 ? "+" : ""}${formatCurrency(pnl)}`
+      }
+      sub="All creators' affiliates combined, lifetime"
+      icon={LineChart}
+      accent={accent}
+      action={
+        byCreator.length > 0 ? (
+          <GlobalPnlByCreatorPopover creators={byCreator} />
+        ) : undefined
+      }
+    />
+  );
+}
+
+function GlobalPnlTileSkeleton() {
+  return (
+    <div className="relative overflow-hidden rounded-xl border bg-blue-500/10 border-blue-500/20 px-3 py-2.5 sm:px-4 sm:py-3">
+      <div className="flex items-center gap-1.5 sm:gap-2">
+        <LineChart className="size-3.5 shrink-0 text-blue-500 sm:size-4" />
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[11px]">
+          Global PnL
+        </span>
+      </div>
+      <Skeleton className="mt-1 h-6 w-24 sm:h-7" />
+      <Skeleton className="mt-1 h-3 w-32" />
+    </div>
+  );
 }

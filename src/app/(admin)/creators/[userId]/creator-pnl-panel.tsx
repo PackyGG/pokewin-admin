@@ -5,6 +5,8 @@ import { SectionHeading, StatPanel, PanelRow } from "@/components/modern-panels"
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
+import { CreatorPnlUsersPopover } from "./_components/creator-pnl-users-popover";
+
 const DISPLAYED_PERIODS: Array<{
   key: "24h" | "3d" | "7d" | "14d" | "30d";
   label: string;
@@ -18,35 +20,38 @@ const DISPLAYED_PERIODS: Array<{
 ];
 
 /**
- * Per-creator House P&L panel for /creators/[userId]. Renders 5
- * mini-tiles (1d / 3d / 7d / 2w / 1m), each headlined with the
- * canonical balance-sheet House P&L for that window:
+ * Per-creator House P&L panel for /creators/[userId]. Renders the
+ * lifetime hero plus 5 windowed tiles (1d / 3d / 7d / 2w / 1m), all
+ * driven by the same code-attributed formula:
  *
- *   pnl = deposits − withdrawals − balanceChange − inventoryChange − voucherChange
+ *   pnl = deposits − cardWithdrawals
  *
- * Same formula the dashboard's Lifetime P&L surface uses — just
- * evaluated as DELTAS over the window. Because lifetime P&L is
- * cash_in − cash_out − liability_now, the delta gives the actual
- * P&L change attributable to the window.
+ * Wagered is displayed alongside as an informational figure
+ * (volume) but does NOT enter the formula — wagers spin back and
+ * forth within the platform, only deposits cross the money-in
+ * boundary and only physical card withdrawals cross the value-out
+ * boundary.
  *
- * Referred-user pool excludes admin / support / creator roles AND
- * the creator's own user_id, so other streamers' on-site activity
- * doesn't skew the per-creator number.
+ * Attribution is event-level via `affiliate_code_usages`: each
+ * deposit / wager row carries the code that was active at the time,
+ * so a referred user who later switches codes stops contributing
+ * from that point on and never gets attributed to multiple creators
+ * for the same event.
+ *
+ * Card withdrawals are matched via
+ * `card_withdrawal_requests.inventory_item_ids` → user_inventory →
+ * the creator's session set; valued at `value_at_obtained`.
  *
  * House POV:
- *   pnl > 0 (emerald) — house made money on this creator's referrals
- *   pnl < 0 (rose)    — house lost money
+ *   pnl > 0 (emerald) — house retained more cash than card value
+ *                       physically shipped out
+ *   pnl < 0 (rose)    — physical cards out exceeded cash deposited
  */
 export async function CreatorPnlPanel({ userId }: { userId: string }) {
   const data = await getCreatorPnl(userId);
 
-  // Map period key → row for O(1) lookup.
   const byPeriod = new Map(data.byPeriod.map((p) => [p.period, p]));
 
-  // Lifetime / all-time hero. Same canonical formula as the per-
-  // period tiles below, but evaluated as a snapshot — so balance /
-  // inventory / vouchers are CURRENT values (not deltas), which is
-  // what "all-time PnL" naturally reads as.
   const lifetimePnl = data.lifetime.pnl;
   const isLifetimeWin = lifetimePnl > 0;
   const isLifetimeLoss = lifetimePnl < 0;
@@ -60,16 +65,8 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
     <div className="space-y-3">
       <SectionHeading icon={LineChart} title="Affiliates PnL" />
 
-      {/* All-time hero — the single number admins most often want
-          to scan ("how much have we made off this creator
-          lifetime"). Spans full width, larger heading, breakdown
-          rows below the hero number. Period tiles below stay for
-          drill-in on shorter horizons.
-
-          The icon flips with the result — TrendingUp when we won
-          (emerald), TrendingDown when we lost (rose), LineChart on
-          zero. Matches the per-period tiles below so win/loss is
-          obvious at a glance even before reading the colour. */}
+      {/* All-time hero — `deposits − cardWithdrawals` over the full
+          history of events booked against this creator's code. */}
       <StatPanel
         title="All-time"
         icon={
@@ -82,8 +79,6 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
         accent={lifetimeAccent}
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          {/* Left: PnL hero. The big number admins came here to read,
-              colour + sign carry the win/loss state. */}
           <div className="space-y-1">
             <div
               className={cn(
@@ -94,7 +89,7 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
                     ? "text-rose-600 dark:text-rose-400"
                     : "text-muted-foreground",
               )}
-              title="Lifetime House P&L from this creator's affiliates"
+              title="Lifetime House P&L — deposits under this code minus physical card withdrawals from its sessions"
             >
               {lifetimePnl === 0
                 ? "—"
@@ -104,20 +99,15 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
               Lifetime House P&amp;L from this creator&apos;s affiliates
               <br />
               <span className="text-[10px]">
-                Positive (emerald) = we won · Negative (rose) = we lost
+                Positive (emerald) = we kept value · Negative (rose) =
+                cards out &gt; cash in
               </span>
             </p>
           </div>
-          {/* Right: Lifetime Wagered — the volume figure that produced
-              the PnL on the left. Neutral colour (cyan accent on the
-              label icon) — wager volume itself isn't a win/loss
-              signal, just scale. Hidden when no wagers exist so the
-              tile stays clean for brand-new creators with no
-              activity. */}
           {data.lifetime.totalWagered > 0 && (
             <div
               className="space-y-1 text-left sm:text-right"
-              title="Sum of every completed wager (pack opens + battle bets + battle sponsorships + withdrawal shipping fees) from this creator's referred users — lifetime."
+              title="Sum of every wager booked against this creator's code — lifetime. Informational, not in the PnL formula."
             >
               <div className="text-xl font-bold tabular-nums leading-none sm:text-2xl">
                 {formatCurrency(data.lifetime.totalWagered)}
@@ -129,28 +119,21 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
             </div>
           )}
         </div>
-        {/* Prominent disclaimer about what THIS number does NOT
-            include — admins were misreading the result as "total
-            creator profitability". Affiliates PnL is ONLY the
-            referrals-side P&L; commission / tips / fills paid TO
-            the creator live on the FinancialsCard. */}
         <div className="mt-3 flex items-start gap-2 rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
           <Info className="size-3.5 shrink-0 mt-0.5" />
           <span>
-            Affiliates only — excludes creator deal cost (commission,
-            tips, fills, weekly fills). Combine with the
-            FinancialsCard&apos;s deal cost to get net creator
-            economics.
+            Per-code attribution from{" "}
+            <code className="font-mono">affiliate_code_usages</code>:
+            deposits booked against this creator&apos;s code and physical
+            card withdrawals for cards obtained in its sessions. Wagered
+            shown as volume context, not in the formula. Excludes
+            creator deal cost — combine with the FinancialsCard for net
+            creator economics.
           </span>
         </div>
-        {/* Snapshot components — currentBalance / currentInventory /
-            currentVouchers are RIGHT-NOW values (liability), not
-            window deltas. Same house-POV color rules: positive
-            liability subtracts from PnL → rose; positive cash-in
-            adds to PnL → emerald. */}
-        <div className="mt-4 grid grid-cols-1 gap-y-0.5 sm:grid-cols-2 sm:gap-x-6">
+        <div className="mt-4 grid grid-cols-1 gap-y-0.5 sm:grid-cols-3 sm:gap-x-6">
           <PanelRow
-            label="Total Deposits"
+            label="Deposits"
             value={
               data.lifetime.totalDeposits === 0
                 ? "—"
@@ -163,53 +146,23 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
             }
           />
           <PanelRow
-            label="Total Withdrawals"
+            label="Wagered"
             value={
-              data.lifetime.totalWithdrawals === 0
+              data.lifetime.totalWagered === 0
                 ? "—"
-                : formatCurrency(data.lifetime.totalWithdrawals)
+                : formatCurrency(data.lifetime.totalWagered)
             }
-            valueClassName={
-              data.lifetime.totalWithdrawals > 0
-                ? "text-rose-600 dark:text-rose-400"
-                : ""
-            }
+            valueClassName="text-muted-foreground"
           />
           <PanelRow
-            label="Current Balance"
+            label="Card Withdrawals"
             value={
-              data.lifetime.currentBalance === 0
+              data.lifetime.totalCardWithdrawals === 0
                 ? "—"
-                : formatCurrency(data.lifetime.currentBalance)
+                : formatCurrency(data.lifetime.totalCardWithdrawals)
             }
             valueClassName={
-              data.lifetime.currentBalance > 0
-                ? "text-rose-600 dark:text-rose-400"
-                : ""
-            }
-          />
-          <PanelRow
-            label="Current Inventory"
-            value={
-              data.lifetime.currentInventory === 0
-                ? "—"
-                : formatCurrency(data.lifetime.currentInventory)
-            }
-            valueClassName={
-              data.lifetime.currentInventory > 0
-                ? "text-rose-600 dark:text-rose-400"
-                : ""
-            }
-          />
-          <PanelRow
-            label="Current Vouchers"
-            value={
-              data.lifetime.currentVouchers === 0
-                ? "—"
-                : formatCurrency(data.lifetime.currentVouchers)
-            }
-            valueClassName={
-              data.lifetime.currentVouchers > 0
+              data.lifetime.totalCardWithdrawals > 0
                 ? "text-rose-600 dark:text-rose-400"
                 : ""
             }
@@ -222,10 +175,8 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
           const row = byPeriod.get(key);
           const pnl = row?.pnl ?? 0;
           const deposits = row?.deposits ?? 0;
-          const withdrawals = row?.withdrawals ?? 0;
-          const balanceChange = row?.balanceChange ?? 0;
-          const inventoryChange = row?.inventoryChange ?? 0;
-          const voucherChange = row?.voucherChange ?? 0;
+          const wagered = row?.wagered ?? 0;
+          const cardWithdrawals = row?.cardWithdrawals ?? 0;
           const isWin = pnl > 0;
           const isLoss = pnl < 0;
           const accent: "emerald" | "rose" | "blue" = isWin
@@ -239,6 +190,12 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
               title={label}
               icon={isWin ? TrendingUp : isLoss ? TrendingDown : LineChart}
               accent={accent}
+              action={
+                <CreatorPnlUsersPopover
+                  users={row?.users ?? []}
+                  periodLabel={sub}
+                />
+              }
             >
               <div className="space-y-1.5">
                 <div
@@ -257,7 +214,6 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
                 <p className="text-[10px] text-muted-foreground">{sub}</p>
               </div>
               <div className="mt-3 space-y-0.5">
-                {/* Deposits — cash-in from referred users (House gain) */}
                 <PanelRow
                   label="Deposits"
                   value={deposits === 0 ? "—" : formatCurrency(deposits)}
@@ -267,66 +223,22 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
                       : ""
                   }
                 />
-                {/* Withdrawals — cash + cards leaving House (House loss) */}
                 <PanelRow
-                  label="Withdrawals"
-                  value={
-                    withdrawals === 0 ? "—" : formatCurrency(withdrawals)
-                  }
-                  valueClassName={
-                    withdrawals > 0 ? "text-rose-600 dark:text-rose-400" : ""
-                  }
+                  label="Wagered"
+                  value={wagered === 0 ? "—" : formatCurrency(wagered)}
+                  valueClassName="text-muted-foreground"
                 />
-                {/* Balance change — net change in user balance liability.
-                    Positive = user has more on-site balance now (we owe
-                    more = House loss). */}
                 <PanelRow
-                  label="Balance Δ"
+                  label="Card WD"
                   value={
-                    balanceChange === 0
+                    cardWithdrawals === 0
                       ? "—"
-                      : `${balanceChange > 0 ? "+" : ""}${formatCurrency(balanceChange)}`
+                      : formatCurrency(cardWithdrawals)
                   }
                   valueClassName={
-                    balanceChange > 0
+                    cardWithdrawals > 0
                       ? "text-rose-600 dark:text-rose-400"
-                      : balanceChange < 0
-                        ? "text-emerald-600 dark:text-emerald-400"
-                        : ""
-                  }
-                />
-                {/* Inventory change — net change in unsold-card liability.
-                    Positive = user has more cards on the books now. */}
-                <PanelRow
-                  label="Inventory Δ"
-                  value={
-                    inventoryChange === 0
-                      ? "—"
-                      : `${inventoryChange > 0 ? "+" : ""}${formatCurrency(inventoryChange)}`
-                  }
-                  valueClassName={
-                    inventoryChange > 0
-                      ? "text-rose-600 dark:text-rose-400"
-                      : inventoryChange < 0
-                        ? "text-emerald-600 dark:text-emerald-400"
-                        : ""
-                  }
-                />
-                {/* Voucher change — net change in unclaimed-voucher
-                    liability. Same sign convention. */}
-                <PanelRow
-                  label="Voucher Δ"
-                  value={
-                    voucherChange === 0
-                      ? "—"
-                      : `${voucherChange > 0 ? "+" : ""}${formatCurrency(voucherChange)}`
-                  }
-                  valueClassName={
-                    voucherChange > 0
-                      ? "text-rose-600 dark:text-rose-400"
-                      : voucherChange < 0
-                        ? "text-emerald-600 dark:text-emerald-400"
-                        : ""
+                      : ""
                   }
                 />
               </div>
@@ -336,13 +248,16 @@ export async function CreatorPnlPanel({ userId }: { userId: string }) {
       </div>
 
       <p className="text-[11px] text-muted-foreground">
-        House P&amp;L = deposits − withdrawals − balance Δ − inventory Δ −
-        voucher Δ. Same canonical balance-sheet formula as Lifetime P&amp;L
-        on the dashboard, evaluated as deltas over each window. Excludes
-        admin / support / creator role accounts from the referred-user
-        pool. Positive (emerald) = we made money. Excludes creator-side
+        House P&amp;L = deposits − card withdrawals. Wagered shown for
+        volume context, not in the formula. Attribution is event-level
+        from <code className="font-mono">affiliate_code_usages</code>:
+        each event carries the code that was active at the time. Card
+        withdrawals are matched via{" "}
+        <code className="font-mono">inventory_item_ids</code> →{" "}
+        <code className="font-mono">user_inventory.source_id</code>.
+        Excludes admin / support / creator role accounts and creator
         deal cost (commission, tips, fills) — that lives on the
-        FinancialsCard.
+        FinancialsCard. Positive (emerald) = we kept value.
       </p>
     </div>
   );
