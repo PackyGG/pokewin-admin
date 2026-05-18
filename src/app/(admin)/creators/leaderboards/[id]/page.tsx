@@ -27,6 +27,7 @@ import { getAffiliateLeaderboardRankings } from "@/lib/queries/creators";
 import { getLeaderboardSponsorshipMap } from "../../_queries/leaderboard-sponsorship";
 
 import { DetailActions } from "../_components/detail-actions";
+import { ManualPaymentPanel } from "../_components/manual-payment-panel";
 
 export const metadata = { title: "Affiliate Leaderboard" };
 
@@ -121,6 +122,14 @@ export default async function AffiliateLeaderboardDetailPage({
                                     {lb.time_status}
                                 </Badge>
                                 {lb.is_sponsored && <Badge variant="outline">sponsored</Badge>}
+                                {lb.paid_manually && (
+                                    <Badge
+                                        variant="outline"
+                                        className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                                    >
+                                        paid manually
+                                    </Badge>
+                                )}
                                 {lb.cancelled_at && (
                                     <Badge variant="outline" className="bg-zinc-500/15 text-zinc-600 border-zinc-500/30">
                                         cancelled
@@ -277,6 +286,14 @@ export default async function AffiliateLeaderboardDetailPage({
                             }
                         />
                     </div>
+                </FadeIn>
+
+                <FadeIn>
+                    <ManualPaymentPanel
+                        leaderboardId={lb.id}
+                        initialPaidManually={lb.paid_manually}
+                        initialPayoutNote={lb.payout_note}
+                    />
                 </FadeIn>
             </div>
 
