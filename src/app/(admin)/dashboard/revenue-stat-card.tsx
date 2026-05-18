@@ -117,10 +117,10 @@ export function GgrStatCard({ ggr }: { ggr: Record<string, number> }) {
 // from the other period cards (Deposits/GGR/PnL/Withdrawals).
 //
 // Reused for two cards on the dashboard: the default "Total Wager"
-// (customer wager — creator accounts excluded, since creators wager
-// house-funded "sponsored" balance on their streams) and a "Raw Wager"
-// variant that includes creators. `caption` carries the muted hint
-// that distinguishes the pair.
+// (customer wager — wagers a creator made while live on a deal/stream
+// are dropped, since that is house-funded "sponsored" balance) and a
+// "Raw Wager" variant that includes them. `caption` carries the muted
+// hint that distinguishes the pair.
 export function WagerStatCard({
   wagers,
   title = "Total Wager",

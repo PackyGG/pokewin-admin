@@ -69,15 +69,18 @@ export default async function DashboardPage() {
       <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-6">
         <PnlStatCard pnl={stats.realizedPnl} />
         <GgrStatCard ggr={stats.ggr} />
-        {/* Two wager cards: "Total Wager" excludes creator accounts —
-            creators wager house-funded sponsored balance on streams,
-            which is not a real customer bet; "Raw Wager" includes them.
-            The gap between the two is the creator (sponsored) wager. */}
-        <WagerStatCard wagers={stats.wagers} caption="excl. creators" />
+        {/* Two wager cards: "Total Wager" drops wagers a creator made
+            while live on a deal/stream (house-funded sponsored balance,
+            not a real customer bet); "Raw Wager" includes them. The gap
+            between the two is the creator on-stream sponsored wager. */}
+        <WagerStatCard
+          wagers={stats.wagers}
+          caption="excl. creator sessions"
+        />
         <WagerStatCard
           wagers={stats.wagersRaw}
           title="Raw Wager"
-          caption="incl. creators"
+          caption="incl. creator sessions"
         />
         <DepositsStatCard
           deposits={stats.deposits}

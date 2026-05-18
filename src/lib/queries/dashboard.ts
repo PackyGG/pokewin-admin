@@ -10,6 +10,7 @@ import {
 } from "./_blacklist";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
+import { getCreatorSessionWindowsCte } from "./creator-session-windows";
 
 export type ActivityItem = {
   id: string;
@@ -64,6 +65,11 @@ function getPeriodAggregates(
   sevenDaysAgo: Date,
   thirtyDaysAgo: Date,
   blacklistIdNotIn: string,
+  // A `session_windows(uid, win_start, win_end)` CTE definition (built
+  // by getCreatorSessionWindowsCte) — every creator deal/stream session.
+  // Wagers a creator made inside one of these windows are dropped from
+  // the customer wager figure.
+  sessionWindowsCte: string,
 ) {
   return db.$queryRaw<
     {
@@ -73,10 +79,10 @@ function getPeriodAggregates(
       withdrawal_24h: string; withdrawal_3d: string; withdrawal_7d: string; withdrawal_30d: string; withdrawal_all: string;
       wager_1h: string; wager_3h: string; wager_6h: string; wager_12h: string;
       wager_24h: string; wager_3d: string; wager_7d: string; wager_30d: string; wager_all: string;
-      // Customer wager — the wager_* set with creator-account rows
-      // removed (creators wager house-funded "sponsored" balance).
-      wager_excl_creator_1h: string; wager_excl_creator_3h: string; wager_excl_creator_6h: string; wager_excl_creator_12h: string;
-      wager_excl_creator_24h: string; wager_excl_creator_3d: string; wager_excl_creator_7d: string; wager_excl_creator_30d: string; wager_excl_creator_all: string;
+      // Customer wager — wager_* MINUS wagers a creator made while live
+      // on a deal/stream (house-funded "sponsored" play).
+      wager_excl_session_1h: string; wager_excl_session_3h: string; wager_excl_session_6h: string; wager_excl_session_12h: string;
+      wager_excl_session_24h: string; wager_excl_session_3d: string; wager_excl_session_7d: string; wager_excl_session_30d: string; wager_excl_session_all: string;
       ggr_1h: string; ggr_3h: string; ggr_6h: string; ggr_12h: string;
       ggr_24h: string; ggr_3d: string; ggr_7d: string; ggr_30d: string; ggr_all: string;
       // Deposit COUNT (number of completed deposit transactions) per
@@ -90,13 +96,23 @@ function getPeriodAggregates(
     WITH real_users AS (
       SELECT id, role FROM "user" WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
     ),
+    ${Prisma.raw(sessionWindowsCte)},
     base AS (
-      -- is_creator flags rows whose user is a creator, so the wager
-      -- aggregate can be computed both with and without creator play:
-      -- creators wager house-funded "sponsored" balance during their
-      -- deal/streams, which is not a real customer bet.
-      SELECT lt.type, lt.amount::numeric AS amount, lt.created_at,
-             (ru.role = 'creator') AS is_creator
+      -- in_session marks a wager a creator made while live on a deal/
+      -- stream — its created_at falls inside one of that creator's
+      -- session windows. Creators wager house-funded "sponsored"
+      -- balance on stream, which is not a real customer bet, so the
+      -- customer wager figure drops these rows. The CASE keeps the
+      -- EXISTS subquery off the hot path for non-creator rows.
+      SELECT lt.user_id, lt.type, lt.amount::numeric AS amount, lt.created_at,
+             CASE WHEN ru.role = 'creator'
+                  THEN EXISTS (
+                    SELECT 1 FROM session_windows sw
+                    WHERE sw.uid = lt.user_id
+                      AND lt.created_at >= sw.win_start
+                      AND lt.created_at <  sw.win_end
+                  )
+                  ELSE false END AS in_session
       FROM ledger_transactions lt
       JOIN real_users ru ON ru.id = lt.user_id
       WHERE lt.status = 'completed'
@@ -143,20 +159,20 @@ function getPeriodAggregates(
       COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND created_at >= ${thirtyDaysAgo} THEN amount ELSE 0 END), 0)::text AS wager_30d,
       COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship')                                    THEN amount ELSE 0 END), 0)::text AS wager_all,
 
-      -- Customer wager — the wager_* set with creator-account rows
-      -- removed. Creators wager house-funded "sponsored" balance during
-      -- deal/streams (recorded as ordinary pack_opening/battle_bet rows,
-      -- NOT a creator_fill_* type), which inflates the wager figure with
-      -- money that was never a real customer bet. NOT is_creator drops it.
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND NOT is_creator AND created_at >= ${oneHourAgo}     THEN amount ELSE 0 END), 0)::text AS wager_excl_creator_1h,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND NOT is_creator AND created_at >= ${threeHoursAgo}  THEN amount ELSE 0 END), 0)::text AS wager_excl_creator_3h,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND NOT is_creator AND created_at >= ${sixHoursAgo}    THEN amount ELSE 0 END), 0)::text AS wager_excl_creator_6h,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND NOT is_creator AND created_at >= ${twelveHoursAgo} THEN amount ELSE 0 END), 0)::text AS wager_excl_creator_12h,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND NOT is_creator AND created_at >= ${twentyFourHoursAgo}    THEN amount ELSE 0 END), 0)::text AS wager_excl_creator_24h,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND NOT is_creator AND created_at >= ${threeDaysAgo}  THEN amount ELSE 0 END), 0)::text AS wager_excl_creator_3d,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND NOT is_creator AND created_at >= ${sevenDaysAgo}  THEN amount ELSE 0 END), 0)::text AS wager_excl_creator_7d,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND NOT is_creator AND created_at >= ${thirtyDaysAgo} THEN amount ELSE 0 END), 0)::text AS wager_excl_creator_30d,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND NOT is_creator                                    THEN amount ELSE 0 END), 0)::text AS wager_excl_creator_all,
+      -- Customer wager — the wager_* set MINUS wagers a creator made
+      -- while live on a deal/stream (in_session). Creators wager
+      -- house-funded "sponsored" balance on stream — recorded as
+      -- ordinary pack_opening/battle_bet rows — which is not a real
+      -- customer bet. A creator's OFF-session personal play stays in.
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${oneHourAgo}     THEN amount ELSE 0 END), 0)::text AS wager_excl_session_1h,
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${threeHoursAgo}  THEN amount ELSE 0 END), 0)::text AS wager_excl_session_3h,
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${sixHoursAgo}    THEN amount ELSE 0 END), 0)::text AS wager_excl_session_6h,
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${twelveHoursAgo} THEN amount ELSE 0 END), 0)::text AS wager_excl_session_12h,
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${twentyFourHoursAgo}    THEN amount ELSE 0 END), 0)::text AS wager_excl_session_24h,
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${threeDaysAgo}  THEN amount ELSE 0 END), 0)::text AS wager_excl_session_3d,
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${sevenDaysAgo}  THEN amount ELSE 0 END), 0)::text AS wager_excl_session_7d,
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${thirtyDaysAgo} THEN amount ELSE 0 END), 0)::text AS wager_excl_session_30d,
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND NOT in_session                                    THEN amount ELSE 0 END), 0)::text AS wager_excl_session_all,
 
       -- GGR = wagers − payouts (industry-standard pure gaming margin).
       -- Wager + payout type lists are intentionally hardcoded inline here
@@ -278,11 +294,16 @@ async function dashboardStatsInner() {
   // every aggregate below applies the same exclusion set. The list is
   // cached via React `cache()` in fetch.ts → repeated invocations are
   // free.
-  const [staffRelation, staffRoleDirect, excluded] = await Promise.all([
-    excludeStaffAndBlacklisted(),
-    excludeStaffAndBlacklistedDirect(),
-    getExcludedUserIds(),
-  ]);
+  const [staffRelation, staffRoleDirect, excluded, sessionWindowsCte] =
+    await Promise.all([
+      excludeStaffAndBlacklisted(),
+      excludeStaffAndBlacklistedDirect(),
+      getExcludedUserIds(),
+      // Creator deal/stream session windows (backend creators API;
+      // 5-min cached, best-effort) — drives the customer-wager
+      // exclusion in getPeriodAggregates.
+      getCreatorSessionWindowsCte(),
+    ]);
   // Inline SQL fragment for `AND id NOT IN (...)` for the raw queries
   // that already do role NOT IN ('admin','support'). Empty string when
   // nothing is blacklisted so the query stays valid.
@@ -431,7 +452,7 @@ async function dashboardStatsInner() {
     // `startOfDay`. The old behaviour reset every "24h" KPI to zero at
     // UTC midnight, which read like a partial half-day for most of the
     // morning; rolling matches the 1h / 3h / 12h chips on the same card.
-    getPeriodAggregates(db, oneHourAgo, threeHoursAgo, sixHoursAgo, twelveHoursAgo, rolling24h, threeDaysAgo, sevenDaysAgo, thirtyDaysAgo, blacklistIdNotIn),
+    getPeriodAggregates(db, oneHourAgo, threeHoursAgo, sixHoursAgo, twelveHoursAgo, rolling24h, threeDaysAgo, sevenDaysAgo, thirtyDaysAgo, blacklistIdNotIn, sessionWindowsCte),
     db.user_statistics.aggregate({
       where: { user: staffRelation },
       _sum: { opened_packs_count: true, battles_played: true },
@@ -573,8 +594,8 @@ async function dashboardStatsInner() {
     withdrawal_24h: "0", withdrawal_3d: "0", withdrawal_7d: "0", withdrawal_30d: "0", withdrawal_all: "0",
     wager_1h: "0", wager_3h: "0", wager_6h: "0", wager_12h: "0",
     wager_24h: "0", wager_3d: "0", wager_7d: "0", wager_30d: "0", wager_all: "0",
-    wager_excl_creator_1h: "0", wager_excl_creator_3h: "0", wager_excl_creator_6h: "0", wager_excl_creator_12h: "0",
-    wager_excl_creator_24h: "0", wager_excl_creator_3d: "0", wager_excl_creator_7d: "0", wager_excl_creator_30d: "0", wager_excl_creator_all: "0",
+    wager_excl_session_1h: "0", wager_excl_session_3h: "0", wager_excl_session_6h: "0", wager_excl_session_12h: "0",
+    wager_excl_session_24h: "0", wager_excl_session_3d: "0", wager_excl_session_7d: "0", wager_excl_session_30d: "0", wager_excl_session_all: "0",
     ggr_1h: "0", ggr_3h: "0", ggr_6h: "0", ggr_12h: "0",
     ggr_24h: "0", ggr_3d: "0", ggr_7d: "0", ggr_30d: "0", ggr_all: "0",
     deposit_count_1h: "0", deposit_count_3h: "0", deposit_count_6h: "0", deposit_count_12h: "0",
@@ -654,24 +675,24 @@ async function dashboardStatsInner() {
       "30d": Math.abs(num(pa.withdrawal_30d)),
       all: Math.abs(num(pa.withdrawal_all)),
     },
-    // Customer wager — creators EXCLUDED. Creators wager house-funded
-    // "sponsored" balance on deal/streams (ordinary pack_opening/battle_bet
-    // rows), which is not a real customer bet. This is the figure the
-    // dashboard's "Total Wager" card shows.
+    // Customer wager — wagers a creator made while live on a deal/stream
+    // are EXCLUDED (house-funded "sponsored" play, not a real customer
+    // bet). A creator's off-session personal play is kept. This is the
+    // figure the dashboard's "Total Wager" card shows.
     wagers: {
-      "1h": Math.abs(num(pa.wager_excl_creator_1h)),
-      "3h": Math.abs(num(pa.wager_excl_creator_3h)),
-      "6h": Math.abs(num(pa.wager_excl_creator_6h)),
-      "12h": Math.abs(num(pa.wager_excl_creator_12h)),
-      "24h": Math.abs(num(pa.wager_excl_creator_24h)),
-      "3d": Math.abs(num(pa.wager_excl_creator_3d)),
-      "7d": Math.abs(num(pa.wager_excl_creator_7d)),
-      "30d": Math.abs(num(pa.wager_excl_creator_30d)),
-      all: Math.abs(num(pa.wager_excl_creator_all)),
+      "1h": Math.abs(num(pa.wager_excl_session_1h)),
+      "3h": Math.abs(num(pa.wager_excl_session_3h)),
+      "6h": Math.abs(num(pa.wager_excl_session_6h)),
+      "12h": Math.abs(num(pa.wager_excl_session_12h)),
+      "24h": Math.abs(num(pa.wager_excl_session_24h)),
+      "3d": Math.abs(num(pa.wager_excl_session_3d)),
+      "7d": Math.abs(num(pa.wager_excl_session_7d)),
+      "30d": Math.abs(num(pa.wager_excl_session_30d)),
+      all: Math.abs(num(pa.wager_excl_session_all)),
     },
-    // Raw wager — every non-staff user INCLUDING creators. The "Raw
-    // Wager" card shows this; (wagersRaw − wagers) is the creator
-    // sponsored-balance contribution.
+    // Raw wager — every non-staff user, INCLUDING creators' on-stream
+    // sponsored play. The "Raw Wager" card shows this; (wagersRaw −
+    // wagers) is the creator deal/stream sponsored-balance contribution.
     wagersRaw: {
       "1h": Math.abs(num(pa.wager_1h)),
       "3h": Math.abs(num(pa.wager_3h)),
