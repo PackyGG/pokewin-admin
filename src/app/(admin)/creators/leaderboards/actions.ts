@@ -146,6 +146,17 @@ const sponsorshipSchema = z.object({
         .max(100, "Sponsored % must be 100 or less"),
 });
 
+// Admin-side "paid manually" annotation. Note is optional; backend trims/
+// clears empty strings and also forces-clears the note when toggling off.
+const manualPaymentSchema = z.object({
+    paid_manually: z.boolean(),
+    payout_note: z
+        .string()
+        .max(2000, "Note must be 2000 characters or less")
+        .optional()
+        .nullable(),
+});
+
 function toErrorMessage(err: unknown): string {
     if (err instanceof BackendApiError) {
         return err.message;
@@ -385,6 +396,62 @@ export async function setLeaderboardSponsorship(
     // The /creators "Leaderboard Cost" KPI weights by this %, so it
     // must recompute too.
     revalidatePath("/creators");
+    return { success: true };
+}
+
+/**
+ * Toggle the "paid manually" flag and update the optional payout note on a
+ * creator leaderboard. Annotation only — does not touch any balance, ledger,
+ * or backend leaderboard state. Editable for any leaderboard regardless of
+ * status, since it tracks an off-platform payout that an admin performed.
+ */
+export async function setLeaderboardManualPayment(
+    leaderboardId: string,
+    input: { paid_manually: boolean; payout_note?: string | null },
+): Promise<ActionResult> {
+    const session = await requirePageAccess(PAGE_KEY);
+    const parsedId = idSchema.safeParse(leaderboardId);
+    if (!parsedId.success) {
+        return { success: false, error: parsedId.error.issues[0]?.message ?? "Invalid id" };
+    }
+    const parsed = manualPaymentSchema.safeParse(input);
+    if (!parsed.success) {
+        return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+    await requireCapability(
+        session,
+        "__can_update_creator_deal",
+        "edit creator leaderboards",
+    );
+
+    try {
+        await affiliateLeaderboardsApi.setManualPayment(
+            parsedId.data,
+            {
+                paid_manually: parsed.data.paid_manually,
+                payout_note: parsed.data.payout_note ?? null,
+            },
+            session.userId,
+        );
+    } catch (err) {
+        return { success: false, error: toErrorMessage(err) };
+    }
+
+    try {
+        await createAdminAuditEvent({
+            adminUserId: session.userId,
+            eventType: "affiliate_leaderboard_manual_payment_set",
+            metadata: {
+                leaderboard_id: parsedId.data,
+                paid_manually: parsed.data.paid_manually,
+                has_note: !!(parsed.data.payout_note && parsed.data.payout_note.trim().length > 0),
+            },
+        });
+    } catch (err) {
+        logAuditFailure("setLeaderboardManualPayment", err);
+    }
+
+    revalidate(parsedId.data);
     return { success: true };
 }
 

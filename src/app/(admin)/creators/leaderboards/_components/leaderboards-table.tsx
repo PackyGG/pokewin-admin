@@ -95,6 +95,14 @@ function LeaderboardMobileCard({
                 cancelled
               </Badge>
             )}
+            {r.paid_manually && (
+              <Badge
+                variant="outline"
+                className="h-4 px-1 text-[9px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+              >
+                paid
+              </Badge>
+            )}
           </div>
           <div className="mt-1 text-[10px] text-muted-foreground">
             {formatRelative(r.start_date)} → {formatRelative(r.end_date)}
@@ -236,6 +244,14 @@ export function LeaderboardsTable({
                           className="ml-2 bg-zinc-500/15 text-zinc-600 border-zinc-500/30"
                         >
                           cancelled
+                        </Badge>
+                      )}
+                      {r.paid_manually && (
+                        <Badge
+                          variant="outline"
+                          className="ml-2 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                        >
+                          paid
                         </Badge>
                       )}
                     </TableCell>
