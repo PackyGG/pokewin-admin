@@ -18,7 +18,7 @@ import {
   listRoles,
   assignRoleToAdminUser,
   type RoleRow,
-} from "../roles/actions";
+} from "@/app/(admin)/settings/roles/custom-roles-actions";
 
 const NONE = "__none__";
 
@@ -91,7 +91,7 @@ export function AssignRoleCard({
           <p className="text-sm text-muted-foreground">
             No roles yet.{" "}
             <Link
-              href="/admin-users/roles"
+              href="/settings/roles"
               className="text-blue-400 hover:underline"
             >
               Create one

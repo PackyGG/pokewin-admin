@@ -180,7 +180,7 @@ export async function createRole(
       metadata: { role_id: role.id, name, capabilities_count: capabilities.length },
     });
 
-    revalidatePath("/admin-users/roles");
+    revalidatePath("/settings/roles");
     return { ok: true, id: role.id };
   } catch (err) {
     if (isUniqueViolation(err)) {
@@ -264,8 +264,8 @@ export async function updateRole(
     },
   });
 
-  revalidatePath("/admin-users/roles");
-  revalidatePath(`/admin-users/roles/${id}`);
+  revalidatePath("/settings/roles");
+  revalidatePath(`/settings/roles/${id}`);
   revalidatePath("/", "layout");
   return { ok: true };
 }
@@ -292,7 +292,7 @@ export async function deleteRole(
     metadata: { role_id: id, name: existing.name },
   });
 
-  revalidatePath("/admin-users/roles");
+  revalidatePath("/settings/roles");
   revalidatePath("/", "layout");
   return { ok: true };
 }

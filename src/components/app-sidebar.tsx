@@ -247,8 +247,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "System",
     items: [
       { label: "Users", href: "/admin-users", icon: "ShieldCheck" },
-      { label: "Roles", href: "/admin-users/roles", icon: "KeyRound" },
-      { label: "Role Permissions", href: "/settings/roles", icon: "Shield" },
+      { label: "Roles", href: "/settings/roles", icon: "KeyRound" },
       { label: "Bots", href: "/bots", icon: "Bot" },
       { label: "Settings", href: "/settings", icon: "Settings" },
       // Excluded users blacklist — motha-only entry point. The page

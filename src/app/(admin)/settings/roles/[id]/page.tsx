@@ -4,7 +4,7 @@ import { ArrowLeft, KeyRound, FileText, ShieldCheck, Users } from "lucide-react"
 import { requireAdmin } from "@/lib/dal";
 import { PageHero, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
-import { getRole } from "../actions";
+import { getRole } from "../custom-roles-actions";
 import { RoleEditor } from "../role-editor";
 
 export const metadata = { title: "Role" };
@@ -28,7 +28,7 @@ export default async function RoleDetailPage({
       <PageHero>
         <div className="flex items-center gap-3">
           <Link
-            href="/admin-users/roles"
+            href="/settings/roles"
             className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground"
           >
             <ArrowLeft className="size-4" />

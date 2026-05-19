@@ -23,8 +23,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { ALL_PERMISSION_KEYS } from "@/app/(admin)/settings/roles/permissions-utils";
-import { PermissionPicker } from "../_components/permission-picker";
-import { updateRole, deleteRole, type RoleRow } from "./actions";
+import { PermissionPicker } from "@/app/(admin)/admin-users/_components/permission-picker";
+import { updateRole, deleteRole, type RoleRow } from "./custom-roles-actions";
 
 export function RoleEditor({ role }: { role: RoleRow }) {
   const router = useRouter();
@@ -77,7 +77,7 @@ export function RoleEditor({ role }: { role: RoleRow }) {
         return;
       }
       toast.success("Role deleted");
-      router.push("/admin-users/roles");
+      router.push("/settings/roles");
     });
   }
 

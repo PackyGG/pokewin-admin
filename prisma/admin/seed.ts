@@ -44,9 +44,9 @@ async function main() {
     console.log(`Admin user ${email} already exists, skipping user create.`);
   }
 
-  // Custom roles are created in the admin panel (/admin-users/roles) and
+  // Custom roles are created in the admin panel (/settings/roles) and
   // stored in admin_roles — there are no seeded roles. The built-in enum
-  // roles + /settings/roles cover the default permission presets.
+  // roles are edited on the same /settings/roles page.
 
   await pool.end();
 }
