@@ -222,7 +222,7 @@ function UserBattleLimitsDialog({
               onChange={(e) => setBaseBetLimitUsd(e.target.value)}
             />
             <p className="text-[11px] text-muted-foreground">
-              Base "out of pocket" cap. Backend scales this by{" "}
+              Base out-of-pocket cap. Backend scales this by{" "}
               <code className="font-mono">1 / (1 − borrow%)</code> at battle
               creation time.
             </p>
