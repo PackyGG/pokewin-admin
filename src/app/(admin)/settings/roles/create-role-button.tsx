@@ -17,7 +17,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { createRole } from "./actions";
+import { createRole } from "./custom-roles-actions";
 
 export function CreateRoleButton() {
   const [open, setOpen] = useState(false);
@@ -45,7 +45,7 @@ export function CreateRoleButton() {
       toast.success("Role created");
       setOpen(false);
       reset();
-      router.push(`/admin-users/roles/${result.id}`);
+      router.push(`/settings/roles/${result.id}`);
     });
   }
 
