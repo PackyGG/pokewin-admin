@@ -1445,6 +1445,107 @@ export async function fetchCreatorWithdrawalLimits(userId: string) {
 }
 
 // ---------------------------------------------------------------------------
+// Per-user battle limit overrides (highroller / VIP support)
+// ---------------------------------------------------------------------------
+//
+// Each field is independently nullable: null means "fall back to site_config
+// default" (`battle_max_value_usd` / `battle_base_bet_limit_usd`). The
+// backend resolution lives in CreationService.createBattle and applies the
+// override-or-default per column at battle creation time.
+//
+// Admin-only — battle limits move real money exposure (the backend uses them
+// to gate `total_cost > maxBattleValueUsd` checks), so we keep them behind
+// `requireAdmin()` rather than a softer page-access gate.
+
+const userBattleLimitsSchema = z.object({
+  userId: z.string().min(1),
+  maxValueUsd: z.number().positive().nullable(),
+  baseBetLimitUsd: z.number().positive().nullable(),
+});
+
+export async function updateUserBattleLimits(data: {
+  userId: string;
+  maxValueUsd: number | null;
+  baseBetLimitUsd: number | null;
+}): Promise<{ success: true } | { success: false; error: string }> {
+  const db = await getDb();
+  const session = await requireAdmin();
+
+  const parseResult = userBattleLimitsSchema.safeParse(data);
+  if (!parseResult.success) {
+    return {
+      success: false,
+      error: parseResult.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+  const parsed = parseResult.data;
+
+  try {
+    await db.user_battle_limits.upsert({
+      where: { user_id: parsed.userId },
+      update: {
+        max_value_usd: parsed.maxValueUsd,
+        base_bet_limit_usd: parsed.baseBetLimitUsd,
+        updated_at: new Date(),
+      },
+      create: {
+        id: crypto.randomUUID(),
+        user_id: parsed.userId,
+        max_value_usd: parsed.maxValueUsd,
+        base_bet_limit_usd: parsed.baseBetLimitUsd,
+      },
+    });
+  } catch (err) {
+    console.error("[updateUserBattleLimits] upsert failed:", err);
+    return { success: false, error: "Failed to update battle limits" };
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "user_battle_limits_updated",
+    targetUserId: parsed.userId,
+    metadata: {
+      maxValueUsd: parsed.maxValueUsd,
+      baseBetLimitUsd: parsed.baseBetLimitUsd,
+    },
+  });
+
+  revalidatePath(`/users/${parsed.userId}`);
+  return { success: true };
+}
+
+export async function clearUserBattleLimits(
+  userId: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const db = await getDb();
+  const session = await requireAdmin();
+
+  if (!userId || typeof userId !== "string") {
+    return { success: false, error: "Invalid user id" };
+  }
+
+  try {
+    // deleteMany is idempotent — count: 0 when no row exists, no throw.
+    // Matches the removeUserTag pattern so a double-click on "Clear"
+    // can't crash the page.
+    await db.user_battle_limits.deleteMany({ where: { user_id: userId } });
+  } catch (err) {
+    console.error("[clearUserBattleLimits] delete failed:", err);
+    return { success: false, error: "Failed to clear battle limits" };
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "user_battle_limits_cleared",
+    targetUserId: userId,
+    metadata: {},
+  });
+
+  revalidatePath(`/users/${userId}`);
+  return { success: true };
+}
+
+// ---------------------------------------------------------------------------
 // Wipe Account Data — Alt Account Cleanup
 // ---------------------------------------------------------------------------
 // Permanently deletes ALL user activity data while keeping the User row and

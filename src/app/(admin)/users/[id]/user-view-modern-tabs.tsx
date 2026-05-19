@@ -72,6 +72,7 @@ import {
   GAMING_TX_TYPES,
   FINANCIAL_TX_TYPES,
 } from "./user-tabs";
+import { UserBattleLimitsCard } from "./user-battle-limits-card";
 import type { PaginatedInventory } from "./user-tabs-types";
 import type { UserRewards } from "@/lib/queries/users";
 import {
@@ -701,7 +702,7 @@ export function AccountTab({
   notes: AdminNote[];
   isAdmin: boolean;
 }) {
-  const { user, balances, shippingAddress, vault, depositAddresses, featureLocks, mutes, capabilities } = data;
+  const { user, balances, shippingAddress, vault, depositAddresses, featureLocks, battleLimits, mutes, capabilities } = data;
   void isAdmin; // currently only consumed by downstream components
   return (
     <div className="space-y-6">
@@ -723,6 +724,12 @@ export function AccountTab({
         userId={user.id}
         featureLocks={featureLocks}
         canToggle={capabilities.canToggleFeatureLocks}
+      />
+      <SectionHeading icon={Dices} title="Custom Battle Limits" />
+      <UserBattleLimitsCard
+        userId={user.id}
+        limits={battleLimits}
+        canManage={data.sessionRole === "admin"}
       />
       <SectionHeading icon={ShieldCheck} title="Moderation" />
       <Card>

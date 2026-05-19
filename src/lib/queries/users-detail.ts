@@ -39,6 +39,7 @@ export async function getUserDetail(id: string) {
     balances,
     statistics,
     featureLocks,
+    battleLimits,
     inventoryCount,
     affiliateAccount,
     affiliateCodeRecord,
@@ -64,6 +65,7 @@ export async function getUserDetail(id: string) {
     db.balances.findUnique({ where: { user_id: id } }),
     db.user_statistics.findUnique({ where: { user_id: id } }),
     db.user_feature_locks.findUnique({ where: { user_id: id } }),
+    db.user_battle_limits.findUnique({ where: { user_id: id } }),
     db.user_inventory.count({ where: { user_id: id, sold_at: null, exchanged_at: null } }),
     db.affiliate_accounts.findUnique({
       where: { user_id: id },
@@ -275,6 +277,18 @@ export async function getUserDetail(id: string) {
           lockedExchanges: featureLocks.locked_exchanges,
           lockedOpenings: featureLocks.locked_openings,
           lockedVault: featureLocks.locked_vault,
+        }
+      : null,
+    battleLimits: battleLimits
+      ? {
+          maxValueUsd:
+            battleLimits.max_value_usd != null
+              ? toNumber(battleLimits.max_value_usd)
+              : null,
+          baseBetLimitUsd:
+            battleLimits.base_bet_limit_usd != null
+              ? toNumber(battleLimits.base_bet_limit_usd)
+              : null,
         }
       : null,
     inventoryCount,

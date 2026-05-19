@@ -90,6 +90,16 @@ export type UserDetail = {
     lockedOpenings: boolean;
     lockedVault: boolean;
   } | null;
+  /**
+   * Per-user battle limit overrides. `null` row → user falls back to
+   * site_config defaults (battle_max_value_usd / battle_base_bet_limit_usd).
+   * Each field is independently nullable: a row may override one limit
+   * while leaving the other on the platform default.
+   */
+  battleLimits: {
+    maxValueUsd: number | null;
+    baseBetLimitUsd: number | null;
+  } | null;
   inventoryCount: number;
   affiliate: {
     code: string;
