@@ -95,6 +95,60 @@ const COVERING_CREATOR_SQL = `(
    LIMIT 1
 )`;
 
+// "Withdrawn unit" derived table: emits one row per value-unit (card
+// OR session-linked voucher) leaving the house via a completed
+// `card_withdrawal_requests`. Used in place of `JOIN user_inventory`
+// throughout the cardWD queries so vouchers contribute to the same
+// total as physical cards.
+//
+// Two sources, both UNNEST'd from the cwr array columns and joined on
+// equality to their parent table — much faster than the equivalent
+// `JOIN ... ON id = ANY(array)` shape, which forces sequential scans
+// because Postgres can't use a B-tree index on the right side of
+// `ANY(array)`. UNNEST turns the array into rows the planner can
+// hash-join or nested-loop on the indexed primary key column.
+//
+//   • Cards: `cwr.inventory_item_ids` → `user_inventory.id` where
+//     `source_type IN ('pack','battle')`. Per-card valuation uses
+//     `value_at_obtained` (canonical).
+//   • Session-linked vouchers: `cwr.voucher_ids` → `vouchers.id`
+//     where `origin IN ('battle_excess_to_voucher',
+//     'pack_borrow_to_voucher')`. Both origins set `origin_id` to the
+//     producing `game_session_id`, so the same `source_id` joining
+//     pattern as cards works against creator acu wager sessions.
+//
+// `exchange_excess_to_voucher` is excluded — its `origin_id` points to
+// an exchange session, not a wager session, so it doesn't appear in
+// acu wager rows and can't be code-attributed via the session chain.
+// `creator_fill_conversion` is excluded — those are creator's own deal
+// commission, unrelated to referrer attribution.
+//
+// `withdrawn_at` (= COALESCE(shipped_at, completed_at)) is projected
+// out so windowed period filters can apply uniformly.
+const WITHDRAWN_UNITS_SQL = `(
+  SELECT cwr_unnested.withdrawn_at,
+         ui.user_id, ui.source_id, ui.value_at_obtained::numeric AS value
+    FROM (
+      SELECT COALESCE(cwr.shipped_at, cwr.completed_at) AS withdrawn_at,
+             UNNEST(cwr.inventory_item_ids) AS item_id
+        FROM card_withdrawal_requests cwr
+       WHERE cwr.status IN ('completed', 'shipped')
+    ) cwr_unnested
+    JOIN user_inventory ui ON ui.id = cwr_unnested.item_id
+   WHERE ui.source_type::text IN ('pack', 'battle')
+  UNION ALL
+  SELECT cwr_unnested.withdrawn_at,
+         v.user_id, v.origin_id AS source_id, v.value::numeric AS value
+    FROM (
+      SELECT COALESCE(cwr.shipped_at, cwr.completed_at) AS withdrawn_at,
+             UNNEST(cwr.voucher_ids) AS voucher_id
+        FROM card_withdrawal_requests cwr
+       WHERE cwr.status IN ('completed', 'shipped')
+    ) cwr_unnested
+    JOIN vouchers v ON v.id = cwr_unnested.voucher_id
+   WHERE v.origin::text IN ('battle_excess_to_voucher', 'pack_borrow_to_voucher')
+)`;
+
 async function buildBlacklistAnd(): Promise<string> {
   const excluded = await getExcludedUserIds();
   return excluded.length > 0
@@ -166,12 +220,18 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
     userId,
   );
 
-  // Per-period card withdrawals — value of inventory items that
-  // physically left the house in the window, where the item was
-  // obtained in a session wagered under this creator's code AND the
-  // withdrawing user has at least one coverage-attributed deposit
-  // under this creator (the depositor filter, redefined for the
-  // coverage model).
+  // Per-period card withdrawals — value of physical cards AND
+  // session-linked vouchers that left the house in the window via a
+  // card_withdrawal_requests row. Sourced from WITHDRAWN_UNITS_SQL
+  // which unions inventory items (`cwr.inventory_item_ids`) and
+  // session-linked vouchers (`cwr.voucher_ids` for origins
+  // `battle_excess_to_voucher`, `pack_borrow_to_voucher`).
+  //
+  // Each unit must:
+  //   • come from a session wagered under this creator's code
+  //     (`wu.source_id ∈ creator's acu wager sessions`), AND
+  //   • belong to a user who has at least one coverage-attributed
+  //     deposit under this creator (depositor filter).
   const cardWdRowsP = db.$queryRawUnsafe<
     {
       period: string;
@@ -180,26 +240,20 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
   >(
     `SELECT p.period,
             COALESCE(SUM(CASE
-              WHEN COALESCE(cwr.shipped_at, cwr.completed_at)
-                   >= NOW() - (${PERIOD_INTERVAL_CASE})
-                THEN ui.value_at_obtained::numeric
+              WHEN wu.withdrawn_at >= NOW() - (${PERIOD_INTERVAL_CASE})
+                THEN wu.value
               ELSE 0
             END), 0)::text AS card_withdrawals
        FROM ${PERIODS_VALUES_SQL}
-       LEFT JOIN card_withdrawal_requests cwr
-         ON cwr.status IN ('completed', 'shipped')
-        AND COALESCE(cwr.shipped_at, cwr.completed_at)
-              >= NOW() - INTERVAL '30 days'
-       LEFT JOIN user_inventory ui
-         ON ui.id = ANY(cwr.inventory_item_ids)
-        AND ui.source_type::text IN ('pack', 'battle')
-        AND ui.user_id IN (
+       LEFT JOIN ${WITHDRAWN_UNITS_SQL} wu
+         ON wu.withdrawn_at >= NOW() - INTERVAL '30 days'
+        AND wu.user_id IN (
           SELECT DISTINCT lt.user_id
             FROM ledger_transactions lt
            WHERE lt.type = 'deposit' AND lt.status = 'completed'
              AND $1 = ${COVERING_CREATOR_SQL}
         )
-        AND ui.source_id IN (
+        AND wu.source_id IN (
           SELECT DISTINCT acu.game_session_id
             FROM affiliate_code_usages acu
             JOIN "user" u ON u.id = acu.referred_user_id
@@ -239,18 +293,15 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
             AND u.role NOT IN ('admin', 'support', 'creator')
             AND u.id != $1${blacklistAnd}
         ) AS total_wagered,
-        (SELECT COALESCE(SUM(ui.value_at_obtained::numeric), 0)::text
-           FROM card_withdrawal_requests cwr
-           JOIN user_inventory ui ON ui.id = ANY(cwr.inventory_item_ids)
-          WHERE cwr.status IN ('completed', 'shipped')
-            AND ui.source_type::text IN ('pack', 'battle')
-            AND ui.user_id IN (
+        (SELECT COALESCE(SUM(wu.value), 0)::text
+           FROM ${WITHDRAWN_UNITS_SQL} wu
+          WHERE wu.user_id IN (
               SELECT DISTINCT lt.user_id
                 FROM ledger_transactions lt
                WHERE lt.type = 'deposit' AND lt.status = 'completed'
                  AND $1 = ${COVERING_CREATOR_SQL}
             )
-            AND ui.source_id IN (
+            AND wu.source_id IN (
               SELECT DISTINCT acu.game_session_id
                 FROM affiliate_code_usages acu
                 JOIN "user" u ON u.id = acu.referred_user_id
@@ -324,7 +375,8 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
   );
 
   // Per-user-per-period card withdrawals, with coverage-depositor
-  // filter for consistency with the headline.
+  // filter for consistency with the headline. Includes both cards
+  // and session-linked vouchers via WITHDRAWN_UNITS_SQL.
   const cardWdUserRowsP = db.$queryRawUnsafe<
     {
       user_id: string;
@@ -334,28 +386,23 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
       amount: string;
     }[]
   >(
-    `SELECT ui.user_id AS user_id,
+    `SELECT wu.user_id AS user_id,
             u.username,
             u.image,
             p.period,
-            SUM(ui.value_at_obtained::numeric)::text AS amount
-       FROM card_withdrawal_requests cwr
-       JOIN user_inventory ui ON ui.id = ANY(cwr.inventory_item_ids)
-       JOIN "user" u ON u.id = ui.user_id
+            SUM(wu.value)::text AS amount
+       FROM ${WITHDRAWN_UNITS_SQL} wu
+       JOIN "user" u ON u.id = wu.user_id
        CROSS JOIN ${PERIODS_WITH_INTERVAL_SQL}
-      WHERE cwr.status IN ('completed', 'shipped')
-        AND COALESCE(cwr.shipped_at, cwr.completed_at)
-              >= NOW() - INTERVAL '30 days'
-        AND COALESCE(cwr.shipped_at, cwr.completed_at)
-              >= NOW() - p.intv
-        AND ui.source_type::text IN ('pack', 'battle')
-        AND ui.user_id IN (
+      WHERE wu.withdrawn_at >= NOW() - INTERVAL '30 days'
+        AND wu.withdrawn_at >= NOW() - p.intv
+        AND wu.user_id IN (
           SELECT DISTINCT lt.user_id
             FROM ledger_transactions lt
            WHERE lt.type = 'deposit' AND lt.status = 'completed'
              AND $1 = ${COVERING_CREATOR_SQL}
         )
-        AND ui.source_id IN (
+        AND wu.source_id IN (
           SELECT DISTINCT acu.game_session_id
             FROM affiliate_code_usages acu
             JOIN "user" u2 ON u2.id = acu.referred_user_id
@@ -367,8 +414,8 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
         )
         AND u.role NOT IN ('admin', 'support', 'creator')
         AND u.id != $1${blacklistAnd}
-      GROUP BY ui.user_id, u.username, u.image, p.period
-     HAVING SUM(ui.value_at_obtained::numeric) > 0`,
+      GROUP BY wu.user_id, u.username, u.image, p.period
+     HAVING SUM(wu.value) > 0`,
     userId,
   );
 

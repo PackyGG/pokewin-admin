@@ -127,28 +127,57 @@ export async function getAllCreatorsLifetimePnl(): Promise<AllCreatorsLifetimePn
          AND u.id != acu.affiliate_user_id${blacklistAnd}
        GROUP BY acu.affiliate_user_id
     ),
+    withdrawn_units AS (
+      -- Both physical cards and session-linked vouchers leaving the
+      -- house via completed card_withdrawal_requests.
+      --
+      -- UNNEST + indexed-equality join (not ANY(array)) so Postgres
+      -- can use the PK index on user_inventory.id / vouchers.id
+      -- instead of seq-scanning every cwr row.
+      --
+      -- Cards: source_type IN ('pack','battle').
+      -- Vouchers: origins ('battle_excess_to_voucher',
+      -- 'pack_borrow_to_voucher') — both set origin_id to the
+      -- producing game_session_id, so the same source_id-to-acu-wager
+      -- matching as cards works. exchange_excess_to_voucher /
+      -- creator_fill_conversion are excluded (not session-attributable
+      -- to a referrer).
+      SELECT ui.user_id, ui.source_id, ui.value_at_obtained::numeric AS value
+        FROM (
+          SELECT UNNEST(cwr.inventory_item_ids) AS item_id
+            FROM card_withdrawal_requests cwr
+           WHERE cwr.status IN ('completed', 'shipped')
+        ) cwr_unnested
+        JOIN user_inventory ui ON ui.id = cwr_unnested.item_id
+       WHERE ui.source_type::text IN ('pack', 'battle')
+      UNION ALL
+      SELECT v.user_id, v.origin_id AS source_id, v.value::numeric AS value
+        FROM (
+          SELECT UNNEST(cwr.voucher_ids) AS voucher_id
+            FROM card_withdrawal_requests cwr
+           WHERE cwr.status IN ('completed', 'shipped')
+        ) cwr_unnested
+        JOIN vouchers v ON v.id = cwr_unnested.voucher_id
+       WHERE v.origin::text IN ('battle_excess_to_voucher', 'pack_borrow_to_voucher')
+    ),
     creator_cardwd AS (
-      -- CardWD: value_at_obtained from inventory items withdrawn,
-      -- where the item came from a session wagered under some creator's
-      -- code AND the withdrawing user has a coverage-attributed deposit
-      -- under THAT creator. Depositor filter via EXISTS on
-      -- depositors_per_creator so cross-creator drag is prevented.
+      -- Value-out per creator: each withdrawn unit (card OR voucher)
+      -- matched back to the creator via its source session's acu
+      -- wager row, restricted to users with a coverage-attributed
+      -- deposit under THAT creator (depositor filter).
       SELECT acu_w.affiliate_user_id AS creator_id,
-             SUM(ui.value_at_obtained::numeric) AS total_card_withdrawals
-        FROM card_withdrawal_requests cwr
-        JOIN user_inventory ui ON ui.id = ANY(cwr.inventory_item_ids)
+             SUM(wu.value) AS total_card_withdrawals
+        FROM withdrawn_units wu
         JOIN affiliate_code_usages acu_w
-             ON acu_w.game_session_id = ui.source_id
+             ON acu_w.game_session_id = wu.source_id
             AND acu_w.usage_type::text = 'wager'
         JOIN "user" u ON u.id = acu_w.referred_user_id
-       WHERE cwr.status IN ('completed', 'shipped')
-         AND ui.source_type::text IN ('pack', 'battle')
-         AND u.role NOT IN ('admin', 'support', 'creator')
+       WHERE u.role NOT IN ('admin', 'support', 'creator')
          AND u.id != acu_w.affiliate_user_id${blacklistAnd}
          AND EXISTS (
            SELECT 1 FROM depositors_per_creator dpc
             WHERE dpc.creator_id = acu_w.affiliate_user_id
-              AND dpc.user_id    = ui.user_id
+              AND dpc.user_id    = wu.user_id
          )
        GROUP BY acu_w.affiliate_user_id
     )
