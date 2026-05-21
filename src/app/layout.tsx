@@ -16,6 +16,10 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  // Absolute base for OG image URLs in link-preview embeds (Discord /
+  // Slack / iMessage / Twitter). Without this Next emits relative URLs
+  // and crawlers can't resolve them.
+  metadataBase: new URL("https://pokewin-admin.vercel.app"),
   title: {
     default: "PackyGG Admin",
     template: "%s · PackyGG Admin",
@@ -23,6 +27,23 @@ export const metadata: Metadata = {
   description: "Admin panel for PackyGG",
   icons: {
     icon: "/icon.png",
+  },
+  // Link-preview metadata. Title is static — every page shared (login,
+  // withdrawals/[id], etc.) shows the same branded card instead of
+  // "Sign In · PackyGG Admin". The image is sourced from the
+  // file-based metadata convention: `src/app/opengraph-image.jpg` is
+  // auto-resolved by Next.js and injected as the og:image with the
+  // correct width/height — no need to repeat the URL here.
+  openGraph: {
+    title: "PackyGG Admin dashboard",
+    description: "PackyGG Admin dashboard",
+    siteName: "PackyGG Admin",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "PackyGG Admin dashboard",
+    description: "PackyGG Admin dashboard",
   },
 };
 
