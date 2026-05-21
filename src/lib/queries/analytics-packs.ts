@@ -10,17 +10,25 @@ export type TopPack24hRow = {
 };
 
 /**
- * Top N packs by opening count over the rolling last 24 hours. Used
- * by the Analytics overview tab to surface "what's hot right now"
- * with exact open counts + pack names.
+ * Top N packs by REAL opening count over the rolling last 24 hours.
+ * Combines solo opens AND battle opens — a pack that runs mostly in
+ * battles still ranks correctly. Reward packs
+ * (`packs.pack_type = 'reward'`) are excluded, since the panel is
+ * meant to surface what real users are actually paying to open.
+ * Used by the Analytics → Pack & Battle tab as a "what's hot RIGHT
+ * NOW" leaderboard.
  *
- * Same staff-exclusion + blacklist semantics as every other dashboard
- * aggregate. Uses `game_sessions.game_id → packs.id` direct join —
- * matches the convention in `getPackProfitability` above. Pack openings
- * that go through `user_packs` (e.g. reward packs) are not counted
- * here, matching the existing per-pack analytics behaviour. If we
- * ever need to include them, mirror the COALESCE pattern from
- * /users/[id]/actions.ts:getGameSessionDetails.
+ * Counting:
+ *   • Solo   — one row per `game_sessions` with `game_type = 'pack'`.
+ *   • Battle — one row per (`battle_participants` row, pack-in
+ *     `battles.pack_ids`) pair. Each participant opens every pack
+ *     listed on the battle, so UNNEST gives the right granularity.
+ *     Bot participants (`battle_participants.user_id IS NULL`) and
+ *     staff (admin / support) are filtered out.
+ *
+ * Pack openings via `user_packs` (legacy reward grants, gift-card
+ * grants, etc.) are still not counted, matching the rest of the
+ * analytics layer.
  */
 export async function getTopOpenedPacks24h(
   limit = 20,
@@ -38,18 +46,53 @@ export async function getTopOpenedPacks24h(
   const rows = await db.$queryRawUnsafe<
     { id: string; name: string; image_url: string | null; opens: string }[]
   >(`
+    WITH solo_opens AS (
+      SELECT gs.game_id AS pack_id, COUNT(*) AS opens
+      FROM game_sessions gs
+      WHERE gs.game_type = 'pack'
+        AND gs.created_at >= NOW() - INTERVAL '24 hours'
+        AND gs.user_id IN (
+          SELECT id FROM "user"
+          WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
+        )
+      GROUP BY gs.game_id
+    ),
+    battle_opens AS (
+      -- Each battle_participant opens every pack listed on the battle.
+      -- UNNEST(pack_ids) yields one row per (participant, pack) pair —
+      -- counting those rows gives real per-pack open counts that match
+      -- the user's intuition ("this pack was opened N times"). Bots
+      -- have user_id IS NULL and are excluded by both filters below.
+      SELECT pid::uuid AS pack_id, COUNT(*) AS opens
+      FROM battle_participants bp
+      JOIN battles b ON b.id = bp.battle_id
+      CROSS JOIN LATERAL UNNEST(b.pack_ids::uuid[]) AS pid
+      WHERE bp.created_at >= NOW() - INTERVAL '24 hours'
+        AND bp.user_id IS NOT NULL
+        AND bp.user_id IN (
+          SELECT id FROM "user"
+          WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
+        )
+      GROUP BY pid
+    ),
+    total_opens AS (
+      SELECT pack_id, SUM(opens) AS opens
+      FROM (
+        SELECT pack_id, opens FROM solo_opens
+        UNION ALL
+        SELECT pack_id, opens FROM battle_opens
+      ) x
+      GROUP BY pack_id
+    )
     SELECT
-      p.id::text AS id,
+      p.id::text       AS id,
       p.name,
       p.image_url,
-      COUNT(*)::text AS opens
-    FROM game_sessions gs
-    JOIN packs p ON p.id = gs.game_id
-    WHERE gs.game_type = 'pack'
-      AND gs.created_at >= NOW() - INTERVAL '24 hours'
-      AND gs.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})
-    GROUP BY p.id, p.name, p.image_url
-    ORDER BY opens DESC
+      t.opens::text    AS opens
+    FROM total_opens t
+    JOIN packs p ON p.id = t.pack_id
+    WHERE p.pack_type <> 'reward'
+    ORDER BY t.opens DESC
     LIMIT ${safeLimit}
   `);
 
