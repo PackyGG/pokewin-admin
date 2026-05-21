@@ -7,6 +7,10 @@ import { columns as depositsColumns } from "./columns";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  TableSkeleton,
+  PaginationSkeleton,
+} from "@/components/loading-skeletons";
 import { PageHero } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { BigDepositsToggle } from "./big-deposits-toggle";
@@ -29,13 +33,14 @@ export default async function DepositsTransactionsPage({
   const parsedMin = Number(params.minAmount);
   const minAmount =
     Number.isFinite(parsedMin) && parsedMin > 0 ? parsedMin : undefined;
+  const search = params.search;
 
-  const result = await getDepositTransactions({
-    page,
-    perPage,
-    search: params.search,
-    minAmount,
-  });
+  // Key that changes whenever the query inputs change, so the inner
+  // <Suspense> remounts (re-shows the table skeleton) on pagination /
+  // search / big-deposits toggle. Without this, an in-segment
+  // navigation would leave a stale table on screen until the new
+  // query returned — feels broken on a slow query.
+  const sectionKey = `${page}|${perPage}|${search ?? ""}|${minAmount ?? ""}`;
 
   return (
     <div className="space-y-6">
@@ -61,16 +66,69 @@ export default async function DepositsTransactionsPage({
             <BigDepositsToggle />
           </DataTableToolbar>
         </Suspense>
-        <FadeIn>
-          <TransactionsDataTable data={result.data} columns={depositsColumns} />
-        </FadeIn>
-        <DataTablePagination
-          page={result.page}
-          totalPages={result.totalPages}
-          total={result.total}
-          perPage={result.perPage}
-        />
+        {/* The ledger query is the slow part of this page —
+            getDepositTransactions runs a correlated EXISTS over
+            ledger_transactions to de-dupe paired deposit_bonus rows
+            plus a LATERAL bonus join, both gated by type IN (…) and
+            ORDER BY created_at DESC. Wrap just the table + pagination
+            in <Suspense> so the page hero and toolbar paint
+            immediately; the skeleton stays visible until the query
+            returns, instead of blocking the whole route render. On
+            an in-segment navigation (page change, search, toggle)
+            the section key flips and the skeleton re-shows. */}
+        <Suspense
+          key={sectionKey}
+          fallback={
+            <>
+              <TableSkeleton rows={Math.min(perPage, 15)} columns={6} />
+              <PaginationSkeleton />
+            </>
+          }
+        >
+          <DepositsTableSection
+            page={page}
+            perPage={perPage}
+            search={search}
+            minAmount={minAmount}
+          />
+        </Suspense>
       </div>
     </div>
+  );
+}
+
+// Extracted async section so the slow query lives inside <Suspense>
+// instead of blocking the whole route. Kept colocated with the page
+// — only one consumer, no reuse, splitting to a separate file would
+// just add indirection.
+async function DepositsTableSection({
+  page,
+  perPage,
+  search,
+  minAmount,
+}: {
+  page: number;
+  perPage: number;
+  search: string | undefined;
+  minAmount: number | undefined;
+}) {
+  const result = await getDepositTransactions({
+    page,
+    perPage,
+    search,
+    minAmount,
+  });
+  return (
+    <>
+      <FadeIn>
+        <TransactionsDataTable data={result.data} columns={depositsColumns} />
+      </FadeIn>
+      <DataTablePagination
+        page={result.page}
+        totalPages={result.totalPages}
+        total={result.total}
+        perPage={result.perPage}
+      />
+    </>
   );
 }

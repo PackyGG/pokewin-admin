@@ -7,6 +7,10 @@ import { TransactionsDataTable } from "../data-table";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  TableSkeleton,
+  PaginationSkeleton,
+} from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
 import { PageHero } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
@@ -20,7 +24,12 @@ const STATUS_TABS = [
   { value: "failed", label: "Failed" },
 ];
 
-const TYPES = ["battle_bet", "battle_sponsorship", "battle_refund", "battle_excess_to_voucher"];
+const TYPES = [
+  "battle_bet",
+  "battle_sponsorship",
+  "battle_refund",
+  "battle_excess_to_voucher",
+];
 
 export default async function BattleTransactionsPage({
   searchParams,
@@ -33,13 +42,8 @@ export default async function BattleTransactionsPage({
   const perPage = Number(params.perPage) || 20;
   const tab = params.tab || "all";
 
-  const result = await getTransactions({
-    page,
-    perPage,
-    search: params.search,
-    types: TYPES,
-    status: tab === "all" ? undefined : tab,
-  });
+  // Suspense key — re-mount the table boundary on input change.
+  const suspenseKey = `${tab}|${page}|${perPage}|${params.search ?? ""}`;
 
   return (
     <div className="space-y-6">
@@ -79,16 +83,59 @@ export default async function BattleTransactionsPage({
             searchPlaceholder="Search by user ID, username, or transaction ID..."
           />
         </Suspense>
-        <FadeIn>
-          <TransactionsDataTable data={result.data} />
-        </FadeIn>
-        <DataTablePagination
-          page={result.page}
-          totalPages={result.totalPages}
-          total={result.total}
-          perPage={result.perPage}
-        />
+        {/* getTransactions for battle types still hits the big
+            ledger_transactions scan + game_sessions join. Stream the
+            table so the page chrome flushes immediately. */}
+        <Suspense
+          key={suspenseKey}
+          fallback={
+            <>
+              <TableSkeleton rows={Math.min(perPage, 15)} columns={6} />
+              <PaginationSkeleton />
+            </>
+          }
+        >
+          <BattleTxTableSection
+            page={page}
+            perPage={perPage}
+            tab={tab}
+            search={params.search}
+          />
+        </Suspense>
       </div>
     </div>
+  );
+}
+
+async function BattleTxTableSection({
+  page,
+  perPage,
+  tab,
+  search,
+}: {
+  page: number;
+  perPage: number;
+  tab: string;
+  search: string | undefined;
+}) {
+  const result = await getTransactions({
+    page,
+    perPage,
+    search,
+    types: TYPES,
+    status: tab === "all" ? undefined : tab,
+  });
+  return (
+    <>
+      <FadeIn>
+        <TransactionsDataTable data={result.data} />
+      </FadeIn>
+      <DataTablePagination
+        page={result.page}
+        totalPages={result.totalPages}
+        total={result.total}
+        perPage={result.perPage}
+      />
+    </>
   );
 }
