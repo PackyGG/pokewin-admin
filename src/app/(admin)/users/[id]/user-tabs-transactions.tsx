@@ -261,7 +261,7 @@ export const CategoryTransactionsTable = React.memo(
                 <TableHead>ID</TableHead>
                 <TableHead>Type</TableHead>
                 <TableHead>Amount</TableHead>
-                {showCardsValue && <TableHead>Cards Value</TableHead>}
+                {showCardsValue && <TableHead>Won Value</TableHead>}
                 {showCardsValue && <TableHead>House Profit</TableHead>}
                 <TableHead>Before</TableHead>
                 <TableHead>After</TableHead>
@@ -343,8 +343,8 @@ export const CategoryTransactionsTable = React.memo(
                             {cv != null
                               ? (() => {
                                   // House profit on the session: bet we
-                                  // took in minus value of cards we
-                                  // handed back. Positive = house win
+                                  // took in minus value of cards + vouchers
+                                  // we handed back. Positive = house win
                                   // (emerald), negative = user pulled
                                   // above bet (rose) — already in
                                   // house-POV, no sign flip needed.

@@ -46,6 +46,7 @@ export async function getUserTransactions(
       include: {
         game_sessions_ledger_transactions_game_session_idTogame_sessions: {
           select: {
+            id: true,
             game_id: true,
             game_type: true,
             result: true,
@@ -168,7 +169,7 @@ export async function getUserTransactions(
       // per-tx held-value snapshot can count them alongside cards.
       db.vouchers.findMany({
         where: { user_id: userId },
-        select: { value: true, created_at: true, claimed_at: true },
+        select: { value: true, created_at: true, claimed_at: true, origin_id: true },
       }),
     ]);
   const { inventoryItems, cards } = invAndCards;
@@ -196,34 +197,46 @@ export async function getUserTransactions(
     inventoryValueByTx.set(t.id, total);
   }
 
-  // Compute cards value for gaming transactions from included provably_fair_results.
-  // For battles we only trust the sum once game_sessions.result is non-null
-  // (i.e. the battle has resolved for this participant). Inventory rows are
-  // inserted round-by-round during the battle, so reading them mid-battle
-  // gives a moving target — the admin sees a fake "losing" display that
-  // drifts toward the real P&L as rounds roll in.
-  // Pack openings don't have this problem (they're atomic), so they stay
-  // on the old path.
+  // Voucher excess a game session produced (battle_excess_to_voucher /
+  // pack_borrow_to_voucher) is parked as a voucher whose origin_id is
+  // the originating game_session id. Map session id → total voucher
+  // value so the value WON below counts the voucher as winnings, not
+  // just the cards — a voucher is value the user pulled out of the play.
+  const voucherValueByGameSession = new Map<string, number>();
+  for (const v of allVouchers) {
+    if (v.origin_id) {
+      voucherValueByGameSession.set(
+        v.origin_id,
+        (voucherValueByGameSession.get(v.origin_id) ?? 0) + toNumber(v.value),
+      );
+    }
+  }
+
+  // Value WON per gaming transaction = card winnings (from the session's
+  // provably_fair_results) PLUS any voucher excess that session spun off.
+  // For battles we only trust the sum once game_sessions.result is
+  // non-null (otherwise PF rows are still inserted round-by-round and the
+  // number is a moving target — the admin would see a fake "losing"
+  // display). Pack openings are atomic, so they're always safe to read.
   const cardsValueByTx = new Map<string, number>();
   for (const t of transactions) {
     const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
     if (!gs) continue;
+    const sessionVoucher = voucherValueByGameSession.get(gs.id) ?? 0;
 
     if (t.type === "pack_opening") {
-      const value = gs.provably_fair_results.reduce(
+      const cards = gs.provably_fair_results.reduce(
         (sum, pf) => sum + (pf.user_inventory ? toNumber(pf.user_inventory.value_at_obtained) : 0),
         0
       );
-      cardsValueByTx.set(t.id, value);
+      cardsValueByTx.set(t.id, cards + sessionVoucher);
     } else if (t.type === "battle_bet" || t.type === "battle_sponsorship") {
-      // Only compute for resolved battles — otherwise leave null so the UI
-      // shows "—" / "Pending" rather than a changing number.
       if (gs.result !== null) {
-        const value = gs.provably_fair_results.reduce(
+        const cards = gs.provably_fair_results.reduce(
           (sum, pf) => sum + (pf.user_inventory ? toNumber(pf.user_inventory.value_at_obtained) : 0),
           0
         );
-        cardsValueByTx.set(t.id, value);
+        cardsValueByTx.set(t.id, cards + sessionVoucher);
       }
     }
   }
