@@ -155,17 +155,30 @@ export async function getUserTransactions(
     return { inventoryItems, cards };
   }
 
-  const [packByGameId, invAndCards, allInventory] = await Promise.all([
-    resolvePacks(),
-    resolveInventoryWithCards(),
-    db.user_inventory.findMany({
-      where: { user_id: userId },
-      select: { value_at_obtained: true, obtained_at: true, sold_at: true, exchanged_at: true },
-    }),
-  ]);
+  const [packByGameId, invAndCards, allInventory, allVouchers] =
+    await Promise.all([
+      resolvePacks(),
+      resolveInventoryWithCards(),
+      db.user_inventory.findMany({
+        where: { user_id: userId },
+        select: { value_at_obtained: true, obtained_at: true, sold_at: true, exchanged_at: true },
+      }),
+      // Vouchers are held value too — battle / exchange excess gets
+      // parked as a voucher until the user redeems it. Pulled so the
+      // per-tx held-value snapshot can count them alongside cards.
+      db.vouchers.findMany({
+        where: { user_id: userId },
+        select: { value: true, created_at: true, claimed_at: true },
+      }),
+    ]);
   const { inventoryItems, cards } = invAndCards;
   const cardMap = new Map(cards.map((c) => [c.id, c]));
   const inventoryMap = new Map(inventoryItems.map((i) => [i.id, { ...i, card: cardMap.get(i.card_id) ?? null }]));
+  // Held value at each tx timestamp = unsold/unexchanged cards PLUS
+  // unclaimed vouchers, each valued as of that moment (held = created
+  // on/before the tx and not yet disposed/claimed as of it). Vouchers
+  // are included because a voucher is value the user is holding exactly
+  // like card inventory — the same way the PnL formula subtracts both.
   const inventoryValueByTx = new Map<string, number>();
   for (const t of transactions) {
     const ts = t.created_at;
@@ -173,6 +186,11 @@ export async function getUserTransactions(
     for (const item of allInventory) {
       if (item.obtained_at <= ts && (!item.sold_at || item.sold_at > ts) && (!item.exchanged_at || item.exchanged_at > ts)) {
         total += toNumber(item.value_at_obtained);
+      }
+    }
+    for (const v of allVouchers) {
+      if (v.created_at <= ts && (!v.claimed_at || v.claimed_at > ts)) {
+        total += toNumber(v.value);
       }
     }
     inventoryValueByTx.set(t.id, total);
