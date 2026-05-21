@@ -8,6 +8,7 @@ import {
   LineChart,
   BadgeDollarSign,
   HandCoins,
+  Gauge,
 } from "lucide-react";
 import { getDashboardStats } from "@/lib/queries/dashboard";
 import { getLiveActivity, getLiveDeposits } from "@/lib/queries/dashboard-live";
@@ -38,6 +39,13 @@ export default async function DashboardPage() {
     getLiveActivity({ sinceCreatedAt: null, limit: 50 }),
     getLiveDeposits({ sinceCreatedAt: null, limit: 20 }),
   ]);
+
+  // Average deposit transactions per hour. depositCounts holds the
+  // completed-deposit count per rolling window, so dividing by the
+  // window length in hours gives the per-hour rate. 24h is the hero
+  // (smooths a full peak/off-peak day); 7d is the longer baseline.
+  const depositsPerHour24h = (stats.depositCounts["24h"] ?? 0) / 24;
+  const depositsPerHour7d = (stats.depositCounts["7d"] ?? 0) / (7 * 24);
 
   return (
     <div className="space-y-6">
@@ -92,7 +100,7 @@ export default async function DashboardPage() {
       {/* Secondary stats — all-time / snapshot. These are simpler
           (no period chips) so they tolerate 2-up on phone, 3-up at
           sm, then 6 across at lg+. */}
-      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-6">
+      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-6 xl:grid-cols-7">
         <StatCard
           title="Total Users"
           animatedValue={stats.users.total}
@@ -159,6 +167,19 @@ export default async function DashboardPage() {
           subtitle="Across all users (lifetime)"
           icon={Coins}
           color="cyan"
+        />
+        {/* Deposits / Hour — average deposit transactions per hour.
+            Hero is the last-24h rate (count ÷ 24); subtitle carries the
+            7-day baseline. Emerald = money flowing in (house POV), to
+            match the Deposits card. Uses `value` (not animatedValue)
+            because AnimatedNumber rounds the "number" format to an
+            integer and we want the .1 precision on a fractional rate. */}
+        <StatCard
+          title="Deposits / Hour"
+          value={depositsPerHour24h.toFixed(1)}
+          subtitle={`last 24h avg · 7d ${depositsPerHour7d.toFixed(1)}/hr`}
+          icon={Gauge}
+          color="emerald"
         />
         <StatCard
           title="Avg RTP"
