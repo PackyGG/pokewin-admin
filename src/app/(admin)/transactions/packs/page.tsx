@@ -11,6 +11,10 @@ import { columns as packColumns } from "./columns";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  TableSkeleton,
+  PaginationSkeleton,
+} from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
 import { PageHero } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
@@ -44,14 +48,10 @@ export default async function PackTransactionsPage({
     rawSort && (SORT_MODES as string[]).includes(rawSort) ? rawSort : "recent"
   ) as TransactionSortMode;
 
-  const result = await getTransactions({
-    page,
-    perPage,
-    search: params.search,
-    types: TYPES,
-    status: tab === "all" ? undefined : tab,
-    sortBy,
-  });
+  // Suspense key — flips when any query input changes so the table
+  // skeleton re-shows on in-segment navigation instead of leaving a
+  // stale table on screen during a slow refetch.
+  const suspenseKey = `${tab}|${page}|${perPage}|${sortBy}|${params.search ?? ""}`;
 
   return (
     <div className="space-y-6">
@@ -109,16 +109,65 @@ export default async function PackTransactionsPage({
             ]}
           />
         </Suspense>
-        <FadeIn>
-          <TransactionsDataTable data={result.data} columns={packColumns} />
-        </FadeIn>
-        <DataTablePagination
-          page={result.page}
-          totalPages={result.totalPages}
-          total={result.total}
-          perPage={result.perPage}
-        />
+        {/* getTransactions joins ledger_transactions to game_sessions /
+            provably_fair_results / user_inventory to compute the
+            payout + multiplier columns — heavy enough to block the
+            route render on its own. Streamed inside Suspense so the
+            hero + tabs + toolbar flush immediately. */}
+        <Suspense
+          key={suspenseKey}
+          fallback={
+            <>
+              <TableSkeleton rows={Math.min(perPage, 15)} columns={6} />
+              <PaginationSkeleton />
+            </>
+          }
+        >
+          <PackTxTableSection
+            page={page}
+            perPage={perPage}
+            tab={tab}
+            sortBy={sortBy}
+            search={params.search}
+          />
+        </Suspense>
       </div>
     </div>
+  );
+}
+
+async function PackTxTableSection({
+  page,
+  perPage,
+  tab,
+  sortBy,
+  search,
+}: {
+  page: number;
+  perPage: number;
+  tab: string;
+  sortBy: TransactionSortMode;
+  search: string | undefined;
+}) {
+  const result = await getTransactions({
+    page,
+    perPage,
+    search,
+    types: TYPES,
+    status: tab === "all" ? undefined : tab,
+    sortBy,
+  });
+  return (
+    <>
+      <FadeIn>
+        <TransactionsDataTable data={result.data} columns={packColumns} />
+      </FadeIn>
+      <DataTablePagination
+        page={result.page}
+        totalPages={result.totalPages}
+        total={result.total}
+        perPage={result.perPage}
+      />
+    </>
   );
 }
