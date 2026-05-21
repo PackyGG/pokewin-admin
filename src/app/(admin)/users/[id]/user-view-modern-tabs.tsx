@@ -238,6 +238,7 @@ export function InventoryTab({
         userId={user.id}
         initialInventory={inventory}
         inventoryValue={balances?.inventoryValue ?? 0}
+        vouchersValue={balances?.vouchersValue ?? 0}
         statusFilter="owned"
       />
       <SectionHeading icon={Trophy} title="Sold & Exchanged" />

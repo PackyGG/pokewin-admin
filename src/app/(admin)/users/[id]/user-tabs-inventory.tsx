@@ -44,11 +44,16 @@ export const InventoryGrid = React.memo(function InventoryGrid({
   userId,
   initialInventory,
   inventoryValue,
+  vouchersValue = 0,
   statusFilter = "owned",
 }: {
   userId: string;
   initialInventory: PaginatedInventory;
   inventoryValue: number;
+  /** Unclaimed voucher value the user is holding. Shown next to the
+   *  card value so "Current Inventory" reflects all held value — a
+   *  voucher is held value just like a card. */
+  vouchersValue?: number;
   statusFilter?: string;
 }) {
   const [inventory, setInventory] = useState(initialInventory);
@@ -149,6 +154,14 @@ export const InventoryGrid = React.memo(function InventoryGrid({
                 —{" "}
                 <span className="text-muted-foreground">
                   {formatCurrency(inventoryValue)}
+                </span>
+              </>
+            ) : null}
+            {vouchersValue > 0 ? (
+              <>
+                {" "}
+                <span className="text-muted-foreground">
+                  + {formatCurrency(vouchersValue)} in vouchers
                 </span>
               </>
             ) : null}
