@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Package, Swords } from "lucide-react";
+import { ArrowRight, Flame, Package, Swords } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -11,10 +11,13 @@ import {
 } from "@/components/ui/table";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { FadeIn } from "@/components/fade-in";
+import { CardImage } from "@/components/card-image";
 import { cn } from "@/lib/utils";
 import {
   getPackProfitability,
+  getTopOpenedPacks24h,
   type PacksPeriod,
+  type TopPack24hRow,
 } from "@/lib/queries/analytics-packs";
 import { getPackAndBattleStats } from "@/lib/queries/analytics";
 import { BattleModesSection, PackPopularitySection } from "./sections";
@@ -66,9 +69,10 @@ export async function PacksBattlesTab({
   // visitors count, etc.) purely to consume two of its return fields.
   // Slim variant runs the 6 raws that actually feed those two
   // sections, dropping the rest entirely.
-  const [data, overview] = await Promise.all([
+  const [data, overview, topPacks24h] = await Promise.all([
     getPackProfitability(period),
     getPackAndBattleStats(heroPeriod),
+    getTopOpenedPacks24h(10),
   ]);
   const sortFn = (a: {
     revenue: number;
@@ -97,6 +101,8 @@ export async function PacksBattlesTab({
   return (
     <FadeIn>
       <div className="space-y-4">
+        <TopPacks24hPanel rows={topPacks24h} />
+
         <div className="space-y-4">
           <BattleModesSection stats={overview.battleStats} />
           <PackPopularitySection stats={overview.packStats} />
@@ -325,5 +331,108 @@ function BattlePacksTable({
         ))}
       </TableBody>
     </Table>
+  );
+}
+
+// ── Top Packs (last 24h) ────────────────────────────────────────────
+//
+// Rolling-24h leaderboard of most-opened packs with exact open count
+// + pack name (and avatar where the pack has an image_url). Period
+// filter at the top of the page is intentionally ignored — this panel
+// answers "what's hot RIGHT NOW" and pairing it with a 90d window
+// would dilute the signal. Lives on this tab (was on Overview) so
+// pack-related signals are grouped together.
+function TopPacks24hPanel({ rows }: { rows: TopPack24hRow[] }) {
+  const totalOpens = rows.reduce((sum, r) => sum + r.opens, 0);
+  const topOpens = rows[0]?.opens ?? 0;
+
+  return (
+    <div className="rounded-2xl border bg-gradient-to-br from-card via-card to-card/80 p-4 sm:p-5">
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-orange-500/15">
+            <Flame className="size-4 text-orange-500" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-base font-semibold leading-tight">
+              Top packs — last 24h
+            </h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Most-opened packs in the rolling last 24 hours. Real users
+              only.
+            </p>
+          </div>
+        </div>
+        <div className="shrink-0 rounded-lg border border-orange-500/30 bg-orange-500/10 px-3 py-1.5 sm:text-right">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Total opens
+          </p>
+          <p className="text-base font-bold tabular-nums text-orange-600 dark:text-orange-400">
+            {formatNumber(totalOpens)}
+          </p>
+        </div>
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="py-8 text-center text-sm text-muted-foreground">
+          No pack opens in the last 24 hours.
+        </p>
+      ) : (
+        <div className="divide-y rounded-xl border">
+          {rows.map((r, idx) => (
+            <TopPackRow key={r.id} row={r} rank={idx + 1} topOpens={topOpens} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TopPackRow({
+  row,
+  rank,
+  topOpens,
+}: {
+  row: TopPack24hRow;
+  rank: number;
+  topOpens: number;
+}) {
+  // Inline progress bar — width relative to the #1 pack so the
+  // distribution is readable at a glance without forcing every row to
+  // be 100%.
+  const widthPct = topOpens > 0 ? (row.opens / topOpens) * 100 : 0;
+  return (
+    <Link
+      href={`/packs/${row.id}`}
+      className="group flex items-center justify-between gap-3 px-3 py-2.5 transition-colors hover:bg-muted/40 sm:px-4"
+    >
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <span className="w-6 shrink-0 text-center text-xs font-semibold tabular-nums text-muted-foreground">
+          {rank}
+        </span>
+        <CardImage
+          src={row.imageUrl}
+          alt=""
+          className="size-9 shrink-0 rounded-lg"
+        />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium leading-tight">
+            {row.name}
+          </p>
+          <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-sm bg-muted/60">
+            <div
+              className="h-full rounded-sm bg-orange-500/70 transition-[width] motion-safe:duration-500"
+              style={{ width: `${widthPct}%` }}
+            />
+          </div>
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        <p className="text-sm font-semibold tabular-nums sm:text-base">
+          {formatNumber(row.opens)}
+        </p>
+        <ArrowRight className="size-4 text-muted-foreground opacity-50 transition-opacity group-hover:opacity-100" />
+      </div>
+    </Link>
   );
 }
