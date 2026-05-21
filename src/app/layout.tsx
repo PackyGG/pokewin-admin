@@ -46,12 +46,10 @@ export const metadata: Metadata = {
   icons: {
     icon: "/icon.png",
   },
-  // Link-preview metadata. Title is static — every page shared (login,
-  // withdrawals/[id], etc.) shows the same branded card instead of
-  // "Sign In · PackyGG Admin". The image is sourced from the
-  // file-based metadata convention: `src/app/opengraph-image.jpg` is
-  // auto-resolved by Next.js and injected as the og:image with the
-  // correct width/height — no need to repeat the URL here.
+  // Link-preview metadata. Title is static — every page shared
+  // (login, withdrawals/[id], etc.) embeds the same branded text
+  // card instead of "Sign In · PackyGG Admin". No og:image on
+  // purpose — text-only embed.
   openGraph: {
     title: "PackyGG Admin dashboard",
     description: "PackyGG Admin dashboard",
