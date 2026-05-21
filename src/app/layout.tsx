@@ -15,11 +15,29 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// Absolute base for OG image URLs in link-preview embeds (Discord /
+// Slack / iMessage / Twitter). Without this Next emits relative URLs
+// and crawlers can't resolve them.
+//
+// Resolved per-deployment so the og:image URL always points at the
+// SAME deployment that served the metadata — otherwise a branch
+// preview would emit URLs that point at prod, and prod wouldn't have
+// the file yet until the branch is merged. Priority:
+//   1. NEXT_PUBLIC_SITE_URL  — explicit override (custom domains).
+//   2. Production deployment → VERCEL_PROJECT_PRODUCTION_URL (clean alias).
+//   3. Any other Vercel deployment → VERCEL_URL (this deployment).
+//   4. Local fallback (npm run dev / non-Vercel build).
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL
+  ? process.env.NEXT_PUBLIC_SITE_URL
+  : process.env.VERCEL_ENV === "production" &&
+      process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : "https://pokewin-admin.vercel.app";
+
 export const metadata: Metadata = {
-  // Absolute base for OG image URLs in link-preview embeds (Discord /
-  // Slack / iMessage / Twitter). Without this Next emits relative URLs
-  // and crawlers can't resolve them.
-  metadataBase: new URL("https://pokewin-admin.vercel.app"),
+  metadataBase: new URL(siteUrl),
   title: {
     default: "PackyGG Admin",
     template: "%s · PackyGG Admin",
