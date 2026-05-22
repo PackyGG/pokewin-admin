@@ -66,16 +66,15 @@ export default async function DepositsTransactionsPage({
             <BigDepositsToggle />
           </DataTableToolbar>
         </Suspense>
-        {/* The ledger query is the slow part of this page —
-            getDepositTransactions runs a correlated EXISTS over
-            ledger_transactions to de-dupe paired deposit_bonus rows
-            plus a LATERAL bonus join, both gated by type IN (…) and
-            ORDER BY created_at DESC. Wrap just the table + pagination
-            in <Suspense> so the page hero and toolbar paint
-            immediately; the skeleton stays visible until the query
-            returns, instead of blocking the whole route render. On
-            an in-segment navigation (page change, search, toggle)
-            the section key flips and the skeleton re-shows. */}
+        {/* getDepositTransactions is now lean — a bare index scan over
+            type='deposit' plus a per-page-row LATERAL that merges the
+            paired deposit_bonus. No per-user totals or cross-DB tag
+            preload. We still wrap the table + pagination in <Suspense>
+            so the page hero and toolbar paint immediately and the
+            skeleton stays visible until the rows return, instead of
+            blocking the whole route render. On an in-segment navigation
+            (page change, search, toggle) the section key flips and the
+            skeleton re-shows. */}
         <Suspense
           key={sectionKey}
           fallback={
