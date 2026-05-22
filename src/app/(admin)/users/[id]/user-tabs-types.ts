@@ -298,6 +298,9 @@ export type PnlBreakdown = {
   };
   netPnlRealized: number;
   netPnlTrue: number;
+  // Rolling windowed house P&L (past 24h / 7d) — see getUserPnlBreakdown.
+  pnl24h: number;
+  pnl7d: number;
 };
 
 export type AdminNote = {

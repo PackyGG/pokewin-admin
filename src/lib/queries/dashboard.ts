@@ -10,6 +10,7 @@ import {
 } from "./_blacklist";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
+import { calculateWindowedPnl } from "./pnl";
 import { getCreatorSessionWindowsCte } from "./creator-session-windows";
 
 export type ActivityItem = {
@@ -378,6 +379,7 @@ async function dashboardStatsInner() {
     activityTotals,
     uniqueDepositorsResult,
     realizedPnlResult,
+    realizedPnl24hResult,
     avgSessionValueResult,
     totalInventoryValue,
     packsOpened24h,
@@ -469,6 +471,11 @@ async function dashboardStatsInner() {
         AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)})
     `,
     getRealizedPnlSnapshot(),
+    // Rolling past-24h house P&L — windowed delta (deposits −
+    // withdrawals − balanceΔ − inventoryΔ − voucherΔ over the last 24h),
+    // distinct from the lifetime realized snapshot above. Same staff +
+    // blacklist exclusion as the rest of the dashboard.
+    calculateWindowedPnl({ since: rolling24h, excludeUserIds: excluded }),
     db.$queryRaw<{ avg_session_value: string }[]>`
       WITH real_users AS (
         SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
@@ -635,6 +642,8 @@ async function dashboardStatsInner() {
     // Lifetime realized P&L from the house perspective — see getRealizedPnlSnapshot.
     // This is a single snapshot value, not a period series.
     realizedPnl: realizedPnlResult.pnl,
+    // Rolling past-24h house P&L (windowed delta — see calculateWindowedPnl).
+    realizedPnl24h: realizedPnl24hResult.pnl,
     deposits: {
       "1h": num(pa.revenue_1h),
       "3h": num(pa.revenue_3h),

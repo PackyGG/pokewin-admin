@@ -12,29 +12,53 @@ import { AnimatedNumber } from "@/components/animated-number";
 // rain-tip flood, etc.) without waiting for the 24h aggregate to move.
 const ranges = ["1h", "3h", "6h", "12h", "24h", "3d", "7d", "30d", "all"] as const;
 
-// Lifetime realized P&L — a single snapshot number, not period-based. The
-// number comes straight from getRealizedPnlSnapshot() in the dashboard query and
-// already accounts for deposits, withdrawals, user balances, inventory,
-// unclaimed vouchers, and unclaimed rakeback. No range selector — adding one
-// would be misleading because the underlying liabilities are current-state,
-// not a time series.
+// House P&L with two modes behind a small toggle:
+//   • lifetime — the realized-P&L SNAPSHOT (getRealizedPnlSnapshot):
+//     deposits − withdrawals − user balances − inventory − unclaimed
+//     vouchers − unclaimed rakeback, valued right now. Not a time series.
+//   • 24h — the ROLLING past-24h windowed delta (calculateWindowedPnl):
+//     the change in house P&L over the last 24 hours (now − 24h, not
+//     since UTC midnight). Different methodology from the snapshot (no
+//     rakeback term), so it sits behind its own toggle rather than
+//     pretending the snapshot is a time series.
 //
 // Colors follow CLAUDE.md's house-POV rule: house profit = emerald, house
-// loss = rose. Uses the rose palette rather than red so the dashboard keeps
-// a single-tone "house loss" color across every card.
-export function PnlStatCard({ pnl }: { pnl: number }) {
-  const isProfit = pnl >= 0;
+// loss = rose. The card tint + value color flip with the SELECTED value,
+// so switching to 24h recolors the card if the last day was a loss.
+export function PnlStatCard({
+  pnl,
+  pnl24h,
+}: {
+  pnl: number;
+  pnl24h: number;
+}) {
+  const [mode, setMode] = useState<"lifetime" | "24h">("lifetime");
+  const value = mode === "lifetime" ? pnl : pnl24h;
+  const isProfit = value >= 0;
 
   return (
     <Card className={cn(isProfit ? "bg-emerald-500/10" : "bg-rose-500/10")}>
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <CardTitle className="text-card-title text-muted-foreground">
             PnL
           </CardTitle>
-          <span className="hidden text-tiny text-muted-foreground sm:inline">
-            lifetime
-          </span>
+          <div className="flex gap-0.5">
+            {(["lifetime", "24h"] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                className={cn(
+                  "rounded px-1.5 py-0.5 text-tiny font-medium transition-colors",
+                  mode === m
+                    ? "bg-background/70 text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
         </div>
         {isProfit ? (
           <TrendingUp className="size-4 shrink-0 text-emerald-400" />
@@ -46,7 +70,7 @@ export function PnlStatCard({ pnl }: { pnl: number }) {
         <div className="text-stat-value truncate">
           <span className={isProfit ? "text-emerald-400" : "text-rose-400"}>
             {isProfit ? "+" : ""}
-            <AnimatedNumber value={pnl} format="currency" />
+            <AnimatedNumber value={value} format="currency" />
           </span>
         </div>
       </CardContent>

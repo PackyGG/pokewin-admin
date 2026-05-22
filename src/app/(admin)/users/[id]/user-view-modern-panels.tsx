@@ -292,6 +292,44 @@ export function ModernPnlPanel({
           }
         />
       </div>
+      {/* Rolling windowed P&L — house P&L over the past 24h / 7d (now − N,
+          NOT calendar buckets), as a windowed delta. House POV: gain =
+          emerald, loss = rose. */}
+      <div className="mt-3 space-y-0.5 border-t pt-3">
+        <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
+          Rolling P&amp;L
+        </p>
+        <PanelRow
+          label="Past 24h"
+          value={
+            <span
+              className={cn(
+                pnlBreakdown.pnl24h >= 0
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-rose-600 dark:text-rose-400",
+              )}
+            >
+              {pnlBreakdown.pnl24h >= 0 ? "+" : ""}
+              {formatCurrency(pnlBreakdown.pnl24h)}
+            </span>
+          }
+        />
+        <PanelRow
+          label="Past 7d"
+          value={
+            <span
+              className={cn(
+                pnlBreakdown.pnl7d >= 0
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-rose-600 dark:text-rose-400",
+              )}
+            >
+              {pnlBreakdown.pnl7d >= 0 ? "+" : ""}
+              {formatCurrency(pnlBreakdown.pnl7d)}
+            </span>
+          }
+        />
+      </div>
     </StatPanel>
   );
 }

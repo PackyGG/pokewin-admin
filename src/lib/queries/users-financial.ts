@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { calculateWindowedPnl } from "./pnl";
 
 export type PnlBreakdown = {
   // Gambling revenue (platform perspective, positive = platform earned)
@@ -28,11 +29,18 @@ export type PnlBreakdown = {
   // Net
   netPnlRealized: number;
   netPnlTrue: number;
+  // Rolling windowed house P&L (past 24h / 7d, now − N) — windowed
+  // delta form. Positive = house gain (emerald), per CLAUDE.md.
+  pnl24h: number;
+  pnl7d: number;
 };
 
 export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown> {
   const db = await getDb();
-  const [rows, inventoryValue] = await Promise.all([
+  const nowMs = Date.now();
+  const since24h = new Date(nowMs - 24 * 60 * 60 * 1000);
+  const since7d = new Date(nowMs - 7 * 24 * 60 * 60 * 1000);
+  const [rows, inventoryValue, windowed24h, windowed7d] = await Promise.all([
     db.$queryRaw<{ type: string; net: string }[]>`
       SELECT type,
              COALESCE(SUM(
@@ -57,6 +65,9 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
       where: { user_id: userId, sold_at: null, exchanged_at: null },
       _sum: { value_at_obtained: true },
     }),
+    // Rolling windowed house P&L for this user (past 24h / 7d).
+    calculateWindowedPnl({ userId, since: since24h }),
+    calculateWindowedPnl({ userId, since: since7d }),
   ]);
 
   const byType = new Map(rows.map((r) => [r.type, parseFloat(r.net) || 0]));
@@ -101,6 +112,8 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
     gamblingPnlRealized, unrealizedLiability, gamblingPnlTrue,
     bonusesCost, rakebackCost, affiliateCost, otherCosts, otherCostsDetail,
     netPnlRealized, netPnlTrue,
+    pnl24h: windowed24h.pnl,
+    pnl7d: windowed7d.pnl,
   };
 }
 

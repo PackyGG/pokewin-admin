@@ -75,7 +75,7 @@ export default async function DashboardPage() {
           squeezing 2-up at 380px crushed both). 2-up at sm, 3 at lg,
           6 across at xl. */}
       <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-6">
-        <PnlStatCard pnl={stats.realizedPnl} />
+        <PnlStatCard pnl={stats.realizedPnl} pnl24h={stats.realizedPnl24h} />
         <GgrStatCard ggr={stats.ggr} />
         {/* Two wager cards: "Total Wager" drops wagers a creator made
             while live on a deal/stream (house-funded sponsored balance,
