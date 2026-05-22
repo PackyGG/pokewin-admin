@@ -226,6 +226,14 @@ export default async function BattleDetailPage({
                                 {player.result}
                               </Badge>
                             )}
+                            {player.borrowPercentage > 0 && (
+                              <Badge
+                                variant="outline"
+                                className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30"
+                              >
+                                {player.borrowPercentage}% borrow
+                              </Badge>
+                            )}
                             <span className="text-sm font-medium">
                               {formatCurrency(player.totalValue)}
                             </span>

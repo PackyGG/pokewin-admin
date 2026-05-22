@@ -557,6 +557,23 @@ export async function getBattleDetail(id: string) {
       const playerCards = cardsByParticipantId.get(p.id) ?? [];
       const totalValue = playerCards.reduce((sum, c) => sum + c.valueAtObtained, 0);
 
+      // Per-participant borrow — each joiner picks their own borrow %, so
+      // it lives in that player's PF result metadata (same field solo
+      // openings use). The battle-level borrow_percentage only reflects
+      // the creator's setting and reads 0 when a joiner borrowed, which
+      // is why the battle's single "Borrow" row could miss it.
+      let borrowPercentage = 0;
+      const firstPf = gs.provably_fair_results[0];
+      if (firstPf) {
+        const m = firstPf.result_metadata as Record<string, unknown> | null;
+        const raw = m?.borrow_percentage;
+        if (typeof raw === "number") borrowPercentage = raw;
+        else if (typeof raw === "string") {
+          const n = parseInt(raw, 10);
+          if (Number.isFinite(n)) borrowPercentage = n;
+        }
+      }
+
       return {
         id: p.id,
         userId: p.user_id,
@@ -567,6 +584,7 @@ export async function getBattleDetail(id: string) {
         betAmount: toNumber(gs.bet_amount),
         cards: playerCards,
         totalValue,
+        borrowPercentage,
       };
     });
 
