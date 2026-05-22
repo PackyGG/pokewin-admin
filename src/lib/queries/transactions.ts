@@ -1,5 +1,4 @@
 import { getDb } from "@/lib/db";
-import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
@@ -124,6 +123,9 @@ export async function getDepositTransactions(params: {
   // Bind user-provided values via positional parameters to avoid SQL injection.
   const queryParams: unknown[] = [];
   let searchFilter = "";
+  // Username search needs the "user" join in the COUNT query too; a UUID
+  // search (or no search) keeps COUNT as a bare index scan over deposits.
+  let needsUserJoin = false;
   if (search) {
     const isUuid =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
@@ -137,6 +139,7 @@ export async function getDepositTransactions(params: {
       queryParams.push(`%${search.toLowerCase()}%`);
       const idx = queryParams.length;
       searchFilter = `AND LOWER(u.username) LIKE $${idx}`;
+      needsUserJoin = true;
     }
   }
 
@@ -157,35 +160,25 @@ export async function getDepositTransactions(params: {
     minAmountFilter = `AND t.amount::numeric >= $${idx}`;
   }
 
-  // Exclude bonus rows that are paired with a deposit already in the set.
-  // This keeps page sizes exact and avoids showing the bonus twice (once
-  // merged into its deposit, once as its own row).
-  const bonusPairedExclusion = `
-    AND NOT (
-      t.type = 'deposit_bonus'
-      AND EXISTS (
-        SELECT 1 FROM ledger_transactions d
-        WHERE d.user_id = t.user_id
-          AND d.type = 'deposit'
-          AND d.balance_after = t.balance_before
-          AND d.created_at <= t.created_at
-          AND d.created_at > t.created_at - INTERVAL '2 minutes'
-      )
-    )
-  `;
-
+  // Lean "Deposits" view — ONLY raw deposit rows. We no longer pull the
+  // standalone deposit_bonus / shipping-fee rows or run the correlated
+  // bonus-pair EXISTS exclusion; that scan across deposit + bonus +
+  // shipping was what made this page crawl. Each deposit still gets its
+  // paired bonus merged in via the LATERAL below — a per-page-row lookup,
+  // not a whole-table scan.
   const baseWhere = `
-    WHERE t.type IN ('deposit', 'deposit_bonus', 'withdrawal_shipping_fee')
+    WHERE t.type = 'deposit'
       ${searchFilter}
       ${statusFilter}
       ${minAmountFilter}
-      ${bonusPairedExclusion}
   `;
 
+  // Cheap count — a bare index scan over type='deposit' (no EXISTS).
+  // Only joins "user" when the search filter is by username.
   const countSql = `
     SELECT COUNT(*)::text AS total
     FROM ledger_transactions t
-    LEFT JOIN "user" u ON u.id = t.user_id
+    ${needsUserJoin ? `LEFT JOIN "user" u ON u.id = t.user_id` : ""}
     ${baseWhere}
   `;
 
@@ -217,7 +210,7 @@ export async function getDepositTransactions(params: {
         AND created_at < t.created_at + INTERVAL '2 minutes'
       ORDER BY created_at ASC
       LIMIT 1
-    ) b ON t.type = 'deposit'
+    ) b ON true
     ${baseWhere}
     ORDER BY t.created_at DESC
     LIMIT ${safePerPage}
@@ -248,87 +241,11 @@ export async function getDepositTransactions(params: {
 
   const total = Number(countResult[0]?.total ?? "0");
 
-  // Per-user 24h / 3d deposit totals + VIP tags for THIS page's
-  // users. Both lookups share the same userIds set; we run them in
-  // parallel so the deposits-list latency stays unchanged.
-  //
-  // The totals query is a single GROUP BY against ledger_transactions
-  // — one round-trip regardless of page size. Aggregates only
-  // `deposit` rows (no bonuses, no shipping fees) so the totals
-  // reflect actual money the user paid in.
-  //
-  // The tags query is a single findMany against admin_user_tags
-  // (separate Postgres cluster — admin DB). Returns oldest-first so
-  // the badge order is stable across renders.
-  const pageUserIds = [...new Set(rows.map((r) => r.user_id))];
-  type UserDepositTotalsRow = {
-    user_id: string;
-    total_24h: string;
-    total_3d: string;
-  };
-  let userTotalsMap = new Map<string, { d24h: number; d3d: number }>();
-  const userTagsMap = new Map<string, UserTagValue[]>();
-  if (pageUserIds.length > 0) {
-    // Inline the user IDs via positional params so the prepared
-    // statement can plan the IN list well. They came from `t.user_id`
-    // which is itself bound from the main DB, so injection isn't a
-    // real risk here, but we still parameterise for hygiene.
-    const placeholders = pageUserIds
-      .map((_, i) => `$${i + 1}`)
-      .join(",");
-    const [userTotalsRows, tagRows] = await Promise.all([
-      db.$queryRawUnsafe<UserDepositTotalsRow[]>(
-        `
-          SELECT
-            user_id,
-            COALESCE(
-              SUM(CASE WHEN created_at >= NOW() - INTERVAL '24 hours' THEN amount::numeric ELSE 0 END),
-              0
-            )::text AS total_24h,
-            COALESCE(
-              SUM(CASE WHEN created_at >= NOW() - INTERVAL '3 days' THEN amount::numeric ELSE 0 END),
-              0
-            )::text AS total_3d
-          FROM ledger_transactions
-          WHERE type = 'deposit'
-            AND status = 'completed'
-            AND user_id IN (${placeholders})
-            AND created_at >= NOW() - INTERVAL '3 days'
-          GROUP BY user_id
-        `,
-        ...pageUserIds,
-      ),
-      // Cross-DB lookup (admin DB) — same userIds, different cluster.
-      // Wrapped in try/catch so an admin-DB blip doesn't take down the
-      // whole deposits page — tags are a nice-to-have, the ledger
-      // rows are the page's job.
-      adminDb.admin_user_tags
-        .findMany({
-          where: { target_user_id: { in: pageUserIds } },
-          select: { target_user_id: true, tag: true },
-          orderBy: { created_at: "asc" },
-        })
-        .catch((err) => {
-          console.error(
-            "[getDepositTransactions] tag lookup failed (rendering without tags):",
-            err,
-          );
-          return [] as { target_user_id: string; tag: string }[];
-        }),
-    ]);
-    userTotalsMap = new Map(
-      userTotalsRows.map((r) => [
-        r.user_id,
-        { d24h: Number(r.total_24h), d3d: Number(r.total_3d) },
-      ]),
-    );
-    for (const t of tagRows) {
-      const existing = userTagsMap.get(t.target_user_id) ?? [];
-      existing.push(t.tag as UserTagValue);
-      userTagsMap.set(t.target_user_id, existing);
-    }
-  }
-
+  // NOTE: per-user 24h/3d deposit totals and VIP tags are intentionally
+  // NOT preloaded here. They were the cross-DB / extra-aggregate round
+  // trips that made this list slow. The page now ships only the raw
+  // deposit rows; the totals/tags columns auto-hide when empty (see
+  // columns.tsx conditionals) and can be loaded on demand per row.
   const data: TransactionListItem[] = rows.map((r) => {
     const balanceBefore = Number(r.balance_before);
     const rawBalanceAfter = Number(r.balance_after);
@@ -339,7 +256,6 @@ export async function getDepositTransactions(params: {
       bonusAmount != null && r.bonus_balance_after != null
         ? Number(r.bonus_balance_after)
         : rawBalanceAfter;
-    const userTotals = userTotalsMap.get(r.user_id);
     return {
       id: r.id,
       userId: r.user_id,
@@ -358,15 +274,10 @@ export async function getDepositTransactions(params: {
       cryptoAsset: r.crypto_asset,
       cryptoAmount: r.crypto_amount != null ? Number(r.crypto_amount) : null,
       bonusAmount,
-      // Per-user deposit totals attached for the Deposits page's
-      // "How much in 24h / 3d" surface. Default to 0 when the user
-      // hasn't deposited in the window (the GROUP BY drops them from
-      // the result set).
-      userDeposit24h: userTotals?.d24h ?? 0,
-      userDeposit3d: userTotals?.d3d ?? 0,
-      // VIP tags on this user — empty array when none set or the
-      // admin-DB lookup failed (logged + degraded gracefully).
-      userTags: userTagsMap.get(r.user_id) ?? [],
+      // Not preloaded — see note above. Columns auto-hide when null/empty.
+      userDeposit24h: null,
+      userDeposit3d: null,
+      userTags: [],
       // Deposits/withdrawals can't be borrowed — null both fields so
       // the BorrowBadge cell renders empty.
       borrowPercentage: null,
