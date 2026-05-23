@@ -91,6 +91,13 @@ function getPeriodAggregates(
       // period selector.
       deposit_count_1h: string; deposit_count_3h: string; deposit_count_6h: string; deposit_count_12h: string;
       deposit_count_24h: string; deposit_count_3d: string; deposit_count_7d: string; deposit_count_30d: string; deposit_count_all: string;
+      // Distinct real users who placed a wager (pack_opening / battle_bet /
+      // battle_sponsorship) in the rolling last 24h. Engagement headcount —
+      // not money — so it lives next to the wager columns but is a COUNT
+      // DISTINCT. Computed off the same `base` CTE (already staff +
+      // blacklist filtered, status='completed'), so it costs no extra
+      // round-trip.
+      active_users_24h: string;
     }[]
   >`
     WITH real_users AS (
@@ -230,7 +237,18 @@ function getPeriodAggregates(
       COUNT(CASE WHEN type = 'deposit' AND created_at >= ${threeDaysAgo}      THEN 1 END)::text AS deposit_count_3d,
       COUNT(CASE WHEN type = 'deposit' AND created_at >= ${sevenDaysAgo}      THEN 1 END)::text AS deposit_count_7d,
       COUNT(CASE WHEN type = 'deposit' AND created_at >= ${thirtyDaysAgo}     THEN 1 END)::text AS deposit_count_30d,
-      COUNT(CASE WHEN type = 'deposit'                                         THEN 1 END)::text AS deposit_count_all
+      COUNT(CASE WHEN type = 'deposit'                                         THEN 1 END)::text AS deposit_count_all,
+
+      -- Active players in the rolling last 24h — distinct real users who
+      -- placed a wager (pack_opening / battle_bet / battle_sponsorship)
+      -- since now - 24h. The base CTE is already JOINed to real_users
+      -- (staff + blacklist excluded) and filtered to status='completed', so
+      -- this is a free COUNT(DISTINCT) off the same scan. Engagement metric
+      -- → neutral/blue tile, no money sign.
+      COUNT(DISTINCT CASE
+        WHEN type IN ('pack_opening','battle_bet','battle_sponsorship')
+             AND created_at >= ${twentyFourHoursAgo}
+        THEN user_id END)::text AS active_users_24h
     FROM base
   `;
 }
@@ -251,6 +269,13 @@ export const getDashboardStats = cache(async () => {
 });
 
 async function dashboardStatsInner() {
+  // Wall-clock start of the server-side compute. Returned as `queryMs`
+  // (Date.now() − t0 just before the return) so the dashboard can show a
+  // real "Loaded in N ms" indicator instead of a faked/animated one. This
+  // measures the whole aggregate (exclusion-list resolution + the parallel
+  // query batch + post-processing), which is exactly the latency an admin
+  // perceives when the streamed KPI strips resolve.
+  const t0 = Date.now();
   const db = await getDb();
   // Resolve the combined staff+blacklist filter ONCE per request so
   // every aggregate below applies the same exclusion set. The list is
@@ -342,6 +367,7 @@ async function dashboardStatsInner() {
     battlesPlayed24h,
     signups24h,
     ftdResult,
+    pendingWithdrawalsResult,
   ] = await Promise.all([
     // STAFF_ROLES (admin + support) excluded from every user count so the
     // KPI strip reads only real customers — matches staffRelation
@@ -542,6 +568,27 @@ async function dashboardStatsInner() {
       FROM first_deposits
       WHERE created_at >= ${rolling24h}
     `,
+    // Withdrawals queued for payout — requests still in the pipeline
+    // (status pending / processing / shipped, i.e. money committed to leave
+    // the house but not yet finalized). Mirrors the source-of-truth used by
+    // the rest of the dashboard's withdrawal figures (card_withdrawal_requests)
+    // and the same status set the avg-session query treats as "in flight".
+    // We deliberately count pending+processing+shipped (NOT completed —
+    // those already left) so the tile reads as the operator's outstanding
+    // payout queue. Real users only (staff + blacklist excluded), matching
+    // every other dashboard aggregate. House-POV: a queued payout is a
+    // house outflow → rose tile.
+    db.$queryRaw<{ count: string; total: string }[]>`
+      SELECT
+        COUNT(*)::text AS count,
+        COALESCE(SUM(total_value_usd::numeric), 0)::text AS total
+      FROM card_withdrawal_requests
+      WHERE status IN ('pending', 'processing', 'shipped')
+        AND user_id IN (
+          SELECT id FROM "user"
+          WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+        )
+    `,
   ]);
 
   const totalWagered = toNumber(balanceAggregates._sum?.total_wagered);
@@ -563,6 +610,7 @@ async function dashboardStatsInner() {
     ggr_24h: "0", ggr_3d: "0", ggr_7d: "0", ggr_30d: "0", ggr_all: "0",
     deposit_count_1h: "0", deposit_count_3h: "0", deposit_count_6h: "0", deposit_count_12h: "0",
     deposit_count_24h: "0", deposit_count_3d: "0", deposit_count_7d: "0", deposit_count_30d: "0", deposit_count_all: "0",
+    active_users_24h: "0",
   };
   const num = (s: string) => parseFloat(s) || 0;
   // Lifetime deposit transaction count — reused from the period
@@ -574,6 +622,10 @@ async function dashboardStatsInner() {
   // computed below, and avoids a NaN when there are zero FTDs.
   const ftdCount = Number(ftdResult[0]?.count ?? 0);
   const ftdTotal = Number(ftdResult[0]?.total ?? 0);
+  // Outstanding withdrawal queue (pending + processing + shipped) — count
+  // and summed USD value. Drives the "Pending Payouts" ops tile.
+  const pendingWithdrawalsCount = Number(pendingWithdrawalsResult[0]?.count ?? 0);
+  const pendingWithdrawalsValue = Number(pendingWithdrawalsResult[0]?.total ?? 0);
 
   return {
     users: {
@@ -721,6 +773,18 @@ async function dashboardStatsInner() {
       packsOpened24h,
       battlesPlayed24h,
       signups24h,
+      // Distinct real users who wagered in the last 24h (engagement
+      // headcount, from the period-aggregates CTE).
+      activeUsers24h: num(pa.active_users_24h),
+    },
+    // Operational / ops-desk figures that aren't revenue but need an eye
+    // on them. Currently the outstanding withdrawal payout queue.
+    operations: {
+      // Withdrawal requests still in flight (pending / processing /
+      // shipped) — count + summed USD value. A queued payout is committed
+      // house outflow, so the tile reads House-POV rose.
+      pendingWithdrawalsCount,
+      pendingWithdrawalsValue,
     },
     dailyWagers: dailyWagers.map((d) => ({
       date: new Date(d.date).toISOString().split("T")[0],
@@ -735,5 +799,13 @@ async function dashboardStatsInner() {
       date: new Date(d.date).toISOString().split("T")[0],
       count: Number(d.count),
     })),
+    // Server-side compute metadata. `queryMs` is the wall-clock time spent
+    // in this function (exclusion lists + the parallel query batch + the
+    // light post-processing above) — measured here at the very end so it
+    // reflects the whole aggregate. `generatedAt` is the moment the data
+    // was produced, for a "updated Ns ago" relative label. Both are plain
+    // serializable primitives → safe across the RSC boundary.
+    queryMs: Date.now() - t0,
+    generatedAt: new Date().toISOString(),
   };
 }
