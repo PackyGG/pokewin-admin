@@ -16,6 +16,7 @@ import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/empty-state";
+import { Skeleton } from "@/components/ui/skeleton";
 import { BorrowBadge } from "@/components/borrow-badge";
 import type {
   LiveActivityEventKind,
@@ -279,6 +280,46 @@ export function RecentActivity({
           </ul>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Loading skeleton for the Recent Activity card — mirrors the Live
+ * Deposits skeleton (structured rows, not a plain block) so both feed
+ * cards read as the same loading state. Card chrome + the 3-up 24h stat
+ * strip + row placeholders matching ActivityRow's layout.
+ */
+export function RecentActivitySkeleton() {
+  return (
+    <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -right-24 -top-24 size-60 rounded-full bg-blue-500/10 blur-3xl"
+      />
+      {/* 24h stat strip (Signups / Packs / Battles) */}
+      <div className="relative grid grid-cols-3 divide-x divide-border/60 border-b border-border/60">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div key={i} className="flex flex-col items-center gap-1.5 px-3 py-3">
+            <Skeleton className="size-7 rounded-lg" />
+            <Skeleton className="h-2.5 w-14" />
+            <Skeleton className="h-4 w-8" />
+          </div>
+        ))}
+      </div>
+      {/* Event rows — same shape as ActivityRow (chip + 2 lines + amount) */}
+      <ul className="divide-y divide-border/60" aria-hidden>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <li key={i} className="flex items-center gap-3 px-3 py-3 sm:px-5">
+            <Skeleton className="size-9 shrink-0 rounded-lg" />
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <Skeleton className="h-3.5 w-28" />
+              <Skeleton className="h-3 w-20" />
+            </div>
+            <Skeleton className="ml-auto h-4 w-14 shrink-0" />
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
