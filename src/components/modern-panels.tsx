@@ -101,19 +101,32 @@ export function PageHero({
   return (
     <div
       className={cn(
-        "relative overflow-hidden rounded-xl border bg-gradient-to-br from-card via-card to-card/60 sm:rounded-2xl",
+        "surface-sheen surface-raise relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/50 sm:rounded-3xl",
         className,
       )}
     >
+      {/* Corner glows — slightly richer than before (0.06 → 0.10) and a
+          third subtle cyan wash at top-center for depth. Still soft and
+          low-opacity so the hero reads premium, not gaudy. */}
       <div
         aria-hidden
-        className="pointer-events-none absolute -right-24 -top-24 size-48 rounded-full bg-blue-500/[0.06] blur-3xl sm:size-72"
+        className="pointer-events-none absolute -right-24 -top-24 size-56 rounded-full bg-blue-500/[0.10] blur-3xl sm:size-80"
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute -left-24 -bottom-24 size-48 rounded-full bg-purple-500/[0.06] blur-3xl sm:size-72"
+        className="pointer-events-none absolute -left-24 -bottom-24 size-56 rounded-full bg-purple-500/[0.09] blur-3xl sm:size-80"
       />
-      <div className="relative p-4 sm:p-5 md:p-6">{children}</div>
+      <div
+        aria-hidden
+        className="pointer-events-none absolute left-1/2 -top-32 size-64 -translate-x-1/2 rounded-full bg-cyan-500/[0.04] blur-3xl"
+      />
+      {/* Hairline top highlight — a crisp light catch along the very top
+          edge that makes the panel feel lifted on the dark theme. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/15 to-transparent"
+      />
+      <div className="relative p-5 sm:p-6 md:p-7">{children}</div>
     </div>
   );
 }
@@ -186,13 +199,13 @@ export function PageHeroIdentity({
         {backNode}
         <div
           className={cn(
-            "flex size-9 shrink-0 items-center justify-center rounded-xl sm:size-10",
-            colors ? colors.bg : "bg-primary/10",
+            "flex size-10 shrink-0 items-center justify-center rounded-xl border shadow-sm ring-1 ring-inset ring-white/5 sm:size-11",
+            colors ? colors.bg : "border-primary/20 bg-primary/10",
           )}
         >
           <Icon
             className={cn(
-              "size-4 sm:size-5",
+              "size-5 sm:size-[22px]",
               colors ? colors.icon : "text-primary",
             )}
           />
@@ -205,7 +218,7 @@ export function PageHeroIdentity({
             <div className="flex flex-wrap items-center gap-2">
               <h1
                 className={cn(
-                  "text-xl font-bold leading-tight sm:text-2xl md:text-3xl",
+                  "text-xl font-bold leading-tight tracking-tight sm:text-2xl md:text-3xl",
                   titleClassName,
                 )}
               >
@@ -259,13 +272,24 @@ export function SectionHeading({
   // (filter chips, buttons, dropdowns) routinely push the title off-
   // screen at 360px. At sm+ the original side-by-side layout returns.
   return (
-    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-      <div className="flex min-w-0 items-center gap-2">
-        <div className="shrink-0 rounded-md bg-primary/10 p-1.5">
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+      <div className="flex min-w-0 items-center gap-2.5">
+        <div className="shrink-0 rounded-lg border border-primary/20 bg-primary/10 p-1.5 shadow-sm ring-1 ring-inset ring-white/5">
           <Icon className="size-4 text-primary" />
         </div>
-        <h3 className="truncate text-sm font-semibold sm:text-base">{title}</h3>
+        <h3 className="truncate text-sm font-semibold tracking-tight sm:text-base">
+          {title}
+        </h3>
       </div>
+      {/* Hairline divider fills the gap between title and action on wide
+          rows — gives the heading more structure without extra chrome.
+          Hidden on phones (stacked layout) and when there's no action. */}
+      {action && (
+        <div
+          aria-hidden
+          className="hidden h-px flex-1 bg-gradient-to-r from-border/60 to-transparent sm:block"
+        />
+      )}
       {action && (
         <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap sm:shrink-0">
           {action}
@@ -313,11 +337,27 @@ export function KpiTile({
   return (
     <div
       className={cn(
-        "group relative overflow-hidden rounded-xl border px-3 py-2.5 transition-all hover:shadow-md sm:px-4 sm:py-3",
+        "hover-raise group surface-sheen relative overflow-hidden rounded-xl border px-3 py-2.5 sm:px-4 sm:py-3",
         colors.bg,
       )}
     >
-      <div className="flex items-start justify-between gap-2">
+      {/* Left accent bar — inherits the accent hue via text-color +
+          bg-current. Brightens on hover. House-POV safe: the accent is
+          chosen by the caller, same as the value tint. */}
+      <div
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-current opacity-50 transition-opacity duration-200 group-hover:opacity-80",
+          colors.icon,
+        )}
+      />
+      {/* Faint diagonal sheen for a glassy finish — neutral white so it
+          never fights the House-POV accent. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.04] to-transparent"
+      />
+      <div className="relative flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
           <Icon className={cn("size-3.5 shrink-0 sm:size-4", colors.icon)} />
           <span className="truncate text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[11px]">
@@ -328,14 +368,14 @@ export function KpiTile({
       </div>
       <p
         className={cn(
-          "mt-1 truncate text-lg font-bold leading-tight tabular-nums sm:text-xl",
+          "relative mt-1 truncate text-xl font-bold leading-tight tracking-tight tabular-nums sm:text-2xl",
           colors.text,
         )}
       >
         {value}
       </p>
       {sub && (
-        <p className="mt-0.5 truncate text-[10px] text-muted-foreground sm:text-[11px]">
+        <p className="relative mt-0.5 truncate text-[10px] text-muted-foreground sm:text-[11px]">
           {sub}
         </p>
       )}
@@ -361,8 +401,27 @@ export function MetricTile({
 }) {
   const colors = TILE_COLORS[accent];
   return (
-    <div className={cn("rounded-xl border p-3 sm:p-4", colors.bg)}>
-      <div className="flex items-center gap-1.5 sm:gap-2">
+    <div
+      className={cn(
+        "hover-raise group surface-sheen relative overflow-hidden rounded-xl border p-3 sm:p-4",
+        colors.bg,
+      )}
+    >
+      {/* Left accent bar + glassy sheen — matches KpiTile so a grid of
+          mixed tiles reads as one family. House-POV safe (neutral sheen,
+          caller-chosen accent). */}
+      <div
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-current opacity-50 transition-opacity duration-200 group-hover:opacity-80",
+          colors.icon,
+        )}
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/[0.04] to-transparent"
+      />
+      <div className="relative flex items-center gap-1.5 sm:gap-2">
         <Icon className={cn("size-3.5 shrink-0 sm:size-4", colors.icon)} />
         <span className="truncate text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[11px]">
           {label}
@@ -370,14 +429,14 @@ export function MetricTile({
       </div>
       <p
         className={cn(
-          "mt-1 truncate text-xl font-bold tabular-nums sm:text-2xl",
+          "relative mt-1 truncate text-2xl font-bold tracking-tight tabular-nums sm:text-3xl",
           colors.text,
         )}
       >
         {value}
       </p>
       {sub && (
-        <p className="mt-0.5 truncate text-[10px] text-muted-foreground sm:text-[11px]">
+        <p className="relative mt-0.5 truncate text-[10px] text-muted-foreground sm:text-[11px]">
           {sub}
         </p>
       )}
@@ -410,20 +469,27 @@ export function StatPanel({
 }) {
   const colors = TILE_COLORS[accent];
   return (
-    <div className="relative overflow-hidden rounded-xl border bg-gradient-to-br from-card via-card to-card/80 sm:rounded-2xl">
+    <div className="surface-sheen surface-raise group relative overflow-hidden rounded-xl border bg-gradient-to-br from-card via-card to-card/70 transition-shadow duration-200 hover:shadow-lg sm:rounded-2xl">
+      {/* Accent corner glow — a touch stronger (40% → 50%) and a hair
+          larger so the panel feels alive. Still soft/low-opacity. */}
       <div
         aria-hidden
         className={cn(
-          "pointer-events-none absolute -right-12 -top-12 size-24 rounded-full blur-2xl opacity-40 sm:size-32",
+          "pointer-events-none absolute -right-12 -top-12 size-28 rounded-full opacity-50 blur-2xl transition-opacity duration-200 group-hover:opacity-70 sm:size-36",
           colors.bg,
         )}
+      />
+      {/* Hairline top highlight for a crisp lifted edge on dark. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"
       />
       <div className="relative p-4 sm:p-5">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
             <div
               className={cn(
-                "flex size-7 shrink-0 items-center justify-center rounded-lg",
+                "flex size-7 shrink-0 items-center justify-center rounded-lg border shadow-sm ring-1 ring-inset ring-white/5",
                 colors.bg,
               )}
             >
