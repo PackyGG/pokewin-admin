@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Plus, Trash2, X } from "lucide-react";
+import { Plus, Trash2, Trophy, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +16,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatCurrency } from "@/lib/utils/format";
+import { EmptyState } from "@/components/empty-state";
 import {
   upsertRacePrizeTier,
   upsertRacePrizeTiersBulk,
@@ -438,13 +439,14 @@ export function RaceTiersTable({ tiers }: { tiers: PrizeTier[] }) {
               )}
 
               {items.length === 0 && !isAdding && (
-                <TableRow>
-                  <TableCell
-                    colSpan={3}
-                    className="h-24 text-center text-muted-foreground"
-                  >
-                    No tiers configured. Click &ldquo;Add Tier&rdquo; to add
-                    the first one.
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={3} className="p-0">
+                    <EmptyState
+                      icon={Trophy}
+                      title="No tiers configured"
+                      description={`Click "Add Tiers" to set up prize payouts for the ${raceType} race.`}
+                      compact
+                    />
                   </TableCell>
                 </TableRow>
               )}
