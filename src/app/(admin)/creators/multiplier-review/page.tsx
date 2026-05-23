@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
-import { KpiTile, PageHero } from "@/components/modern-panels";
+import { KpiTile, PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { Card } from "@/components/ui/card";
 import { listMultiplierReviewQueue } from "../multiplier-actions";
 
@@ -78,23 +78,13 @@ export default async function MultiplierReviewPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-amber-500/10">
-              <ShieldAlert className="size-5 text-amber-500" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold leading-tight">
-                Multiplier Review
-              </h1>
-              <p className="text-sm text-muted-foreground">
-                Settle ended multiplier streams — issue payout vouchers or
-                reject deals across all creators. Oldest first.
-              </p>
-            </div>
-          </div>
-          <ReviewQueueFilters flaggedOnly={flaggedOnly} />
-        </div>
+        <PageHeroIdentity
+          icon={ShieldAlert}
+          accent="amber"
+          title="Multiplier Review"
+          subtitle="Settle ended multiplier streams — issue payout vouchers or reject deals across all creators. Oldest first."
+          action={<ReviewQueueFilters flaggedOnly={flaggedOnly} />}
+        />
       </PageHero>
 
       <div className="grid grid-cols-2 gap-2.5 sm:gap-3 sm:grid-cols-4">
