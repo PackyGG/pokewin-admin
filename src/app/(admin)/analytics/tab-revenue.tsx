@@ -12,6 +12,7 @@ import {
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { FadeIn } from "@/components/fade-in";
 import { MetricTile } from "@/components/modern-panels";
+import { EmptyState } from "@/components/empty-state";
 import { cn } from "@/lib/utils";
 import {
   getRevenueBreakdown,
@@ -185,17 +186,22 @@ function WithdrawnCoinsTable({
 }) {
   if (assets.length === 0 && physicalCount === 0) {
     return (
-      <p className="py-4 text-center text-sm text-muted-foreground">
-        No withdrawals in this window.
-      </p>
+      <EmptyState
+        icon={Coins}
+        title="No withdrawals in this window"
+        description="No crypto cash-outs or physical card shipments in the selected period. Try a longer period."
+        compact
+      />
     );
   }
   return (
     <div className="space-y-3">
       {assets.length === 0 ? (
-        <p className="py-2 text-center text-sm text-muted-foreground">
-          No crypto withdrawals in this window.
-        </p>
+        <EmptyState
+          icon={Coins}
+          title="No crypto withdrawals in this window"
+          compact
+        />
       ) : (
         <>
           {/* Mobile card list (<md) — asset + USD headline (rose, real

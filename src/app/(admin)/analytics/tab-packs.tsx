@@ -12,6 +12,7 @@ import {
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { FadeIn } from "@/components/fade-in";
 import { CardImage } from "@/components/card-image";
+import { EmptyState } from "@/components/empty-state";
 import { cn } from "@/lib/utils";
 import {
   getPackProfitability,
@@ -205,9 +206,12 @@ function PacksTable({
 }) {
   if (rows.length === 0) {
     return (
-      <p className="py-8 text-center text-sm text-muted-foreground">
-        No pack data for the selected window.
-      </p>
+      <EmptyState
+        icon={Package}
+        title="No pack data"
+        description="No solo pack openings in the selected window. Try a longer period."
+        compact
+      />
     );
   }
   return (
@@ -273,9 +277,12 @@ function BattlePacksTable({
 }) {
   if (rows.length === 0) {
     return (
-      <p className="py-8 text-center text-sm text-muted-foreground">
-        No battle-pack data for the selected window.
-      </p>
+      <EmptyState
+        icon={Swords}
+        title="No battle-pack data"
+        description="No packs were played inside battles in the selected window. Try a longer period."
+        compact
+      />
     );
   }
   return (
@@ -374,9 +381,12 @@ function TopPacks24hPanel({ rows }: { rows: TopPack24hRow[] }) {
       </div>
 
       {rows.length === 0 ? (
-        <p className="py-8 text-center text-sm text-muted-foreground">
-          No pack opens in the last 24 hours.
-        </p>
+        <EmptyState
+          icon={Flame}
+          title="No pack opens in the last 24 hours"
+          description="Real-user pack openings from the rolling 24h window will appear here as they happen."
+          compact
+        />
       ) : (
         <div className="divide-y rounded-xl border">
           {rows.map((r, idx) => (

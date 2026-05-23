@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/table";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { FadeIn } from "@/components/fade-in";
+import { EmptyState } from "@/components/empty-state";
 import { cn } from "@/lib/utils";
 import {
   getTopDepositors,
@@ -252,9 +253,12 @@ function UserLeaderTable({
 }) {
   if (rows.length === 0) {
     return (
-      <p className="py-8 text-center text-sm text-muted-foreground">
-        No data for the selected window.
-      </p>
+      <EmptyState
+        icon={Trophy}
+        title="No data for the selected window"
+        description="No users qualify for this leaderboard yet. Try a longer period."
+        compact
+      />
     );
   }
   const toneClass =
@@ -333,9 +337,12 @@ function CreatorLeaderTable({
 }) {
   if (rows.length === 0) {
     return (
-      <p className="py-8 text-center text-sm text-muted-foreground">
-        No creators active in the selected window.
-      </p>
+      <EmptyState
+        icon={UserPlus}
+        title="No creators active"
+        description="No creators drove referred-user volume in the selected window. Try a longer period."
+        compact
+      />
     );
   }
   return (
@@ -433,9 +440,12 @@ function CountryLeaderTable({
 }) {
   if (rows.length === 0) {
     return (
-      <p className="py-8 text-center text-sm text-muted-foreground">
-        No country data for the selected window.
-      </p>
+      <EmptyState
+        icon={Globe}
+        title="No country data"
+        description="No GGR could be attributed to a country in the selected window. Try a longer period."
+        compact
+      />
     );
   }
   return (

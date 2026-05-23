@@ -26,6 +26,8 @@ import {
   ledgerDirection,
 } from "@/lib/utils/ledger-direction";
 import { MobileCard } from "@/components/data-table/mobile-card-list";
+import { EmptyState } from "@/components/empty-state";
+import { Receipt } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 const TYPE_COLORS: Record<string, string> = {
@@ -124,8 +126,13 @@ export function TransactionsDataTable({
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
         {data.length === 0 ? (
-          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
-            No transactions found.
+          <div className="rounded-md border">
+            <EmptyState
+              icon={Receipt}
+              title="No transactions found"
+              description="No ledger entries match the current filters. Try a different status, type, or value range."
+              compact
+            />
           </div>
         ) : (
           <div className="overflow-hidden rounded-md border">
@@ -164,9 +171,14 @@ export function TransactionsDataTable({
                 </TableRow>
               ))
             ) : (
-              <TableRow>
-                <TableCell colSpan={resolvedColumns.length} className="h-24 text-center">
-                  No transactions found.
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={resolvedColumns.length} className="p-0">
+                  <EmptyState
+                    icon={Receipt}
+                    title="No transactions found"
+                    description="No ledger entries match the current filters. Try a different status, type, or value range."
+                    compact
+                  />
                 </TableCell>
               </TableRow>
             )}
