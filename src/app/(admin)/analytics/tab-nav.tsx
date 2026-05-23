@@ -46,13 +46,15 @@ const TABS: { value: AnalyticsTab; label: string; icon: typeof BarChart3 }[] = [
  * Mobile UX:
  *   - Tabs are wider than a phone (9 chips × ~110px ≈ 990px), so the
  *     row stays horizontally scrollable on touch — but on phones it's
- *     unclear whether more content lives off-screen. We layer two
- *     gradient fades on the left/right edges that hint at scrollable
- *     content; they're absolutely positioned and pointer-events-none
- *     so they never block taps. Hidden at sm+ where 9 chips fit on a
- *     normal viewport.
- *   - Active chip is `scroll-mx-2` so when the page mounts mid-scroll
- *     the active tab still has breathing room from the fade overlay.
+ *     unclear whether more content lives off-screen. We fade the strip's
+ *     own edges to transparent with a horizontal `mask-image` gradient,
+ *     so off-screen chips dissolve at both edges regardless of what sits
+ *     behind the strip (no background-color matching needed, unlike an
+ *     overlay div). The mask is dropped at lg+ where all 9 chips fit.
+ *   - `overscroll-x-contain` keeps the momentum swipe inside the strip
+ *     instead of bouncing the whole page.
+ *   - Active chip is `scroll-mx-4` so when the page mounts mid-scroll the
+ *     active tab still clears the faded edge.
  */
 export function AnalyticsTabNav() {
   const pathname = usePathname();
@@ -66,36 +68,33 @@ export function AnalyticsTabNav() {
   }
 
   return (
-    <div className="relative">
-      <div className="flex gap-1 overflow-x-auto rounded-lg border bg-muted/50 p-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {TABS.map(({ value, label, icon: Icon }) => (
-          <Link
-            key={value}
-            href={hrefFor(value)}
-            replace
-            prefetch={false}
-            className={cn(
-              "flex shrink-0 scroll-mx-2 items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-              current === value
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            <Icon className="size-3.5" />
-            {label}
-          </Link>
-        ))}
-      </div>
-      {/* Edge fades — only meaningful on phones where the tab list
-          overflows. At lg+ all 9 chips fit so the gradients are noise. */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-y-0 left-0 w-6 rounded-l-lg bg-gradient-to-r from-background to-transparent lg:hidden"
-      />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-y-0 right-0 w-6 rounded-r-lg bg-gradient-to-l from-background to-transparent lg:hidden"
-      />
+    <div
+      className={cn(
+        "flex gap-1 overflow-x-auto overscroll-x-contain rounded-lg border bg-muted/50 p-1",
+        "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+        // Fade both edges to transparent on phones to signal more chips
+        // off-screen; removed at lg+ where the full strip is visible.
+        "[mask-image:linear-gradient(to_right,transparent,black_1.5rem,black_calc(100%-1.5rem),transparent)]",
+        "lg:[mask-image:none]",
+      )}
+    >
+      {TABS.map(({ value, label, icon: Icon }) => (
+        <Link
+          key={value}
+          href={hrefFor(value)}
+          replace
+          prefetch={false}
+          className={cn(
+            "flex shrink-0 scroll-mx-4 items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+            current === value
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <Icon className="size-3.5" />
+          {label}
+        </Link>
+      ))}
     </div>
   );
 }

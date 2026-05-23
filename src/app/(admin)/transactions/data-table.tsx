@@ -114,6 +114,9 @@ export function TransactionsDataTable({
     data,
     columns: resolvedColumns,
     getCoreRowModel: getCoreRowModel(),
+    // Key rows by stable tx id (matches the users table) so React reuses
+    // row nodes across pages instead of churning on positional index keys.
+    getRowId: (r) => r.id,
   });
 
   return (
