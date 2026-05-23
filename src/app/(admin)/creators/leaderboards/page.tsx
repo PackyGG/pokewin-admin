@@ -4,7 +4,7 @@ import { Trophy, Plus } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { getDb } from "@/lib/db";
 import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
-import { PageHero } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -92,26 +92,20 @@ export default async function AffiliateLeaderboardsPage({
     return (
         <div className="space-y-6">
             <PageHero>
-                <div className="flex items-center justify-between gap-4 flex-wrap">
-                    <div className="flex items-center gap-3">
-                        <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-                            <Trophy className="size-5 text-primary" />
-                        </div>
-                        <div>
-                            <h1 className="text-2xl font-bold leading-tight">Affiliate Leaderboards</h1>
-                            <p className="text-sm text-muted-foreground">
-                                Create on behalf of any creator (site-funded), or manage existing entries.
-                            </p>
-                        </div>
-                    </div>
-                    <CreateDialog
-                        trigger={
-                            <Button>
-                                <Plus className="size-4 mr-1" /> Create a creator leaderboard
-                            </Button>
-                        }
-                    />
-                </div>
+                <PageHeroIdentity
+                    icon={Trophy}
+                    title="Affiliate Leaderboards"
+                    subtitle="Create on behalf of any creator (site-funded), or manage existing entries."
+                    action={
+                        <CreateDialog
+                            trigger={
+                                <Button>
+                                    <Plus className="size-4 mr-1" /> Create a creator leaderboard
+                                </Button>
+                            }
+                        />
+                    }
+                />
             </PageHero>
 
             <div className="space-y-4">
