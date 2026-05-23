@@ -4,6 +4,7 @@ import { Gift, ExternalLink, Twitter, MessageCircle, Link2 } from "lucide-react"
 import { requirePageAccess } from "@/lib/dal";
 import { PageHero, PageHeroIdentity, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { EmptyState } from "@/components/empty-state";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
@@ -67,10 +68,13 @@ export default async function GiveawayPage() {
 
       <FadeIn>
         {cards.length === 0 ? (
-          <div className="rounded-xl border bg-card p-8 text-center text-sm text-muted-foreground">
-            No giveaways yet. They appear here as soon as an admin adjusts a
-            user&apos;s balance with the &ldquo;Giveaway&rdquo; reason and a
-            source URL.
+          <div className="rounded-xl border bg-card">
+            <EmptyState
+              icon={Gift}
+              title="No giveaways yet"
+              description="They appear here as soon as an admin adjusts a user's balance with the “Giveaway” reason and a source URL."
+              accent="pink"
+            />
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">

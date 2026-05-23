@@ -18,6 +18,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatCurrency } from "@/lib/utils/format";
+import { EmptyState } from "@/components/empty-state";
+import { FileText } from "lucide-react";
 
 const TYPE_LABELS: Record<string, string> = {
   flat_fee: "Flat Fee",
@@ -73,6 +75,7 @@ export function DealsTable({ deals }: { deals: Deal[] }) {
     <>
       <Card>
         <CardContent>
+          <div className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
@@ -111,14 +114,20 @@ export function DealsTable({ deals }: { deals: Deal[] }) {
                 </TableRow>
               ))}
               {deals.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
-                    No deals yet.
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={5} className="p-0">
+                    <EmptyState
+                      icon={FileText}
+                      title="No deals yet"
+                      description="Creator deals set up for your account appear here."
+                      compact
+                    />
                   </TableCell>
                 </TableRow>
               )}
             </TableBody>
           </Table>
+          </div>
         </CardContent>
       </Card>
 
