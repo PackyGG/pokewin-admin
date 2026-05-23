@@ -38,6 +38,7 @@ import {
   formatRelative,
 } from "@/lib/utils/format";
 import type { AdCodeSummary } from "@/lib/queries/ads";
+import { EmptyState } from "@/components/empty-state";
 import { createAdCode, deleteAdCode } from "./actions";
 import { getAdLink } from "./ad-link";
 
@@ -68,14 +69,19 @@ export function AdsList({ codes }: { codes: AdCodeSummary[] }) {
       </div>
 
       {filtered.length === 0 ? (
-        <div className="flex h-40 flex-col items-center justify-center gap-2 rounded-2xl border bg-muted/20 text-sm text-muted-foreground">
+        <div className="rounded-2xl border bg-muted/20">
           {codes.length === 0 ? (
-            <>
-              <MousePointerClick className="size-6 text-muted-foreground/60" />
-              <p>No ad codes yet. Create one to get started.</p>
-            </>
+            <EmptyState
+              icon={MousePointerClick}
+              title="No ad codes yet"
+              description="Create your first campaign code to start tracking clicks, signups, and deposits."
+            />
           ) : (
-            "No codes match your search."
+            <EmptyState
+              icon={Search}
+              title="No codes match your search"
+              description="Try a different campaign code."
+            />
           )}
         </div>
       ) : (

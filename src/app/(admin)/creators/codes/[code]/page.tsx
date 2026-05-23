@@ -33,6 +33,7 @@ import {
   KpiTile,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { EmptyState } from "@/components/empty-state";
 
 export const metadata = { title: "Creator Code Detail" };
 
@@ -268,12 +269,14 @@ export default async function CodeAnalyticsPage({
                 );
               })}
               {data.recentReferrals.length === 0 && (
-                <TableRow>
-                  <TableCell
-                    colSpan={7}
-                    className="h-24 text-center text-muted-foreground"
-                  >
-                    No referrals yet.
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={7} className="p-0">
+                    <EmptyState
+                      icon={Activity}
+                      title="No referrals yet"
+                      description="When a user signs up, deposits, or wagers on this code, they'll appear here."
+                      compact
+                    />
                   </TableCell>
                 </TableRow>
               )}
