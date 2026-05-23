@@ -11,7 +11,7 @@ import {
   TableSkeleton,
   PaginationSkeleton,
 } from "@/components/loading-skeletons";
-import { PageHero } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { BigDepositsToggle } from "./big-deposits-toggle";
 
@@ -45,17 +45,11 @@ export default async function DepositsTransactionsPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-            <ArrowDownToLine className="size-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold leading-tight">Deposits</h1>
-            <p className="text-sm text-muted-foreground">
-              All inbound deposit transactions across users.
-            </p>
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={ArrowDownToLine}
+          title="Deposits"
+          subtitle="All inbound deposit transactions across users."
+        />
       </PageHero>
 
       <div className="space-y-4">

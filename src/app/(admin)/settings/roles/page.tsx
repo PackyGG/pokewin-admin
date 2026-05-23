@@ -7,7 +7,11 @@ import { getRolePermissions } from "./actions";
 import { listRoles } from "./custom-roles-actions";
 import { RolePermissionsEditor } from "./role-permissions-editor";
 import { CreateRoleButton } from "./create-role-button";
-import { PageHero, SectionHeading } from "@/components/modern-panels";
+import {
+  PageHero,
+  PageHeroIdentity,
+  SectionHeading,
+} from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Roles" };
@@ -50,19 +54,11 @@ export default async function RolesPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-            <ShieldCheck className="size-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold leading-tight">Roles</h1>
-            <p className="text-sm text-muted-foreground">
-              Custom roles and built-in roles in one place. Create a custom
-              role as a reusable preset, or edit a built-in role to change
-              access for everyone who has it.
-            </p>
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={ShieldCheck}
+          title="Roles"
+          subtitle="Custom roles and built-in roles in one place. Create a custom role as a reusable preset, or edit a built-in role to change access for everyone who has it."
+        />
       </PageHero>
 
       {/* Custom roles — reusable presets stored in admin_roles. Create
