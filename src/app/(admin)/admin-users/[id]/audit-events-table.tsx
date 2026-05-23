@@ -4,9 +4,10 @@ import { useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight, Search, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Search, X, ScrollText } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { EmptyState } from "@/components/empty-state";
 import {
   Table,
   TableBody,
@@ -416,8 +417,13 @@ export function AuditEventsTable({
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
         {auditEvents.data.length === 0 ? (
-          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
-            No audit events
+          <div className="rounded-md border">
+            <EmptyState
+              icon={ScrollText}
+              title="No audit events"
+              description="Actions taken by or against this admin appear here."
+              compact
+            />
           </div>
         ) : (
           <div className="overflow-hidden rounded-md border">
@@ -472,9 +478,14 @@ export function AuditEventsTable({
           </TableHeader>
           <TableBody>
             {auditEvents.data.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
-                  No audit events
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={4} className="p-0">
+                  <EmptyState
+                    icon={ScrollText}
+                    title="No audit events"
+                    description="Actions taken by or against this admin appear here."
+                    compact
+                  />
                 </TableCell>
               </TableRow>
             )}

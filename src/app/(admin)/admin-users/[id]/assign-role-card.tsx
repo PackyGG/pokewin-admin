@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { KeyRound } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/empty-state";
 import {
   Select,
   SelectContent,
@@ -88,16 +89,22 @@ export function AssignRoleCard({
           adjustments survive a later role change.
         </p>
         {loaded && roles.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No roles yet.{" "}
-            <Link
-              href="/settings/roles"
-              className="text-blue-400 hover:underline"
-            >
-              Create one
-            </Link>{" "}
-            to assign it here.
-          </p>
+          <EmptyState
+            icon={KeyRound}
+            title="No roles yet"
+            description={
+              <>
+                <Link
+                  href="/settings/roles"
+                  className="text-blue-400 hover:underline"
+                >
+                  Create one
+                </Link>{" "}
+                to assign it here.
+              </>
+            }
+            compact
+          />
         ) : (
           <>
             <Select
