@@ -2,12 +2,13 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Wallet, Loader2 } from "lucide-react";
+import { Wallet } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/empty-state";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { LiveDepositItem } from "@/lib/queries/dashboard-live";
 import { fetchRecentDepositsLive } from "./live-actions";
 
@@ -140,11 +141,15 @@ export function LiveDeposits() {
         </div>
 
         <div className="mb-1">
-          <AnimatedNumber
-            value={total24h}
-            format="currency"
-            className="text-3xl font-bold text-emerald-600 dark:text-emerald-400"
-          />
+          {bootstrapped ? (
+            <AnimatedNumber
+              value={total24h}
+              format="currency"
+              className="text-3xl font-bold text-emerald-600 dark:text-emerald-400"
+            />
+          ) : (
+            <Skeleton className="h-9 w-40" />
+          )}
         </div>
         <p className="mb-4 text-xs text-muted-foreground">Last 24h deposited</p>
 
@@ -158,7 +163,7 @@ export function LiveDeposits() {
                 compact
               />
             ) : (
-              <LoadingState />
+              <DepositsSkeleton />
             )
           ) : (
             <ul className="divide-y divide-border/60">
@@ -246,11 +251,22 @@ function LivePulse() {
   );
 }
 
-function LoadingState() {
+function DepositsSkeleton() {
+  // Skeleton rows mirroring DepositRow (avatar + two text lines + amount)
+  // so the initial bootstrap reads as a clean loading state — matching
+  // Recent Activity's skeleton — instead of a bare spinner.
   return (
-    <div className="flex flex-col items-center justify-center gap-2 py-12 text-center">
-      <Loader2 className="size-5 animate-spin text-muted-foreground motion-reduce:animate-none" />
-      <p className="text-sm text-muted-foreground">Loading deposits...</p>
-    </div>
+    <ul className="divide-y divide-border/60" aria-hidden>
+      {Array.from({ length: 5 }).map((_, i) => (
+        <li key={i} className="-mx-5 flex items-center gap-3 px-5 py-3">
+          <Skeleton className="size-9 shrink-0 rounded-full" />
+          <div className="min-w-0 flex-1 space-y-1.5">
+            <Skeleton className="h-3.5 w-24" />
+            <Skeleton className="h-3 w-16" />
+          </div>
+          <Skeleton className="ml-auto h-4 w-14 shrink-0" />
+        </li>
+      ))}
+    </ul>
   );
 }
