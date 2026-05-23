@@ -42,7 +42,6 @@ export async function getUserDetail(id: string) {
     battleLimits,
     inventoryCount,
     affiliateAccount,
-    affiliateCodeRecord,
     shippingAddress,
     vault,
     mutes,
@@ -53,6 +52,7 @@ export async function getUserDetail(id: string) {
     withdrawalCount,
     userPnl,
     wagerBreakdownResolved,
+    ownedCodeRows,
   ] = await Promise.all([
     db.user.findUnique({
       where: { id },
@@ -78,11 +78,6 @@ export async function getUserDetail(id: string) {
         total_bonus_distributed_usd: true,
         last_payout_at: true,
       },
-    }),
-    db.affiliate_codes.findFirst({
-      where: { user_id: id },
-      select: { code: true },
-      orderBy: { created_at: "desc" },
     }),
     db.shipping_addresses.findUnique({ where: { user_id: id } }),
     db.vaults.findUnique({ where: { user_id: id } }),
@@ -124,6 +119,16 @@ export async function getUserDetail(id: string) {
     }),
     userPnlPromise,
     wagerBreakdownPromise,
+    // Every code this user owns (rows in affiliate_codes). No dependency
+    // on any other query result — keyed on the id param — so it runs in
+    // the main batch instead of a serial tail. orderBy created_at ASC:
+    // the LAST row is the newest, used as the affiliate-code fallback
+    // below (replaces the dropped findFirst ... orderBy desc limit 1).
+    db.affiliate_codes.findMany({
+      where: { user_id: id },
+      orderBy: { created_at: "asc" },
+      select: { code: true, created_at: true },
+    }),
   ]);
 
   const depositCount = depositAgg._count._all;
@@ -173,17 +178,16 @@ export async function getUserDetail(id: string) {
   // historical / extras. Surfacing the full list on /users/[id]
   // lets admins see drift between user.affiliate_code and what's
   // actually in the affiliate_codes table — and switch the primary
-  // without touching the DB.
-  const ownedCodeRows = await db.affiliate_codes.findMany({
-    where: { user_id: user.id },
-    orderBy: { created_at: "asc" },
-    select: { code: true, created_at: true },
-  });
+  // without touching the DB. (Rows fetched in the main Promise.all.)
   const ownedCodes = ownedCodeRows.map((c) => ({
     code: c.code,
     createdAt: c.created_at.toISOString(),
     isPrimary: c.code === user.affiliate_code,
   }));
+  // Newest owned code — preserves the dropped findFirst(orderBy desc)
+  // fallback: ownedCodeRows is sorted ASC, so the last element is the
+  // most-recently-created code.
+  const newestOwnedCode = ownedCodeRows.at(-1)?.code ?? null;
 
   return {
     user: {
@@ -294,7 +298,7 @@ export async function getUserDetail(id: string) {
     inventoryCount,
     affiliate: affiliateAccount
       ? {
-          code: user?.affiliate_code ?? affiliateCodeRecord?.code ?? "",
+          code: user?.affiliate_code ?? newestOwnedCode ?? "",
           totalReferred: affiliateAccount.total_referred,
           totalWagerVolumeUsd: toNumber(affiliateAccount.total_wager_volume_usd),
           totalEarnedUsd: toNumber(affiliateAccount.total_earned_usd),
