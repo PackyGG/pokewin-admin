@@ -30,6 +30,7 @@ import {
   PanelRow,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { EmptyState } from "@/components/empty-state";
 
 export const metadata = { title: "Promo Code Detail" };
 
@@ -229,12 +230,14 @@ export default async function PromoCodeDetailPage({
                 </TableRow>
               ))}
               {data.redemptions.length === 0 && (
-                <TableRow>
-                  <TableCell
-                    colSpan={3}
-                    className="h-24 text-center text-muted-foreground"
-                  >
-                    No redemptions yet.
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={3} className="p-0">
+                    <EmptyState
+                      icon={Activity}
+                      title="No redemptions yet"
+                      description="Players who redeem this code will be listed here."
+                      compact
+                    />
                   </TableCell>
                 </TableRow>
               )}

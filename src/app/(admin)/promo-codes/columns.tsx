@@ -4,9 +4,10 @@ import { useState, useTransition } from "react";
 import { ColumnDef } from "@tanstack/react-table";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Trash2 } from "lucide-react";
+import { Activity, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils/format";
+import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -134,9 +135,12 @@ function RedemptionsCell({
             </p>
           )}
           {data && data.length === 0 && (
-            <p className="py-4 text-center text-sm text-muted-foreground">
-              No redemptions yet.
-            </p>
+            <EmptyState
+              icon={Activity}
+              title="No redemptions yet"
+              description="Players who redeem this code will be listed here."
+              compact
+            />
           )}
           {data && data.length > 0 && (
             <div className="max-h-[400px] overflow-y-auto">

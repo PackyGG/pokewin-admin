@@ -10,6 +10,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatCurrency, formatDate, formatDateTime, formatRelative } from "@/lib/utils/format";
+import { EmptyState } from "@/components/empty-state";
 import type { VoucherListItem } from "@/lib/queries/vouchers";
 
 function VoucherMobileCard({
@@ -100,8 +101,17 @@ export function VouchersTable({
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
         {data.length === 0 ? (
-          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
-            No vouchers found.
+          <div className="rounded-md border">
+            <EmptyState
+              icon={Ticket}
+              title="No vouchers found"
+              description={
+                claimed
+                  ? "Claimed vouchers will appear here once players redeem them."
+                  : "Unclaimed vouchers will appear here once they are issued."
+              }
+              compact
+            />
           </div>
         ) : (
           <div className="overflow-hidden rounded-md border">
@@ -177,12 +187,18 @@ export function VouchersTable({
               </TableRow>
             ))}
             {data.length === 0 && (
-              <TableRow>
-                <TableCell
-                  colSpan={claimed ? 8 : 6}
-                  className="h-24 text-center"
-                >
-                  No vouchers found.
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={claimed ? 8 : 6} className="p-0">
+                  <EmptyState
+                    icon={Ticket}
+                    title="No vouchers found"
+                    description={
+                      claimed
+                        ? "Claimed vouchers will appear here once players redeem them."
+                        : "Unclaimed vouchers will appear here once they are issued."
+                    }
+                    compact
+                  />
                 </TableCell>
               </TableRow>
             )}
