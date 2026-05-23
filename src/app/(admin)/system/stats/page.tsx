@@ -33,6 +33,7 @@ import {
   PanelRow,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { EmptyState } from "@/components/empty-state";
 import {
   Table,
   TableBody,
@@ -196,9 +197,12 @@ export default async function SystemStatsPage() {
 
           <StatPanel title="Slowest queries (recent)" icon={Timer} accent="rose">
             {timingStats.slowest.length === 0 ? (
-              <p className="py-8 text-center text-sm text-muted-foreground">
-                No samples yet — navigate a few pages, then refresh.
-              </p>
+              <EmptyState
+                icon={Timer}
+                title="No samples yet"
+                description="Navigate a few pages, then refresh."
+                compact
+              />
             ) : (
               <div className="max-h-[260px] overflow-auto">
                 <Table>
@@ -231,9 +235,12 @@ export default async function SystemStatsPage() {
 
           <StatPanel title="Per-query aggregates" icon={Layers} accent="purple">
             {timingStats.perQuery.length === 0 ? (
-              <p className="py-8 text-center text-sm text-muted-foreground">
-                No samples yet.
-              </p>
+              <EmptyState
+                icon={Layers}
+                title="No samples yet"
+                description="Navigate a few pages, then refresh."
+                compact
+              />
             ) : (
               <div className="max-h-[260px] overflow-auto">
                 <Table>
@@ -283,9 +290,11 @@ export default async function SystemStatsPage() {
             accent="amber"
           >
             {breakdownTotal === 0 ? (
-              <p className="py-8 text-center text-sm text-muted-foreground">
-                No events this month.
-              </p>
+              <EmptyState
+                icon={ScrollText}
+                title="No events this month"
+                compact
+              />
             ) : (
               <div className="space-y-2">
                 {breakdownTop.map((row) => {
@@ -342,9 +351,11 @@ export default async function SystemStatsPage() {
             accent="blue"
           >
             {topAdmins.length === 0 ? (
-              <p className="py-6 text-center text-sm text-muted-foreground">
-                No admin activity this month.
-              </p>
+              <EmptyState
+                icon={Users}
+                title="No admin activity this month"
+                compact
+              />
             ) : (
               <Table>
                 <TableHeader>
