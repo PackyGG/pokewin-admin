@@ -176,6 +176,77 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ledger_tx_metadata_affiliate_code
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_inv_card_id
   ON user_inventory (card_id);
 
+-- #11 ----------------------------------------------------------------
+-- ledger_transactions partial (user_id, created_at DESC) WHERE completed
+-- ===================================================================
+-- Added by the 2026-05-23 query perf pass.
+--
+-- getUserBalanceHistory (users-financial.ts) runs
+--   SELECT DISTINCT ON (DATE(created_at)) ...
+--   WHERE user_id = $1 AND status = 'completed'
+--   ORDER BY DATE(created_at) ASC, created_at DESC
+-- #2 above leads (user_id, TYPE, status, created_at), so with no `type`
+-- predicate it can only range-scan on user_id and must then SORT to get
+-- created_at / DATE(created_at) order. This partial index returns the
+-- user's completed rows already in created_at order, so the DISTINCT ON
+-- collapses without a sort and the status filter is satisfied by the
+-- partial predicate. Stays small because it only covers completed rows.
+--
+-- Accelerates:
+--   • src/lib/queries/users-financial.ts getUserBalanceHistory
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ledger_tx_user_created_at_completed
+  ON ledger_transactions (user_id, created_at DESC)
+  WHERE status = 'completed';
+
+-- #12 ----------------------------------------------------------------
+-- ledger_transactions (created_at DESC) — unfiltered recency scan
+-- ===================================================================
+-- Added by the 2026-05-23 query perf pass.
+--
+-- getRecentActivity (dashboard.ts) pulls the newest N rows with a bare
+--   ORDER BY created_at DESC LIMIT N
+-- and no WHERE clause. #1 and #2 both lead with status/type/user_id, so
+-- neither can serve an unfiltered global recency scan — it falls back to
+-- a full scan + top-N sort. A plain (created_at DESC) index turns it into
+-- an index-only top-N read. (getRecentActivity's offset is now capped, so
+-- this only ever reads the first page-window of the index.)
+--
+-- Accelerates:
+--   • src/lib/queries/dashboard.ts getRecentActivity (ledger side)
+--   • any "latest N transactions" global feed
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ledger_tx_created_at
+  ON ledger_transactions (created_at DESC);
+
+-- #13 ----------------------------------------------------------------
+-- battle_participants (battle_id)
+-- ===================================================================
+-- Added by the 2026-05-23 query perf pass.
+--
+-- battle_participants has only PK + a UNIQUE on game_session_id; the
+-- battle_id FK column is UNINDEXED (Postgres does not auto-index FKs).
+-- The biggest-hit battle sort (battles.ts getBattles, sortBy=hit) joins
+--   battles b LEFT JOIN battle_participants bp ON bp.battle_id = b.id
+-- across every completed battle, forcing a seq scan / full hash of
+-- battle_participants. An index on battle_id makes it a per-battle index
+-- lookup. Also helps any per-battle participant fetch.
+--
+-- Accelerates:
+--   • src/lib/queries/battles.ts getBattles biggest-hit multiplier CTE
+--   • per-battle participant joins generally
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_battle_participants_battle_id
+  ON battle_participants (battle_id);
+
+-- -------------------------------------------------------------------
+-- ADMIN DB (separate database — apply against ADMIN_DATABASE_URL, NOT
+-- the main game DB). Lower priority: admin_audit_events is a small
+-- staff-action log.
+-- -------------------------------------------------------------------
+-- getRecentActivity (dashboard.ts) also orders admin_audit_events by
+-- created_at DESC with no index on that column. Cheap to add; only worth
+-- it once the audit log grows large.
+-- CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_admin_audit_created_at
+--   ON admin_audit_events (created_at DESC);
+
 -- =============================================================================
 -- Verification queries (run AFTER each index creation)
 -- =============================================================================
