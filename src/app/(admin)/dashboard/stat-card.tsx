@@ -65,7 +65,7 @@ export function StatCard({
         />
       </CardHeader>
       <CardContent>
-        <div className="truncate text-stat-value">
+        <div className="truncate text-stat-value tabular-nums">
           {useAnimated ? (
             <AnimatedNumber value={animatedValue!} format={formatKind!} />
           ) : (
