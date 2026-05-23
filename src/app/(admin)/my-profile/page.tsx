@@ -31,6 +31,7 @@ import { formatCurrency, formatDateTime, formatNumber } from "@/lib/utils/format
 import { AFFILIATE_LEVEL_COLORS, AFFILIATE_LEVEL_LABELS } from "@/lib/constants";
 import { PageHero, KpiTile, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { EmptyState } from "@/components/empty-state";
 import { SocialsCard } from "./socials-card";
 import { CreatorWebhooksCard } from "./webhooks-card";
 import { DealsTable } from "./deal-detail-dialog";
@@ -162,6 +163,7 @@ export default async function MyProfilePage() {
               <SectionHeading icon={Users} title="Referrals" />
               <Card>
                 <CardContent className="pt-6">
+                  <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -203,14 +205,20 @@ export default async function MyProfilePage() {
                         </TableRow>
                       ))}
                       {data.referrals.length === 0 && (
-                        <TableRow>
-                          <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
-                            No referrals yet.
+                        <TableRow className="hover:bg-transparent">
+                          <TableCell colSpan={7} className="p-0">
+                            <EmptyState
+                              icon={Users}
+                              title="No referrals yet"
+                              description="Users who sign up with your code appear here."
+                              compact
+                            />
                           </TableCell>
                         </TableRow>
                       )}
                     </TableBody>
                   </Table>
+                  </div>
                 </CardContent>
               </Card>
             </div>
@@ -221,6 +229,7 @@ export default async function MyProfilePage() {
               <SectionHeading icon={Receipt} title="Payouts" />
               <Card>
                 <CardContent className="pt-6">
+                  <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -250,14 +259,20 @@ export default async function MyProfilePage() {
                         </TableRow>
                       ))}
                       {data.payouts.length === 0 && (
-                        <TableRow>
-                          <TableCell colSpan={3} className="h-24 text-center text-muted-foreground">
-                            No payouts yet.
+                        <TableRow className="hover:bg-transparent">
+                          <TableCell colSpan={3} className="p-0">
+                            <EmptyState
+                              icon={Receipt}
+                              title="No payouts yet"
+                              description="Affiliate payouts you receive appear here."
+                              compact
+                            />
                           </TableCell>
                         </TableRow>
                       )}
                     </TableBody>
                   </Table>
+                  </div>
                 </CardContent>
               </Card>
             </div>
