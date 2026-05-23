@@ -9,6 +9,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Loader2,
+  Receipt,
   X,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -42,6 +43,7 @@ import {
   ledgerDirection,
 } from "@/lib/utils/ledger-direction";
 import { BorrowBadge } from "@/components/borrow-badge";
+import { EmptyState } from "@/components/empty-state";
 import { fetchUserTransactions } from "./actions";
 import type {
   Transaction,
@@ -399,12 +401,17 @@ export const CategoryTransactionsTable = React.memo(
                 </TableRow>
               ))}
               {txData.data.length === 0 && (
-                <TableRow>
+                <TableRow className="hover:bg-transparent">
                   <TableCell
                     colSpan={showCardsValue ? 11 : 9}
-                    className="text-center text-muted-foreground"
+                    className="p-0"
                   >
-                    No transactions
+                    <EmptyState
+                      icon={Receipt}
+                      title="No transactions"
+                      description="Nothing matches the current filters."
+                      compact
+                    />
                   </TableCell>
                 </TableRow>
               )}
