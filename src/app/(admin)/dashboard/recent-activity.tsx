@@ -183,8 +183,9 @@ export function RecentActivity({
     {
       onInit: (rows) => {
         // The server emits an initial snapshot of up to 30 rows (newest-
-        // first). The parent already rendered `initial` SSR, so we just
-        // dedupe and advance the cursor to the freshest row we know about.
+        // first). This seeds the feed on first paint (it no longer relies
+        // on an SSR-rendered `initial` list) and advances the cursor to
+        // the freshest row we know about.
         if (rows.length === 0) return;
         const newest = rows[0].createdAt;
         if (
