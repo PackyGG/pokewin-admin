@@ -12,7 +12,7 @@ import {
   PaginationSkeleton,
 } from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
-import { PageHero } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Battle Transactions" };
@@ -48,17 +48,11 @@ export default async function BattleTransactionsPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-            <Swords className="size-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold leading-tight">Battle Transactions</h1>
-            <p className="text-sm text-muted-foreground">
-              Battle bets, sponsorships, and refunds — filtered across all modes.
-            </p>
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={Swords}
+          title="Battle Transactions"
+          subtitle="Battle bets, sponsorships, and refunds — filtered across all modes."
+        />
       </PageHero>
 
       <div className="space-y-4">

@@ -12,7 +12,7 @@ import {
   PaginationSkeleton,
 } from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
-import { PageHero } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Reward Transactions" };
@@ -47,17 +47,11 @@ export default async function RewardTransactionsPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-            <Gift className="size-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold leading-tight">Reward Transactions</h1>
-            <p className="text-sm text-muted-foreground">
-              Rakeback claims, race prizes, and reward-card sales.
-            </p>
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={Gift}
+          title="Reward Transactions"
+          subtitle="Rakeback claims, race prizes, and reward-card sales."
+        />
       </PageHero>
 
       <div className="space-y-4">
