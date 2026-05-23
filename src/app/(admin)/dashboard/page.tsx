@@ -10,10 +10,17 @@ import {
   BadgeDollarSign,
   HandCoins,
   Gauge,
+  HeartPulse,
+  UserCheck,
+  Hourglass,
+  ArrowDownUp,
+  Boxes,
+  Receipt,
 } from "lucide-react";
 import { getDashboardStats } from "@/lib/queries/dashboard";
 import { requirePageAccess } from "@/lib/dal";
 import { formatCurrency } from "@/lib/utils/format";
+import { LoadTimeIndicator } from "./load-time-indicator";
 import { StatCard } from "./stat-card";
 import {
   PnlStatCard,
@@ -67,6 +74,19 @@ export default async function DashboardPage() {
           icon={LayoutDashboard}
           title="Dashboard"
           subtitle="Live platform overview — revenue, users, and recent activity."
+          // The load-time chip needs the (streamed) stats, so it sits
+          // behind its own tiny Suspense boundary — the hero itself still
+          // paints instantly. Fallback is a faint pill of the same size so
+          // the hero's right edge doesn't jump when the chip resolves.
+          action={
+            <Suspense
+              fallback={
+                <Skeleton className="h-[26px] w-40 rounded-full" />
+              }
+            >
+              <DashboardLoadTime />
+            </Suspense>
+          }
         />
       </PageHero>
 
@@ -85,6 +105,19 @@ export default async function DashboardPage() {
       >
         <DashboardStatStrips />
       </Suspense>
+
+      {/* Health & Operations — a curated second tier of DERIVED ratios
+          (net cashflow, payout ratio, inventory liability, ARPU) plus two
+          live ops figures (active players, queued payouts). Grouped under
+          its own heading so the primary revenue strip stays focused.
+          Streams behind Suspense sharing the same cached getDashboardStats;
+          fallback is a 6-tile strip matching the real grid. */}
+      <div className="space-y-3">
+        <SectionHeading icon={HeartPulse} title="Health & Operations" />
+        <Suspense fallback={<KpiStripSkeleton count={6} />}>
+          <DashboardHealthStrip />
+        </Suspense>
+      </div>
 
       {/* Charts. Three-up at lg+ but stacks to a single column on
           phones so each chart keeps a readable height (Recharts crushes
@@ -130,6 +163,138 @@ export default async function DashboardPage() {
           </FadeIn>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Load-time chip for the hero action slot. Streams behind its own tiny
+ * Suspense; reads the same React-cached getDashboardStats, so it adds no
+ * extra query — it just surfaces the queryMs / generatedAt that the
+ * aggregate already measures.
+ */
+async function DashboardLoadTime() {
+  const stats = await getDashboardStats();
+  return (
+    <LoadTimeIndicator
+      queryMs={stats.queryMs}
+      generatedAt={stats.generatedAt}
+    />
+  );
+}
+
+/**
+ * Health & Operations strip — derived ratios + live ops figures. Async so
+ * it streams behind its own Suspense; reads the React-cached
+ * getDashboardStats (shared with the other streamed segments).
+ *
+ * House-POV color rule (CLAUDE.md): a number the USER would celebrate is
+ * rose; a number good for the HOUSE is emerald; pure engagement is blue;
+ * liability magnitude uses orange to stay distinct from directional rose.
+ */
+async function DashboardHealthStrip() {
+  const stats = await getDashboardStats();
+
+  // Net deposits (rolling 24h) = deposits − withdrawals over the same
+  // window. Positive = more cash came in than went out = house-favorable
+  // cash position → emerald; negative → rose. Both inputs are the existing
+  // period objects, so this is purely derived (no new query).
+  const netDeposits24h = stats.deposits["24h"] - stats.withdrawals["24h"];
+  const netIsHousePositive = netDeposits24h >= 0;
+
+  // Withdrawal ratio (24h) = withdrawals / deposits × 100 — payout health.
+  // Higher = more of today's inflow is flowing back out. A watch metric
+  // (magnitude matters, not a win/loss direction) → amber. Guard the
+  // divide-by-zero so a quiet day shows 0% rather than NaN/∞.
+  const withdrawalRatio24h =
+    stats.deposits["24h"] > 0
+      ? (stats.withdrawals["24h"] / stats.deposits["24h"]) * 100
+      : 0;
+
+  // Inventory liability = held (unsold) inventory value + unclaimed
+  // voucher value. The non-cash legs of what the house owes users → an
+  // orange liability tile (matches the "Users Total Balance" convention).
+  const inventoryLiability =
+    stats.financials.totalInventoryValue +
+    stats.financials.totalUnclaimedVouchers;
+
+  // ARPU = lifetime GGR ÷ unique depositors — gaming revenue earned per
+  // funded player. House gaming margin per head → emerald. Guard the
+  // divide-by-zero before any depositor exists.
+  const arpu =
+    stats.financials.uniqueDepositors > 0
+      ? stats.ggr.all / stats.financials.uniqueDepositors
+      : 0;
+
+  return (
+    <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-6">
+      {/* Active players (24h) — distinct real users who wagered in the last
+          24h. Pure engagement headcount → blue. */}
+      <StatCard
+        title="Active Players (24h)"
+        animatedValue={stats.activity.activeUsers24h}
+        formatKind="number"
+        subtitle="Distinct players who wagered"
+        icon={UserCheck}
+        color="blue"
+      />
+      {/* Net Deposits (24h) — deposits minus withdrawals. House-favorable
+          when positive → emerald, else rose. Sign is explicit so the
+          direction reads at a glance. */}
+      <StatCard
+        title="Net Deposits (24h)"
+        value={`${netDeposits24h < 0 ? "−" : "+"}${formatCurrency(
+          Math.abs(netDeposits24h),
+        )}`}
+        subtitle={`${formatCurrency(stats.deposits["24h"])} in · ${formatCurrency(stats.withdrawals["24h"])} out`}
+        icon={ArrowDownUp}
+        color={netIsHousePositive ? "emerald" : "rose"}
+      />
+      {/* Withdrawal Ratio (24h) — payout-to-deposit health. Amber watch
+          metric. `value` (not animatedValue) so the .1 precision survives
+          (the number formatter rounds to an integer). */}
+      <StatCard
+        title="Withdrawal Ratio"
+        value={`${withdrawalRatio24h.toFixed(1)}%`}
+        subtitle="Withdrawals ÷ deposits (24h)"
+        icon={Percent}
+        color="amber"
+      />
+      {/* ARPU — lifetime GGR per unique depositor. House gaming margin per
+          funded player → emerald. */}
+      <StatCard
+        title="ARPU"
+        animatedValue={arpu}
+        formatKind="currency"
+        subtitle="GGR per depositor (lifetime)"
+        icon={Receipt}
+        color="emerald"
+      />
+      {/* Inventory Liability — unsold inventory + unclaimed vouchers, the
+          non-cash legs of house liability. Orange (liability magnitude). */}
+      <StatCard
+        title="Inventory Liability"
+        animatedValue={inventoryLiability}
+        formatKind="currency"
+        subtitle={`${formatCurrency(stats.financials.totalInventoryValue)} items · ${formatCurrency(stats.financials.totalUnclaimedVouchers)} vouchers`}
+        icon={Boxes}
+        color="orange"
+      />
+      {/* Pending Payouts — withdrawal requests still in flight (pending /
+          processing / shipped). Committed house outflow queued to leave →
+          rose. Subtitle carries the request count. */}
+      <StatCard
+        title="Pending Payouts"
+        animatedValue={stats.operations.pendingWithdrawalsValue}
+        formatKind="currency"
+        subtitle={`${stats.operations.pendingWithdrawalsCount} ${
+          stats.operations.pendingWithdrawalsCount === 1
+            ? "request"
+            : "requests"
+        } queued`}
+        icon={Hourglass}
+        color="rose"
+      />
     </div>
   );
 }
