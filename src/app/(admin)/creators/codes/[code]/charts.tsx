@@ -321,7 +321,8 @@ export function CodeAnalyticsCharts({ data }: { data: DailyData[] }) {
                 stroke="var(--color-wagerVolume)"
                 fill="url(#fillWagers)"
                 strokeWidth={2}
-                animationDuration={500}
+                animationDuration={700}
+                animationEasing="ease-out"
               />
               <Area
                 type="monotone"
@@ -329,7 +330,8 @@ export function CodeAnalyticsCharts({ data }: { data: DailyData[] }) {
                 stroke="var(--color-depositVolume)"
                 fill="url(#fillDeposits)"
                 strokeWidth={2}
-                animationDuration={500}
+                animationDuration={700}
+                animationEasing="ease-out"
               />
               <Area
                 type="monotone"
@@ -337,7 +339,8 @@ export function CodeAnalyticsCharts({ data }: { data: DailyData[] }) {
                 stroke="var(--color-commission)"
                 fill="url(#fillCommission)"
                 strokeWidth={2}
-                animationDuration={500}
+                animationDuration={700}
+                animationEasing="ease-out"
               />
             </AreaChart>
           </ChartContainer>
@@ -376,13 +379,15 @@ export function CodeAnalyticsCharts({ data }: { data: DailyData[] }) {
                 dataKey="clicks"
                 fill="var(--color-clicks)"
                 radius={[4, 4, 0, 0]}
-                animationDuration={500}
+                animationDuration={700}
+                animationEasing="ease-out"
               />
               <Bar
                 dataKey="referrals"
                 fill="var(--color-referrals)"
                 radius={[4, 4, 0, 0]}
-                animationDuration={500}
+                animationDuration={700}
+                animationEasing="ease-out"
               />
             </BarChart>
           </ChartContainer>
