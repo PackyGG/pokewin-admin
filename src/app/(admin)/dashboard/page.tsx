@@ -141,15 +141,21 @@ export default async function DashboardPage() {
         {/* Users Total Balance is a HOUSE LIABILITY but we accent it orange
             (not rose) so it's visually distinct from the Withdrawals / PnL
             cards that also use rose. The magnitude is what admins care about
-            here, not a direction signal. */}
+            here, not a direction signal.
+
+            Liability total = on-site cash + held inventory (unsold cards) +
+            unclaimed vouchers. Vouchers are real owed balance the user can
+            still redeem, so they belong in the same liability figure as cash
+            and inventory (they were previously omitted from this tile). */}
         <StatCard
           title="Users Total Balance"
           animatedValue={
             stats.financials.totalSiteBalance +
-            stats.financials.totalInventoryValue
+            stats.financials.totalInventoryValue +
+            stats.financials.totalUnclaimedVouchers
           }
           formatKind="currency"
-          subtitle={`${formatCurrency(stats.financials.totalSiteBalance)} cash · ${formatCurrency(stats.financials.totalInventoryValue)} unsold inventory`}
+          subtitle={`${formatCurrency(stats.financials.totalSiteBalance)} cash · ${formatCurrency(stats.financials.totalInventoryValue)} inventory · ${formatCurrency(stats.financials.totalUnclaimedVouchers)} vouchers`}
           icon={Wallet}
           color="orange"
         />

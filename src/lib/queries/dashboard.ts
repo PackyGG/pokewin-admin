@@ -1,6 +1,5 @@
 import { getDb } from "@/lib/db";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
-import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { MS_PER_DAY, MS_PER_HOUR } from "@/lib/utils/time";
@@ -17,20 +16,6 @@ import {
   WAGER_TYPES_SQL,
   PAYOUT_TYPES_SQL,
 } from "./_wager-payout-types";
-
-export type ActivityItem = {
-  id: string;
-  source: "audit" | "transaction";
-  type: string;
-  username: string;
-  createdAt: string;
-  detail?: string;
-  amount?: number;
-  adminUserId?: string;
-  targetUserId?: string;
-  targetUsername?: string;
-  userId?: string;
-};
 
 /**
  * Single raw query that returns revenue (deposits), withdrawal, wager and GGR
@@ -685,6 +670,14 @@ async function dashboardStatsInner() {
       // round-trip during the 2026-05-11 perf pass).
       totalSiteBalance: toNumber(balanceAggregates._sum?.available_balance),
       totalInventoryValue: toNumber(totalInventoryValue._sum?.value_at_obtained),
+      // Outstanding (unclaimed) voucher liability — the third leg of the
+      // house's balance liability alongside on-site cash + held inventory.
+      // Pulled from the realized-P&L snapshot (already fetched + React-
+      // cached above), so this adds no extra round-trip and uses the SAME
+      // staff+blacklist exclusion. The dashboard previously surfaced only
+      // cash + inventory in "Users Total Balance"; vouchers were tracked
+      // inside realizedPnl but never shown as part of the liability total.
+      totalUnclaimedVouchers: realizedPnlResult.vouchers,
       avgWagerPerDeposit: depositCount > 0 ? totalWagered / depositCount : 0,
       avgDeposit:
         depositCount > 0
@@ -733,115 +726,5 @@ async function dashboardStatsInner() {
       date: new Date(d.date).toISOString().split("T")[0],
       count: Number(d.count),
     })),
-  };
-}
-
-// A merge-two-sources-then-slice feed only makes sense for the first
-// handful of pages — nobody pages 500 deep into "recent activity". Cap
-// the reachable window so we never (a) `take: skip + perPage` thousands
-// of rows out of BOTH sources to throw all but a page away, nor
-// (b) run an unbounded exact COUNT(*) over the live ledger (millions of
-// rows) just to render a page count. Items past this offset are not
-// reachable through this feed.
-const RECENT_ACTIVITY_MAX_ITEMS = 1000;
-
-export async function getRecentActivity({ page = 1, perPage = 20 }: { page?: number; perPage?: number }) {
-  const db = await getDb();
-  const skip = (page - 1) * perPage;
-
-  // Bound the fetch window. For any page inside the cap this is exactly
-  // `skip + perPage` (the original take), so the displayed feed is
-  // identical; only deep pages past the cap are clamped.
-  const take = Math.min(skip + perPage, RECENT_ACTIVITY_MAX_ITEMS);
-
-  // Bounded counts instead of unbounded COUNT(*). Each subquery scans at
-  // most CAP+1 rows then stops — enough to know whether the combined
-  // feed reaches the cap. When neither source is clamped (sum <= CAP)
-  // the bounded sum equals the true total, so pagination is exact for
-  // every reachable page; once the cap is hit, total saturates at CAP.
-  const countCap = RECENT_ACTIVITY_MAX_ITEMS + 1;
-
-  // Fetch from both sources with enough items to fill the page
-  const [auditEvents, transactions, totalAuditRows, totalTxRows] = await Promise.all([
-    adminDb.admin_audit_events.findMany({
-      take,
-      orderBy: { created_at: "desc" },
-      include: { admin_user: { select: { username: true, email: true } } },
-    }),
-    db.ledger_transactions.findMany({
-      take,
-      orderBy: { created_at: "desc" },
-      include: { user: { select: { username: true, email: true } } },
-    }),
-    adminDb.$queryRaw<{ c: bigint }[]>`
-      SELECT COUNT(*)::bigint AS c
-      FROM (SELECT 1 FROM admin_audit_events LIMIT ${countCap}) s
-    `,
-    db.$queryRaw<{ c: bigint }[]>`
-      SELECT COUNT(*)::bigint AS c
-      FROM (SELECT 1 FROM ledger_transactions LIMIT ${countCap}) s
-    `,
-  ]);
-
-  const totalAudit = Number(totalAuditRows[0]?.c ?? 0);
-  const totalTx = Number(totalTxRows[0]?.c ?? 0);
-
-  // Resolve target user usernames from the main DB
-  const targetUserIds = [
-    ...new Set([
-      ...auditEvents.map((e) => e.target_user_id).filter(Boolean),
-      ...transactions.map((t) => t.user_id),
-    ]),
-  ] as string[];
-
-  const targetUsers =
-    targetUserIds.length > 0
-      ? await db.user.findMany({
-          where: { id: { in: targetUserIds } },
-          select: { id: true, username: true, email: true },
-        })
-      : [];
-
-  const userMap = new Map(
-    targetUsers.map((u) => [u.id, u.username ?? u.email ?? "Unknown"])
-  );
-
-  const auditItems: ActivityItem[] = auditEvents.map((e) => ({
-    id: e.id,
-    source: "audit",
-    type: e.event_type,
-    username: e.admin_user?.username ?? e.admin_user?.email ?? "System",
-    createdAt: e.created_at.toISOString(),
-    adminUserId: e.admin_user_id ?? undefined,
-    targetUserId: e.target_user_id ?? undefined,
-    targetUsername: e.target_user_id ? userMap.get(e.target_user_id) ?? "Unknown" : undefined,
-  }));
-  const txItems: ActivityItem[] = transactions.map((t) => ({
-    id: t.id,
-    source: "transaction",
-    type: t.type,
-    username: t.user?.username ?? t.user?.email ?? "Unknown",
-    createdAt: t.created_at.toISOString(),
-    detail: t.description,
-    amount: toNumber(t.amount),
-    userId: t.user_id,
-    targetUsername: t.user?.username ?? t.user?.email ?? "Unknown",
-  }));
-
-  const merged = [...auditItems, ...txItems]
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-  // Saturate at the cap: only the first RECENT_ACTIVITY_MAX_ITEMS rows
-  // of the merged feed are reachable, so totalPages can't promise more.
-  // Below the cap, totalAudit + totalTx is the exact combined total.
-  const total = Math.min(totalAudit + totalTx, RECENT_ACTIVITY_MAX_ITEMS);
-  const data = merged.slice(skip, skip + perPage);
-
-  return {
-    data,
-    page,
-    perPage,
-    total,
-    totalPages: Math.ceil(total / perPage),
   };
 }
