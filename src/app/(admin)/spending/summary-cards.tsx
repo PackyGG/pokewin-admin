@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/chart";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { useIsMobile } from "@/hooks/use-mobile";
 import type { SpendingSummary, MonthlyTrendItem } from "@/lib/queries/spending";
 import { EXPENSE_CATEGORIES, CATEGORY_CHART_COLORS } from "./constants";
 import {
@@ -61,6 +62,10 @@ export function SummaryCards({
   to: string;
   trend: MonthlyTrendItem[];
 }) {
+  // Radial pie labels collide and clip on narrow screens, so suppress
+  // them on phones — the slice data stays intact and is still readable
+  // via the tooltip. Presentation-only; no data is dropped.
+  const isMobile = useIsMobile();
   const grandTotal = summary.totalPeriod + summary.recurringTotal;
   const prevTotal = summary.totalPrevPeriod + summary.recurringTotal;
   const change = prevTotal > 0 ? ((grandTotal - prevTotal) / prevTotal) * 100 : 0;
@@ -385,8 +390,11 @@ export function SummaryCards({
                       outerRadius="70%"
                       paddingAngle={2}
                       strokeWidth={0}
-                      label={({ category, percent }) =>
-                        `${category} ${(percent * 100).toFixed(0)}%`
+                      label={
+                        isMobile
+                          ? false
+                          : ({ category, percent }) =>
+                              `${category} ${((percent ?? 0) * 100).toFixed(0)}%`
                       }
                       labelLine={false}
                       fontSize={11}
