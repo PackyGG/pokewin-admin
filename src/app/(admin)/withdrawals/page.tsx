@@ -9,8 +9,13 @@ import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { ValueRangeFilter } from "./value-range-filter";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TableSkeleton, PaginationSkeleton } from "@/components/loading-skeletons";
-import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
+import {
+  PageHero,
+  PageHeroIdentity,
+  SectionHeading,
+} from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { ListChecks } from "lucide-react";
 
 export const metadata = { title: "Withdrawals" };
 
@@ -116,6 +121,10 @@ export default async function WithdrawalsPage({
             <ValueRangeFilter />
           </DataTableToolbar>
         </Suspense>
+      </div>
+
+      <div className="space-y-3">
+        <SectionHeading icon={ListChecks} title="Withdrawal requests" />
         <Suspense
           key={suspenseKey}
           fallback={

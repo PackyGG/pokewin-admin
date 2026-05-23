@@ -11,7 +11,11 @@ import {
   TableSkeleton,
   PaginationSkeleton,
 } from "@/components/loading-skeletons";
-import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
+import {
+  PageHero,
+  PageHeroIdentity,
+  SectionHeading,
+} from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { BigDepositsToggle } from "./big-deposits-toggle";
 
@@ -60,6 +64,10 @@ export default async function DepositsTransactionsPage({
             <BigDepositsToggle />
           </DataTableToolbar>
         </Suspense>
+      </div>
+
+      <div className="space-y-3">
+        <SectionHeading icon={ArrowDownToLine} title="Inbound deposits" />
         {/* getDepositTransactions is now lean — a bare index scan over
             type='deposit' plus a per-page-row LATERAL that merges the
             paired deposit_bonus. No per-user totals or cross-DB tag
