@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { BotsContent } from "./bots-content";
 import {
   PageHero,
+  PageHeroIdentity,
   SectionHeading,
   KpiTile,
 } from "@/components/modern-panels";
@@ -39,18 +40,11 @@ export default async function BotsPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-            <Bot className="size-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold leading-tight">Bots</h1>
-            <p className="text-sm text-muted-foreground">
-              Automated opponents for battle modes — activity and aggregate
-              play stats.
-            </p>
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={Bot}
+          title="Bots"
+          subtitle="Automated opponents for battle modes — activity and aggregate play stats."
+        />
       </PageHero>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">

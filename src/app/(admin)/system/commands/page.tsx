@@ -8,7 +8,12 @@
 
 import { Command, Keyboard } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
-import { PageHero, SectionHeading, KpiTile } from "@/components/modern-panels";
+import {
+  PageHero,
+  PageHeroIdentity,
+  SectionHeading,
+  KpiTile,
+} from "@/components/modern-panels";
 import {
   ACTION_COMMANDS,
   EXAMPLE_QUERIES,
@@ -29,13 +34,11 @@ export default async function CommandsDocsPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-            <Keyboard className="size-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold leading-tight">Commands</h1>
-            <p className="text-sm text-muted-foreground">
+        <PageHeroIdentity
+          icon={Keyboard}
+          title="Commands"
+          subtitle={
+            <>
               Press{" "}
               <Kbd>
                 {/* We can't feature-detect platform server-side; show both. */}
@@ -46,9 +49,9 @@ export default async function CommandsDocsPage() {
               jump to a page, run a quick action, or search end-users with
               an <code className="rounded bg-muted px-1 py-0.5 text-xs">@</code>{" "}
               prefix.
-            </p>
-          </div>
-        </div>
+            </>
+          }
+        />
       </PageHero>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
