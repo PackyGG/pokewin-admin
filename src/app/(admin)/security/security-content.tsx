@@ -3,7 +3,6 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,7 +17,9 @@ import {
 } from "@/components/ui/table";
 import { upsertSiteConfig, deleteSiteConfig } from "./actions";
 import type { SiteConfigRow } from "@/lib/queries/security";
-import { Trash2 } from "lucide-react";
+import { Trash2, SlidersHorizontal, Plus } from "lucide-react";
+import { SectionHeading } from "@/components/modern-panels";
+import { EmptyState } from "@/components/empty-state";
 
 function isBoolean(value: string) {
   return value === "true" || value === "false";
@@ -82,11 +83,9 @@ export function SecurityContent({ config }: { config: SiteConfigRow[] }) {
 
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium">Site Configuration</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <div className="space-y-3">
+        <SectionHeading icon={SlidersHorizontal} title="Site Configuration" />
+        <div className="rounded-md border overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
@@ -98,9 +97,14 @@ export function SecurityContent({ config }: { config: SiteConfigRow[] }) {
             </TableHeader>
             <TableBody>
               {config.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={4} className="text-center text-muted-foreground">
-                    No configuration entries
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={4} className="p-0">
+                    <EmptyState
+                      icon={SlidersHorizontal}
+                      title="No configuration entries"
+                      description="Add a config key below to control site behaviour."
+                      compact
+                    />
                   </TableCell>
                 </TableRow>
               )}
@@ -147,14 +151,12 @@ export function SecurityContent({ config }: { config: SiteConfigRow[] }) {
               ))}
             </TableBody>
           </Table>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium">Add Configuration</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <div className="space-y-3">
+        <SectionHeading icon={Plus} title="Add Configuration" />
+        <div className="rounded-md border p-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
             <div className="space-y-1">
               <Label>Key</Label>
@@ -181,13 +183,18 @@ export function SecurityContent({ config }: { config: SiteConfigRow[] }) {
               />
             </div>
             <div className="flex items-end">
-              <Button onClick={handleAdd} disabled={isPending}>
+              <Button
+                onClick={handleAdd}
+                disabled={isPending}
+                className="w-full sm:w-auto"
+              >
+                <Plus className="size-4" />
                 Add
               </Button>
             </div>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }
