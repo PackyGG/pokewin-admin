@@ -14,7 +14,12 @@ import {
   Users,
 } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
-import { KpiTile, PageHero, SectionHeading } from "@/components/modern-panels";
+import {
+  KpiTile,
+  PageHero,
+  PageHeroIdentity,
+  SectionHeading,
+} from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -64,40 +69,39 @@ export default async function AdCodeDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3 min-w-0">
+        <PageHeroIdentity
+          icon={Megaphone}
+          back={
             <Link
               href="/creators/ads"
-              className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground"
+              className="inline-flex size-9 shrink-0 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground"
               aria-label="Back to Ads"
             >
               <ArrowLeft className="size-4" />
             </Link>
-            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 shrink-0">
-              <Megaphone className="size-5 text-primary" />
+          }
+          title={summary.code}
+          titleClassName="font-mono truncate"
+          badges={
+            <Badge
+              variant="outline"
+              className="bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30"
+            >
+              Ad code
+            </Badge>
+          }
+          subtitle={
+            <>
+              Created {formatRelative(summary.createdAt)} ·{" "}
+              {formatDateTime(summary.createdAt)}
+            </>
+          }
+          action={
+            <div className="w-full md:w-[360px] shrink-0">
+              <CopyShareLink code={summary.code} />
             </div>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-2xl font-bold font-mono leading-tight truncate">
-                  {summary.code}
-                </h1>
-                <Badge
-                  variant="outline"
-                  className="bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30"
-                >
-                  Ad code
-                </Badge>
-              </div>
-              <p className="mt-0.5 text-sm text-muted-foreground">
-                Created {formatRelative(summary.createdAt)} ·{" "}
-                {formatDateTime(summary.createdAt)}
-              </p>
-            </div>
-          </div>
-          <div className="w-full md:w-[360px] shrink-0">
-            <CopyShareLink code={summary.code} />
-          </div>
-        </div>
+          }
+        />
       </PageHero>
 
       {/* KPI strip */}

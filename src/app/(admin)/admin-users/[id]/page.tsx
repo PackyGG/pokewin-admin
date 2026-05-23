@@ -1,7 +1,5 @@
 import { notFound } from "next/navigation";
-import Link from "next/link";
 import {
-  ArrowLeft,
   UserCog,
   Activity,
   Clock,
@@ -18,7 +16,7 @@ import {
 import { getLimitsForAdmin } from "@/lib/balance-limits";
 import { Badge } from "@/components/ui/badge";
 import { formatRelative } from "@/lib/utils/format";
-import { PageHero, KpiTile } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { AdminUserTabs } from "./admin-user-tabs";
 
@@ -63,30 +61,20 @@ export default async function AdminUserDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
-            <Link
-              href="/admin-users"
-              className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground shrink-0"
-            >
-              <ArrowLeft className="size-4" />
-            </Link>
-            <div className="flex size-10 items-center justify-center rounded-xl bg-purple-500/10 shrink-0">
-              <UserCog className="size-5 text-purple-500" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-xl sm:text-2xl font-bold leading-tight truncate">
-                  {detail.username}
-                </h1>
-                <Badge variant="outline" className="text-xs uppercase">
-                  {detail.role}
-                </Badge>
-              </div>
-              <p className="text-sm text-muted-foreground truncate">{detail.email}</p>
-            </div>
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={UserCog}
+          accent="purple"
+          backHref="/admin-users"
+          title={detail.username}
+          titleClassName="truncate"
+          badges={
+            <Badge variant="outline" className="text-xs uppercase">
+              {detail.role}
+            </Badge>
+          }
+          subtitle={detail.email}
+          subtitleClassName="truncate"
+        />
       </PageHero>
 
       <div className="grid grid-cols-2 gap-2.5 sm:gap-3 md:grid-cols-4">

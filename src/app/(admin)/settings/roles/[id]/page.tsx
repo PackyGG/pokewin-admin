@@ -1,8 +1,7 @@
 import { notFound } from "next/navigation";
-import Link from "next/link";
-import { ArrowLeft, KeyRound, FileText, ShieldCheck, Users } from "lucide-react";
+import { KeyRound, FileText, ShieldCheck, Users } from "lucide-react";
 import { requireAdmin } from "@/lib/dal";
-import { PageHero, KpiTile } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { getRole } from "../custom-roles-actions";
 import { RoleEditor } from "../role-editor";
@@ -26,23 +25,13 @@ export default async function RoleDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-3">
-          <Link
-            href="/settings/roles"
-            className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground"
-          >
-            <ArrowLeft className="size-4" />
-          </Link>
-          <div className="flex size-10 items-center justify-center rounded-xl bg-amber-500/10">
-            <KeyRound className="size-5 text-amber-500" />
-          </div>
-          <div className="flex-1">
-            <h1 className="text-2xl font-bold leading-tight">{role.name}</h1>
-            {role.description && (
-              <p className="text-sm text-muted-foreground">{role.description}</p>
-            )}
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={KeyRound}
+          accent="amber"
+          backHref="/settings/roles"
+          title={role.name}
+          subtitle={role.description || undefined}
+        />
       </PageHero>
 
       <div className="grid grid-cols-3 gap-3">

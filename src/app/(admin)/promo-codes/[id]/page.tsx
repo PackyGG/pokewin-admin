@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import {
-  ArrowLeft,
   Ticket,
   DollarSign,
   Users,
@@ -24,6 +23,7 @@ import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils/format";
 import { DeletePromoCodeButton } from "./delete-button";
 import {
   PageHero,
+  PageHeroIdentity,
   SectionHeading,
   KpiTile,
   StatPanel,
@@ -50,39 +50,28 @@ export default async function PromoCodeDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex flex-col gap-3 sm:gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
-            <Link
-              href="/promo-codes"
-              className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground shrink-0"
-            >
-              <ArrowLeft className="size-4" />
-            </Link>
-            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 shrink-0">
-              <Ticket className="size-5 text-primary" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-xl sm:text-2xl font-bold leading-tight truncate">
-                  {data.code ?? "Promo Code"}
-                </h1>
-                <Badge variant="outline">{data.region}</Badge>
-                {isExpired && (
-                  <Badge
-                    variant="outline"
-                    className="bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30"
-                  >
-                    Expired
-                  </Badge>
-                )}
-              </div>
-              <p className="text-xs font-mono text-muted-foreground mt-0.5 truncate">
-                {data.codeHash}
-              </p>
-            </div>
-          </div>
-          <DeletePromoCodeButton promoCodeId={data.id} />
-        </div>
+        <PageHeroIdentity
+          icon={Ticket}
+          backHref="/promo-codes"
+          title={data.code ?? "Promo Code"}
+          titleClassName="truncate"
+          badges={
+            <>
+              <Badge variant="outline">{data.region}</Badge>
+              {isExpired && (
+                <Badge
+                  variant="outline"
+                  className="bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30"
+                >
+                  Expired
+                </Badge>
+              )}
+            </>
+          }
+          subtitle={data.codeHash}
+          subtitleClassName="font-mono truncate"
+          action={<DeletePromoCodeButton promoCodeId={data.id} />}
+        />
       </PageHero>
 
       <div className="grid grid-cols-2 gap-2.5 sm:gap-3 md:grid-cols-4">

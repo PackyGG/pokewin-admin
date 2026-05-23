@@ -7,7 +7,12 @@ import { requirePageAccess } from "@/lib/dal";
 import { Badge } from "@/components/ui/badge";
 import { CardImage } from "@/components/card-image";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { PageHero, SectionHeading, KpiTile } from "@/components/modern-panels";
+import {
+  PageHero,
+  PageHeroIdentity,
+  SectionHeading,
+  KpiTile,
+} from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { EditCardButton } from "./edit-card-button";
 import { DeleteCardButton } from "./delete-card-button";
@@ -44,32 +49,33 @@ export default async function CardDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex flex-col gap-3 sm:gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
-            <BackButton />
-            <div className="flex size-10 items-center justify-center rounded-xl bg-blue-500/10 shrink-0">
-              <Layers className="size-5 text-blue-500" />
+        <PageHeroIdentity
+          icon={Layers}
+          accent="blue"
+          back={<BackButton />}
+          title={data.name}
+          titleClassName="truncate"
+          badges={
+            data.rarity ? (
+              <Badge variant="outline" className={RARITY_COLORS[data.rarity.toLowerCase()] ?? ""}>
+                {data.rarity}
+              </Badge>
+            ) : undefined
+          }
+          subtitle={
+            <>
+              {data.setName ? `${data.setName} · ` : ""}
+              {data.cardNumber ? `#${data.cardNumber}` : ""}
+            </>
+          }
+          subtitleClassName="truncate"
+          action={
+            <div className="flex flex-wrap gap-1.5 sm:gap-2">
+              <EditCardButton card={data} sets={sets} />
+              <DeleteCardButton cardId={data.id} cardName={data.name} packCount={data.packs.length} packNames={data.packs.map((p: { name: string }) => p.name)} />
             </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-xl sm:text-2xl font-bold leading-tight truncate">{data.name}</h1>
-                {data.rarity && (
-                  <Badge variant="outline" className={RARITY_COLORS[data.rarity.toLowerCase()] ?? ""}>
-                    {data.rarity}
-                  </Badge>
-                )}
-              </div>
-              <p className="text-sm text-muted-foreground truncate">
-                {data.setName ? `${data.setName} · ` : ""}
-                {data.cardNumber ? `#${data.cardNumber}` : ""}
-              </p>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-1.5 sm:gap-2">
-            <EditCardButton card={data} sets={sets} />
-            <DeleteCardButton cardId={data.id} cardName={data.name} packCount={data.packs.length} packNames={data.packs.map((p: { name: string }) => p.name)} />
-          </div>
-        </div>
+          }
+        />
       </PageHero>
 
       <div className="grid grid-cols-2 gap-2.5 sm:gap-3 md:grid-cols-4">
