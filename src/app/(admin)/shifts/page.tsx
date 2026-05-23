@@ -1,6 +1,6 @@
 import { CalendarClock } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
-import { PageHero } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { ShiftBoard } from "./shift-board";
 import { getAssignableWorkers, getShiftsForWeeks } from "./queries";
@@ -50,18 +50,11 @@ export default async function ShiftsPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
-            <CalendarClock className="size-5 text-primary" />
-          </div>
-          <div className="min-w-0">
-            <h1 className="text-xl font-bold leading-tight sm:text-2xl">Shifts</h1>
-            <p className="text-xs text-muted-foreground sm:text-sm">
-              Weekly support rota — three shift slots per day with flexible
-              times. Every shift renders in your own timezone.
-            </p>
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={CalendarClock}
+          title="Shifts"
+          subtitle="Weekly support rota — three shift slots per day with flexible times. Every shift renders in your own timezone."
+        />
       </PageHero>
 
       <FadeIn>

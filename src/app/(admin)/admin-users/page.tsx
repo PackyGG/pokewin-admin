@@ -9,6 +9,7 @@ import { AdminUserActions } from "./admin-user-actions";
 import { CreateAdminDialog } from "./create-dialog";
 import {
   PageHero,
+  PageHeroIdentity,
   SectionHeading,
   KpiTile,
 } from "@/components/modern-panels";
@@ -62,34 +63,28 @@ export default async function AdminUsersPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-              <Shield className="size-5 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold leading-tight">Users</h1>
-              <p className="text-sm text-muted-foreground">
-                Staff accounts — roles, 2FA status, and activation state.
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {isCurrentUserAdmin && (
-              <Button
-                variant="outline"
-                size="sm"
-                render={
-                  <Link href="/admin-users/balance-limits">
-                    <Wallet className="mr-1.5 size-4" />
-                    Balance Limits
-                  </Link>
-                }
-              />
-            )}
-            <CreateAdminDialog />
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={Shield}
+          title="Users"
+          subtitle="Staff accounts — roles, 2FA status, and activation state."
+          action={
+            <>
+              {isCurrentUserAdmin && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  render={
+                    <Link href="/admin-users/balance-limits">
+                      <Wallet className="mr-1.5 size-4" />
+                      Balance Limits
+                    </Link>
+                  }
+                />
+              )}
+              <CreateAdminDialog />
+            </>
+          }
+        />
       </PageHero>
 
       <div
