@@ -12,6 +12,7 @@ import {
 import { BackendApiError } from "@/lib/backend-api/errors";
 import { PageHero } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
 import {
     Table,
@@ -366,14 +367,22 @@ export default async function AffiliateLeaderboardDetailPage({
                         </TableHeader>
                         <TableBody>
                             {rankings.length === 0 ? (
-                                <TableRow>
-                                    <TableCell
-                                        colSpan={4}
-                                        className="text-center text-muted-foreground py-6"
-                                    >
-                                        {lb.time_status === "upcoming"
-                                            ? "Leaderboard hasn't started yet."
-                                            : "No qualifying wager activity in this window."}
+                                <TableRow className="hover:bg-transparent">
+                                    <TableCell colSpan={4} className="p-0">
+                                        <EmptyState
+                                            icon={Trophy}
+                                            title={
+                                                lb.time_status === "upcoming"
+                                                    ? "Leaderboard hasn't started yet"
+                                                    : "No qualifying wager activity"
+                                            }
+                                            description={
+                                                lb.time_status === "upcoming"
+                                                    ? "Standings populate once the event window opens and users start wagering on the code."
+                                                    : "No users tied to this leaderboard's code(s) wagered inside the event window."
+                                            }
+                                            compact
+                                        />
                                     </TableCell>
                                 </TableRow>
                             ) : (
@@ -469,9 +478,14 @@ export default async function AffiliateLeaderboardDetailPage({
                         </TableHeader>
                         <TableBody>
                             {lb.prize_tiers.length === 0 ? (
-                                <TableRow>
-                                    <TableCell colSpan={2} className="text-center text-muted-foreground py-6">
-                                        No prize tiers configured.
+                                <TableRow className="hover:bg-transparent">
+                                    <TableCell colSpan={2} className="p-0">
+                                        <EmptyState
+                                            icon={Trophy}
+                                            title="No prize tiers configured"
+                                            description="This leaderboard has no per-position prizes set."
+                                            compact
+                                        />
                                     </TableCell>
                                 </TableRow>
                             ) : (

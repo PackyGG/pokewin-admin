@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/table";
 import { PageHero, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { EmptyState } from "@/components/empty-state";
 import {
   formatCurrency,
   formatDateTime,
@@ -204,14 +205,22 @@ export default async function CreatorWagersPage({
                   </TableRow>
                 )}
                 {!loadFailed && wagers.length === 0 && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={4}
-                      className="h-24 text-center text-muted-foreground"
-                    >
-                      {profile.code
-                        ? "No wager activity yet."
-                        : "Creator has no affiliate code."}
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={4} className="p-0">
+                      <EmptyState
+                        icon={Activity}
+                        title={
+                          profile.code
+                            ? "No wager activity yet"
+                            : "Creator has no affiliate code"
+                        }
+                        description={
+                          profile.code
+                            ? "Recent wagers from users tied to this creator's code will appear here."
+                            : "Once this creator owns an affiliate code, wager events from their users show up here."
+                        }
+                        compact
+                      />
                     </TableCell>
                   </TableRow>
                 )}

@@ -1,7 +1,9 @@
 import countries from "i18n-iso-countries";
 import enLocale from "i18n-iso-countries/langs/en.json";
+import { Globe } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatNumber } from "@/lib/utils/format";
+import { EmptyState } from "@/components/empty-state";
 import { cn } from "@/lib/utils";
 
 // Register once per module load. Safe to call repeatedly — the lib dedupes.
@@ -32,9 +34,12 @@ export function CountryBreakdown({ rows }: { rows: CountryRow[] }) {
           </p>
         </CardHeader>
         <CardContent className="pt-0">
-          <p className="py-6 text-center text-sm text-muted-foreground">
-            No geographic data yet.
-          </p>
+          <EmptyState
+            icon={Globe}
+            title="No geographic data yet"
+            description="Country-level clicks and signups appear once the code starts getting traffic."
+            compact
+          />
         </CardContent>
       </Card>
     );

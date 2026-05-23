@@ -10,6 +10,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatDateTime, formatRelative } from "@/lib/utils/format";
+import { EmptyState } from "@/components/empty-state";
 import { ListRowActions } from "./list-row-actions";
 import { InlineSponsoredPercentage } from "./inline-sponsored-percentage";
 import type {
@@ -147,8 +148,13 @@ export function LeaderboardsTable({
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
         {rows.length === 0 ? (
-          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
-            No leaderboards found for this filter.
+          <div className="rounded-md border">
+            <EmptyState
+              icon={Trophy}
+              title="No leaderboards found"
+              description="No creator leaderboards match this filter. Try a different status or clear the creator filter."
+              compact
+            />
           </div>
         ) : (
           <div className="overflow-hidden rounded-md border">
@@ -184,12 +190,14 @@ export function LeaderboardsTable({
           </TableHeader>
           <TableBody>
             {rows.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  colSpan={11}
-                  className="text-center text-muted-foreground py-8"
-                >
-                  No leaderboards found for this filter.
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={11} className="p-0">
+                  <EmptyState
+                    icon={Trophy}
+                    title="No leaderboards found"
+                    description="No creator leaderboards match this filter. Try a different status or clear the creator filter."
+                    compact
+                  />
                 </TableCell>
               </TableRow>
             ) : (
