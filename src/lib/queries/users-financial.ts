@@ -25,6 +25,7 @@ export type PnlBreakdown = {
     exchangeExcessCredit: number;
     exchangeExcessToVoucher: number;
     battleExcessToVoucher: number;
+    affiliateLeaderboard: number;
   };
   // Net
   netPnlRealized: number;
@@ -58,7 +59,9 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
           'rakeback_claim','affiliate_claim',
           'rain_win','race_prize','balance_reward_claim','creator_tip',
           'voucher_redeemed','voucher_exchange','exchange_excess_credit',
-          'exchange_excess_to_voucher','battle_excess_to_voucher')
+          'exchange_excess_to_voucher','battle_excess_to_voucher',
+          'affiliate_leaderboard_creation','affiliate_leaderboard_refund',
+          'affiliate_leaderboard_prize')
       GROUP BY type
     `,
     db.user_inventory.aggregate({
@@ -100,6 +103,15 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
     exchangeExcessCredit: sum("exchange_excess_credit"),
     exchangeExcessToVoucher: sum("exchange_excess_to_voucher"),
     battleExcessToVoucher: sum("battle_excess_to_voucher"),
+    // Affiliate leaderboards: creator buy-in (house gain → negative net)
+    // netted against prize payouts + buy-in refunds (house cost → positive
+    // net). One net category so the breakdown reconciles with the balance-
+    // sheet realized P&L, which already captures these via balance deltas.
+    affiliateLeaderboard: sum(
+      "affiliate_leaderboard_creation",
+      "affiliate_leaderboard_refund",
+      "affiliate_leaderboard_prize",
+    ),
   };
   const otherCosts = Object.values(otherCostsDetail).reduce((a, b) => a + b, 0);
 
