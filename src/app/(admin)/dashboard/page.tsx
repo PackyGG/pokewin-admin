@@ -25,7 +25,11 @@ import {
 } from "./revenue-stat-card";
 import { AutoRefresh } from "./auto-refresh";
 import { WagerChart, DepositsChart, SignupsChart } from "./charts";
-import { RecentActivity, RecentActivityLivePulse } from "./recent-activity";
+import {
+  RecentActivity,
+  RecentActivityLivePulse,
+  RecentActivitySkeleton,
+} from "./recent-activity";
 import { LiveDeposits } from "./live-deposits";
 import { PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
@@ -132,7 +136,7 @@ export default async function DashboardPage() {
                 first paint. The fallback is a plain skeleton (NOT a live
                 RecentActivity) so we never open a throwaway SSE
                 connection that gets torn down the moment stats resolve. */}
-            <Suspense fallback={<Skeleton className="h-96 rounded-2xl" />}>
+            <Suspense fallback={<RecentActivitySkeleton />}>
               <DashboardActivityFeed />
             </Suspense>
           </FadeIn>
