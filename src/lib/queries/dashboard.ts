@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { getDb } from "@/lib/db";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import { toNumber } from "@/lib/utils/decimal";
@@ -237,9 +238,17 @@ function getPeriodAggregates(
 // Lifetime realized P&L lives in src/lib/queries/_realized-pnl.ts so the
 // Analytics page can use the exact same definition. Do not inline it here.
 
-export async function getDashboardStats() {
+/**
+ * Per-request memoized. The dashboard page streams several independent
+ * Suspense segments (KPI strips, charts, the activity count strip) that
+ * each read these stats; `cache()` ensures the heavy 17-query aggregate
+ * runs once per render, not once per segment. Cross-request caching is
+ * intentionally omitted — these are live platform numbers and the page
+ * already revalidates them via the 60s AutoRefresh.
+ */
+export const getDashboardStats = cache(async () => {
   return withTiming("dashboard.getDashboardStats", () => dashboardStatsInner());
-}
+});
 
 async function dashboardStatsInner() {
   const db = await getDb();

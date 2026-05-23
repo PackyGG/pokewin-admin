@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import {
   Users,
   Percent,
@@ -27,26 +28,32 @@ import { RecentActivity, RecentActivityLivePulse } from "./recent-activity";
 import { LiveDeposits } from "./live-deposits";
 import { PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import {
+  KpiStripSkeleton,
+  ChartRowSkeleton,
+} from "@/components/loading-skeletons";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export const metadata = { title: "Dashboard" };
 
 export default async function DashboardPage() {
   await requirePageAccess("/dashboard");
 
-  // Only the KPI stats are fetched server-side. The two live feeds
-  // (Recent Activity, Live Deposits) bootstrap their own snapshot on the
-  // client — that keeps the 60s router.refresh() below scoped to the
-  // KPIs and stops it from re-running getLiveActivity/getLiveDeposits
-  // every minute for data the feeds already own via SSE / polling.
-  const stats = await getDashboardStats();
-
-  // Average deposit transactions per hour. depositCounts holds the
-  // completed-deposit count per rolling window, so dividing by the
-  // window length in hours gives the per-hour rate. 24h is the hero
-  // (smooths a full peak/off-peak day); 7d is the longer baseline.
-  const depositsPerHour24h = (stats.depositCounts["24h"] ?? 0) / 24;
-  const depositsPerHour7d = (stats.depositCounts["7d"] ?? 0) / (7 * 24);
-
+  // The KPI numbers come from getDashboardStats — a heavy 17-query
+  // aggregate. Instead of awaiting it before the page renders anything,
+  // the static shell (hero, section headings, live feeds) paints
+  // immediately and each stats-fed segment streams in behind its own
+  // Suspense boundary. getDashboardStats is React-cached, so the three
+  // segments below share a single execution per render.
+  //
+  // The two live feeds (Recent Activity, Live Deposits) bootstrap their
+  // own snapshot on the client — that keeps the 60s router.refresh()
+  // below scoped to the KPIs and stops it from re-running
+  // getLiveActivity/getLiveDeposits every minute for data the feeds
+  // already own via SSE / polling. LiveDeposits needs no server stats so
+  // it renders directly in the shell; RecentActivity's 24h count strip
+  // does, so it streams behind Suspense (its live feed still connects on
+  // client mount regardless).
   return (
     <div className="space-y-6">
       {/* Dashboard polls at 60s for the KPI numbers only — KPIs settle
@@ -63,6 +70,87 @@ export default async function DashboardPage() {
         />
       </PageHero>
 
+      {/* Primary + secondary KPI strips stream together — they share the
+          same getDashboardStats fetch, so splitting them into separate
+          boundaries would just show two skeletons resolving at the same
+          instant. Fallback mirrors the 6-up primary + 7-up secondary
+          grids in DashboardStatStrips. */}
+      <Suspense
+        fallback={
+          <>
+            <KpiStripSkeleton count={6} />
+            <KpiStripSkeleton count={7} />
+          </>
+        }
+      >
+        <DashboardStatStrips />
+      </Suspense>
+
+      {/* Charts. Three-up at lg+ but stacks to a single column on
+          phones so each chart keeps a readable height (Recharts crushes
+          when forced into a tight grid cell). At md we go 2-up so the
+          row stays balanced before we have room for the third. */}
+      <div className="space-y-3">
+        <SectionHeading icon={LineChart} title="Trends" />
+        <Suspense fallback={<ChartRowSkeleton count={3} height={300} />}>
+          <DashboardCharts />
+        </Suspense>
+      </div>
+
+      {/* Live feeds — Recent Activity (SSE, dashboard-side ledger events) on
+          the left, Live Deposits (6s polling) on the right. Both feeds
+          self-bootstrap their snapshot on the client (no server-rendered
+          seed), so the 60s dashboard refresh doesn't re-query them.
+          Stacks to a single column on smaller screens so the deposits
+          card keeps a usable width. Both cards manage their own height
+          cap via internal scroll so the grid stays symmetric. */}
+      <div className="grid gap-3 sm:gap-4 xl:grid-cols-2">
+        <div className="space-y-3">
+          <SectionHeading
+            icon={Activity}
+            title="Recent Activity"
+            action={<RecentActivityLivePulse />}
+          />
+          <FadeIn>
+            {/* Only the 24h count strip atop this card needs server
+                stats; the live event list self-bootstraps on the client.
+                Streaming it keeps the heavy stats query off the page's
+                first paint. The fallback is a plain skeleton (NOT a live
+                RecentActivity) so we never open a throwaway SSE
+                connection that gets torn down the moment stats resolve. */}
+            <Suspense fallback={<Skeleton className="h-96 rounded-2xl" />}>
+              <DashboardActivityFeed />
+            </Suspense>
+          </FadeIn>
+        </div>
+        <div className="space-y-3">
+          <SectionHeading icon={Wallet} title="Deposits" />
+          <FadeIn>
+            <LiveDeposits />
+          </FadeIn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Primary (period-aware) + secondary (snapshot) KPI strips. Async so it
+ * streams behind the page-level Suspense; reads the React-cached
+ * getDashboardStats.
+ */
+async function DashboardStatStrips() {
+  const stats = await getDashboardStats();
+
+  // Average deposit transactions per hour. depositCounts holds the
+  // completed-deposit count per rolling window, so dividing by the
+  // window length in hours gives the per-hour rate. 24h is the hero
+  // (smooths a full peak/off-peak day); 7d is the longer baseline.
+  const depositsPerHour24h = (stats.depositCounts["24h"] ?? 0) / 24;
+  const depositsPerHour7d = (stats.depositCounts["7d"] ?? 0) / (7 * 24);
+
+  return (
+    <>
       {/* Primary stats — period-aware cards.
           Mobile-first grid: ONE column at <sm so each card is full-
           width and the dollar value never truncates (these cards
@@ -195,49 +283,37 @@ export default async function DashboardPage() {
           color="pink"
         />
       </div>
+    </>
+  );
+}
 
-      {/* Charts. Three-up at lg+ but stacks to a single column on
-          phones so each chart keeps a readable height (Recharts crushes
-          when forced into a tight grid cell). At md we go 2-up so the
-          row stays balanced before we have room for the third. */}
-      <div className="space-y-3">
-        <SectionHeading icon={LineChart} title="Trends" />
-        <FadeIn className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
-          <WagerChart data={stats.dailyWagers} />
-          <DepositsChart data={stats.dailyDeposits} />
-          <SignupsChart data={stats.dailySignups} />
-        </FadeIn>
-      </div>
+/**
+ * The three trend charts (wagers, deposits, signups). Async so it streams
+ * behind its own Suspense; reads the React-cached getDashboardStats.
+ */
+async function DashboardCharts() {
+  const stats = await getDashboardStats();
+  return (
+    <FadeIn className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <WagerChart data={stats.dailyWagers} />
+      <DepositsChart data={stats.dailyDeposits} />
+      <SignupsChart data={stats.dailySignups} />
+    </FadeIn>
+  );
+}
 
-      {/* Live feeds — Recent Activity (SSE, dashboard-side ledger events) on
-          the left, Live Deposits (6s polling) on the right. Both feeds
-          self-bootstrap their snapshot on the client (no server-rendered
-          seed), so the 60s dashboard refresh doesn't re-query them.
-          Stacks to a single column on smaller screens so the deposits
-          card keeps a usable width. Both cards manage their own height
-          cap via internal scroll so the grid stays symmetric. */}
-      <div className="grid gap-3 sm:gap-4 xl:grid-cols-2">
-        <div className="space-y-3">
-          <SectionHeading
-            icon={Activity}
-            title="Recent Activity"
-            action={<RecentActivityLivePulse />}
-          />
-          <FadeIn>
-            <RecentActivity
-              signups24h={stats.activity.signups24h}
-              packsOpened24h={stats.activity.packsOpened24h}
-              battlesPlayed24h={stats.activity.battlesPlayed24h}
-            />
-          </FadeIn>
-        </div>
-        <div className="space-y-3">
-          <SectionHeading icon={Wallet} title="Deposits" />
-          <FadeIn>
-            <LiveDeposits />
-          </FadeIn>
-        </div>
-      </div>
-    </div>
+/**
+ * Recent Activity card. Only its 24h count strip needs server stats; the
+ * live event list self-bootstraps on the client (SSE / polling). Async so
+ * the count strip streams behind Suspense without blocking first paint.
+ */
+async function DashboardActivityFeed() {
+  const stats = await getDashboardStats();
+  return (
+    <RecentActivity
+      signups24h={stats.activity.signups24h}
+      packsOpened24h={stats.activity.packsOpened24h}
+      battlesPlayed24h={stats.activity.battlesPlayed24h}
+    />
   );
 }
