@@ -13,6 +13,7 @@ import {
   SectionHeading,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { EmptyState } from "@/components/empty-state";
 
 export const metadata = { title: "Roles" };
 
@@ -69,65 +70,91 @@ export default async function RolesPage() {
           title="Custom Roles"
           action={<CreateRoleButton />}
         />
-        <FadeIn className="overflow-hidden rounded-md border">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b bg-muted/50">
-                <th className="px-4 py-3 text-left text-sm font-medium">
-                  Name
-                </th>
-                <th className="px-4 py-3 text-left text-sm font-medium">
-                  Permissions
-                </th>
-                <th className="px-4 py-3 text-left text-sm font-medium">
-                  Users
-                </th>
-                <th className="px-4 py-3 text-left text-sm font-medium">
-                  Updated
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {customRoles.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={4}
-                    className="px-4 py-8 text-center text-sm text-muted-foreground"
-                  >
-                    No custom roles yet — use the New Role button above to
-                    create your first reusable preset.
-                  </td>
-                </tr>
-              )}
+        {customRoles.length === 0 ? (
+          <FadeIn className="rounded-md border">
+            <EmptyState
+              icon={KeyRound}
+              title="No custom roles yet"
+              description="Use the New Role button above to create your first reusable preset."
+              compact
+            />
+          </FadeIn>
+        ) : (
+          <FadeIn className="space-y-2">
+            {/* Desktop table (>=md). */}
+            <div className="hidden overflow-x-auto rounded-md border md:block">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b bg-muted/50">
+                    <th className="px-4 py-3 text-left text-sm font-medium">
+                      Name
+                    </th>
+                    <th className="px-4 py-3 text-left text-sm font-medium">
+                      Permissions
+                    </th>
+                    <th className="px-4 py-3 text-left text-sm font-medium">
+                      Users
+                    </th>
+                    <th className="px-4 py-3 text-left text-sm font-medium">
+                      Updated
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {customRoles.map((role) => (
+                    <tr key={role.id} className="border-b last:border-b-0">
+                      <td className="px-4 py-3 text-sm font-medium">
+                        <Link
+                          href={`/settings/roles/${role.id}`}
+                          className="text-blue-400 hover:underline"
+                        >
+                          {role.name}
+                        </Link>
+                        {role.description && (
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            {role.description}
+                          </p>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-muted-foreground">
+                        {role.capabilities.length}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-muted-foreground">
+                        {role.user_count}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-muted-foreground">
+                        {formatDateTime(role.updated_at)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile card list (<md). */}
+            <div className="space-y-2 md:hidden">
               {customRoles.map((role) => (
-                <tr key={role.id} className="border-b last:border-b-0">
-                  <td className="px-4 py-3 text-sm font-medium">
-                    <Link
-                      href={`/settings/roles/${role.id}`}
-                      className="text-blue-400 hover:underline"
-                    >
-                      {role.name}
-                    </Link>
-                    {role.description && (
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        {role.description}
-                      </p>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-muted-foreground">
-                    {role.capabilities.length}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-muted-foreground">
-                    {role.user_count}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-muted-foreground">
-                    {formatDateTime(role.updated_at)}
-                  </td>
-                </tr>
+                <Link
+                  key={role.id}
+                  href={`/settings/roles/${role.id}`}
+                  className="block rounded-lg border bg-card p-3 transition-colors hover:border-border/80"
+                >
+                  <div className="font-medium text-blue-400">{role.name}</div>
+                  {role.description && (
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {role.description}
+                    </p>
+                  )}
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                    <span>{role.capabilities.length} permissions</span>
+                    <span>{role.user_count} users</span>
+                    <span>Updated {formatDateTime(role.updated_at)}</span>
+                  </div>
+                </Link>
               ))}
-            </tbody>
-          </table>
-        </FadeIn>
+            </div>
+          </FadeIn>
+        )}
       </div>
 
       {/* Built-in roles — fixed enum roles. Editing one re-applies to
