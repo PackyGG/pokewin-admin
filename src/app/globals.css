@@ -196,11 +196,10 @@
    - .surface-raise   — a soft, layered drop shadow tuned for the
        dark theme (shadows are near-invisible on dark unless they
        are large + soft). Pairs with hover transitions on tiles.
-   - .hover-raise      — opt-in hover affordance: gentle lift +
-       1% scale + stronger shadow. Gated behind no-preference so
-       reduced-motion users get a static card. Kept here (not as a
-       Tailwind hover: chain) so the easing curve is consistent and
-       tunable in one place.
+   - .hover-raise      — opt-in hover affordance: a slightly stronger
+       shadow on hover ONLY. No scale/translate — the tiles must not
+       zoom or move on hover. Kept here (not as a Tailwind hover: chain)
+       so the easing curve is consistent and tunable in one place.
 */
 @layer utilities {
   .surface-sheen {
@@ -218,12 +217,12 @@
 @media (prefers-reduced-motion: no-preference) {
   .hover-raise {
     transition:
-      transform 200ms ease-out,
       box-shadow 200ms ease-out,
       border-color 200ms ease-out;
   }
   .hover-raise:hover {
-    transform: translateY(-2px) scale(1.01);
+    /* No transform — tiles must NOT zoom or shift on hover. Only a
+       slightly stronger shadow for subtle, static feedback. */
     box-shadow:
       0 2px 4px -2px color-mix(in oklch, black 35%, transparent),
       0 16px 40px -16px color-mix(in oklch, black 55%, transparent);
