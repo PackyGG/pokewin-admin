@@ -87,7 +87,14 @@ export const columns: ColumnDef<WithdrawalListItem, unknown>[] = [
   {
     accessorKey: "totalValueUsd",
     header: "Value",
-    cell: ({ row }) => formatCurrency(row.original.totalValueUsd),
+    // House-POV: a withdrawal value = money the user takes out of the
+    // house → house loss → rose. Matches the mobile card + the detail
+    // page's "Total Value" KPI so the figure reads the same everywhere.
+    cell: ({ row }) => (
+      <span className="font-medium tabular-nums text-rose-600 dark:text-rose-400">
+        {formatCurrency(row.original.totalValueUsd)}
+      </span>
+    ),
   },
   {
     id: "handledBy",
