@@ -2,11 +2,12 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Wallet, Circle } from "lucide-react";
+import { Wallet, Loader2 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { EmptyState } from "@/components/empty-state";
 import type { LiveDepositItem } from "@/lib/queries/dashboard-live";
 import { fetchRecentDepositsLive } from "./live-actions";
 
@@ -149,9 +150,16 @@ export function LiveDeposits() {
 
         <div className="max-h-[32rem] overflow-y-auto -mx-5 px-5">
           {items.length === 0 ? (
-            <EmptyState
-              label={bootstrapped ? "Waiting for deposits..." : "Loading deposits..."}
-            />
+            bootstrapped ? (
+              <EmptyState
+                icon={Wallet}
+                title="Waiting for deposits"
+                description="New deposits land here in real time as players fund their accounts."
+                compact
+              />
+            ) : (
+              <LoadingState />
+            )
           ) : (
             <ul className="divide-y divide-border/60">
               {items.map((item) => (
@@ -180,7 +188,7 @@ function DepositRow({
   return (
     <li
       className={cn(
-        "group flex items-center gap-3 py-3",
+        "group -mx-5 flex items-center gap-3 px-5 py-3 transition-colors hover:bg-muted/30",
         isNew &&
           "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-2 motion-safe:duration-300 motion-reduce:animate-in motion-reduce:fade-in motion-reduce:duration-200",
       )}
@@ -238,11 +246,11 @@ function LivePulse() {
   );
 }
 
-function EmptyState({ label }: { label: string }) {
+function LoadingState() {
   return (
     <div className="flex flex-col items-center justify-center gap-2 py-12 text-center">
-      <Circle className="size-5 animate-pulse text-muted-foreground motion-reduce:animate-none" />
-      <p className="text-sm text-muted-foreground">{label}</p>
+      <Loader2 className="size-5 animate-spin text-muted-foreground motion-reduce:animate-none" />
+      <p className="text-sm text-muted-foreground">Loading deposits...</p>
     </div>
   );
 }

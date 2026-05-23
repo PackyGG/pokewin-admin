@@ -3,9 +3,9 @@
 import * as React from "react";
 import Link from "next/link";
 import {
+  Activity,
   ArrowDownCircle,
   ArrowUpCircle,
-  Circle,
   Gift,
   Package,
   Swords,
@@ -15,6 +15,7 @@ import type { LucideIcon } from "lucide-react";
 import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { EmptyState } from "@/components/empty-state";
 import { BorrowBadge } from "@/components/borrow-badge";
 import type {
   LiveActivityEventKind,
@@ -260,7 +261,12 @@ export function RecentActivity({
       </div>
       <div className="relative max-h-[40rem] overflow-y-auto">
         {items.length === 0 ? (
-          <EmptyState label="Waiting for activity..." />
+          <EmptyState
+            icon={Activity}
+            title="Waiting for activity"
+            description="Deposits, wagers, payouts and signups will stream in here as they happen."
+            compact
+          />
         ) : (
           <ul className="divide-y divide-border/60">
             {items.map((item) => (
@@ -398,14 +404,5 @@ export function RecentActivityLivePulse() {
       </span>
       Live
     </span>
-  );
-}
-
-function EmptyState({ label }: { label: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center gap-2 py-20 text-center">
-      <Circle className="size-5 animate-pulse text-muted-foreground motion-reduce:animate-none" />
-      <p className="text-sm text-muted-foreground">{label}</p>
-    </div>
   );
 }
