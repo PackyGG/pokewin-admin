@@ -123,13 +123,17 @@ export default async function TransactionDetailPage({
                   <Badge variant="outline">{data.type.replace(/_/g, " ")}</Badge>
                 </InfoRow>
                 <InfoRow label="Amount">
-                  <span className={amountColor}>
+                  <span className={`font-medium tabular-nums ${amountColor}`}>
                     {amountSign}
                     {formatCurrency(absAmount)}
                   </span>
                 </InfoRow>
-                <InfoRow label="Balance Before">{formatCurrency(data.balanceBefore)}</InfoRow>
-                <InfoRow label="Balance After">{formatCurrency(data.balanceAfter)}</InfoRow>
+                <InfoRow label="Balance Before">
+                  <span className="tabular-nums">{formatCurrency(data.balanceBefore)}</span>
+                </InfoRow>
+                <InfoRow label="Balance After">
+                  <span className="tabular-nums">{formatCurrency(data.balanceAfter)}</span>
+                </InfoRow>
                 <InfoRow label="Status">
                   <Badge variant="outline" className={STATUS_COLORS[data.status] ?? ""}>
                     {data.status}
@@ -260,9 +264,12 @@ export default async function TransactionDetailPage({
             {data.gameSession && (
               <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
                 <div className="relative p-4 sm:p-5 space-y-4">
-                  <h3 className="text-sm font-medium">
-                    {data.gameSession.gameType === "pack" ? "Pack Opening" : "Battle"} Details
-                  </h3>
+                  <div className="flex items-center gap-2">
+                    <Boxes className="size-4 text-blue-500" />
+                    <h3 className="text-sm font-medium">
+                      {data.gameSession.gameType === "pack" ? "Pack Opening" : "Battle"} Details
+                    </h3>
+                  </div>
                   {data.gameSession.packs.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-xs text-muted-foreground font-medium">
@@ -328,9 +335,12 @@ export default async function TransactionDetailPage({
                         ))}
                       </div>
                       <div className="pt-1 border-t">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between gap-3">
                           <span className="text-xs text-muted-foreground">Payout (at obtained)</span>
-                          <span className="text-sm font-medium">
+                          {/* House-POV: cards handed to the user are value
+                              leaving the house → house loss → rose. Matches
+                              the Payout column on the list views. */}
+                          <span className="text-sm font-medium tabular-nums text-rose-600 dark:text-rose-400">
                             {formatCurrency(data.gameSession.cardsObtained.reduce((s, c) => s + c.valueAtObtained, 0))}
                           </span>
                         </div>
