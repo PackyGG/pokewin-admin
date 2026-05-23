@@ -18,7 +18,12 @@ import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { BackendApiError, BackendNetworkError } from "@/lib/backend-api";
-import { PageHero, KpiTile, SectionHeading } from "@/components/modern-panels";
+import {
+  PageHero,
+  PageHeroIdentity,
+  KpiTile,
+  SectionHeading,
+} from "@/components/modern-panels";
 
 import { parseCreatorsSearchParams } from "./_lib/search-params";
 import { type CreatorsListPage } from "./_queries/list-creators";
@@ -242,22 +247,13 @@ export default async function CreatorsPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-pink-500/10">
-              <Megaphone className="size-5 text-pink-500" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold leading-tight">Creators</h1>
-              <p className="text-sm text-muted-foreground">
-                Weekly fill deals, stream sessions, and payouts.
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <AddCreatorDialog />
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={Megaphone}
+          accent="pink"
+          title="Creators"
+          subtitle="Weekly fill deals, stream sessions, and payouts."
+          action={<AddCreatorDialog />}
+        />
       </PageHero>
 
       {result && (

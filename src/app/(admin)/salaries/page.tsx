@@ -2,7 +2,7 @@ import { Coins, Users, Receipt, CalendarDays } from "lucide-react";
 import { adminDb } from "@/lib/admin-db";
 import { requireMotha } from "@/lib/salary/motha-gate";
 import { ensureSalarySchema } from "@/lib/salary/ensure-schema";
-import { PageHero, KpiTile } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { SalariesClient } from "./salaries-client";
 
@@ -72,21 +72,18 @@ export default async function SalariesPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-amber-500/10">
-            <Coins className="size-5 text-amber-500" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold leading-tight">
-              Employee Salaries
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              Saved recipient registry. Click an employee&apos;s
-              address to scan it as a QR code, send USDT manually
-              from your wallet, then log the payment here.
-            </p>
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={Coins}
+          accent="amber"
+          title="Employee Salaries"
+          subtitle={
+            <>
+              Saved recipient registry. Click an employee&apos;s address to
+              scan it as a QR code, send USDT manually from your wallet, then
+              log the payment here.
+            </>
+          }
+        />
       </PageHero>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
