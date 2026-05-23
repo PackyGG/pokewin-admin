@@ -1,4 +1,6 @@
 import * as React from "react";
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -122,30 +124,112 @@ export function PageHero({
 // stacks under the identity block on phones (instead of fighting it
 // for horizontal space). Existing pages composing PageHero by hand
 // keep working — this is purely opt-in.
+//
+// Optional, additive props (all default to the original behaviour when
+// omitted, so existing call sites render identically):
+//   - accent      — tints the icon chip with a TILE_COLORS token
+//                   (rose / pink / amber / emerald / cyan / …). When
+//                   omitted the chip stays on the neutral `primary`
+//                   tint, exactly as before.
+//   - backHref    — renders the standard leading ArrowLeft link (the
+//                   detail-page "back to list" affordance). Markup
+//                   matches the hand-rolled `<Link>` blocks it replaces.
+//   - back        — escape hatch for a custom leading node (e.g. the
+//                   <BackButton> client component that calls
+//                   router.back()). Takes precedence over backHref.
+//   - badges      — inline nodes rendered after the title (status /
+//                   type badges on detail pages).
+//   - titleClassName / subtitleClassName — extra classes appended to
+//                   the title / subtitle (e.g. `font-mono` for code
+//                   and id headers).
 
 export function PageHeroIdentity({
   icon: Icon,
   title,
   subtitle,
   action,
+  accent,
+  backHref,
+  back,
+  badges,
+  titleClassName,
+  subtitleClassName,
 }: {
   icon: React.ElementType;
   title: React.ReactNode;
   subtitle?: React.ReactNode;
   action?: React.ReactNode;
+  accent?: AccentColor;
+  backHref?: string;
+  back?: React.ReactNode;
+  badges?: React.ReactNode;
+  titleClassName?: string;
+  subtitleClassName?: string;
 }) {
+  const colors = accent ? TILE_COLORS[accent] : null;
+  // Leading back affordance: an explicit node wins, otherwise a
+  // backHref renders the standard ArrowLeft link used across detail
+  // pages. Nothing renders when neither is supplied.
+  const backNode = back ?? (
+    backHref ? (
+      <Link
+        href={backHref}
+        className="inline-flex size-9 shrink-0 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground"
+      >
+        <ArrowLeft className="size-4" />
+      </Link>
+    ) : null
+  );
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
       <div className="flex min-w-0 items-center gap-3">
-        <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 sm:size-10">
-          <Icon className="size-4 text-primary sm:size-5" />
+        {backNode}
+        <div
+          className={cn(
+            "flex size-9 shrink-0 items-center justify-center rounded-xl sm:size-10",
+            colors ? colors.bg : "bg-primary/10",
+          )}
+        >
+          <Icon
+            className={cn(
+              "size-4 sm:size-5",
+              colors ? colors.icon : "text-primary",
+            )}
+          />
         </div>
         <div className="min-w-0">
-          <h1 className="text-xl font-bold leading-tight sm:text-2xl md:text-3xl">
-            {title}
-          </h1>
+          {/* Wrap title + badges in a flex row only when badges are
+              present; without them the h1 stays a plain block child so
+              existing call sites render byte-for-byte the same. */}
+          {badges ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <h1
+                className={cn(
+                  "text-xl font-bold leading-tight sm:text-2xl md:text-3xl",
+                  titleClassName,
+                )}
+              >
+                {title}
+              </h1>
+              {badges}
+            </div>
+          ) : (
+            <h1
+              className={cn(
+                "text-xl font-bold leading-tight sm:text-2xl md:text-3xl",
+                titleClassName,
+              )}
+            >
+              {title}
+            </h1>
+          )}
           {subtitle && (
-            <p className="text-xs text-muted-foreground sm:text-sm">
+            <p
+              className={cn(
+                "text-xs text-muted-foreground sm:text-sm",
+                subtitleClassName,
+              )}
+            >
               {subtitle}
             </p>
           )}
