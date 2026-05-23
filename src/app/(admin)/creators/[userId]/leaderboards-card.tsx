@@ -6,6 +6,7 @@ import { BackendApiError } from "@/lib/backend-api/errors";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/empty-state";
 import { formatDateTime } from "@/lib/utils/format";
 
 import { CreateDialog } from "../leaderboards/_components/create-dialog";
@@ -132,9 +133,12 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
             </CardHeader>
             <CardContent>
                 {rows.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">
-                        This creator has not submitted any affiliate leaderboards yet.
-                    </p>
+                    <EmptyState
+                        icon={Trophy}
+                        title="No affiliate leaderboards yet"
+                        description="This creator hasn't submitted any leaderboards. Use Create to set one up on their behalf."
+                        compact
+                    />
                 ) : (
                     <div className="space-y-2">
                         {rows.map((r) => (
