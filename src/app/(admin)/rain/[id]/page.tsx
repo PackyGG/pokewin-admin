@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import {
-  ArrowLeft,
   CloudRain,
   Coins,
   DollarSign,
@@ -24,7 +23,12 @@ import {
 } from "@/components/ui/table";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { formatCurrency, formatDateTime, formatNumber } from "@/lib/utils/format";
-import { PageHero, SectionHeading, KpiTile } from "@/components/modern-panels";
+import {
+  PageHero,
+  PageHeroIdentity,
+  SectionHeading,
+  KpiTile,
+} from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { RainDetailsCard } from "./rain-detail-cards";
 
@@ -59,28 +63,19 @@ export default async function RainDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-3">
-          <Link
-            href="/rain"
-            className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground"
-          >
-            <ArrowLeft className="size-4" />
-          </Link>
-          <div className="flex size-10 items-center justify-center rounded-xl bg-blue-500/10">
-            <CloudRain className="size-5 text-blue-500" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-2xl font-bold leading-tight">Rain</h1>
-              <Badge variant="outline" className={STATUS_COLORS[data.status] ?? ""}>
-                {data.status}
-              </Badge>
-            </div>
-            <p className="text-sm text-muted-foreground font-mono">
-              {data.id.slice(0, 8)}…
-            </p>
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={CloudRain}
+          accent="blue"
+          backHref="/rain"
+          title="Rain"
+          badges={
+            <Badge variant="outline" className={STATUS_COLORS[data.status] ?? ""}>
+              {data.status}
+            </Badge>
+          }
+          subtitle={`${data.id.slice(0, 8)}…`}
+          subtitleClassName="font-mono"
+        />
       </PageHero>
 
       {/* Rain payouts go FROM us TO the winning user → user wins → ROSE.
