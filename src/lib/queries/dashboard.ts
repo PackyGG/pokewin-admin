@@ -12,6 +12,10 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
 import { calculateWindowedPnl } from "./pnl";
 import { getCreatorSessionWindowsCte } from "./creator-session-windows";
+import {
+  WAGER_TYPES_SQL,
+  PAYOUT_TYPES_SQL,
+} from "./_wager-payout-types";
 
 export type ActivityItem = {
   id: string;
@@ -72,6 +76,14 @@ function getPeriodAggregates(
   // the customer wager figure.
   sessionWindowsCte: string,
 ) {
+  // GGR wager/payout type sets — built ONCE from the canonical shared
+  // constants (src/lib/queries/_wager-payout-types.ts) and interpolated
+  // into every GGR period block below via Prisma.raw, so the dashboard's
+  // global GGR can never drift from the per-creator GGR (creators-pnl.ts)
+  // that imports the same lists. The values are hardcoded ledger-type
+  // strings — no external input — so Prisma.raw is injection-safe here.
+  const ggrWagerIn = Prisma.raw(WAGER_TYPES_SQL);
+  const ggrPayoutIn = Prisma.raw(PAYOUT_TYPES_SQL);
   return db.$queryRaw<
     {
       revenue_1h: string; revenue_3h: string; revenue_6h: string; revenue_12h: string;
@@ -176,92 +188,46 @@ function getPeriodAggregates(
       COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND NOT in_session                                    THEN amount ELSE 0 END), 0)::text AS wager_excl_session_all,
 
       -- GGR = wagers − payouts (industry-standard pure gaming margin).
-      -- Wager + payout type lists are intentionally hardcoded inline here
-      -- (Prisma's tagged $queryRaw can't interpolate raw SQL fragments).
-      -- The canonical sets live in src/lib/queries/_wager-payout-types.ts;
-      -- creators-pnl.ts imports from there. If you change the lists here,
-      -- update the shared constants too — otherwise per-creator GGR will
-      -- drift from the dashboard's global GGR for the same population.
+      -- The wager (ggrWagerIn) + payout (ggrPayoutIn) type sets are
+      -- interpolated from the canonical shared constants in
+      -- src/lib/queries/_wager-payout-types.ts (the same lists creators-pnl.ts
+      -- uses), so the dashboard's global GGR can never drift from the
+      -- per-creator GGR. Change the lists in that one file, not here.
       (
-        COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','withdrawal_shipping_fee') AND created_at >= ${oneHourAgo} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN (
-            'battle_refund','card_sale','reward_card_sale','card_exchange','exchange_excess_credit',
-            'deposit_bonus','race_prize','gift_card_redeemed','promo_code_redeemed','rakeback_claim',
-            'balance_reward_claim','affiliate_claim','rain_win','waitlist_prize','creator_tip',
-            'voucher_redeemed','voucher_exchange','exchange_excess_to_voucher','battle_excess_to_voucher'
-          ) AND created_at >= ${oneHourAgo} THEN ABS(amount) ELSE 0 END), 0)
+        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${oneHourAgo} THEN ABS(amount) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${oneHourAgo} THEN ABS(amount) ELSE 0 END), 0)
       )::text AS ggr_1h,
       (
-        COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','withdrawal_shipping_fee') AND created_at >= ${threeHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN (
-            'battle_refund','card_sale','reward_card_sale','card_exchange','exchange_excess_credit',
-            'deposit_bonus','race_prize','gift_card_redeemed','promo_code_redeemed','rakeback_claim',
-            'balance_reward_claim','affiliate_claim','rain_win','waitlist_prize','creator_tip',
-            'voucher_redeemed','voucher_exchange','exchange_excess_to_voucher','battle_excess_to_voucher'
-          ) AND created_at >= ${threeHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
+        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${threeHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${threeHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
       )::text AS ggr_3h,
       (
-        COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','withdrawal_shipping_fee') AND created_at >= ${sixHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN (
-            'battle_refund','card_sale','reward_card_sale','card_exchange','exchange_excess_credit',
-            'deposit_bonus','race_prize','gift_card_redeemed','promo_code_redeemed','rakeback_claim',
-            'balance_reward_claim','affiliate_claim','rain_win','waitlist_prize','creator_tip',
-            'voucher_redeemed','voucher_exchange','exchange_excess_to_voucher','battle_excess_to_voucher'
-          ) AND created_at >= ${sixHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
+        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${sixHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${sixHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
       )::text AS ggr_6h,
       (
-        COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','withdrawal_shipping_fee') AND created_at >= ${twelveHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN (
-            'battle_refund','card_sale','reward_card_sale','card_exchange','exchange_excess_credit',
-            'deposit_bonus','race_prize','gift_card_redeemed','promo_code_redeemed','rakeback_claim',
-            'balance_reward_claim','affiliate_claim','rain_win','waitlist_prize','creator_tip',
-            'voucher_redeemed','voucher_exchange','exchange_excess_to_voucher','battle_excess_to_voucher'
-          ) AND created_at >= ${twelveHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
+        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${twelveHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${twelveHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
       )::text AS ggr_12h,
       (
-        COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','withdrawal_shipping_fee') AND created_at >= ${twentyFourHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN (
-            'battle_refund','card_sale','reward_card_sale','card_exchange','exchange_excess_credit',
-            'deposit_bonus','race_prize','gift_card_redeemed','promo_code_redeemed','rakeback_claim',
-            'balance_reward_claim','affiliate_claim','rain_win','waitlist_prize','creator_tip',
-            'voucher_redeemed','voucher_exchange','exchange_excess_to_voucher','battle_excess_to_voucher'
-          ) AND created_at >= ${twentyFourHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
+        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${twentyFourHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${twentyFourHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
       )::text AS ggr_24h,
       (
-        COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','withdrawal_shipping_fee') AND created_at >= ${threeDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN (
-            'battle_refund','card_sale','reward_card_sale','card_exchange','exchange_excess_credit',
-            'deposit_bonus','race_prize','gift_card_redeemed','promo_code_redeemed','rakeback_claim',
-            'balance_reward_claim','affiliate_claim','rain_win','waitlist_prize','creator_tip',
-            'voucher_redeemed','voucher_exchange','exchange_excess_to_voucher','battle_excess_to_voucher'
-          ) AND created_at >= ${threeDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
+        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${threeDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${threeDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
       )::text AS ggr_3d,
       (
-        COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','withdrawal_shipping_fee') AND created_at >= ${sevenDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN (
-            'battle_refund','card_sale','reward_card_sale','card_exchange','exchange_excess_credit',
-            'deposit_bonus','race_prize','gift_card_redeemed','promo_code_redeemed','rakeback_claim',
-            'balance_reward_claim','affiliate_claim','rain_win','waitlist_prize','creator_tip',
-            'voucher_redeemed','voucher_exchange','exchange_excess_to_voucher','battle_excess_to_voucher'
-          ) AND created_at >= ${sevenDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
+        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${sevenDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${sevenDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
       )::text AS ggr_7d,
       (
-        COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','withdrawal_shipping_fee') AND created_at >= ${thirtyDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN (
-            'battle_refund','card_sale','reward_card_sale','card_exchange','exchange_excess_credit',
-            'deposit_bonus','race_prize','gift_card_redeemed','promo_code_redeemed','rakeback_claim',
-            'balance_reward_claim','affiliate_claim','rain_win','waitlist_prize','creator_tip',
-            'voucher_redeemed','voucher_exchange','exchange_excess_to_voucher','battle_excess_to_voucher'
-          ) AND created_at >= ${thirtyDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
+        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${thirtyDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${thirtyDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
       )::text AS ggr_30d,
       (
-        COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','withdrawal_shipping_fee') THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN (
-            'battle_refund','card_sale','reward_card_sale','card_exchange','exchange_excess_credit',
-            'deposit_bonus','race_prize','gift_card_redeemed','promo_code_redeemed','rakeback_claim',
-            'balance_reward_claim','affiliate_claim','rain_win','waitlist_prize','creator_tip',
-            'voucher_redeemed','voucher_exchange','exchange_excess_to_voucher','battle_excess_to_voucher'
-          ) THEN ABS(amount) ELSE 0 END), 0)
+        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} THEN ABS(amount) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} THEN ABS(amount) ELSE 0 END), 0)
       )::text AS ggr_all,
 
       -- Deposit COUNT per period. Same window definitions as the
@@ -774,25 +740,55 @@ async function dashboardStatsInner() {
   };
 }
 
+// A merge-two-sources-then-slice feed only makes sense for the first
+// handful of pages — nobody pages 500 deep into "recent activity". Cap
+// the reachable window so we never (a) `take: skip + perPage` thousands
+// of rows out of BOTH sources to throw all but a page away, nor
+// (b) run an unbounded exact COUNT(*) over the live ledger (millions of
+// rows) just to render a page count. Items past this offset are not
+// reachable through this feed.
+const RECENT_ACTIVITY_MAX_ITEMS = 1000;
+
 export async function getRecentActivity({ page = 1, perPage = 20 }: { page?: number; perPage?: number }) {
   const db = await getDb();
   const skip = (page - 1) * perPage;
 
+  // Bound the fetch window. For any page inside the cap this is exactly
+  // `skip + perPage` (the original take), so the displayed feed is
+  // identical; only deep pages past the cap are clamped.
+  const take = Math.min(skip + perPage, RECENT_ACTIVITY_MAX_ITEMS);
+
+  // Bounded counts instead of unbounded COUNT(*). Each subquery scans at
+  // most CAP+1 rows then stops — enough to know whether the combined
+  // feed reaches the cap. When neither source is clamped (sum <= CAP)
+  // the bounded sum equals the true total, so pagination is exact for
+  // every reachable page; once the cap is hit, total saturates at CAP.
+  const countCap = RECENT_ACTIVITY_MAX_ITEMS + 1;
+
   // Fetch from both sources with enough items to fill the page
-  const [auditEvents, transactions, totalAudit, totalTx] = await Promise.all([
+  const [auditEvents, transactions, totalAuditRows, totalTxRows] = await Promise.all([
     adminDb.admin_audit_events.findMany({
-      take: skip + perPage,
+      take,
       orderBy: { created_at: "desc" },
       include: { admin_user: { select: { username: true, email: true } } },
     }),
     db.ledger_transactions.findMany({
-      take: skip + perPage,
+      take,
       orderBy: { created_at: "desc" },
       include: { user: { select: { username: true, email: true } } },
     }),
-    adminDb.admin_audit_events.count(),
-    db.ledger_transactions.count(),
+    adminDb.$queryRaw<{ c: bigint }[]>`
+      SELECT COUNT(*)::bigint AS c
+      FROM (SELECT 1 FROM admin_audit_events LIMIT ${countCap}) s
+    `,
+    db.$queryRaw<{ c: bigint }[]>`
+      SELECT COUNT(*)::bigint AS c
+      FROM (SELECT 1 FROM ledger_transactions LIMIT ${countCap}) s
+    `,
   ]);
+
+  const totalAudit = Number(totalAuditRows[0]?.c ?? 0);
+  const totalTx = Number(totalTxRows[0]?.c ?? 0);
 
   // Resolve target user usernames from the main DB
   const targetUserIds = [
@@ -839,7 +835,10 @@ export async function getRecentActivity({ page = 1, perPage = 20 }: { page?: num
   const merged = [...auditItems, ...txItems]
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-  const total = totalAudit + totalTx;
+  // Saturate at the cap: only the first RECENT_ACTIVITY_MAX_ITEMS rows
+  // of the merged feed are reachable, so totalPages can't promise more.
+  // Below the cap, totalAudit + totalTx is the exact combined total.
+  const total = Math.min(totalAudit + totalTx, RECENT_ACTIVITY_MAX_ITEMS);
   const data = merged.slice(skip, skip + perPage);
 
   return {
