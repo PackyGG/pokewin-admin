@@ -215,6 +215,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Rewards",
     items: [
       { label: "Rewards", href: "/rewards", icon: "Award" },
+      { label: "Analytics", href: "/rewards/analytics", icon: "BarChart3" },
       { label: "Rakeback", href: "/rewards/rakeback", icon: "Percent" },
       { label: "Raffles", href: "/rewards/raffles", icon: "Ticket" },
       { label: "Rain", href: "/rain", icon: "CloudRain" },
