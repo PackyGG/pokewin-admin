@@ -30,6 +30,7 @@ import {
   KpiTile,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { EmptyState } from "@/components/empty-state";
 import { RainDetailsCard } from "./rain-detail-cards";
 
 export const metadata = { title: "Rain Detail" };
@@ -183,9 +184,14 @@ export default async function RainDetailPage({
                 </TableRow>
               ))}
               {data.tips.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
-                    No tips yet.
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={4} className="p-0">
+                    <EmptyState
+                      icon={Gift}
+                      title="No tips yet"
+                      description="Tips that fund this rain pool will appear here."
+                      compact
+                    />
                   </TableCell>
                 </TableRow>
               )}
@@ -222,9 +228,14 @@ export default async function RainDetailPage({
                   </TableRow>
                 ))}
                 {data.entries.data.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={3} className="h-24 text-center text-muted-foreground">
-                      No entries yet.
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={3} className="p-0">
+                      <EmptyState
+                        icon={Ticket}
+                        title="No entries yet"
+                        description="Players who join this rain will be listed here."
+                        compact
+                      />
                     </TableCell>
                   </TableRow>
                 )}

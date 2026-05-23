@@ -36,6 +36,7 @@ import { columns } from "./columns";
 import type { PromoCodeListItem } from "@/lib/queries/promo-codes";
 import { formatCurrency } from "@/lib/utils/format";
 import { MobileCard } from "@/components/data-table/mobile-card-list";
+import { EmptyState } from "@/components/empty-state";
 import { deletePromoCodesBulk } from "./actions";
 
 function codeStatus(row: PromoCodeListItem): { label: string; cls: string } {
@@ -176,8 +177,13 @@ export function PromoCodesDataTable({ data }: { data: PromoCodeListItem[] }) {
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
         {data.length === 0 ? (
-          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
-            No promo codes found.
+          <div className="rounded-md border">
+            <EmptyState
+              icon={Ticket}
+              title="No promo codes found"
+              description="Create a promo code to grant credit to players who redeem it."
+              compact
+            />
           </div>
         ) : (
           <div className="overflow-hidden rounded-md border">
@@ -222,9 +228,14 @@ export function PromoCodesDataTable({ data }: { data: PromoCodeListItem[] }) {
                 </TableRow>
               ))
             ) : (
-              <TableRow>
-                <TableCell colSpan={columns.length} className="h-24 text-center">
-                  No promo codes found.
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={columns.length} className="p-0">
+                  <EmptyState
+                    icon={Ticket}
+                    title="No promo codes found"
+                    description="Create a promo code to grant credit to players who redeem it."
+                    compact
+                  />
                 </TableCell>
               </TableRow>
             )}
