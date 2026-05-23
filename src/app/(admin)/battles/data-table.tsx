@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Swords } from "lucide-react";
+import { EmptyState } from "@/components/empty-state";
 import { columns } from "./columns";
 import type { BattleListItem } from "@/lib/queries/battles";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
@@ -113,8 +114,13 @@ export function BattlesDataTable({ data }: { data: BattleListItem[] }) {
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
         {data.length === 0 ? (
-          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
-            No battles found.
+          <div className="rounded-md border">
+            <EmptyState
+              icon={Swords}
+              title="No battles found"
+              description="No case battles match the current filters. Try a different status, mode, or time window."
+              compact
+            />
           </div>
         ) : (
           <div className="overflow-hidden rounded-md border">
@@ -153,9 +159,14 @@ export function BattlesDataTable({ data }: { data: BattleListItem[] }) {
                 </TableRow>
               ))
             ) : (
-              <TableRow>
-                <TableCell colSpan={columns.length} className="h-24 text-center">
-                  No battles found.
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={columns.length} className="p-0">
+                  <EmptyState
+                    icon={Swords}
+                    title="No battles found"
+                    description="No case battles match the current filters. Try a different status, mode, or time window."
+                    compact
+                  />
                 </TableCell>
               </TableRow>
             )}

@@ -1,7 +1,8 @@
 "use client";
 
-import { Search } from "lucide-react";
+import { SearchX } from "lucide-react";
 import { CardTile, TileDataRow } from "@/components/card-tile";
+import { EmptyState } from "@/components/empty-state";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import type { CardListItem } from "@/lib/queries/cards";
@@ -20,14 +21,12 @@ import type { CardListItem } from "@/lib/queries/cards";
 export function CardsGrid({ data }: { data: CardListItem[] }) {
   if (data.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed bg-card/30 px-6 py-16 text-center">
-        <div className="flex size-12 items-center justify-center rounded-xl bg-muted/40">
-          <Search className="size-5 text-muted-foreground" />
-        </div>
-        <p className="text-sm font-medium">No cards match your filters</p>
-        <p className="text-xs text-muted-foreground">
-          Try a different rarity, set, or price range.
-        </p>
+      <div className="rounded-2xl border border-dashed bg-card/30">
+        <EmptyState
+          icon={SearchX}
+          title="No cards match your filters"
+          description="Try a different rarity, set, or price range."
+        />
       </div>
     );
   }

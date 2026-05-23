@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/dialog";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { EmptyState } from "@/components/empty-state";
 import type { PackListItem } from "@/lib/queries/packs";
 import { togglePackActive, deletePack } from "./actions";
 
@@ -62,14 +63,12 @@ export function PacksGrid({
 }) {
   if (data.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed bg-card/30 px-6 py-16 text-center">
-        <div className="flex size-12 items-center justify-center rounded-xl bg-muted/40">
-          <Package className="size-5 text-muted-foreground" />
-        </div>
-        <p className="text-sm font-medium">No packs match your filters</p>
-        <p className="text-xs text-muted-foreground">
-          Try a different search or status filter.
-        </p>
+      <div className="rounded-2xl border border-dashed bg-card/30">
+        <EmptyState
+          icon={Package}
+          title="No packs match your filters"
+          description="Try a different search or status filter."
+        />
       </div>
     );
   }
