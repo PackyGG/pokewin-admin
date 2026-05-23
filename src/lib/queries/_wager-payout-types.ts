@@ -1,20 +1,19 @@
 /**
  * Canonical sets of ledger transaction types used by GGR-style aggregates.
  *
- * Pre-existing dashboard.ts and creators-pnl.ts each kept their own
- * inline list. They drifted: the dashboard's payout list included
- * `withdrawal_shipping_fee`, `card_sale`, `reward_card_sale`,
- * `card_exchange`, `exchange_excess_credit`, `exchange_excess_to_voucher`,
- * `battle_excess_to_voucher`, plus `voucher_redeemed` /
- * `voucher_exchange`. The creator-PnL list was a strict subset. Result:
- * the same user's wagers contributed differently to the global GGR
- * vs. the per-creator GGR for that user — making the two surfaces
- * impossible to reconcile.
+ * dashboard.ts previously inlined these lists (repeated across every
+ * period branch). They're centralized here so the gross-gaming-revenue
+ * definition lives in one place and can't drift between dashboard call
+ * sites.
  *
- * Default behaviour: align them. Per-creator GGR uses the same payout
- * set as the dashboard's gross gaming revenue. If a future divergence is
- * intentional, declare it here as a separate constant rather than letting
- * each call site drift its own way.
+ * IMPORTANT — not every GGR surface shares this set:
+ *  - creators-pnl.ts computes per-creator GGR from
+ *    `affiliate_code_usages.wager_amount_usd`, NOT from these ledger
+ *    types — a different mechanism, intentionally not coupled here.
+ *  - analytics.ts / analytics-cohorts.ts use their own smaller payout
+ *    lists (a known divergence pending a product decision).
+ * Don't assume importing these constants makes a surface match the
+ * dashboard's GGR; only dashboard.ts is wired to them today.
  */
 
 /**
