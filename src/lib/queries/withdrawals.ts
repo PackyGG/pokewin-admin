@@ -2,6 +2,15 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
+import {
+  card_withdrawal_status,
+  card_withdrawal_method,
+} from "@/generated/prisma/enums";
+
+// Allowlists from the generated Prisma enums — validate user-supplied
+// filter values before they hit the query rather than blind-casting.
+const CWR_STATUSES = new Set<string>(Object.values(card_withdrawal_status));
+const CWR_METHODS = new Set<string>(Object.values(card_withdrawal_method));
 
 export type WithdrawalListItem = {
   id: string;
@@ -37,13 +46,16 @@ export async function getWithdrawals(params: {
   const where: Prisma.card_withdrawal_requestsWhereInput = {};
 
   if (statuses && statuses.length > 0) {
-    where.status = { in: statuses as Prisma.Enumcard_withdrawal_statusFilter["in"] };
-  } else if (status && status !== "all") {
-    where.status = status as Prisma.Enumcard_withdrawal_statusFilter["equals"];
+    const validStatuses = statuses.filter(
+      (s): s is card_withdrawal_status => CWR_STATUSES.has(s),
+    );
+    if (validStatuses.length > 0) where.status = { in: validStatuses };
+  } else if (status && status !== "all" && CWR_STATUSES.has(status)) {
+    where.status = status as card_withdrawal_status;
   }
 
-  if (method) {
-    where.method = method as Prisma.Enumcard_withdrawal_methodFilter["equals"];
+  if (method && CWR_METHODS.has(method)) {
+    where.method = method as card_withdrawal_method;
   }
 
   if (minValue !== undefined || maxValue !== undefined) {

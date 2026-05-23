@@ -2,7 +2,20 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
+import {
+  ledger_transaction_type,
+  ledger_transaction_status,
+} from "@/generated/prisma/enums";
 import type { UserTagValue } from "@/lib/queries/user-tags";
+
+// Allowlists derived from the generated Prisma enums — used to validate
+// user-supplied filter values before they reach the query (instead of an
+// unchecked `as` cast). Object.values keeps them in sync with the schema
+// automatically.
+const LEDGER_TX_TYPES = new Set<string>(Object.values(ledger_transaction_type));
+const LEDGER_TX_STATUSES = new Set<string>(
+  Object.values(ledger_transaction_status),
+);
 
 export type TransactionListItem = {
   id: string;
@@ -348,13 +361,18 @@ export async function getTransactions(params: {
   }
 
   if (types && types.length > 0) {
-    where.type = { in: types } as unknown as Prisma.Enumledger_transaction_typeFieldUpdateOperationsInput["set"];
-  } else if (type && type !== "all") {
-    where.type = type as Prisma.Enumledger_transaction_typeFieldUpdateOperationsInput["set"];
+    // Drop any value not in the generated enum; only filter if some
+    // valid types remain (an all-invalid list shouldn't match nothing).
+    const validTypes = types.filter(
+      (t): t is ledger_transaction_type => LEDGER_TX_TYPES.has(t),
+    );
+    if (validTypes.length > 0) where.type = { in: validTypes };
+  } else if (type && type !== "all" && LEDGER_TX_TYPES.has(type)) {
+    where.type = type as ledger_transaction_type;
   }
 
-  if (status && status !== "all") {
-    where.status = status as Prisma.Enumledger_transaction_statusFieldUpdateOperationsInput["set"];
+  if (status && status !== "all" && LEDGER_TX_STATUSES.has(status)) {
+    where.status = status as ledger_transaction_status;
   }
 
   if (minAmount !== undefined || maxAmount !== undefined) {
