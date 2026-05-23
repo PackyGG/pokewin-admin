@@ -10,7 +10,7 @@ import { ValueRangeFilter } from "@/app/(admin)/withdrawals/value-range-filter";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TableSkeleton, PaginationSkeleton } from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
-import { PageHero } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Transactions" };
@@ -114,17 +114,11 @@ export default async function TransactionsPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-            <Receipt className="size-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold leading-tight">Transactions</h1>
-            <p className="text-sm text-muted-foreground">
-              Every ledger-backed movement — filter by status, type, or value.
-            </p>
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={Receipt}
+          title="Transactions"
+          subtitle="Every ledger-backed movement — filter by status, type, or value."
+        />
       </PageHero>
 
       <div className="space-y-4">

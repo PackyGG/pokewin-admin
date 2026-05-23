@@ -16,7 +16,7 @@ import { RainRangeFilters } from "./range-filters";
 import { RainsTable } from "./rains-table";
 import { RAIN_CONFIG_KEYS } from "./config-keys";
 import { RainConfigCard } from "./rain-config-card";
-import { PageHero } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Rain" };
@@ -42,17 +42,11 @@ export default async function RainPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-            <CloudRain className="size-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold leading-tight">Rain</h1>
-            <p className="text-sm text-muted-foreground">
-              Community rain instances — pools, tips, and winners.
-            </p>
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={CloudRain}
+          title="Rain"
+          subtitle="Community rain instances — pools, tips, and winners."
+        />
       </PageHero>
 
       <div className="space-y-4">
