@@ -23,6 +23,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Content", label: "Battles", key: "/battles" },
   // Rewards
   { group: "Rewards", label: "Rewards", key: "/rewards" },
+  { group: "Rewards", label: "Analytics", key: "/rewards/analytics" },
   { group: "Rewards", label: "Rakeback", key: "/rewards/rakeback" },
   { group: "Rewards", label: "Raffles", key: "/rewards/raffles" },
   { group: "Rewards", label: "Rain", key: "/rain" },
