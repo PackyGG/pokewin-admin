@@ -295,6 +295,7 @@ export type PnlBreakdown = {
     exchangeExcessCredit: number;
     exchangeExcessToVoucher: number;
     battleExcessToVoucher: number;
+    affiliateLeaderboard: number;
   };
   netPnlRealized: number;
   netPnlTrue: number;

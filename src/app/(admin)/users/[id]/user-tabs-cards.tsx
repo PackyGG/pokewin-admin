@@ -265,6 +265,10 @@ export const PnlCard = React.memo(function PnlCard({
                       "Battle → Voucher",
                       p.otherCostsDetail.battleExcessToVoucher,
                     ],
+                    [
+                      "Affiliate Leaderboard",
+                      p.otherCostsDetail.affiliateLeaderboard,
+                    ],
                   ] as [string, number][]
                 )
                   .filter(([, v]) => v !== 0)
