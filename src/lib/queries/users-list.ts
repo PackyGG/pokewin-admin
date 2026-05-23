@@ -2,11 +2,17 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
+import { user_role } from "@/generated/prisma/enums";
 import {
   computeRiskScoresForList,
   type RiskTier,
 } from "@/lib/fraud/score";
 import { calculateUsersPnlBatch } from "./pnl";
+
+// Allowlist from the generated Prisma user_role enum — validate the
+// role filter before it reaches either the Prisma where or the raw-SQL
+// sort branch, instead of an unchecked cast.
+const USER_ROLES = new Set<string>(Object.values(user_role));
 
 type UserListItem = {
   id: string;
@@ -85,8 +91,8 @@ export async function getUsers(params: {
     where.OR = or;
   }
 
-  if (role && role !== "all") {
-    where.role = role as Prisma.Enumuser_roleFieldUpdateOperationsInput["set"];
+  if (role && role !== "all" && USER_ROLES.has(role)) {
+    where.role = role as user_role;
   }
 
   if (status === "banned") where.is_banned = true;
@@ -155,8 +161,10 @@ export async function getUsers(params: {
         `(u.username ILIKE '%${safe}%' OR u.email ILIKE '%${safe}%' OR u.id = '${safe}'${discordClause})`,
       );
     }
-    if (role && role !== "all") {
-      whereSql.push(`u.role = '${role.replace(/'/g, "''")}'::user_role`);
+    if (role && role !== "all" && USER_ROLES.has(role)) {
+      // role is validated against the user_role enum above, so it's a
+      // known alphanumeric member; inline it safely.
+      whereSql.push(`u.role = '${role}'::user_role`);
     }
     if (status === "banned") whereSql.push("u.is_banned = true");
     else if (status === "locked") whereSql.push("u.is_locked = true");
