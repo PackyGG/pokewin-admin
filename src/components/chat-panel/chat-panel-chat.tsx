@@ -47,7 +47,6 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import type { ChatMessageItem } from "@/lib/queries/chat";
-import { useSseStream } from "@/lib/hooks/use-sse";
 import { subscribePackyWs, type ChatMessage } from "@/lib/packy-ws";
 import {
   deleteMessage,
@@ -68,6 +67,10 @@ const ROLE_BADGE: Record<string, string> = {
 };
 
 const PAGE_SIZE = 50;
+// Cap the in-memory message list so a long-lived panel on a busy chat
+// doesn't grow the array (and the DOM) without bound. We keep the most
+// recent N — same approach the WS hooks use via `.slice`.
+const MAX_MESSAGES = 200;
 
 /**
  * Convert a packy.gg WebSocket `chat.pull.history` message into the
@@ -113,10 +116,12 @@ export function ChatPanelChat({ role }: { role: string }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastPollRef = useRef<string>(new Date().toISOString());
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // When SSE fails repeatedly, flip back to the old polling path so the
-  // panel still updates on stubborn networks. `EventSource` missing at
-  // module load (very old browser) also trips the fallback immediately.
-  const [useFallback, setUseFallback] = useState<boolean>(
+  // Live updates come from the packy.gg WebSocket (chat.pull.history) via
+  // the `/api/packy-live` SSE proxy. The 3s polling loop below is only a
+  // degraded fallback for browsers without EventSource — without it the
+  // WS proxy can't connect either, so polling is the only way to stay
+  // live. Computed once at mount; nothing flips it at runtime.
+  const [useFallback] = useState<boolean>(
     () => typeof window !== "undefined" && typeof EventSource === "undefined",
   );
 
@@ -132,7 +137,15 @@ export function ChatPanelChat({ role }: { role: string }) {
         const fresh = incoming.filter((m) => !ids.has(m.id));
         if (!fresh.length) return prev;
         lastPollRef.current = fresh[fresh.length - 1].createdAt;
-        return [...prev, ...fresh.map((m) => ({ ...m, activeMuteId: null }))];
+        const next = [
+          ...prev,
+          ...fresh.map((m) => ({ ...m, activeMuteId: null })),
+        ];
+        // Trim from the top (oldest) so the list stays bounded; the view
+        // is oldest-at-top / newest-at-bottom, so we keep the tail.
+        return next.length > MAX_MESSAGES
+          ? next.slice(next.length - MAX_MESSAGES)
+          : next;
       });
     },
     [],
@@ -182,28 +195,14 @@ export function ChatPanelChat({ role }: { role: string }) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length]);
 
-  // SSE live feed — default path. Paused while searching so the stream
-  // doesn't inject rows that wouldn't match the active filter. Disabled
-  // when we've fallen back to polling.
-  useSseStream<ChatMessageItem>(
-    "/api/live/chat",
-    {
-      // `init` from this route is always empty (cursor seeded at connect
-      // time); we don't need the snapshot because the initial
-      // `fetchChatMessagesPanel()` load above paints the current state.
-      onInit: () => {},
-      onRow: (row) => appendLive([row]),
-      onGiveUp: () => setUseFallback(true),
-    },
-    { enabled: !activeSearch && !useFallback },
-  );
-
-  // packy.gg live WebSocket — subscribes to chat.pull.history and merges
-  // new messages into the same feed. Runs in parallel with the SSE
-  // stream; the append-path dedupes by message id so the same row never
-  // renders twice even if both sources deliver it. Paused while the
-  // operator is searching, since the WS payload can't be filtered
-  // server-side.
+  // packy.gg live WebSocket — the SINGLE live transport for the panel.
+  // Subscribes to chat.pull.history and merges new messages into the
+  // feed. (We previously also ran an SSE stream against /api/live/chat in
+  // parallel, which double-polled the chat_messages table for the exact
+  // same rows; the WS already carries chat without any DB polling, so the
+  // SSE path was removed.) The append-path dedupes by message id. Paused
+  // while the operator is searching, since the WS payload can't be
+  // filtered server-side.
   useEffect(() => {
     if (activeSearch) return;
     return subscribePackyWs<{

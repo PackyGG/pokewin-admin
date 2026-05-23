@@ -5,10 +5,17 @@ import {
 } from "@/lib/queries/chat";
 import { sseResponse } from "@/lib/sse";
 
-// Per-user concurrent-stream cap (1) for THIS route in THIS Node.js
-// process. One stream per user — multiple tabs would just multiply DB
-// poll load for identical data. In-memory only — per-instance, not
-// global. Acceptable until a shared cache is wired up.
+// Per-user concurrent-stream cap for THIS route in THIS Node.js process.
+// BEST-EFFORT ONLY — per-instance in-memory state, NOT a global per-user
+// cap (each Vercel instance keeps its own Map). Client-side dedupe is the
+// real guard: the browser shares one EventSource per stream type across
+// tabs/components (see `src/lib/hooks/use-sse.ts`).
+//
+// NOTE: as of the chat-transport consolidation the chat panel feeds live
+// messages from the packy.gg WebSocket (chat.pull.history) and no longer
+// opens this SSE route, so in normal operation nothing connects here.
+// The route is kept (with a wide interval) as a working server-push
+// path; if it is ever re-wired, the 12s tick keeps DB load modest.
 const MAX_CONCURRENT = 1;
 const openStreams = new Map<string, number>();
 
@@ -71,6 +78,9 @@ export async function GET(request: Request): Promise<Response> {
         nextCursor: rows[rows.length - 1].createdAt,
       };
     },
-    intervalMs: 6000,
+    // 12s — this route is a fallback server-push path (the panel uses the
+    // packy WS for live chat). A wide interval keeps the chat_messages
+    // poll cheap if anything ever reconnects here.
+    intervalMs: 12_000,
   });
 }
