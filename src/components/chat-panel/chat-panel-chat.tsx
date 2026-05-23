@@ -219,15 +219,24 @@ export function ChatPanelChat({ role }: { role: string }) {
     });
   }, [activeSearch, appendLive]);
 
-  // Polling fallback — only active if SSE gave up or isn't supported.
-  // Verbatim preservation of the old 3s-tick loop so the degraded path
-  // behaves identically to the pre-SSE implementation.
+  // Polling fallback — only active when EventSource isn't supported (very
+  // old browsers). Without EventSource the packy WS proxy can't connect
+  // either, so this 3s poll is the only way to keep the panel live. The
+  // append-path dedupes by id so it never double-renders a message.
   useEffect(() => {
     if (activeSearch) return;
     if (!useFallback) return;
     let alive = true;
     const tick = async () => {
       if (!alive) return;
+      // Skip while the tab is backgrounded so a hidden panel doesn't keep
+      // polling the chat_messages table — matches the other live feeds.
+      if (
+        typeof document !== "undefined" &&
+        document.visibilityState !== "visible"
+      ) {
+        return;
+      }
       try {
         const newer = await pollMessages(lastPollRef.current);
         if (newer.length && alive) {
