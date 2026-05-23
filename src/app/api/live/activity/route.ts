@@ -1,15 +1,19 @@
 import { requirePageAccess } from "@/lib/dal";
 import {
   getLiveActivity,
+  getLiveActivityWatermark,
   type LiveActivityItem,
 } from "@/lib/queries/dashboard-live";
 import { sseResponse } from "@/lib/sse";
 
-// Per-user concurrent-stream cap (1) for THIS route in THIS Node.js
-// process. One stream per user is enough — multiple tabs all show the
-// same activity feed, so opening N upstreams for one admin just
-// multiplies DB load for identical data. The 2nd tab gets 429 and the
-// EventSource client retries once the first tab closes.
+// Per-user concurrent-stream cap for THIS route in THIS Node.js process.
+// BEST-EFFORT ONLY — this is per-instance in-memory state. On Vercel each
+// Fluid Compute instance has its own Map, so the real ceiling is
+// `MAX_CONCURRENT × instance_count`, NOT a global per-user cap. The
+// authoritative dedupe is client-side: the browser opens exactly one
+// EventSource per stream type across all tabs/components (see the shared
+// connection in `src/lib/hooks/use-sse.ts`). This server cap just stops a
+// single instance from stacking duplicate upstreams for one admin.
 const MAX_CONCURRENT = 1;
 const openStreams = new Map<string, number>();
 
@@ -65,12 +69,29 @@ export async function GET(request: Request): Promise<Response> {
       return { rows, cursor };
     },
     produce: async (lastCursor) => {
+      // Cheap watermark pre-check FIRST. The heavy include query
+      // (`getLiveActivity` — 3 findMany with user joins + deposit-bonus
+      // pairing + battle-participant borrow chain) only runs when a new
+      // event actually landed since the last value we sent on this
+      // stream. On an idle feed this collapses every ~6s tick to three
+      // indexed `take: 1` lookups instead of the full feed query, which
+      // is what was hammering the live prod DB per-connection.
+      const watermark = await getLiveActivityWatermark(lastCursor);
+      if (watermark == null) {
+        // Nothing newer than the cursor — skip the heavy query entirely.
+        return { rows: [], nextCursor: null };
+      }
+
       const rows = await getLiveActivity({
         sinceCreatedAt: lastCursor,
         limit: 30,
       });
       if (rows.length === 0) {
-        return { rows: [], nextCursor: null };
+        // Watermark advanced but the heavy query returned nothing (e.g.
+        // a row that the broader watermark matched got filtered out by
+        // the heavy query's row-level shaping). Advance the cursor to
+        // the watermark so we don't re-trigger on the same row forever.
+        return { rows: [], nextCursor: watermark };
       }
       // Emit oldest first so the client receives rows in chronological
       // order. `getLiveActivity` returns newest-first; reverse for the

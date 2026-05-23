@@ -161,6 +161,99 @@ export type LiveActivityItem = {
   borrowedAmountUsd: number | null;
 };
 
+// Ledger types surfaced by the live activity feed. Kept as a module
+// constant so the cheap watermark pre-check (getLiveActivityWatermark)
+// filters on the EXACT same set as the heavy include query below — a
+// narrower watermark would risk skipping real rows.
+const LIVE_ACTIVITY_LEDGER_TYPES = [
+  "deposit",
+  "creator_tip",
+  "rain_win",
+  "race_prize",
+  "pack_opening",
+  "battle_bet",
+  "battle_sponsorship",
+  "battle_refund",
+  "rakeback_claim",
+  "affiliate_claim",
+  "deposit_bonus",
+  "admin_balance_adjustment",
+  "balance_reward_claim",
+  "waitlist_prize",
+  "gift_card_redeemed",
+  "promo_code_redeemed",
+  "voucher_redeemed",
+] as const;
+
+/**
+ * Cheap "has anything advanced?" pre-check for the live-activity SSE
+ * stream. Returns the newest event timestamp (ISO) strictly AFTER
+ * `sinceCreatedAt` across all three sources, or `null` when nothing is
+ * newer.
+ *
+ * Why this exists: the SSE produce loop used to re-run the full
+ * `getLiveActivity` include query every tick (~6s) per connection
+ * against the live prod DB even when nothing changed. This pre-check
+ * touches the same three tables but with NO includes, NO joins beyond
+ * the staff filter, `take: 1`, and selects only the timestamp column —
+ * so it rides the existing created_at / requested_at indexes. The route
+ * only runs the heavy query when this advances past the last value it
+ * already sent on that stream.
+ *
+ * Filters mirror `getLiveActivity` 1:1 (same staff/blacklist exclusion,
+ * same ledger-type set, same withdrawal + signup sources). It is
+ * therefore broad-or-equal to the heavy query: it can never report
+ * "advanced" later than a real row the heavy query would return, so no
+ * row is ever skipped.
+ */
+export async function getLiveActivityWatermark(
+  sinceCreatedAt: string | null,
+): Promise<string | null> {
+  const db = await getDb();
+  const since = sinceCreatedAt ? new Date(sinceCreatedAt) : null;
+  const staffRelation = await excludeStaffAndBlacklisted();
+
+  const [ledgerTop, withdrawalTop, signupTop] = await Promise.all([
+    db.ledger_transactions.findFirst({
+      where: {
+        status: "completed",
+        ...(since ? { created_at: { gt: since } } : {}),
+        user: staffRelation,
+        type: { in: [...LIVE_ACTIVITY_LEDGER_TYPES] },
+      },
+      orderBy: { created_at: "desc" },
+      select: { created_at: true },
+    }),
+    db.card_withdrawal_requests.findFirst({
+      where: {
+        ...(since ? { requested_at: { gt: since } } : {}),
+        user_card_withdrawal_requests_user_idTouser: staffRelation,
+      },
+      orderBy: { requested_at: "desc" },
+      select: { requested_at: true },
+    }),
+    db.user.findFirst({
+      where: {
+        role: { not: "admin" },
+        ...(since ? { created_at: { gt: since } } : {}),
+      },
+      orderBy: { created_at: "desc" },
+      select: { created_at: true },
+    }),
+  ]);
+
+  let max: Date | null = null;
+  for (const ts of [
+    ledgerTop?.created_at ?? null,
+    withdrawalTop?.requested_at ?? null,
+    signupTop?.created_at ?? null,
+  ]) {
+    if (ts && (max === null || ts.getTime() > max.getTime())) max = ts;
+  }
+
+  return max ? max.toISOString() : null;
+}
+
 /**
  * A live feed of every platform event the admin cares about: signups +
  * deposits + withdrawals + pack/battle wagers + card sales + rain wins +
@@ -188,42 +281,21 @@ export async function getLiveActivity(params: {
         status: "completed",
         ...(since ? { created_at: { gt: since } } : {}),
         user: staffRelation,
-        type: {
-          // Note: `card_withdrawal` is intentionally NOT in this list.
-          // That ledger row is only created AFTER admin processing, so
-          // polling it means pending withdrawal requests are invisible.
-          // Instead we pull from card_withdrawal_requests below, which
-          // captures the moment the user hits submit.
-          in: [
-            "deposit",
-            "creator_tip",
-            "rain_win",
-            "race_prize",
-            "pack_opening",
-            "battle_bet",
-            "battle_sponsorship",
-            // Battle wins — the house paying a user back because they
-            // won. Classified as a payout (red) so the feed actually
-            // shows every win, not just the bet that started it.
-            "battle_refund",
-            // Bonus credits the house granted — rakeback / affiliate
-            // claims / admin balance adjustments / deposit bonuses.
-            "rakeback_claim",
-            "affiliate_claim",
-            "deposit_bonus",
-            "admin_balance_adjustment",
-            "balance_reward_claim",
-            "waitlist_prize",
-            "gift_card_redeemed",
-            "promo_code_redeemed",
-            "voucher_redeemed",
-            // card_sale / reward_card_sale intentionally excluded — the
-            // user already "paid" for the card via a pack or battle, so
-            // selling it back is a balance-neutral round-trip in the
-            // feed (the pack/battle rows already capture the gambling
-            // P&L; surfacing the sale adds noise without new info).
-          ],
-        },
+        // Note: `card_withdrawal` is intentionally NOT in this list.
+        // That ledger row is only created AFTER admin processing, so
+        // polling it means pending withdrawal requests are invisible.
+        // Instead we pull from card_withdrawal_requests below, which
+        // captures the moment the user hits submit.
+        //
+        // `card_sale` / `reward_card_sale` are intentionally excluded —
+        // the user already "paid" for the card via a pack or battle, so
+        // selling it back is a balance-neutral round-trip in the feed
+        // (the pack/battle rows already capture the gambling P&L;
+        // surfacing the sale adds noise without new info).
+        //
+        // The set lives in LIVE_ACTIVITY_LEDGER_TYPES so the cheap
+        // watermark pre-check filters on the exact same types.
+        type: { in: [...LIVE_ACTIVITY_LEDGER_TYPES] },
       },
       orderBy: { created_at: "desc" },
       take: limit,
@@ -404,8 +476,9 @@ function classifyLedgerKind(type: string): LiveActivityEventKind {
 
 // ─── Live Users ────────────────────────────────────────────────────
 //
-// The global top-bar LiveIndicator now subscribes to the packy.gg
-// WebSocket (`active.users.count` event) via `src/lib/packy-ws.ts`, so
-// the ledger-proxy `getLiveUserCount` that used to feed it was removed.
-// Re-add it here only if a non-WS code path (e.g. a server-side analytics
+// There is currently NO live active-user-count consumer in the admin
+// UI: the old ledger-proxy `getLiveUserCount` was removed and no
+// component renders the packy.gg `active.users.count` feed (the
+// `active.users.count` WS event is not subscribed by any .tsx). Re-add
+// a query here only if a server-side code path (e.g. an analytics
 // export) actually needs the count.
