@@ -14,7 +14,11 @@ import { sseResponse } from "@/lib/sse";
 // EventSource per stream type across all tabs/components (see the shared
 // connection in `src/lib/hooks/use-sse.ts`). This server cap just stops a
 // single instance from stacking duplicate upstreams for one admin.
-const MAX_CONCURRENT = 1;
+// Headroom (was 1): the ~4min stream rotation briefly overlaps the old +
+// new connection, and an admin with 2 tabs legitimately opens 2 streams
+// (the client dedupes per-tab, not cross-tab). 1 locked those out on a
+// 429. The real ceiling is still the client singleton; this is a backstop.
+const MAX_CONCURRENT = 4;
 const openStreams = new Map<string, number>();
 
 // This route streams and is expected to stay open for minutes at a time.

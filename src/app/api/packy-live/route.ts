@@ -84,7 +84,9 @@ const EXPECTED_ACCEPT = crypto
 // In-memory only: each Vercel function instance has its own map, so the
 // real ceiling is `MAX_CONCURRENT × instance_count`. Acceptable until a
 // shared cache is wired up.
-const MAX_CONCURRENT = 1;
+// Headroom (was 1) for rotation overlap + multi-tab; client singleton is
+// the real per-tab limiter. 1 caused 429 lockouts on reconnect.
+const MAX_CONCURRENT = 4;
 const openStreams = new Map<string, number>();
 
 export async function GET(request: Request): Promise<Response> {

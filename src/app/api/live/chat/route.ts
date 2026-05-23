@@ -16,7 +16,9 @@ import { sseResponse } from "@/lib/sse";
 // opens this SSE route, so in normal operation nothing connects here.
 // The route is kept (with a wide interval) as a working server-push
 // path; if it is ever re-wired, the 12s tick keeps DB load modest.
-const MAX_CONCURRENT = 1;
+// Headroom (was 1) for rotation overlap + multi-tab; client singleton is
+// the real per-tab limiter. 1 caused 429 lockouts on reconnect.
+const MAX_CONCURRENT = 4;
 const openStreams = new Map<string, number>();
 
 // Stream keeps the connection open for minutes at a time — disable
