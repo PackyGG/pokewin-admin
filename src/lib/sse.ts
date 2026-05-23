@@ -62,63 +62,76 @@ export function sseResponse<T>(params: {
 
   const encoder = new TextEncoder();
 
+  // ── Stream lifecycle state (hoisted OUT of start) ──────────────────
+  // cleanup() must be reachable from BOTH the request abort signal AND the
+  // ReadableStream `cancel()` callback. On Vercel Fluid Compute the abort
+  // signal does NOT reliably fire when an SSE client disconnects, but the
+  // stream's `cancel()` does. Relying on the abort signal alone leaked the
+  // produce-loop timers — they kept hammering the DB every tick for ghost
+  // connections (site-wide slowdown) and never ran `onClose`, so the
+  // per-user concurrency counter got stuck and reconnects were rejected
+  // with 429 ("waiting for activity"). Keeping this state at the closure
+  // level lets cancel() tear everything down.
+  let closed = false;
+  let cursor: string | null = null;
+  let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
+
+  const timers: {
+    tick: ReturnType<typeof setInterval> | null;
+    heartbeat: ReturnType<typeof setInterval> | null;
+    rotation: ReturnType<typeof setTimeout> | null;
+  } = {
+    tick: null,
+    heartbeat: null,
+    rotation: null,
+  };
+
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    if (timers.tick) clearInterval(timers.tick);
+    if (timers.heartbeat) clearInterval(timers.heartbeat);
+    if (timers.rotation) clearTimeout(timers.rotation);
+    try {
+      controllerRef?.close();
+    } catch {
+      // Already closed — ignore.
+    }
+    if (onClose) {
+      try {
+        onClose();
+      } catch {
+        // The caller's onClose mustn't break the cleanup.
+      }
+    }
+  };
+
+  const write = (chunk: string): boolean => {
+    if (closed || !controllerRef) return false;
+    try {
+      controllerRef.enqueue(encoder.encode(chunk));
+      return true;
+    } catch {
+      cleanup();
+      return false;
+    }
+  };
+
+  const writeEvent = (event: string, data: unknown): boolean => {
+    return write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      let closed = false;
-      let cursor: string | null = null;
+      controllerRef = controller;
 
-      const timers: {
-        tick: ReturnType<typeof setInterval> | null;
-        heartbeat: ReturnType<typeof setInterval> | null;
-        rotation: ReturnType<typeof setTimeout> | null;
-      } = {
-        tick: null,
-        heartbeat: null,
-        rotation: null,
-      };
-
-      const cleanup = () => {
-        if (closed) return;
-        closed = true;
-        if (timers.tick) clearInterval(timers.tick);
-        if (timers.heartbeat) clearInterval(timers.heartbeat);
-        if (timers.rotation) clearTimeout(timers.rotation);
-        try {
-          controller.close();
-        } catch {
-          // Already closed — ignore.
-        }
-        if (onClose) {
-          try {
-            onClose();
-          } catch {
-            // The caller's onClose mustn't break the cleanup.
-          }
-        }
-      };
-
-      const write = (chunk: string): boolean => {
-        if (closed) return false;
-        try {
-          controller.enqueue(encoder.encode(chunk));
-          return true;
-        } catch {
-          cleanup();
-          return false;
-        }
-      };
-
-      const writeEvent = (event: string, data: unknown): boolean => {
-        return write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-      };
-
-      // If the client disconnects (tab close, navigation), Node aborts the
-      // underlying request — we react by tearing everything down so we
-      // don't keep polling the DB for a ghost connection.
+      // If the client already went away, don't even start the loops.
       if (request.signal.aborted) {
         cleanup();
         return;
       }
+      // Belt-and-suspenders: react to the abort signal too (fires reliably
+      // in Node; on Vercel the `cancel()` callback below is the real one).
       request.signal.addEventListener("abort", cleanup, { once: true });
 
       // Kick off with the initial snapshot. Wrapped in an async IIFE so we
@@ -174,8 +187,10 @@ export function sseResponse<T>(params: {
       })();
     },
     cancel() {
-      // The consumer cancelled (e.g. Next.js aborted the response). Nothing
-      // to do — the start() closure's cleanup runs via the abort signal.
+      // The consumer (browser/Next.js) cancelled the stream. THIS is the
+      // reliable client-disconnect signal on Vercel — without running
+      // cleanup here, the produce timers leak and onClose never fires.
+      cleanup();
     },
   });
 
