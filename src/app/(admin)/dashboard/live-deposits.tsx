@@ -11,34 +11,33 @@ import type { LiveDepositItem } from "@/lib/queries/dashboard-live";
 import { fetchRecentDepositsLive } from "./live-actions";
 
 const MAX_ITEMS = 20;
-const POLL_INTERVAL_MS = 3000;
+// 6s poll. Deposits are lower-frequency than the mixed activity feed, so
+// a 6s cadence still feels live while halving the request rate vs the
+// old 3s. The panel self-bootstraps its first snapshot on mount (see
+// below) so it no longer depends on a server-rendered `initial` prop —
+// that decouples it from the dashboard's 60s router.refresh(), which
+// used to re-run getLiveDeposits() purely to re-seed a prop the lazy
+// useState initializer ignored after first render.
+const POLL_INTERVAL_MS = 6000;
 
 /**
- * Live Deposits feed for the dashboard. Polls `fetchRecentDepositsLive`
- * every 3s (cursor-advanced so each row arrives once), pausing while the
- * tab is hidden. New rows slide in from the top.
+ * Live Deposits feed for the dashboard. Bootstraps its initial snapshot
+ * on mount, then polls `fetchRecentDepositsLive` every 6s (cursor-
+ * advanced so each row arrives once), pausing while the tab is hidden.
+ * New rows slide in from the top.
  *
  * House-POV coloring: a deposit is the user handing the house money, so
  * the amount + 24h hero are emerald (house gain).
  */
-export function LiveDeposits({
-  initial,
-  initialTotal24h,
-}: {
-  initial: LiveDepositItem[];
-  initialTotal24h: number;
-}) {
-  const [items, setItems] = React.useState<LiveDepositItem[]>(() =>
-    initial.slice(0, MAX_ITEMS),
-  );
-  const [total24h, setTotal24h] = React.useState<number>(initialTotal24h);
+export function LiveDeposits() {
+  const [items, setItems] = React.useState<LiveDepositItem[]>([]);
+  const [total24h, setTotal24h] = React.useState<number>(0);
+  const [bootstrapped, setBootstrapped] = React.useState(false);
   // The id set is used to flag newly-arrived rows for the slide-in animation.
-  // Initial rows are rendered statically — only rows that appear after mount
-  // get the entry animation so the first paint doesn't flash.
+  // The bootstrap snapshot is rendered statically — only rows that appear
+  // after it get the entry animation so the first paint doesn't flash.
   const [newIds, setNewIds] = React.useState<Set<string>>(() => new Set());
-  const cursorRef = React.useRef<string | null>(
-    initial.length > 0 ? initial[0].createdAt : null,
-  );
+  const cursorRef = React.useRef<string | null>(null);
   // Re-render every 30s so relative timestamps ("12s ago") stay fresh even
   // when no new items arrive.
   const [, setNow] = React.useState(0);
@@ -46,6 +45,30 @@ export function LiveDeposits({
   React.useEffect(() => {
     const tick = setInterval(() => setNow((n) => n + 1), 30_000);
     return () => clearInterval(tick);
+  }, []);
+
+  // One-shot bootstrap: load the newest snapshot + the 24h total on mount
+  // (cursor null = newest N). Runs before the polling loop so the panel
+  // fills immediately instead of waiting a poll interval.
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetchRecentDepositsLive(null);
+        if (!alive) return;
+        setTotal24h(res.total24h);
+        const snap = res.items.slice(0, MAX_ITEMS);
+        setItems(snap);
+        cursorRef.current = snap.length > 0 ? snap[0].createdAt : null;
+      } catch {
+        // Silent — the polling loop below will retry and fill the panel.
+      } finally {
+        if (alive) setBootstrapped(true);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
   }, []);
 
   React.useEffect(() => {
@@ -126,7 +149,9 @@ export function LiveDeposits({
 
         <div className="max-h-[32rem] overflow-y-auto -mx-5 px-5">
           {items.length === 0 ? (
-            <EmptyState label="Waiting for deposits..." />
+            <EmptyState
+              label={bootstrapped ? "Waiting for deposits..." : "Loading deposits..."}
+            />
           ) : (
             <ul className="divide-y divide-border/60">
               {items.map((item) => (

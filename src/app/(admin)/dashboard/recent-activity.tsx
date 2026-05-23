@@ -116,25 +116,26 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 export function RecentActivity({
-  initial,
   signups24h,
   packsOpened24h,
   battlesPlayed24h,
 }: {
-  initial: LiveActivityItem[];
   /** Rolling-24h counts for the stats strip at the top of the card.
    *  Refreshed by the dashboard's 60s router.refresh(). */
   signups24h: number;
   packsOpened24h: number;
   battlesPlayed24h: number;
 }) {
-  const [items, setItems] = React.useState<LiveActivityItem[]>(() =>
-    initial.slice(0, MAX_ITEMS),
-  );
+  // The feed self-bootstraps from the SSE `init` snapshot (up to 30 rows
+  // delivered the moment the stream connects), so it no longer needs a
+  // server-rendered `initial` prop. Dropping that prop decouples the feed
+  // from the dashboard's 60s router.refresh(), which used to re-run
+  // getLiveActivity(50) only to re-seed a prop the lazy useState
+  // initializer ignored after first render. The polling fallback below
+  // bootstraps with a null cursor when SSE is unavailable.
+  const [items, setItems] = React.useState<LiveActivityItem[]>([]);
   const [newIds, setNewIds] = React.useState<Set<string>>(() => new Set());
-  const cursorRef = React.useRef<string | null>(
-    initial.length > 0 ? initial[0].createdAt : null,
-  );
+  const cursorRef = React.useRef<string | null>(null);
   // When SSE proves unavailable we flip to the old polling path. Default
   // stays on SSE for every modern browser.
   const [useFallback, setUseFallback] = React.useState<boolean>(
@@ -203,8 +204,10 @@ export function RecentActivity({
     { enabled: !useFallback },
   );
 
-  // Polling fallback — only active when SSE is unavailable / gave up. Kept
-  // verbatim from the original implementation so the UX degrades cleanly.
+  // Polling fallback — only active when SSE is unavailable / gave up.
+  // With a null cursor the first call returns the newest snapshot, so
+  // this also bootstraps the feed when SSE never connected. Runs once
+  // immediately, then on the interval.
   React.useEffect(() => {
     if (!useFallback) return;
     let alive = true;
@@ -225,6 +228,7 @@ export function RecentActivity({
         // Silent — polling will recover on the next tick.
       }
     };
+    poll();
     const id = setInterval(poll, POLL_INTERVAL_MS);
     return () => {
       alive = false;

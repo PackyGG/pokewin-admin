@@ -11,7 +11,6 @@ import {
   Gauge,
 } from "lucide-react";
 import { getDashboardStats } from "@/lib/queries/dashboard";
-import { getLiveActivity, getLiveDeposits } from "@/lib/queries/dashboard-live";
 import { requirePageAccess } from "@/lib/dal";
 import { formatCurrency } from "@/lib/utils/format";
 import { StatCard } from "./stat-card";
@@ -34,11 +33,12 @@ export const metadata = { title: "Dashboard" };
 export default async function DashboardPage() {
   await requirePageAccess("/dashboard");
 
-  const [stats, liveActivity, liveDeposits] = await Promise.all([
-    getDashboardStats(),
-    getLiveActivity({ sinceCreatedAt: null, limit: 50 }),
-    getLiveDeposits({ sinceCreatedAt: null, limit: 20 }),
-  ]);
+  // Only the KPI stats are fetched server-side. The two live feeds
+  // (Recent Activity, Live Deposits) bootstrap their own snapshot on the
+  // client — that keeps the 60s router.refresh() below scoped to the
+  // KPIs and stops it from re-running getLiveActivity/getLiveDeposits
+  // every minute for data the feeds already own via SSE / polling.
+  const stats = await getDashboardStats();
 
   // Average deposit transactions per hour. depositCounts holds the
   // completed-deposit count per rolling window, so dividing by the
@@ -49,9 +49,10 @@ export default async function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      {/* Dashboard polls at 60s — KPIs settle slowly and the live
-          feeds (RecentActivity SSE, LiveDeposits polling) update
-          independently. */}
+      {/* Dashboard polls at 60s for the KPI numbers only — KPIs settle
+          slowly and the live feeds (RecentActivity SSE, LiveDeposits
+          polling) own their own data on the client, so this refresh no
+          longer re-queries the feeds. */}
       <AutoRefresh intervalMs={60_000} />
 
       <PageHero>
@@ -209,10 +210,12 @@ export default async function DashboardPage() {
       </div>
 
       {/* Live feeds — Recent Activity (SSE, dashboard-side ledger events) on
-          the left, Live Deposits (3s polling) on the right. Stacks to a
-          single column on smaller screens so the deposits card keeps a
-          usable width. Both cards manage their own height cap via
-          internal scroll so the grid stays symmetric. */}
+          the left, Live Deposits (6s polling) on the right. Both feeds
+          self-bootstrap their snapshot on the client (no server-rendered
+          seed), so the 60s dashboard refresh doesn't re-query them.
+          Stacks to a single column on smaller screens so the deposits
+          card keeps a usable width. Both cards manage their own height
+          cap via internal scroll so the grid stays symmetric. */}
       <div className="grid gap-3 sm:gap-4 xl:grid-cols-2">
         <div className="space-y-3">
           <SectionHeading
@@ -222,7 +225,6 @@ export default async function DashboardPage() {
           />
           <FadeIn>
             <RecentActivity
-              initial={liveActivity}
               signups24h={stats.activity.signups24h}
               packsOpened24h={stats.activity.packsOpened24h}
               battlesPlayed24h={stats.activity.battlesPlayed24h}
@@ -232,10 +234,7 @@ export default async function DashboardPage() {
         <div className="space-y-3">
           <SectionHeading icon={Wallet} title="Deposits" />
           <FadeIn>
-            <LiveDeposits
-              initial={liveDeposits.items}
-              initialTotal24h={liveDeposits.total24h}
-            />
+            <LiveDeposits />
           </FadeIn>
         </div>
       </div>
