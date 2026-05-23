@@ -43,7 +43,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ROLE_COLORS } from "@/lib/constants";
+import { cn } from "@/lib/utils";
 import { formatRelative } from "@/lib/utils/format";
+import { EmptyState } from "@/components/empty-state";
 import { setAdminLimit, deleteAdminLimit } from "../limits-actions";
 import type { limit_period_type } from "@/generated/admin-prisma/client";
 
@@ -108,49 +110,76 @@ export function BalanceLimitsOverview({
         <AddLimitDialog allAdmins={allAdmins} />
       </div>
 
-      <div className="rounded-2xl border overflow-hidden">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b bg-muted/50">
-              <th className="px-4 py-3 text-left text-sm font-medium">Admin</th>
-              <th className="px-4 py-3 text-left text-sm font-medium">Role</th>
-              <th className="px-4 py-3 text-left text-sm font-medium">Period</th>
-              <th className="px-4 py-3 text-right text-sm font-medium">Cap</th>
-              <th className="px-4 py-3 text-left text-sm font-medium">Set by</th>
-              <th className="px-4 py-3 text-left text-sm font-medium">Updated</th>
-              <th className="px-4 py-3 text-right text-sm font-medium w-[140px]">
-                Actions
-              </th>
-            </tr>
-          </thead>
-          <tbody>
+      {filtered.length === 0 ? (
+        <div className="rounded-2xl border">
+          {rows.length === 0 ? (
+            <EmptyState
+              icon={Wallet}
+              title="No balance caps set on any admin"
+              description={
+                <>
+                  Click <span className="font-medium">Add Limit</span> to cap an
+                  admin&apos;s adjustment power.
+                </>
+              }
+              compact
+            />
+          ) : (
+            <EmptyState
+              icon={Search}
+              title="No caps match your search"
+              compact
+            />
+          )}
+        </div>
+      ) : (
+        <>
+          {/* Desktop table (>=md). */}
+          <div className="hidden rounded-2xl border overflow-x-auto md:block">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b bg-muted/50">
+                  <th className="px-4 py-3 text-left text-sm font-medium">
+                    Admin
+                  </th>
+                  <th className="px-4 py-3 text-left text-sm font-medium">
+                    Role
+                  </th>
+                  <th className="px-4 py-3 text-left text-sm font-medium">
+                    Period
+                  </th>
+                  <th className="px-4 py-3 text-right text-sm font-medium">
+                    Cap
+                  </th>
+                  <th className="px-4 py-3 text-left text-sm font-medium">
+                    Set by
+                  </th>
+                  <th className="px-4 py-3 text-left text-sm font-medium">
+                    Updated
+                  </th>
+                  <th className="px-4 py-3 text-right text-sm font-medium w-[140px]">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((row) => (
+                  <LimitRow key={row.id} row={row} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile card list (<md) — the 7-col table overflows at
+              360px. Each cap renders as a stacked card with inline
+              edit + delete. */}
+          <div className="space-y-2 md:hidden">
             {filtered.map((row) => (
-              <LimitRow key={row.id} row={row} />
+              <LimitMobileCard key={row.id} row={row} />
             ))}
-            {filtered.length === 0 && (
-              <tr>
-                <td
-                  colSpan={7}
-                  className="h-32 text-center text-sm text-muted-foreground"
-                >
-                  {rows.length === 0 ? (
-                    <div className="flex flex-col items-center gap-2 py-4">
-                      <Wallet className="size-6 text-muted-foreground/60" />
-                      <p>No balance caps set on any admin.</p>
-                      <p className="text-xs">
-                        Click <span className="font-medium">Add Limit</span> to
-                        cap an admin&apos;s adjustment power.
-                      </p>
-                    </div>
-                  ) : (
-                    "No caps match your search."
-                  )}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -292,10 +321,155 @@ function LimitRow({ row }: { row: Row }) {
 }
 
 // ---------------------------------------------------------------------------
+// Mobile equivalent of LimitRow — stacked card with inline edit/delete.
+// Same actions + server calls as the desktop row; touch targets >=36px.
+// ---------------------------------------------------------------------------
+
+function LimitMobileCard({ row }: { row: Row }) {
+  const router = useRouter();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(String(row.maxAmount));
+  const [pending, startTransition] = useTransition();
+  const roleColor =
+    ROLE_COLORS[row.adminRole as keyof typeof ROLE_COLORS] ??
+    "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30";
+
+  function handleSave() {
+    const amount = parseFloat(value);
+    if (Number.isNaN(amount) || amount <= 0) {
+      toast.error("Enter a positive amount");
+      return;
+    }
+    startTransition(async () => {
+      const result = await setAdminLimit({
+        adminUserId: row.adminUserId,
+        periodType: row.periodType,
+        maxAmount: amount,
+      });
+      if (!result.success) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success(
+        `${PERIOD_LABEL[row.periodType]} cap for ${row.adminUsername} → $${amount.toFixed(2)}`,
+      );
+      setEditing(false);
+      router.refresh();
+    });
+  }
+
+  return (
+    <div className="rounded-xl border bg-card p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <Link
+            href={`/admin-users/${row.adminUserId}`}
+            className="inline-flex items-center gap-1 font-medium hover:underline"
+          >
+            {row.adminUsername}
+            <ChevronRight className="size-3 text-muted-foreground" />
+          </Link>
+          <p className="truncate text-xs text-muted-foreground">
+            {row.adminEmail}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
+          <Badge variant="outline" className={roleColor}>
+            {row.adminRole}
+          </Badge>
+          <Badge variant="outline" className="capitalize">
+            {PERIOD_LABEL[row.periodType]}
+          </Badge>
+        </div>
+      </div>
+
+      <div className="mt-3 flex items-center justify-between gap-2">
+        {editing ? (
+          <div className="flex items-center gap-1">
+            <span className="text-sm text-muted-foreground">$</span>
+            <Input
+              type="number"
+              className="h-9 w-28 text-sm"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              min={0}
+              step={0.01}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleSave();
+                if (e.key === "Escape") {
+                  setEditing(false);
+                  setValue(String(row.maxAmount));
+                }
+              }}
+            />
+          </div>
+        ) : (
+          <span className="text-lg font-semibold tabular-nums">
+            ${row.maxAmount.toLocaleString()}
+          </span>
+        )}
+        <div className="flex items-center gap-1">
+          {editing ? (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-9"
+                disabled={pending}
+                onClick={handleSave}
+              >
+                Save
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-9"
+                disabled={pending}
+                onClick={() => {
+                  setEditing(false);
+                  setValue(String(row.maxAmount));
+                }}
+              >
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                size="icon"
+                variant="outline"
+                className="size-9"
+                aria-label="Edit cap"
+                onClick={() => setEditing(true)}
+              >
+                <Pencil className="size-4" />
+              </Button>
+              <DeleteLimitButton row={row} className="size-9" />
+            </>
+          )}
+        </div>
+      </div>
+
+      <p className="mt-2 text-[11px] text-muted-foreground">
+        Set by {row.setByUsername ?? "unknown"} ·{" "}
+        {formatRelative(row.updatedAt)}
+      </p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Delete confirm
 // ---------------------------------------------------------------------------
 
-function DeleteLimitButton({ row }: { row: Row }) {
+function DeleteLimitButton({
+  row,
+  className,
+}: {
+  row: Row;
+  className?: string;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -320,7 +494,10 @@ function DeleteLimitButton({ row }: { row: Row }) {
       <Button
         size="icon"
         variant="ghost"
-        className="size-7 text-muted-foreground hover:text-rose-500"
+        className={cn(
+          "size-7 text-muted-foreground hover:text-rose-500",
+          className,
+        )}
         aria-label="Remove cap"
         onClick={() => setOpen(true)}
       >
