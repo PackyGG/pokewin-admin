@@ -78,10 +78,10 @@ function getPeriodAggregates(
 ) {
   // GGR wager/payout type sets — built ONCE from the canonical shared
   // constants (src/lib/queries/_wager-payout-types.ts) and interpolated
-  // into every GGR period block below via Prisma.raw, so the dashboard's
-  // global GGR can never drift from the per-creator GGR (creators-pnl.ts)
-  // that imports the same lists. The values are hardcoded ledger-type
-  // strings — no external input — so Prisma.raw is injection-safe here.
+  // into every GGR period block below via Prisma.raw, instead of being
+  // re-typed inline 9× (where the 19-item payout list inevitably drifts).
+  // The values are hardcoded ledger-type strings — no external input —
+  // so Prisma.raw is injection-safe here.
   const ggrWagerIn = Prisma.raw(WAGER_TYPES_SQL);
   const ggrPayoutIn = Prisma.raw(PAYOUT_TYPES_SQL);
   return db.$queryRaw<
