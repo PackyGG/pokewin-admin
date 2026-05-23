@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { escapeBlacklistIds } from "./_blacklist";
 import type {
   CreatorLifetimePnl,
   CreatorPnlData,
@@ -151,10 +152,10 @@ const WITHDRAWN_UNITS_SQL = `(
 
 async function buildBlacklistAnd(): Promise<string> {
   const excluded = await getExcludedUserIds();
+  // Leading space is intentional — call sites concatenate this directly
+  // after another condition (e.g. `... AND u.id != $1${blacklistAnd}`).
   return excluded.length > 0
-    ? ` AND u.id NOT IN (${excluded
-        .map((id) => `'${id.replace(/'/g, "''")}'`)
-        .join(",")})`
+    ? ` AND u.id NOT IN (${escapeBlacklistIds(excluded)})`
     : "";
 }
 

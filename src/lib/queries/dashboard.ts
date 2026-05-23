@@ -7,6 +7,7 @@ import { MS_PER_DAY, MS_PER_HOUR } from "@/lib/utils/time";
 import {
   excludeStaffAndBlacklisted,
   excludeStaffAndBlacklistedDirect,
+  blacklistNotInClause,
 } from "./_blacklist";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
@@ -274,12 +275,7 @@ async function dashboardStatsInner() {
   // Inline SQL fragment for `AND id NOT IN (...)` for the raw queries
   // that already do role NOT IN ('admin','support'). Empty string when
   // nothing is blacklisted so the query stays valid.
-  const blacklistIdNotIn =
-    excluded.length > 0
-      ? `AND id NOT IN (${excluded
-          .map((id) => `'${id.replace(/'/g, "''")}'`)
-          .join(",")})`
-      : "";
+  const blacklistIdNotIn = blacklistNotInClause("id", excluded);
   const now = new Date();
   // UTC-anchored boundaries so the dashboard renders the same numbers no
   // matter which timezone the request happens to land in (Vercel functions

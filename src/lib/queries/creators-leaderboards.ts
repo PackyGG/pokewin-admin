@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { blacklistNotInClause } from "./_blacklist";
 
 export type LeaderboardRanking = {
   position: number;
@@ -72,10 +73,7 @@ export async function getAffiliateLeaderboardRankings(opts: {
 
   const db = await getDb();
   const excluded = await getExcludedUserIds();
-  const blacklistIdNotIn =
-    excluded.length > 0
-      ? `AND u.id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
-      : "";
+  const blacklistIdNotIn = blacklistNotInClause("u.id", excluded);
 
   // Resolve the code set this leaderboard is scoped to. Empty array
   // on the input = "all codes this creator owns" (matches what the

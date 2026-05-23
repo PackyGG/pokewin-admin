@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { blacklistNotInClause } from "./_blacklist";
 
 /**
  * Activity heatmap: 7 days × 24 hours of wager volume + deposit count.
@@ -56,10 +57,7 @@ export async function getActivityHeatmap(
   const db = await getDb();
   const days = daysForPeriod(period);
   const excluded = await getExcludedUserIds();
-  const blacklistIdNotIn =
-    excluded.length > 0
-      ? `AND id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
-      : "";
+  const blacklistIdNotIn = blacklistNotInClause("id", excluded);
 
   const rows = await db.$queryRawUnsafe<
     {

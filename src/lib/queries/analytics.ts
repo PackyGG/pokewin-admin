@@ -2,6 +2,7 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { blacklistNotInClause, escapeBlacklistIds } from "./_blacklist";
 
 // SQL fragment builder for user_id filtering — admin + support are
 // internal accounts so we drop them from analytics. Creators stay in
@@ -13,11 +14,7 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 // double-up embedded single quotes defensively.
 function buildExclStaffFrag(excluded: string[]): string {
   const tail =
-    excluded.length > 0
-      ? ` AND id NOT IN (${excluded
-          .map((id) => `'${id.replace(/'/g, "''")}'`)
-          .join(",")})`
-      : "";
+    excluded.length > 0 ? ` AND id NOT IN (${escapeBlacklistIds(excluded)})` : "";
   return `AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','support')${tail})`;
 }
 
@@ -122,12 +119,7 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
   // Inline `AND id NOT IN (...)` for queries that filter directly on
   // the user table (rather than on `user_id IN (subquery)`). Empty
   // string when nothing is blacklisted.
-  const blacklistIdNotIn =
-    excluded.length > 0
-      ? `AND id NOT IN (${excluded
-          .map((id) => `'${id.replace(/'/g, "''")}'`)
-          .join(",")})`
-      : "";
+  const blacklistIdNotIn = blacklistNotInClause("id", excluded);
   // Same filter, but without the leading "AND " because it'll be the only WHERE condition
   // Exclude battles created by admin/creator (support counts as normal user)
   const battleStaffExcl = `user_id IN (SELECT id FROM "user" WHERE role != 'admin')`;
@@ -558,12 +550,7 @@ export async function getPackAndBattleStats(
   const db = await getDb();
   const dateFilter = periodToDateFilter(period);
   const excluded = await getExcludedUserIds();
-  const blacklistIdNotIn =
-    excluded.length > 0
-      ? `AND id NOT IN (${excluded
-          .map((id) => `'${id.replace(/'/g, "''")}'`)
-          .join(",")})`
-      : "";
+  const blacklistIdNotIn = blacklistNotInClause("id", excluded);
   const battleStaffExcl = `user_id IN (SELECT id FROM "user" WHERE role != 'admin')`;
   const battleStaffExclAliased = `b.user_id IN (SELECT id FROM "user" WHERE role != 'admin')`;
   const battleDateWhere =

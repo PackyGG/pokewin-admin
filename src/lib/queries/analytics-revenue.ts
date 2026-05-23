@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { blacklistNotInClause } from "./_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 
 /**
@@ -93,12 +94,7 @@ export async function getRevenueBreakdown(
   const dateFilter =
     days !== null ? `AND created_at >= NOW() - INTERVAL '${days} days'` : "";
   const excluded = await getExcludedUserIds();
-  const blacklistIdNotIn =
-    excluded.length > 0
-      ? `AND id NOT IN (${excluded
-          .map((id) => `'${id.replace(/'/g, "''")}'`)
-          .join(",")})`
-      : "";
+  const blacklistIdNotIn = blacklistNotInClause("id", excluded);
 
   const dailyRows = await db.$queryRawUnsafe<
     {

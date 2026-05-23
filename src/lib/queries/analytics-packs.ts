@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { blacklistNotInClause } from "./_blacklist";
 
 export type TopPack24hRow = {
   id: string;
@@ -35,10 +36,7 @@ export async function getTopOpenedPacks24h(
 ): Promise<TopPack24hRow[]> {
   const db = await getDb();
   const excluded = await getExcludedUserIds();
-  const blacklistIdNotIn =
-    excluded.length > 0
-      ? `AND id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
-      : "";
+  const blacklistIdNotIn = blacklistNotInClause("id", excluded);
 
   // Clamp the limit so a caller-side bug can't pull thousands of rows.
   const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
@@ -173,10 +171,7 @@ export async function getPackProfitability(
   const ltWhere =
     days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";
   const excluded = await getExcludedUserIds();
-  const blacklistIdNotIn =
-    excluded.length > 0
-      ? `AND id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
-      : "";
+  const blacklistIdNotIn = blacklistNotInClause("id", excluded);
 
   const [packRows, battleRows] = await Promise.all([
     db.$queryRawUnsafe<
