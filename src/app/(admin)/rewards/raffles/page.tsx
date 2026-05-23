@@ -11,7 +11,7 @@ import {
 import { cn } from "@/lib/utils";
 import { CreateRaffleButton } from "./create-raffle-button";
 import { RafflesTable } from "./raffles-table";
-import { PageHero } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Raffles" };
@@ -60,20 +60,12 @@ export default async function RafflesPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-              <Ticket className="size-5 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold leading-tight">Raffles</h1>
-              <p className="text-sm text-muted-foreground">
-                Active and historic raffles — entries, participants, and winners.
-              </p>
-            </div>
-          </div>
-          <CreateRaffleButton />
-        </div>
+        <PageHeroIdentity
+          icon={Ticket}
+          title="Raffles"
+          subtitle="Active and historic raffles — entries, participants, and winners."
+          action={<CreateRaffleButton />}
+        />
       </PageHero>
 
       <div className="space-y-4">

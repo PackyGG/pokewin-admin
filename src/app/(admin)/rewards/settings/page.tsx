@@ -4,7 +4,11 @@ import { requirePageAccess } from "@/lib/dal";
 import { getRakebackConfigs } from "@/lib/queries/rewards";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { PageHero, SectionHeading } from "@/components/modern-panels";
+import {
+  PageHero,
+  PageHeroIdentity,
+  SectionHeading,
+} from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Rewards Settings" };
@@ -16,17 +20,11 @@ export default async function RewardsSettingsPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-            <Settings className="size-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold leading-tight">Rewards Settings</h1>
-            <p className="text-sm text-muted-foreground">
-              Global switches and rakeback configuration.
-            </p>
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={Settings}
+          title="Rewards Settings"
+          subtitle="Global switches and rakeback configuration."
+        />
       </PageHero>
 
       <div className="space-y-3">
