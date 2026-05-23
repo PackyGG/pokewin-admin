@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { getUserDetail, getUserTransactions, getUserAuditLog, getUserInventory, getUserPnlBreakdown, getUserRewards } from "@/lib/queries/users";
+import { getUserDetail, getUserTransactions, getUserInventory, getUserPnlBreakdown, getUserRewards } from "@/lib/queries/users";
 import { getNotesForUser } from "@/lib/queries/admin-notes";
 import { getUserTags } from "@/lib/queries/user-tags";
 import { requirePageAccess, getUserPermissions } from "@/lib/dal";
@@ -18,44 +18,22 @@ export const metadata = { title: "User Detail" };
 
 export default async function UserDetailPage({
   params,
-  searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const session = await requirePageAccess("/users");
   const { id } = await params;
-  const sp = await searchParams;
-  const txPage = Math.max(1, Number(sp.txPage) || 1);
-  const txPerPage = [10, 20, 50, 100].includes(Number(sp.txPerPage))
-    ? Number(sp.txPerPage)
-    : 20;
-  const auditPage = Math.max(1, Number(sp.auditPage) || 1);
-  const auditPerPage = [10, 20, 50, 100].includes(Number(sp.auditPerPage))
-    ? Number(sp.auditPerPage)
-    : 20;
 
   const GAMING_TYPES = ["pack_opening", "battle_bet", "battle_sponsorship", "battle_refund", "voucher_redeemed"];
   const FINANCIAL_TYPES = ["deposit", "deposit_bonus", "admin_balance_adjustment", "card_withdrawal", "withdrawal_shipping_fee", "rakeback_claim", "balance_reward_claim", "affiliate_claim", "promo_code_redeemed", "gift_card_redeemed", "rain_win", "race_prize"];
-  const CARD_SALE_TYPES = ["card_sale", "reward_card_sale"];
-  const EXCHANGE_TYPES = ["card_exchange", "exchange_excess_to_voucher", "exchange_excess_credit", "battle_excess_to_voucher", "voucher_exchange"];
 
   // Resolve permissions in parallel with the data queries — admins can
   // skip the permissions fetch entirely (they get all capabilities by
   // definition), so only non-admins trigger the extra round-trip. Previously
   // this was awaited inside the JSX after the main Promise.all, adding
   // a serial round-trip to the page's time-to-render.
-  const [data, transactions, auditLog, inventory, disposedInventory, pnlBreakdown, notes, gamingTx, financialTx, rewards, riskBreakdown, sharedIps, sharedFingerprints, permissions, userTags] = await Promise.all([
+  const [data, inventory, disposedInventory, pnlBreakdown, notes, gamingTx, financialTx, rewards, riskBreakdown, sharedIps, sharedFingerprints, permissions, userTags] = await Promise.all([
     getUserDetail(id),
-    getUserTransactions(id, txPage, txPerPage, {
-      type: typeof sp.txType === "string" ? sp.txType : undefined,
-      status: typeof sp.txStatus === "string" ? sp.txStatus : undefined,
-      dateFrom: typeof sp.txFrom === "string" ? sp.txFrom : undefined,
-      dateTo: typeof sp.txTo === "string" ? sp.txTo : undefined,
-    }),
-    getUserAuditLog(id, auditPage, auditPerPage, {
-      eventType: typeof sp.auditEventType === "string" ? sp.auditEventType : undefined,
-    }),
     getUserInventory(id, 1, 24, { status: "owned" }),
     getUserInventory(id, 1, 24, { status: "disposed" }),
     getUserPnlBreakdown(id),
@@ -137,7 +115,7 @@ export default async function UserDetailPage({
           canManage={canManageUserTags}
         />
       </div>
-      <UserTabs data={{ ...data, sessionRole: session.role, capabilities }} transactions={transactions} auditLog={auditLog} inventory={inventory} disposedInventory={disposedInventory} pnlBreakdown={pnlBreakdown} notes={notes} gamingTx={gamingTx} financialTx={financialTx} rewards={rewards} riskBreakdown={riskBreakdown} sharedIps={sharedIps} sharedFingerprints={sharedFingerprints} />
+      <UserTabs data={{ ...data, sessionRole: session.role, capabilities }} inventory={inventory} disposedInventory={disposedInventory} pnlBreakdown={pnlBreakdown} notes={notes} gamingTx={gamingTx} financialTx={financialTx} rewards={rewards} riskBreakdown={riskBreakdown} sharedIps={sharedIps} sharedFingerprints={sharedFingerprints} />
     </div>
   );
 }
