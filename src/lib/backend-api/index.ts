@@ -34,3 +34,8 @@ export type {
   RejectMultiplierDealInput,
   FlagMultiplierDealInput,
 } from "./multiplier-deals";
+export { upgraderApi } from "./upgrader";
+export type {
+  UpgraderOutputCard,
+  AddUpgraderOutputsResult,
+} from "./upgrader";
