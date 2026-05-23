@@ -25,7 +25,7 @@ import { AutoRefresh } from "./auto-refresh";
 import { WagerChart, DepositsChart, SignupsChart } from "./charts";
 import { RecentActivity, RecentActivityLivePulse } from "./recent-activity";
 import { LiveDeposits } from "./live-deposits";
-import { PageHero, SectionHeading } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Dashboard" };
@@ -56,17 +56,11 @@ export default async function DashboardPage() {
       <AutoRefresh intervalMs={60_000} />
 
       <PageHero>
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
-            <LayoutDashboard className="size-5 text-primary" />
-          </div>
-          <div className="min-w-0">
-            <h1 className="text-xl font-bold leading-tight sm:text-2xl">Dashboard</h1>
-            <p className="text-xs text-muted-foreground sm:text-sm">
-              Live platform overview — revenue, users, and recent activity.
-            </p>
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={LayoutDashboard}
+          title="Dashboard"
+          subtitle="Live platform overview — revenue, users, and recent activity."
+        />
       </PageHero>
 
       {/* Primary stats — period-aware cards.
