@@ -156,12 +156,27 @@ export async function getUserTransactions(
     return { inventoryItems, cards };
   }
 
+  // Newest tx timestamp on this page (rows are ordered desc). An
+  // inventory item obtained AFTER this instant fails `obtained_at <= ts`
+  // for every tx on the page, so it can never contribute to the
+  // held-value snapshot here — bound the inventory pull by it to avoid
+  // dragging the user's entire lifetime inventory back on deep pages.
+  // Vouchers are NOT bounded the same way: `allVouchers` is also used
+  // below to value session-spun voucher excess by origin_id, where a
+  // voucher created after the bet tx (battle resolves later) still
+  // belongs to a session shown on the page.
+  const maxTxTs =
+    transactions.length > 0 ? transactions[0].created_at : undefined;
+
   const [packByGameId, invAndCards, allInventory, allVouchers] =
     await Promise.all([
       resolvePacks(),
       resolveInventoryWithCards(),
       db.user_inventory.findMany({
-        where: { user_id: userId },
+        where: {
+          user_id: userId,
+          ...(maxTxTs ? { obtained_at: { lte: maxTxTs } } : {}),
+        },
         select: { value_at_obtained: true, obtained_at: true, sold_at: true, exchanged_at: true },
       }),
       // Vouchers are held value too — battle / exchange excess gets
@@ -180,21 +195,56 @@ export async function getUserTransactions(
   // on/before the tx and not yet disposed/claimed as of it). Vouchers
   // are included because a voucher is value the user is holding exactly
   // like card inventory — the same way the PnL formula subtracts both.
+  //
+  // Computed as a single chronological sweep instead of an
+  // O(tx × inventory) double-loop. The held value over time is a step
+  // function: each held unit contributes +value from when it's obtained
+  // until (but not including) when it leaves. So emit a +value event at
+  // the obtain time and a −value event at the disposal time, sort all
+  // events by time, then walk the page's transactions in ascending time
+  // applying every event at-or-before each tx's timestamp. The running
+  // sum at a tx's timestamp equals exactly the original predicate
+  // (`obtained_at <= ts AND disposal > ts`): an add at `ts` is included
+  // (<=), a removal at `ts` is also applied (<=), which nets the unit
+  // out — matching the strict `disposal > ts` exclusion. Disposal time
+  // is the EARLIER of sold_at / exchanged_at, since the unit drops out
+  // as soon as either trips.
+  type SweepEvent = { t: number; d: number };
+  const sweepEvents: SweepEvent[] = [];
+  for (const item of allInventory) {
+    const value = toNumber(item.value_at_obtained);
+    sweepEvents.push({ t: item.obtained_at.getTime(), d: value });
+    const sold = item.sold_at ? item.sold_at.getTime() : null;
+    const exchanged = item.exchanged_at ? item.exchanged_at.getTime() : null;
+    let disposed: number | null = null;
+    if (sold !== null && exchanged !== null) disposed = Math.min(sold, exchanged);
+    else if (sold !== null) disposed = sold;
+    else if (exchanged !== null) disposed = exchanged;
+    if (disposed !== null) sweepEvents.push({ t: disposed, d: -value });
+  }
+  for (const v of allVouchers) {
+    const value = toNumber(v.value);
+    sweepEvents.push({ t: v.created_at.getTime(), d: value });
+    if (v.claimed_at) sweepEvents.push({ t: v.claimed_at.getTime(), d: -value });
+  }
+  sweepEvents.sort((a, b) => a.t - b.t);
+
+  // Transactions ascending by timestamp so the sweep advances forward
+  // once. Keep ids to write the map; the returned `data` order is
+  // unaffected (it maps over the original `transactions` array).
+  const txAsc = transactions
+    .map((t) => ({ id: t.id, t: t.created_at.getTime() }))
+    .sort((a, b) => a.t - b.t);
+
   const inventoryValueByTx = new Map<string, number>();
-  for (const t of transactions) {
-    const ts = t.created_at;
-    let total = 0;
-    for (const item of allInventory) {
-      if (item.obtained_at <= ts && (!item.sold_at || item.sold_at > ts) && (!item.exchanged_at || item.exchanged_at > ts)) {
-        total += toNumber(item.value_at_obtained);
-      }
+  let sweepIdx = 0;
+  let runningHeld = 0;
+  for (const tx of txAsc) {
+    while (sweepIdx < sweepEvents.length && sweepEvents[sweepIdx].t <= tx.t) {
+      runningHeld += sweepEvents[sweepIdx].d;
+      sweepIdx++;
     }
-    for (const v of allVouchers) {
-      if (v.created_at <= ts && (!v.claimed_at || v.claimed_at > ts)) {
-        total += toNumber(v.value);
-      }
-    }
-    inventoryValueByTx.set(t.id, total);
+    inventoryValueByTx.set(tx.id, runningHeld);
   }
 
   // Voucher excess a game session produced (battle_excess_to_voucher /
