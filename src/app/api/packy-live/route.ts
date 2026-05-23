@@ -400,13 +400,16 @@ export async function GET(request: Request): Promise<Response> {
         });
 
         // ── Opt into the feeds we care about ────────────────────────
-        // The gateway broadcasts `active.users.count` without any
-        // action from us, but pull + chat feeds are pull-based: the
-        // client has to send a `*.feed.subscribe` message after the
-        // handshake to start receiving `live.pull.history` /
-        // `chat.pull.history` frames. Without these, pulls never
-        // arrive — confirmed end-to-end via the probe scripts in
-        // scripts/test-packy-ws-*.mjs.
+        // The gateway broadcasts `active.users.count` without any action
+        // from us, but the chat feed is pull-based: the client has to
+        // send `chat.pull.feed.subscribe` after the handshake to start
+        // receiving `chat.pull.history` frames. Confirmed end-to-end via
+        // the probe scripts in scripts/test-packy-ws-*.mjs.
+        //
+        // We deliberately do NOT subscribe to `live.pull.feed.subscribe`
+        // anymore: no admin UI renders the pull feed (the only consumer,
+        // usePackyWsLivePulls, was removed), so pulling those frames just
+        // burned upstream bandwidth + proxy work for data nobody reads.
         //
         // Send via ws.Sender so the frames are properly masked (WS
         // spec requires client→server text frames to be masked).
@@ -430,10 +433,7 @@ export async function GET(request: Request): Promise<Response> {
         ).Sender;
         if (typeof SenderCtor === "function") {
           const sender = new SenderCtor(rawSocket, extensions);
-          const subscribes = [
-            { type: "live.pull.feed.subscribe" },
-            { type: "chat.pull.feed.subscribe" },
-          ];
+          const subscribes = [{ type: "chat.pull.feed.subscribe" }];
           for (const msg of subscribes) {
             try {
               sender.send(JSON.stringify(msg), {
