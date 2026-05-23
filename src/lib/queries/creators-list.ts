@@ -2,6 +2,7 @@ import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { blacklistNotInClause } from "./_blacklist";
 import type { PaginatedResult } from "@/lib/types";
 import type { CreatorListItem, UserSearchResult } from "./creators-types";
 
@@ -46,10 +47,7 @@ export async function getCreators(params: {
 
   const db = await getDb();
   const excluded = await getExcludedUserIds();
-  const blacklistIdNotIn =
-    excluded.length > 0
-      ? `AND ru.id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
-      : "";
+  const blacklistIdNotIn = blacklistNotInClause("ru.id", excluded);
   const where: Record<string, unknown> = {
     user: { role: "creator" },
   };

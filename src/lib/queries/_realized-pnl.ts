@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { withTiming } from "@/lib/observability/query-timings";
 import { computeHousePnl } from "./pnl";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { blacklistNotInClause } from "./_blacklist";
 
 /**
  * Lifetime realized P&L from the house perspective — a balance-sheet snapshot.
@@ -56,12 +57,7 @@ async function realizedPnlSnapshotInner(): Promise<RealizedPnlSnapshot> {
   // packy.gg user_ids — already alphanumeric — but we double-up any
   // embedded single quote defensively before inlining.
   const excluded = await getExcludedUserIds();
-  const blacklistFrag =
-    excluded.length > 0
-      ? `AND id NOT IN (${excluded
-          .map((id) => `'${id.replace(/'/g, "''")}'`)
-          .join(",")})`
-      : "";
+  const blacklistFrag = blacklistNotInClause("id", excluded);
   const rows = await db.$queryRawUnsafe<
     {
       deposited: string;

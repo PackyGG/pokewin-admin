@@ -4,6 +4,39 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { STAFF_ROLES } from "@/lib/queries/_exclude-staff";
 
 /**
+ * Escape + quote a list of already-resolved excluded user_ids for inline
+ * interpolation into a raw SQL `IN (...)` / `NOT IN (...)` list. Returns
+ * a bare comma-separated list of quoted text literals WITHOUT the
+ * surrounding parentheses, e.g. `'a','b'`. Empty input → empty string.
+ *
+ * packy.gg user_ids are character-class restricted (alphanumeric), and
+ * we still double-up any embedded single quote as defence-in-depth — the
+ * single canonical place that escaping lives, so the ~8 raw-SQL call
+ * sites that used to re-implement `ids.map(id => '..replace..')` can't
+ * drift apart.
+ */
+export function escapeBlacklistIds(ids: string[]): string {
+  return ids.map((id) => `'${id.replace(/'/g, "''")}'`).join(",");
+}
+
+/**
+ * Build an `AND <column> NOT IN ('id', …)` SQL fragment from an
+ * already-resolved id list. Returns the empty string when nothing is
+ * excluded so the fragment can be concatenated unconditionally into a
+ * WHERE clause. `column` is inlined verbatim — pass only trusted,
+ * hardcoded column identifiers (e.g. `"u.id"`, `"user_id"`).
+ *
+ * Sync sibling of `blacklistSqlFragment` for call sites that already have
+ * the excluded-ids array in hand (and use it for other things too), so
+ * they don't pay a second `getExcludedUserIds()` round just to format
+ * the clause.
+ */
+export function blacklistNotInClause(column: string, ids: string[]): string {
+  if (ids.length === 0) return "";
+  return `AND ${column} NOT IN (${escapeBlacklistIds(ids)})`;
+}
+
+/**
  * Filter helpers that combine the static staff-role exclusion with
  * the DB-backed blacklist (the `excluded_users` table managed by the
  * `/system/excluded-users` page).
@@ -84,9 +117,7 @@ export async function blacklistSqlFragment(
   columnName = "user_id",
 ): Promise<string> {
   const ids = await getExcludedUserIds();
-  if (ids.length === 0) return "";
-  const list = ids.map((id) => `'${id.replace(/'/g, "''")}'`).join(",");
-  return `AND ${columnName} NOT IN (${list})`;
+  return blacklistNotInClause(columnName, ids);
 }
 
 /**
@@ -105,8 +136,6 @@ export async function blacklistSqlFragment(
 export async function excludeStaffAndBlacklistedSql(): Promise<string> {
   const ids = await getExcludedUserIds();
   const blacklistTail =
-    ids.length > 0
-      ? ` AND id NOT IN (${ids.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
-      : "";
+    ids.length > 0 ? ` AND id NOT IN (${escapeBlacklistIds(ids)})` : "";
   return `user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','support')${blacklistTail})`;
 }

@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { blacklistNotInClause } from "./_blacklist";
 import type { PaginatedResult } from "@/lib/types";
 import type { CodeListItem } from "./creators-types";
 
@@ -630,10 +631,7 @@ export async function getCodeReferrals(
   const uppercaseCode = code.toUpperCase();
   const safeLimit = Math.max(1, Math.min(Math.floor(limit), 200));
   const excluded = await getExcludedUserIds();
-  const blacklistIdNotIn =
-    excluded.length > 0
-      ? `AND u.id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
-      : "";
+  const blacklistIdNotIn = blacklistNotInClause("u.id", excluded);
 
   try {
     const rows = await db.$queryRawUnsafe<
@@ -726,10 +724,7 @@ export async function getRecentWagersOnCode(
   // Cap and floor the limit so a buggy caller can't fetch the world.
   const safeLimit = Math.max(1, Math.min(Math.floor(limit), 100));
   const excludedRecent = await getExcludedUserIds();
-  const blacklistIdNotIn =
-    excludedRecent.length > 0
-      ? `AND u.id NOT IN (${excludedRecent.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
-      : "";
+  const blacklistIdNotIn = blacklistNotInClause("u.id", excludedRecent);
 
   try {
     const rows = await db.$queryRawUnsafe<

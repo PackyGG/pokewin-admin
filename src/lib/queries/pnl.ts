@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
+import { blacklistNotInClause } from "./_blacklist";
 
 /**
  * Canonical P&L formula — single source of truth.
@@ -161,12 +162,7 @@ export async function calculateWindowedPnl(opts: {
     // Per-table user scope. Single-user binds the id as positional $2;
     // global filters to non-staff users minus the blacklist (ids come
     // from a trusted admin source, escaped defensively).
-    const blacklist =
-      excludeUserIds.length > 0
-        ? `AND u.id NOT IN (${excludeUserIds
-            .map((id) => `'${id.replace(/'/g, "''")}'`)
-            .join(",")})`
-        : "";
+    const blacklist = blacklistNotInClause("u.id", excludeUserIds);
     const scope = (col: string) =>
       userId
         ? `${col} = $2`

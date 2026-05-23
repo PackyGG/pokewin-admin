@@ -1,6 +1,7 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { blacklistNotInClause } from "./_blacklist";
 
 // Append-only `AND u.id NOT IN (...)` fragment for the staff-exclusion
 // WHERE clauses used in each leaderboard query. Empty string when
@@ -9,10 +10,7 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 // defensive single-quote escaping.
 async function buildBlacklistIdNotIn(alias = "u"): Promise<string> {
   const excluded = await getExcludedUserIds();
-  if (excluded.length === 0) return "";
-  return `AND ${alias}.id NOT IN (${excluded
-    .map((id) => `'${id.replace(/'/g, "''")}'`)
-    .join(",")})`;
+  return blacklistNotInClause(`${alias}.id`, excluded);
 }
 
 /**
