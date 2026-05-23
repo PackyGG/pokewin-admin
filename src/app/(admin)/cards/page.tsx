@@ -17,7 +17,7 @@ import { PaginationSkeleton } from "@/components/loading-skeletons";
 import { CreateCardButton } from "./create-card-button";
 import { PriceFilter } from "./price-filter";
 import { SetFilter } from "./set-filter";
-import { PageHero, KpiTile } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 
@@ -127,20 +127,12 @@ export default async function CardsPage({
     <div className="space-y-6">
       {/* ── HERO ───────────────────────────────────────────────────── */}
       <PageHero>
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-              <Layers className="size-5 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold leading-tight">Cards</h1>
-              <p className="text-sm text-muted-foreground">
-                Browse and manage card assets across all sets.
-              </p>
-            </div>
-          </div>
-          <CreateCardButton sets={sets} />
-        </div>
+        <PageHeroIdentity
+          icon={Layers}
+          title="Cards"
+          subtitle="Browse and manage card assets across all sets."
+          action={<CreateCardButton sets={sets} />}
+        />
       </PageHero>
 
       {/* ── KPI STRIP ─────────────────────────────────────────────── */}

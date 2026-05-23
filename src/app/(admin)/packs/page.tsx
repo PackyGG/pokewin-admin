@@ -10,7 +10,7 @@ import { DataTablePagination } from "@/components/data-table/data-table-paginati
 import { Skeleton } from "@/components/ui/skeleton";
 import { PaginationSkeleton } from "@/components/loading-skeletons";
 import { CreatePackButton } from "./create-pack-button";
-import { PageHero } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Packs" };
@@ -105,20 +105,12 @@ export default async function PacksPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-              <Package className="size-5 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold leading-tight">Packs</h1>
-              <p className="text-sm text-muted-foreground">
-                Pack catalog — pricing, availability, and stats.
-              </p>
-            </div>
-          </div>
-          {canCreate && <CreatePackButton />}
-        </div>
+        <PageHeroIdentity
+          icon={Package}
+          title="Packs"
+          subtitle="Pack catalog — pricing, availability, and stats."
+          action={canCreate ? <CreatePackButton /> : undefined}
+        />
       </PageHero>
 
       <div className="space-y-4">
