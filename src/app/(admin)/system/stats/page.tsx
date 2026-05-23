@@ -26,6 +26,7 @@ import { getQueryTimingStats } from "@/lib/observability/query-timings";
 import { formatNumber, formatRelative } from "@/lib/utils/format";
 import {
   PageHero,
+  PageHeroIdentity,
   SectionHeading,
   KpiTile,
   StatPanel,
@@ -116,23 +117,12 @@ export default async function SystemStatsPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-              <Gauge className="size-5 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold leading-tight">
-                Admin Dashboard Stats
-              </h1>
-              <p className="text-sm text-muted-foreground">
-                Operational health of the admin panel itself — sessions, audit
-                throughput, query latency, and cron freshness.
-              </p>
-            </div>
-          </div>
-          <RefreshButton />
-        </div>
+        <PageHeroIdentity
+          icon={Gauge}
+          title="Admin Dashboard Stats"
+          subtitle="Operational health of the admin panel itself — sessions, audit throughput, query latency, and cron freshness."
+          action={<RefreshButton />}
+        />
       </PageHero>
 
       {/* KPI strip */}
