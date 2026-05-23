@@ -42,7 +42,12 @@ import { cn } from "@/lib/utils";
 const globalSelection = new Map<string, { username: string | null; email: string | null }>();
 
 function useSelection() {
-  const [, forceUpdate] = React.useReducer((c: number) => c + 1, 0);
+  // Monotonic version counter that bumps on EVERY mutation. Using this as
+  // the dep for `isSelected` (instead of `globalSelection.size`) keeps the
+  // callback identity correct even for same-size swaps — e.g. deselecting A
+  // while selecting B leaves `.size` unchanged but must still invalidate any
+  // memoized consumer of `isSelected`.
+  const [version, bump] = React.useReducer((c: number) => c + 1, 0);
 
   const toggle = React.useCallback((row: UserRow) => {
     if (globalSelection.has(row.id)) {
@@ -50,7 +55,7 @@ function useSelection() {
     } else {
       globalSelection.set(row.id, { username: row.username, email: row.email });
     }
-    forceUpdate();
+    bump();
   }, []);
 
   const toggleAll = React.useCallback((rows: UserRow[], checked: boolean) => {
@@ -61,18 +66,20 @@ function useSelection() {
         globalSelection.delete(row.id);
       }
     }
-    forceUpdate();
+    bump();
   }, []);
 
   const clear = React.useCallback(() => {
     globalSelection.clear();
-    forceUpdate();
+    bump();
   }, []);
 
   const isSelected = React.useCallback(
     (id: string) => globalSelection.has(id),
+    // Re-derive on every mutation via the version counter, not on `.size`
+    // (which misses equal-size add/remove swaps).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [globalSelection.size],
+    [version],
   );
 
   return {
@@ -206,12 +213,19 @@ function UserMobileCard({
         selected && "bg-accent/30",
       )}
     >
-      <Checkbox
-        checked={selected}
-        onCheckedChange={onToggle}
+      {/* Negative-margin padding wrapper enlarges the thumb hit-area
+          (~40px) without changing the visual checkbox size or the row
+          layout. */}
+      <span
+        className="-m-2 p-2 inline-flex shrink-0"
         onClick={(e) => e.stopPropagation()}
-        aria-label={`Select ${row.username ?? row.email ?? "user"}`}
-      />
+      >
+        <Checkbox
+          checked={selected}
+          onCheckedChange={onToggle}
+          aria-label={`Select ${row.username ?? row.email ?? "user"}`}
+        />
+      </span>
       <button
         type="button"
         onClick={onNavigate}
