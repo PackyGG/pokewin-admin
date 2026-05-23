@@ -41,6 +41,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { formatRelative } from "@/lib/utils/format";
+import { cn } from "@/lib/utils";
+import { EmptyState } from "@/components/empty-state";
 import {
   addSalaryEmployee,
   deleteSalaryEmployee,
@@ -131,41 +133,59 @@ function EmployeesCard({ employees }: { employees: Employee[] }) {
       </CardHeader>
       <CardContent>
         {employees.length === 0 ? (
-          <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-            No employees yet. Add one to start tracking salaries.
+          <div className="rounded-md border border-dashed">
+            <EmptyState
+              icon={Wallet}
+              title="No employees yet"
+              description="Add one to start tracking salaries."
+              compact
+            />
           </div>
         ) : (
-          <div className="rounded-md border overflow-hidden">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b bg-muted/50">
-                  <th className="px-3 py-2 text-left text-xs font-medium">
-                    Discord
-                  </th>
-                  <th className="px-3 py-2 text-left text-xs font-medium">
-                    Address (click for QR)
-                  </th>
-                  <th className="px-3 py-2 text-left text-xs font-medium">
-                    Cadence
-                  </th>
-                  <th className="px-3 py-2 text-right text-xs font-medium">
-                    Salary
-                  </th>
-                  <th className="px-3 py-2 text-left text-xs font-medium">
-                    Last Paid
-                  </th>
-                  <th className="px-3 py-2 text-right text-xs font-medium">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {employees.map((e) => (
-                  <EmployeeRow key={e.id} employee={e} />
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            {/* Desktop table (>=md). Horizontal scroll guard so the
+                6 columns never blow up the layout on tablet widths. */}
+            <div className="hidden rounded-md border overflow-x-auto md:block">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b bg-muted/50">
+                    <th className="px-3 py-2 text-left text-xs font-medium">
+                      Discord
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-medium">
+                      Address (click for QR)
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-medium">
+                      Cadence
+                    </th>
+                    <th className="px-3 py-2 text-right text-xs font-medium">
+                      Salary
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-medium">
+                      Last Paid
+                    </th>
+                    <th className="px-3 py-2 text-right text-xs font-medium">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {employees.map((e) => (
+                    <EmployeeRow key={e.id} employee={e} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile card list (<md) — the 6-col table overflows at
+                360px, so each employee renders as a stacked card with
+                ≥40px touch targets for the actions. */}
+            <div className="space-y-2 md:hidden">
+              {employees.map((e) => (
+                <EmployeeMobileCard key={e.id} employee={e} />
+              ))}
+            </div>
+          </>
         )}
       </CardContent>
       <EmployeeFormDialog
@@ -278,6 +298,126 @@ function EmployeeRow({ employee }: { employee: Employee }) {
         employee={employee}
       />
     </>
+  );
+}
+
+// Mobile equivalent of EmployeeRow — same data + actions + dialogs,
+// laid out as a stacked card so the 6-column table doesn't overflow
+// on phones. Action buttons keep ≥40px touch targets.
+function EmployeeMobileCard({ employee }: { employee: Employee }) {
+  const [qrOpen, setQrOpen] = useState(false);
+  const [logOpen, setLogOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const perMonth =
+    employee.cadence === "monthly"
+      ? null
+      : employee.salaryUsdt *
+        (employee.cadence === "weekly" ? 52 / 12 : 26 / 12);
+  return (
+    <div
+      className={cn(
+        "rounded-lg border bg-card p-3",
+        !employee.active && "opacity-60",
+      )}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <span className="font-mono text-sm font-medium">
+            {employee.discordName}
+          </span>
+          {!employee.active && (
+            <Badge variant="outline" className="text-[10px]">
+              inactive
+            </Badge>
+          )}
+          <Badge
+            variant="outline"
+            className={cn("text-[10px]", CADENCE_COLORS[employee.cadence])}
+          >
+            {CADENCE_LABELS[employee.cadence]}
+          </Badge>
+        </div>
+        <div className="text-right">
+          <div className="text-sm font-semibold tabular-nums">
+            ${employee.salaryUsdt.toFixed(2)}
+            <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+              /
+              {employee.cadence === "monthly"
+                ? "mo"
+                : employee.cadence === "weekly"
+                  ? "wk"
+                  : "2wk"}
+            </span>
+          </div>
+          {perMonth != null && (
+            <div className="text-[10px] text-muted-foreground tabular-nums">
+              ≈ $
+              {perMonth.toLocaleString(undefined, {
+                maximumFractionDigits: 2,
+              })}{" "}
+              /mo
+            </div>
+          )}
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => setQrOpen(true)}
+        className="mt-2 inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 text-xs font-mono text-blue-500 hover:bg-blue-500/10 hover:underline"
+        title="Click to view QR code"
+      >
+        <QrCode className="size-3" />
+        {employee.ethAddress.slice(0, 6)}…{employee.ethAddress.slice(-4)}
+      </button>
+
+      <div className="mt-1 text-[11px] text-muted-foreground">
+        Last paid:{" "}
+        {employee.lastPaidAt ? formatRelative(employee.lastPaidAt) : "never"}
+      </div>
+
+      <div className="mt-3 flex items-center gap-2">
+        <Button
+          size="sm"
+          variant="default"
+          className="h-9 flex-1 bg-emerald-500 text-xs hover:bg-emerald-500/90"
+          disabled={!employee.active}
+          onClick={() => setLogOpen(true)}
+          title={
+            employee.active ? "Record a manual payment" : "Employee is inactive"
+          }
+        >
+          <Receipt className="size-3.5" />
+          Log Payment
+        </Button>
+        <Button
+          size="icon"
+          variant="outline"
+          className="size-9"
+          onClick={() => setEditOpen(true)}
+          aria-label="Edit"
+        >
+          <Pencil className="size-4" />
+        </Button>
+        <DeleteEmployeeButton employee={employee} className="size-9" />
+      </div>
+
+      <AddressQrDialog
+        open={qrOpen}
+        onClose={() => setQrOpen(false)}
+        employee={employee}
+      />
+      <RecordPayoutDialog
+        open={logOpen}
+        onClose={() => setLogOpen(false)}
+        employee={employee}
+      />
+      <EmployeeFormDialog
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        employee={employee}
+      />
+    </div>
   );
 }
 
@@ -735,7 +875,13 @@ function EmployeeFormDialog({
   );
 }
 
-function DeleteEmployeeButton({ employee }: { employee: Employee }) {
+function DeleteEmployeeButton({
+  employee,
+  className,
+}: {
+  employee: Employee;
+  className?: string;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -758,7 +904,10 @@ function DeleteEmployeeButton({ employee }: { employee: Employee }) {
       <Button
         size="icon"
         variant="ghost"
-        className="size-7 text-muted-foreground hover:text-rose-500"
+        className={cn(
+          "size-7 text-muted-foreground hover:text-rose-500",
+          className,
+        )}
         onClick={() => setOpen(true)}
         aria-label="Remove"
       >
@@ -838,41 +987,56 @@ function PayoutsCard({
       </CardHeader>
       <CardContent>
         {payouts.length === 0 ? (
-          <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-            No payments logged yet.
+          <div className="rounded-md border border-dashed">
+            <EmptyState
+              icon={Receipt}
+              title="No payments logged yet"
+              description="Logged payments roll up into the KPIs above."
+              compact
+            />
           </div>
         ) : (
-          <div className="rounded-md border overflow-hidden">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b bg-muted/50">
-                  <th className="px-3 py-2 text-left text-xs font-medium">
-                    Employee
-                  </th>
-                  <th className="px-3 py-2 text-right text-xs font-medium">
-                    Amount
-                  </th>
-                  <th className="px-3 py-2 text-left text-xs font-medium">
-                    Etherscan
-                  </th>
-                  <th className="px-3 py-2 text-left text-xs font-medium">
-                    Notes
-                  </th>
-                  <th className="px-3 py-2 text-left text-xs font-medium">
-                    When
-                  </th>
-                  <th className="px-3 py-2 text-right text-xs font-medium">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {payouts.map((p) => (
-                  <PayoutRow key={p.id} payout={p} />
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            {/* Desktop table (>=md). */}
+            <div className="hidden rounded-md border overflow-x-auto md:block">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b bg-muted/50">
+                    <th className="px-3 py-2 text-left text-xs font-medium">
+                      Employee
+                    </th>
+                    <th className="px-3 py-2 text-right text-xs font-medium">
+                      Amount
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-medium">
+                      Etherscan
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-medium">
+                      Notes
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-medium">
+                      When
+                    </th>
+                    <th className="px-3 py-2 text-right text-xs font-medium">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {payouts.map((p) => (
+                    <PayoutRow key={p.id} payout={p} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile card list (<md). */}
+            <div className="space-y-2 md:hidden">
+              {payouts.map((p) => (
+                <PayoutMobileCard key={p.id} payout={p} />
+              ))}
+            </div>
+          </>
         )}
       </CardContent>
       <StandalonePayoutDialog
@@ -968,6 +1132,96 @@ function PayoutRow({ payout }: { payout: Payout }) {
         </AlertDialog>
       </td>
     </tr>
+  );
+}
+
+// Mobile equivalent of PayoutRow — stacked card with a full-width
+// delete button (≥40px touch target). Amounts stay plain (these are
+// operational salary payments, not user-ledger events).
+function PayoutMobileCard({ payout }: { payout: Payout }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  function handleDelete() {
+    startTransition(async () => {
+      const result = await deleteSalaryPayout(payout.id);
+      if (!result.success) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success("Payment removed from log");
+      setConfirmOpen(false);
+      router.refresh();
+    });
+  }
+
+  return (
+    <div className="rounded-lg border bg-card p-3">
+      <div className="flex items-start justify-between gap-2">
+        <span className="min-w-0 truncate text-sm font-medium">
+          {payout.employeeDiscordName}
+        </span>
+        <span className="text-sm font-semibold tabular-nums">
+          ${payout.amountUsdt.toFixed(2)}
+        </span>
+      </div>
+      <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+        <span>{formatRelative(payout.paidAt)}</span>
+        {payout.txHash ? (
+          <a
+            href={`https://etherscan.io/tx/${payout.txHash}`}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 font-mono text-blue-500 hover:underline"
+          >
+            {payout.txHash.slice(0, 10)}…
+            <ExternalLink className="size-3" />
+          </a>
+        ) : (
+          <span className="italic">no tx link</span>
+        )}
+      </div>
+      {payout.notes && (
+        <p className="mt-1 text-xs text-muted-foreground">{payout.notes}</p>
+      )}
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="mt-2 h-9 w-full text-muted-foreground hover:text-rose-500"
+          onClick={() => setConfirmOpen(true)}
+          aria-label="Remove from log"
+        >
+          <Trash2 className="size-3.5" />
+          Remove from log
+        </Button>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this entry?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Drops the ${payout.amountUsdt.toFixed(2)} payment to{" "}
+              <span className="font-medium">
+                {payout.employeeDiscordName}
+              </span>{" "}
+              from the log. The on-chain transaction (if any) isn&apos;t
+              affected — this is bookkeeping only. Use if you logged it twice
+              or by mistake.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={pending}
+              className="bg-rose-500 hover:bg-rose-500/90"
+            >
+              {pending ? "Removing…" : "Remove"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
   );
 }
 
