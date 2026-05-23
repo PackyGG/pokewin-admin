@@ -361,7 +361,6 @@ async function dashboardStatsInner() {
     uniqueDepositorsResult,
     realizedPnlResult,
     realizedPnl24hResult,
-    avgSessionValueResult,
     totalInventoryValue,
     packsOpened24h,
     battlesPlayed24h,
@@ -446,62 +445,21 @@ async function dashboardStatsInner() {
     // "Depositors" KPI. Raw SQL with COUNT(DISTINCT) avoids
     // materializing per-user rows; same staff-exclusion as everything
     // else.
-    db.$queryRaw<{ count: string }[]>`
-      SELECT COUNT(DISTINCT user_id)::text AS count
-      FROM ledger_transactions
-      WHERE type = 'deposit' AND status = 'completed'
-        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)})
-    `,
+    // Distinct depositors = real users whose LIFETIME completed-deposit
+    // total is > 0. Read from `balances` (one row per user — thousands)
+    // with the same staff+blacklist exclusion, instead of COUNT(DISTINCT
+    // user_id) over every completed deposit ledger row (millions). Safe
+    // equivalence: total_deposited is the authoritative lifetime deposit
+    // sum the dashboard already trusts (avgDeposit / totalDeposited).
+    db.balances.count({
+      where: { total_deposited: { gt: 0 }, user: staffRelation },
+    }),
     getRealizedPnlSnapshot(),
     // Rolling past-24h house P&L — windowed delta (deposits −
     // withdrawals − balanceΔ − inventoryΔ − voucherΔ over the last 24h),
     // distinct from the lifetime realized snapshot above. Same staff +
     // blacklist exclusion as the rest of the dashboard.
     calculateWindowedPnl({ since: rolling24h, excludeUserIds: excluded }),
-    db.$queryRaw<{ avg_session_value: string }[]>`
-      WITH real_users AS (
-        SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
-      ),
-      withdrawal_events AS (
-        SELECT user_id, created_at, 'withdrawal' as event_type
-        FROM card_withdrawal_requests
-        WHERE status IN ('processing', 'shipped', 'completed')
-          AND user_id IN (SELECT id FROM real_users)
-      ),
-      timeline AS (
-        SELECT user_id, type::text as event_type, amount, balance_after, created_at
-        FROM ledger_transactions
-        WHERE status = 'completed'
-          AND user_id IN (SELECT id FROM real_users)
-        UNION ALL
-        SELECT user_id, event_type, 0 as amount, NULL as balance_after, created_at
-        FROM withdrawal_events
-      ),
-      session_boundaries AS (
-        SELECT *,
-          CASE WHEN event_type = 'deposit'
-               OR event_type = 'withdrawal'
-               OR (balance_after IS NOT NULL AND balance_after::numeric = 0)
-          THEN 1 ELSE 0 END as is_boundary
-        FROM timeline
-      ),
-      sessions AS (
-        SELECT *,
-          SUM(is_boundary) OVER (PARTITION BY user_id ORDER BY created_at ROWS UNBOUNDED PRECEDING) as session_id
-        FROM session_boundaries
-      ),
-      session_wagers AS (
-        SELECT user_id, session_id,
-          SUM(CASE WHEN event_type IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
-              THEN ABS(amount::numeric) ELSE 0 END) as session_wager
-        FROM sessions
-        GROUP BY user_id, session_id
-        HAVING SUM(CASE WHEN event_type IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
-              THEN ABS(amount::numeric) ELSE 0 END) > 0
-      )
-      SELECT COALESCE(AVG(session_wager), 0)::text as avg_session_value
-      FROM session_wagers
-    `,
     db.user_inventory.aggregate({
       where: {
         sold_at: null,
@@ -739,7 +697,6 @@ async function dashboardStatsInner() {
       // cash + inventory in "Users Total Balance"; vouchers were tracked
       // inside realizedPnl but never shown as part of the liability total.
       totalUnclaimedVouchers: realizedPnlResult.vouchers,
-      avgWagerPerDeposit: depositCount > 0 ? totalWagered / depositCount : 0,
       avgDeposit:
         depositCount > 0
           ? toNumber(balanceAggregates._sum?.total_deposited) / depositCount
@@ -750,8 +707,7 @@ async function dashboardStatsInner() {
       // from depositCount above which counts deposit transactions —
       // a single user with five deposits = depositCount 5,
       // uniqueDepositors 1.
-      uniqueDepositors: Number(uniqueDepositorsResult[0]?.count ?? 0),
-      avgSessionValue: Number(avgSessionValueResult[0]?.avg_session_value ?? 0),
+      uniqueDepositors: uniqueDepositorsResult,
       // First-time depositors in the rolling last 24h: count, the
       // summed value of those first deposits, and the average. The 24h
       // counterpart to uniqueDepositors (lifetime distinct depositors).
