@@ -10,6 +10,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatCurrency, formatDateTime, formatRelative } from "@/lib/utils/format";
+import { EmptyState } from "@/components/empty-state";
 
 type RakebackClaim = {
   id: string;
@@ -84,8 +85,13 @@ export function RakebackClaimsTable({ data }: { data: RakebackClaim[] }) {
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
         {data.length === 0 ? (
-          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
-            No claims found.
+          <div className="rounded-md border">
+            <EmptyState
+              icon={Percent}
+              title="No claims found"
+              description="Rakeback claims appear here once players claim a rebate on their wagering."
+              compact
+            />
           </div>
         ) : (
           <div className="overflow-hidden rounded-md border">
@@ -151,12 +157,14 @@ export function RakebackClaimsTable({ data }: { data: RakebackClaim[] }) {
               </TableRow>
             ))}
             {data.length === 0 && (
-              <TableRow>
-                <TableCell
-                  colSpan={6}
-                  className="h-24 text-center text-muted-foreground"
-                >
-                  No claims found.
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={6} className="p-0">
+                  <EmptyState
+                    icon={Percent}
+                    title="No claims found"
+                    description="Rakeback claims appear here once players claim a rebate on their wagering."
+                    compact
+                  />
                 </TableCell>
               </TableRow>
             )}

@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Plus, Power, RefreshCw } from "lucide-react";
+import { History, Plus, Power, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 import { formatDateTime } from "@/lib/utils/format";
+import { EmptyState } from "@/components/empty-state";
 import {
   startRacePeriod,
   toggleRacePeriodAutoRenew,
@@ -384,12 +385,14 @@ export function PeriodsTable({
             </TableHeader>
             <TableBody>
               {recent.length === 0 ? (
-                <TableRow>
-                  <TableCell
-                    colSpan={6}
-                    className="h-20 text-center text-muted-foreground text-xs"
-                  >
-                    No ended periods yet.
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={6} className="p-0">
+                    <EmptyState
+                      icon={History}
+                      title="No ended periods yet"
+                      description="Completed race periods will be listed here once a period ends."
+                      compact
+                    />
                   </TableCell>
                 </TableRow>
               ) : (
