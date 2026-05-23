@@ -12,6 +12,7 @@ import {
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { FadeIn } from "@/components/fade-in";
 import { MetricTile } from "@/components/modern-panels";
+import { EmptyState } from "@/components/empty-state";
 import { cn } from "@/lib/utils";
 import {
   getCreatorLtv,
@@ -155,9 +156,12 @@ function LtvPeriodFilter({ current }: { current: LtvPeriod }) {
 function LtvTable({ rows }: { rows: Awaited<ReturnType<typeof getCreatorLtv>>["rows"] }) {
   if (rows.length === 0) {
     return (
-      <p className="py-8 text-center text-sm text-muted-foreground">
-        No creator data in the selected window.
-      </p>
+      <EmptyState
+        icon={TrendingUp}
+        title="No creator data"
+        description="No creators have referred activity in the selected window. Try a longer period."
+        compact
+      />
     );
   }
 

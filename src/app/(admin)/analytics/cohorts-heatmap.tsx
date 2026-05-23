@@ -5,6 +5,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Users } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { EmptyState } from "@/components/empty-state";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import type { CohortData, CohortGranularity } from "@/lib/queries/analytics-cohorts";
 
@@ -90,9 +91,12 @@ function HeatmapTable({
 
   if (rows.length === 0) {
     return (
-      <p className="py-8 text-center text-sm text-muted-foreground">
-        No cohort data in the selected window.
-      </p>
+      <EmptyState
+        icon={Users}
+        title="No cohort data"
+        description="No signup cohorts fall inside the selected window yet. Try switching the grouping granularity."
+        compact
+      />
     );
   }
 

@@ -3,6 +3,7 @@ import { Filter, TrendingDown } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatNumber } from "@/lib/utils/format";
 import { FadeIn } from "@/components/fade-in";
+import { EmptyState } from "@/components/empty-state";
 import { cn } from "@/lib/utils";
 import {
   getFunnelData,
@@ -136,9 +137,12 @@ function FunnelBars({ data }: { data: Awaited<ReturnType<typeof getFunnelData>> 
 
   if (steps.length === 0 || steps[0].count === 0) {
     return (
-      <p className="py-8 text-center text-sm text-muted-foreground">
-        No funnel data in the selected window.
-      </p>
+      <EmptyState
+        icon={Filter}
+        title="No funnel data"
+        description="No tracked clicks landed in the selected window, so there's nothing to step through yet. Try a longer period."
+        compact
+      />
     );
   }
 
