@@ -99,11 +99,15 @@ function HeatmapTable({
   // The cohort table can be 8+ period columns wide on a 30/90-day
   // window — too wide for any phone. Wrap in horizontal scroll and pin
   // the cohort label column so the user always knows which cohort row
-  // the cells belong to as they pan.
+  // the cells belong to as they pan. `overscroll-x-contain` keeps the
+  // momentum swipe inside the grid instead of bouncing the whole page,
+  // and a right-edge fade hints there are more period columns off-screen
+  // (the left column is sticky, so only the right side needs the cue).
   return (
     <div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs border-separate border-spacing-1">
+      <div className="relative">
+        <div className="overflow-x-auto overscroll-x-contain">
+          <table className="w-full text-xs border-separate border-spacing-1">
           <thead>
             <tr className="text-muted-foreground">
               <th className="sticky left-0 z-10 bg-card text-left font-medium">
@@ -151,7 +155,15 @@ function HeatmapTable({
               );
             })}
           </tbody>
-        </table>
+          </table>
+        </div>
+        {/* Right-edge fade affordance — signals more period columns when
+            the grid overflows. pointer-events-none so it never blocks the
+            scroll/tap. */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-card to-transparent"
+        />
       </div>
       <CohortsToggle granularity={granularity} />
     </div>
