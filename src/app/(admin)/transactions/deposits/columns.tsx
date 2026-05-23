@@ -29,7 +29,7 @@ import type { UserTagValue } from "@/lib/queries/user-tags";
  */
 
 // Hidden because they are game-session metrics only.
-const HIDDEN_KEYS = new Set(["payout", "houseEdge"]);
+const HIDDEN_KEYS = new Set(["payout", "housePnl"]);
 
 // House-POV tones: deposit itself is cash IN (house gain, emerald).
 // Bonus credits are house-paid perks (house loss, rose). Shipping fee is
@@ -221,7 +221,7 @@ const amountColumn: ColumnDef<TransactionListItem> = {
   },
 };
 
-// Start from the shared columns, drop payout + houseEdge, then replace the
+// Start from the shared columns, drop payout + housePnl, then replace the
 // User, Type, and Amount columns with our deposit-specific ones (Amount
 // gains the per-user 24h / 3d totals subtitle).
 const baseColumns = sharedColumns
