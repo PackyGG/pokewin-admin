@@ -29,8 +29,26 @@ export type TransactionListItem = {
   status: string;
   description: string;
   createdAt: string;
-  houseEdge: number | null;
+  /**
+   * USD value the user WON on a game-session row = card winnings
+   * (sum of `provably_fair_results.user_inventory.value_at_obtained`)
+   * PLUS the voucher excess that session spun off (battle/pack excess
+   * parked as a `vouchers` row whose `origin_id` is the game_session
+   * id). Honors the invariant inventory = cards + vouchers, so a row
+   * surfaces the full value handed to the user, not just cards. Null on
+   * non-game rows (deposit / withdrawal / manual adjustment). From the
+   * house POV this value left the house → render rose.
+   */
   payout: number | null;
+  /**
+   * Per-row house profit/loss in USD on a game-session row:
+   * `housePnl = bet − payout` (what we took in vs cards+vouchers we paid
+   * out). House POV: > 0 = house gain (emerald), < 0 = house loss
+   * (rose). Null on non-game rows (no "—" math there). Replaces the old
+   * meaningless `houseEdge` percentage which produced values like
+   * -203900% on high-multiplier hits.
+   */
+  housePnl: number | null;
   cryptoAsset: string | null;
   cryptoAmount: number | null;
   // Set by mergeDepositBonuses() when a deposit_bonus ledger row has been
@@ -281,9 +299,9 @@ export async function getDepositTransactions(params: {
       status: r.status,
       description: r.description,
       createdAt: r.created_at.toISOString(),
-      // houseEdge/payout are game-session metrics — not applicable here.
-      houseEdge: null,
+      // payout/housePnl are game-session metrics — not applicable here.
       payout: null,
+      housePnl: null,
       cryptoAsset: r.crypto_asset,
       cryptoAmount: r.crypto_amount != null ? Number(r.crypto_amount) : null,
       bonusAmount,
@@ -400,6 +418,7 @@ export async function getTransactions(params: {
     user: { select: { username: true, image: true } },
     game_sessions_ledger_transactions_game_session_idTogame_sessions: {
       select: {
+        id: true,
         bet_amount: true,
         provably_fair_results: {
           // result_metadata carries the per-result `borrow_percentage`
@@ -542,27 +561,73 @@ export async function getTransactions(params: {
     }
   }
 
+  // Per-session voucher excess — mirrors getUserTransactions'
+  // `voucherValueByGameSession`. Battle / pack excess gets parked as a
+  // `vouchers` row whose `origin_id` is the originating game_session id.
+  // That value is part of what the user WON (invariant: inventory =
+  // cards + vouchers), so it has to be added to `payout` alongside the
+  // card value — otherwise a high-multiplier hit that paid out mostly as
+  // a voucher reads as a tiny loss. Batched across the page's session
+  // ids in one round-trip (no N+1).
+  //
+  // Auxiliary lookup — same graceful-degrade convention as the borrow
+  // map above: a failure must not crash the whole /transactions page.
+  const sessionIds = new Set<string>();
+  for (const t of transactions) {
+    const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
+    if (gs?.id) sessionIds.add(gs.id);
+  }
+  const voucherValueBySession = new Map<string, number>();
+  if (sessionIds.size > 0) {
+    try {
+      const vouchers = await db.vouchers.findMany({
+        where: { origin_id: { in: [...sessionIds] } },
+        select: { origin_id: true, value: true },
+      });
+      for (const v of vouchers) {
+        if (!v.origin_id) continue;
+        voucherValueBySession.set(
+          v.origin_id,
+          (voucherValueBySession.get(v.origin_id) ?? 0) + toNumber(v.value),
+        );
+      }
+    } catch (e) {
+      console.error(
+        "[getTransactions] voucher excess lookup failed (non-fatal — payout falls back to card value only):",
+        e,
+      );
+    }
+  }
+
   return {
     data: transactions.map((t) => {
       const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
-      let houseEdge: number | null = null;
+      let housePnl: number | null = null;
       let payout: number | null = null;
       let borrowPercentage: number | null = null;
       let borrowedAmountUsd: number | null = null;
       let multiplier: number | null = null;
       if (gs) {
         const cost = toNumber(gs.bet_amount);
-        payout = gs.provably_fair_results.reduce(
+        // Card winnings from the session's PF results...
+        const cardValue = gs.provably_fair_results.reduce(
           (sum, pf) => sum + (pf.user_inventory ? toNumber(pf.user_inventory.value_at_obtained) : 0),
           0
         );
+        // ...plus the voucher excess this session spun off. Together
+        // they're the full value the user won (cards + vouchers),
+        // honoring the inventory invariant.
+        const voucherExcess = voucherValueBySession.get(gs.id) ?? 0;
+        payout = cardValue + voucherExcess;
+        // Per-row HOUSE P&L in USD: bet taken in minus value paid out
+        // (cards + vouchers). House POV: >0 = house gain (emerald),
+        // <0 = house loss (rose). Replaces the old houseEdge %.
+        housePnl = cost - payout;
         if (cost > 0) {
-          houseEdge = ((cost - payout) / cost) * 100;
-          // `payout / bet` — from the user's POV, what they got back
-          // vs what they paid in for this game session. >1 means they
-          // hit, <1 means the house kept some. Surfaced on the
-          // packs transactions page for the "Highest Multiplier"
-          // sort.
+          // `payout / bet` — total value the user got back (cards +
+          // vouchers) vs what they paid in for this game session. >1
+          // means they hit. Surfaced on the packs transactions page for
+          // the "Highest Multiplier" sort.
           multiplier = payout / cost;
         }
         // Borrow %: pull from the linked battle for battle rows, else
@@ -599,8 +664,8 @@ export async function getTransactions(params: {
         status: t.status,
         description: t.description,
         createdAt: t.created_at.toISOString(),
-        houseEdge,
         payout,
+        housePnl,
         cryptoAsset: t.crypto_asset,
         cryptoAmount: t.crypto_amount ? toNumber(t.crypto_amount) : null,
         // Shared query doesn't pair deposit_bonus rows — only the
@@ -646,6 +711,27 @@ export async function getTransactionDetail(id: string) {
     gameType: string;
     betAmount: number;
     houseEdge: number | null;
+    /**
+     * Total card value handed to the user on this session (sum of
+     * value_at_obtained across obtained cards). House loss.
+     */
+    cardsValue: number;
+    /**
+     * Voucher excess this session spun off (battle/pack excess parked
+     * as a voucher whose origin_id is this game_session id). Part of
+     * what the user won. House loss.
+     */
+    voucherValue: number;
+    /**
+     * Full value the user won = cardsValue + voucherValue (invariant
+     * inventory = cards + vouchers). House loss → rose.
+     */
+    itemsWon: number;
+    /**
+     * House P&L on this session in USD = betAmount − itemsWon. >0 =
+     * house gain (emerald), <0 = house loss (rose).
+     */
+    housePnl: number;
     packs: { name: string; imageUrl: string | null; priceUsd: number; quantity: number }[];
     cardsObtained: {
       name: string;
@@ -748,25 +834,46 @@ export async function getTransactionDetail(id: string) {
         select: { id: true, type: true, amount: true, balance_before: true, balance_after: true, description: true },
       });
 
-      const [packsResolved, cards, relatedTxs] = await Promise.all([
+      // Voucher excess this session spun off — parked as a `vouchers`
+      // row whose origin_id is the game_session id. Part of what the
+      // user won (invariant inventory = cards + vouchers), so it's
+      // surfaced alongside the cards on the detail page.
+      const vouchersPromise = db.vouchers.findMany({
+        where: { origin_id: tx.game_session_id! },
+        select: { value: true },
+      });
+
+      const [packsResolved, cards, relatedTxs, sessionVouchers] = await Promise.all([
         packsPromise,
         cardsPromise,
         relatedTxsPromise,
+        vouchersPromise,
       ]);
       packs = packsResolved;
 
       const cardsMap = new Map(cards.map((c) => [c.id, c]));
 
       const betAmount = toNumber(session.bet_amount);
-      const totalPayout = session.provably_fair_results
+      const cardsValue = session.provably_fair_results
         .filter((pf) => pf.user_inventory?.card_id && cardsMap.has(pf.user_inventory.card_id))
         .reduce((sum, pf) => sum + toNumber(pf.user_inventory!.value_at_obtained), 0);
-      const houseEdge = betAmount > 0 ? ((betAmount - totalPayout) / betAmount) * 100 : null;
+      const voucherValue = sessionVouchers.reduce(
+        (sum, v) => sum + toNumber(v.value),
+        0,
+      );
+      // Full value won = cards + voucher excess; house P&L = bet − that.
+      const itemsWon = cardsValue + voucherValue;
+      const housePnl = betAmount - itemsWon;
+      const houseEdge = betAmount > 0 ? (housePnl / betAmount) * 100 : null;
 
       gameSession = {
         gameType: session.game_type,
         betAmount,
         houseEdge,
+        cardsValue,
+        voucherValue,
+        itemsWon,
+        housePnl,
         packs,
         cardsObtained: session.provably_fair_results
           .filter((pf) => pf.user_inventory?.card_id && cardsMap.has(pf.user_inventory.card_id))

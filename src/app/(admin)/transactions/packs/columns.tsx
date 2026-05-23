@@ -28,14 +28,15 @@ function getColumnKey(
   return col.id;
 }
 
-// Packs-specific Payout cell: dollar amount on top, multiplier
-// badge underneath. The multiplier (= payout / bet) is what the
-// "Highest Multiplier" sort ranks by, so surfacing it inline lets
-// admins see WHY a row is at the top without doing the math.
-// House loss → rose, like the shared Payout cell.
+// Packs-specific Items Won cell: dollar amount on top, multiplier
+// badge underneath. `payout` is the full value won (cards + voucher
+// excess); the multiplier (= payout / bet) is what the "Highest
+// Multiplier" sort ranks by, so surfacing it inline lets admins see
+// WHY a row is at the top without doing the math. House loss → rose,
+// like the shared Items Won cell.
 const payoutColumn: ColumnDef<TransactionListItem> = {
   accessorKey: "payout",
-  header: "Payout",
+  header: "Items Won",
   cell: ({ row }) => {
     const p = row.original.payout;
     const m = row.original.multiplier;
@@ -55,8 +56,8 @@ const payoutColumn: ColumnDef<TransactionListItem> = {
   },
 };
 
-// Start from shared columns, replace the Payout cell. Everything
-// else (ID, User, Type, Amount, Before, After, House Edge, Status,
+// Start from shared columns, replace the Items Won cell. Everything
+// else (ID, User, Type, Amount, Before, After, House P&L, Status,
 // Date) stays exactly as on the global /transactions page.
 export const columns: ColumnDef<TransactionListItem>[] = sharedColumns.map(
   (col) => {
