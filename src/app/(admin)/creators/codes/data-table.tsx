@@ -20,6 +20,7 @@ import { columns } from "./columns";
 import type { CodeListItem } from "@/lib/queries/creators";
 import { formatRelative } from "@/lib/utils/format";
 import { MobileCard } from "@/components/data-table/mobile-card-list";
+import { EmptyState } from "@/components/empty-state";
 
 function CodeMobileCard({ code }: { code: CodeListItem }) {
   const router = useRouter();
@@ -66,8 +67,13 @@ export function CodesDataTable({ data }: { data: CodeListItem[] }) {
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
         {data.length === 0 ? (
-          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
-            No codes found.
+          <div className="rounded-md border">
+            <EmptyState
+              icon={Tag}
+              title="No codes found"
+              description="No affiliate codes match the current search. Try a different code or username."
+              compact
+            />
           </div>
         ) : (
           <div className="overflow-hidden rounded-md border">
@@ -106,9 +112,14 @@ export function CodesDataTable({ data }: { data: CodeListItem[] }) {
                 </TableRow>
               ))
             ) : (
-              <TableRow>
-                <TableCell colSpan={columns.length} className="h-24 text-center">
-                  No codes found.
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={columns.length} className="p-0">
+                  <EmptyState
+                    icon={Tag}
+                    title="No codes found"
+                    description="No affiliate codes match the current search. Try a different code or username."
+                    compact
+                  />
                 </TableCell>
               </TableRow>
             )}

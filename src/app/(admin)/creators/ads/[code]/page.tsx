@@ -43,6 +43,7 @@ import {
   getAdCodeDetail,
   type AdCodeUsageEntry,
 } from "@/lib/queries/ads";
+import { EmptyState } from "@/components/empty-state";
 import { ClicksByDayChart } from "./charts";
 import { CopyShareLink } from "./copy-link";
 
@@ -210,12 +211,14 @@ export default async function AdCodeDetailPage({
                   );
                 })}
                 {clicksByCountry.length === 0 && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={3}
-                      className="h-24 text-center text-sm text-muted-foreground"
-                    >
-                      No clicks yet.
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={3} className="p-0">
+                      <EmptyState
+                        icon={Globe}
+                        title="No clicks yet"
+                        description="Country breakdown appears once the tracking link gets its first clicks."
+                        compact
+                      />
                     </TableCell>
                   </TableRow>
                 )}
@@ -307,12 +310,14 @@ export default async function AdCodeDetailPage({
                   );
                 })}
                 {signupsList.length === 0 && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={5}
-                      className="h-24 text-center text-sm text-muted-foreground"
-                    >
-                      No signups yet.
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={5} className="p-0">
+                      <EmptyState
+                        icon={UserPlus}
+                        title="No signups yet"
+                        description="Users who sign up through this code will show up here with their deposit and wager activity."
+                        compact
+                      />
                     </TableCell>
                   </TableRow>
                 )}
@@ -479,14 +484,14 @@ function WagerSourceSection({
               );
             })}
             {usageHistory.length === 0 && (
-              <TableRow>
-                <TableCell
-                  colSpan={8}
-                  className="h-24 text-center text-sm text-muted-foreground"
-                >
-                  No attributed activity yet — when a user signs up,
-                  deposits, or wagers via this code the row will
-                  appear here.
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={8} className="p-0">
+                  <EmptyState
+                    icon={History}
+                    title="No attributed activity yet"
+                    description="When a user signs up, deposits, or wagers via this code, the row will appear here."
+                    compact
+                  />
                 </TableCell>
               </TableRow>
             )}
