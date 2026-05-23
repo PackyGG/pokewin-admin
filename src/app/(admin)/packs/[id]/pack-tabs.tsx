@@ -17,6 +17,7 @@ import {
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Loader2, Search, X } from "lucide-react";
 import { CardImage } from "@/components/card-image";
 import { CardTile, TileDataRow } from "@/components/card-tile";
+import { EmptyState } from "@/components/empty-state";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { fetchPackGames } from "../actions";
 
@@ -309,9 +310,16 @@ function GamesTable({ packId, initialGames }: { packId: string; initialGames: Pa
           </div>
         )}
         {data.length === 0 ? (
-          <p className="text-center text-sm text-muted-foreground py-8">
-            {hasFilters ? "No games match your filters" : "No games played yet"}
-          </p>
+          <EmptyState
+            icon={Search}
+            title={hasFilters ? "No games match your filters" : "No games played yet"}
+            description={
+              hasFilters
+                ? "Try a different user, type, or date range."
+                : "Opens of this pack will appear here once players start unboxing it."
+            }
+            compact
+          />
         ) : (
           <div className="overflow-x-auto -mx-6 px-6 sm:mx-0 sm:px-0">
           <Table>

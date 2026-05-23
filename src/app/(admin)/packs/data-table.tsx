@@ -19,6 +19,7 @@ import { columns } from "./columns";
 import type { PackListItem } from "@/lib/queries/packs";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { MobileCard } from "@/components/data-table/mobile-card-list";
+import { EmptyState } from "@/components/empty-state";
 import { Package } from "lucide-react";
 
 function PackMobileCard({ pack }: { pack: PackListItem }) {
@@ -89,8 +90,13 @@ export function PacksDataTable({ data }: { data: PackListItem[] }) {
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
         {data.length === 0 ? (
-          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
-            No packs found.
+          <div className="rounded-md border">
+            <EmptyState
+              icon={Package}
+              title="No packs found"
+              description="No packs match the current search or status filter."
+              compact
+            />
           </div>
         ) : (
           <div className="overflow-hidden rounded-md border">
@@ -129,9 +135,14 @@ export function PacksDataTable({ data }: { data: PackListItem[] }) {
                 </TableRow>
               ))
             ) : (
-              <TableRow>
-                <TableCell colSpan={columns.length} className="h-24 text-center">
-                  No packs found.
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={columns.length} className="p-0">
+                  <EmptyState
+                    icon={Package}
+                    title="No packs found"
+                    description="No packs match the current search or status filter."
+                    compact
+                  />
                 </TableCell>
               </TableRow>
             )}
