@@ -236,6 +236,28 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ledger_tx_created_at
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_battle_participants_battle_id
   ON battle_participants (battle_id);
 
+-- #14 ----------------------------------------------------------------
+-- provably_fair_results functional index on result_metadata->>'pack_id'
+-- ===================================================================
+-- Added by the 2026-05-23 query perf pass (second pass).
+--
+-- provably_fair_results has ONLY a PK today (the FK indexes in #7 are
+-- still recommendations, not applied). Every pack-scoped analytics query
+-- filters on the JSON expression `result_metadata->>'pack_id'`, which no
+-- plain index can satisfy — so each one seq-scans the entire PF table
+-- (one of the largest on the site). A functional B-tree on the extracted
+-- text turns the WHERE into an index range scan; adding created_at as the
+-- trailing key also serves the per-day GROUP BY and the date ORDER BY of
+-- the games listing without a separate sort.
+--
+-- Accelerates (all in src/lib/queries/packs.ts):
+--   • getPackStats   daily-breakdown CTE  (WHERE result_metadata->>'pack_id' = $1, GROUP BY DATE(created_at))
+--   • getPackStats   borrow/sponsor breakdown (same WHERE)
+--   • getPackGames   COUNT(*) total        (same WHERE)
+--   • getPackGames   paginated rows        (same WHERE, ORDER BY created_at)
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pf_result_metadata_pack_id_created_at
+  ON provably_fair_results ((result_metadata->>'pack_id'), created_at DESC);
+
 -- -------------------------------------------------------------------
 -- ADMIN DB (separate database — apply against ADMIN_DATABASE_URL, NOT
 -- the main game DB). Lower priority: admin_audit_events is a small
