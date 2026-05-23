@@ -10,6 +10,7 @@ import {
   SectionHeading,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { EmptyState } from "@/components/empty-state";
 
 export const metadata = { title: "Rewards Settings" };
 
@@ -38,11 +39,16 @@ export default async function RewardsSettingsPage() {
           }
         />
         <FadeIn>
-          <div className="rounded-2xl border bg-card/60 p-5">
+          <div className="rounded-2xl border bg-card/60">
             {configs.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No rakeback configs found.</p>
+              <EmptyState
+                icon={Percent}
+                title="No rakeback configs found"
+                description="Rakeback tiers will appear here once they are configured."
+                compact
+              />
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-3 p-5">
                 {configs.map((config) => (
                   <div key={config.id} className="flex items-center justify-between">
                     <div className="flex items-center gap-3">

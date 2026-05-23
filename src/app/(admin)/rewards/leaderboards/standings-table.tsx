@@ -10,6 +10,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatCurrency } from "@/lib/utils/format";
+import { EmptyState } from "@/components/empty-state";
 
 type Standing = {
   id: string;
@@ -61,8 +62,13 @@ export function StandingsTable({ data }: { data: Standing[] }) {
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
         {data.length === 0 ? (
-          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
-            No leaderboard data.
+          <div className="rounded-md border">
+            <EmptyState
+              icon={Trophy}
+              title="No leaderboard data"
+              description="Standings populate as players wager during this race period."
+              compact
+            />
           </div>
         ) : (
           <div className="overflow-hidden rounded-md border">
@@ -101,12 +107,14 @@ export function StandingsTable({ data }: { data: Standing[] }) {
               </TableRow>
             ))}
             {data.length === 0 && (
-              <TableRow>
-                <TableCell
-                  colSpan={3}
-                  className="h-24 text-center text-muted-foreground"
-                >
-                  No leaderboard data.
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={3} className="p-0">
+                  <EmptyState
+                    icon={Trophy}
+                    title="No leaderboard data"
+                    description="Standings populate as players wager during this race period."
+                    compact
+                  />
                 </TableCell>
               </TableRow>
             )}

@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { Percent } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +16,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { EmptyState } from "@/components/empty-state";
 import { updateRakebackConfig } from "../actions";
 
 type RakebackConfig = {
@@ -98,8 +100,13 @@ export function RakebackConfigTable({ configs }: { configs: RakebackConfig[] }) 
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
         {configs.length === 0 ? (
-          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
-            No rakeback configs found.
+          <div className="rounded-md border">
+            <EmptyState
+              icon={Percent}
+              title="No rakeback configs found"
+              description="Rakeback tiers will appear here once they are configured."
+              compact
+            />
           </div>
         ) : (
           <div className="overflow-hidden rounded-md border divide-y divide-border/60">
@@ -262,9 +269,14 @@ export function RakebackConfigTable({ configs }: { configs: RakebackConfig[] }) 
               </TableRow>
             ))}
             {configs.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
-                  No rakeback configs found.
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={6} className="p-0">
+                  <EmptyState
+                    icon={Percent}
+                    title="No rakeback configs found"
+                    description="Rakeback tiers will appear here once they are configured."
+                    compact
+                  />
                 </TableCell>
               </TableRow>
             )}

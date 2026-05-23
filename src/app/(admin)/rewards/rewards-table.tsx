@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/table";
 import { formatCurrency, formatDateTime, formatRelative } from "@/lib/utils/format";
 import type { RewardItem } from "@/lib/queries/rewards";
+import { EmptyState } from "@/components/empty-state";
 import { EditRewardButton } from "./edit-reward-button";
 import { DeleteRewardButton } from "./delete-reward-button";
 
@@ -80,8 +81,13 @@ export function RewardsTable({ data }: { data: RewardItem[] }) {
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
         {data.length === 0 ? (
-          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
-            No rewards found.
+          <div className="rounded-md border">
+            <EmptyState
+              icon={Gift}
+              title="No rewards found"
+              description="Create a reward to grant cash or packs to eligible players."
+              compact
+            />
           </div>
         ) : (
           <div className="overflow-hidden rounded-md border">
@@ -154,12 +160,14 @@ export function RewardsTable({ data }: { data: RewardItem[] }) {
               </TableRow>
             ))}
             {data.length === 0 && (
-              <TableRow>
-                <TableCell
-                  colSpan={8}
-                  className="h-24 text-center text-muted-foreground"
-                >
-                  No rewards found.
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={8} className="p-0">
+                  <EmptyState
+                    icon={Gift}
+                    title="No rewards found"
+                    description="Create a reward to grant cash or packs to eligible players."
+                    compact
+                  />
                 </TableCell>
               </TableRow>
             )}

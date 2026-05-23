@@ -29,6 +29,7 @@ import {
   KpiTile,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { EmptyState } from "@/components/empty-state";
 
 export const metadata = { title: "Raffle Detail" };
 
@@ -190,9 +191,14 @@ export default async function RaffleDetailPage({
                   </TableRow>
                 ))}
                 {data.entries.data.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={3} className="h-24 text-center text-muted-foreground">
-                      No entries yet.
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={3} className="p-0">
+                      <EmptyState
+                        icon={UsersIcon}
+                        title="No entries yet"
+                        description="Entries appear here as players spend points to join this raffle."
+                        compact
+                      />
                     </TableCell>
                   </TableRow>
                 )}

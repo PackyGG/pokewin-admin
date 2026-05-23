@@ -10,6 +10,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatDateTime, formatNumber, formatRelative } from "@/lib/utils/format";
+import { EmptyState } from "@/components/empty-state";
 import { CancelRaffleButton } from "./cancel-raffle-button";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -90,8 +91,13 @@ export function RafflesTable({ data }: { data: Raffle[] }) {
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
         {data.length === 0 ? (
-          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
-            No raffles found.
+          <div className="rounded-md border">
+            <EmptyState
+              icon={Ticket}
+              title="No raffles found"
+              description="Create a raffle to let players spend points for a chance at a prize."
+              compact
+            />
           </div>
         ) : (
           <div className="overflow-hidden rounded-md border">
@@ -147,12 +153,14 @@ export function RafflesTable({ data }: { data: Raffle[] }) {
               </TableRow>
             ))}
             {data.length === 0 && (
-              <TableRow>
-                <TableCell
-                  colSpan={8}
-                  className="h-24 text-center text-muted-foreground"
-                >
-                  No raffles found.
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={8} className="p-0">
+                  <EmptyState
+                    icon={Ticket}
+                    title="No raffles found"
+                    description="Create a raffle to let players spend points for a chance at a prize."
+                    compact
+                  />
                 </TableCell>
               </TableRow>
             )}
