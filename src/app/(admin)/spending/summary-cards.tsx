@@ -33,6 +33,7 @@ import {
   BarChart3,
 } from "lucide-react";
 import { MetricTile, SectionHeading } from "@/components/modern-panels";
+import { EmptyState } from "@/components/empty-state";
 
 function getCategoryLabel(value: string) {
   return EXPENSE_CATEGORIES.find((c) => c.value === value)?.label ?? value;
@@ -266,10 +267,13 @@ export function SummaryCards({
                     </div>
                   </>
                 ) : (
-                  <div className="flex h-[260px] flex-col items-center justify-center text-center text-sm text-muted-foreground">
-                    <BarChart3 className="size-8 text-muted-foreground/40 mb-2" />
-                    <p>No expenses in this period.</p>
-                    <p className="text-xs">Add expenses to see category breakdown.</p>
+                  <div className="flex h-[260px] items-center justify-center">
+                    <EmptyState
+                      icon={BarChart3}
+                      title="No expenses in this period"
+                      description="Add expenses to see the category breakdown."
+                      compact
+                    />
                   </div>
                 )}
               </div>
@@ -349,10 +353,13 @@ export function SummaryCards({
                     </AreaChart>
                   </ChartContainer>
                 ) : (
-                  <div className="flex h-[260px] flex-col items-center justify-center text-center text-sm text-muted-foreground">
-                    <LineIcon className="size-8 text-muted-foreground/40 mb-2" />
-                    <p>Not enough history for a trend yet.</p>
-                    <p className="text-xs">Logged expenses build the curve over months.</p>
+                  <div className="flex h-[260px] items-center justify-center">
+                    <EmptyState
+                      icon={LineIcon}
+                      title="Not enough history for a trend yet"
+                      description="Logged expenses build the curve over months."
+                      compact
+                    />
                   </div>
                 )}
               </div>

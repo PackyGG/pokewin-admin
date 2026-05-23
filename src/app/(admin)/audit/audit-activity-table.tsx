@@ -9,9 +9,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { ScrollText } from "lucide-react";
 import { formatRelative, formatCurrency } from "@/lib/utils/format";
 import type { AuditListItem } from "@/lib/queries/audit";
 import { cn } from "@/lib/utils";
+import { EmptyState } from "@/components/empty-state";
 
 const EVENT_COLORS: Record<string, string> = {
   admin_login: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
@@ -438,8 +440,13 @@ export function AuditActivityTable({ data }: { data: AuditListItem[] }) {
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
         {data.length === 0 ? (
-          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
-            No audit events found.
+          <div className="rounded-md border">
+            <EmptyState
+              icon={ScrollText}
+              title="No audit events found"
+              description="No actions match the current filters."
+              compact
+            />
           </div>
         ) : (
           <div className="overflow-hidden rounded-md border">
@@ -516,9 +523,14 @@ export function AuditActivityTable({ data }: { data: AuditListItem[] }) {
               </TableRow>
             ))}
             {data.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={6} className="h-24 text-center">
-                  No audit events found.
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={6} className="p-0">
+                  <EmptyState
+                    icon={ScrollText}
+                    title="No audit events found"
+                    description="No actions match the current filters."
+                    compact
+                  />
                 </TableCell>
               </TableRow>
             )}
