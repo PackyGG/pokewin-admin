@@ -10,12 +10,10 @@ import {
  * Matches /dashboard: PageHero (with a trailing load-time chip), 6-tile
  * primary stats (PnL/GGR/Total Wager/Raw Wager/Deposits/Withdrawals),
  * 7-tile secondary stats (Total Users/FTDs/Depositors/Users Total
- * Balance/Avg Deposit/Deposits per Hour/Avg RTP), a 6-tile Health &
- * Operations strip (Active Players/Net Deposits/Withdrawal Ratio/ARPU/
- * Inventory Liability/Pending Payouts), Trends section (3 charts), and a
- * 2-column live feed (Recent Activity + Deposits). Tile counts mirror the
- * Suspense fallbacks in page.tsx so the full-page navigation skeleton and
- * the streamed in-page skeletons agree.
+ * Balance/Avg Deposit/Deposits per Hour/Avg RTP), Trends section (3
+ * charts), and a 2-column live feed (Recent Activity + Deposits). Tile
+ * counts mirror the Suspense fallbacks in page.tsx so the full-page
+ * navigation skeleton and the streamed in-page skeletons agree.
  */
 export default function DashboardLoading() {
   return (
@@ -25,10 +23,6 @@ export default function DashboardLoading() {
       <PageHeroSkeleton action />
       <KpiStripSkeleton count={6} />
       <KpiStripSkeleton count={7} />
-      <div className="space-y-3">
-        <SectionHeadingSkeleton titleWidth={150} />
-        <KpiStripSkeleton count={6} />
-      </div>
       <div className="space-y-3">
         <SectionHeadingSkeleton titleWidth={80} />
         <ChartRowSkeleton count={3} height={300} />
