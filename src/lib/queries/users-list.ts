@@ -26,10 +26,12 @@ type UserListItem = {
   pnl: number;
   /**
    * Combined on-platform holdings = available + locked balance +
-   * unsold/unexchanged inventory value. This is the user's TOTAL
-   * position on-site right now, which from the house POV is the
-   * direct liability per user. Useful for spotting whales without
-   * having to mentally add the Balance + Inventory columns.
+   * unsold/unexchanged inventory value + unclaimed voucher value.
+   * Vouchers count as inventory exactly like cards (cards + vouchers
+   * = inventory), so they're part of the on-site position. This is the
+   * user's TOTAL position on-site right now, which from the house POV
+   * is the direct liability per user. Useful for spotting whales
+   * without having to mentally add the Balance + Inventory columns.
    */
   netHoldings: number;
   createdAt: string;
@@ -192,13 +194,18 @@ export async function getUsers(params: {
             ? `COALESCE(inv.inv_value, 0)`
             : sortBy === "netHoldings"
               ? // Net on-platform position from the house POV: cash
-                // (available + locked) + open inventory. This is the
-                // "what the user has on-site RIGHT NOW" snapshot —
-                // ignores lifetime deposits/withdrawals/PnL so big
-                // holders surface even if they never wagered.
+                // (available + locked) + open inventory + unclaimed
+                // vouchers. Vouchers count as inventory exactly like
+                // cards (cards + vouchers = inventory), so they belong
+                // in the on-site holdings snapshot. This is the "what
+                // the user has on-site RIGHT NOW" snapshot — ignores
+                // lifetime deposits/withdrawals/PnL so big holders
+                // surface even if they never wagered. Must stay in sync
+                // with the JS netHoldings computed in the data mapping.
                 `COALESCE(b.available_balance::numeric, 0)
                  + COALESCE(b.locked_balance::numeric, 0)
-                 + COALESCE(inv.inv_value, 0)`
+                 + COALESCE(inv.inv_value, 0)
+                 + COALESCE(vc.voucher_value, 0)`
               : `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)
                + COALESCE(b.available_balance::numeric, 0)
                + COALESCE(b.locked_balance::numeric, 0)
@@ -301,16 +308,21 @@ export async function getUsers(params: {
       const totalDeposited = userPnl?.deposits ?? 0;
       const totalWithdrawn = userPnl?.withdrawals ?? 0;
       const inventoryValue = userPnl?.inventoryValue ?? 0;
+      const unclaimedVouchers = userPnl?.unclaimedVouchers ?? 0;
       // The data-table renders user-POV pnl (positive = user winning,
       // shown red because that's our liability). The shared helper returns
       // House-POV; flip the sign here to keep the column semantics intact.
       const pnl = userPnl ? -userPnl.pnl : 0;
       // Net on-platform holdings = cash (available + locked vault) +
-      // open inventory. Mirrors the SQL ORDER BY expression for the
-      // `netHoldings` sort so client-side reordering matches what the
-      // server returned. Lifetime deposits/withdrawals deliberately
-      // excluded — this is "what's on-site RIGHT NOW", not PnL.
-      const netHoldings = availableBalance + lockedBalance + inventoryValue;
+      // open inventory + unclaimed vouchers. Vouchers are inventory
+      // exactly like cards (cards + vouchers = inventory), so they're
+      // part of what the user holds on-site. Mirrors the SQL ORDER BY
+      // expression for the `netHoldings` sort so client-side reordering
+      // matches what the server returned. Lifetime deposits/withdrawals
+      // deliberately excluded — this is "what's on-site RIGHT NOW", not
+      // PnL.
+      const netHoldings =
+        availableBalance + lockedBalance + inventoryValue + unclaimedVouchers;
       const risk = riskScoresMap.get(u.id);
       return {
         id: u.id,
