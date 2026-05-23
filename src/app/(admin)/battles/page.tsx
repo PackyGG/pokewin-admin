@@ -8,7 +8,7 @@ import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { PageHero } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Battles" };
@@ -56,17 +56,11 @@ export default async function BattlesPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-            <Swords className="size-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold leading-tight">Battles</h1>
-            <p className="text-sm text-muted-foreground">
-              Case battles across all modes — track status, teams, and outcomes.
-            </p>
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={Swords}
+          title="Battles"
+          subtitle="Case battles across all modes — track status, teams, and outcomes."
+        />
       </PageHero>
 
       <div className="space-y-4">

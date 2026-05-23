@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 import { RewardsOverview } from "./rewards-overview";
 import { CreateRewardButton } from "./create-reward-button";
 import { RewardsTable } from "./rewards-table";
-import { PageHero } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Rewards" };
@@ -66,17 +66,11 @@ export default async function RewardsPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-            <Gift className="size-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold leading-tight">Rewards</h1>
-            <p className="text-sm text-muted-foreground">
-              One-time, daily, and balance rewards — plus rakeback claim stats.
-            </p>
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={Gift}
+          title="Rewards"
+          subtitle="One-time, daily, and balance rewards — plus rakeback claim stats."
+        />
       </PageHero>
 
       {/* Rakeback overview and the rewards table are independent — render

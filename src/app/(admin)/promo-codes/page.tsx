@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { CreatePromoCodeButton } from "./create-button";
 import {
   PageHero,
+  PageHeroIdentity,
   SectionHeading,
   KpiTile,
 } from "@/components/modern-panels";
@@ -46,20 +47,12 @@ export default async function PromoCodesPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-              <Ticket className="size-5 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold leading-tight">Promo Codes</h1>
-              <p className="text-sm text-muted-foreground">
-                Manage promotional codes — track usage, restrictions, and expirations.
-              </p>
-            </div>
-          </div>
-          <CreatePromoCodeButton />
-        </div>
+        <PageHeroIdentity
+          icon={Ticket}
+          title="Promo Codes"
+          subtitle="Manage promotional codes — track usage, restrictions, and expirations."
+          action={<CreatePromoCodeButton />}
+        />
       </PageHero>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
