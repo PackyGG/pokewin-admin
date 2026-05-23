@@ -162,9 +162,97 @@ function LtvTable({ rows }: { rows: Awaited<ReturnType<typeof getCreatorLtv>>["r
   }
 
   return (
-    <div className="overflow-x-auto">
-      <Table>
-        <TableHeader>
+    <>
+      {/* Mobile card list (<md) — the 7-column table is unreadable on a
+          phone, so each creator becomes a tappable card: name + net ROI
+          headline, the rest as meta rows. House-POV colors preserved. */}
+      <div className="space-y-2 md:hidden">
+        {rows.map((r) => {
+          const pnlClass =
+            r.grossPlatformPnl > 0
+              ? "text-emerald-600 dark:text-emerald-400"
+              : r.grossPlatformPnl < 0
+                ? "text-rose-600 dark:text-rose-400"
+                : "text-muted-foreground";
+          const roiClass =
+            r.netRoi > 0
+              ? "text-emerald-600 dark:text-emerald-400"
+              : r.netRoi < 0
+                ? "text-rose-600 dark:text-rose-400"
+                : "text-muted-foreground";
+          return (
+            <div
+              key={r.userId}
+              className="rounded-lg border bg-card p-3 transition-colors hover:bg-muted/40"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <Link
+                  href={`/users/${r.userId}`}
+                  className="min-w-0 flex-1 hover:underline"
+                >
+                  <span className="block truncate text-sm font-medium">
+                    {r.username ?? "—"}
+                  </span>
+                  {r.code && (
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {r.code}
+                    </span>
+                  )}
+                </Link>
+                <div className="shrink-0 text-right">
+                  <div
+                    className={cn(
+                      "text-sm font-semibold tabular-nums",
+                      roiClass,
+                    )}
+                  >
+                    {formatCurrency(r.netRoi)}
+                  </div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Net ROI
+                  </div>
+                </div>
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-muted-foreground">Referred</span>
+                  <span className="tabular-nums">
+                    {formatNumber(r.referredUsers)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-muted-foreground">ROI ×</span>
+                  <span className="tabular-nums">
+                    {r.roiMultiple === null
+                      ? "—"
+                      : `${r.roiMultiple.toFixed(2)}x`}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-muted-foreground">Gross P&amp;L</span>
+                  <span className={cn("tabular-nums", pnlClass)}>
+                    {formatCurrency(r.grossPlatformPnl)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-muted-foreground">Cost</span>
+                  <span className="tabular-nums text-rose-600 dark:text-rose-400">
+                    {formatCurrency(r.creatorCost)}
+                  </span>
+                </div>
+              </div>
+              <div className="mt-2">
+                <StatusBadge netRoi={r.netRoi} creatorCost={r.creatorCost} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Desktop table (>=md) */}
+      <div className="hidden overflow-x-auto md:block">
+        <Table>
+          <TableHeader>
           <TableRow>
             <TableHead>Creator</TableHead>
             <TableHead className="text-right">Referred</TableHead>
@@ -231,9 +319,10 @@ function LtvTable({ rows }: { rows: Awaited<ReturnType<typeof getCreatorLtv>>["r
               </TableCell>
             </TableRow>
           ))}
-        </TableBody>
-      </Table>
-    </div>
+          </TableBody>
+        </Table>
+      </div>
+    </>
   );
 }
 

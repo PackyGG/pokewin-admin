@@ -264,32 +264,65 @@ function UserLeaderTable({
         ? "text-rose-600 dark:text-rose-400"
         : "text-foreground";
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead className="w-[50px]">Rank</TableHead>
-          <TableHead>User</TableHead>
-          <TableHead className="text-right">{metricLabel}</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
+    <>
+      {/* Mobile card list (<md) */}
+      <div className="space-y-1.5 md:hidden">
         {rows.map((r, i) => (
-          <TableRow key={r.userId}>
-            <TableCell className="tabular-nums text-muted-foreground">
+          <div
+            key={r.userId}
+            className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5 transition-colors hover:bg-muted/40"
+          >
+            <span className="w-7 shrink-0 text-xs tabular-nums text-muted-foreground">
               #{i + 1}
-            </TableCell>
-            <TableCell className="font-medium">
-              <Link href={`/users/${r.userId}`} className="hover:underline">
-                {r.username ?? r.userId.slice(0, 8)}
-              </Link>
-            </TableCell>
-            <TableCell className={cn("text-right tabular-nums", toneClass)}>
+            </span>
+            <Link
+              href={`/users/${r.userId}`}
+              className="min-w-0 flex-1 truncate text-sm font-medium hover:underline"
+            >
+              {r.username ?? r.userId.slice(0, 8)}
+            </Link>
+            <span
+              className={cn(
+                "shrink-0 text-sm font-medium tabular-nums",
+                toneClass,
+              )}
+            >
               {formatCurrency(r.amount)}
-            </TableCell>
-          </TableRow>
+            </span>
+          </div>
         ))}
-      </TableBody>
-    </Table>
+      </div>
+
+      {/* Desktop table (>=md) */}
+      <div className="hidden md:block">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-[50px]">Rank</TableHead>
+              <TableHead>User</TableHead>
+              <TableHead className="text-right">{metricLabel}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((r, i) => (
+              <TableRow key={r.userId}>
+                <TableCell className="tabular-nums text-muted-foreground">
+                  #{i + 1}
+                </TableCell>
+                <TableCell className="font-medium">
+                  <Link href={`/users/${r.userId}`} className="hover:underline">
+                    {r.username ?? r.userId.slice(0, 8)}
+                  </Link>
+                </TableCell>
+                <TableCell className={cn("text-right tabular-nums", toneClass)}>
+                  {formatCurrency(r.amount)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </>
   );
 }
 
@@ -306,44 +339,90 @@ function CreatorLeaderTable({
     );
   }
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead className="w-[50px]">Rank</TableHead>
-          <TableHead>Creator</TableHead>
-          <TableHead className="text-right">Wager Volume</TableHead>
-          <TableHead className="text-right">Commission Paid</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
+    <>
+      {/* Mobile card list (<md) */}
+      <div className="space-y-2 md:hidden">
         {rows.map((r, i) => (
-          <TableRow key={r.userId}>
-            <TableCell className="tabular-nums text-muted-foreground">
-              #{i + 1}
-            </TableCell>
-            <TableCell className="font-medium">
+          <div
+            key={r.userId}
+            className="rounded-lg border bg-card p-3 transition-colors hover:bg-muted/40"
+          >
+            <div className="flex items-center gap-3">
+              <span className="w-7 shrink-0 text-xs tabular-nums text-muted-foreground">
+                #{i + 1}
+              </span>
               <Link
                 href={`/creators/${r.userId}`}
-                className="hover:underline"
+                className="min-w-0 flex-1 truncate text-sm font-medium hover:underline"
               >
                 {r.username ?? r.userId.slice(0, 8)}
+                {r.code && (
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">
+                    {r.code}
+                  </span>
+                )}
               </Link>
-              {r.code && (
-                <span className="ml-2 text-xs text-muted-foreground">
-                  {r.code}
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-x-3 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted-foreground">Volume</span>
+                <span className="tabular-nums text-emerald-600 dark:text-emerald-400">
+                  {formatCurrency(r.wagerVolume)}
                 </span>
-              )}
-            </TableCell>
-            <TableCell className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">
-              {formatCurrency(r.wagerVolume)}
-            </TableCell>
-            <TableCell className="text-right tabular-nums text-rose-600 dark:text-rose-400">
-              {formatCurrency(r.commission)}
-            </TableCell>
-          </TableRow>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted-foreground">Commission</span>
+                <span className="tabular-nums text-rose-600 dark:text-rose-400">
+                  {formatCurrency(r.commission)}
+                </span>
+              </div>
+            </div>
+          </div>
         ))}
-      </TableBody>
-    </Table>
+      </div>
+
+      {/* Desktop table (>=md) */}
+      <div className="hidden md:block">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-[50px]">Rank</TableHead>
+              <TableHead>Creator</TableHead>
+              <TableHead className="text-right">Wager Volume</TableHead>
+              <TableHead className="text-right">Commission Paid</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((r, i) => (
+              <TableRow key={r.userId}>
+                <TableCell className="tabular-nums text-muted-foreground">
+                  #{i + 1}
+                </TableCell>
+                <TableCell className="font-medium">
+                  <Link
+                    href={`/creators/${r.userId}`}
+                    className="hover:underline"
+                  >
+                    {r.username ?? r.userId.slice(0, 8)}
+                  </Link>
+                  {r.code && (
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      {r.code}
+                    </span>
+                  )}
+                </TableCell>
+                <TableCell className="text-right tabular-nums text-emerald-600 dark:text-emerald-400">
+                  {formatCurrency(r.wagerVolume)}
+                </TableCell>
+                <TableCell className="text-right tabular-nums text-rose-600 dark:text-rose-400">
+                  {formatCurrency(r.commission)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </>
   );
 }
 
@@ -360,45 +439,87 @@ function CountryLeaderTable({
     );
   }
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead className="w-[50px]">Rank</TableHead>
-          <TableHead>Country</TableHead>
-          <TableHead className="text-right">Users</TableHead>
-          <TableHead className="text-right">GGR</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
+    <>
+      {/* Mobile card list (<md) */}
+      <div className="space-y-1.5 md:hidden">
         {rows.map((r, i) => (
-          <TableRow key={`${r.countryCode ?? r.country}-${i}`}>
-            <TableCell className="tabular-nums text-muted-foreground">
+          <div
+            key={`${r.countryCode ?? r.country}-${i}`}
+            className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5"
+          >
+            <span className="w-7 shrink-0 text-xs tabular-nums text-muted-foreground">
               #{i + 1}
-            </TableCell>
-            <TableCell className="font-medium">
-              {r.countryCode && (
-                <span className="mr-2 text-xs text-muted-foreground">
-                  {r.countryCode}
-                </span>
-              )}
-              {r.country}
-            </TableCell>
-            <TableCell className="text-right tabular-nums">
-              {formatNumber(r.users)}
-            </TableCell>
-            <TableCell
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium">
+                {r.countryCode && (
+                  <span className="mr-2 text-xs font-normal text-muted-foreground">
+                    {r.countryCode}
+                  </span>
+                )}
+                {r.country}
+              </div>
+              <div className="text-[11px] text-muted-foreground tabular-nums">
+                {formatNumber(r.users)} users
+              </div>
+            </div>
+            <span
               className={cn(
-                "text-right tabular-nums",
+                "shrink-0 text-sm font-medium tabular-nums",
                 r.ggr >= 0
                   ? "text-emerald-600 dark:text-emerald-400"
                   : "text-rose-600 dark:text-rose-400",
               )}
             >
               {formatCurrency(r.ggr)}
-            </TableCell>
-          </TableRow>
+            </span>
+          </div>
         ))}
-      </TableBody>
-    </Table>
+      </div>
+
+      {/* Desktop table (>=md) */}
+      <div className="hidden md:block">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-[50px]">Rank</TableHead>
+              <TableHead>Country</TableHead>
+              <TableHead className="text-right">Users</TableHead>
+              <TableHead className="text-right">GGR</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((r, i) => (
+              <TableRow key={`${r.countryCode ?? r.country}-${i}`}>
+                <TableCell className="tabular-nums text-muted-foreground">
+                  #{i + 1}
+                </TableCell>
+                <TableCell className="font-medium">
+                  {r.countryCode && (
+                    <span className="mr-2 text-xs text-muted-foreground">
+                      {r.countryCode}
+                    </span>
+                  )}
+                  {r.country}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {formatNumber(r.users)}
+                </TableCell>
+                <TableCell
+                  className={cn(
+                    "text-right tabular-nums",
+                    r.ggr >= 0
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-rose-600 dark:text-rose-400",
+                  )}
+                >
+                  {formatCurrency(r.ggr)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </>
   );
 }

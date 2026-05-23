@@ -197,53 +197,102 @@ function WithdrawnCoinsTable({
           No crypto withdrawals in this window.
         </p>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Asset</TableHead>
-              <TableHead className="text-right">Withdrawals</TableHead>
-              <TableHead className="text-right">Native amount</TableHead>
-              <TableHead className="text-right">USD value</TableHead>
-              <TableHead className="text-right">Share</TableHead>
-              <TableHead className="w-[120px]">Bar</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+        <>
+          {/* Mobile card list (<md) — asset + USD headline (rose, real
+              cash leaving), count/native/share as meta + a bar. */}
+          <div className="space-y-2 md:hidden">
             {assets.map((a) => {
               const pct =
                 totalCryptoUsd > 0 ? (a.totalUsd / totalCryptoUsd) * 100 : 0;
               return (
-                <TableRow key={a.asset}>
-                  <TableCell className="font-mono text-xs">
-                    {a.asset}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatNumber(a.count)}
-                  </TableCell>
-                  <TableCell className="text-right font-mono text-xs tabular-nums text-muted-foreground">
-                    {a.totalCryptoAmount.toLocaleString("en-US", {
-                      maximumFractionDigits: 8,
-                    })}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-rose-600 dark:text-rose-400">
-                    {formatCurrency(a.totalUsd)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {pct.toFixed(1)}%
-                  </TableCell>
-                  <TableCell>
-                    <div className="h-2 overflow-hidden rounded-sm bg-muted">
+                <div key={a.asset} className="rounded-lg border bg-card p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-mono text-xs font-medium">
+                      {a.asset}
+                    </span>
+                    <span className="shrink-0 text-sm font-medium tabular-nums text-rose-600 dark:text-rose-400">
+                      {formatCurrency(a.totalUsd)}
+                    </span>
+                  </div>
+                  <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                    <span className="tabular-nums">
+                      {formatNumber(a.count)} withdrawals
+                    </span>
+                    <span className="truncate font-mono tabular-nums">
+                      {a.totalCryptoAmount.toLocaleString("en-US", {
+                        maximumFractionDigits: 8,
+                      })}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <div className="h-2 flex-1 overflow-hidden rounded-sm bg-muted">
                       <div
                         className="h-full rounded-sm bg-rose-500/60 transition-all"
                         style={{ width: `${pct}%` }}
                       />
                     </div>
-                  </TableCell>
-                </TableRow>
+                    <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                      {pct.toFixed(1)}%
+                    </span>
+                  </div>
+                </div>
               );
             })}
-          </TableBody>
-        </Table>
+          </div>
+
+          {/* Desktop table (>=md) */}
+          <div className="hidden md:block">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Asset</TableHead>
+                  <TableHead className="text-right">Withdrawals</TableHead>
+                  <TableHead className="text-right">Native amount</TableHead>
+                  <TableHead className="text-right">USD value</TableHead>
+                  <TableHead className="text-right">Share</TableHead>
+                  <TableHead className="w-[120px]">Bar</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {assets.map((a) => {
+                  const pct =
+                    totalCryptoUsd > 0
+                      ? (a.totalUsd / totalCryptoUsd) * 100
+                      : 0;
+                  return (
+                    <TableRow key={a.asset}>
+                      <TableCell className="font-mono text-xs">
+                        {a.asset}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatNumber(a.count)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs tabular-nums text-muted-foreground">
+                        {a.totalCryptoAmount.toLocaleString("en-US", {
+                          maximumFractionDigits: 8,
+                        })}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-rose-600 dark:text-rose-400">
+                        {formatCurrency(a.totalUsd)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {pct.toFixed(1)}%
+                      </TableCell>
+                      <TableCell>
+                        <div className="h-2 overflow-hidden rounded-sm bg-muted">
+                          <div
+                            className="h-full rounded-sm bg-rose-500/60 transition-all"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </>
       )}
 
       {/* Physical card shipments — separate line so the crypto table
@@ -324,41 +373,85 @@ function SourceTable({
   const barClass = accent === "emerald" ? "bg-emerald-500/60" : "bg-rose-500/60";
 
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Source</TableHead>
-          <TableHead className="text-right">Total</TableHead>
-          <TableHead className="text-right">Share</TableHead>
-          <TableHead className="w-[120px]">Bar</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
+    <>
+      {/* Mobile card list (<md) — label + amount headline, share % and a
+          full-width bar underneath. House-POV accent preserved. */}
+      <div className="space-y-2 md:hidden">
         {sorted.map((r) => {
           const pct = total > 0 ? (r.total / total) * 100 : 0;
           return (
-            <TableRow key={r.key}>
-              <TableCell className="font-medium">{r.label}</TableCell>
-              <TableCell
-                className={cn("text-right tabular-nums", colorClass)}
-              >
-                {formatCurrency(r.total)}
-              </TableCell>
-              <TableCell className="text-right tabular-nums">
-                {pct.toFixed(1)}%
-              </TableCell>
-              <TableCell>
-                <div className="h-2 overflow-hidden rounded-sm bg-muted">
+            <div key={r.key} className="rounded-lg border bg-card p-3">
+              <div className="flex items-center justify-between gap-3">
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                  {r.label}
+                </span>
+                <span
+                  className={cn(
+                    "shrink-0 text-sm font-medium tabular-nums",
+                    colorClass,
+                  )}
+                >
+                  {formatCurrency(r.total)}
+                </span>
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <div className="h-2 flex-1 overflow-hidden rounded-sm bg-muted">
                   <div
                     className={cn("h-full rounded-sm transition-all", barClass)}
                     style={{ width: `${pct}%` }}
                   />
                 </div>
-              </TableCell>
-            </TableRow>
+                <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                  {pct.toFixed(1)}%
+                </span>
+              </div>
+            </div>
           );
         })}
-      </TableBody>
-    </Table>
+      </div>
+
+      {/* Desktop table (>=md) */}
+      <div className="hidden md:block">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Source</TableHead>
+              <TableHead className="text-right">Total</TableHead>
+              <TableHead className="text-right">Share</TableHead>
+              <TableHead className="w-[120px]">Bar</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {sorted.map((r) => {
+              const pct = total > 0 ? (r.total / total) * 100 : 0;
+              return (
+                <TableRow key={r.key}>
+                  <TableCell className="font-medium">{r.label}</TableCell>
+                  <TableCell
+                    className={cn("text-right tabular-nums", colorClass)}
+                  >
+                    {formatCurrency(r.total)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {pct.toFixed(1)}%
+                  </TableCell>
+                  <TableCell>
+                    <div className="h-2 overflow-hidden rounded-sm bg-muted">
+                      <div
+                        className={cn(
+                          "h-full rounded-sm transition-all",
+                          barClass,
+                        )}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
+    </>
   );
 }
