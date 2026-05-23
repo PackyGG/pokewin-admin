@@ -9,7 +9,7 @@ import {
   Users,
 } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
-import { KpiTile, PageHero } from "@/components/modern-panels";
+import { KpiTile, PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import {
@@ -60,36 +60,34 @@ export default async function AdsPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-              <Megaphone className="size-5 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold leading-tight">Ads</h1>
-              <p className="text-sm text-muted-foreground">
-                Campaign tracking codes. Clicks, signups and deposits roll up
-                through the{" "}
-                <Link
-                  href={`/users/${houseUser.id}`}
-                  className="font-medium text-foreground hover:underline"
-                >
-                  {houseUser.username ?? houseUser.email ?? "house user"}
-                </Link>{" "}
-                account.
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Badge
-              variant="outline"
-              className="bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30"
-            >
-              House: {houseUser.username ?? houseUser.email ?? houseUser.id.slice(0, 8)}
-            </Badge>
-            <CreateAdCodeButton />
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={Megaphone}
+          title="Ads"
+          subtitle={
+            <>
+              Campaign tracking codes. Clicks, signups and deposits roll up
+              through the{" "}
+              <Link
+                href={`/users/${houseUser.id}`}
+                className="font-medium text-foreground hover:underline"
+              >
+                {houseUser.username ?? houseUser.email ?? "house user"}
+              </Link>{" "}
+              account.
+            </>
+          }
+          action={
+            <>
+              <Badge
+                variant="outline"
+                className="bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30"
+              >
+                House: {houseUser.username ?? houseUser.email ?? houseUser.id.slice(0, 8)}
+              </Badge>
+              <CreateAdCodeButton />
+            </>
+          }
+        />
       </PageHero>
 
       {/* Aggregate KPI strip */}

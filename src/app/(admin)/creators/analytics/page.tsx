@@ -13,7 +13,7 @@ import { getAffiliateAnalytics } from "@/lib/queries/creators";
 import { StatCard } from "../../dashboard/stat-card";
 import { PeriodFilter } from "./period-filter";
 import { CreatorAnalyticsCharts } from "./charts";
-import { PageHero } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Creator Analytics" };
@@ -37,22 +37,12 @@ export default async function CreatorAnalyticsPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-              <BarChart3 className="size-5 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold leading-tight">
-                Creator Analytics
-              </h1>
-              <p className="text-sm text-muted-foreground">
-                Affiliate performance — signups, commission, wagers, clicks.
-              </p>
-            </div>
-          </div>
-          <PeriodFilter />
-        </div>
+        <PageHeroIdentity
+          icon={BarChart3}
+          title="Creator Analytics"
+          subtitle="Affiliate performance — signups, commission, wagers, clicks."
+          action={<PeriodFilter />}
+        />
       </PageHero>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
