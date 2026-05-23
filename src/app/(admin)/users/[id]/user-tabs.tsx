@@ -4,7 +4,6 @@ import { UserViewModern } from "./user-view-modern";
 import type {
   UserDetail,
   PaginatedTransactions,
-  PaginatedAuditLog,
   PaginatedInventory,
   PnlBreakdown,
   AdminNote,
@@ -45,8 +44,6 @@ export { ModerationSection } from "./user-tabs-moderation";
 
 export function UserTabs({
   data,
-  transactions,
-  auditLog,
   inventory,
   disposedInventory,
   pnlBreakdown,
@@ -59,8 +56,6 @@ export function UserTabs({
   sharedFingerprints,
 }: {
   data: UserDetail;
-  transactions: PaginatedTransactions;
-  auditLog: PaginatedAuditLog;
   inventory: PaginatedInventory;
   disposedInventory: PaginatedInventory;
   pnlBreakdown: PnlBreakdown;
@@ -75,8 +70,6 @@ export function UserTabs({
   // Classic view was removed — UserTabs now always renders the modern
   // user detail page. The wrapper is kept for backwards-compatible call
   // sites (page.tsx) and type stability.
-  void transactions;
-  void auditLog;
   return (
     <UserViewModern
       data={data}
