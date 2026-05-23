@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Trash2 } from "lucide-react";
+import { Trash2, Users, ChevronRight } from "lucide-react";
 import {
   flexRender,
   getCoreRowModel,
@@ -33,6 +33,7 @@ import {
 import { columns, type UserRow } from "./columns";
 import { UsersSortProvider } from "./sort-context";
 import { bulkDeleteUsers } from "./actions";
+import { EmptyState } from "@/components/empty-state";
 import { ROLE_COLORS, USER_STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
@@ -209,8 +210,8 @@ function UserMobileCard({
   return (
     <div
       className={cn(
-        "flex items-center gap-3 border-b border-border/60 px-3 py-3 last:border-b-0 transition-colors",
-        selected && "bg-accent/30",
+        "flex items-center gap-3 border-b border-border/60 px-3 py-2.5 last:border-b-0 transition-colors",
+        selected ? "bg-accent/30" : "active:bg-accent/20",
       )}
     >
       {/* Negative-margin padding wrapper enlarges the thumb hit-area
@@ -229,7 +230,7 @@ function UserMobileCard({
       <button
         type="button"
         onClick={onNavigate}
-        className="flex flex-1 items-center gap-3 text-left min-w-0"
+        className="flex min-h-[40px] flex-1 items-center gap-3 text-left min-w-0"
       >
         <Avatar className="size-9 shrink-0">
           {row.image && <AvatarImage src={row.image} alt="" />}
@@ -282,6 +283,7 @@ function UserMobileCard({
             {formatCurrency(row.pnl)} P&L
           </div>
         </div>
+        <ChevronRight className="size-4 shrink-0 text-muted-foreground/50" />
       </button>
     </div>
   );
@@ -335,11 +337,16 @@ function Inner({ rows }: { rows: UserRow[] }) {
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
         {rows.length === 0 ? (
-          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
-            No users found.
+          <div className="rounded-xl border">
+            <EmptyState
+              icon={Users}
+              title="No users found"
+              description="Try adjusting your search or filters."
+              compact
+            />
           </div>
         ) : (
-          <div className="overflow-hidden rounded-md border">
+          <div className="overflow-hidden rounded-xl border">
             <div className="flex items-center gap-3 border-b bg-muted/30 px-3 py-2">
               <Checkbox
                 checked={allOnPageSelected}
@@ -365,7 +372,7 @@ function Inner({ rows }: { rows: UserRow[] }) {
 
       {/* Desktop table (>=lg) */}
       <div className="hidden lg:block">
-        <div className="rounded-md border overflow-x-auto">
+        <div className="rounded-xl border overflow-x-auto">
           <Table>
             <TableHeader>
               {table.getHeaderGroups().map((hg) => (
@@ -422,12 +429,14 @@ function Inner({ rows }: { rows: UserRow[] }) {
                   </TableRow>
                 ))
               ) : (
-                <TableRow>
-                  <TableCell
-                    colSpan={columns.length + 1}
-                    className="h-24 text-center"
-                  >
-                    No users found.
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={columns.length + 1} className="p-0">
+                    <EmptyState
+                      icon={Users}
+                      title="No users found"
+                      description="Try adjusting your search or filters."
+                      compact
+                    />
                   </TableCell>
                 </TableRow>
               )}
