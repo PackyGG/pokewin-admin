@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatDate, formatNumber } from "@/lib/utils/format";
+import { EmptyState } from "@/components/empty-state";
 import type {
   CreatorListItem,
   CreatorDealStatus,
@@ -170,8 +171,12 @@ export function CreatorCardGrid({
 }) {
   if (creators.length === 0) {
     return (
-      <div className="flex h-32 items-center justify-center rounded-xl border bg-muted/20 text-sm text-muted-foreground">
-        No creators found.
+      <div className="rounded-xl border bg-muted/20">
+        <EmptyState
+          icon={Crown}
+          title="No creators found"
+          description="No creators match the current search or tab. Try a different search term or switch the deal program."
+        />
       </div>
     );
   }

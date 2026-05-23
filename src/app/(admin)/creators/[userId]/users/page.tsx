@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/table";
 import { PageHero, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { EmptyState } from "@/components/empty-state";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 
 import { CodeActivityNav } from "../_components/code-activity-nav";
@@ -177,14 +178,22 @@ export default async function CreatorUsersPage({
                   </TableRow>
                 )}
                 {!loadFailed && referrals.length === 0 && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={4}
-                      className="h-24 text-center text-muted-foreground"
-                    >
-                      {profile.code
-                        ? "No users on this code yet."
-                        : "Creator has no affiliate code."}
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={4} className="p-0">
+                      <EmptyState
+                        icon={Users}
+                        title={
+                          profile.code
+                            ? "No users on this code yet"
+                            : "Creator has no affiliate code"
+                        }
+                        description={
+                          profile.code
+                            ? "Users who sign up, deposit, or wager on this code will appear here."
+                            : "Once this creator owns an affiliate code, their referred users show up here."
+                        }
+                        compact
+                      />
                     </TableCell>
                   </TableRow>
                 )}
