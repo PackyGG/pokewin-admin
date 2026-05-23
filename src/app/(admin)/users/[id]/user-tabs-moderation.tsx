@@ -3,7 +3,7 @@
 import React, { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Archive, Ban, ShieldAlert, ShieldOff, Lock, Unlock, Trash2 } from "lucide-react";
+import { Archive, Ban, ShieldAlert, ShieldCheck, ShieldOff, Lock, Unlock, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,6 +36,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
+import { EmptyState } from "@/components/empty-state";
 import type { UserDetail } from "./user-tabs-types";
 import { banUser, unbanUser, lockUser, unlockUser } from "../actions";
 import { moveBalanceToVault } from "./actions";
@@ -226,7 +227,12 @@ export const ModerationSection = React.memo(function ModerationSection({
       )}
 
       {mutes.length === 0 && !user.isBanned && !user.isLocked && (
-        <p className="text-sm text-muted-foreground">No moderation history</p>
+        <EmptyState
+          icon={ShieldCheck}
+          title="No moderation history"
+          description="This user has never been banned, locked, or muted."
+          compact
+        />
       )}
     </div>
   );

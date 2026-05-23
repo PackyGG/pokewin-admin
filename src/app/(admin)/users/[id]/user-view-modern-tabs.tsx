@@ -49,6 +49,7 @@ import {
   Percent,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState } from "@/components/empty-state";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import {
@@ -757,8 +758,13 @@ function WageringStatsCard({
   if (!balances) {
     return (
       <Card>
-        <CardContent className="py-12 text-center text-sm text-muted-foreground">
-          No wagering data yet.
+        <CardContent className="p-0">
+          <EmptyState
+            icon={Dices}
+            title="No wagering data yet"
+            description="Wager totals appear once this user places their first bet."
+            compact
+          />
         </CardContent>
       </Card>
     );
@@ -829,8 +835,13 @@ function RecentActivityTimeline({
   if (merged.length === 0) {
     return (
       <Card>
-        <CardContent className="py-12 text-center text-sm text-muted-foreground">
-          No recent activity.
+        <CardContent className="p-0">
+          <EmptyState
+            icon={Activity}
+            title="No recent activity"
+            description="Gaming and financial events will show up here."
+            compact
+          />
         </CardContent>
       </Card>
     );

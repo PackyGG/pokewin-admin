@@ -3,7 +3,7 @@
 import React, { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Loader2, Trash2 } from "lucide-react";
+import { FileText, Loader2, LineChart, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ import {
   formatDateTime,
   formatRelative,
 } from "@/lib/utils/format";
+import { EmptyState } from "@/components/empty-state";
 import { toggleFeatureLock } from "./actions";
 import { createNote, deleteNote } from "./note-actions";
 import type { UserRewards } from "@/lib/queries/users";
@@ -738,9 +739,12 @@ export const BalanceHistoryChart = React.memo(function BalanceHistoryChart({
           <CardTitle className="text-sm font-medium">Balance History</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-muted-foreground text-center py-8">
-            No transaction history
-          </p>
+          <EmptyState
+            icon={LineChart}
+            title="No transaction history"
+            description="Balance changes will chart here once this user transacts."
+            compact
+          />
         </CardContent>
       </Card>
     );
@@ -931,7 +935,12 @@ export const NotesSection = React.memo(function NotesSection({
         )}
 
         {notes.length === 0 && (
-          <p className="text-sm text-muted-foreground">No notes yet</p>
+          <EmptyState
+            icon={FileText}
+            title="No notes yet"
+            description="Use the box above to leave the first note on this user."
+            compact
+          />
         )}
       </CardContent>
     </Card>
