@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import {
-  ArrowLeft,
   Trophy,
   Swords,
   Package,
@@ -18,7 +17,12 @@ import { Badge } from "@/components/ui/badge";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { CardImage } from "@/components/card-image";
 import { CancelBattleButton } from "./cancel-button";
-import { PageHero, SectionHeading, KpiTile } from "@/components/modern-panels";
+import {
+  PageHero,
+  PageHeroIdentity,
+  SectionHeading,
+  KpiTile,
+} from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Battle Detail" };
@@ -72,28 +76,22 @@ export default async function BattleDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-start gap-3 sm:gap-4 flex-wrap">
-          <Link
-            href="/battles"
-            className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground shrink-0"
-          >
-            <ArrowLeft className="size-4" />
-          </Link>
-          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 shrink-0">
-            <Swords className="size-5 text-primary" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-xl sm:text-2xl font-bold leading-tight">Battle</h1>
+        <PageHeroIdentity
+          icon={Swords}
+          backHref="/battles"
+          title="Battle"
+          badges={
+            <>
               <Badge variant="outline" className={BATTLE_STATUS_COLORS[data.status] ?? ""}>
                 {data.status.replace(/_/g, " ")}
               </Badge>
               <Badge variant="outline">{data.mode}</Badge>
-            </div>
-            <p className="font-mono text-xs text-muted-foreground truncate">{data.id}</p>
-          </div>
-          {data.status === "waiting" && <CancelBattleButton battleId={data.id} />}
-        </div>
+            </>
+          }
+          subtitle={data.id}
+          subtitleClassName="font-mono truncate"
+          action={data.status === "waiting" ? <CancelBattleButton battleId={data.id} /> : undefined}
+        />
       </PageHero>
 
       {/* KPI strip - completed battles only */}

@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, ArrowUpFromLine, Package, Ticket, Layers } from "lucide-react";
+import { ArrowUpFromLine, Package, Ticket, Layers } from "lucide-react";
 import { getWithdrawalDetail } from "@/lib/queries/withdrawals";
 import { requirePageAccess } from "@/lib/dal";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +12,7 @@ import { CardImage } from "@/components/card-image";
 import { CopyableAddress } from "./copyable-address";
 import {
   PageHero,
+  PageHeroIdentity,
   SectionHeading,
   KpiTile,
 } from "@/components/modern-panels";
@@ -60,32 +61,28 @@ export default async function WithdrawalDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-start gap-3 sm:gap-4 flex-wrap">
-          <Link
-            href="/withdrawals"
-            className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground shrink-0"
-          >
-            <ArrowLeft className="size-4" />
-          </Link>
-          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 shrink-0">
-            <ArrowUpFromLine className="size-5 text-primary" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-xl sm:text-2xl font-bold leading-tight">Withdrawal</h1>
+        <PageHeroIdentity
+          icon={ArrowUpFromLine}
+          backHref="/withdrawals"
+          title="Withdrawal"
+          badges={
+            <>
               <Badge variant="outline" className={STATUS_COLORS[data.status]}>{data.status}</Badge>
               <Badge variant="outline">{data.method}</Badge>
+            </>
+          }
+          subtitle={data.id}
+          subtitleClassName="font-mono truncate"
+          action={
+            <div className="w-full sm:w-auto">
+              <WithdrawalActionButtons
+                withdrawalId={data.id}
+                status={data.status}
+                method={data.method}
+              />
             </div>
-            <p className="font-mono text-xs text-muted-foreground mt-0.5 truncate">{data.id}</p>
-          </div>
-          <div className="w-full sm:w-auto">
-            <WithdrawalActionButtons
-              withdrawalId={data.id}
-              status={data.status}
-              method={data.method}
-            />
-          </div>
-        </div>
+          }
+        />
         <div className="mt-4 sm:mt-6 -mx-3 sm:-mx-0 px-3 sm:px-0 flex justify-start sm:justify-center overflow-x-auto">
           <StatusTimeline steps={timelineSteps} />
         </div>
