@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { ScrollText } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDateTime, formatRelative } from "@/lib/utils/format";
+import { EmptyState } from "@/components/empty-state";
 import type { AdminUserDetail, AdminAuditStats } from "@/lib/queries/admin-users";
 
 /* ── Profile Card ── */
@@ -102,7 +104,7 @@ export function StatsCards({ auditStats }: { auditStats: AdminAuditStats }) {
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
           {topTypes.length === 0 && (
-            <p className="text-muted-foreground">No events yet</p>
+            <EmptyState icon={ScrollText} title="No events yet" compact />
           )}
           {topTypes.map((e) => (
             <div key={e.eventType} className="flex justify-between">
