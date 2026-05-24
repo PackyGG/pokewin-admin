@@ -225,6 +225,12 @@ export type Transaction = {
   borrowPercentage: number | null;
   /** USD the house fronted on this row (bet × borrow%). */
   borrowedAmountUsd: number | null;
+  /**
+   * Battle id for battle rows (battle_bet / battle_sponsorship /
+   * battle_refund) — powers the "watch live" link to
+   * packy.gg/battle/<id>. Null on non-battle rows.
+   */
+  battleId: string | null;
 };
 
 export type PaginatedTransactions = {
