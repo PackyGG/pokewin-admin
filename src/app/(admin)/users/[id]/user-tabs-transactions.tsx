@@ -256,6 +256,7 @@ export const CategoryTransactionsTable = React.memo(
             <TableHeader>
               <TableRow>
                 <TableHead>ID</TableHead>
+                {showCardsValue && <TableHead>Battle</TableHead>}
                 <TableHead>Type</TableHead>
                 <TableHead>Amount</TableHead>
                 {showCardsValue && <TableHead>Won Value</TableHead>}
@@ -279,6 +280,25 @@ export const CategoryTransactionsTable = React.memo(
                       {t.id.slice(0, 8)}...
                     </button>
                   </TableCell>
+                  {/* Dedicated "watch live" button — gaming tab, battle_bet
+                      only. Opens packy.gg/games/battles/<id> in a new tab.
+                      Empty cell on other gaming rows keeps the column aligned. */}
+                  {showCardsValue && (
+                    <TableCell>
+                      {t.type === "battle_bet" && t.battleId ? (
+                        <a
+                          href={battleUrl(t.battleId)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="Open the live battle on packy.gg"
+                          className="inline-flex h-7 items-center gap-1 rounded-md border border-blue-500/30 bg-blue-500/10 px-2 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-500/20 dark:text-blue-400"
+                        >
+                          <ExternalLink className="size-3 shrink-0" />
+                          Watch
+                        </a>
+                      ) : null}
+                    </TableCell>
+                  )}
                   <TableCell>
                     <div className="flex flex-col items-start gap-0.5">
                       <Badge variant="outline" className="font-mono text-xs">
@@ -314,12 +334,16 @@ export const CategoryTransactionsTable = React.memo(
                       const isBattle =
                         t.type === "battle_bet" ||
                         t.type === "battle_sponsorship";
-                      // For battles, only trust the result once the session
-                      // has a win/lose outcome. Until then, provably_fair_results
-                      // are still being inserted one-round-at-a-time and any
-                      // cardsValue we compute is a moving target. Show
-                      // "Pending" so admins don't see a fake P&L.
-                      const isBattlePending = isBattle && t.gameResult === null;
+                      // For battles, only trust the won-value / House P&L
+                      // once the battle is FULLY resolved (cards finished
+                      // distributing — t.battleResolved). Before that the
+                      // provably_fair_results are still inserted one round
+                      // at a time, so cardsValue is a moving target and the
+                      // House P&L reads BACKWARDS (looks like a house win
+                      // while the user is actually winning). Also guards the
+                      // brief window before the session result is written.
+                      const isBattlePending =
+                        isBattle && (t.gameResult === null || !t.battleResolved);
                       if (isBattlePending) {
                         return (
                           <TableCell
@@ -389,17 +413,6 @@ export const CategoryTransactionsTable = React.memo(
                       >
                         {t.packName}
                       </Link>
-                    ) : t.battleId ? (
-                      <a
-                        href={battleUrl(t.battleId)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-blue-400 hover:underline"
-                        title="Open the live battle on packy.gg"
-                      >
-                        Watch battle
-                        <ExternalLink className="size-3 shrink-0" />
-                      </a>
                     ) : t.soldCard ? (
                       <span className="truncate block">
                         Sold: {t.soldCard.name}
@@ -416,7 +429,7 @@ export const CategoryTransactionsTable = React.memo(
               {txData.data.length === 0 && (
                 <TableRow className="hover:bg-transparent">
                   <TableCell
-                    colSpan={showCardsValue ? 11 : 9}
+                    colSpan={showCardsValue ? 12 : 9}
                     className="p-0"
                   >
                     <EmptyState
