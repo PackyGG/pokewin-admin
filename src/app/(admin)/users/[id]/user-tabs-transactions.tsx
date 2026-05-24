@@ -334,20 +334,45 @@ export const CategoryTransactionsTable = React.memo(
                       const isBattle =
                         t.type === "battle_bet" ||
                         t.type === "battle_sponsorship";
-                      // For battles, only trust the won-value / House P&L
-                      // once the session has a win/lose outcome (gameResult
-                      // set). Until then cardsValue is a moving target. Once
-                      // gameResult is written the result + card values are
-                      // final, so show it immediately (matching the battle
-                      // detail) instead of waiting on animation.
-                      const isBattlePending = isBattle && t.gameResult === null;
-                      if (isBattlePending) {
+                      if (isBattle) {
+                        // Battles: show the win/lose OUTCOME from the session
+                        // result (gameResult) — the reliable source of truth
+                        // (same value the battle detail shows). We do NOT
+                        // derive a $ House P&L on this row: the bet (this row)
+                        // and the winnings (a separate battle_refund row / the
+                        // won pot) live apart, so cardsValue here is only this
+                        // player's own pulls (~$0) and made a WIN read as a
+                        // house win. House-POV colors: player win = house loss
+                        // = rose; player loss = house win = emerald.
+                        if (t.gameResult === null) {
+                          return (
+                            <TableCell
+                              colSpan={2}
+                              className="text-xs italic text-muted-foreground"
+                            >
+                              Pending — battle still resolving
+                            </TableCell>
+                          );
+                        }
+                        const playerWon = t.gameResult === "win";
+                        const isDraw = t.gameResult === "draw";
                         return (
                           <TableCell
                             colSpan={2}
-                            className="text-xs italic text-muted-foreground"
+                            className={
+                              "text-sm font-medium " +
+                              (isDraw
+                                ? "text-muted-foreground"
+                                : playerWon
+                                  ? "text-rose-600 dark:text-rose-400"
+                                  : "text-emerald-600 dark:text-emerald-400")
+                            }
                           >
-                            Pending — battle still resolving
+                            {isDraw
+                              ? "Draw"
+                              : playerWon
+                                ? "Player won"
+                                : "Player lost"}
                           </TableCell>
                         );
                       }
