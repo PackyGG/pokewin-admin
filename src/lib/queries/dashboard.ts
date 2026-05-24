@@ -347,14 +347,10 @@ async function dashboardStatsInner() {
   // round-trip. Compounded with the 15s→60s AutoRefresh cadence change,
   // dashboard polling load drops by roughly 8×.
   const [
-    totalUsers,
-    usersToday,
-    usersWeek,
-    usersMonth,
+    userCounts,
     balanceAggregates,
     packStats,
-    dailyWagers,
-    dailyDeposits,
+    dailyChart,
     dailySignups,
     periodAggregates,
     activityTotals,
@@ -368,13 +364,19 @@ async function dashboardStatsInner() {
     ftdResult,
     pendingWithdrawalsResult,
   ] = await Promise.all([
-    // STAFF_ROLES (admin + support) excluded from every user count so the
-    // KPI strip reads only real customers — matches staffRelation
-    // used by every aggregate below.
-    db.user.count({ where: { ...staffRoleDirect } }),
-    db.user.count({ where: { ...staffRoleDirect, created_at: { gte: startOfDay } } }),
-    db.user.count({ where: { ...staffRoleDirect, created_at: { gte: startOfWeek } } }),
-    db.user.count({ where: { ...staffRoleDirect, created_at: { gte: startOfMonth } } }),
+    // All four user counts (total + new today/week/month) in ONE scan of
+    // the user table via COUNT(*) FILTER, instead of four separate
+    // round-trips. STAFF_ROLES (admin + support) + blacklist excluded so
+    // the KPI strip reads only real customers — matches staffRelation.
+    db.$queryRaw<{ total: string; today: string; week: string; month: string }[]>`
+      SELECT
+        COUNT(*)::text AS total,
+        COUNT(*) FILTER (WHERE created_at >= ${startOfDay})::text AS today,
+        COUNT(*) FILTER (WHERE created_at >= ${startOfWeek})::text AS week,
+        COUNT(*) FILTER (WHERE created_at >= ${startOfMonth})::text AS month
+      FROM "user"
+      WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+    `,
     // Single balances aggregate — `available_balance` is folded in with
     // the lifetime _sums so the dashboard pays one round-trip, not two.
     // The `Users Total Balance` tile + lifetime financial KPIs all draw
@@ -397,24 +399,18 @@ async function dashboardStatsInner() {
       },
       _avg: { actual_house_edge: true },
     }),
-    // Wagers last 30 days — split by packs vs battles for stacked bar chart
-    db.$queryRaw<{ date: Date; packs: string; battles: string }[]>`
+    // Daily wager + deposit series for the last 30 days in ONE ledger
+    // scan (was two separate 30-day scans). packs/battles feed the stacked
+    // wager bar chart; deposits feeds the deposits line. Split apart in JS
+    // below. Pure deposits only (deposit_bonus excluded by the type list).
+    db.$queryRaw<{ date: Date; packs: string; battles: string; deposits: string }[]>`
       SELECT
         DATE(created_at) as date,
         COALESCE(SUM(CASE WHEN type = 'pack_opening' THEN ABS(amount::numeric) ELSE 0 END), 0)::text as packs,
-        COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') THEN ABS(amount::numeric) ELSE 0 END), 0)::text as battles
+        COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') THEN ABS(amount::numeric) ELSE 0 END), 0)::text as battles,
+        COALESCE(SUM(CASE WHEN type = 'deposit' THEN amount::numeric ELSE 0 END), 0)::text as deposits
       FROM ledger_transactions
-      WHERE type IN ('pack_opening','battle_bet','battle_sponsorship') AND status = 'completed'
-        AND created_at >= NOW() - INTERVAL '30 days'
-        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)})
-      GROUP BY DATE(created_at)
-      ORDER BY date
-    `,
-    // Deposits last 30 days — pure deposits (excludes deposit_bonus)
-    db.$queryRaw<{ date: Date; amount: string }[]>`
-      SELECT DATE(created_at) as date, COALESCE(SUM(amount::numeric), 0)::text as amount
-      FROM ledger_transactions
-      WHERE type = 'deposit' AND status = 'completed'
+      WHERE type IN ('pack_opening','battle_bet','battle_sponsorship','deposit') AND status = 'completed'
         AND created_at >= NOW() - INTERVAL '30 days'
         AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)})
       GROUP BY DATE(created_at)
@@ -587,10 +583,10 @@ async function dashboardStatsInner() {
 
   return {
     users: {
-      total: totalUsers,
-      today: usersToday,
-      week: usersWeek,
-      month: usersMonth,
+      total: Number(userCounts[0]?.total ?? 0),
+      today: Number(userCounts[0]?.today ?? 0),
+      week: Number(userCounts[0]?.week ?? 0),
+      month: Number(userCounts[0]?.month ?? 0),
     },
     // Gaming margin (wagers − payouts) per period. Pure GGR, no liability
     // adjustment. Use realizedPnl for the balance-sheet-true number.
@@ -742,14 +738,14 @@ async function dashboardStatsInner() {
       pendingWithdrawalsCount,
       pendingWithdrawalsValue,
     },
-    dailyWagers: dailyWagers.map((d) => ({
+    dailyWagers: dailyChart.map((d) => ({
       date: new Date(d.date).toISOString().split("T")[0],
       packs: Number(d.packs),
       battles: Number(d.battles),
     })),
-    dailyDeposits: dailyDeposits.map((d) => ({
+    dailyDeposits: dailyChart.map((d) => ({
       date: new Date(d.date).toISOString().split("T")[0],
-      amount: Math.abs(Number(d.amount)),
+      amount: Math.abs(Number(d.deposits)),
     })),
     dailySignups: dailySignups.map((d) => ({
       date: new Date(d.date).toISOString().split("T")[0],
