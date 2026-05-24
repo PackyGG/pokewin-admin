@@ -13,6 +13,7 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
+import { ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
@@ -29,6 +30,7 @@ import {
   ledgerDirection,
 } from "@/lib/utils/ledger-direction";
 import { getGameSessionDetails } from "./actions";
+import { battleUrl } from "@/lib/utils/main-site";
 import type { Transaction, GameSessionDetails } from "./user-tabs-types";
 
 const RARITY_COLORS: Record<string, string> = {
@@ -173,6 +175,23 @@ export function TransactionDetailModal({
       label: "Game Session ID",
       value: (
         <span className="font-mono text-xs break-all">{t.gameSessionId}</span>
+      ),
+    });
+  }
+  if (t.battleId) {
+    rows.push({
+      label: "Battle",
+      value: (
+        <a
+          href={battleUrl(t.battleId)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 font-mono text-xs text-blue-400 break-all hover:underline"
+          title="Open the live battle on packy.gg"
+        >
+          {t.battleId}
+          <ExternalLink className="size-3 shrink-0" />
+        </a>
       ),
     });
   }
