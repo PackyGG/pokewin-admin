@@ -335,15 +335,12 @@ export const CategoryTransactionsTable = React.memo(
                         t.type === "battle_bet" ||
                         t.type === "battle_sponsorship";
                       // For battles, only trust the won-value / House P&L
-                      // once the battle is FULLY resolved (cards finished
-                      // distributing — t.battleResolved). Before that the
-                      // provably_fair_results are still inserted one round
-                      // at a time, so cardsValue is a moving target and the
-                      // House P&L reads BACKWARDS (looks like a house win
-                      // while the user is actually winning). Also guards the
-                      // brief window before the session result is written.
-                      const isBattlePending =
-                        isBattle && (t.gameResult === null || !t.battleResolved);
+                      // once the session has a win/lose outcome (gameResult
+                      // set). Until then cardsValue is a moving target. Once
+                      // gameResult is written the result + card values are
+                      // final, so show it immediately (matching the battle
+                      // detail) instead of waiting on animation.
+                      const isBattlePending = isBattle && t.gameResult === null;
                       if (isBattlePending) {
                         return (
                           <TableCell

@@ -101,6 +101,21 @@ export function TransactionDetailModal({
         );
       })(),
     },
+    // Worth = cash balance + held inventory (cards + vouchers) at that
+    // point, so a battle/pack that trades cash for items reads as the true
+    // total-worth change instead of looking like a pure cash loss.
+    // inventoryValue is the held value AT the tx (after won items land);
+    // the "before" inventory removes the items this tx won (cardsValue).
+    {
+      label: "Worth Before",
+      value: formatCurrency(
+        t.balanceBefore + Math.max(0, t.inventoryValue - (t.cardsValue ?? 0)),
+      ),
+    },
+    {
+      label: "Worth After",
+      value: formatCurrency(t.balanceAfter + t.inventoryValue),
+    },
     { label: "Balance Before", value: formatCurrency(t.balanceBefore) },
     { label: "Balance After", value: formatCurrency(t.balanceAfter) },
     { label: "Inventory Value", value: formatCurrency(t.inventoryValue) },

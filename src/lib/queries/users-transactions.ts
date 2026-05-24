@@ -53,21 +53,8 @@ export async function getUserTransactions(
             bet_amount: true,
             // One-to-one link to the battle (game_session →
             // battle_participants → battles). battle_id is the
-            // authoritative id for the "watch live" link; the battle's
-            // completion markers drive the "fully resolved" gate so the
-            // gaming tab doesn't show a premature/backwards House P&L
-            // while cards are still being distributed.
-            battle_participants: {
-              select: {
-                battle_id: true,
-                battles: {
-                  select: {
-                    animation_complete_at: true,
-                    total_unpacked: true,
-                  },
-                },
-              },
-            },
+            // authoritative id for the "watch live" link.
+            battle_participants: { select: { battle_id: true } },
             provably_fair_results: {
               // result_metadata + battle_id are needed for the borrow
               // badge — solo opens carry the % in metadata, battle
@@ -354,19 +341,6 @@ export async function getUserTransactions(
         (typeof meta?.battle_id === "string" ? (meta.battle_id as string) : null) ??
         null;
 
-      // A battle row's won-value (and House P&L) is only trustworthy once
-      // the battle has finished distributing cards. Treat it as resolved
-      // when animation_complete_at OR total_unpacked is set; before that
-      // provably_fair_results are still being inserted round-by-round so
-      // cardsValue is a moving target and the P&L reads backwards.
-      // Non-battle rows are always "resolved".
-      const bp = gs?.battle_participants;
-      const battleResolved =
-        bp == null
-          ? true
-          : bp.battles?.animation_complete_at != null ||
-            bp.battles?.total_unpacked != null;
-
       return {
         id: t.id,
         type: t.type,
@@ -402,7 +376,6 @@ export async function getUserTransactions(
         borrowPercentage,
         borrowedAmountUsd,
         battleId,
-        battleResolved,
       };
     }),
     total,
