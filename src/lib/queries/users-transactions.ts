@@ -51,6 +51,12 @@ export async function getUserTransactions(
             game_type: true,
             result: true,
             bet_amount: true,
+            // One-to-one link to the battle (game_session →
+            // battle_participants → battles). This is the authoritative
+            // battle id for the "watch live" link — the PF result /
+            // ledger metadata are NOT reliably the battles row id on a
+            // battle_bet's session.
+            battle_participants: { select: { battle_id: true } },
             provably_fair_results: {
               // result_metadata + battle_id are needed for the borrow
               // badge — solo opens carry the % in metadata, battle
@@ -326,11 +332,13 @@ export async function getUserTransactions(
       }
 
       // Battle id for the "watch live" link (packy.gg/games/battles/<id>).
-      // This is the `battles` row id — NOT the game_session_id. The most
-      // authoritative source is the linked PF result's battle_id (a hard
-      // FK to `battles`); fall back to the ledger metadata's battle_id.
-      // Null on non-battle rows.
+      // This is the `battles` row id — NOT the game_session_id. Source of
+      // truth: the session's one-to-one battle_participants.battle_id (FK
+      // chain game_session → battle_participants → battles). PF result +
+      // ledger metadata are best-effort fallbacks only. Null on non-battle
+      // rows (battle_participants is null for solo/pack sessions).
       const battleId =
+        gs?.battle_participants?.battle_id ??
         gs?.provably_fair_results[0]?.battle_id ??
         (typeof meta?.battle_id === "string" ? (meta.battle_id as string) : null) ??
         null;
