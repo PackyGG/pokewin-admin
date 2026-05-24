@@ -325,6 +325,14 @@ export async function getUserTransactions(
         }
       }
 
+      // Battle id for the "watch live" link (packy.gg/battle/<id>). Battle
+      // ledger rows carry it in metadata; fall back to the linked PF
+      // result's battle_id. Null on non-battle rows.
+      const battleId =
+        (typeof meta?.battle_id === "string" ? (meta.battle_id as string) : null) ??
+        gs?.provably_fair_results[0]?.battle_id ??
+        null;
+
       return {
         id: t.id,
         type: t.type,
@@ -359,6 +367,7 @@ export async function getUserTransactions(
         updatedAt: t.updated_at.toISOString(),
         borrowPercentage,
         borrowedAmountUsd,
+        battleId,
       };
     }),
     total,

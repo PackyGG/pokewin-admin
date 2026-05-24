@@ -8,6 +8,7 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  ExternalLink,
   Loader2,
   Receipt,
   X,
@@ -44,6 +45,7 @@ import {
 } from "@/lib/utils/ledger-direction";
 import { BorrowBadge } from "@/components/borrow-badge";
 import { EmptyState } from "@/components/empty-state";
+import { battleUrl } from "@/lib/utils/main-site";
 import { fetchUserTransactions } from "./actions";
 import type {
   Transaction,
@@ -387,6 +389,17 @@ export const CategoryTransactionsTable = React.memo(
                       >
                         {t.packName}
                       </Link>
+                    ) : t.battleId ? (
+                      <a
+                        href={battleUrl(t.battleId)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-blue-400 hover:underline"
+                        title="Open the live battle on packy.gg"
+                      >
+                        Watch battle
+                        <ExternalLink className="size-3 shrink-0" />
+                      </a>
                     ) : t.soldCard ? (
                       <span className="truncate block">
                         Sold: {t.soldCard.name}
