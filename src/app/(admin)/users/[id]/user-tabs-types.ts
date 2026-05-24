@@ -231,6 +231,13 @@ export type Transaction = {
    * packy.gg/battle/<id>. Null on non-battle rows.
    */
   battleId: string | null;
+  /**
+   * True once a battle row is fully resolved (cards distributed) — gates
+   * the won-value / House P&L so the gaming tab never shows a premature,
+   * backwards result while the battle is still unpacking. Always true for
+   * non-battle rows.
+   */
+  battleResolved: boolean;
 };
 
 export type PaginatedTransactions = {
