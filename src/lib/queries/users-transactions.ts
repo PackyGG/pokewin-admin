@@ -325,12 +325,14 @@ export async function getUserTransactions(
         }
       }
 
-      // Battle id for the "watch live" link (packy.gg/battle/<id>). Battle
-      // ledger rows carry it in metadata; fall back to the linked PF
-      // result's battle_id. Null on non-battle rows.
+      // Battle id for the "watch live" link (packy.gg/games/battles/<id>).
+      // This is the `battles` row id — NOT the game_session_id. The most
+      // authoritative source is the linked PF result's battle_id (a hard
+      // FK to `battles`); fall back to the ledger metadata's battle_id.
+      // Null on non-battle rows.
       const battleId =
-        (typeof meta?.battle_id === "string" ? (meta.battle_id as string) : null) ??
         gs?.provably_fair_results[0]?.battle_id ??
+        (typeof meta?.battle_id === "string" ? (meta.battle_id as string) : null) ??
         null;
 
       return {

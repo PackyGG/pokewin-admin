@@ -11,7 +11,7 @@ export function mainSiteBase(): string {
   return (raw && raw.length > 0 ? raw : "https://packy.gg").replace(/\/+$/, "");
 }
 
-/** Live battle page on the public site: `<base>/battle/<id>`. */
+/** Live battle page on the public site: `<base>/games/battles/<id>`. */
 export function battleUrl(battleId: string): string {
-  return `${mainSiteBase()}/battle/${battleId}`;
+  return `${mainSiteBase()}/games/battles/${battleId}`;
 }
