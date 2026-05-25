@@ -24,7 +24,7 @@ import {
   WithdrawalsStatCard,
 } from "./revenue-stat-card";
 import { AutoRefresh } from "./auto-refresh";
-import { WagerChart, DepositsChart, SignupsChart } from "./charts";
+import { WagerChart, DepositsChart, SignupsChart, FtdsChart } from "./charts";
 import {
   RecentActivity,
   RecentActivityLivePulse,
@@ -120,7 +120,7 @@ export default async function DashboardPage() {
           row stays balanced before we have room for the third. */}
       <div className="space-y-3">
         <SectionHeading icon={LineChart} title="Trends" />
-        <Suspense fallback={<ChartRowSkeleton count={3} height={300} />}>
+        <Suspense fallback={<ChartRowSkeleton count={4} height={300} />}>
           <DashboardCharts />
         </Suspense>
       </div>
@@ -348,10 +348,11 @@ async function DashboardActiveRain() {
 async function DashboardCharts() {
   const stats = await getDashboardStats();
   return (
-    <FadeIn className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
+    <FadeIn className="grid gap-3 sm:gap-4 md:grid-cols-2 xl:grid-cols-4">
       <WagerChart data={stats.dailyWagers} />
       <DepositsChart data={stats.dailyDeposits} />
       <SignupsChart data={stats.dailySignups} />
+      <FtdsChart data={stats.dailyFtds} />
     </FadeIn>
   );
 }
