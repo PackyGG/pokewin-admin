@@ -388,11 +388,13 @@ export function AppSidebar({
           onClick={handleNavTap}
           className="flex justify-center"
         >
-          {/* Expanded wordmark. Light mode uses the dark-ink PackyGG SVG;
-              dark mode keeps logo.png (the dark-ink mark would vanish on a
-              dark background). Both hide when the sidebar collapses. */}
+          {/* Expanded wordmark. Light mode uses logo-light.png — the exact
+              same artwork as logo.png (identical 390×91 geometry, so sizing
+              and placement match dark mode pixel-for-pixel), just with the
+              wordmark recolored to dark ink so it's visible on a light
+              background. Dark mode keeps logo.png. Both hide when collapsed. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo-light.svg" alt="PackyGG" className="h-6 group-data-[collapsible=icon]:hidden dark:hidden" />
+          <img src="/logo-light.png" alt="PackyGG" className="h-6 group-data-[collapsible=icon]:hidden dark:hidden" />
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo.png" alt="Pokewin" className="h-6 hidden dark:block group-data-[collapsible=icon]:hidden" />
           {/* Collapsed (icon) mode: show the compact favicon-sized mark */}
