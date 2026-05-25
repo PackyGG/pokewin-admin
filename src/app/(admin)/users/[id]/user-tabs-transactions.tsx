@@ -331,19 +331,12 @@ export const CategoryTransactionsTable = React.memo(
                   })()}
                   {showCardsValue &&
                     (() => {
-                      const isBattle =
-                        t.type === "battle_bet" ||
-                        t.type === "battle_sponsorship";
-                      if (isBattle) {
-                        // Battles: show the win/lose OUTCOME from the session
-                        // result (gameResult) — the reliable source of truth
-                        // (same value the battle detail shows). We do NOT
-                        // derive a $ House P&L on this row: the bet (this row)
-                        // and the winnings (a separate battle_refund row / the
-                        // won pot) live apart, so cardsValue here is only this
-                        // player's own pulls (~$0) and made a WIN read as a
-                        // house win. House-POV colors: player win = house loss
-                        // = rose; player loss = house win = emerald.
+                      const isBattleBet = t.type === "battle_bet";
+                      const isBattleSponsor = t.type === "battle_sponsorship";
+                      if (isBattleBet || isBattleSponsor) {
+                        // gameResult is the reliable source of truth (same
+                        // value the battle detail shows). null = still
+                        // resolving.
                         if (t.gameResult === null) {
                           return (
                             <TableCell
@@ -354,26 +347,94 @@ export const CategoryTransactionsTable = React.memo(
                             </TableCell>
                           );
                         }
+                        if (t.gameResult === "draw") {
+                          return (
+                            <TableCell
+                              colSpan={2}
+                              className="text-sm font-medium text-muted-foreground"
+                            >
+                              Draw
+                            </TableCell>
+                          );
+                        }
                         const playerWon = t.gameResult === "win";
-                        const isDraw = t.gameResult === "draw";
-                        return (
-                          <TableCell
-                            colSpan={2}
-                            className={
-                              "text-sm font-medium " +
-                              (isDraw
-                                ? "text-muted-foreground"
-                                : playerWon
+                        // Sponsorship economics differ from a bet (the
+                        // sponsor funds someone else's play), so we don't
+                        // derive a $ P&L for it — keep the truthful outcome
+                        // label. House-POV: player win = house loss = rose;
+                        // player loss = house gain = emerald.
+                        if (isBattleSponsor) {
+                          return (
+                            <TableCell
+                              colSpan={2}
+                              className={
+                                "text-sm font-medium " +
+                                (playerWon
                                   ? "text-rose-600 dark:text-rose-400"
                                   : "text-emerald-600 dark:text-emerald-400")
-                            }
-                          >
-                            {isDraw
-                              ? "Draw"
-                              : playerWon
-                                ? "Player won"
-                                : "Player lost"}
-                          </TableCell>
+                              }
+                            >
+                              {playerWon ? "Player won" : "Player lost"}
+                            </TableCell>
+                          );
+                        }
+                        // ── battle_bet, resolved ───────────────────────
+                        if (!playerWon) {
+                          // LOSS: player won nothing → house keeps the
+                          // full bet. Won Value = $0, House Profit = +bet
+                          // (house gain = emerald).
+                          return (
+                            <>
+                              <TableCell className="tabular-nums text-muted-foreground">
+                                {formatCurrency(0)}
+                              </TableCell>
+                              <TableCell className="tabular-nums">
+                                <span className="text-emerald-600 dark:text-emerald-400">
+                                  +{formatCurrency(t.amount)}
+                                </span>
+                              </TableCell>
+                            </>
+                          );
+                        }
+                        // WIN: winnings are the linked battle_refund payout.
+                        if (t.battleWinnings == null) {
+                          // Refund couldn't be linked — don't fabricate a
+                          // number, show the truthful outcome instead.
+                          return (
+                            <>
+                              <TableCell className="tabular-nums text-muted-foreground">
+                                —
+                              </TableCell>
+                              <TableCell className="text-sm font-medium text-rose-600 dark:text-rose-400">
+                                Player won
+                              </TableCell>
+                            </>
+                          );
+                        }
+                        // House P&L on the battle = bet we took in minus the
+                        // winnings we paid out. Negative = house lost (rose),
+                        // positive = house won (emerald) — already house-POV.
+                        const profit = t.amount - t.battleWinnings;
+                        return (
+                          <>
+                            <TableCell className="tabular-nums text-rose-600 dark:text-rose-400">
+                              {formatCurrency(t.battleWinnings)}
+                            </TableCell>
+                            <TableCell className="tabular-nums">
+                              <span
+                                className={
+                                  profit > 0
+                                    ? "text-emerald-600 dark:text-emerald-400"
+                                    : profit < 0
+                                      ? "text-rose-600 dark:text-rose-400"
+                                      : "text-muted-foreground"
+                                }
+                              >
+                                {profit > 0 ? "+" : ""}
+                                {formatCurrency(profit)}
+                              </span>
+                            </TableCell>
+                          </>
                         );
                       }
                       const cv = t.cardsValue;
@@ -415,7 +476,34 @@ export const CategoryTransactionsTable = React.memo(
                   <TableCell className="text-muted-foreground">
                     {formatCurrency(t.balanceBefore)}
                   </TableCell>
-                  <TableCell>{formatCurrency(t.balanceAfter)}</TableCell>
+                  {(() => {
+                    // The bet row's balance_after only reflects the
+                    // debited bet — the WIN is credited later by a
+                    // separate battle_refund. Show the real post-win
+                    // balance (after-bet + winnings) for won battle bets,
+                    // with a hint + tooltip so it's never misleading.
+                    const winnings =
+                      t.type === "battle_bet" && t.gameResult === "win"
+                        ? t.battleWinnings
+                        : null;
+                    if (winnings != null && winnings > 0) {
+                      return (
+                        <TableCell
+                          title={`Balance after the bet was ${formatCurrency(
+                            t.balanceAfter,
+                          )}; this includes ${formatCurrency(
+                            winnings,
+                          )} battle winnings paid out separately`}
+                        >
+                          {formatCurrency(t.balanceAfter + winnings)}
+                          <span className="ml-1 text-[10px] text-muted-foreground">
+                            incl. win
+                          </span>
+                        </TableCell>
+                      );
+                    }
+                    return <TableCell>{formatCurrency(t.balanceAfter)}</TableCell>;
+                  })()}
                   <TableCell className="text-muted-foreground tabular-nums">
                     {formatCurrency(t.inventoryValue)}
                   </TableCell>
