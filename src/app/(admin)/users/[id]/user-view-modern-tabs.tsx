@@ -288,10 +288,13 @@ export function AffiliateTab({ data }: { data: UserDetail }) {
         </Card>
       )}
 
-      {/* Two visually distinct sections — each manages a DIFFERENT
-          column on the user table:
-            • ReferrerCard ↓ writes user.referred_by  (who referred them in)
-            • OwnCodeCard  → writes user.affiliate_code (what code they own)
+      {/* Two visually distinct sections — each manages DIFFERENT
+          columns on the user table:
+            • ReferrerCard ↓ writes user.referred_by (who referred them
+              in) AND user.affiliate_code/_active (the code they're on
+              right now → where wager affiliate income routes).
+            • OwnCodeCard  → writes the affiliate_codes table (the codes
+              this user OWNS to hand out).
           The labels and panel styling are deliberately different so
           admins can't confuse the two — the previous "Referral Code
           Used" / "Own Affiliate Code" naming was too symmetric. */}
@@ -355,13 +358,17 @@ export function AffiliateTab({ data }: { data: UserDetail }) {
   );
 }
 
-// ── Referrer card — sets user.referred_by via a code lookup ────────
+// ── Referrer card — sets the code this user is on, via a code lookup ─
 //
-// Admins enter a code (someone else's affiliate code), the action
-// looks up the owner and writes user.referred_by = owner.id, plus
-// bumps that owner's affiliate_accounts.total_referred. Exists for
-// the case where a referral signup got dropped and needs to be
-// reattributed manually.
+// Admins enter a code (someone else's affiliate code); the action looks
+// up the owner and writes BOTH:
+//   • user.referred_by = owner.id           (permanent attribution)
+//   • user.affiliate_code = code, _active=true, _expires_at=null
+//     (the ACTIVE code → routes WAGER affiliate income to the owner;
+//      no frontend lock so the user can still change it on the site)
+// and bumps that owner's affiliate_accounts.total_referred. Setting
+// referred_by alone does NOT move wager income — affiliate_code is the
+// live routing field — which is why this card writes both.
 function ReferrerCard({ user }: { user: UserDetail["user"] }) {
   const router = useRouter();
   const [codeInput, setCodeInput] = useState("");
@@ -377,7 +384,9 @@ function ReferrerCard({ user }: { user: UserDetail["user"] }) {
     startTransition(async () => {
       try {
         await assignAffiliateCode(user.id, trimmed);
-        toast.success(`Referrer set via code "${trimmed}"`);
+        toast.success(
+          `Code "${trimmed}" set — wager income now routes to its owner`,
+        );
         setCodeInput("");
         router.refresh();
       } catch (e) {
@@ -513,8 +522,8 @@ function ReferrerCard({ user }: { user: UserDetail["user"] }) {
         <div className="space-y-1.5">
           <Label className="text-xs text-muted-foreground">
             {user.referredBy
-              ? "Change which code they joined under"
-              : "Set the code they joined under"}
+              ? "Change the code this user is on (routes wager income)"
+              : "Set the code this user is on (routes wager income)"}
           </Label>
           <div className="flex flex-wrap items-center gap-2">
             <Input
@@ -538,10 +547,16 @@ function ReferrerCard({ user }: { user: UserDetail["user"] }) {
             </Button>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            ⚠ This sets <span className="font-mono">user.referred_by</span>{" "}
-            — i.e. WHO referred THIS user in. The code must already be
-            owned by another user. To give THIS user their own code to
-            hand out instead, use the section below.
+            ⚠ This sets the user&apos;s{" "}
+            <span className="font-mono">referred_by</span> (who referred
+            them in) <span className="font-semibold">and</span> their
+            active <span className="font-mono">affiliate_code</span> — so
+            their <span className="font-semibold">wager affiliate income
+            routes to this code&apos;s owner</span>. No frontend lock is
+            applied (it replaces any pending 1h lock; the user can still
+            change it on the site). The code must already be owned by
+            another user. To give THIS user their own code to hand out
+            instead, use the section below.
           </p>
         </div>
       </CardContent>
@@ -552,8 +567,11 @@ function ReferrerCard({ user }: { user: UserDetail["user"] }) {
             <AlertDialogTitle>Clear referrer?</AlertDialogTitle>
             <AlertDialogDescription>
               Removes this user&apos;s{" "}
-              <span className="font-mono">referred_by</span> link and
-              decrements the previous referrer&apos;s{" "}
+              <span className="font-mono">referred_by</span> link, clears
+              their active{" "}
+              <span className="font-mono">affiliate_code</span> (so wager
+              income stops routing to the old owner), and decrements the
+              previous referrer&apos;s{" "}
               <span className="font-mono">total_referred</span>{" "}
               counter. Historical{" "}
               <span className="font-mono">affiliate_code_usages</span>{" "}

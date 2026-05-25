@@ -1058,7 +1058,15 @@ export async function assignAffiliateCode(userId: string, affiliateCode: string 
 
     await db.user.update({
       where: { id: userId },
-      data: { referred_by: null },
+      data: {
+        referred_by: null,
+        // Clearing reverts BOTH columns: drop the active code too so
+        // wager income stops routing to the old owner, and leave no
+        // lock behind.
+        affiliate_code: null,
+        affiliate_code_active: false,
+        affiliate_code_expires_at: null,
+      },
     });
 
     if (currentUser?.referred_by) {
@@ -1095,7 +1103,24 @@ export async function assignAffiliateCode(userId: string, affiliateCode: string 
   await db.$transaction([
     db.user.update({
       where: { id: userId },
-      data: { referred_by: codeRecord.user_id },
+      data: {
+        // Formal attribution — WHO referred this user in.
+        referred_by: codeRecord.user_id,
+        // The ACTIVE code the user is "on" right now. This is the field
+        // the backend reads to route WAGER affiliate income to the
+        // code's owner — setting referred_by alone does NOT move wager
+        // income (referred_by is just the permanent attribution).
+        // Store the canonical code string (exact case from the codes
+        // table), not the raw admin input.
+        affiliate_code: codeRecord.code,
+        affiliate_code_active: true,
+        // No frontend lock on an admin override: a null expiry leaves
+        // the code active for attribution while letting the user change
+        // it again on the site. (The 1h lock only applies to fresh
+        // frontend entries; setting a code here REPLACES any pending
+        // lock.)
+        affiliate_code_expires_at: null,
+      },
     }),
     db.affiliate_accounts.update({
       where: { user_id: codeRecord.user_id },
@@ -1104,7 +1129,7 @@ export async function assignAffiliateCode(userId: string, affiliateCode: string 
     db.affiliate_code_usages.create({
       data: {
         affiliate_user_id: codeRecord.user_id,
-        code: affiliateCode.trim(),
+        code: codeRecord.code,
         referred_user_id: userId,
         usage_type: "deposit",
       },
