@@ -25,7 +25,8 @@ export default function DashboardLoading() {
       <KpiStripSkeleton count={7} />
       <div className="space-y-3">
         <SectionHeadingSkeleton titleWidth={80} />
-        <ChartRowSkeleton count={4} height={300} />
+        <ChartRowSkeleton count={3} height={300} />
+        <ChartRowSkeleton count={2} height={300} />
       </div>
       <div className="grid gap-4 xl:grid-cols-2">
         <div className="space-y-3">

@@ -325,7 +325,7 @@ export function PnlChart({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <ChartContainer config={pnlConfig} className="h-[240px] w-full md:h-[280px]">
+        <ChartContainer config={pnlConfig} className="h-[220px] w-full md:h-[260px] lg:h-[300px]">
           <BarChart data={data} accessibilityLayer>
             <CartesianGrid vertical={false} />
             <XAxis
