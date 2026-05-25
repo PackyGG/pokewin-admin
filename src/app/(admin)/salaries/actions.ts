@@ -183,7 +183,118 @@ export async function deleteSalaryEmployee(
   return { success: true };
 }
 
-// Manual payment logging (recordSalaryPayout / deleteSalaryPayout) was
-// removed — this page is now just the recipient registry. The
-// salary_payouts table is kept (historical rows + the delete guard in
-// deleteSalaryEmployee), but nothing writes to it from here anymore.
+// ── Payment tracking ────────────────────────────────────────────────
+// Lightweight: a saved payment link + date per employee. Distinct from
+// the legacy salary_payouts table (kept, unused). Stored in
+// salary_payments.
+
+const paymentLinkSchema = z
+  .string()
+  .trim()
+  .min(1, "Payment link is required")
+  .max(2000, "Link is too long")
+  .refine((v) => {
+    // Only allow real http(s) links — blocks javascript:/data: etc. so
+    // the rendered <a href> can't execute anything.
+    try {
+      const u = new URL(v);
+      return u.protocol === "http:" || u.protocol === "https:";
+    } catch {
+      return false;
+    }
+  }, "Enter a valid http(s) link");
+
+const addPaymentSchema = z.object({
+  employeeId: z.string().uuid("Invalid employee id"),
+  paymentLink: paymentLinkSchema,
+  // Date the payment was made (date-input string). Defaults to now.
+  paidAt: z.string().trim().optional(),
+});
+
+const deletePaymentSchema = z.object({
+  paymentId: z.string().uuid("Invalid id"),
+});
+
+export async function addSalaryPayment(data: {
+  employeeId: string;
+  paymentLink: string;
+  paidAt?: string;
+}): Promise<{ success: true; id: string } | { success: false; error: string }> {
+  const session = await requireMotha();
+  await ensure();
+  const parsed = addPaymentSchema.safeParse(data);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  const employee = await adminDb.salary_employees.findUnique({
+    where: { id: parsed.data.employeeId },
+    select: { id: true, discord_name: true },
+  });
+  if (!employee) return { success: false, error: "Employee not found" };
+
+  let paidAt = new Date();
+  if (parsed.data.paidAt) {
+    const d = new Date(parsed.data.paidAt);
+    if (Number.isNaN(d.getTime())) {
+      return { success: false, error: "Invalid date" };
+    }
+    paidAt = d;
+  }
+
+  const created = await adminDb.salary_payments.create({
+    data: {
+      employee_id: employee.id,
+      payment_link: parsed.data.paymentLink,
+      paid_at: paidAt,
+      created_by_id: session.userId,
+    },
+    select: { id: true },
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "salary_payment_tracked",
+    metadata: {
+      paymentId: created.id,
+      employeeId: employee.id,
+      employeeDiscordName: employee.discord_name,
+      paidAt: paidAt.toISOString(),
+    },
+  });
+
+  revalidatePath("/salaries");
+  return { success: true, id: created.id };
+}
+
+export async function deleteSalaryPayment(
+  paymentId: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requireMotha();
+  await ensure();
+  const parsed = deletePaymentSchema.safeParse({ paymentId });
+  if (!parsed.success) {
+    return { success: false, error: "Invalid id" };
+  }
+
+  try {
+    await adminDb.salary_payments.delete({
+      where: { id: parsed.data.paymentId },
+      select: { id: true },
+    });
+  } catch {
+    return { success: false, error: "Payment not found" };
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "salary_payment_deleted",
+    metadata: { paymentId: parsed.data.paymentId },
+  });
+
+  revalidatePath("/salaries");
+  return { success: true };
+}

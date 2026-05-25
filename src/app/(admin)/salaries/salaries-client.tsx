@@ -7,9 +7,11 @@ import { toast } from "sonner";
 import {
   Copy,
   ExternalLink,
+  Link2,
   Pencil,
   Plus,
   QrCode,
+  Receipt,
   Trash2,
   Wallet,
 } from "lucide-react";
@@ -20,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { formatDate } from "@/lib/utils/format";
 import {
   Dialog,
   DialogContent,
@@ -42,7 +45,9 @@ import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/empty-state";
 import {
   addSalaryEmployee,
+  addSalaryPayment,
   deleteSalaryEmployee,
+  deleteSalaryPayment,
   updateSalaryEmployee,
 } from "./actions";
 
@@ -187,10 +192,25 @@ const NETWORK_NOTE: Record<AddressKind, string> = {
     "Unrecognized address format — double-check which network this belongs to before sending.",
 };
 
-export function SalariesClient({ employees }: { employees: Employee[] }) {
+type Payment = {
+  id: string;
+  employeeId: string;
+  employeeDiscordName: string;
+  paymentLink: string;
+  paidAt: string;
+};
+
+export function SalariesClient({
+  employees,
+  payments,
+}: {
+  employees: Employee[];
+  payments: Payment[];
+}) {
   return (
     <div className="space-y-4">
       <EmployeesCard employees={employees} />
+      <PaymentTrackingCard employees={employees} payments={payments} />
     </div>
   );
 }
@@ -893,5 +913,339 @@ function DeleteEmployeeButton({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
+}
+
+// ── Payment tracking ────────────────────────────────────────────────
+
+function PaymentTrackingCard({
+  employees,
+  payments,
+}: {
+  employees: Employee[];
+  payments: Payment[];
+}) {
+  const [adding, setAdding] = useState(false);
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Receipt className="size-4 text-emerald-500" />
+            Payment Tracking
+          </CardTitle>
+          <Button
+            size="sm"
+            onClick={() => setAdding(true)}
+            disabled={employees.length === 0}
+          >
+            <Plus className="size-4" />
+            Track payment
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Log a payment you sent: pick the employee, paste the payment
+          link, and save it with a date.
+        </p>
+      </CardHeader>
+      <CardContent>
+        {payments.length === 0 ? (
+          <div className="rounded-md border border-dashed">
+            <EmptyState
+              icon={Receipt}
+              title="No payments tracked yet"
+              description="Use the Track payment button to save one."
+              compact
+            />
+          </div>
+        ) : (
+          <>
+            {/* Desktop table (>=md). */}
+            <div className="hidden rounded-md border overflow-x-auto md:block">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b bg-muted/50">
+                    <th className="px-3 py-2 text-left text-xs font-medium">
+                      Employee
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-medium">
+                      Payment Link
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-medium">
+                      Date
+                    </th>
+                    <th className="px-3 py-2 text-right text-xs font-medium">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {payments.map((p) => (
+                    <PaymentRow key={p.id} payment={p} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile cards (<md). */}
+            <div className="space-y-2 md:hidden">
+              {payments.map((p) => (
+                <PaymentMobileCard key={p.id} payment={p} />
+              ))}
+            </div>
+          </>
+        )}
+      </CardContent>
+      <TrackPaymentDialog
+        open={adding}
+        onClose={() => setAdding(false)}
+        employees={employees}
+      />
+    </Card>
+  );
+}
+
+function PaymentLink({ href }: { href: string }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer noopener"
+      className="inline-flex max-w-full items-center gap-1 text-xs text-blue-500 hover:underline"
+      title={href}
+    >
+      <Link2 className="size-3 shrink-0" />
+      <span className="truncate">{href}</span>
+      <ExternalLink className="size-3 shrink-0" />
+    </a>
+  );
+}
+
+function PaymentRow({ payment }: { payment: Payment }) {
+  return (
+    <tr className="border-b last:border-b-0">
+      <td className="px-3 py-2 text-sm font-medium">
+        <span className="font-mono">{payment.employeeDiscordName}</span>
+      </td>
+      <td className="max-w-[280px] px-3 py-2">
+        <PaymentLink href={payment.paymentLink} />
+      </td>
+      <td className="px-3 py-2 text-xs text-muted-foreground">
+        {formatDate(payment.paidAt)}
+      </td>
+      <td className="px-3 py-2 text-right">
+        <DeletePaymentButton paymentId={payment.id} />
+      </td>
+    </tr>
+  );
+}
+
+function PaymentMobileCard({ payment }: { payment: Payment }) {
+  return (
+    <div className="rounded-lg border bg-card p-3">
+      <div className="flex items-start justify-between gap-2">
+        <span className="font-mono text-sm font-medium">
+          {payment.employeeDiscordName}
+        </span>
+        <span className="shrink-0 text-[11px] text-muted-foreground">
+          {formatDate(payment.paidAt)}
+        </span>
+      </div>
+      <div className="mt-2 min-w-0">
+        <PaymentLink href={payment.paymentLink} />
+      </div>
+      <DeletePaymentButton
+        paymentId={payment.id}
+        className="mt-2 h-9 w-full"
+        withLabel
+      />
+    </div>
+  );
+}
+
+function DeletePaymentButton({
+  paymentId,
+  className,
+  withLabel,
+}: {
+  paymentId: string;
+  className?: string;
+  withLabel?: boolean;
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [pending, startTransition] = useTransition();
+
+  function handleDelete() {
+    startTransition(async () => {
+      const result = await deleteSalaryPayment(paymentId);
+      if (!result.success) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success("Payment removed");
+      setOpen(false);
+      router.refresh();
+    });
+  }
+
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <Button
+        size={withLabel ? "sm" : "icon"}
+        variant="ghost"
+        className={cn(
+          "text-muted-foreground hover:text-rose-500",
+          !withLabel && "size-7",
+          className,
+        )}
+        onClick={() => setOpen(true)}
+        aria-label="Remove payment"
+      >
+        <Trash2 className="size-3.5" />
+        {withLabel ? "Remove" : null}
+      </Button>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Remove this payment?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Deletes the tracked payment record. Bookkeeping only — it does
+            not affect anything off-system.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={handleDelete}
+            disabled={pending}
+            className="bg-rose-500 hover:bg-rose-500/90"
+          >
+            {pending ? "Removing…" : "Remove"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+function TrackPaymentDialog({
+  open,
+  onClose,
+  employees,
+}: {
+  open: boolean;
+  onClose: () => void;
+  employees: Employee[];
+}) {
+  const router = useRouter();
+  const [employeeId, setEmployeeId] = useState("");
+  const [link, setLink] = useState("");
+  // Init empty; set to today in the effect on open so there's no
+  // server/client date mismatch during render.
+  const [date, setDate] = useState("");
+  const [pending, startTransition] = useTransition();
+
+  useEffect(() => {
+    if (!open) return;
+    setEmployeeId("");
+    setLink("");
+    setDate(new Date().toISOString().slice(0, 10));
+  }, [open]);
+
+  function handleSubmit() {
+    if (!employeeId) {
+      toast.error("Pick an employee");
+      return;
+    }
+    if (!link.trim()) {
+      toast.error("Enter a payment link");
+      return;
+    }
+    startTransition(async () => {
+      const result = await addSalaryPayment({
+        employeeId,
+        paymentLink: link.trim(),
+        paidAt: date || undefined,
+      });
+      if (!result.success) {
+        toast.error(result.error);
+        return;
+      }
+      const name =
+        employees.find((e) => e.id === employeeId)?.discordName ?? "employee";
+      toast.success(`Tracked payment to ${name}`);
+      onClose();
+      router.refresh();
+    });
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) onClose();
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Receipt className="size-4 text-emerald-500" />
+            Track a payment
+          </DialogTitle>
+          <DialogDescription>
+            Save a payment link against an employee, with a date.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Employee</Label>
+            <select
+              value={employeeId}
+              onChange={(e) => setEmployeeId(e.target.value)}
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            >
+              <option value="">Pick an employee…</option>
+              {employees.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.discordName}
+                  {e.active ? "" : " (inactive)"}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">
+              Payment Link
+            </Label>
+            <Input
+              value={link}
+              onChange={(e) => setLink(e.target.value)}
+              placeholder="https://…"
+              className="font-mono text-xs"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Date</Label>
+            <Input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={pending}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSubmit}
+            disabled={pending}
+            className="bg-emerald-500 hover:bg-emerald-500/90"
+          >
+            {pending ? "Saving…" : "Save payment"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

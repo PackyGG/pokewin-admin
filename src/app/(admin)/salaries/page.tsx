@@ -45,9 +45,16 @@ export default async function SalariesPage() {
     /* swallow — the queries below will surface a clearer error */
   });
 
-  const employees = await adminDb.salary_employees.findMany({
-    orderBy: [{ active: "desc" }, { discord_name: "asc" }],
-  });
+  const [employees, payments] = await Promise.all([
+    adminDb.salary_employees.findMany({
+      orderBy: [{ active: "desc" }, { discord_name: "asc" }],
+    }),
+    adminDb.salary_payments.findMany({
+      orderBy: { paid_at: "desc" },
+      take: 100,
+      include: { employee: { select: { discord_name: true } } },
+    }),
+  ]);
 
   const now = new Date();
   const activeEmployees = employees.filter((e) => e.active).length;
@@ -139,6 +146,13 @@ export default async function SalariesPage() {
             payDayOfMonth: e.pay_day_of_month ?? null,
             payStatus: payDayStatus(e.pay_day_of_month ?? null, now),
             notes: e.notes,
+          }))}
+          payments={payments.map((p) => ({
+            id: p.id,
+            employeeId: p.employee_id,
+            employeeDiscordName: p.employee.discord_name,
+            paymentLink: p.payment_link,
+            paidAt: p.paid_at.toISOString(),
           }))}
         />
       </FadeIn>

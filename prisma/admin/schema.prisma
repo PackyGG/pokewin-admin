@@ -537,6 +537,7 @@ model salary_employees {
   created_by       admin_users         @relation(fields: [created_by_id], references: [id])
 
   payouts          salary_payouts[]
+  payments         salary_payments[]
 
   @@index([active])
 }
@@ -567,6 +568,24 @@ model salary_payouts {
   @@index([employee_id])
   @@index([status])
   @@index([created_at(sort: Desc)])
+}
+
+// Lightweight payment tracking — a saved payment link + date per
+// employee. Distinct from the legacy salary_payouts table; this is just
+// "who was paid, the link, and when". created_by_id is a loose FK to
+// admin_users (DB-level only, no Prisma relation) to keep the admin_users
+// model untouched.
+model salary_payments {
+  id            String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id   String           @db.Uuid
+  payment_link  String
+  paid_at       DateTime         @default(now()) @db.Timestamptz(6)
+  created_by_id String           @db.Uuid
+  created_at    DateTime         @default(now()) @db.Timestamptz(6)
+  employee      salary_employees @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+
+  @@index([employee_id])
+  @@index([paid_at(sort: Desc)])
 }
 
 // ─── Employee org board (drag-and-drop workspace grouping) ─────────

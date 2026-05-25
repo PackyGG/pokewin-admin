@@ -119,6 +119,29 @@ export async function ensureSalarySchema(): Promise<void> {
       CREATE INDEX IF NOT EXISTS "salary_payouts_created_at_idx"
         ON "salary_payouts" ("created_at" DESC)
     `);
+    // Lightweight payment tracking: a saved payment link per employee
+    // with a date. Separate from the (legacy, unused) salary_payouts
+    // table — this is just "who got paid, link, when". CASCADE so
+    // removing an employee clears their records.
+    await adminDb.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "salary_payments" (
+        "id"            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        "employee_id"   UUID NOT NULL
+                          REFERENCES "salary_employees"("id") ON DELETE CASCADE,
+        "payment_link"  TEXT NOT NULL,
+        "paid_at"       TIMESTAMPTZ(6) NOT NULL DEFAULT now(),
+        "created_by_id" UUID NOT NULL REFERENCES "admin_users"("id"),
+        "created_at"    TIMESTAMPTZ(6) NOT NULL DEFAULT now()
+      )
+    `);
+    await adminDb.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "salary_payments_employee_id_idx"
+        ON "salary_payments" ("employee_id")
+    `);
+    await adminDb.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "salary_payments_paid_at_idx"
+        ON "salary_payments" ("paid_at" DESC)
+    `);
     ensured = true;
   } catch (err) {
     // Reset so the next call retries. Re-throw so the page can
