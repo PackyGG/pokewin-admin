@@ -1,6 +1,6 @@
 "use client";
 
-import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis, Cell } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   type ChartConfig,
@@ -41,6 +41,16 @@ const ftdsConfig = {
     color: "var(--color-chart-5)",
   },
 } satisfies ChartConfig;
+
+// P&L bars are colored per-day by sign (House-POV): house up = emerald,
+// house down = rose. Cell fills override the config, but ChartContainer
+// still needs a config entry for the dataKey.
+const pnlConfig = {
+  pnl: { label: "P&L" },
+} satisfies ChartConfig;
+
+const PNL_UP = "#10b981"; // emerald-500 — house in profit that day
+const PNL_DOWN = "#f43f5e"; // rose-500 — house down that day
 
 export function WagerChart({
   data,
@@ -250,6 +260,99 @@ export function FtdsChart({
               animationDuration={700}
               animationEasing="ease-out"
             />
+          </BarChart>
+        </ChartContainer>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Hover for the daily P&L chart — the day's P&L (colored House-POV) plus
+ * the gross deposits/withdrawals that drove it.
+ */
+function PnlTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{
+    payload: {
+      date: string;
+      pnl: number;
+      deposits: number;
+      withdrawals: number;
+    };
+  }>;
+}) {
+  if (!active || !payload?.length) return null;
+  const p = payload[0].payload;
+  const up = p.pnl >= 0;
+  return (
+    <div className="grid min-w-40 gap-0.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
+      <span className="font-medium text-foreground">{p.date}</span>
+      <span
+        className={
+          "font-semibold " +
+          (up
+            ? "text-emerald-600 dark:text-emerald-400"
+            : "text-rose-600 dark:text-rose-400")
+        }
+      >
+        P&amp;L {up ? "+" : ""}
+        {formatCurrency(p.pnl)}
+      </span>
+      <span className="text-muted-foreground">
+        Deposits {formatCurrency(p.deposits)}
+      </span>
+      <span className="text-muted-foreground">
+        Withdrawals {formatCurrency(p.withdrawals)}
+      </span>
+    </div>
+  );
+}
+
+export function PnlChart({
+  data,
+}: {
+  data: { date: string; pnl: number; deposits: number; withdrawals: number }[];
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm font-medium">
+          Daily P&amp;L (30 days)
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <ChartContainer config={pnlConfig} className="h-[240px] w-full md:h-[280px]">
+          <BarChart data={data} accessibilityLayer>
+            <CartesianGrid vertical={false} />
+            <XAxis
+              dataKey="date"
+              tickLine={false}
+              axisLine={false}
+              tickMargin={8}
+              tickFormatter={(v) => v.slice(5)}
+            />
+            <YAxis
+              tickLine={false}
+              axisLine={false}
+              tickMargin={8}
+              width={70}
+              tickFormatter={formatCompactUsd}
+            />
+            <ChartTooltip content={<PnlTooltip />} />
+            <Bar
+              dataKey="pnl"
+              radius={[4, 4, 0, 0]}
+              animationDuration={700}
+              animationEasing="ease-out"
+            >
+              {data.map((d) => (
+                <Cell key={d.date} fill={d.pnl >= 0 ? PNL_UP : PNL_DOWN} />
+              ))}
+            </Bar>
           </BarChart>
         </ChartContainer>
       </CardContent>

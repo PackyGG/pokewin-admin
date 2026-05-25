@@ -12,6 +12,7 @@ import {
   Gauge,
 } from "lucide-react";
 import { getDashboardStats, getActiveRain } from "@/lib/queries/dashboard";
+import { getDailyPnl } from "@/lib/queries/pnl";
 import { requirePageAccess } from "@/lib/dal";
 import { formatCurrency } from "@/lib/utils/format";
 import { LoadTimeIndicator } from "./load-time-indicator";
@@ -24,7 +25,13 @@ import {
   WithdrawalsStatCard,
 } from "./revenue-stat-card";
 import { AutoRefresh } from "./auto-refresh";
-import { WagerChart, DepositsChart, SignupsChart, FtdsChart } from "./charts";
+import {
+  WagerChart,
+  DepositsChart,
+  SignupsChart,
+  FtdsChart,
+  PnlChart,
+} from "./charts";
 import {
   RecentActivity,
   RecentActivityLivePulse,
@@ -37,6 +44,7 @@ import { FadeIn } from "@/components/fade-in";
 import {
   KpiStripSkeleton,
   ChartRowSkeleton,
+  ChartSkeleton,
 } from "@/components/loading-skeletons";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -120,6 +128,12 @@ export default async function DashboardPage() {
           row stays balanced before we have room for the third. */}
       <div className="space-y-3">
         <SectionHeading icon={LineChart} title="Trends" />
+        {/* Daily house P&L — the headline trend, full width above the rest.
+            Its own lightweight query (getDailyPnl) streams behind its own
+            Suspense so it doesn't gate the other charts. */}
+        <Suspense fallback={<ChartSkeleton height={280} />}>
+          <DashboardPnlChart />
+        </Suspense>
         <Suspense fallback={<ChartRowSkeleton count={4} height={300} />}>
           <DashboardCharts />
         </Suspense>
@@ -342,8 +356,22 @@ async function DashboardActiveRain() {
 }
 
 /**
- * The three trend charts (wagers, deposits, signups). Async so it streams
- * behind its own Suspense; reads the React-cached getDashboardStats.
+ * Daily house P&L chart. Its own lightweight query (getDailyPnl — bucketed
+ * windowed-P&L components over 30 days), streamed behind its own Suspense so
+ * it doesn't add to the heavy getDashboardStats aggregate.
+ */
+async function DashboardPnlChart() {
+  const data = await getDailyPnl();
+  return (
+    <FadeIn>
+      <PnlChart data={data} />
+    </FadeIn>
+  );
+}
+
+/**
+ * The four trend charts (wagers, deposits, signups, FTDs). Async so it
+ * streams behind its own Suspense; reads the React-cached getDashboardStats.
  */
 async function DashboardCharts() {
   const stats = await getDashboardStats();
