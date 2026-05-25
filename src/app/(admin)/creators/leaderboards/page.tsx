@@ -1,9 +1,12 @@
 import Link from "next/link";
-import { Trophy, Plus } from "lucide-react";
+import { Trophy, Plus, ArrowUp, ArrowDown } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
 import { getDb } from "@/lib/db";
-import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
+import {
+    affiliateLeaderboardsApi,
+    type LeaderboardAdminRow,
+} from "@/lib/backend-api/affiliate-leaderboards";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { Button } from "@/components/ui/button";
@@ -27,6 +30,30 @@ type StatusTab = (typeof STATUS_TABS)[number]["value"];
 
 const PAGE_LIMIT = 50;
 
+// The backend list API can't sort, so we pull the whole filtered set and
+// sort + paginate here. Creator leaderboards are a small bounded list;
+// 1000 is comfortably above any realistic count (result.total still
+// reflects the true backend count regardless).
+const FETCH_CAP = 1000;
+
+const SORTABLE = ["start_asc", "start_desc", "end_asc", "end_desc"] as const;
+type SortValue = (typeof SORTABLE)[number];
+
+function sortLeaderboards(
+    rows: LeaderboardAdminRow[],
+    sort: SortValue | undefined,
+): LeaderboardAdminRow[] {
+    if (!sort) return rows;
+    const [field, dir] = sort.split("_") as ["start" | "end", "asc" | "desc"];
+    const key = field === "start" ? "start_date" : "end_date";
+    return [...rows].sort((a, b) => {
+        const av = new Date(a[key]).getTime();
+        const bv = new Date(b[key]).getTime();
+        if (Number.isNaN(av) || Number.isNaN(bv)) return 0;
+        return dir === "asc" ? av - bv : bv - av;
+    });
+}
+
 function buildQueryString(params: Record<string, string | number | undefined | null>): string {
     const entries = Object.entries(params).filter(
         ([, v]) => v !== undefined && v !== null && v !== "",
@@ -48,7 +75,14 @@ export default async function AffiliateLeaderboardsPage({
     const creatorUserId = params.creator_user_id?.trim() || undefined;
     const includeCancelled = params.include_cancelled === "1";
     const offset = Number(params.offset) || 0;
+    const sort: SortValue | undefined = (SORTABLE as readonly string[]).includes(
+        params.sort ?? "",
+    )
+        ? (params.sort as SortValue)
+        : undefined;
 
+    // Fetch the whole filtered set (offset 0, high cap) so the sort and
+    // pagination span every row — the backend list API has no sort param.
     const result = await affiliateLeaderboardsApi.list({
         status: tab === "all" ? undefined : tab,
         creator_user_id: creatorUserId,
@@ -56,12 +90,13 @@ export default async function AffiliateLeaderboardsPage({
         // schema accepts 'true'/'false'/'1'/'0' but never auto-derives a
         // default beyond hidden=false, so leaving it off is equivalent.
         include_cancelled: includeCancelled ? true : undefined,
-        limit: PAGE_LIMIT,
-        offset,
+        limit: FETCH_CAP,
+        offset: 0,
     });
 
-    const rows = result.leaderboards;
     const total = result.total;
+    const sortedRows = sortLeaderboards(result.leaderboards, sort);
+    const rows = sortedRows.slice(offset, offset + PAGE_LIMIT);
 
     // Hydrate creator usernames from local Prisma DB so admins see who owns each row.
     const creatorIds = [...new Set(rows.map((r) => r.creator_user_id))];
@@ -86,8 +121,15 @@ export default async function AffiliateLeaderboardsPage({
         return new Map<string, number>();
     });
 
-    const hasNext = offset + PAGE_LIMIT < total;
+    const hasNext = offset + PAGE_LIMIT < sortedRows.length;
     const hasPrev = offset > 0;
+
+    // Sort-chip state: which field is active + the direction a click should
+    // move to next (first click → desc / latest-first, click again → asc).
+    const isStart = sort === "start_asc" || sort === "start_desc";
+    const isEnd = sort === "end_asc" || sort === "end_desc";
+    const nextStart: SortValue = sort === "start_desc" ? "start_asc" : "start_desc";
+    const nextEnd: SortValue = sort === "end_desc" ? "end_asc" : "end_desc";
 
     return (
         <div className="space-y-6">
@@ -118,6 +160,7 @@ export default async function AffiliateLeaderboardsPage({
                                     status: s.value === "all" ? undefined : s.value,
                                     creator_user_id: creatorUserId,
                                     include_cancelled: includeCancelled ? "1" : undefined,
+                                    sort,
                                 })}`}
                                 className={cn(
                                     "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
@@ -132,6 +175,69 @@ export default async function AffiliateLeaderboardsPage({
                     </div>
 
                     <div className="flex items-center gap-3 flex-wrap">
+                        {/* Sort by start / end date. The backend list API can't
+                            sort, so this drives the in-page sort over the full
+                            fetched set. First click on a field sorts descending
+                            (latest first); click the active field again to flip
+                            to ascending. "Default" clears back to backend order. */}
+                        <div className="flex items-center gap-1 rounded-lg bg-muted p-1">
+                            <span className="px-1.5 text-xs font-medium text-muted-foreground">
+                                Sort
+                            </span>
+                            <Link
+                                href={`/creators/leaderboards${buildQueryString({
+                                    status: tab === "all" ? undefined : tab,
+                                    creator_user_id: creatorUserId,
+                                    include_cancelled: includeCancelled ? "1" : undefined,
+                                    sort: undefined,
+                                })}`}
+                                className={cn(
+                                    "rounded-md px-2.5 py-1 text-sm font-medium transition-colors",
+                                    !sort
+                                        ? "bg-background text-foreground shadow-sm"
+                                        : "text-muted-foreground hover:text-foreground",
+                                )}
+                            >
+                                Default
+                            </Link>
+                            <Link
+                                href={`/creators/leaderboards${buildQueryString({
+                                    status: tab === "all" ? undefined : tab,
+                                    creator_user_id: creatorUserId,
+                                    include_cancelled: includeCancelled ? "1" : undefined,
+                                    sort: nextStart,
+                                })}`}
+                                className={cn(
+                                    "inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-sm font-medium transition-colors",
+                                    isStart
+                                        ? "bg-background text-foreground shadow-sm"
+                                        : "text-muted-foreground hover:text-foreground",
+                                )}
+                            >
+                                Start date
+                                {sort === "start_asc" && <ArrowUp className="size-3" />}
+                                {sort === "start_desc" && <ArrowDown className="size-3" />}
+                            </Link>
+                            <Link
+                                href={`/creators/leaderboards${buildQueryString({
+                                    status: tab === "all" ? undefined : tab,
+                                    creator_user_id: creatorUserId,
+                                    include_cancelled: includeCancelled ? "1" : undefined,
+                                    sort: nextEnd,
+                                })}`}
+                                className={cn(
+                                    "inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-sm font-medium transition-colors",
+                                    isEnd
+                                        ? "bg-background text-foreground shadow-sm"
+                                        : "text-muted-foreground hover:text-foreground",
+                                )}
+                            >
+                                End date
+                                {sort === "end_asc" && <ArrowUp className="size-3" />}
+                                {sort === "end_desc" && <ArrowDown className="size-3" />}
+                            </Link>
+                        </div>
+
                         {/* Cancelled rows stay in the DB for refund/audit trail —
                             toggle surfaces them when reviewing cancellations. */}
                         <Link
@@ -139,6 +245,7 @@ export default async function AffiliateLeaderboardsPage({
                                 status: tab === "all" ? undefined : tab,
                                 creator_user_id: creatorUserId,
                                 include_cancelled: includeCancelled ? undefined : "1",
+                                sort,
                             })}`}
                             className={cn(
                                 "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
@@ -155,6 +262,7 @@ export default async function AffiliateLeaderboardsPage({
                             {includeCancelled && (
                                 <input type="hidden" name="include_cancelled" value="1" />
                             )}
+                            {sort && <input type="hidden" name="sort" value={sort} />}
                             <Input
                                 name="creator_user_id"
                                 defaultValue={creatorUserId ?? ""}
@@ -184,6 +292,7 @@ export default async function AffiliateLeaderboardsPage({
                                     status: tab === "all" ? undefined : tab,
                                     creator_user_id: creatorUserId,
                                     include_cancelled: includeCancelled ? "1" : undefined,
+                                    sort,
                                     offset: Math.max(0, offset - PAGE_LIMIT),
                                 })}`}
                                 className="rounded-md border px-3 py-1 hover:bg-muted"
@@ -197,6 +306,7 @@ export default async function AffiliateLeaderboardsPage({
                                     status: tab === "all" ? undefined : tab,
                                     creator_user_id: creatorUserId,
                                     include_cancelled: includeCancelled ? "1" : undefined,
+                                    sort,
                                     offset: offset + PAGE_LIMIT,
                                 })}`}
                                 className="rounded-md border px-3 py-1 hover:bg-muted"
