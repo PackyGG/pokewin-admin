@@ -74,7 +74,7 @@ import {
   FINANCIAL_TX_TYPES,
 } from "./user-tabs";
 import { UserBattleLimitsCard } from "./user-battle-limits-card";
-import type { PaginatedInventory } from "./user-tabs-types";
+import type { PaginatedInventory, TipEntry } from "./user-tabs-types";
 import type { UserRewards } from "@/lib/queries/users";
 import {
   SectionHeading,
@@ -136,6 +136,12 @@ export function OverviewTab({
         cardWithdrawals={data.cardWithdrawals}
       />
 
+      {/* Tips — creator tips this user received or sent. Sits directly
+          below deposits per admin request (tips weren't visible on any
+          tab before). */}
+      <SectionHeading icon={Coins} title="Tips" />
+      <TipsSection tips={data.tips} />
+
       {/* Recent activity — unified timeline (gaming + financial). Colors
           are flipped to HOUSE perspective: if the user made money the
           dot/amount shows RED (we lost), user losses show GREEN. */}
@@ -145,6 +151,114 @@ export function OverviewTab({
         financialTx={financialTx.data.slice(0, 5)}
       />
     </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  TIPS SECTION (overview) — creator tips received / sent
+// ───────────────────────────────────────────────────────────────────
+
+function TipsSection({ tips }: { tips: UserDetail["tips"] }) {
+  return (
+    <div className="grid gap-3 sm:gap-4 md:grid-cols-2">
+      <TipPanel kind="received" data={tips.received} />
+      <TipPanel kind="sent" data={tips.sent} />
+    </div>
+  );
+}
+
+function TipPanel({
+  kind,
+  data,
+}: {
+  kind: "received" | "sent";
+  data: { count: number; totalUsd: number; recent: TipEntry[] };
+}) {
+  const isReceived = kind === "received";
+  // House-POV (CLAUDE.md): a tip RECEIVED grows the user's balance →
+  // user gain → house loss → rose. A tip SENT shrinks the sender's own
+  // balance → user loss → house gain → emerald.
+  const amountColor = isReceived
+    ? "text-rose-600 dark:text-rose-400"
+    : "text-emerald-600 dark:text-emerald-400";
+  const accentChip = isReceived
+    ? "bg-rose-500/15 text-rose-500"
+    : "bg-emerald-500/15 text-emerald-500";
+  const Icon = isReceived ? ArrowDownToLine : ArrowUpRight;
+  const label = isReceived ? "Tips Received" : "Tips Sent";
+  const sign = isReceived ? "+" : "-";
+
+  return (
+    <Card>
+      <CardContent className="space-y-3 p-4 sm:p-5">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span
+              className={cn(
+                "flex size-8 shrink-0 items-center justify-center rounded-lg",
+                accentChip,
+              )}
+            >
+              <Icon className="size-4" />
+            </span>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                {label}
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                {data.count} {data.count === 1 ? "tip" : "tips"}
+              </p>
+            </div>
+          </div>
+          <p className={cn("text-lg font-bold tabular-nums", amountColor)}>
+            {data.count > 0
+              ? `${sign}${formatCurrency(data.totalUsd)}`
+              : formatCurrency(0)}
+          </p>
+        </div>
+
+        {data.recent.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            {isReceived ? "No tips received." : "No tips sent."}
+          </p>
+        ) : (
+          <ul className="space-y-1.5">
+            {data.recent.map((t) => (
+              <li
+                key={t.id}
+                className="flex items-center justify-between gap-2 text-xs"
+              >
+                <span className="min-w-0 truncate text-muted-foreground">
+                  {isReceived ? "from " : "to "}
+                  {t.counterpartyId ? (
+                    <Link
+                      href={`/users/${t.counterpartyId}`}
+                      className="font-medium text-foreground hover:text-primary hover:underline"
+                    >
+                      {t.counterpartyName ?? t.counterpartyId.slice(0, 8)}
+                    </Link>
+                  ) : (
+                    <span className="font-medium text-foreground">unknown</span>
+                  )}
+                  <span className="ml-1 text-muted-foreground/70">
+                    · {formatRelative(t.createdAt)}
+                  </span>
+                </span>
+                <span
+                  className={cn(
+                    "shrink-0 font-medium tabular-nums",
+                    amountColor,
+                  )}
+                >
+                  {sign}
+                  {formatCurrency(t.amountUsd)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

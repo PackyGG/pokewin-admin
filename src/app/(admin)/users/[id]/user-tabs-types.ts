@@ -169,6 +169,10 @@ export type UserDetail = {
     withdrawals: number;
     avgDeposit: number;
   };
+  tips: {
+    received: { count: number; totalUsd: number; recent: TipEntry[] };
+    sent: { count: number; totalUsd: number; recent: TipEntry[] };
+  };
   sessionRole: string;
   capabilities: {
     canAdjustBalance: boolean;
@@ -182,6 +186,14 @@ export type UserDetail = {
     canChangeUserRoles: boolean;
     canRecordManualWithdrawal: boolean;
   };
+};
+
+export type TipEntry = {
+  id: string;
+  amountUsd: number;
+  counterpartyId: string | null;
+  counterpartyName: string | null;
+  createdAt: string;
 };
 
 export type Transaction = {

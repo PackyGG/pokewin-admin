@@ -3,6 +3,119 @@ import { affiliate_usage_type } from "@/generated/prisma/enums";
 import { toNumber } from "@/lib/utils/decimal";
 import { calculateUserPnl } from "./pnl";
 
+type Db = Awaited<ReturnType<typeof getDb>>;
+
+const TIP_RECENT_LIMIT = 10;
+
+/**
+ * Creator tips for a user, split into received vs sent.
+ *
+ * Both sides of a tip are `creator_tip` ledger rows (one on each user):
+ *   - on the recipient: metadata.direction = "received", balance ↑,
+ *     metadata.sender_user_id = who tipped them,
+ *   - on the sender:    metadata.direction = "sent",     balance ↓,
+ *     metadata.recipient_user_id = who they tipped.
+ * `amount` is the magnitude on both rows; for older rows that predate the
+ * metadata flag we fall back to the balance delta to infer direction.
+ */
+async function getUserTips(db: Db, userId: string) {
+  const rows = await db.ledger_transactions.findMany({
+    where: { user_id: userId, type: "creator_tip" },
+    orderBy: { created_at: "desc" },
+    select: {
+      id: true,
+      amount: true,
+      balance_before: true,
+      balance_after: true,
+      metadata: true,
+      created_at: true,
+    },
+  });
+
+  type Entry = {
+    id: string;
+    amountUsd: number;
+    counterpartyId: string | null;
+    counterpartyName: string | null;
+    createdAt: string;
+    sent: boolean;
+  };
+
+  const entries: Entry[] = rows.map((r) => {
+    const meta =
+      r.metadata && typeof r.metadata === "object" && !Array.isArray(r.metadata)
+        ? (r.metadata as Record<string, unknown>)
+        : {};
+    const dir = typeof meta.direction === "string" ? meta.direction : null;
+    const sent =
+      dir === "sent" ||
+      (dir == null && toNumber(r.balance_after) < toNumber(r.balance_before));
+    const counterpartyId =
+      typeof meta.sender_user_id === "string"
+        ? meta.sender_user_id
+        : typeof meta.recipient_user_id === "string"
+          ? meta.recipient_user_id
+          : null;
+    return {
+      id: r.id,
+      amountUsd: toNumber(r.amount),
+      counterpartyId,
+      counterpartyName: null,
+      createdAt: r.created_at.toISOString(),
+      sent,
+    };
+  });
+
+  const received = entries.filter((e) => !e.sent);
+  const sent = entries.filter((e) => e.sent);
+
+  // Resolve counterparty usernames only for the rows we'll render.
+  const shown = [
+    ...received.slice(0, TIP_RECENT_LIMIT),
+    ...sent.slice(0, TIP_RECENT_LIMIT),
+  ];
+  const ids = [
+    ...new Set(
+      shown.map((e) => e.counterpartyId).filter((x): x is string => !!x),
+    ),
+  ];
+  if (ids.length > 0) {
+    const users = await db.user.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, username: true, email: true },
+    });
+    const nameById = new Map(
+      users.map((u) => [u.id, u.username ?? u.email ?? u.id]),
+    );
+    for (const e of shown) {
+      if (e.counterpartyId)
+        e.counterpartyName = nameById.get(e.counterpartyId) ?? null;
+    }
+  }
+
+  const sum = (arr: Entry[]) => arr.reduce((s, e) => s + e.amountUsd, 0);
+  const strip = (e: Entry) => ({
+    id: e.id,
+    amountUsd: e.amountUsd,
+    counterpartyId: e.counterpartyId,
+    counterpartyName: e.counterpartyName,
+    createdAt: e.createdAt,
+  });
+
+  return {
+    received: {
+      count: received.length,
+      totalUsd: sum(received),
+      recent: received.slice(0, TIP_RECENT_LIMIT).map(strip),
+    },
+    sent: {
+      count: sent.length,
+      totalUsd: sum(sent),
+      recent: sent.slice(0, TIP_RECENT_LIMIT).map(strip),
+    },
+  };
+}
+
 export async function getUserDetail(id: string) {
   const db = await getDb();
   // Everything is independent — one Promise.all instead of two serialized ones
@@ -53,6 +166,7 @@ export async function getUserDetail(id: string) {
     userPnl,
     wagerBreakdownResolved,
     ownedCodeRows,
+    tips,
   ] = await Promise.all([
     db.user.findUnique({
       where: { id },
@@ -129,6 +243,10 @@ export async function getUserDetail(id: string) {
       orderBy: { created_at: "asc" },
       select: { code: true, created_at: true },
     }),
+    // Creator tips received + sent (both are creator_tip rows, split by
+    // metadata.direction). Runs in parallel; resolves counterparty names
+    // for the shown rows internally.
+    getUserTips(db, id),
   ]);
 
   const depositCount = depositAgg._count._all;
@@ -212,6 +330,7 @@ export async function getUserDetail(id: string) {
   const newestOwnedCode = ownedCodeRows.at(-1)?.code ?? null;
 
   return {
+    tips,
     user: {
       id: user.id,
       username: user.username,
