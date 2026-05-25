@@ -27,9 +27,8 @@ const employeeSchema = z.object({
     .max(1_000_000),
   notes: z.string().trim().max(500).nullable().optional(),
   active: z.boolean().optional(),
-  // Recurring pay day as a weekday number (0 = Sunday … 6 = Saturday).
-  // null clears it.
-  payDayOfWeek: z.number().int().min(0).max(6).nullable().optional(),
+  // Recurring pay day as a day of the month (1-31). null clears it.
+  payDayOfMonth: z.number().int().min(1).max(31).nullable().optional(),
 });
 
 const updateEmployeeSchema = employeeSchema.partial().extend({
@@ -73,7 +72,7 @@ export async function addSalaryEmployee(
       max_per_payout: null,
       notes: parsed.data.notes?.trim() || null,
       active: parsed.data.active ?? true,
-      pay_day_of_week: parsed.data.payDayOfWeek ?? null,
+      pay_day_of_month: parsed.data.payDayOfMonth ?? null,
       created_by_id: session.userId,
     },
     select: { id: true },
@@ -126,8 +125,8 @@ export async function updateSalaryEmployee(
     updateData.notes = parsed.data.notes?.trim() || null;
   }
   if (parsed.data.active !== undefined) updateData.active = parsed.data.active;
-  if (parsed.data.payDayOfWeek !== undefined)
-    updateData.pay_day_of_week = parsed.data.payDayOfWeek;
+  if (parsed.data.payDayOfMonth !== undefined)
+    updateData.pay_day_of_month = parsed.data.payDayOfMonth;
 
   if (Object.keys(updateData).length === 0) {
     return { success: false, error: "Nothing to update" };

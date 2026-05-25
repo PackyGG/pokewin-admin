@@ -60,45 +60,34 @@ type Employee = {
   cadence: Cadence;
   salaryUsdt: number;
   active: boolean;
-  // Recurring pay day (0 = Sunday … 6 = Saturday) or null if unset, plus
-  // the server-computed proximity status used to color the badge.
-  payDayOfWeek: number | null;
+  // Recurring pay day as a day of the month (1-31) or null if unset,
+  // plus the server-computed proximity status used to color the badge.
+  payDayOfMonth: number | null;
   payStatus: "due" | "ok" | null;
   notes: string | null;
 };
 
-// Dropdown order (Mon-first) with the underlying getUTCDay values.
-const WEEKDAY_OPTIONS = [
-  { value: 1, label: "Monday" },
-  { value: 2, label: "Tuesday" },
-  { value: 3, label: "Wednesday" },
-  { value: 4, label: "Thursday" },
-  { value: 5, label: "Friday" },
-  { value: 6, label: "Saturday" },
-  { value: 0, label: "Sunday" },
-] as const;
+// Day-of-month options for the pay-day dropdown (1-31).
+const PAY_DAY_OPTIONS = Array.from({ length: 31 }, (_, i) => i + 1);
 
-const WEEKDAY_LABEL: Record<number, string> = {
-  0: "Sunday",
-  1: "Monday",
-  2: "Tuesday",
-  3: "Wednesday",
-  4: "Thursday",
-  5: "Friday",
-  6: "Saturday",
-};
+// 1 → "1st", 2 → "2nd", 3 → "3rd", 11 → "11th", 21 → "21st", 31 → "31st".
+function ordinal(n: number): string {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return `${n}${s[(v - 20) % 10] || s[v] || s[0]}`;
+}
 
-// Pay-day badge. Red = "due" (today/tomorrow is the pay day, ~24h out),
+// Pay-day badge. Red = "due" (today/tomorrow is the pay date, ~24h out),
 // green = "ok" (not imminent). These are status colors the admin asked
 // for, not House-POV money colors.
 function PayDayBadge({
-  payDayOfWeek,
+  payDayOfMonth,
   payStatus,
 }: {
-  payDayOfWeek: number | null;
+  payDayOfMonth: number | null;
   payStatus: "due" | "ok" | null;
 }) {
-  if (payDayOfWeek == null) {
+  if (payDayOfMonth == null) {
     return <span className="text-xs text-muted-foreground">—</span>;
   }
   const due = payStatus === "due";
@@ -113,7 +102,7 @@ function PayDayBadge({
       )}
       title={due ? "Pay day is within ~24h" : "Pay day not imminent"}
     >
-      {WEEKDAY_LABEL[payDayOfWeek]}
+      {ordinal(payDayOfMonth)}
     </Badge>
   );
 }
@@ -335,7 +324,7 @@ function EmployeeRow({ employee }: { employee: Employee }) {
         </td>
         <td className="px-3 py-2">
           <PayDayBadge
-            payDayOfWeek={employee.payDayOfWeek}
+            payDayOfMonth={employee.payDayOfMonth}
             payStatus={employee.payStatus}
           />
         </td>
@@ -417,9 +406,9 @@ function EmployeeMobileCard({ employee }: { employee: Employee }) {
           >
             {CADENCE_LABELS[employee.cadence]}
           </Badge>
-          {employee.payDayOfWeek != null && (
+          {employee.payDayOfMonth != null && (
             <PayDayBadge
-              payDayOfWeek={employee.payDayOfWeek}
+              payDayOfMonth={employee.payDayOfMonth}
               payStatus={employee.payStatus}
             />
           )}
@@ -627,7 +616,7 @@ function EmployeeFormDialog({
   const [address, setAddress] = useState(employee?.ethAddress ?? "");
   const [cadence, setCadence] = useState<Cadence>(employee?.cadence ?? "monthly");
   const [payDay, setPayDay] = useState<number | null>(
-    employee?.payDayOfWeek ?? null,
+    employee?.payDayOfMonth ?? null,
   );
   const [salary, setSalary] = useState(
     employee ? String(employee.salaryUsdt) : "",
@@ -641,7 +630,7 @@ function EmployeeFormDialog({
     setDiscordName(employee?.discordName ?? "");
     setAddress(employee?.ethAddress ?? "");
     setCadence(employee?.cadence ?? "monthly");
-    setPayDay(employee?.payDayOfWeek ?? null);
+    setPayDay(employee?.payDayOfMonth ?? null);
     setSalary(employee ? String(employee.salaryUsdt) : "");
     setActive(employee?.active ?? true);
     setNotes(employee?.notes ?? "");
@@ -670,7 +659,7 @@ function EmployeeFormDialog({
             cadence,
             salaryUsdt: sal,
             active,
-            payDayOfWeek: payDay,
+            payDayOfMonth: payDay,
             notes: notes.trim() || null,
           })
         : await addSalaryEmployee({
@@ -679,7 +668,7 @@ function EmployeeFormDialog({
             cadence,
             salaryUsdt: sal,
             active,
-            payDayOfWeek: payDay,
+            payDayOfMonth: payDay,
             notes: notes.trim() || null,
           });
       if (!result.success) {
@@ -768,14 +757,16 @@ function EmployeeFormDialog({
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
             >
               <option value="">No pay day</option>
-              {WEEKDAY_OPTIONS.map((d) => (
-                <option key={d.value} value={d.value}>
-                  {d.label}
+              {PAY_DAY_OPTIONS.map((d) => (
+                <option key={d} value={d}>
+                  {ordinal(d)}
                 </option>
               ))}
             </select>
             <p className="text-[10px] text-muted-foreground">
-              Shown on the list and flagged red ~24h before the day.
+              Day of the month. Shown on the list and flagged red ~24h
+              before. Days past a short month&apos;s end fall on its last
+              day.
             </p>
           </div>
           <div className="space-y-1">

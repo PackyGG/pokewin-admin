@@ -12,16 +12,28 @@ export const metadata = { title: "Employee Salaries" };
 /**
  * Pay-day proximity status, computed server-side per request so there's
  * no client/server hydration mismatch.
- *   - "due"  → today or tomorrow is the pay day (within ~24h) → red
+ *   - "due"  → the pay date is today or tomorrow (within ~24h) → red
  *   - "ok"   → not imminent → green
  *   - null   → no pay day set
- * payDay uses the JS getUTCDay convention (0 = Sunday … 6 = Saturday).
+ * payDay is a day of the month (1-31), clamped to the month's actual
+ * length so e.g. 31 on a 30-day month means the 30th and Feb is handled.
  */
 function payDayStatus(payDay: number | null, now: Date): "due" | "ok" | null {
   if (payDay == null) return null;
-  const today = now.getUTCDay();
-  const daysUntil = (payDay - today + 7) % 7;
-  return daysUntil <= 1 ? "due" : "ok";
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth();
+  const today = now.getUTCDate();
+  // Day 0 of the next month === last day of this month.
+  const daysInThisMonth = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  const dayThisMonth = Math.min(payDay, daysInThisMonth);
+  let diff = dayThisMonth - today;
+  if (diff < 0) {
+    // This month's pay date already passed → count to next month's.
+    const daysInNextMonth = new Date(Date.UTC(y, m + 2, 0)).getUTCDate();
+    const dayNextMonth = Math.min(payDay, daysInNextMonth);
+    diff = daysInThisMonth - today + dayNextMonth;
+  }
+  return diff <= 1 ? "due" : "ok";
 }
 
 export default async function SalariesPage() {
@@ -124,8 +136,8 @@ export default async function SalariesPage() {
               : "monthly") as "weekly" | "biweekly" | "monthly",
             salaryUsdt: Number(e.salary_usdt),
             active: e.active,
-            payDayOfWeek: e.pay_day_of_week ?? null,
-            payStatus: payDayStatus(e.pay_day_of_week ?? null, now),
+            payDayOfMonth: e.pay_day_of_month ?? null,
+            payStatus: payDayStatus(e.pay_day_of_month ?? null, now),
             notes: e.notes,
           }))}
         />

@@ -54,13 +54,18 @@ export async function ensureSalarySchema(): Promise<void> {
       ALTER TABLE "salary_employees"
         ADD COLUMN IF NOT EXISTS "cadence" TEXT NOT NULL DEFAULT 'monthly'
     `);
-    // Optional recurring pay day, stored as a weekday number
-    // (0 = Sunday … 6 = Saturday, matching JS Date.getUTCDay()).
-    // Nullable — employees without a set pay day just don't show a
-    // due/ok badge.
+    // Optional recurring pay day. pay_day_of_week (0=Sun…6=Sat) is the
+    // legacy weekday column — kept for back-compat but no longer used by
+    // the UI. pay_day_of_month (1-31) is the current setting: the day of
+    // the month the employee is paid (clamped to month length at render).
+    // Both nullable — no pay day = no due/ok badge.
     await adminDb.$executeRawUnsafe(`
       ALTER TABLE "salary_employees"
         ADD COLUMN IF NOT EXISTS "pay_day_of_week" SMALLINT
+    `);
+    await adminDb.$executeRawUnsafe(`
+      ALTER TABLE "salary_employees"
+        ADD COLUMN IF NOT EXISTS "pay_day_of_month" SMALLINT
     `);
     await adminDb.$executeRawUnsafe(`
       DO $$

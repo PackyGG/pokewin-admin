@@ -523,9 +523,12 @@ model salary_employees {
   // amount even if the admin types it explicitly. Catches typos.
   max_per_payout   Decimal?            @db.Decimal(20, 6)
   active           Boolean             @default(true)
-  // Optional recurring pay day as a weekday number (0 = Sunday …
-  // 6 = Saturday, JS Date.getUTCDay convention). Null = none set.
+  // Legacy weekday pay day (0=Sun…6=Sat). Superseded by
+  // pay_day_of_month; kept for back-compat, not used by the UI.
   pay_day_of_week  Int?                @db.SmallInt
+  // Recurring pay day as a day of the month (1-31, clamped to the
+  // month's length at render). Null = none set.
+  pay_day_of_month Int?                @db.SmallInt
   last_paid_at     DateTime?           @db.Timestamptz(6)
   notes            String?
   created_at       DateTime            @default(now()) @db.Timestamptz(6)
