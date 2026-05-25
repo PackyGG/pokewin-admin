@@ -161,14 +161,17 @@ function UpgraderOutputCardTile({ card }: { card: UpgraderOutputCard }) {
     });
   };
 
-  const handleColorChange = (sentinelOrColor: string) => {
+  const handleColorChange = (sentinelOrColor: string | null) => {
+    // base-ui's Select onValueChange may emit null when the value is
+    // cleared programmatically. We collapse both null and the sentinel
+    // string to the same "no override" branch.
     const next: UpgraderOutputColor | null =
-      sentinelOrColor === COLOR_DEFAULT_SENTINEL
+      sentinelOrColor === null || sentinelOrColor === COLOR_DEFAULT_SENTINEL
         ? null
         : (sentinelOrColor as UpgraderOutputColor);
 
-    // Optimistically skip the round-trip when the value didn't change — the
-    // Select fires onValueChange on initial mount in some flows.
+    // Skip the round-trip when the value didn't change — the Select fires
+    // onValueChange on initial mount in some flows.
     if (next === currentColor) return;
 
     startTransition(async () => {
