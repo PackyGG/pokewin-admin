@@ -31,7 +31,7 @@ import {
   RecentActivitySkeleton,
 } from "./recent-activity";
 import { LiveDeposits } from "./live-deposits";
-import { ActiveRainCard } from "./active-rain-card";
+import { ActiveRainChip } from "./active-rain-chip";
 import { PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import {
@@ -73,18 +73,27 @@ export default async function DashboardPage() {
           icon={LayoutDashboard}
           title="Dashboard"
           subtitle="Live platform overview — revenue, users, and recent activity."
-          // The load-time chip needs the (streamed) stats, so it sits
-          // behind its own tiny Suspense boundary — the hero itself still
-          // paints instantly. Fallback is a faint pill of the same size so
-          // the hero's right edge doesn't jump when the chip resolves.
+          // Top-right action chips: the live Active Rain entrant count and
+          // the load-time indicator, each behind its own tiny Suspense so
+          // the hero paints instantly. Wrap so they sit side by side and
+          // wrap onto a second line on narrow phones.
           action={
-            <Suspense
-              fallback={
-                <Skeleton className="h-[26px] w-40 rounded-full" />
-              }
-            >
-              <DashboardLoadTime />
-            </Suspense>
+            <div className="flex flex-wrap items-center gap-2">
+              <Suspense
+                fallback={
+                  <Skeleton className="h-[28px] w-28 rounded-full" />
+                }
+              >
+                <DashboardActiveRain />
+              </Suspense>
+              <Suspense
+                fallback={
+                  <Skeleton className="h-[26px] w-40 rounded-full" />
+                }
+              >
+                <DashboardLoadTime />
+              </Suspense>
+            </div>
           }
         />
       </PageHero>
@@ -103,14 +112,6 @@ export default async function DashboardPage() {
         }
       >
         <DashboardStatStrips />
-      </Suspense>
-
-      {/* Active Rain — live entrant count of the rain currently in play.
-          Its own lightweight query (single row) behind its own Suspense, so
-          it refreshes on the 60s tick without touching the heavy stats
-          aggregate. */}
-      <Suspense fallback={<Skeleton className="h-[88px] w-full rounded-xl" />}>
-        <DashboardActiveRain />
       </Suspense>
 
       {/* Charts. Three-up at lg+ but stacks to a single column on
@@ -337,7 +338,7 @@ async function DashboardStatStrips() {
  */
 async function DashboardActiveRain() {
   const rain = await getActiveRain();
-  return <ActiveRainCard rain={rain} />;
+  return <ActiveRainChip rain={rain} />;
 }
 
 /**
