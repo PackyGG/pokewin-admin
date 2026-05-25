@@ -37,5 +37,7 @@ export type {
 export { upgraderApi } from "./upgrader";
 export type {
   UpgraderOutputCard,
+  UpgraderOutputColor,
+  UpdateUpgraderOutputBody,
   AddUpgraderOutputsResult,
 } from "./upgrader";

@@ -8,6 +8,10 @@ import {
   upgraderApi,
   type UpgraderOutputCard,
 } from "@/lib/backend-api";
+import {
+  UPGRADER_OUTPUT_COLORS,
+  type UpgraderOutputColor,
+} from "./colors";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -156,6 +160,49 @@ export async function setUpgraderOutputEnabled(id: string, enabled: boolean) {
       adminUserId: session.userId,
       eventType: enabled ? "upgrader_output_enabled" : "upgrader_output_disabled",
       metadata: { via: "backend_api", output_card_id: id },
+    });
+
+    revalidatePath("/upgrader");
+  } catch (err) {
+    throw toActionError(err);
+  }
+}
+
+/**
+ * Validates the caller-supplied color before forwarding to the backend.
+ * The frontend UI exposes a select with the 7 named tones, but we treat
+ * the parameter as untrusted (server action surface) and reject anything
+ * outside the allowlist — that way a stray client cannot persist an
+ * arbitrary string the upgrader UI would later fail to theme.
+ */
+const ColorParamSchema = z
+  .union([z.enum(UPGRADER_OUTPUT_COLORS), z.null()])
+  .nullable();
+
+export async function setUpgraderOutputColor(
+  id: string,
+  color: UpgraderOutputColor | null,
+) {
+  const session = await requirePageAccess("/upgrader");
+  await requireCapability(
+    session,
+    "__can_toggle_upgrader_output",
+    "update upgrader output cards",
+  );
+
+  const parsedColor = ColorParamSchema.parse(color);
+
+  try {
+    await upgraderApi.update(id, { color: parsedColor });
+
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "upgrader_output_color_changed",
+      metadata: {
+        via: "backend_api",
+        output_card_id: id,
+        color: parsedColor,
+      },
     });
 
     revalidatePath("/upgrader");

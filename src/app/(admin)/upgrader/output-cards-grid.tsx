@@ -9,6 +9,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -25,9 +32,54 @@ import { cn } from "@/lib/utils";
 
 import type { UpgraderOutputCard } from "@/lib/backend-api";
 import {
+  UPGRADER_OUTPUT_COLORS,
+  type UpgraderOutputColor,
+} from "./colors";
+import {
   removeUpgraderOutput,
+  setUpgraderOutputColor,
   setUpgraderOutputEnabled,
 } from "./actions";
+
+/**
+ * Swatch hexes mirror auraHex values in the game frontend's
+ * CARD_RARITY_THEME_MAP (src/lib/cards/theme/card-theme.ts). These are
+ * visual cues only — the persisted value is the named tone string
+ * ("gray", "blue", ...), not the hex. Keep this map in sync with the
+ * upgrader/game UI to avoid admin/player color drift.
+ */
+const COLOR_SWATCH: Record<UpgraderOutputColor, string> = {
+  gray: "#6E7199",
+  white: "#F5F9FF",
+  blue: "#00B4F0",
+  green: "#5EC22E",
+  purple: "#A855F7",
+  red: "#FF4545",
+  gold: "#FFD700",
+};
+
+// Sentinel value used in the Select dropdown to represent the "no
+// override" state — base-ui Select needs a string for every option, so
+// we map "default" ↔ null at the action-call boundary.
+const COLOR_DEFAULT_SENTINEL = "default";
+
+function ColorSwatch({ color }: { color: UpgraderOutputColor | null }) {
+  if (color === null) {
+    return (
+      <span
+        aria-hidden
+        className="inline-block size-3 shrink-0 rounded-full border border-dashed border-muted-foreground/60"
+      />
+    );
+  }
+  return (
+    <span
+      aria-hidden
+      className="inline-block size-3 shrink-0 rounded-full border border-border/40 shadow-sm"
+      style={{ backgroundColor: COLOR_SWATCH[color] }}
+    />
+  );
+}
 
 const RARITY_BADGE: Record<string, string> = {
   common: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
@@ -77,16 +129,54 @@ export function UpgraderOutputCardsGrid({
   );
 }
 
+/**
+ * Narrow a string from the backend to a known UpgraderOutputColor. We
+ * treat unknown / malformed values as if the override were unset — they
+ * still show up as "Default" in the dropdown and the next save will
+ * persist a valid value (or clear it).
+ */
+function asKnownColor(value: string | null): UpgraderOutputColor | null {
+  if (value === null) return null;
+  return (UPGRADER_OUTPUT_COLORS as readonly string[]).includes(value)
+    ? (value as UpgraderOutputColor)
+    : null;
+}
+
 function UpgraderOutputCardTile({ card }: { card: UpgraderOutputCard }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [removeOpen, setRemoveOpen] = useState(false);
+
+  const currentColor = asKnownColor(card.color);
 
   const toggleEnabled = (next: boolean) => {
     startTransition(async () => {
       try {
         await setUpgraderOutputEnabled(card.id, next);
         toast.success(next ? "Card enabled" : "Card disabled");
+        router.refresh();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Failed to update");
+      }
+    });
+  };
+
+  const handleColorChange = (sentinelOrColor: string) => {
+    const next: UpgraderOutputColor | null =
+      sentinelOrColor === COLOR_DEFAULT_SENTINEL
+        ? null
+        : (sentinelOrColor as UpgraderOutputColor);
+
+    // Optimistically skip the round-trip when the value didn't change — the
+    // Select fires onValueChange on initial mount in some flows.
+    if (next === currentColor) return;
+
+    startTransition(async () => {
+      try {
+        await setUpgraderOutputColor(card.id, next);
+        toast.success(
+          next === null ? "Color cleared" : `Color set to ${next}`,
+        );
         router.refresh();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Failed to update");
@@ -143,6 +233,37 @@ function UpgraderOutputCardTile({ card }: { card: UpgraderOutputCard }) {
           </span>
         </div>
       </div>
+
+      <Select
+        value={currentColor ?? COLOR_DEFAULT_SENTINEL}
+        onValueChange={handleColorChange}
+        disabled={isPending}
+      >
+        <SelectTrigger
+          size="sm"
+          className="h-7 w-full justify-between px-2 text-[11px]"
+          aria-label="Card color override"
+        >
+          <SelectValue>
+            <span className="flex items-center gap-1.5">
+              <ColorSwatch color={currentColor} />
+              <span className="capitalize">{currentColor ?? "Default"}</span>
+            </span>
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={COLOR_DEFAULT_SENTINEL}>
+            <ColorSwatch color={null} />
+            <span>Default</span>
+          </SelectItem>
+          {UPGRADER_OUTPUT_COLORS.map((c) => (
+            <SelectItem key={c} value={c}>
+              <ColorSwatch color={c} />
+              <span className="capitalize">{c}</span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
 
       <div className="flex items-center justify-between gap-2 border-t pt-2">
         <label className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
