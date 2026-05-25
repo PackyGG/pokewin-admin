@@ -126,7 +126,7 @@ export function PageHero({
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/15 to-transparent"
       />
-      <div className="relative p-5 sm:p-6 md:p-7">{children}</div>
+      <div className="relative p-4 sm:p-5">{children}</div>
     </div>
   );
 }
@@ -199,13 +199,13 @@ export function PageHeroIdentity({
         {backNode}
         <div
           className={cn(
-            "flex size-10 shrink-0 items-center justify-center rounded-xl border shadow-sm ring-1 ring-inset ring-white/5 sm:size-11",
+            "flex size-9 shrink-0 items-center justify-center rounded-xl border shadow-sm ring-1 ring-inset ring-white/5 sm:size-10",
             colors ? colors.bg : "border-primary/20 bg-primary/10",
           )}
         >
           <Icon
             className={cn(
-              "size-5 sm:size-[22px]",
+              "size-[18px] sm:size-5",
               colors ? colors.icon : "text-primary",
             )}
           />
@@ -218,7 +218,7 @@ export function PageHeroIdentity({
             <div className="flex flex-wrap items-center gap-2">
               <h1
                 className={cn(
-                  "text-xl font-bold leading-tight tracking-tight sm:text-2xl md:text-3xl",
+                  "text-lg font-bold leading-tight tracking-tight sm:text-xl md:text-2xl",
                   titleClassName,
                 )}
               >
@@ -229,7 +229,7 @@ export function PageHeroIdentity({
           ) : (
             <h1
               className={cn(
-                "text-xl font-bold leading-tight sm:text-2xl md:text-3xl",
+                "text-lg font-bold leading-tight sm:text-xl md:text-2xl",
                 titleClassName,
               )}
             >

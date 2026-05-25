@@ -47,7 +47,7 @@ export function PageHeroSkeleton({
         aria-hidden
         className="pointer-events-none absolute -left-24 -bottom-24 size-48 rounded-full bg-purple-500/[0.06] blur-3xl sm:size-72"
       />
-      <div className="relative p-4 sm:p-5 md:p-6">
+      <div className="relative p-4 sm:p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
           <div className="flex min-w-0 items-center gap-3">
             <Skeleton className="size-9 shrink-0 rounded-xl sm:size-10" />
@@ -163,7 +163,7 @@ export function DetailHeroSkeleton({
         aria-hidden
         className="pointer-events-none absolute -left-24 -bottom-24 size-48 rounded-full bg-purple-500/[0.06] blur-3xl sm:size-72"
       />
-      <div className="relative p-4 sm:p-5 md:p-6">
+      <div className="relative p-4 sm:p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
           <div className="flex min-w-0 items-center gap-2 sm:gap-3">
             <Skeleton className="size-8 shrink-0 rounded-md sm:size-9" />
