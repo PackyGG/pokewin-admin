@@ -11,10 +11,28 @@ import "server-only";
  */
 
 const ETH_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
+// Solana public keys are base58-encoded (Bitcoin alphabet — no 0, O, I,
+// l) and decode to 32 bytes, which renders as 32-44 base58 chars.
+const SOL_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
-/** Mainnet Ethereum address format validator. */
+/** Which chain an address belongs to, derived purely from its format. */
+export type AddressKind = "erc20" | "sol" | "unknown";
+
+/**
+ * Classify an address by format alone. ERC-20 is checked first; its
+ * `0x` prefix can never satisfy the base58 SOL pattern, so the two are
+ * mutually exclusive.
+ */
+export function addressKind(value: string): AddressKind {
+  const v = value.trim();
+  if (ETH_ADDRESS_RE.test(v)) return "erc20";
+  if (SOL_ADDRESS_RE.test(v)) return "sol";
+  return "unknown";
+}
+
+/** True for any address we recognise (ERC-20 or Solana). */
 export function isAddress(value: string): boolean {
-  return ETH_ADDRESS_RE.test(value.trim());
+  return addressKind(value) !== "unknown";
 }
 
 /** Build a mainnet Etherscan URL for an address. */
@@ -28,11 +46,13 @@ export function etherscanTxUrl(txHash: string): string {
 }
 
 /**
- * 0x-prefix and lowercase normalize an address. We validate FIRST
- * with isAddress, then store lowercase so equality checks elsewhere
- * (audit metadata, dedup) don't need to checksum-aware compare.
+ * Normalize an address for storage. ERC-20 addresses are
+ * case-insensitive hex → lowercased so equality checks (audit
+ * metadata, dedup) don't need checksum-aware compares. Solana
+ * addresses are case-SENSITIVE base58 → stored verbatim (lowercasing
+ * would corrupt the key), only trimmed.
  */
 export function normalizeAddress(value: string): string {
   const trimmed = value.trim();
-  return trimmed.toLowerCase();
+  return ETH_ADDRESS_RE.test(trimmed) ? trimmed.toLowerCase() : trimmed;
 }
