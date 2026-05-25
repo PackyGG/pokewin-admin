@@ -9,6 +9,21 @@ import { SalariesClient } from "./salaries-client";
 
 export const metadata = { title: "Employee Salaries" };
 
+/**
+ * Pay-day proximity status, computed server-side per request so there's
+ * no client/server hydration mismatch.
+ *   - "due"  → today or tomorrow is the pay day (within ~24h) → red
+ *   - "ok"   → not imminent → green
+ *   - null   → no pay day set
+ * payDay uses the JS getUTCDay convention (0 = Sunday … 6 = Saturday).
+ */
+function payDayStatus(payDay: number | null, now: Date): "due" | "ok" | null {
+  if (payDay == null) return null;
+  const today = now.getUTCDay();
+  const daysUntil = (payDay - today + 7) % 7;
+  return daysUntil <= 1 ? "due" : "ok";
+}
+
 export default async function SalariesPage() {
   await requireMotha();
   // Defensive — the original migration created salary_wallet which
@@ -22,6 +37,7 @@ export default async function SalariesPage() {
     orderBy: [{ active: "desc" }, { discord_name: "asc" }],
   });
 
+  const now = new Date();
   const activeEmployees = employees.filter((e) => e.active).length;
   // Monthly budget = sum of (salary × periods-per-month) across all
   // active employees, normalized to a calendar month. Per-period
@@ -108,6 +124,8 @@ export default async function SalariesPage() {
               : "monthly") as "weekly" | "biweekly" | "monthly",
             salaryUsdt: Number(e.salary_usdt),
             active: e.active,
+            payDayOfWeek: e.pay_day_of_week ?? null,
+            payStatus: payDayStatus(e.pay_day_of_week ?? null, now),
             notes: e.notes,
           }))}
         />
