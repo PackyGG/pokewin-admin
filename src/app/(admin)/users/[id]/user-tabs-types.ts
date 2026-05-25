@@ -172,6 +172,7 @@ export type UserDetail = {
   tips: {
     received: { count: number; totalUsd: number; recent: TipEntry[] };
     sent: { count: number; totalUsd: number; recent: TipEntry[] };
+    rainPrizes: { count: number; totalUsd: number; recent: TipEntry[] };
   };
   sessionRole: string;
   capabilities: {
@@ -245,6 +246,12 @@ export type Transaction = {
   borrowPercentage: number | null;
   /** USD the house fronted on this row (bet × borrow%). */
   borrowedAmountUsd: number | null;
+  /**
+   * Sponsorship % of the linked battle (0 = none, 100 = fully
+   * sponsored — the creator paid the whole entry so others join free).
+   * null on non-battle rows — drives the "Sponsored" badge.
+   */
+  sponsorshipPercentage: number | null;
   /**
    * Battle id for battle rows (battle_bet / battle_sponsorship /
    * battle_refund) — powers the "watch live" link to

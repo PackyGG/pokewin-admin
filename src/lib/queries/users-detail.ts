@@ -19,18 +19,33 @@ const TIP_RECENT_LIMIT = 10;
  * metadata flag we fall back to the balance delta to infer direction.
  */
 async function getUserTips(db: Db, userId: string) {
-  const rows = await db.ledger_transactions.findMany({
-    where: { user_id: userId, type: "creator_tip" },
-    orderBy: { created_at: "desc" },
-    select: {
-      id: true,
-      amount: true,
-      balance_before: true,
-      balance_after: true,
-      metadata: true,
-      created_at: true,
-    },
-  });
+  const [rows, rainAgg, rainRecent] = await Promise.all([
+    db.ledger_transactions.findMany({
+      where: { user_id: userId, type: "creator_tip" },
+      orderBy: { created_at: "desc" },
+      select: {
+        id: true,
+        amount: true,
+        balance_before: true,
+        balance_after: true,
+        metadata: true,
+        created_at: true,
+      },
+    }),
+    // Rain prizes the user won (rain_win) — count + total in one pass…
+    db.ledger_transactions.aggregate({
+      where: { user_id: userId, type: "rain_win" },
+      _count: { _all: true },
+      _sum: { amount: true },
+    }),
+    // …plus the most recent few for the list.
+    db.ledger_transactions.findMany({
+      where: { user_id: userId, type: "rain_win" },
+      orderBy: { created_at: "desc" },
+      take: TIP_RECENT_LIMIT,
+      select: { id: true, amount: true, created_at: true },
+    }),
+  ]);
 
   type Entry = {
     id: string;
@@ -112,6 +127,18 @@ async function getUserTips(db: Db, userId: string) {
       count: sent.length,
       totalUsd: sum(sent),
       recent: sent.slice(0, TIP_RECENT_LIMIT).map(strip),
+    },
+    // Rain prizes have no counterparty — they come from the rain pool.
+    rainPrizes: {
+      count: rainAgg._count._all,
+      totalUsd: toNumber(rainAgg._sum.amount ?? 0),
+      recent: rainRecent.map((r) => ({
+        id: r.id,
+        amountUsd: toNumber(r.amount),
+        counterpartyId: null,
+        counterpartyName: null,
+        createdAt: r.created_at.toISOString(),
+      })),
     },
   };
 }

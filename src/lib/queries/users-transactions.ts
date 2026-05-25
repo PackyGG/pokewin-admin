@@ -99,6 +99,9 @@ export async function getUserTransactions(
     }
   }
   const battleBorrowMap = new Map<string, number>();
+  // battle id → sponsorship % (0 = none, 100 = fully sponsored: the
+  // creator paid the whole entry so others join free).
+  const battleSponsorshipMap = new Map<string, number>();
   const battleOutcomeMap = new Map<
     string,
     { winnerTeam: number | null; status: string }
@@ -110,12 +113,14 @@ export async function getUserTransactions(
         select: {
           id: true,
           borrow_percentage: true,
+          sponsorship_percentage: true,
           winner_team: true,
           status: true,
         },
       });
       for (const b of battleRows) {
         battleBorrowMap.set(b.id, b.borrow_percentage ?? 0);
+        battleSponsorshipMap.set(b.id, b.sponsorship_percentage ?? 0);
         battleOutcomeMap.set(b.id, {
           winnerTeam: b.winner_team,
           status: b.status,
@@ -438,6 +443,13 @@ export async function getUserTransactions(
         (typeof meta?.battle_id === "string" ? (meta.battle_id as string) : null) ??
         null;
 
+      // Sponsorship % of the linked battle (0 = none, 100 = fully
+      // sponsored). Null on non-battle rows so the badge only shows on
+      // battle activity.
+      const sponsorshipPercentage = battleId
+        ? (battleSponsorshipMap.get(battleId) ?? null)
+        : null;
+
       // Battle outcome + winnings for a battle_bet row.
       //   battleResult: "win" | "lose" | null (null = not resolved yet —
       //     in_progress / animating / waiting / cancelled). Decided by
@@ -543,6 +555,7 @@ export async function getUserTransactions(
         updatedAt: t.updated_at.toISOString(),
         borrowPercentage,
         borrowedAmountUsd,
+        sponsorshipPercentage,
         battleId,
         battleWinnings,
       };

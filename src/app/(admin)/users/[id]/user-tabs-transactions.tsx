@@ -313,6 +313,21 @@ export const CategoryTransactionsTable = React.memo(
                         amountUsd={t.borrowedAmountUsd}
                         size="sm"
                       />
+                      {/* Sponsorship signal — flags battle rows where the
+                          creator fronted the entry (others join free).
+                          100% = fully sponsored. Null/0 on everything
+                          else. */}
+                      {t.sponsorshipPercentage != null &&
+                        t.sponsorshipPercentage > 0 && (
+                          <Badge
+                            variant="outline"
+                            className="border-violet-500/30 bg-violet-500/15 text-[10px] font-medium text-violet-600 dark:text-violet-400"
+                          >
+                            {t.sponsorshipPercentage >= 100
+                              ? "Fully sponsored"
+                              : `Sponsored ${t.sponsorshipPercentage}%`}
+                          </Badge>
+                        )}
                     </div>
                   </TableCell>
                   {(() => {

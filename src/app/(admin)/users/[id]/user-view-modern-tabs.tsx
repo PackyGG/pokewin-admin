@@ -136,10 +136,10 @@ export function OverviewTab({
         cardWithdrawals={data.cardWithdrawals}
       />
 
-      {/* Tips — creator tips this user received or sent. Sits directly
-          below deposits per admin request (tips weren't visible on any
-          tab before). */}
-      <SectionHeading icon={Coins} title="Tips" />
+      {/* Tips & Rain — creator tips this user received/sent + rain
+          prizes won. Sits directly below deposits per admin request
+          (none of this was visible on any tab before). */}
+      <SectionHeading icon={Coins} title="Tips & Rain" />
       <TipsSection tips={data.tips} />
 
       {/* Recent activity — unified timeline (gaming + financial). Colors
@@ -155,14 +155,16 @@ export function OverviewTab({
 }
 
 // ───────────────────────────────────────────────────────────────────
-//  TIPS SECTION (overview) — creator tips received / sent
+//  TIPS & RAIN SECTION (overview) — creator tips received/sent + rain
+//  prizes won
 // ───────────────────────────────────────────────────────────────────
 
 function TipsSection({ tips }: { tips: UserDetail["tips"] }) {
   return (
-    <div className="grid gap-3 sm:gap-4 md:grid-cols-2">
+    <div className="grid gap-3 sm:gap-4 md:grid-cols-3">
       <TipPanel kind="received" data={tips.received} />
       <TipPanel kind="sent" data={tips.sent} />
+      <TipPanel kind="rain" data={tips.rainPrizes} />
     </div>
   );
 }
@@ -171,22 +173,39 @@ function TipPanel({
   kind,
   data,
 }: {
-  kind: "received" | "sent";
+  kind: "received" | "sent" | "rain";
   data: { count: number; totalUsd: number; recent: TipEntry[] };
 }) {
-  const isReceived = kind === "received";
-  // House-POV (CLAUDE.md): a tip RECEIVED grows the user's balance →
-  // user gain → house loss → rose. A tip SENT shrinks the sender's own
-  // balance → user loss → house gain → emerald.
-  const amountColor = isReceived
+  // House-POV (CLAUDE.md): money the user GAINS (tips received, rain
+  // prizes) → house loss → rose. Money the user SPENDS (tips sent) →
+  // house gain → emerald.
+  const userGained = kind !== "sent";
+  const amountColor = userGained
     ? "text-rose-600 dark:text-rose-400"
     : "text-emerald-600 dark:text-emerald-400";
-  const accentChip = isReceived
+  const accentChip = userGained
     ? "bg-rose-500/15 text-rose-500"
     : "bg-emerald-500/15 text-emerald-500";
-  const Icon = isReceived ? ArrowDownToLine : ArrowUpRight;
-  const label = isReceived ? "Tips Received" : "Tips Sent";
-  const sign = isReceived ? "+" : "-";
+  const Icon =
+    kind === "received"
+      ? ArrowDownToLine
+      : kind === "sent"
+        ? ArrowUpRight
+        : Trophy;
+  const label =
+    kind === "received"
+      ? "Tips Received"
+      : kind === "sent"
+        ? "Tips Sent"
+        : "Rain Prizes";
+  const unit = kind === "rain" ? "prize" : "tip";
+  const emptyText =
+    kind === "received"
+      ? "No tips received."
+      : kind === "sent"
+        ? "No tips sent."
+        : "No rain prizes won.";
+  const sign = userGained ? "+" : "-";
 
   return (
     <Card>
@@ -206,7 +225,7 @@ function TipPanel({
                 {label}
               </p>
               <p className="text-[11px] text-muted-foreground">
-                {data.count} {data.count === 1 ? "tip" : "tips"}
+                {data.count} {data.count === 1 ? unit : `${unit}s`}
               </p>
             </div>
           </div>
@@ -218,9 +237,7 @@ function TipPanel({
         </div>
 
         {data.recent.length === 0 ? (
-          <p className="text-xs text-muted-foreground">
-            {isReceived ? "No tips received." : "No tips sent."}
-          </p>
+          <p className="text-xs text-muted-foreground">{emptyText}</p>
         ) : (
           <ul className="space-y-1.5">
             {data.recent.map((t) => (
@@ -229,16 +246,24 @@ function TipPanel({
                 className="flex items-center justify-between gap-2 text-xs"
               >
                 <span className="min-w-0 truncate text-muted-foreground">
-                  {isReceived ? "from " : "to "}
-                  {t.counterpartyId ? (
-                    <Link
-                      href={`/users/${t.counterpartyId}`}
-                      className="font-medium text-foreground hover:text-primary hover:underline"
-                    >
-                      {t.counterpartyName ?? t.counterpartyId.slice(0, 8)}
-                    </Link>
+                  {kind === "rain" ? (
+                    <span className="text-foreground">Rain prize</span>
                   ) : (
-                    <span className="font-medium text-foreground">unknown</span>
+                    <>
+                      {kind === "received" ? "from " : "to "}
+                      {t.counterpartyId ? (
+                        <Link
+                          href={`/users/${t.counterpartyId}`}
+                          className="font-medium text-foreground hover:text-primary hover:underline"
+                        >
+                          {t.counterpartyName ?? t.counterpartyId.slice(0, 8)}
+                        </Link>
+                      ) : (
+                        <span className="font-medium text-foreground">
+                          unknown
+                        </span>
+                      )}
+                    </>
                   )}
                   <span className="ml-1 text-muted-foreground/70">
                     · {formatRelative(t.createdAt)}
