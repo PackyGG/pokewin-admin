@@ -41,6 +41,7 @@ import {
   ChevronRight,
   FlaskConical,
   Ban,
+  Network,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -101,6 +102,7 @@ const ICONS: Record<string, LucideIcon> = {
   Coins,
   FlaskConical,
   Ban,
+  Network,
 };
 
 type NavItem = {
@@ -139,6 +141,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Transactions", href: "/transactions", icon: "Receipt" },
       { label: "Map", href: "/map", icon: "Globe" },
       { label: "Users", href: "/users", icon: "Users" },
+      { label: "Employee Board", href: "/employees", icon: "Network" },
       { label: "Deposits", href: "/transactions/deposits", icon: "ArrowDownToLine" },
       { label: "Withdrawals", href: "/withdrawals", icon: "ArrowDownToLine" },
     ],

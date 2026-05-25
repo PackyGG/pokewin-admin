@@ -10,6 +10,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Navigation", label: "Analytics", key: "/analytics" },
   { group: "Navigation", label: "Map", key: "/map" },
   { group: "Navigation", label: "Users", key: "/users" },
+  { group: "Navigation", label: "Employee Board", key: "/employees" },
   { group: "Navigation", label: "Withdrawals", key: "/withdrawals" },
   // Transactions
   { group: "Transactions", label: "All", key: "/transactions" },

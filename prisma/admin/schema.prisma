@@ -563,6 +563,43 @@ model salary_payouts {
   @@index([created_at(sort: Desc)])
 }
 
+// ─── Employee org board (drag-and-drop workspace grouping) ─────────
+// A Kanban-style board (page /employees, all-admin access) where the
+// employees from the salary registry are organized into named
+// "workspace" columns and tagged with free-form roles. This board is
+// broader-access than the founders-only /salaries page, so it stores
+// NOTHING sensitive — pay/wallet data never leaves the salary tables.
+// Tables are also created via a runtime IF-NOT-EXISTS fallback in
+// src/lib/employee-board/ensure-schema.ts (no migration file, matching
+// the salary self-heal pattern).
+model employee_workspaces {
+  id         String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Display name of the column ("Marketing", "Dev", …).
+  name       String
+  // Manual ordering of the columns left-to-right.
+  position   Int                          @default(0)
+  created_at DateTime                     @default(now()) @db.Timestamptz(6)
+  updated_at DateTime                     @updatedAt @db.Timestamptz(6)
+  placements employee_board_placements[]
+}
+
+// One row per placed employee. employee_id is salary_employees.id but
+// intentionally kept as a LOOSE column (DB-level FK only, no Prisma
+// relation field on salary_employees) so the salary model stays
+// untouched. workspace_id null = the "Unassigned" pool.
+model employee_board_placements {
+  id           String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id  String               @unique @db.Uuid
+  workspace_id String?              @db.Uuid
+  roles        String[]             @default([])
+  position     Int                  @default(0)
+  created_at   DateTime             @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime             @updatedAt @db.Timestamptz(6)
+  workspace    employee_workspaces? @relation(fields: [workspace_id], references: [id], onDelete: SetNull)
+
+  @@index([workspace_id])
+}
+
 // Admin-side "sponsored %" annotation on a creator (affiliate)
 // leaderboard. Purely a cost-accounting input — it does NOT touch the
 // backend leaderboard in any way. The /creators "Leaderboard Cost" KPI
