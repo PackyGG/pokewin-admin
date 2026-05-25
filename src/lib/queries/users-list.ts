@@ -69,22 +69,32 @@ export async function getUsers(params: {
 
   const where: Prisma.UserWhereInput = {};
 
+  // Trim so stray leading/trailing whitespace (easy to paste in by
+  // accident) doesn't turn a valid handle into a miss.
+  const searchTerm = search?.trim();
+
   // Discord snowflake IDs are 17-20 digit numeric strings. We match the
   // linked Discord account (account.providerId = 'discord', account.accountId
   // = snowflake) only when the search looks like one — otherwise a generic
   // numeric username would trigger an unnecessary join.
-  const isDiscordId = /^\d{17,20}$/.test(search ?? "");
+  const isDiscordId = /^\d{17,20}$/.test(searchTerm ?? "");
 
-  if (search) {
+  if (searchTerm) {
+    // All text matches are case-insensitive (ILIKE under the hood). We
+    // search the handle, the display name + OAuth name (so a user can be
+    // found by what Discord/Google shows, not just the lowercase
+    // handle), and the email; id is an exact match.
     const or: Prisma.UserWhereInput[] = [
-      { username: { contains: search, mode: "insensitive" } },
-      { email: { contains: search, mode: "insensitive" } },
-      { id: search },
+      { username: { contains: searchTerm, mode: "insensitive" } },
+      { display_username: { contains: searchTerm, mode: "insensitive" } },
+      { name: { contains: searchTerm, mode: "insensitive" } },
+      { email: { contains: searchTerm, mode: "insensitive" } },
+      { id: searchTerm },
     ];
     if (isDiscordId) {
       or.push({
         account: {
-          some: { providerId: "discord", accountId: search },
+          some: { providerId: "discord", accountId: searchTerm },
         },
       });
     }
@@ -152,13 +162,13 @@ export async function getUsers(params: {
   if (rawSqlSorts.has(sortBy)) {
     const orderSql = order === "asc" ? "ASC" : "DESC";
     const whereSql: string[] = [];
-    if (search) {
-      const safe = search.replace(/'/g, "''");
+    if (searchTerm) {
+      const safe = searchTerm.replace(/'/g, "''");
       const discordClause = isDiscordId
         ? ` OR EXISTS (SELECT 1 FROM account a WHERE a."userId" = u.id AND a."providerId" = 'discord' AND a."accountId" = '${safe}')`
         : "";
       whereSql.push(
-        `(u.username ILIKE '%${safe}%' OR u.email ILIKE '%${safe}%' OR u.id = '${safe}'${discordClause})`,
+        `(u.username ILIKE '%${safe}%' OR u.display_username ILIKE '%${safe}%' OR u.name ILIKE '%${safe}%' OR u.email ILIKE '%${safe}%' OR u.id = '${safe}'${discordClause})`,
       );
     }
     if (role && role !== "all" && USER_ROLES.has(role)) {
