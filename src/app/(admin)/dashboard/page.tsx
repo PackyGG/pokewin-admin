@@ -44,7 +44,6 @@ import { FadeIn } from "@/components/fade-in";
 import {
   KpiStripSkeleton,
   ChartRowSkeleton,
-  ChartSkeleton,
 } from "@/components/loading-skeletons";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -128,13 +127,18 @@ export default async function DashboardPage() {
           row stays balanced before we have room for the third. */}
       <div className="space-y-3">
         <SectionHeading icon={LineChart} title="Trends" />
-        {/* Daily house P&L — the headline trend, full width above the rest.
-            Its own lightweight query (getDailyPnl) streams behind its own
-            Suspense so it doesn't gate the other charts. */}
-        <Suspense fallback={<ChartSkeleton height={280} />}>
-          <DashboardPnlChart />
-        </Suspense>
-        <Suspense fallback={<ChartRowSkeleton count={4} height={300} />}>
+        {/* Row 1: Wagers · Deposits · FTDs. Row 2: Daily P&L · Signups.
+            One boundary — the row-1/Signups charts share the cached
+            getDashboardStats and the standalone getDailyPnl runs in
+            parallel with it. */}
+        <Suspense
+          fallback={
+            <>
+              <ChartRowSkeleton count={3} height={300} />
+              <ChartRowSkeleton count={2} height={300} />
+            </>
+          }
+        >
           <DashboardCharts />
         </Suspense>
       </div>
@@ -356,31 +360,28 @@ async function DashboardActiveRain() {
 }
 
 /**
- * Daily house P&L chart. Its own lightweight query (getDailyPnl — bucketed
- * windowed-P&L components over 30 days), streamed behind its own Suspense so
- * it doesn't add to the heavy getDashboardStats aggregate.
- */
-async function DashboardPnlChart() {
-  const data = await getDailyPnl();
-  return (
-    <FadeIn>
-      <PnlChart data={data} />
-    </FadeIn>
-  );
-}
-
-/**
- * The four trend charts (wagers, deposits, signups, FTDs). Async so it
- * streams behind its own Suspense; reads the React-cached getDashboardStats.
+ * Trend charts in two rows:
+ *   Row 1 (3): Wagers · Deposits · FTDs   — from the cached getDashboardStats
+ *   Row 2 (2): Daily P&L · Signups        — P&L from standalone getDailyPnl
+ * Both data sources are awaited in parallel (getDashboardStats is cached, so
+ * it's shared with the KPI strips; getDailyPnl runs alongside it).
  */
 async function DashboardCharts() {
-  const stats = await getDashboardStats();
+  const [stats, dailyPnl] = await Promise.all([
+    getDashboardStats(),
+    getDailyPnl(),
+  ]);
   return (
-    <FadeIn className="grid gap-3 sm:gap-4 md:grid-cols-2 xl:grid-cols-4">
-      <WagerChart data={stats.dailyWagers} />
-      <DepositsChart data={stats.dailyDeposits} />
-      <SignupsChart data={stats.dailySignups} />
-      <FtdsChart data={stats.dailyFtds} />
+    <FadeIn className="space-y-3 sm:space-y-4">
+      <div className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <WagerChart data={stats.dailyWagers} />
+        <DepositsChart data={stats.dailyDeposits} />
+        <FtdsChart data={stats.dailyFtds} />
+      </div>
+      <div className="grid gap-3 sm:gap-4 md:grid-cols-2">
+        <PnlChart data={dailyPnl} />
+        <SignupsChart data={stats.dailySignups} />
+      </div>
     </FadeIn>
   );
 }
