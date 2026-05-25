@@ -41,6 +41,7 @@ import {
   ChevronRight,
   FlaskConical,
   Ban,
+  ArrowUpCircle,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -101,6 +102,7 @@ const ICONS: Record<string, LucideIcon> = {
   Coins,
   FlaskConical,
   Ban,
+  ArrowUpCircle,
 };
 
 type NavItem = {
@@ -113,6 +115,10 @@ type NavItem = {
   // server-side via requireMotha — this flag is purely cosmetic /
   // discoverability.
   usernameAllowlist?: string[];
+  // Renders a small "NEW" badge next to the label to surface a
+  // recently-added page. Purely cosmetic — remove once the team has
+  // discovered the page.
+  isNew?: boolean;
 };
 
 type NavGroup = {
@@ -197,6 +203,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Packs", href: "/packs", icon: "Package" },
       { label: "Cards", href: "/cards", icon: "Layers" },
       { label: "Battles", href: "/battles", icon: "Swords" },
+      { label: "Upgrader", href: "/upgrader", icon: "ArrowUpCircle", isNew: true },
     ],
   },
   {
@@ -436,6 +443,11 @@ export function AppSidebar({
                     >
                       <Icon className={cn("size-4", isActive ? "text-primary" : "text-muted-foreground")} />
                       <span>{item.label}</span>
+                      {item.isNew && (
+                        <span className="ml-auto rounded-sm bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-emerald-600 group-data-[collapsible=icon]:hidden dark:text-emerald-400">
+                          New
+                        </span>
+                      )}
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 );
