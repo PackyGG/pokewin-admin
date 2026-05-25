@@ -330,20 +330,27 @@ export const CategoryTransactionsTable = React.memo(
                         )}
                     </div>
                   </TableCell>
-                  {(() => {
-                    // HOUSE-POV amount. The signed balance delta alone is
-                    // a user-perspective signal (wager and withdrawal
-                    // both make the balance go down), so we classify by
-                    // ledger type instead — matches Recent Activity and
-                    // every other transaction surface.
-                    const dir = ledgerDirection(t.type);
-                    return (
-                      <TableCell className={amountColorFor(dir)}>
-                        {amountSignFor(dir)}
-                        {formatCurrency(t.amount)}
-                      </TableCell>
-                    );
-                  })()}
+                  {showCardsValue ? (
+                    // Gaming tab: Amount is the raw stake/wager, not a
+                    // P&L. Keep it neutral so only the House Profit
+                    // column carries the green/red signal.
+                    <TableCell className="tabular-nums">
+                      {formatCurrency(t.amount)}
+                    </TableCell>
+                  ) : (
+                    (() => {
+                      // Finances / overview: Amount IS the signal, so
+                      // color + sign it from the HOUSE POV (classified by
+                      // ledger type, matching every other tx surface).
+                      const dir = ledgerDirection(t.type);
+                      return (
+                        <TableCell className={amountColorFor(dir)}>
+                          {amountSignFor(dir)}
+                          {formatCurrency(t.amount)}
+                        </TableCell>
+                      );
+                    })()
+                  )}
                   {showCardsValue &&
                     (() => {
                       // Sponsorship funds someone else's play — the house
