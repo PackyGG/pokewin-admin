@@ -487,6 +487,23 @@ export async function getUserTransactions(
         ? cardsValueByTx.get(t.id)!
         : null;
 
+      // A WON battle pays out in CARDS that land at battle resolution —
+      // LATER than this bet row's timestamp — so the bet row's inventory
+      // snapshot (taken at battle start) doesn't include them, which made
+      // a winning battle look like a pure cash loss with $0 inventory.
+      // Reflect the battle's OUTCOME on its bet row: show the won cards in
+      // this row's inventory and worth. Built from the strictly-before
+      // snapshot + winnings so it never double-counts (the won cards are
+      // always obtained after the bet, never in the before snapshot).
+      const isWonBattleBet =
+        t.type === "battle_bet" &&
+        battleResult === "win" &&
+        battleWinnings != null &&
+        battleWinnings > 0;
+      const inventoryDisplayedNum = isWonBattleBet
+        ? inventoryValueBeforeNum + battleWinnings!
+        : inventoryValueNum;
+
       return {
         id: t.id,
         type: t.type,
@@ -494,7 +511,7 @@ export async function getUserTransactions(
         balanceBefore: balanceBeforeNum,
         balanceAfter: balanceAfterNum,
         worthBefore: balanceBeforeNum + inventoryValueBeforeNum,
-        worthAfter: balanceAfterNum + inventoryValueNum,
+        worthAfter: balanceAfterNum + inventoryDisplayedNum,
         description: t.description,
         status: t.status,
         gameSessionId: t.game_session_id,
@@ -505,7 +522,7 @@ export async function getUserTransactions(
         // (winner_team vs team_number), NOT game_sessions.result. Packs
         // keep gs.result (unused by the UI, but harmless).
         gameResult: t.type === "battle_bet" ? battleResult : gs?.result ?? null,
-        inventoryValue: inventoryValueNum,
+        inventoryValue: inventoryDisplayedNum,
         soldCard: soldItem?.card ? {
           name: soldItem.card.name,
           imageUrl: soldItem.card.image_url,
