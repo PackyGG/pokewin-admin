@@ -363,6 +363,7 @@ async function dashboardStatsInner() {
     signups24h,
     ftdResult,
     pendingWithdrawalsResult,
+    dailyFtds,
   ] = await Promise.all([
     // All four user counts (total + new today/week/month) in ONE scan of
     // the user table via COUNT(*) FILTER, instead of four separate
@@ -542,6 +543,34 @@ async function dashboardStatsInner() {
           SELECT id FROM "user"
           WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
         )
+    `,
+    // Daily FTDs (first-time depositors) for the last 30 days — the daily
+    // counterpart to the FTDs (24h) tile and the Signups chart. Uses the
+    // SAME "first deposit" definition (DISTINCT ON user_id → each user's
+    // earliest completed deposit), bucketed by the day that first deposit
+    // landed. Returns per-day count + summed first-deposit value so the
+    // chart hover can show count, total, and average. Appended last so the
+    // positional destructuring above is unaffected.
+    db.$queryRaw<{ date: Date; count: string; total: string }[]>`
+      WITH first_deposits AS (
+        SELECT DISTINCT ON (user_id)
+          user_id, amount::numeric AS amount, created_at
+        FROM ledger_transactions
+        WHERE type = 'deposit' AND status = 'completed'
+          AND user_id IN (
+            SELECT id FROM "user"
+            WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+          )
+        ORDER BY user_id, created_at ASC
+      )
+      SELECT
+        DATE(created_at) AS date,
+        COUNT(*)::text AS count,
+        COALESCE(SUM(amount), 0)::text AS total
+      FROM first_deposits
+      WHERE created_at >= NOW() - INTERVAL '30 days'
+      GROUP BY DATE(created_at)
+      ORDER BY date
     `,
   ]);
 
@@ -751,6 +780,19 @@ async function dashboardStatsInner() {
       date: new Date(d.date).toISOString().split("T")[0],
       count: Number(d.count),
     })),
+    // Daily FTDs — count + summed first-deposit value per day, plus the
+    // derived average (total / count, guarded against div-by-zero). The
+    // chart shows count; the hover surfaces total + avg.
+    dailyFtds: dailyFtds.map((d) => {
+      const count = Number(d.count);
+      const total = Number(d.total);
+      return {
+        date: new Date(d.date).toISOString().split("T")[0],
+        count,
+        total,
+        avg: count > 0 ? total / count : 0,
+      };
+    }),
     // Server-side compute metadata. `queryMs` is the wall-clock time spent
     // in this function (exclusion lists + the parallel query batch + the
     // light post-processing above) — measured here at the very end so it

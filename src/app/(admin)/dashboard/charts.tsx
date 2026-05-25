@@ -8,7 +8,7 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from "@/components/ui/chart";
-import { formatCompactUsd } from "@/lib/utils/format";
+import { formatCompactUsd, formatCurrency } from "@/lib/utils/format";
 
 const wagerConfig = {
   packs: {
@@ -32,6 +32,13 @@ const signupsConfig = {
   count: {
     label: "Signups",
     color: "var(--color-chart-1)",
+  },
+} satisfies ChartConfig;
+
+const ftdsConfig = {
+  count: {
+    label: "FTDs",
+    color: "var(--color-chart-5)",
   },
 } satisfies ChartConfig;
 
@@ -171,6 +178,71 @@ export function SignupsChart({
             />
             <YAxis tickLine={false} axisLine={false} tickMargin={8} />
             <ChartTooltip content={<ChartTooltipContent />} />
+            <Bar
+              dataKey="count"
+              fill="var(--color-count)"
+              radius={[4, 4, 0, 0]}
+              animationDuration={700}
+              animationEasing="ease-out"
+            />
+          </BarChart>
+        </ChartContainer>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Custom hover for the FTDs chart — the bar shows the daily count, and the
+ * tooltip adds the total first-deposit value and the average. Recharts
+ * clones this element with `active`/`payload`, so we read the day's row off
+ * payload[0].payload. Styling mirrors ChartTooltipContent's container.
+ */
+function FtdsTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{ payload: { count: number; total: number; avg: number } }>;
+}) {
+  if (!active || !payload?.length) return null;
+  const p = payload[0].payload;
+  return (
+    <div className="grid min-w-32 gap-0.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
+      <span className="font-medium text-foreground">
+        {p.count} {p.count === 1 ? "FTD" : "FTDs"}
+      </span>
+      <span className="text-muted-foreground">
+        Total {formatCurrency(p.total)}
+      </span>
+      <span className="text-muted-foreground">Avg {formatCurrency(p.avg)}</span>
+    </div>
+  );
+}
+
+export function FtdsChart({
+  data,
+}: {
+  data: { date: string; count: number; total: number; avg: number }[];
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm font-medium">FTDs (30 days)</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <ChartContainer config={ftdsConfig} className="h-[220px] w-full md:h-[260px] lg:h-[300px]">
+          <BarChart data={data} accessibilityLayer>
+            <CartesianGrid vertical={false} />
+            <XAxis
+              dataKey="date"
+              tickLine={false}
+              axisLine={false}
+              tickMargin={8}
+              tickFormatter={(v) => v.slice(5)}
+            />
+            <YAxis tickLine={false} axisLine={false} tickMargin={8} />
+            <ChartTooltip content={<FtdsTooltip />} />
             <Bar
               dataKey="count"
               fill="var(--color-count)"
