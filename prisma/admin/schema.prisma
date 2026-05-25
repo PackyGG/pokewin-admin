@@ -577,10 +577,11 @@ model employee_workspaces {
   // Display name of the column ("Marketing", "Dev", …).
   name       String
   // Manual ordering of the columns left-to-right.
-  position   Int                          @default(0)
-  created_at DateTime                     @default(now()) @db.Timestamptz(6)
-  updated_at DateTime                     @updatedAt @db.Timestamptz(6)
-  placements employee_board_placements[]
+  position      Int                           @default(0)
+  created_at    DateTime                      @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime                      @updatedAt @db.Timestamptz(6)
+  placements    employee_board_placements[]
+  manager_links employee_manager_workspaces[]
 }
 
 // One row per placed employee. employee_id is salary_employees.id but
@@ -597,6 +598,36 @@ model employee_board_placements {
   updated_at   DateTime             @updatedAt @db.Timestamptz(6)
   workspace    employee_workspaces? @relation(fields: [workspace_id], references: [id], onDelete: SetNull)
 
+  @@index([workspace_id])
+}
+
+// An employee promoted to "manager" — rendered in the row above the
+// workspace columns. employee_id is salary_employees.id (loose column,
+// DB-level FK only, same convention as employee_board_placements). A
+// manager can oversee many workspaces via employee_manager_workspaces.
+model employee_managers {
+  id          String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id String                        @unique @db.Uuid
+  // Manual ordering of the manager blocks left-to-right.
+  position    Int                           @default(0)
+  created_at  DateTime                      @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime                      @updatedAt @db.Timestamptz(6)
+  workspaces  employee_manager_workspaces[]
+}
+
+// Many-to-many link manager ↔ workspace. One row per connector line on
+// the board. Both FKs CASCADE so deleting a manager or a workspace
+// removes its lines automatically.
+model employee_manager_workspaces {
+  id           String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  manager_id   String              @db.Uuid
+  workspace_id String              @db.Uuid
+  created_at   DateTime            @default(now()) @db.Timestamptz(6)
+  manager      employee_managers   @relation(fields: [manager_id], references: [id], onDelete: Cascade)
+  workspace    employee_workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@unique([manager_id, workspace_id])
+  @@index([manager_id])
   @@index([workspace_id])
 }
 

@@ -51,6 +51,19 @@ const employeeRoleSchema = z.object({
   role: roleSchema,
 });
 
+const managerEmployeeSchema = z.object({
+  employeeId: z.string().uuid("Invalid employee id"),
+});
+
+const managerIdSchema = z.object({
+  managerId: z.string().uuid("Invalid manager id"),
+});
+
+const managerWorkspaceSchema = z.object({
+  managerId: z.string().uuid("Invalid manager id"),
+  workspaceId: z.string().uuid("Invalid workspace id"),
+});
+
 // ── Workspaces ──────────────────────────────────────────────────────
 
 export async function createWorkspace(
@@ -320,6 +333,189 @@ export async function removeEmployeeRole(
     adminUserId: session.userId,
     eventType: "employee_board_role_removed",
     metadata: { employeeId: parsed.data.employeeId, role: parsed.data.role },
+  });
+
+  revalidatePath(PAGE_KEY);
+  return { success: true };
+}
+
+// ── Managers ────────────────────────────────────────────────────────
+// A manager is an employee promoted into the row above the columns. It
+// is a separate concept from a placement: the employee keeps any column
+// placement/roles (so demoting returns them to where they were), but the
+// page hides managers from the columns and renders them as manager
+// blocks instead.
+
+export async function addManager(
+  employeeId: string,
+): Promise<{ success: true; id: string } | { success: false; error: string }> {
+  const session = await requirePageAccess(PAGE_KEY);
+  await ensure();
+  const parsed = managerEmployeeSchema.safeParse({ employeeId });
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  // Must be a real salary employee (DB FK enforces this too).
+  const employee = await adminDb.salary_employees.findUnique({
+    where: { id: parsed.data.employeeId },
+    select: { id: true },
+  });
+  if (!employee) return { success: false, error: "Employee not found" };
+
+  // employee_id is UNIQUE — can't promote the same person twice.
+  const existing = await adminDb.employee_managers.findUnique({
+    where: { employee_id: parsed.data.employeeId },
+    select: { id: true },
+  });
+  if (existing) return { success: false, error: "Already a manager" };
+
+  // Append to the end of the manager row.
+  const last = await adminDb.employee_managers.findFirst({
+    orderBy: { position: "desc" },
+    select: { position: true },
+  });
+  const nextPosition = (last?.position ?? -1) + 1;
+
+  const created = await adminDb.employee_managers.create({
+    data: { employee_id: parsed.data.employeeId, position: nextPosition },
+    select: { id: true },
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "employee_board_manager_added",
+    metadata: { managerId: created.id, employeeId: parsed.data.employeeId },
+  });
+
+  revalidatePath(PAGE_KEY);
+  return { success: true, id: created.id };
+}
+
+export async function removeManager(
+  managerId: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requirePageAccess(PAGE_KEY);
+  await ensure();
+  const parsed = managerIdSchema.safeParse({ managerId });
+  if (!parsed.success) {
+    return { success: false, error: "Invalid manager id" };
+  }
+
+  // Deleting the manager cascades to its workspace links (the lines).
+  // The employee + their column placement/roles are untouched.
+  try {
+    await adminDb.employee_managers.delete({
+      where: { id: parsed.data.managerId },
+      select: { id: true },
+    });
+  } catch {
+    return { success: false, error: "Manager not found" };
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "employee_board_manager_removed",
+    metadata: { managerId: parsed.data.managerId },
+  });
+
+  revalidatePath(PAGE_KEY);
+  return { success: true };
+}
+
+export async function linkManagerWorkspace(
+  managerId: string,
+  workspaceId: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requirePageAccess(PAGE_KEY);
+  await ensure();
+  const parsed = managerWorkspaceSchema.safeParse({ managerId, workspaceId });
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  const [manager, workspace] = await Promise.all([
+    adminDb.employee_managers.findUnique({
+      where: { id: parsed.data.managerId },
+      select: { id: true },
+    }),
+    adminDb.employee_workspaces.findUnique({
+      where: { id: parsed.data.workspaceId },
+      select: { id: true },
+    }),
+  ]);
+  if (!manager) return { success: false, error: "Manager not found" };
+  if (!workspace) return { success: false, error: "Workspace not found" };
+
+  // Idempotent: a duplicate link is a no-op (the UI only offers unlinked
+  // workspaces, but guard against double-submits / races).
+  const existing = await adminDb.employee_manager_workspaces.findFirst({
+    where: {
+      manager_id: parsed.data.managerId,
+      workspace_id: parsed.data.workspaceId,
+    },
+    select: { id: true },
+  });
+  if (existing) return { success: true };
+
+  await adminDb.employee_manager_workspaces.create({
+    data: {
+      manager_id: parsed.data.managerId,
+      workspace_id: parsed.data.workspaceId,
+    },
+    select: { id: true },
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "employee_board_manager_linked",
+    metadata: {
+      managerId: parsed.data.managerId,
+      workspaceId: parsed.data.workspaceId,
+    },
+  });
+
+  revalidatePath(PAGE_KEY);
+  return { success: true };
+}
+
+export async function unlinkManagerWorkspace(
+  managerId: string,
+  workspaceId: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requirePageAccess(PAGE_KEY);
+  await ensure();
+  const parsed = managerWorkspaceSchema.safeParse({ managerId, workspaceId });
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  const deleted = await adminDb.employee_manager_workspaces.deleteMany({
+    where: {
+      manager_id: parsed.data.managerId,
+      workspace_id: parsed.data.workspaceId,
+    },
+  });
+  if (deleted.count === 0) {
+    return { success: false, error: "Link not found" };
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "employee_board_manager_unlinked",
+    metadata: {
+      managerId: parsed.data.managerId,
+      workspaceId: parsed.data.workspaceId,
+    },
   });
 
   revalidatePath(PAGE_KEY);

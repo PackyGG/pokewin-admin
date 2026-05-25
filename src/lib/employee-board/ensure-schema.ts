@@ -27,6 +27,13 @@ let ensured = false;
  *      placement automatically),
  *   - workspace_id → employee_workspaces(id) ON DELETE SET NULL
  *     (deleting a workspace sends its cards back to "Unassigned").
+ *
+ * The manager layer adds two more tables:
+ *   - employee_managers: an employee promoted to manager (sits in the row
+ *     above the columns). employee_id → salary_employees CASCADE.
+ *   - employee_manager_workspaces: many-to-many link manager ↔ workspace,
+ *     one row per connector line. Both FKs CASCADE, so deleting either a
+ *     manager or a workspace drops the corresponding lines.
  */
 export async function ensureEmployeeBoardSchema(): Promise<void> {
   if (ensured) return;
@@ -56,6 +63,36 @@ export async function ensureEmployeeBoardSchema(): Promise<void> {
     await adminDb.$executeRawUnsafe(`
       CREATE INDEX IF NOT EXISTS "employee_board_placements_workspace_id_idx"
         ON "employee_board_placements" ("workspace_id")
+    `);
+    await adminDb.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "employee_managers" (
+        "id"          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        "employee_id" UUID NOT NULL UNIQUE
+                        REFERENCES "salary_employees"("id") ON DELETE CASCADE,
+        "position"    INTEGER NOT NULL DEFAULT 0,
+        "created_at"  TIMESTAMPTZ(6) NOT NULL DEFAULT now(),
+        "updated_at"  TIMESTAMPTZ(6) NOT NULL DEFAULT now()
+      )
+    `);
+    await adminDb.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "employee_manager_workspaces" (
+        "id"           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        "manager_id"   UUID NOT NULL
+                         REFERENCES "employee_managers"("id") ON DELETE CASCADE,
+        "workspace_id" UUID NOT NULL
+                         REFERENCES "employee_workspaces"("id") ON DELETE CASCADE,
+        "created_at"   TIMESTAMPTZ(6) NOT NULL DEFAULT now(),
+        CONSTRAINT "employee_manager_workspaces_manager_id_workspace_id_key"
+          UNIQUE ("manager_id", "workspace_id")
+      )
+    `);
+    await adminDb.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "employee_manager_workspaces_manager_id_idx"
+        ON "employee_manager_workspaces" ("manager_id")
+    `);
+    await adminDb.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "employee_manager_workspaces_workspace_id_idx"
+        ON "employee_manager_workspaces" ("workspace_id")
     `);
     ensured = true;
   } catch (err) {

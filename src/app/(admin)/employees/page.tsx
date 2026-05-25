@@ -15,7 +15,7 @@ export default async function EmployeesPage() {
   // clearer error if the DB is genuinely unreachable.
   await ensureEmployeeBoardSchema().catch(() => {});
 
-  const [employees, workspaces, placements] = await Promise.all([
+  const [employees, workspaces, placements, managers] = await Promise.all([
     // SECURITY: this board is broader-access than the founders-only
     // /salaries page. Select ONLY id / discord_name / active — never
     // eth_address, salary_usdt, max_per_payout or notes, so no pay or
@@ -36,6 +36,18 @@ export default async function EmployeesPage() {
         position: true,
       },
     }),
+    // Managers sit in the row above the columns. Each carries its linked
+    // workspace ids (one connector line per id). Same security rule —
+    // employee_id is joined to the safe `employees` list below, never to
+    // pay/wallet columns.
+    adminDb.employee_managers.findMany({
+      orderBy: { position: "asc" },
+      select: {
+        id: true,
+        employee_id: true,
+        workspaces: { select: { workspace_id: true } },
+      },
+    }),
   ]);
 
   // Join in code (no cross-table include needed): each employee → its
@@ -45,17 +57,51 @@ export default async function EmployeesPage() {
     placements.map((p) => [p.employee_id, p]),
   );
 
-  const employeeCards = employees.map((e) => {
-    const placement = placementByEmployee.get(e.id);
-    return {
+  // Managers are rendered in their own row, so they're excluded from the
+  // column cards below. Their column placement/roles are kept untouched
+  // in the DB so demoting returns them to where they were.
+  const managerEmployeeIds = new Set(managers.map((m) => m.employee_id));
+  const employeeById = new Map(employees.map((e) => [e.id, e]));
+
+  const employeeCards = employees
+    .filter((e) => !managerEmployeeIds.has(e.id))
+    .map((e) => {
+      const placement = placementByEmployee.get(e.id);
+      return {
+        id: e.id,
+        discordName: e.discord_name,
+        active: e.active,
+        workspaceId: placement?.workspace_id ?? null,
+        roles: placement?.roles ?? [],
+        position: placement?.position ?? 0,
+      };
+    });
+
+  // Manager blocks: join each manager to the SAFE employee record for its
+  // display name / active flag, and carry the workspace ids it links to.
+  const managerCards = managers
+    .map((m) => {
+      const emp = employeeById.get(m.employee_id);
+      if (!emp) return null; // employee left the registry (FK CASCADE makes this rare)
+      return {
+        id: m.id,
+        employeeId: m.employee_id,
+        discordName: emp.discord_name,
+        active: emp.active,
+        workspaceIds: m.workspaces.map((w) => w.workspace_id),
+      };
+    })
+    .filter((m): m is NonNullable<typeof m> => m !== null);
+
+  // Candidates for the "Add manager" picker: every employee not already a
+  // manager (so an admin can promote anyone, even someone in a column).
+  const managerCandidates = employees
+    .filter((e) => !managerEmployeeIds.has(e.id))
+    .map((e) => ({
       id: e.id,
       discordName: e.discord_name,
       active: e.active,
-      workspaceId: placement?.workspace_id ?? null,
-      roles: placement?.roles ?? [],
-      position: placement?.position ?? 0,
-    };
-  });
+    }));
 
   const workspaceList = workspaces.map((w) => ({
     id: w.id,
@@ -80,7 +126,12 @@ export default async function EmployeesPage() {
       </PageHero>
 
       <FadeIn>
-        <EmployeeBoard employees={employeeCards} workspaces={workspaceList} />
+        <EmployeeBoard
+          employees={employeeCards}
+          workspaces={workspaceList}
+          managers={managerCards}
+          managerCandidates={managerCandidates}
+        />
       </FadeIn>
     </div>
   );

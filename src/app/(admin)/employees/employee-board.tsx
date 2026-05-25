@@ -22,10 +22,18 @@ import {
   Inbox,
   Users,
   Check,
+  UserCog,
+  UserPlus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import {
   createWorkspace,
@@ -34,6 +42,10 @@ import {
   moveEmployee,
   addEmployeeRole,
   removeEmployeeRole,
+  addManager,
+  removeManager,
+  linkManagerWorkspace,
+  unlinkManagerWorkspace,
 } from "./actions";
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -53,6 +65,34 @@ type Workspace = {
   name: string;
 };
 
+// A manager block (row above the columns). employeeId is the underlying
+// salary employee; workspaceIds are the sections it's linked to — one
+// connector line per id.
+type Manager = {
+  id: string;
+  employeeId: string;
+  discordName: string;
+  active: boolean;
+  workspaceIds: string[];
+};
+
+// An employee eligible to be promoted to manager.
+type ManagerCandidate = {
+  id: string;
+  discordName: string;
+  active: boolean;
+};
+
+// A computed connector line from a manager to one of its workspaces.
+type ConnectorLine = {
+  id: string;
+  d: string;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+};
+
 // Sentinel column id for the Unassigned pool (workspaceId === null).
 const UNASSIGNED = "__unassigned__";
 
@@ -61,9 +101,13 @@ const UNASSIGNED = "__unassigned__";
 export function EmployeeBoard({
   employees,
   workspaces,
+  managers,
+  managerCandidates,
 }: {
   employees: EmployeeCard[];
   workspaces: Workspace[];
+  managers: Manager[];
+  managerCandidates: ManagerCandidate[];
 }) {
   const router = useRouter();
   const sensors = useSensors(
@@ -77,6 +121,82 @@ export function EmployeeBoard({
   const [activeId, setActiveId] = React.useState<string | null>(null);
   const [newWorkspace, setNewWorkspace] = React.useState("");
   const [creating, setCreating] = React.useState(false);
+
+  // ── Connector lines (manager → workspace) ───────────────────────────
+  // We measure the live DOM positions of each manager block and each
+  // workspace column relative to the board wrapper, then draw an SVG
+  // bezier between them. Coordinates are rect-diffs against the wrapper,
+  // so they stay correct while the wrapper scrolls horizontally (the SVG
+  // lives inside the same scrolling wrapper).
+  const wrapperRef = React.useRef<HTMLDivElement | null>(null);
+  const managerRefs = React.useRef(new Map<string, HTMLElement>());
+  const columnRefs = React.useRef(new Map<string, HTMLElement>());
+  const [lines, setLines] = React.useState<ConnectorLine[]>([]);
+
+  const setManagerRef = React.useCallback(
+    (id: string, node: HTMLElement | null) => {
+      if (node) managerRefs.current.set(id, node);
+      else managerRefs.current.delete(id);
+    },
+    [],
+  );
+  const setColumnRef = React.useCallback(
+    (id: string, node: HTMLElement | null) => {
+      if (node) columnRefs.current.set(id, node);
+      else columnRefs.current.delete(id);
+    },
+    [],
+  );
+
+  const recomputeLines = React.useCallback(() => {
+    const wrap = wrapperRef.current;
+    if (!wrap) return;
+    const wr = wrap.getBoundingClientRect();
+    const validWorkspace = new Set(workspaces.map((w) => w.id));
+    const next: ConnectorLine[] = [];
+    for (const m of managers) {
+      const mEl = managerRefs.current.get(m.id);
+      if (!mEl) continue;
+      const mr = mEl.getBoundingClientRect();
+      const x1 = mr.left - wr.left + mr.width / 2;
+      const y1 = mr.bottom - wr.top;
+      for (const wid of m.workspaceIds) {
+        if (!validWorkspace.has(wid)) continue;
+        const cEl = columnRefs.current.get(wid);
+        if (!cEl) continue;
+        const cr = cEl.getBoundingClientRect();
+        const x2 = cr.left - wr.left + cr.width / 2;
+        const y2 = cr.top - wr.top;
+        const midY = y1 + (y2 - y1) / 2;
+        const d = `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
+        next.push({ id: `${m.id}-${wid}`, d, x1, y1, x2, y2 });
+      }
+    }
+    setLines(next);
+  }, [managers, workspaces]);
+
+  // Position lines before paint, then keep them in sync with any layout
+  // change: window resize, and wrapper/column/manager box resizes (e.g. a
+  // role chip wraps and pushes the columns down). recomputeLines changes
+  // identity on every data refresh (managers/workspaces get fresh array
+  // identities each server render), so these effects also re-run then.
+  React.useLayoutEffect(() => {
+    recomputeLines();
+  }, [recomputeLines]);
+
+  React.useEffect(() => {
+    const wrap = wrapperRef.current;
+    if (!wrap) return;
+    const ro = new ResizeObserver(() => recomputeLines());
+    ro.observe(wrap);
+    managerRefs.current.forEach((el) => ro.observe(el));
+    columnRefs.current.forEach((el) => ro.observe(el));
+    window.addEventListener("resize", recomputeLines);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", recomputeLines);
+    };
+  }, [recomputeLines]);
 
   // Group employees by column. Recomputed whenever the server data
   // changes after a router.refresh().
@@ -211,31 +331,83 @@ export function EmployeeBoard({
         onDragEnd={handleDragEnd}
         onDragCancel={() => setActiveId(null)}
       >
-        <div className="flex gap-4 overflow-x-auto pb-2">
-          {/* Unassigned pool — always first. */}
-          <Column
-            id={UNASSIGNED}
-            title="Unassigned"
-            cards={unassigned}
-            isUnassigned
-            onRefresh={() => router.refresh()}
-          />
+        <div className="overflow-x-auto pb-2">
+          <div ref={wrapperRef} className="relative min-w-max">
+            {/* Connector-line layer — sits behind the blocks (z-0) so the
+                lines visibly emerge from the manager/column edges. */}
+            <svg
+              className="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
+              aria-hidden
+            >
+              {lines.map((l) => (
+                <g key={l.id}>
+                  <path
+                    d={l.d}
+                    className="fill-none stroke-cyan-500/45 dark:stroke-cyan-400/45"
+                    strokeWidth={1.5}
+                  />
+                  <circle
+                    cx={l.x1}
+                    cy={l.y1}
+                    r={3}
+                    className="fill-cyan-500/80 dark:fill-cyan-400/80"
+                  />
+                  <circle
+                    cx={l.x2}
+                    cy={l.y2}
+                    r={3}
+                    className="fill-cyan-500/80 dark:fill-cyan-400/80"
+                  />
+                </g>
+              ))}
+            </svg>
 
-          {workspaces.map((w) => (
-            <Column
-              key={w.id}
-              id={w.id}
-              title={w.name}
-              cards={byColumn.get(w.id) ?? []}
-              onRefresh={() => router.refresh()}
-            />
-          ))}
-
-          {workspaces.length === 0 && (
-            <div className="flex min-w-[260px] items-center justify-center rounded-2xl border border-dashed border-border bg-muted/20 p-6 text-center text-xs text-muted-foreground">
-              No workspaces yet. Create one above, then drag employees in.
+            {/* Manager row — the "section heads" above the columns. */}
+            <div className="relative z-10 mb-10 flex items-start gap-3">
+              {managers.map((m) => (
+                <ManagerBlock
+                  key={m.id}
+                  manager={m}
+                  workspaces={workspaces}
+                  registerRef={setManagerRef}
+                  onRefresh={() => router.refresh()}
+                />
+              ))}
+              <AddManagerControl
+                candidates={managerCandidates}
+                onRefresh={() => router.refresh()}
+              />
             </div>
-          )}
+
+            {/* Columns row. */}
+            <div className="relative z-10 flex gap-4">
+              {/* Unassigned pool — always first. */}
+              <Column
+                id={UNASSIGNED}
+                title="Unassigned"
+                cards={unassigned}
+                isUnassigned
+                onRefresh={() => router.refresh()}
+              />
+
+              {workspaces.map((w) => (
+                <Column
+                  key={w.id}
+                  id={w.id}
+                  title={w.name}
+                  cards={byColumn.get(w.id) ?? []}
+                  onRefresh={() => router.refresh()}
+                  registerMeasure={setColumnRef}
+                />
+              ))}
+
+              {workspaces.length === 0 && (
+                <div className="flex min-w-[260px] items-center justify-center rounded-2xl border border-dashed border-border bg-muted/20 p-6 text-center text-xs text-muted-foreground">
+                  No workspaces yet. Create one above, then drag employees in.
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         <DragOverlay>
@@ -256,15 +428,30 @@ function Column({
   cards,
   isUnassigned,
   onRefresh,
+  registerMeasure,
 }: {
   id: string;
   title: string;
   cards: EmployeeCard[];
   isUnassigned?: boolean;
   onRefresh: () => void;
+  // Real workspaces register their DOM node so the board can anchor
+  // connector lines to the column's top-center. Omitted for Unassigned.
+  registerMeasure?: (id: string, node: HTMLElement | null) => void;
 }) {
   const router = useRouter();
   const { setNodeRef, isOver } = useDroppable({ id });
+
+  // Merge the dnd-kit droppable ref with the measure ref so the same DOM
+  // node feeds both. Stable identity (deps are all stable) avoids ref
+  // churn across renders.
+  const setRefs = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      setNodeRef(node);
+      registerMeasure?.(id, node);
+    },
+    [setNodeRef, registerMeasure, id],
+  );
 
   const [editing, setEditing] = React.useState(false);
   const [name, setName] = React.useState(title);
@@ -319,7 +506,7 @@ function Column({
 
   return (
     <div
-      ref={setNodeRef}
+      ref={setRefs}
       className={cn(
         "flex w-[280px] shrink-0 flex-col rounded-2xl border bg-card shadow-sm transition-colors",
         isOver && "border-primary/50 ring-2 ring-primary/30",
@@ -415,6 +602,242 @@ function Column({
         )}
       </div>
     </div>
+  );
+}
+
+// ─── Manager block (row above the columns) ───────────────────────────
+
+function ManagerBlock({
+  manager,
+  workspaces,
+  registerRef,
+  onRefresh,
+}: {
+  manager: Manager;
+  workspaces: Workspace[];
+  registerRef: (id: string, node: HTMLElement | null) => void;
+  onRefresh: () => void;
+}) {
+  const [busy, setBusy] = React.useState(false);
+
+  // Stable callback ref (deps stable) — no churn across renders.
+  const ref = React.useCallback(
+    (node: HTMLDivElement | null) => registerRef(manager.id, node),
+    [registerRef, manager.id],
+  );
+
+  const linkedSet = new Set(manager.workspaceIds);
+  const linked = workspaces.filter((w) => linkedSet.has(w.id));
+  const unlinked = workspaces.filter((w) => !linkedSet.has(w.id));
+
+  async function handleLink(workspaceId: string) {
+    setBusy(true);
+    try {
+      const res = await linkManagerWorkspace(manager.id, workspaceId);
+      if (!res.success) {
+        toast.error(res.error);
+        return;
+      }
+      onRefresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to link section");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleUnlink(workspaceId: string) {
+    setBusy(true);
+    try {
+      const res = await unlinkManagerWorkspace(manager.id, workspaceId);
+      if (!res.success) {
+        toast.error(res.error);
+        return;
+      }
+      onRefresh();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to unlink section",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRemove() {
+    setBusy(true);
+    try {
+      const res = await removeManager(manager.id);
+      if (!res.success) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success(`Removed ${manager.discordName} as manager`);
+      onRefresh();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to remove manager",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      ref={ref}
+      className="w-[240px] shrink-0 rounded-2xl border border-violet-500/30 bg-violet-500/5 p-3 shadow-sm"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-violet-500/15 text-violet-500">
+            <UserCog className="size-4" />
+          </span>
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className="truncate text-sm font-semibold">
+                {manager.discordName}
+              </span>
+              {!manager.active && (
+                <Badge
+                  variant="outline"
+                  className="shrink-0 px-1.5 py-0 text-[9px] font-medium leading-none text-muted-foreground"
+                >
+                  inactive
+                </Badge>
+              )}
+            </div>
+            <span className="text-[10px] font-medium uppercase tracking-wide text-violet-500/80">
+              Manager
+            </span>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={handleRemove}
+          disabled={busy}
+          aria-label={`Remove ${manager.discordName} as manager`}
+          title="Remove manager (returns them to the board)"
+          className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+        >
+          <X className="size-3.5" />
+        </button>
+      </div>
+
+      {/* Linked sections (one chip per connector line) + link control. */}
+      <div className="mt-2 flex flex-wrap items-center gap-1">
+        {linked.map((w) => (
+          <Badge
+            key={w.id}
+            variant="outline"
+            className="flex items-center gap-1 border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium leading-none text-violet-600 dark:text-violet-400"
+          >
+            {w.name}
+            <button
+              type="button"
+              onClick={() => handleUnlink(w.id)}
+              disabled={busy}
+              aria-label={`Unlink ${w.name}`}
+              className="hover:text-rose-500 disabled:opacity-50"
+            >
+              <X className="size-2.5" />
+            </button>
+          </Badge>
+        ))}
+
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <button
+                type="button"
+                disabled={busy}
+                className="inline-flex items-center gap-1 rounded-md border border-dashed border-violet-500/40 px-1.5 py-0.5 text-[10px] font-medium text-violet-500 transition-colors hover:bg-violet-500/10 disabled:opacity-50"
+              />
+            }
+          >
+            <Plus className="size-2.5" />
+            Link section
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="max-h-64 w-48">
+            {unlinked.length === 0 ? (
+              <DropdownMenuItem disabled>
+                {workspaces.length === 0
+                  ? "No sections yet"
+                  : "All sections linked"}
+              </DropdownMenuItem>
+            ) : (
+              unlinked.map((w) => (
+                <DropdownMenuItem key={w.id} onClick={() => handleLink(w.id)}>
+                  <span className="truncate">{w.name}</span>
+                </DropdownMenuItem>
+              ))
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </div>
+  );
+}
+
+// ─── Add-manager control ─────────────────────────────────────────────
+
+function AddManagerControl({
+  candidates,
+  onRefresh,
+}: {
+  candidates: ManagerCandidate[];
+  onRefresh: () => void;
+}) {
+  const [busy, setBusy] = React.useState(false);
+
+  async function handleAdd(employeeId: string) {
+    setBusy(true);
+    try {
+      const res = await addManager(employeeId);
+      if (!res.success) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success("Manager added");
+      onRefresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to add manager");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <button
+            type="button"
+            disabled={busy}
+            className="flex h-[92px] w-[200px] shrink-0 flex-col items-center justify-center gap-1.5 rounded-2xl border border-dashed border-violet-500/40 bg-violet-500/[0.03] text-violet-500 transition-colors hover:bg-violet-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+          />
+        }
+      >
+        <UserPlus className="size-5" />
+        <span className="text-xs font-medium">Add manager</span>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="max-h-72 w-56">
+        {candidates.length === 0 ? (
+          <DropdownMenuItem disabled>No employees available</DropdownMenuItem>
+        ) : (
+          candidates.map((c) => (
+            <DropdownMenuItem key={c.id} onClick={() => handleAdd(c.id)}>
+              <span className="truncate">{c.discordName}</span>
+              {!c.active && (
+                <span className="ml-auto text-[10px] text-muted-foreground">
+                  inactive
+                </span>
+              )}
+            </DropdownMenuItem>
+          ))
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
