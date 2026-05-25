@@ -2,6 +2,7 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { blacklistNotInClause } from "./_blacklist";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 /**
  * Canonical P&L formula — single source of truth.
@@ -310,5 +311,164 @@ export async function calculateUsersPnlBatch(
     }
 
     return result;
+  });
+}
+
+export type DailyPnlPoint = {
+  /** YYYY-MM-DD */
+  date: string;
+  /** House P&L for that day (windowed-delta formula, bucketed per day). */
+  pnl: number;
+  /** Gross deposits that day (context for the chart hover). */
+  deposits: number;
+  /** Gross withdrawals that day — |manual| + card (context for hover). */
+  withdrawals: number;
+};
+
+/**
+ * Daily house P&L for the last 30 days — the per-day breakdown of the same
+ * windowed formula `calculateWindowedPnl` uses:
+ *
+ *   pnl = Δdeposits − Δwithdrawals − Δbalance − Δinventory − Δvouchers
+ *
+ * Each component is bucketed by its own event date (ledger by created_at,
+ * card withdrawals by ship/complete date, inventory by obtained vs disposal
+ * date, vouchers by created vs claimed date) and combined per day. Because
+ * the formula is linear and every event belongs to exactly one day, the
+ * daily values sum to the rolling windowed P&L — so this is consistent with
+ * the dashboard's P&L card, not a different GGR-style metric.
+ *
+ * Global figure across real users (admin/support + the excluded-users
+ * blacklist dropped), matching the dashboard aggregates. Standalone (not
+ * part of getDashboardStats) so it streams behind its own Suspense.
+ */
+export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
+  return withTiming("pnl.daily", async () => {
+    const db = await getDb();
+    const excluded = await getExcludedUserIds();
+    const blacklist = blacklistNotInClause("u.id", excluded);
+    const usersScope = `(SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist})`;
+
+    type LedgerRow = {
+      d: Date;
+      deposits: number;
+      manual_wd: number;
+      balance_change: number;
+    };
+    type CardRow = { d: Date; card_wd: number };
+    type InvRow = { d: Date; obtained: number; disposed: number };
+    type VchRow = { d: Date; issued: number; claimed: number };
+
+    const [ledger, card, inv, vch] = await Promise.all([
+      db.$queryRawUnsafe<LedgerRow[]>(
+        `SELECT DATE(lt.created_at) AS d,
+           COALESCE(SUM(CASE WHEN lt.type = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::float8 AS deposits,
+           COALESCE(SUM(CASE WHEN lt.type = 'admin_balance_adjustment'
+                              AND lt.balance_after < lt.balance_before
+                              AND lt.description ILIKE 'Manual withdrawal:%'
+                             THEN lt.amount::numeric ELSE 0 END), 0)::float8 AS manual_wd,
+           COALESCE(SUM((lt.balance_after - lt.balance_before)::numeric), 0)::float8 AS balance_change
+         FROM ledger_transactions lt
+         WHERE lt.status = 'completed' AND lt.created_at >= NOW() - INTERVAL '30 days'
+           AND lt.user_id IN ${usersScope}
+         GROUP BY DATE(lt.created_at)`,
+      ),
+      db.$queryRawUnsafe<CardRow[]>(
+        `SELECT DATE(COALESCE(cwr.shipped_at, cwr.completed_at)) AS d,
+           COALESCE(SUM(cwr.total_value_usd::numeric), 0)::float8 AS card_wd
+         FROM card_withdrawal_requests cwr
+         WHERE cwr.status IN ('completed', 'shipped')
+           AND COALESCE(cwr.shipped_at, cwr.completed_at) >= NOW() - INTERVAL '30 days'
+           AND cwr.user_id IN ${usersScope}
+         GROUP BY DATE(COALESCE(cwr.shipped_at, cwr.completed_at))`,
+      ),
+      db.$queryRawUnsafe<InvRow[]>(
+        `SELECT d,
+           COALESCE(SUM(obtained), 0)::float8 AS obtained,
+           COALESCE(SUM(disposed), 0)::float8 AS disposed
+         FROM (
+           SELECT DATE(ui.obtained_at) AS d, ui.value_at_obtained::numeric AS obtained, 0::numeric AS disposed
+           FROM user_inventory ui
+           WHERE ui.obtained_at >= NOW() - INTERVAL '30 days' AND ui.user_id IN ${usersScope}
+           UNION ALL
+           SELECT DATE(COALESCE(ui.sold_at, ui.exchanged_at)) AS d, 0::numeric AS obtained, ui.value_at_obtained::numeric AS disposed
+           FROM user_inventory ui
+           WHERE (ui.sold_at >= NOW() - INTERVAL '30 days' OR ui.exchanged_at >= NOW() - INTERVAL '30 days')
+             AND ui.user_id IN ${usersScope}
+         ) x
+         GROUP BY d`,
+      ),
+      db.$queryRawUnsafe<VchRow[]>(
+        `SELECT d,
+           COALESCE(SUM(issued), 0)::float8 AS issued,
+           COALESCE(SUM(claimed), 0)::float8 AS claimed
+         FROM (
+           SELECT DATE(v.created_at) AS d, v.value::numeric AS issued, 0::numeric AS claimed
+           FROM vouchers v
+           WHERE v.created_at >= NOW() - INTERVAL '30 days' AND v.user_id IN ${usersScope}
+           UNION ALL
+           SELECT DATE(v.claimed_at) AS d, 0::numeric AS issued, v.value::numeric AS claimed
+           FROM vouchers v
+           WHERE v.claimed_at >= NOW() - INTERVAL '30 days' AND v.user_id IN ${usersScope}
+         ) x
+         GROUP BY d`,
+      ),
+    ]);
+
+    type Acc = {
+      deposits: number;
+      manualWd: number;
+      cardWd: number;
+      balanceChange: number;
+      inventoryChange: number;
+      voucherChange: number;
+    };
+    const byDay = new Map<string, Acc>();
+    const dayKey = (d: Date) => new Date(d).toISOString().slice(0, 10);
+    const acc = (k: string): Acc => {
+      let a = byDay.get(k);
+      if (!a) {
+        a = {
+          deposits: 0,
+          manualWd: 0,
+          cardWd: 0,
+          balanceChange: 0,
+          inventoryChange: 0,
+          voucherChange: 0,
+        };
+        byDay.set(k, a);
+      }
+      return a;
+    };
+
+    for (const r of ledger) {
+      const a = acc(dayKey(r.d));
+      a.deposits += r.deposits;
+      a.manualWd += r.manual_wd;
+      a.balanceChange += r.balance_change;
+    }
+    for (const r of card) acc(dayKey(r.d)).cardWd += r.card_wd;
+    for (const r of inv)
+      acc(dayKey(r.d)).inventoryChange += r.obtained - r.disposed;
+    for (const r of vch)
+      acc(dayKey(r.d)).voucherChange += r.issued - r.claimed;
+
+    return [...byDay.entries()]
+      .map(([date, a]) => ({
+        date,
+        // Exact per-day form of the windowed formula (manualWd carries its
+        // stored sign here so the daily values sum to the windowed total).
+        pnl:
+          a.deposits -
+          (a.manualWd + a.cardWd) -
+          a.balanceChange -
+          a.inventoryChange -
+          a.voucherChange,
+        deposits: a.deposits,
+        // Gross money-out for the hover (clean positive regardless of how
+        // the manual-withdrawal sign is stored).
+        withdrawals: Math.abs(a.manualWd) + a.cardWd,
+      }))
+      .sort((x, y) => x.date.localeCompare(y.date));
   });
 }
