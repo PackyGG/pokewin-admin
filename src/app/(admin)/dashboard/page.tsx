@@ -11,7 +11,7 @@ import {
   HandCoins,
   Gauge,
 } from "lucide-react";
-import { getDashboardStats } from "@/lib/queries/dashboard";
+import { getDashboardStats, getActiveRain } from "@/lib/queries/dashboard";
 import { requirePageAccess } from "@/lib/dal";
 import { formatCurrency } from "@/lib/utils/format";
 import { LoadTimeIndicator } from "./load-time-indicator";
@@ -31,6 +31,7 @@ import {
   RecentActivitySkeleton,
 } from "./recent-activity";
 import { LiveDeposits } from "./live-deposits";
+import { ActiveRainCard } from "./active-rain-card";
 import { PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import {
@@ -102,6 +103,14 @@ export default async function DashboardPage() {
         }
       >
         <DashboardStatStrips />
+      </Suspense>
+
+      {/* Active Rain — live entrant count of the rain currently in play.
+          Its own lightweight query (single row) behind its own Suspense, so
+          it refreshes on the 60s tick without touching the heavy stats
+          aggregate. */}
+      <Suspense fallback={<Skeleton className="h-[88px] w-full rounded-xl" />}>
+        <DashboardActiveRain />
       </Suspense>
 
       {/* Charts. Three-up at lg+ but stacks to a single column on
@@ -319,6 +328,16 @@ async function DashboardStatStrips() {
       </div>
     </>
   );
+}
+
+/**
+ * Active Rain box. Its own lightweight query (a single rains row), streamed
+ * behind its own Suspense so it never blocks the heavy stats aggregate and
+ * refreshes on the dashboard's 60s tick.
+ */
+async function DashboardActiveRain() {
+  const rain = await getActiveRain();
+  return <ActiveRainCard rain={rain} />;
 }
 
 /**

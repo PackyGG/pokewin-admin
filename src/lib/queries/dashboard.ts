@@ -761,3 +761,55 @@ async function dashboardStatsInner() {
     generatedAt: new Date().toISOString(),
   };
 }
+
+/**
+ * Lightweight snapshot of the CURRENT rain for the dashboard's live box.
+ * Deliberately NOT part of getDashboardStats — it's a single indexed row
+ * lookup, so it streams behind its own Suspense and refreshes on the 60s
+ * dashboard tick without adding to the heavy aggregate's query time.
+ *
+ * "Current" = the rain that's still in play: `active` (accepting entries)
+ * or `drawing` (entries closed, picking a winner). Most recent by
+ * starts_at. Returns null between rains (UI shows an idle state).
+ * Participant count is read straight off rains.participant_count (kept in
+ * sync by the main site), which equals the rain_entries head-count.
+ */
+export type ActiveRainSummary = {
+  id: string;
+  participantCount: number;
+  totalPoolUsd: number;
+  baseAmountUsd: number;
+  tipAmountUsd: number;
+  status: string;
+  startsAt: string;
+  endsAt: string;
+} | null;
+
+export async function getActiveRain(): Promise<ActiveRainSummary> {
+  const db = await getDb();
+  const rain = await db.rains.findFirst({
+    where: { status: { in: ["active", "drawing"] } },
+    orderBy: { starts_at: "desc" },
+    select: {
+      id: true,
+      participant_count: true,
+      total_pool_usd: true,
+      base_amount_usd: true,
+      tip_amount_usd: true,
+      status: true,
+      starts_at: true,
+      ends_at: true,
+    },
+  });
+  if (!rain) return null;
+  return {
+    id: rain.id,
+    participantCount: rain.participant_count,
+    totalPoolUsd: toNumber(rain.total_pool_usd),
+    baseAmountUsd: toNumber(rain.base_amount_usd),
+    tipAmountUsd: toNumber(rain.tip_amount_usd),
+    status: rain.status,
+    startsAt: rain.starts_at.toISOString(),
+    endsAt: rain.ends_at.toISOString(),
+  };
+}
