@@ -333,6 +333,22 @@ export function UserViewModern({
                   >
                     {user.role}
                   </Badge>
+                  {/* Ex-creator flag — they aren't a creator now but were
+                      one before (audit role-change to creator, or own
+                      creator-only affiliate codes). */}
+                  {data.wasCreator && (
+                    <Badge
+                      variant="outline"
+                      className="h-5 border-purple-500/40 bg-purple-500/10 py-0 text-[10px] text-purple-600 dark:text-purple-400"
+                      title={
+                        data.creatorSince
+                          ? `Previously had the creator role — creator since ${data.creatorSince.slice(0, 10)}`
+                          : "Previously had the creator role"
+                      }
+                    >
+                      Ex-creator
+                    </Badge>
+                  )}
                   <Badge
                     variant="outline"
                     className={cn("text-[10px] py-0 h-5", USER_STATUS_COLORS[statusKey] ?? "")}

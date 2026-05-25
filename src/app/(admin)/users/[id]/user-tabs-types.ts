@@ -175,6 +175,12 @@ export type UserDetail = {
     rainPrizes: { count: number; totalUsd: number; recent: TipEntry[] };
   };
   sessionRole: string;
+  // True when the user isn't a creator now but was one before (audit
+  // role-change to creator, or owns creator-only affiliate codes).
+  wasCreator: boolean;
+  // When they were promoted to creator (ISO), if known from the audit
+  // trail. Null when only inferred from owned codes.
+  creatorSince: string | null;
   capabilities: {
     canAdjustBalance: boolean;
     canAdjustXp: boolean;

@@ -4,6 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { getUserDetail, getUserTransactions, getUserInventory, getUserPnlBreakdown, getUserRewards } from "@/lib/queries/users";
 import { getNotesForUser } from "@/lib/queries/admin-notes";
 import { getUserTags } from "@/lib/queries/user-tags";
+import { getUserCreatorHistory } from "@/lib/queries/user-role-history";
 import { requirePageAccess, getUserPermissions } from "@/lib/dal";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { UserTabs } from "./user-tabs";
@@ -32,7 +33,7 @@ export default async function UserDetailPage({
   // definition), so only non-admins trigger the extra round-trip. Previously
   // this was awaited inside the JSX after the main Promise.all, adding
   // a serial round-trip to the page's time-to-render.
-  const [data, inventory, disposedInventory, pnlBreakdown, notes, gamingTx, financialTx, rewards, riskBreakdown, sharedIps, sharedFingerprints, permissions, userTags] = await Promise.all([
+  const [data, inventory, disposedInventory, pnlBreakdown, notes, gamingTx, financialTx, rewards, riskBreakdown, sharedIps, sharedFingerprints, permissions, userTags, creatorHistory] = await Promise.all([
     getUserDetail(id),
     getUserInventory(id, 1, 24, { status: "owned" }),
     getUserInventory(id, 1, 24, { status: "disposed" }),
@@ -54,9 +55,23 @@ export default async function UserDetailPage({
     // each tag. Always fetched — the panel renders read-only for
     // viewers without __can_manage_user_tags.
     getUserTags(id),
+    // Whether the user was ever promoted to creator (admin audit trail).
+    // Supplemented below by their owned affiliate codes (creator-only
+    // artifact) to also catch main-site-only creators.
+    getUserCreatorHistory(id),
   ]);
 
   if (!data) notFound();
+
+  // "Ever a creator?" = currently creator, OR an audit role-change to
+  // creator exists, OR they own affiliate codes (created only for
+  // creators). wasCreator surfaces the past-creator badge for users who
+  // aren't creators right now.
+  const everCreator =
+    data.user.role === "creator" ||
+    creatorHistory.everCreatorByAudit ||
+    data.user.ownedCodes.length > 0;
+  const wasCreator = everCreator && data.user.role !== "creator";
 
   const capabilities =
     session.role === "admin"
@@ -115,7 +130,7 @@ export default async function UserDetailPage({
           canManage={canManageUserTags}
         />
       </div>
-      <UserTabs data={{ ...data, sessionRole: session.role, capabilities }} inventory={inventory} disposedInventory={disposedInventory} pnlBreakdown={pnlBreakdown} notes={notes} gamingTx={gamingTx} financialTx={financialTx} rewards={rewards} riskBreakdown={riskBreakdown} sharedIps={sharedIps} sharedFingerprints={sharedFingerprints} />
+      <UserTabs data={{ ...data, sessionRole: session.role, capabilities, wasCreator, creatorSince: creatorHistory.creatorSince }} inventory={inventory} disposedInventory={disposedInventory} pnlBreakdown={pnlBreakdown} notes={notes} gamingTx={gamingTx} financialTx={financialTx} rewards={rewards} riskBreakdown={riskBreakdown} sharedIps={sharedIps} sharedFingerprints={sharedFingerprints} />
     </div>
   );
 }
