@@ -149,11 +149,13 @@ export async function getUserDetail(id: string) {
   let referredByUsername: string | null = null;
   let referredByCode: string | null = null;
   if (user.referred_by) {
-    const [referrer, signupUsage] = await Promise.all([
+    const [referrer, signupUsage, latestUsage] = await Promise.all([
       db.user.findUnique({
         where: { id: user.referred_by },
         select: { username: true, email: true, affiliate_code: true },
       }),
+      // Historical signup-time code — preferred, since it preserves the
+      // exact string even if the owner later rotated their code.
       db.affiliate_code_usages.findFirst({
         where: {
           referred_user_id: user.id,
@@ -162,13 +164,33 @@ export async function getUserDetail(id: string) {
         orderBy: { created_at: "desc" },
         select: { code: true },
       }),
+      // Most recent usage row of ANY type. The admin "set referrer"
+      // path writes a non-signup usage row, so this surfaces the code
+      // when there's no signup row — without it the code shows as
+      // "unknown" after a manual attribution.
+      db.affiliate_code_usages.findFirst({
+        where: { referred_user_id: user.id },
+        orderBy: { created_at: "desc" },
+        select: { code: true },
+      }),
     ]);
     referredByUsername =
       referrer?.username ?? referrer?.email ?? user.referred_by;
-    // Prefer the historical signup row; fall back to the referrer's
-    // current code if there's no signup row recorded (admin-assigned
-    // referrer paths used to skip writing the signup usage).
-    referredByCode = signupUsage?.code ?? referrer?.affiliate_code ?? null;
+    // Resolution order:
+    //   1. historical signup row (exact code at signup),
+    //   2. the active code the user is on now (user.affiliate_code —
+    //      set by the admin override), which is what wager income
+    //      follows,
+    //   3. any recorded usage row (catches manual/deposit attributions),
+    //   4. the referrer's own code as a last resort.
+    // NOTE: referrer.affiliate_code is the code the OWNER is carrying,
+    // not necessarily a code they own, so it's the weakest fallback.
+    referredByCode =
+      signupUsage?.code ??
+      user.affiliate_code ??
+      latestUsage?.code ??
+      referrer?.affiliate_code ??
+      null;
   }
 
   // Every code this user owns (rows in affiliate_codes). A user can
