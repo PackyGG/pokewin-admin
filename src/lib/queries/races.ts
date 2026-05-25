@@ -212,14 +212,21 @@ async function getAllTimeLeaderboard(params: {
     db.$queryRaw<
       { user_id: string; username: string | null; total_wagered: number }[]
     >`
+      -- All-time wagered MUST come from balances.total_wagered (the user's
+      -- true lifetime figure, same source the user-detail page shows), NOT
+      -- from SUM(race_leaderboard_snapshots.wagered_usd). Snapshots are one
+      -- row per (user, race_type, period), and daily/weekly/monthly periods
+      -- OVERLAP — the same wager is recorded in each race type — so summing
+      -- across them multiplied the total (e.g. 2x). Membership is still the
+      -- set of race participants (distinct snapshot users).
       SELECT
         s.user_id,
         u.username,
-        SUM(s.wagered_usd)::float AS total_wagered
-      FROM race_leaderboard_snapshots s
+        COALESCE(b.total_wagered, 0)::float AS total_wagered
+      FROM (SELECT DISTINCT user_id FROM race_leaderboard_snapshots) s
       LEFT JOIN "user" u ON u.id = s.user_id
+      LEFT JOIN balances b ON b.user_id = s.user_id
       WHERE (${searchFilter}::text IS NULL OR u.username ILIKE ${searchFilter} OR u.email ILIKE ${searchFilter} OR s.user_id = ${search ?? ""})
-      GROUP BY s.user_id, u.username
       ORDER BY total_wagered DESC
       LIMIT ${perPage} OFFSET ${offset}
     `,
