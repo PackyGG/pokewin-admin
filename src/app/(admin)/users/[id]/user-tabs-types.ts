@@ -190,6 +190,14 @@ export type Transaction = {
   amount: number;
   balanceBefore: number;
   balanceAfter: number;
+  /**
+   * Total worth (cash balance + held inventory worth) before/after this
+   * transaction. inventoryValue is the held value AT the tx; worthBefore
+   * removes the items this tx itself won. Mirrors the detail modal's
+   * "Worth Before / Worth After" so the table and modal never disagree.
+   */
+  worthBefore: number;
+  worthAfter: number;
   description: string;
   status: string;
   gameSessionId: string | null;
@@ -232,13 +240,14 @@ export type Transaction = {
    */
   battleId: string | null;
   /**
-   * USD winnings for a WON battle_bet row — the separate `battle_refund`
-   * payout linked back to this bet (a battle WIN credits the user via a
-   * standalone refund row, not the bet row).
+   * Winnings for a WON battle_bet row — the battle's total card value
+   * (a battle is winner-takes-all: the winner walks away with every card
+   * pulled across all participants). Same definition the battles
+   * list/detail pages use.
    *   - 0    → battle resolved as a LOSS (won nothing; house keeps the bet)
-   *   - >0   → battle WON; this is what was paid out
-   *   - null → not a resolved battle_bet, OR a win whose refund row could
-   *            not be linked (the UI falls back to a truthful outcome
+   *   - >0   → battle WON; total card value the winner took
+   *   - null → not a resolved battle_bet, OR a win whose battle id could
+   *            not be derived (the UI falls back to a truthful outcome
    *            label instead of showing a fabricated number)
    */
   battleWinnings: number | null;

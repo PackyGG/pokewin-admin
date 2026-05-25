@@ -261,8 +261,8 @@ export const CategoryTransactionsTable = React.memo(
                 <TableHead>Amount</TableHead>
                 {showCardsValue && <TableHead>Won Value</TableHead>}
                 {showCardsValue && <TableHead>House Profit</TableHead>}
-                <TableHead>Before</TableHead>
-                <TableHead>After</TableHead>
+                <TableHead>Worth Before</TableHead>
+                <TableHead>Worth After</TableHead>
                 <TableHead>Inventory</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Description</TableHead>
@@ -396,10 +396,12 @@ export const CategoryTransactionsTable = React.memo(
                             </>
                           );
                         }
-                        // WIN: winnings are the linked battle_refund payout.
+                        // WIN: winner-takes-all → winnings = the battle's
+                        // total card value (same definition the battle
+                        // pages use).
                         if (t.battleWinnings == null) {
-                          // Refund couldn't be linked — don't fabricate a
-                          // number, show the truthful outcome instead.
+                          // Battle id couldn't be derived — don't fabricate
+                          // a number, show the truthful outcome instead.
                           return (
                             <>
                               <TableCell className="tabular-nums text-muted-foreground">
@@ -473,37 +475,24 @@ export const CategoryTransactionsTable = React.memo(
                         </>
                       );
                     })()}
-                  <TableCell className="text-muted-foreground">
-                    {formatCurrency(t.balanceBefore)}
+                  {/* Before / After show TOTAL WORTH (cash balance + held
+                      inventory worth), not cash alone — the raw cash is in
+                      the tooltip, and the held inventory has its own column
+                      to the right. Matches the detail modal's Worth rows. */}
+                  <TableCell
+                    className="text-muted-foreground tabular-nums"
+                    title={`Cash ${formatCurrency(t.balanceBefore)} + inventory worth`}
+                  >
+                    {formatCurrency(t.worthBefore)}
                   </TableCell>
-                  {(() => {
-                    // The bet row's balance_after only reflects the
-                    // debited bet — the WIN is credited later by a
-                    // separate battle_refund. Show the real post-win
-                    // balance (after-bet + winnings) for won battle bets,
-                    // with a hint + tooltip so it's never misleading.
-                    const winnings =
-                      t.type === "battle_bet" && t.gameResult === "win"
-                        ? t.battleWinnings
-                        : null;
-                    if (winnings != null && winnings > 0) {
-                      return (
-                        <TableCell
-                          title={`Balance after the bet was ${formatCurrency(
-                            t.balanceAfter,
-                          )}; this includes ${formatCurrency(
-                            winnings,
-                          )} battle winnings paid out separately`}
-                        >
-                          {formatCurrency(t.balanceAfter + winnings)}
-                          <span className="ml-1 text-[10px] text-muted-foreground">
-                            incl. win
-                          </span>
-                        </TableCell>
-                      );
-                    }
-                    return <TableCell>{formatCurrency(t.balanceAfter)}</TableCell>;
-                  })()}
+                  <TableCell
+                    className="tabular-nums"
+                    title={`Cash ${formatCurrency(
+                      t.balanceAfter,
+                    )} + inventory ${formatCurrency(t.inventoryValue)}`}
+                  >
+                    {formatCurrency(t.worthAfter)}
+                  </TableCell>
                   <TableCell className="text-muted-foreground tabular-nums">
                     {formatCurrency(t.inventoryValue)}
                   </TableCell>

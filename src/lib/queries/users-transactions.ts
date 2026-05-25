@@ -240,10 +240,25 @@ export async function getUserTransactions(
     .map((t) => ({ id: t.id, t: t.created_at.getTime() }))
     .sort((a, b) => a.t - b.t);
 
+  // Two snapshots per tx from one forward sweep:
+  //   • "before" = held value STRICTLY before the tx (events t < tx.t)
+  //   • "after"  = held value AT the tx (events t <= tx.t)
+  // The gap between them is exactly the items this tx added/removed at its
+  // own instant (e.g. an atomic pack open's pulls), so Worth Before
+  // excludes just-won items WITHOUT a cardsValue back-out. It's correct
+  // for battles too: a battle's pulls land at a LATER timestamp
+  // (resolution) than the bet row, so they're in NEITHER snapshot of the
+  // bet row — Worth Before/After around the bet differ only by the cash bet.
   const inventoryValueByTx = new Map<string, number>();
+  const inventoryValueBeforeByTx = new Map<string, number>();
   let sweepIdx = 0;
   let runningHeld = 0;
   for (const tx of txAsc) {
+    while (sweepIdx < sweepEvents.length && sweepEvents[sweepIdx].t < tx.t) {
+      runningHeld += sweepEvents[sweepIdx].d;
+      sweepIdx++;
+    }
+    inventoryValueBeforeByTx.set(tx.id, runningHeld);
     while (sweepIdx < sweepEvents.length && sweepEvents[sweepIdx].t <= tx.t) {
       runningHeld += sweepEvents[sweepIdx].d;
       sweepIdx++;
@@ -295,30 +310,25 @@ export async function getUserTransactions(
     }
   }
 
-  // ── Battle winnings resolution (for WON battle_bet rows) ───────────
-  // A battle WIN pays the user out via a SEPARATE `battle_refund` ledger
-  // row (a USD credit) — never the bet row itself, whose balance_after
-  // only reflects the debited bet. To show the house's net result and
-  // the real post-win balance on the bet row we link that refund back
-  // to its bet.
+  // ── Battle winnings (for WON battle_bet rows) ─────────────────────
+  // A battle is winner-takes-all: the winner walks away with EVERY card
+  // pulled across ALL participants. So a winner's payout = the battle's
+  // total card value, and a loser's payout = 0. This is the authoritative
+  // battle-economics definition used by the battles list/detail
+  // (src/lib/queries/battles.ts) — we mirror its exact SQL here rather
+  // than invent a separate mechanism, so the per-row P&L on the user tab
+  // matches what the battle pages show.
   //
-  // Linkage: query the user's completed battle_refund rows by BOTH the
-  // bet's game_session_id AND the battle id carried in the refund's
-  // metadata. Both keys are evidenced in this codebase — game_session_id
-  // is how the tx-detail page groups "related transactions"
-  // (transactions.ts), and metadata.battle_id is how the global tx
-  // search finds battle rows — and the main site may use either, so we
-  // resolve against both and take whichever matches. Scoped to user_id +
-  // type so it stays a small, indexed lookup. If neither key links a
-  // refund, the row falls back to a truthful outcome label rather than a
-  // fabricated number.
-  const wonSessionIds = new Set<string>();
+  // total_card_value = SUM over all participants' PF results of
+  // (user_inventory.value_at_obtained, falling back to cards.price when
+  // the card never landed in the winner's inventory) — joined
+  // battles → battle_participants → game_sessions → provably_fair_results
+  // → user_inventory, with a card-price fallback via result_metadata.
   const wonBattleIds = new Set<string>();
   for (const t of transactions) {
     if (t.type !== "battle_bet") continue;
     const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
     if (gs?.result !== "win") continue;
-    if (t.game_session_id) wonSessionIds.add(t.game_session_id);
     const bId =
       gs?.battle_participants?.battle_id ??
       gs?.provably_fair_results[0]?.battle_id ??
@@ -326,46 +336,33 @@ export async function getUserTransactions(
     if (bId) wonBattleIds.add(bId);
   }
 
-  const winningsBySession = new Map<string, number>();
-  const winningsByBattle = new Map<string, number>();
-  if (wonSessionIds.size > 0 || wonBattleIds.size > 0) {
+  const battleWinningsById = new Map<string, number>();
+  if (wonBattleIds.size > 0) {
     try {
-      const refundOr: Prisma.ledger_transactionsWhereInput[] = [];
-      if (wonSessionIds.size > 0) {
-        refundOr.push({ game_session_id: { in: [...wonSessionIds] } });
-      }
-      for (const bId of wonBattleIds) {
-        refundOr.push({ metadata: { path: ["battle_id"], equals: bId } });
-      }
-      const refunds = await db.ledger_transactions.findMany({
-        where: {
-          user_id: userId,
-          type: "battle_refund",
-          status: "completed",
-          OR: refundOr,
-        },
-        select: { amount: true, game_session_id: true, metadata: true },
-      });
-      for (const r of refunds) {
-        // battle_refund credits the user → amount is positive, but abs()
-        // it so a stored sign can't flip the winnings negative.
-        const amt = Math.abs(toNumber(r.amount));
-        if (r.game_session_id) {
-          winningsBySession.set(
-            r.game_session_id,
-            (winningsBySession.get(r.game_session_id) ?? 0) + amt,
-          );
-        }
-        const rm = r.metadata as Record<string, unknown> | null;
-        const rbId =
-          typeof rm?.battle_id === "string" ? (rm.battle_id as string) : null;
-        if (rbId) {
-          winningsByBattle.set(rbId, (winningsByBattle.get(rbId) ?? 0) + amt);
-        }
+      const rows = await db.$queryRaw<
+        { id: string; total_card_value: number }[]
+      >`
+        SELECT
+          b.id::text AS id,
+          COALESCE(
+            SUM(COALESCE(ui.value_at_obtained::numeric, c.price::numeric, 0)),
+            0
+          )::float8 AS total_card_value
+        FROM battles b
+        LEFT JOIN battle_participants bp ON bp.battle_id = b.id
+        LEFT JOIN game_sessions gs ON gs.id = bp.game_session_id
+        LEFT JOIN provably_fair_results pf ON pf.game_session_id = gs.id
+        LEFT JOIN user_inventory ui ON ui.id = pf.inventory_item_id
+        LEFT JOIN cards c ON c.id::text = pf.result_metadata->>'card_id'
+        WHERE b.id::text IN (${Prisma.join([...wonBattleIds])})
+        GROUP BY b.id
+      `;
+      for (const r of rows) {
+        battleWinningsById.set(r.id, r.total_card_value);
       }
     } catch (e) {
       console.error(
-        "[getUserTransactions] battle winnings lookup failed (non-fatal):",
+        "[getUserTransactions] battle winnings (card value) lookup failed (non-fatal):",
         e,
       );
     }
@@ -417,13 +414,13 @@ export async function getUserTransactions(
         (typeof meta?.battle_id === "string" ? (meta.battle_id as string) : null) ??
         null;
 
-      // Winnings for a WON battle_bet row (the linked battle_refund
-      // payout). 0 on a resolved LOSS (house keeps the full bet); a
-      // positive number on a WIN whose refund linked; null when the row
-      // isn't a resolved battle_bet, or it's a win whose refund couldn't
-      // be linked (the UI then shows an outcome label, not a fake
-      // number). Prefer the game_session_id match (most specific), fall
-      // back to the battle id.
+      // Winnings for a battle_bet row (winner-takes-all card value).
+      //   0    → resolved LOSS (won nothing; house keeps the full bet)
+      //   >0   → resolved WIN; the battle's total card value (what the
+      //          winner walked away with across all participants)
+      //   null → not a resolved battle_bet, or a win whose battle id
+      //          couldn't be derived (UI shows an outcome label, not a
+      //          fabricated number).
       let battleWinnings: number | null = null;
       if (t.type === "battle_bet") {
         const result = gs?.result ?? null;
@@ -431,28 +428,43 @@ export async function getUserTransactions(
           battleWinnings = 0;
         } else if (result === "win") {
           battleWinnings =
-            t.game_session_id && winningsBySession.has(t.game_session_id)
-              ? winningsBySession.get(t.game_session_id)!
-              : battleId && winningsByBattle.has(battleId)
-                ? winningsByBattle.get(battleId)!
-                : null;
+            battleId && battleWinningsById.has(battleId)
+              ? battleWinningsById.get(battleId)!
+              : null;
         }
       }
+
+      // Total worth (cash balance + held inventory) before/after this tx,
+      // so a battle/pack that trades cash for items reads as the true
+      // total-worth change instead of a pure cash drop. Uses the two
+      // sweep snapshots: "before" = inventory held strictly before this
+      // tx, "after" = inventory held at this tx (after any same-instant
+      // items land). This is the single source for both the table row and
+      // the detail modal, so the two surfaces never disagree.
+      const balanceBeforeNum = toNumber(t.balance_before);
+      const balanceAfterNum = toNumber(t.balance_after);
+      const inventoryValueNum = inventoryValueByTx.get(t.id) ?? 0;
+      const inventoryValueBeforeNum = inventoryValueBeforeByTx.get(t.id) ?? 0;
+      const cardsValueNum = cardsValueByTx.has(t.id)
+        ? cardsValueByTx.get(t.id)!
+        : null;
 
       return {
         id: t.id,
         type: t.type,
         amount: toNumber(t.amount),
-        balanceBefore: toNumber(t.balance_before),
-        balanceAfter: toNumber(t.balance_after),
+        balanceBefore: balanceBeforeNum,
+        balanceAfter: balanceAfterNum,
+        worthBefore: balanceBeforeNum + inventoryValueBeforeNum,
+        worthAfter: balanceAfterNum + inventoryValueNum,
         description: t.description,
         status: t.status,
         gameSessionId: t.game_session_id,
         packId: pack?.id ?? null,
         packName: pack?.name ?? null,
-        cardsValue: cardsValueByTx.has(t.id) ? cardsValueByTx.get(t.id)! : null,
+        cardsValue: cardsValueNum,
         gameResult: gs?.result ?? null, // "win" | "lose" | null (null = still resolving)
-        inventoryValue: inventoryValueByTx.get(t.id) ?? 0,
+        inventoryValue: inventoryValueNum,
         soldCard: soldItem?.card ? {
           name: soldItem.card.name,
           imageUrl: soldItem.card.image_url,
