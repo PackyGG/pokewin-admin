@@ -121,7 +121,7 @@ export default async function AdminUsersPage() {
         {isCurrentUserAdmin && (
           <Link
             href="/admin-users/balance-limits"
-            className="block transition-transform hover:scale-[1.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded-xl"
+            className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
             aria-label="Open balance limits overview"
           >
             <KpiTile

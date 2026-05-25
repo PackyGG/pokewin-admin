@@ -196,10 +196,9 @@
    - .surface-raise   — a soft, layered drop shadow tuned for the
        dark theme (shadows are near-invisible on dark unless they
        are large + soft). Pairs with hover transitions on tiles.
-   - .hover-raise      — opt-in hover affordance: a slightly stronger
-       shadow on hover ONLY. No scale/translate — the tiles must not
-       zoom or move on hover. Kept here (not as a Tailwind hover: chain)
-       so the easing curve is consistent and tunable in one place.
+   - .hover-raise      — no-op kept as a class hook. Data/KPI/stat tiles
+       must be COMPLETELY static on hover (no zoom, no lift, no shadow
+       change) per request; surface-sheen still gives the static edge.
 */
 @layer utilities {
   .surface-sheen {
@@ -214,20 +213,10 @@
   }
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .hover-raise {
-    transition:
-      box-shadow 200ms ease-out,
-      border-color 200ms ease-out;
-  }
-  .hover-raise:hover {
-    /* No transform — tiles must NOT zoom or shift on hover. Only a
-       slightly stronger shadow for subtle, static feedback. */
-    box-shadow:
-      0 2px 4px -2px color-mix(in oklch, black 35%, transparent),
-      0 16px 40px -16px color-mix(in oklch, black 55%, transparent);
-  }
-}
+/* .hover-raise intentionally does nothing on hover — data/KPI/stat tiles
+   stay completely static (no zoom, no lift, no shadow change) per
+   request. Left as a class hook so existing className references stay
+   valid; .surface-sheen still provides the static lifted edge. */
 
 /* react-datasheet-grid theme overrides */
 .dsg-container {

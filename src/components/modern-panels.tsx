@@ -469,7 +469,7 @@ export function StatPanel({
 }) {
   const colors = TILE_COLORS[accent];
   return (
-    <div className="surface-sheen surface-raise group relative overflow-hidden rounded-xl border bg-gradient-to-br from-card via-card to-card/70 transition-shadow duration-200 hover:shadow-lg sm:rounded-2xl">
+    <div className="surface-sheen surface-raise group relative overflow-hidden rounded-xl border bg-gradient-to-br from-card via-card to-card/70 sm:rounded-2xl">
       {/* Accent corner glow — a touch stronger (40% → 50%) and a hair
           larger so the panel feels alive. Still soft/low-opacity. */}
       <div
