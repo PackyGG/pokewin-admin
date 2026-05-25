@@ -1,6 +1,7 @@
-import { CloudRain } from "lucide-react";
+import { CloudRain, Timer } from "lucide-react";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import type { ActiveRainSummary } from "@/lib/queries/dashboard";
+import { RainCountdown } from "./rain-countdown";
 
 /**
  * Relative "ends in" label, computed server-side at render. Surfaced in the
@@ -55,6 +56,11 @@ export function ActiveRainChip({ rain }: { rain: ActiveRainSummary }) {
         ·
       </span>
       <span className="tabular-nums">{formatCurrency(rain.totalPoolUsd)}</span>
+      <span className="text-cyan-700/40 dark:text-cyan-400/40" aria-hidden>
+        ·
+      </span>
+      <Timer className="size-3.5 shrink-0" aria-hidden />
+      {drawing ? <span>drawing</span> : <RainCountdown endsAt={rain.endsAt} />}
     </span>
   );
 }
