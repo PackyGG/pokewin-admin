@@ -331,12 +331,27 @@ export const CategoryTransactionsTable = React.memo(
                   })()}
                   {showCardsValue &&
                     (() => {
-                      const isBattleBet = t.type === "battle_bet";
-                      const isBattleSponsor = t.type === "battle_sponsorship";
-                      if (isBattleBet || isBattleSponsor) {
-                        // gameResult is the reliable source of truth (same
-                        // value the battle detail shows). null = still
-                        // resolving.
+                      // Sponsorship funds someone else's play — the house
+                      // simply takes the amount in (shown in Amount). We
+                      // don't derive a win/loss P&L for it.
+                      if (t.type === "battle_sponsorship") {
+                        return (
+                          <>
+                            <TableCell className="tabular-nums text-muted-foreground">
+                              —
+                            </TableCell>
+                            <TableCell className="tabular-nums">
+                              <span className="text-emerald-600 dark:text-emerald-400">
+                                +{formatCurrency(t.amount)}
+                              </span>
+                            </TableCell>
+                          </>
+                        );
+                      }
+                      if (t.type === "battle_bet") {
+                        // Win/loss is the battle outcome (winner_team vs
+                        // team_number), surfaced as gameResult. null = the
+                        // battle hasn't resolved yet.
                         if (t.gameResult === null) {
                           return (
                             <TableCell
@@ -347,39 +362,7 @@ export const CategoryTransactionsTable = React.memo(
                             </TableCell>
                           );
                         }
-                        if (t.gameResult === "draw") {
-                          return (
-                            <TableCell
-                              colSpan={2}
-                              className="text-sm font-medium text-muted-foreground"
-                            >
-                              Draw
-                            </TableCell>
-                          );
-                        }
-                        const playerWon = t.gameResult === "win";
-                        // Sponsorship economics differ from a bet (the
-                        // sponsor funds someone else's play), so we don't
-                        // derive a $ P&L for it — keep the truthful outcome
-                        // label. House-POV: player win = house loss = rose;
-                        // player loss = house gain = emerald.
-                        if (isBattleSponsor) {
-                          return (
-                            <TableCell
-                              colSpan={2}
-                              className={
-                                "text-sm font-medium " +
-                                (playerWon
-                                  ? "text-rose-600 dark:text-rose-400"
-                                  : "text-emerald-600 dark:text-emerald-400")
-                              }
-                            >
-                              {playerWon ? "Player won" : "Player lost"}
-                            </TableCell>
-                          );
-                        }
-                        // ── battle_bet, resolved ───────────────────────
-                        if (!playerWon) {
+                        if (t.gameResult === "lose") {
                           // LOSS: player won nothing → house keeps the
                           // full bet. Won Value = $0, House Profit = +bet
                           // (house gain = emerald).
@@ -396,12 +379,14 @@ export const CategoryTransactionsTable = React.memo(
                             </>
                           );
                         }
-                        // WIN: winner-takes-all → winnings = the battle's
-                        // total card value (same definition the battle
-                        // pages use).
-                        if (t.battleWinnings == null) {
-                          // Battle id couldn't be derived — don't fabricate
-                          // a number, show the truthful outcome instead.
+                        // WIN: winnings = the cards the player actually took
+                        // from the battle (their battle-sourced inventory).
+                        if (
+                          t.battleWinnings == null ||
+                          t.battleWinnings <= 0
+                        ) {
+                          // Won, but no traceable kept cards — show the
+                          // truthful outcome rather than a misleading +bet.
                           return (
                             <>
                               <TableCell className="tabular-nums text-muted-foreground">

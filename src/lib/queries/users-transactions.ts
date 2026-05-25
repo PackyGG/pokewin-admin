@@ -53,8 +53,13 @@ export async function getUserTransactions(
             bet_amount: true,
             // One-to-one link to the battle (game_session →
             // battle_participants → battles). battle_id is the
-            // authoritative id for the "watch live" link.
-            battle_participants: { select: { battle_id: true } },
+            // authoritative id for the "watch live" link; team_number is
+            // compared against battles.winner_team to decide win/loss
+            // (the reliable signal — game_sessions.result does NOT track
+            // who won the battle).
+            battle_participants: {
+              select: { battle_id: true, team_number: true },
+            },
             provably_fair_results: {
               // result_metadata + battle_id are needed for the borrow
               // badge — solo opens carry the % in metadata, battle
@@ -73,34 +78,52 @@ export async function getUserTransactions(
     db.ledger_transactions.count({ where }),
   ]);
 
-  // Batch-fetch battles.borrow_percentage for any battle-linked PF
-  // results so the user-detail tab can render the same BorrowBadge
-  // as the global transactions list / live feed.
+  // Batch-fetch battle rows for every battle referenced on this page —
+  // both from PF results (borrow badge) and from battle_bet participants
+  // (win/loss + winnings). One query yields borrow_percentage AND the
+  // outcome (winner_team + status), so we don't hit the battles table
+  // twice.
   //
-  // CRITICAL: auxiliary lookup — same convention as getTransactions.
-  // A failure here must NOT take down the whole /users/[id] activity
-  // tab. Wrap in try/catch; on failure, badge is just absent for the
+  // CRITICAL: auxiliary lookup — same convention as getTransactions. A
+  // failure here must NOT take down the whole /users/[id] activity tab.
+  // Wrap in try/catch; on failure, badges/outcome are just absent for the
   // page-load and rows still render.
-  const battleIdsForBorrow = new Set<string>();
+  const battleIdsToFetch = new Set<string>();
   for (const t of transactions) {
     const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
+    if (gs?.battle_participants?.battle_id) {
+      battleIdsToFetch.add(gs.battle_participants.battle_id);
+    }
     for (const pf of gs?.provably_fair_results ?? []) {
-      if (pf.battle_id) battleIdsForBorrow.add(pf.battle_id);
+      if (pf.battle_id) battleIdsToFetch.add(pf.battle_id);
     }
   }
   const battleBorrowMap = new Map<string, number>();
-  if (battleIdsForBorrow.size > 0) {
+  const battleOutcomeMap = new Map<
+    string,
+    { winnerTeam: number | null; status: string }
+  >();
+  if (battleIdsToFetch.size > 0) {
     try {
-      const battlesForBorrow = await db.battles.findMany({
-        where: { id: { in: [...battleIdsForBorrow] } },
-        select: { id: true, borrow_percentage: true },
+      const battleRows = await db.battles.findMany({
+        where: { id: { in: [...battleIdsToFetch] } },
+        select: {
+          id: true,
+          borrow_percentage: true,
+          winner_team: true,
+          status: true,
+        },
       });
-      for (const b of battlesForBorrow) {
+      for (const b of battleRows) {
         battleBorrowMap.set(b.id, b.borrow_percentage ?? 0);
+        battleOutcomeMap.set(b.id, {
+          winnerTeam: b.winner_team,
+          status: b.status,
+        });
       }
     } catch (e) {
       console.error(
-        "[getUserTransactions] battle borrow lookup failed (non-fatal):",
+        "[getUserTransactions] battle lookup failed (non-fatal):",
         e,
       );
     }
@@ -310,59 +333,60 @@ export async function getUserTransactions(
     }
   }
 
-  // ── Battle winnings (for WON battle_bet rows) ─────────────────────
-  // A battle is winner-takes-all: the winner walks away with EVERY card
-  // pulled across ALL participants. So a winner's payout = the battle's
-  // total card value, and a loser's payout = 0. This is the authoritative
-  // battle-economics definition used by the battles list/detail
-  // (src/lib/queries/battles.ts) — we mirror its exact SQL here rather
-  // than invent a separate mechanism, so the per-row P&L on the user tab
-  // matches what the battle pages show.
-  //
-  // total_card_value = SUM over all participants' PF results of
-  // (user_inventory.value_at_obtained, falling back to cards.price when
-  // the card never landed in the winner's inventory) — joined
-  // battles → battle_participants → game_sessions → provably_fair_results
-  // → user_inventory, with a card-price fallback via result_metadata.
-  const wonBattleIds = new Set<string>();
+  // ── Battle win/loss + winnings (for battle_bet rows) ──────────────
+  // Win/loss is decided by battles.winner_team vs this user's
+  // battle_participant.team_number (the reliable signal —
+  // game_sessions.result does NOT track who won the battle). The
+  // winnings are the user's OWN realized take: the cards that actually
+  // landed in their inventory from the battle, i.e. user_inventory rows
+  // with source_type='battle' and source_id = the bet's game_session_id
+  // (verified: for source_type IN ('pack','battle'), user_inventory
+  // .source_id IS the game_session_id — see creators-pnl.ts /
+  // creators-types.ts). Valued at value_at_obtained, this equals what
+  // the user truly won and matches their inventory/worth — unlike the
+  // battle's gross card value, which over-counts cards the user never
+  // kept.
+  const wonGameSessionIds: string[] = [];
   for (const t of transactions) {
-    if (t.type !== "battle_bet") continue;
+    if (t.type !== "battle_bet" || !t.game_session_id) continue;
     const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
-    if (gs?.result !== "win") continue;
-    const bId =
-      gs?.battle_participants?.battle_id ??
-      gs?.provably_fair_results[0]?.battle_id ??
-      null;
-    if (bId) wonBattleIds.add(bId);
+    const bId = gs?.battle_participants?.battle_id ?? null;
+    const userTeam = gs?.battle_participants?.team_number ?? null;
+    const outcome = bId ? battleOutcomeMap.get(bId) : null;
+    if (
+      outcome &&
+      outcome.status === "completed" &&
+      outcome.winnerTeam != null &&
+      userTeam != null &&
+      userTeam === outcome.winnerTeam
+    ) {
+      wonGameSessionIds.push(t.game_session_id);
+    }
   }
 
-  const battleWinningsById = new Map<string, number>();
-  if (wonBattleIds.size > 0) {
+  const battleWinningsByGsid = new Map<string, number>();
+  if (wonGameSessionIds.length > 0) {
     try {
-      const rows = await db.$queryRaw<
-        { id: string; total_card_value: number }[]
-      >`
-        SELECT
-          b.id::text AS id,
-          COALESCE(
-            SUM(COALESCE(ui.value_at_obtained::numeric, c.price::numeric, 0)),
-            0
-          )::float8 AS total_card_value
-        FROM battles b
-        LEFT JOIN battle_participants bp ON bp.battle_id = b.id
-        LEFT JOIN game_sessions gs ON gs.id = bp.game_session_id
-        LEFT JOIN provably_fair_results pf ON pf.game_session_id = gs.id
-        LEFT JOIN user_inventory ui ON ui.id = pf.inventory_item_id
-        LEFT JOIN cards c ON c.id::text = pf.result_metadata->>'card_id'
-        WHERE b.id::text IN (${Prisma.join([...wonBattleIds])})
-        GROUP BY b.id
-      `;
-      for (const r of rows) {
-        battleWinningsById.set(r.id, r.total_card_value);
+      const grouped = await db.user_inventory.groupBy({
+        by: ["source_id"],
+        where: {
+          user_id: userId,
+          source_type: "battle",
+          source_id: { in: wonGameSessionIds },
+        },
+        _sum: { value_at_obtained: true },
+      });
+      for (const g of grouped) {
+        if (g.source_id) {
+          battleWinningsByGsid.set(
+            g.source_id,
+            toNumber(g._sum.value_at_obtained ?? 0),
+          );
+        }
       }
     } catch (e) {
       console.error(
-        "[getUserTransactions] battle winnings (card value) lookup failed (non-fatal):",
+        "[getUserTransactions] battle winnings (inventory) lookup failed (non-fatal):",
         e,
       );
     }
@@ -414,23 +438,31 @@ export async function getUserTransactions(
         (typeof meta?.battle_id === "string" ? (meta.battle_id as string) : null) ??
         null;
 
-      // Winnings for a battle_bet row (winner-takes-all card value).
-      //   0    → resolved LOSS (won nothing; house keeps the full bet)
-      //   >0   → resolved WIN; the battle's total card value (what the
-      //          winner walked away with across all participants)
-      //   null → not a resolved battle_bet, or a win whose battle id
-      //          couldn't be derived (UI shows an outcome label, not a
-      //          fabricated number).
+      // Battle outcome + winnings for a battle_bet row.
+      //   battleResult: "win" | "lose" | null (null = not resolved yet —
+      //     in_progress / animating / waiting / cancelled). Decided by
+      //     battles.winner_team vs this user's team_number.
+      //   battleWinnings: the user's realized take (their battle-sourced
+      //     inventory for this game_session). 0 on a loss; >0 on a win
+      //     with kept cards; null when not a resolved battle_bet.
+      let battleResult: "win" | "lose" | null = null;
       let battleWinnings: number | null = null;
       if (t.type === "battle_bet") {
-        const result = gs?.result ?? null;
-        if (result === "lose") {
-          battleWinnings = 0;
-        } else if (result === "win") {
-          battleWinnings =
-            battleId && battleWinningsById.has(battleId)
-              ? battleWinningsById.get(battleId)!
-              : null;
+        const outcome = battleId ? battleOutcomeMap.get(battleId) : null;
+        const userTeam = gs?.battle_participants?.team_number ?? null;
+        if (
+          outcome &&
+          outcome.status === "completed" &&
+          outcome.winnerTeam != null &&
+          userTeam != null
+        ) {
+          const won = userTeam === outcome.winnerTeam;
+          battleResult = won ? "win" : "lose";
+          battleWinnings = won
+            ? t.game_session_id
+              ? battleWinningsByGsid.get(t.game_session_id) ?? 0
+              : 0
+            : 0;
         }
       }
 
@@ -443,8 +475,14 @@ export async function getUserTransactions(
       // the detail modal, so the two surfaces never disagree.
       const balanceBeforeNum = toNumber(t.balance_before);
       const balanceAfterNum = toNumber(t.balance_after);
-      const inventoryValueNum = inventoryValueByTx.get(t.id) ?? 0;
-      const inventoryValueBeforeNum = inventoryValueBeforeByTx.get(t.id) ?? 0;
+      // Held inventory can never be negative; clamp tiny floating-point
+      // residue from the +/- sweep (e.g. 359.96 − 359.96 = -1e-13) to 0
+      // so it never renders as "-$0.00".
+      const inventoryValueNum = Math.max(0, inventoryValueByTx.get(t.id) ?? 0);
+      const inventoryValueBeforeNum = Math.max(
+        0,
+        inventoryValueBeforeByTx.get(t.id) ?? 0,
+      );
       const cardsValueNum = cardsValueByTx.has(t.id)
         ? cardsValueByTx.get(t.id)!
         : null;
@@ -463,7 +501,10 @@ export async function getUserTransactions(
         packId: pack?.id ?? null,
         packName: pack?.name ?? null,
         cardsValue: cardsValueNum,
-        gameResult: gs?.result ?? null, // "win" | "lose" | null (null = still resolving)
+        // For battles, the win/lose signal is the battle outcome
+        // (winner_team vs team_number), NOT game_sessions.result. Packs
+        // keep gs.result (unused by the UI, but harmless).
+        gameResult: t.type === "battle_bet" ? battleResult : gs?.result ?? null,
         inventoryValue: inventoryValueNum,
         soldCard: soldItem?.card ? {
           name: soldItem.card.name,
