@@ -81,7 +81,7 @@ export default async function DashboardPage() {
             <div className="flex flex-wrap items-center gap-2">
               <Suspense
                 fallback={
-                  <Skeleton className="h-[28px] w-28 rounded-full" />
+                  <Skeleton className="h-9 w-44 rounded-full" />
                 }
               >
                 <DashboardActiveRain />

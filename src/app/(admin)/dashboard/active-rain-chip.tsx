@@ -28,10 +28,10 @@ export function ActiveRainChip({ rain }: { rain: ActiveRainSummary }) {
   if (!rain) {
     return (
       <span
-        className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-background/40 px-2.5 py-1 text-tiny font-medium text-muted-foreground"
+        className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/40 px-3 py-1.5 text-sm font-medium text-muted-foreground"
         title="No rain currently running"
       >
-        <CloudRain className="size-3 shrink-0" aria-hidden />
+        <CloudRain className="size-4 shrink-0" aria-hidden />
         <span>No active rain</span>
       </span>
     );
@@ -39,18 +39,22 @@ export function ActiveRainChip({ rain }: { rain: ActiveRainSummary }) {
   const drawing = rain.status === "drawing";
   return (
     <span
-      className="inline-flex items-center gap-1.5 rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 text-tiny font-medium text-cyan-700 dark:text-cyan-400"
+      className="inline-flex items-center gap-2 rounded-full border border-cyan-500/40 bg-cyan-500/10 px-3 py-1.5 text-sm font-medium text-cyan-700 dark:text-cyan-400"
       title={`Active rain · ${rain.participantCount} ${
         rain.participantCount === 1 ? "participant" : "participants"
       } · ${formatCurrency(rain.totalPoolUsd)} pool · ${
         drawing ? "drawing winner" : endsInLabel(rain.endsAt)
       }`}
     >
-      <CloudRain className="size-3 shrink-0" aria-hidden />
-      <span className="tabular-nums text-foreground">
+      <CloudRain className="size-4 shrink-0" aria-hidden />
+      <span className="tabular-nums text-base font-semibold text-foreground">
         {formatNumber(rain.participantCount)}
       </span>
       <span>in rain</span>
+      <span className="text-cyan-700/40 dark:text-cyan-400/40" aria-hidden>
+        ·
+      </span>
+      <span className="tabular-nums">{formatCurrency(rain.totalPoolUsd)}</span>
     </span>
   );
 }
