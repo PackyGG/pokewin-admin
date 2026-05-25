@@ -50,7 +50,6 @@ import {
   UserCircle,
   UserSearch,
   Users,
-  Wallet,
   type LucideIcon,
 } from "lucide-react";
 
@@ -386,18 +385,6 @@ export const NAV_COMMANDS: NavCommand[] = [
     pageKey: "/rewards/settings",
   },
 
-  // ── Finance ───────────────────────────────────────────────────────────
-  {
-    kind: "nav",
-    id: "nav.spending",
-    label: "Spending",
-    description: "Expense tracking",
-    icon: Wallet,
-    href: "/spending",
-    pageKey: "/spending",
-    keywords: ["expenses", "recurring"],
-  },
-
   // ── Creator Portal (creator-only) ─────────────────────────────────────
   {
     kind: "nav",
@@ -629,7 +616,7 @@ export const DOCS_NAV_GROUPS: Array<{ label: string; pageKeys: string[] }> = [
   },
   {
     label: "Employees",
-    pageKeys: ["/shifts", "/spending"],
+    pageKeys: ["/shifts"],
   },
   {
     label: "Content",

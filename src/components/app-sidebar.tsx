@@ -33,7 +33,6 @@ import {
   Percent,
   TrendingUp,
   UserCircle,
-  Wallet,
   Globe,
   Megaphone,
   CalendarClock,
@@ -96,7 +95,6 @@ const ICONS: Record<string, LucideIcon> = {
   Percent,
   TrendingUp,
   UserCircle,
-  Wallet,
   Globe,
   Megaphone,
   CalendarClock,
@@ -190,14 +188,13 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "Employees",
     items: [
-      { label: "Shifts", href: "/shifts", icon: "CalendarClock" },
-      { label: "Spending", href: "/spending", icon: "Wallet" },
       {
         label: "Salaries",
         href: "/salaries",
         icon: "Coins",
         usernameAllowlist: ["motha", "void", "kotha"],
       },
+      { label: "Shifts", href: "/shifts", icon: "CalendarClock" },
     ],
   },
   {

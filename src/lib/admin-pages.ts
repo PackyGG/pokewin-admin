@@ -40,9 +40,8 @@ export const ADMIN_PAGES: AdminPage[] = [
   // adjust-balance flow writes when the reason is tagged "Giveaway".
   // Same permission default as the rest of Marketing.
   { group: "Marketing", label: "Giveaway", key: "/marketing/giveaway" },
-  // Employees — internal staff workflow (shift planning + expense tracking)
+  // Employees — internal staff workflow (shift planning)
   { group: "Employees", label: "Shifts", key: "/shifts" },
-  { group: "Employees", label: "Spending", key: "/spending" },
   // Creator Portal
   { group: "Creator Portal", label: "My Profile", key: "/my-profile" },
   // Creators
