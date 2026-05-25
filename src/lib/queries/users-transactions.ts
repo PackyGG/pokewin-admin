@@ -295,6 +295,82 @@ export async function getUserTransactions(
     }
   }
 
+  // ── Battle winnings resolution (for WON battle_bet rows) ───────────
+  // A battle WIN pays the user out via a SEPARATE `battle_refund` ledger
+  // row (a USD credit) — never the bet row itself, whose balance_after
+  // only reflects the debited bet. To show the house's net result and
+  // the real post-win balance on the bet row we link that refund back
+  // to its bet.
+  //
+  // Linkage: query the user's completed battle_refund rows by BOTH the
+  // bet's game_session_id AND the battle id carried in the refund's
+  // metadata. Both keys are evidenced in this codebase — game_session_id
+  // is how the tx-detail page groups "related transactions"
+  // (transactions.ts), and metadata.battle_id is how the global tx
+  // search finds battle rows — and the main site may use either, so we
+  // resolve against both and take whichever matches. Scoped to user_id +
+  // type so it stays a small, indexed lookup. If neither key links a
+  // refund, the row falls back to a truthful outcome label rather than a
+  // fabricated number.
+  const wonSessionIds = new Set<string>();
+  const wonBattleIds = new Set<string>();
+  for (const t of transactions) {
+    if (t.type !== "battle_bet") continue;
+    const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
+    if (gs?.result !== "win") continue;
+    if (t.game_session_id) wonSessionIds.add(t.game_session_id);
+    const bId =
+      gs?.battle_participants?.battle_id ??
+      gs?.provably_fair_results[0]?.battle_id ??
+      null;
+    if (bId) wonBattleIds.add(bId);
+  }
+
+  const winningsBySession = new Map<string, number>();
+  const winningsByBattle = new Map<string, number>();
+  if (wonSessionIds.size > 0 || wonBattleIds.size > 0) {
+    try {
+      const refundOr: Prisma.ledger_transactionsWhereInput[] = [];
+      if (wonSessionIds.size > 0) {
+        refundOr.push({ game_session_id: { in: [...wonSessionIds] } });
+      }
+      for (const bId of wonBattleIds) {
+        refundOr.push({ metadata: { path: ["battle_id"], equals: bId } });
+      }
+      const refunds = await db.ledger_transactions.findMany({
+        where: {
+          user_id: userId,
+          type: "battle_refund",
+          status: "completed",
+          OR: refundOr,
+        },
+        select: { amount: true, game_session_id: true, metadata: true },
+      });
+      for (const r of refunds) {
+        // battle_refund credits the user → amount is positive, but abs()
+        // it so a stored sign can't flip the winnings negative.
+        const amt = Math.abs(toNumber(r.amount));
+        if (r.game_session_id) {
+          winningsBySession.set(
+            r.game_session_id,
+            (winningsBySession.get(r.game_session_id) ?? 0) + amt,
+          );
+        }
+        const rm = r.metadata as Record<string, unknown> | null;
+        const rbId =
+          typeof rm?.battle_id === "string" ? (rm.battle_id as string) : null;
+        if (rbId) {
+          winningsByBattle.set(rbId, (winningsByBattle.get(rbId) ?? 0) + amt);
+        }
+      }
+    } catch (e) {
+      console.error(
+        "[getUserTransactions] battle winnings lookup failed (non-fatal):",
+        e,
+      );
+    }
+  }
+
   return {
     data: transactions.map((t) => {
       const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
@@ -341,6 +417,28 @@ export async function getUserTransactions(
         (typeof meta?.battle_id === "string" ? (meta.battle_id as string) : null) ??
         null;
 
+      // Winnings for a WON battle_bet row (the linked battle_refund
+      // payout). 0 on a resolved LOSS (house keeps the full bet); a
+      // positive number on a WIN whose refund linked; null when the row
+      // isn't a resolved battle_bet, or it's a win whose refund couldn't
+      // be linked (the UI then shows an outcome label, not a fake
+      // number). Prefer the game_session_id match (most specific), fall
+      // back to the battle id.
+      let battleWinnings: number | null = null;
+      if (t.type === "battle_bet") {
+        const result = gs?.result ?? null;
+        if (result === "lose") {
+          battleWinnings = 0;
+        } else if (result === "win") {
+          battleWinnings =
+            t.game_session_id && winningsBySession.has(t.game_session_id)
+              ? winningsBySession.get(t.game_session_id)!
+              : battleId && winningsByBattle.has(battleId)
+                ? winningsByBattle.get(battleId)!
+                : null;
+        }
+      }
+
       return {
         id: t.id,
         type: t.type,
@@ -376,6 +474,7 @@ export async function getUserTransactions(
         borrowPercentage,
         borrowedAmountUsd,
         battleId,
+        battleWinnings,
       };
     }),
     total,

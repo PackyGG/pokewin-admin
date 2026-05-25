@@ -231,6 +231,17 @@ export type Transaction = {
    * packy.gg/battle/<id>. Null on non-battle rows.
    */
   battleId: string | null;
+  /**
+   * USD winnings for a WON battle_bet row — the separate `battle_refund`
+   * payout linked back to this bet (a battle WIN credits the user via a
+   * standalone refund row, not the bet row).
+   *   - 0    → battle resolved as a LOSS (won nothing; house keeps the bet)
+   *   - >0   → battle WON; this is what was paid out
+   *   - null → not a resolved battle_bet, OR a win whose refund row could
+   *            not be linked (the UI falls back to a truthful outcome
+   *            label instead of showing a fabricated number)
+   */
+  battleWinnings: number | null;
 };
 
 export type PaginatedTransactions = {
