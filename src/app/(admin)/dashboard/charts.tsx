@@ -42,6 +42,15 @@ const ftdsConfig = {
   },
 } satisfies ChartConfig;
 
+// Active Depositors uses a hex (cyan-500) rather than a chart-N var so
+// it stays visually distinct from the Signups chart in the same row.
+const activeDepositorsConfig = {
+  count: {
+    label: "Depositors",
+    color: "#06b6d4",
+  },
+} satisfies ChartConfig;
+
 // P&L bars are colored per-day by sign (House-POV): house up = emerald,
 // house down = rose. Cell fills override the config, but ChartContainer
 // still needs a config entry for the dataKey.
@@ -177,6 +186,45 @@ export function SignupsChart({
       </CardHeader>
       <CardContent>
         <ChartContainer config={signupsConfig} className="h-[220px] w-full md:h-[260px] lg:h-[300px]">
+          <BarChart data={data} accessibilityLayer>
+            <CartesianGrid vertical={false} />
+            <XAxis
+              dataKey="date"
+              tickLine={false}
+              axisLine={false}
+              tickMargin={8}
+              tickFormatter={(v) => v.slice(5)}
+            />
+            <YAxis tickLine={false} axisLine={false} tickMargin={8} />
+            <ChartTooltip content={<ChartTooltipContent />} />
+            <Bar
+              dataKey="count"
+              fill="var(--color-count)"
+              radius={[4, 4, 0, 0]}
+              animationDuration={700}
+              animationEasing="ease-out"
+            />
+          </BarChart>
+        </ChartContainer>
+      </CardContent>
+    </Card>
+  );
+}
+
+export function ActiveDepositorsChart({
+  data,
+}: {
+  data: { date: string; count: number }[];
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm font-medium">
+          Active Depositors (30 days)
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <ChartContainer config={activeDepositorsConfig} className="h-[220px] w-full md:h-[260px] lg:h-[300px]">
           <BarChart data={data} accessibilityLayer>
             <CartesianGrid vertical={false} />
             <XAxis

@@ -355,7 +355,6 @@ async function dashboardStatsInner() {
     periodAggregates,
     activityTotals,
     uniqueDepositorsResult,
-    uniqueDepositors24hResult,
     realizedPnlResult,
     realizedPnl24hResult,
     totalInventoryValue,
@@ -365,6 +364,7 @@ async function dashboardStatsInner() {
     ftdResult,
     pendingWithdrawalsResult,
     dailyFtds,
+    dailyActiveDepositors,
   ] = await Promise.all([
     // All four user counts (total + new today/week/month) in ONE scan of
     // the user table via COUNT(*) FILTER, instead of four separate
@@ -452,22 +452,6 @@ async function dashboardStatsInner() {
     db.balances.count({
       where: { total_deposited: { gt: 0 }, user: staffRelation },
     }),
-    // Distinct users who completed at least one deposit in the rolling
-    // last 24h — the active-depositor count for the dashboard tile.
-    // COUNT(DISTINCT user_id) over a small recent slice of
-    // ledger_transactions; staff + blacklist excluded via the same
-    // subquery pattern used elsewhere in this file.
-    db.$queryRaw<{ count: string }[]>`
-      SELECT COUNT(DISTINCT user_id)::text AS count
-      FROM ledger_transactions
-      WHERE type = 'deposit'
-        AND status = 'completed'
-        AND created_at >= ${rolling24h}
-        AND user_id IN (
-          SELECT id FROM "user"
-          WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
-        )
-    `,
     getRealizedPnlSnapshot(),
     // Rolling past-24h house P&L — windowed delta (deposits −
     // withdrawals − balanceΔ − inventoryΔ − voucherΔ over the last 24h),
@@ -586,6 +570,24 @@ async function dashboardStatsInner() {
         COALESCE(SUM(amount), 0)::text AS total
       FROM first_deposits
       WHERE created_at >= NOW() - INTERVAL '30 days'
+      GROUP BY DATE(created_at)
+      ORDER BY date
+    `,
+    // Daily Active Depositors — distinct USERS who completed at least
+    // one deposit on each day in the last 30 days. A user with three
+    // deposits the same day still counts once. Same staff + blacklist
+    // exclusion as the rest of the dashboard.
+    db.$queryRaw<{ date: Date; count: string }[]>`
+      SELECT DATE(created_at) AS date,
+             COUNT(DISTINCT user_id)::text AS count
+      FROM ledger_transactions
+      WHERE type = 'deposit'
+        AND status = 'completed'
+        AND created_at >= NOW() - INTERVAL '30 days'
+        AND user_id IN (
+          SELECT id FROM "user"
+          WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+        )
       GROUP BY DATE(created_at)
       ORDER BY date
     `,
@@ -750,10 +752,6 @@ async function dashboardStatsInner() {
       // a single user with five deposits = depositCount 5,
       // uniqueDepositors 1.
       uniqueDepositors: uniqueDepositorsResult,
-      // Distinct users who completed at least one deposit in the
-      // rolling last 24h. Counts users, not deposits — a user with
-      // three deposits in 24h still counts as 1.
-      uniqueDepositors24h: Number(uniqueDepositors24hResult[0]?.count ?? 0),
       // First-time depositors in the rolling last 24h: count, the
       // summed value of those first deposits, and the average. The 24h
       // counterpart to uniqueDepositors (lifetime distinct depositors).
@@ -814,6 +812,12 @@ async function dashboardStatsInner() {
         avg: count > 0 ? total / count : 0,
       };
     }),
+    // Daily Active Depositors — distinct users who deposited each day
+    // in the last 30 days. Drives the matching chart in the Trends row.
+    dailyActiveDepositors: dailyActiveDepositors.map((d) => ({
+      date: new Date(d.date).toISOString().split("T")[0],
+      count: Number(d.count),
+    })),
     // Server-side compute metadata. `queryMs` is the wall-clock time spent
     // in this function (exclusion lists + the parallel query batch + the
     // light post-processing above) — measured here at the very end so it

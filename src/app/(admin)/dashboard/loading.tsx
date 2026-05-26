@@ -22,11 +22,11 @@ export default function DashboardLoading() {
           edge doesn't jump when it streams in. */}
       <PageHeroSkeleton action />
       <KpiStripSkeleton count={6} />
-      <KpiStripSkeleton count={8} />
+      <KpiStripSkeleton count={7} />
       <div className="space-y-3">
         <SectionHeadingSkeleton titleWidth={80} />
         <ChartRowSkeleton count={3} height={300} />
-        <ChartRowSkeleton count={2} height={300} />
+        <ChartRowSkeleton count={3} height={300} />
       </div>
       <div className="grid gap-4 xl:grid-cols-2">
         <div className="space-y-3">
