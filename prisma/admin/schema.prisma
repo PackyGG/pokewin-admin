@@ -609,13 +609,18 @@ model employee_workspaces {
   manager_links employee_manager_workspaces[]
 }
 
-// One row per placed employee. employee_id is salary_employees.id but
+// One row per (employee, workspace) placement — an employee can be
+// placed in multiple sections (someone who handles both areas). Roles
+// are per-placement, so the same person can hold different roles in
+// different sections. employee_id is salary_employees.id but
 // intentionally kept as a LOOSE column (DB-level FK only, no Prisma
 // relation field on salary_employees) so the salary model stays
-// untouched. workspace_id null = the "Unassigned" pool.
+// untouched. workspace_id null = legacy roles-only "Unassigned" row
+// (older rows created when an employee had roles but no section);
+// new rows created by the multi-section UI always carry a workspace.
 model employee_board_placements {
   id           String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  employee_id  String               @unique @db.Uuid
+  employee_id  String               @db.Uuid
   workspace_id String?              @db.Uuid
   roles        String[]             @default([])
   position     Int                  @default(0)
@@ -623,7 +628,12 @@ model employee_board_placements {
   updated_at   DateTime             @updatedAt @db.Timestamptz(6)
   workspace    employee_workspaces? @relation(fields: [workspace_id], references: [id], onDelete: SetNull)
 
+  // An employee can be placed in any given workspace at most once.
+  // Postgres treats NULL workspace_id rows as distinct under unique
+  // constraints, so legacy roles-only Unassigned rows are not blocked.
+  @@unique([employee_id, workspace_id])
   @@index([workspace_id])
+  @@index([employee_id])
 }
 
 // An employee promoted to "manager" — rendered in the row above the

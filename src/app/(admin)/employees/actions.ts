@@ -40,15 +40,35 @@ const deleteWorkspaceSchema = z.object({
   id: z.string().uuid("Invalid workspace id"),
 });
 
-const moveEmployeeSchema = z.object({
-  employeeId: z.string().uuid("Invalid employee id"),
-  // null = move to the Unassigned pool.
+const placementMoveSchema = z.object({
+  placementId: z.string().uuid("Invalid placement id"),
+  // null = move to the Unassigned pool (no workspace).
   workspaceId: z.string().uuid("Invalid workspace id").nullable(),
 });
 
-const employeeRoleSchema = z.object({
+const addToWorkspaceSchema = z.object({
   employeeId: z.string().uuid("Invalid employee id"),
+  workspaceId: z.string().uuid("Invalid workspace id"),
+});
+
+const placementIdSchema = z.object({
+  placementId: z.string().uuid("Invalid placement id"),
+});
+
+const placementRoleSchema = z.object({
+  placementId: z.string().uuid("Invalid placement id"),
   role: roleSchema,
+});
+
+const reorderColumnSchema = z.object({
+  // null = Unassigned pool. Postgres' unique index treats NULL rows as
+  // distinct, so the legacy roles-only Unassigned rows still order
+  // alongside any new ones via this same action.
+  workspaceId: z.string().uuid("Invalid workspace id").nullable(),
+  placementIds: z
+    .array(z.string().uuid("Invalid placement id"))
+    .min(1, "Empty order list")
+    .max(500, "Too many placements"),
 });
 
 const managerEmployeeSchema = z.object({
@@ -167,15 +187,25 @@ export async function deleteWorkspace(
   return { success: true };
 }
 
-// ── Placements ──────────────────────────────────────────────────────
+// ── Placements (multi-section) ──────────────────────────────────────
+// In v2 an employee can have multiple placements (one per section). All
+// placement operations are keyed on `placement_id` so dragging the
+// "Marketing" card for Alice doesn't disturb her "Sales" card.
 
-export async function moveEmployee(
+/**
+ * Add an employee to a workspace. Creates a NEW placement row — does
+ * NOT touch the employee's other placements. Idempotent: trying to add
+ * an employee to a section they're already in returns a friendly error
+ * instead of throwing on the (employee_id, workspace_id) unique
+ * constraint.
+ */
+export async function addEmployeeToWorkspace(
   employeeId: string,
-  workspaceId: string | null,
-): Promise<{ success: true } | { success: false; error: string }> {
+  workspaceId: string,
+): Promise<{ success: true; placementId: string } | { success: false; error: string }> {
   const session = await requirePageAccess(PAGE_KEY);
   await ensure();
-  const parsed = moveEmployeeSchema.safeParse({ employeeId, workspaceId });
+  const parsed = addToWorkspaceSchema.safeParse({ employeeId, workspaceId });
   if (!parsed.success) {
     return {
       success: false,
@@ -183,22 +213,31 @@ export async function moveEmployee(
     };
   }
 
-  // The employee must exist in the salary registry — the board is just
-  // a view over it. Guard so a bad id can't create an orphan placement
-  // (the DB FK would reject it too, but a friendly error is nicer).
+  // The employee must exist in the salary registry.
   const employee = await adminDb.salary_employees.findUnique({
     where: { id: parsed.data.employeeId },
     select: { id: true },
   });
   if (!employee) return { success: false, error: "Employee not found" };
 
-  // Target workspace must exist when one is given (null = Unassigned).
-  if (parsed.data.workspaceId) {
-    const workspace = await adminDb.employee_workspaces.findUnique({
-      where: { id: parsed.data.workspaceId },
-      select: { id: true },
-    });
-    if (!workspace) return { success: false, error: "Workspace not found" };
+  const workspace = await adminDb.employee_workspaces.findUnique({
+    where: { id: parsed.data.workspaceId },
+    select: { id: true },
+  });
+  if (!workspace) return { success: false, error: "Workspace not found" };
+
+  // Idempotency guard — the unique index would error otherwise.
+  const existing = await adminDb.employee_board_placements.findUnique({
+    where: {
+      employee_id_workspace_id: {
+        employee_id: parsed.data.employeeId,
+        workspace_id: parsed.data.workspaceId,
+      },
+    },
+    select: { id: true },
+  });
+  if (existing) {
+    return { success: false, error: "Already in this section" };
   }
 
   // Append to the end of the target column.
@@ -209,16 +248,9 @@ export async function moveEmployee(
   });
   const nextPosition = (last?.position ?? -1) + 1;
 
-  // First move creates the placement (employee_id is unique); later
-  // moves update it. Roles are untouched here.
-  await adminDb.employee_board_placements.upsert({
-    where: { employee_id: parsed.data.employeeId },
-    create: {
+  const created = await adminDb.employee_board_placements.create({
+    data: {
       employee_id: parsed.data.employeeId,
-      workspace_id: parsed.data.workspaceId,
-      position: nextPosition,
-    },
-    update: {
       workspace_id: parsed.data.workspaceId,
       position: nextPosition,
     },
@@ -227,24 +259,34 @@ export async function moveEmployee(
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
-    eventType: "employee_board_employee_moved",
+    eventType: "employee_board_placement_added",
     metadata: {
+      placementId: created.id,
       employeeId: parsed.data.employeeId,
       workspaceId: parsed.data.workspaceId,
     },
   });
 
   revalidatePath(PAGE_KEY);
-  return { success: true };
+  return { success: true, placementId: created.id };
 }
 
-export async function addEmployeeRole(
-  employeeId: string,
-  role: string,
+/**
+ * Move ONE specific placement to a different workspace (or to
+ * Unassigned via workspaceId = null). The employee's OTHER placements
+ * in other sections are untouched. Drops the placement when the move
+ * would land it on top of a placement that already exists for the same
+ * employee in the target workspace (i.e. you dragged the "Marketing"
+ * card on top of where a "Sales" card already lives for the same
+ * person) — merging is friendlier than throwing on the unique index.
+ */
+export async function movePlacement(
+  placementId: string,
+  workspaceId: string | null,
 ): Promise<{ success: true } | { success: false; error: string }> {
   const session = await requirePageAccess(PAGE_KEY);
   await ensure();
-  const parsed = employeeRoleSchema.safeParse({ employeeId, role });
+  const parsed = placementMoveSchema.safeParse({ placementId, workspaceId });
   if (!parsed.success) {
     return {
       success: false,
@@ -252,57 +294,206 @@ export async function addEmployeeRole(
     };
   }
 
-  const employee = await adminDb.salary_employees.findUnique({
-    where: { id: parsed.data.employeeId },
-    select: { id: true },
+  const placement = await adminDb.employee_board_placements.findUnique({
+    where: { id: parsed.data.placementId },
+    select: { id: true, employee_id: true, workspace_id: true },
   });
-  if (!employee) return { success: false, error: "Employee not found" };
+  if (!placement) return { success: false, error: "Placement not found" };
 
-  const existing = await adminDb.employee_board_placements.findUnique({
-    where: { employee_id: parsed.data.employeeId },
-    select: { roles: true },
+  // Target workspace must exist when one is given (null = Unassigned).
+  if (parsed.data.workspaceId) {
+    const workspace = await adminDb.employee_workspaces.findUnique({
+      where: { id: parsed.data.workspaceId },
+      select: { id: true },
+    });
+    if (!workspace) return { success: false, error: "Workspace not found" };
+  }
+
+  // No-op if it's already in the target column.
+  if (placement.workspace_id === parsed.data.workspaceId) {
+    return { success: true };
+  }
+
+  // If the employee already has a placement in the target workspace,
+  // drop THIS placement instead of creating a duplicate (the unique
+  // (employee_id, workspace_id) index would reject the move otherwise).
+  if (parsed.data.workspaceId) {
+    const conflict = await adminDb.employee_board_placements.findUnique({
+      where: {
+        employee_id_workspace_id: {
+          employee_id: placement.employee_id,
+          workspace_id: parsed.data.workspaceId,
+        },
+      },
+      select: { id: true },
+    });
+    if (conflict) {
+      await adminDb.employee_board_placements.delete({
+        where: { id: placement.id },
+        select: { id: true },
+      });
+      await createAdminAuditEvent({
+        adminUserId: session.userId,
+        eventType: "employee_board_placement_merged",
+        metadata: {
+          droppedPlacementId: placement.id,
+          keptPlacementId: conflict.id,
+          employeeId: placement.employee_id,
+          workspaceId: parsed.data.workspaceId,
+        },
+      });
+      revalidatePath(PAGE_KEY);
+      return { success: true };
+    }
+  }
+
+  // Append to the end of the target column.
+  const last = await adminDb.employee_board_placements.findFirst({
+    where: { workspace_id: parsed.data.workspaceId },
+    orderBy: { position: "desc" },
+    select: { position: true },
   });
+  const nextPosition = (last?.position ?? -1) + 1;
 
-  // Case-insensitive de-dupe so "Lead" and "lead" don't both stick.
-  const current = existing?.roles ?? [];
-  if (current.some((r) => r.toLowerCase() === parsed.data.role.toLowerCase())) {
-    return { success: false, error: "That role is already added" };
-  }
-  if (current.length >= 20) {
-    return { success: false, error: "Too many roles on this employee" };
-  }
-  const nextRoles = [...current, parsed.data.role];
-
-  // Adding a role to an employee that's never been placed creates the
-  // placement in the Unassigned pool (workspace_id stays null).
-  await adminDb.employee_board_placements.upsert({
-    where: { employee_id: parsed.data.employeeId },
-    create: {
-      employee_id: parsed.data.employeeId,
-      workspace_id: null,
-      roles: nextRoles,
+  await adminDb.employee_board_placements.update({
+    where: { id: parsed.data.placementId },
+    data: {
+      workspace_id: parsed.data.workspaceId,
+      position: nextPosition,
     },
-    update: { roles: nextRoles },
     select: { id: true },
   });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
-    eventType: "employee_board_role_added",
-    metadata: { employeeId: parsed.data.employeeId, role: parsed.data.role },
+    eventType: "employee_board_placement_moved",
+    metadata: {
+      placementId: parsed.data.placementId,
+      fromWorkspaceId: placement.workspace_id,
+      toWorkspaceId: parsed.data.workspaceId,
+    },
   });
 
   revalidatePath(PAGE_KEY);
   return { success: true };
 }
 
-export async function removeEmployeeRole(
-  employeeId: string,
+/**
+ * Remove ONE placement row. The employee disappears from that section
+ * but stays in any other sections they were placed in. If this is
+ * their last placement they return to Unassigned (implicit).
+ */
+export async function removePlacement(
+  placementId: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requirePageAccess(PAGE_KEY);
+  await ensure();
+  const parsed = placementIdSchema.safeParse({ placementId });
+  if (!parsed.success) {
+    return { success: false, error: "Invalid placement id" };
+  }
+
+  const placement = await adminDb.employee_board_placements.findUnique({
+    where: { id: parsed.data.placementId },
+    select: { id: true, employee_id: true, workspace_id: true },
+  });
+  if (!placement) return { success: false, error: "Placement not found" };
+
+  await adminDb.employee_board_placements.delete({
+    where: { id: parsed.data.placementId },
+    select: { id: true },
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "employee_board_placement_removed",
+    metadata: {
+      placementId: parsed.data.placementId,
+      employeeId: placement.employee_id,
+      workspaceId: placement.workspace_id,
+    },
+  });
+
+  revalidatePath(PAGE_KEY);
+  return { success: true };
+}
+
+/**
+ * Bulk-update the `position` of every placement inside a single column
+ * (workspace or Unassigned). The caller passes the desired order as an
+ * array of placement ids; we update each row's position to its index in
+ * that array. Single transaction so the column never appears half-
+ * shuffled on a refresh.
+ */
+export async function reorderColumn(
+  workspaceId: string | null,
+  placementIds: string[],
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requirePageAccess(PAGE_KEY);
+  await ensure();
+  const parsed = reorderColumnSchema.safeParse({ workspaceId, placementIds });
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  // Guard: every id must currently live in this column. Prevents a
+  // stale client from reordering a placement that has already moved.
+  const rows = await adminDb.employee_board_placements.findMany({
+    where: { id: { in: parsed.data.placementIds } },
+    select: { id: true, workspace_id: true },
+  });
+  if (rows.length !== parsed.data.placementIds.length) {
+    return { success: false, error: "Some placements no longer exist" };
+  }
+  for (const r of rows) {
+    if (r.workspace_id !== parsed.data.workspaceId) {
+      return {
+        success: false,
+        error: "Some placements are no longer in this column",
+      };
+    }
+  }
+
+  // One transaction so a partial failure can't leave the column with
+  // duplicate or missing positions.
+  await adminDb.$transaction(
+    parsed.data.placementIds.map((id, idx) =>
+      adminDb.employee_board_placements.update({
+        where: { id },
+        data: { position: idx },
+        select: { id: true },
+      }),
+    ),
+  );
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "employee_board_column_reordered",
+    metadata: {
+      workspaceId: parsed.data.workspaceId,
+      placementIds: parsed.data.placementIds,
+    },
+  });
+
+  revalidatePath(PAGE_KEY);
+  return { success: true };
+}
+
+// ── Roles (per-placement) ───────────────────────────────────────────
+// Roles live on the placement row so the same employee can carry
+// different roles in different sections (e.g. "Lead" in Marketing,
+// "Backup" in Support).
+
+export async function addPlacementRole(
+  placementId: string,
   role: string,
 ): Promise<{ success: true } | { success: false; error: string }> {
   const session = await requirePageAccess(PAGE_KEY);
   await ensure();
-  const parsed = employeeRoleSchema.safeParse({ employeeId, role });
+  const parsed = placementRoleSchema.safeParse({ placementId, role });
   if (!parsed.success) {
     return {
       success: false,
@@ -311,10 +502,61 @@ export async function removeEmployeeRole(
   }
 
   const existing = await adminDb.employee_board_placements.findUnique({
-    where: { employee_id: parsed.data.employeeId },
-    select: { roles: true },
+    where: { id: parsed.data.placementId },
+    select: { id: true, employee_id: true, workspace_id: true, roles: true },
   });
-  if (!existing) return { success: false, error: "Employee not placed" };
+  if (!existing) return { success: false, error: "Placement not found" };
+
+  // Case-insensitive de-dupe so "Lead" and "lead" don't both stick.
+  if (
+    existing.roles.some((r) => r.toLowerCase() === parsed.data.role.toLowerCase())
+  ) {
+    return { success: false, error: "That role is already added" };
+  }
+  if (existing.roles.length >= 20) {
+    return { success: false, error: "Too many roles on this placement" };
+  }
+
+  await adminDb.employee_board_placements.update({
+    where: { id: parsed.data.placementId },
+    data: { roles: [...existing.roles, parsed.data.role] },
+    select: { id: true },
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "employee_board_role_added",
+    metadata: {
+      placementId: parsed.data.placementId,
+      employeeId: existing.employee_id,
+      workspaceId: existing.workspace_id,
+      role: parsed.data.role,
+    },
+  });
+
+  revalidatePath(PAGE_KEY);
+  return { success: true };
+}
+
+export async function removePlacementRole(
+  placementId: string,
+  role: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requirePageAccess(PAGE_KEY);
+  await ensure();
+  const parsed = placementRoleSchema.safeParse({ placementId, role });
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  const existing = await adminDb.employee_board_placements.findUnique({
+    where: { id: parsed.data.placementId },
+    select: { id: true, employee_id: true, workspace_id: true, roles: true },
+  });
+  if (!existing) return { success: false, error: "Placement not found" };
 
   const nextRoles = existing.roles.filter(
     (r) => r.toLowerCase() !== parsed.data.role.toLowerCase(),
@@ -324,7 +566,7 @@ export async function removeEmployeeRole(
   }
 
   await adminDb.employee_board_placements.update({
-    where: { employee_id: parsed.data.employeeId },
+    where: { id: parsed.data.placementId },
     data: { roles: nextRoles },
     select: { id: true },
   });
@@ -332,7 +574,12 @@ export async function removeEmployeeRole(
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "employee_board_role_removed",
-    metadata: { employeeId: parsed.data.employeeId, role: parsed.data.role },
+    metadata: {
+      placementId: parsed.data.placementId,
+      employeeId: existing.employee_id,
+      workspaceId: existing.workspace_id,
+      role: parsed.data.role,
+    },
   });
 
   revalidatePath(PAGE_KEY);

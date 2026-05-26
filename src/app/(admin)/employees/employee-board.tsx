@@ -9,11 +9,18 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
-  useDraggable,
   useDroppable,
   type DragStartEvent,
   type DragEndEvent,
+  type DragOverEvent,
 } from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  arrayMove,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import {
   Plus,
   Trash2,
@@ -24,6 +31,7 @@ import {
   Check,
   UserCog,
   UserPlus,
+  UserMinus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,9 +47,12 @@ import {
   createWorkspace,
   renameWorkspace,
   deleteWorkspace,
-  moveEmployee,
-  addEmployeeRole,
-  removeEmployeeRole,
+  movePlacement,
+  addEmployeeToWorkspace,
+  removePlacement,
+  reorderColumn,
+  addPlacementRole,
+  removePlacementRole,
   addManager,
   removeManager,
   linkManagerWorkspace,
@@ -51,13 +62,18 @@ import {
 // ─── Types ───────────────────────────────────────────────────────────
 // Serializable props only — no functions cross the RSC boundary.
 
-type EmployeeCard = {
+// A placement card. `id` is the dnd identity:
+//   - real placement → placement uuid (synthetic === false)
+//   - unplaced employee in Unassigned → "unplaced:<employeeId>" (synthetic === true)
+type PlacementCard = {
   id: string;
+  employeeId: string;
   discordName: string;
   active: boolean;
   workspaceId: string | null;
   roles: string[];
   position: number;
+  synthetic: boolean;
 };
 
 type Workspace = {
@@ -83,6 +99,13 @@ type ManagerCandidate = {
   active: boolean;
 };
 
+// An employee eligible to be added to a workspace via "+ Add member".
+type Placeable = {
+  id: string;
+  discordName: string;
+  active: boolean;
+};
+
 // A computed connector line from a manager to one of its workspaces.
 type ConnectorLine = {
   id: string;
@@ -99,15 +122,17 @@ const UNASSIGNED = "__unassigned__";
 // ─── Board ───────────────────────────────────────────────────────────
 
 export function EmployeeBoard({
-  employees,
+  cards,
   workspaces,
   managers,
   managerCandidates,
+  placeableEmployees,
 }: {
-  employees: EmployeeCard[];
+  cards: PlacementCard[];
   workspaces: Workspace[];
   managers: Manager[];
   managerCandidates: ManagerCandidate[];
+  placeableEmployees: Placeable[];
 }) {
   const router = useRouter();
   const sensors = useSensors(
@@ -118,9 +143,15 @@ export function EmployeeBoard({
     }),
   );
 
+  // Local optimistic state so a drag-reorder doesn't flicker the column
+  // back to its old order while the server roundtrip is in flight. We
+  // re-sync to the server data on every refresh (it's authoritative).
+  const [localCards, setLocalCards] = React.useState(cards);
+  React.useEffect(() => {
+    setLocalCards(cards);
+  }, [cards]);
+
   const [activeId, setActiveId] = React.useState<string | null>(null);
-  const [newWorkspace, setNewWorkspace] = React.useState("");
-  const [creating, setCreating] = React.useState(false);
 
   // ── Connector lines (manager → workspace) ───────────────────────────
   // We measure the live DOM positions of each manager block and each
@@ -175,11 +206,6 @@ export function EmployeeBoard({
     setLines(next);
   }, [managers, workspaces]);
 
-  // Position lines before paint, then keep them in sync with any layout
-  // change: window resize, and wrapper/column/manager box resizes (e.g. a
-  // role chip wraps and pushes the columns down). recomputeLines changes
-  // identity on every data refresh (managers/workspaces get fresh array
-  // identities each server render), so these effects also re-run then.
   React.useLayoutEffect(() => {
     recomputeLines();
   }, [recomputeLines]);
@@ -198,71 +224,207 @@ export function EmployeeBoard({
     };
   }, [recomputeLines]);
 
-  // Group employees by column. Recomputed whenever the server data
-  // changes after a router.refresh().
+  // Group cards by column key (UNASSIGNED for null workspace). Already
+  // sorted by `position` from the server; preserve that order.
   const byColumn = React.useMemo(() => {
-    const map = new Map<string, EmployeeCard[]>();
+    const map = new Map<string, PlacementCard[]>();
     map.set(UNASSIGNED, []);
     for (const w of workspaces) map.set(w.id, []);
-    for (const e of employees) {
-      const key =
-        e.workspaceId && map.has(e.workspaceId) ? e.workspaceId : UNASSIGNED;
-      map.get(key)!.push(e);
+    for (const c of localCards) {
+      const key = c.workspaceId && map.has(c.workspaceId) ? c.workspaceId : UNASSIGNED;
+      map.get(key)!.push(c);
     }
-    // Stable order: by saved position, then discord name.
+    // Synthetic unplaced cards have position = MAX_SAFE_INTEGER so they
+    // sit at the bottom of Unassigned by default; everything else uses
+    // server-provided position.
     for (const list of map.values()) {
-      list.sort(
-        (a, b) =>
-          a.position - b.position ||
-          a.discordName.localeCompare(b.discordName),
-      );
+      list.sort((a, b) => a.position - b.position);
     }
     return map;
-  }, [employees, workspaces]);
+  }, [localCards, workspaces]);
 
-  const activeEmployee = React.useMemo(
-    () => employees.find((e) => e.id === activeId) ?? null,
-    [employees, activeId],
+  const cardById = React.useMemo(
+    () => new Map(localCards.map((c) => [c.id, c])),
+    [localCards],
   );
+
+  const activeCard = activeId ? cardById.get(activeId) ?? null : null;
+
+  // Helper: find which column a card id is currently in (using local
+  // state). Returns the column key (UNASSIGNED or a workspace id).
+  function columnKeyOf(cardId: string): string | null {
+    const c = cardById.get(cardId);
+    if (!c) return null;
+    return c.workspaceId && byColumn.has(c.workspaceId) ? c.workspaceId : UNASSIGNED;
+  }
+
+  // ── DnD handlers ────────────────────────────────────────────────────
 
   function handleDragStart(event: DragStartEvent) {
     setActiveId(String(event.active.id));
   }
 
-  async function handleDragEnd(event: DragEndEvent) {
-    setActiveId(null);
+  // During drag-over, optimistically reflow the local state so the card
+  // visibly slots into the new position before the drop. The server
+  // request fires only on drag-end so we don't spam mid-drag.
+  function handleDragOver(event: DragOverEvent) {
     const { active, over } = event;
     if (!over) return;
+    const activeKey = columnKeyOf(String(active.id));
+    if (activeKey === null) return;
 
-    const employeeId = String(active.id);
-    const employee = employees.find((e) => e.id === employeeId);
-    if (!employee) return;
+    const overId = String(over.id);
+    // Dropping on a column container directly → move to the end of it.
+    const overColumnKey = overId.startsWith("col:")
+      ? overId.slice(4)
+      : columnKeyOf(overId);
+    if (overColumnKey === null) return;
 
-    // Droppable id is the column id (UNASSIGNED sentinel or a real
-    // workspace uuid). Translate the sentinel back to null for the
-    // server action.
-    const overColumn = String(over.id);
-    const targetWorkspaceId = overColumn === UNASSIGNED ? null : overColumn;
-    const currentWorkspaceId = employee.workspaceId ?? null;
-    if (targetWorkspaceId === currentWorkspaceId) return;
+    if (activeKey === overColumnKey) {
+      // Same column reorder is handled fully on drag-end (we want the
+      // ghost to track the pointer without thrashing array order).
+      return;
+    }
 
+    // Cross-column hover: reflect the column change locally so the
+    // empty/filled column visuals update during the hover.
+    setLocalCards((prev) => {
+      const idx = prev.findIndex((c) => c.id === String(active.id));
+      if (idx < 0) return prev;
+      const card = prev[idx];
+      const nextWorkspace = overColumnKey === UNASSIGNED ? null : overColumnKey;
+      if (card.workspaceId === nextWorkspace) return prev;
+      const next = prev.slice();
+      next[idx] = { ...card, workspaceId: nextWorkspace };
+      return next;
+    });
+  }
+
+  async function handleDragEnd(event: DragEndEvent) {
+    const activeIdLocal = activeId;
+    setActiveId(null);
+    const { active, over } = event;
+    if (!over || !activeIdLocal) return;
+
+    const card = cardById.get(String(active.id));
+    if (!card) return;
+
+    const overId = String(over.id);
+    const overColumnKey = overId.startsWith("col:")
+      ? overId.slice(4)
+      : columnKeyOf(overId);
+    if (overColumnKey === null) return;
+
+    const sourceColumnKey =
+      card.workspaceId && byColumn.has(card.workspaceId)
+        ? card.workspaceId
+        : UNASSIGNED;
+    const targetWorkspaceId = overColumnKey === UNASSIGNED ? null : overColumnKey;
+
+    // ── Same-column reorder ───────────────────────────────────────
+    if (sourceColumnKey === overColumnKey) {
+      // Drop directly on a card → place active before/after it.
+      // Drop on the column container → put at the end.
+      const list = byColumn.get(sourceColumnKey) ?? [];
+      const fromIdx = list.findIndex((c) => c.id === String(active.id));
+      let toIdx = list.length - 1;
+      if (!overId.startsWith("col:")) {
+        const i = list.findIndex((c) => c.id === overId);
+        if (i >= 0) toIdx = i;
+      }
+      if (fromIdx < 0 || toIdx === fromIdx) return;
+
+      const reordered = arrayMove(list, fromIdx, toIdx);
+
+      // Synthetic (unplaced) cards can't be ordered server-side — they
+      // don't have a placement row yet. Filter them out; remaining real
+      // placements get fresh positions.
+      const realIds = reordered.filter((c) => !c.synthetic).map((c) => c.id);
+
+      // Optimistic update.
+      setLocalCards((prev) => {
+        const updated = prev.slice();
+        // Patch positions for everything in this column to match the new order.
+        reordered.forEach((c, i) => {
+          const idx = updated.findIndex((u) => u.id === c.id);
+          if (idx >= 0) updated[idx] = { ...updated[idx], position: i };
+        });
+        return updated;
+      });
+
+      if (realIds.length === 0) return; // nothing to persist (all synthetic)
+
+      try {
+        const res = await reorderColumn(targetWorkspaceId, realIds);
+        if (!res.success) {
+          toast.error(res.error);
+          router.refresh();
+          return;
+        }
+        // Don't refresh on success — local state already matches.
+      } catch (err) {
+        toast.error(
+          err instanceof Error ? err.message : "Failed to reorder",
+        );
+        router.refresh();
+      }
+      return;
+    }
+
+    // ── Cross-column move ─────────────────────────────────────────
+    if (card.synthetic) {
+      // Synthetic (no placement row yet) → create one in the target.
+      if (targetWorkspaceId === null) return; // Unassigned → Unassigned is a no-op
+      try {
+        const res = await addEmployeeToWorkspace(
+          card.employeeId,
+          targetWorkspaceId,
+        );
+        if (!res.success) {
+          toast.error(res.error);
+          router.refresh();
+          return;
+        }
+        const label =
+          workspaces.find((w) => w.id === targetWorkspaceId)?.name ?? "workspace";
+        toast.success(`Added ${card.discordName} to ${label}`);
+        router.refresh();
+      } catch (err) {
+        toast.error(
+          err instanceof Error ? err.message : "Failed to add employee",
+        );
+        router.refresh();
+      }
+      return;
+    }
+
+    // Real placement → move it.
     try {
-      const result = await moveEmployee(employeeId, targetWorkspaceId);
-      if (!result.success) {
-        toast.error(result.error);
+      const res = await movePlacement(card.id, targetWorkspaceId);
+      if (!res.success) {
+        toast.error(res.error);
+        router.refresh();
         return;
       }
       const label =
         targetWorkspaceId === null
           ? "Unassigned"
-          : (workspaces.find((w) => w.id === targetWorkspaceId)?.name ??
-            "workspace");
-      toast.success(`Moved ${employee.discordName} to ${label}`);
+          : workspaces.find((w) => w.id === targetWorkspaceId)?.name ??
+            "workspace";
+      toast.success(`Moved ${card.discordName} to ${label}`);
       router.refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to move employee");
+      toast.error(
+        err instanceof Error ? err.message : "Failed to move employee",
+      );
+      router.refresh();
     }
   }
+
+  // ── Create-workspace ─────────────────────────────────────────────
+
+  const [newWorkspace, setNewWorkspace] = React.useState("");
+  const [creating, setCreating] = React.useState(false);
 
   async function handleCreateWorkspace() {
     const name = newWorkspace.trim();
@@ -320,7 +482,8 @@ export function EmployeeBoard({
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          {employees.length} employee{employees.length === 1 ? "" : "s"} ·{" "}
+          {placeableEmployees.length} employee
+          {placeableEmployees.length === 1 ? "" : "s"} ·{" "}
           {workspaces.length} workspace{workspaces.length === 1 ? "" : "s"}
         </p>
       </div>
@@ -328,13 +491,13 @@ export function EmployeeBoard({
       <DndContext
         sensors={sensors}
         onDragStart={handleDragStart}
+        onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
         onDragCancel={() => setActiveId(null)}
       >
         <div className="overflow-x-auto pb-2">
           <div ref={wrapperRef} className="relative min-w-max">
-            {/* Connector-line layer — sits behind the blocks (z-0) so the
-                lines visibly emerge from the manager/column edges. */}
+            {/* Connector-line layer — sits behind the blocks (z-0). */}
             <svg
               className="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
               aria-hidden
@@ -362,7 +525,7 @@ export function EmployeeBoard({
               ))}
             </svg>
 
-            {/* Manager row — the "section heads" above the columns. */}
+            {/* Manager row */}
             <div className="relative z-10 mb-10 flex items-start gap-3">
               {managers.map((m) => (
                 <ManagerBlock
@@ -379,31 +542,40 @@ export function EmployeeBoard({
               />
             </div>
 
-            {/* Columns row. */}
+            {/* Columns row */}
             <div className="relative z-10 flex gap-4">
-              {/* Unassigned pool — always first. */}
               <Column
                 id={UNASSIGNED}
                 title="Unassigned"
                 cards={unassigned}
                 isUnassigned
                 onRefresh={() => router.refresh()}
+                placeableEmployees={placeableEmployees}
               />
 
-              {workspaces.map((w) => (
-                <Column
-                  key={w.id}
-                  id={w.id}
-                  title={w.name}
-                  cards={byColumn.get(w.id) ?? []}
-                  onRefresh={() => router.refresh()}
-                  registerMeasure={setColumnRef}
-                />
-              ))}
+              {workspaces.map((w) => {
+                const list = byColumn.get(w.id) ?? [];
+                const placedIds = new Set(list.map((c) => c.employeeId));
+                const addable = placeableEmployees.filter(
+                  (e) => !placedIds.has(e.id),
+                );
+                return (
+                  <Column
+                    key={w.id}
+                    id={w.id}
+                    title={w.name}
+                    cards={list}
+                    onRefresh={() => router.refresh()}
+                    registerMeasure={setColumnRef}
+                    placeableEmployees={addable}
+                  />
+                );
+              })}
 
               {workspaces.length === 0 && (
                 <div className="flex min-w-[260px] items-center justify-center rounded-2xl border border-dashed border-border bg-muted/20 p-6 text-center text-xs text-muted-foreground">
-                  No workspaces yet. Create one above, then drag employees in.
+                  No workspaces yet. Create one above, then drag employees
+                  in.
                 </div>
               )}
             </div>
@@ -411,8 +583,8 @@ export function EmployeeBoard({
         </div>
 
         <DragOverlay>
-          {activeEmployee ? (
-            <EmployeeCardView employee={activeEmployee} overlay />
+          {activeCard ? (
+            <EmployeeCardView card={activeCard} overlay />
           ) : null}
         </DragOverlay>
       </DndContext>
@@ -429,22 +601,24 @@ function Column({
   isUnassigned,
   onRefresh,
   registerMeasure,
+  placeableEmployees,
 }: {
   id: string;
   title: string;
-  cards: EmployeeCard[];
+  cards: PlacementCard[];
   isUnassigned?: boolean;
   onRefresh: () => void;
-  // Real workspaces register their DOM node so the board can anchor
-  // connector lines to the column's top-center. Omitted for Unassigned.
   registerMeasure?: (id: string, node: HTMLElement | null) => void;
+  placeableEmployees: Placeable[];
 }) {
   const router = useRouter();
-  const { setNodeRef, isOver } = useDroppable({ id });
+  // The droppable id is prefixed with `col:` so DnD handlers can tell
+  // "dropped on column container" apart from "dropped on a card", which
+  // share the same number space.
+  const { setNodeRef, isOver } = useDroppable({ id: `col:${id}` });
 
   // Merge the dnd-kit droppable ref with the measure ref so the same DOM
-  // node feeds both. Stable identity (deps are all stable) avoids ref
-  // churn across renders.
+  // node feeds both.
   const setRefs = React.useCallback(
     (node: HTMLDivElement | null) => {
       setNodeRef(node);
@@ -504,6 +678,27 @@ function Column({
     }
   }
 
+  async function handleAdd(employeeId: string) {
+    if (isUnassigned) return; // can't "add" to the implicit pool
+    try {
+      const res = await addEmployeeToWorkspace(employeeId, id);
+      if (!res.success) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success("Added to section");
+      router.refresh();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to add member",
+      );
+    }
+  }
+
+  // SortableContext needs the list of ids in order. Includes synthetic
+  // ids so dragging an unplaced card into another column still works.
+  const cardIds = React.useMemo(() => cards.map((c) => c.id), [cards]);
+
   return (
     <div
       ref={setRefs}
@@ -554,7 +749,9 @@ function Column({
                 "truncate text-sm font-semibold",
                 !isUnassigned && "cursor-pointer hover:text-primary",
               )}
-              title={isUnassigned ? title : `${title} — double-click to rename`}
+              title={
+                isUnassigned ? title : `${title} — double-click to rename`
+              }
               onDoubleClick={() => {
                 if (!isUnassigned) setEditing(true);
               }}
@@ -571,36 +768,74 @@ function Column({
             {cards.length}
           </Badge>
           {!isUnassigned && (
-            <button
-              type="button"
-              onClick={handleDelete}
-              disabled={saving}
-              aria-label={`Delete workspace ${title}`}
-              title="Delete workspace (cards return to Unassigned)"
-              className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-            >
-              <Trash2 className="size-3.5" />
-            </button>
+            <>
+              {/* Add member dropdown — placeholder filtered to only show
+                  employees not yet placed in this section. */}
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <button
+                      type="button"
+                      aria-label={`Add member to ${title}`}
+                      title="Add a member to this section"
+                      className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-emerald-500/10 hover:text-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    />
+                  }
+                >
+                  <Plus className="size-3.5" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="max-h-72 w-56">
+                  {placeableEmployees.length === 0 ? (
+                    <DropdownMenuItem disabled>
+                      Everyone is already in this section
+                    </DropdownMenuItem>
+                  ) : (
+                    placeableEmployees.map((e) => (
+                      <DropdownMenuItem
+                        key={e.id}
+                        onClick={() => handleAdd(e.id)}
+                      >
+                        <span className="truncate">{e.discordName}</span>
+                        {!e.active && (
+                          <span className="ml-auto text-[10px] text-muted-foreground">
+                            inactive
+                          </span>
+                        )}
+                      </DropdownMenuItem>
+                    ))
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={saving}
+                aria-label={`Delete workspace ${title}`}
+                title="Delete workspace (cards return to Unassigned)"
+                className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+              >
+                <Trash2 className="size-3.5" />
+              </button>
+            </>
           )}
         </div>
       </div>
 
       {/* Cards */}
-      <div className="flex min-h-[120px] flex-1 flex-col gap-2 p-2">
-        {cards.length === 0 ? (
-          <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-border/60 p-4 text-center text-[11px] text-muted-foreground">
-            {isUnassigned ? "Everyone is placed" : "Drag employees here"}
-          </div>
-        ) : (
-          cards.map((card) => (
-            <DraggableEmployee
-              key={card.id}
-              employee={card}
-              onRefresh={onRefresh}
-            />
-          ))
-        )}
-      </div>
+      <SortableContext items={cardIds} strategy={verticalListSortingStrategy}>
+        <div className="flex min-h-[120px] flex-1 flex-col gap-2 p-2">
+          {cards.length === 0 ? (
+            <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-border/60 p-4 text-center text-[11px] text-muted-foreground">
+              {isUnassigned ? "Everyone is placed" : "Drop a member here"}
+            </div>
+          ) : (
+            cards.map((card) => (
+              <SortableCard key={card.id} card={card} onRefresh={onRefresh} />
+            ))
+          )}
+        </div>
+      </SortableContext>
     </div>
   );
 }
@@ -620,7 +855,6 @@ function ManagerBlock({
 }) {
   const [busy, setBusy] = React.useState(false);
 
-  // Stable callback ref (deps stable) — no churn across renders.
   const ref = React.useCallback(
     (node: HTMLDivElement | null) => registerRef(manager.id, node),
     [registerRef, manager.id],
@@ -640,7 +874,9 @@ function ManagerBlock({
       }
       onRefresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to link section");
+      toast.error(
+        err instanceof Error ? err.message : "Failed to link section",
+      );
     } finally {
       setBusy(false);
     }
@@ -801,7 +1037,9 @@ function AddManagerControl({
       toast.success("Manager added");
       onRefresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to add manager");
+      toast.error(
+        err instanceof Error ? err.message : "Failed to add manager",
+      );
     } finally {
       setBusy(false);
     }
@@ -841,26 +1079,37 @@ function AddManagerControl({
   );
 }
 
-// ─── Draggable employee wrapper ──────────────────────────────────────
+// ─── Sortable employee card ──────────────────────────────────────────
 
-function DraggableEmployee({
-  employee,
+function SortableCard({
+  card,
   onRefresh,
 }: {
-  employee: EmployeeCard;
+  card: PlacementCard;
   onRefresh: () => void;
 }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: employee.id,
-  });
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: card.id });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
 
   return (
     <EmployeeCardView
-      employee={employee}
+      card={card}
       onRefresh={onRefresh}
       dragRef={setNodeRef}
       dragHandleProps={{ ...attributes, ...listeners }}
       isDragging={isDragging}
+      style={style}
     />
   );
 }
@@ -868,23 +1117,32 @@ function DraggableEmployee({
 // ─── Employee card ───────────────────────────────────────────────────
 
 function EmployeeCardView({
-  employee,
+  card,
   onRefresh,
   dragRef,
   dragHandleProps,
   isDragging,
   overlay,
+  style,
 }: {
-  employee: EmployeeCard;
+  card: PlacementCard;
   onRefresh?: () => void;
   dragRef?: (node: HTMLElement | null) => void;
   dragHandleProps?: React.HTMLAttributes<HTMLButtonElement>;
   isDragging?: boolean;
   overlay?: boolean;
+  style?: React.CSSProperties;
 }) {
+  const router = useRouter();
   const [addingRole, setAddingRole] = React.useState(false);
   const [role, setRole] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+
+  // Roles + remove-from-section operate on the placement id. Synthetic
+  // cards (employee not yet placed) hide both controls — they need a
+  // real placement row first, which is created by dragging into a
+  // workspace or via the column's "+ Add member" button.
+  const canEditPlacement = !card.synthetic && !overlay && !!onRefresh;
 
   async function handleAddRole() {
     const value = role.trim();
@@ -892,9 +1150,14 @@ function EmployeeCardView({
       setAddingRole(false);
       return;
     }
+    if (!canEditPlacement) {
+      toast.error("Place this employee in a section first");
+      setAddingRole(false);
+      return;
+    }
     setBusy(true);
     try {
-      const result = await addEmployeeRole(employee.id, value);
+      const result = await addPlacementRole(card.id, value);
       if (!result.success) {
         toast.error(result.error);
         return;
@@ -911,16 +1174,40 @@ function EmployeeCardView({
   }
 
   async function handleRemoveRole(target: string) {
+    if (!canEditPlacement) return;
     setBusy(true);
     try {
-      const result = await removeEmployeeRole(employee.id, target);
+      const result = await removePlacementRole(card.id, target);
       if (!result.success) {
         toast.error(result.error);
         return;
       }
       onRefresh?.();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to remove role");
+      toast.error(
+        err instanceof Error ? err.message : "Failed to remove role",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRemoveFromSection() {
+    if (!canEditPlacement) return;
+    setBusy(true);
+    try {
+      const result = await removePlacement(card.id);
+      if (!result.success) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success(`Removed from section`);
+      onRefresh?.();
+      router.refresh();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to remove from section",
+      );
     } finally {
       setBusy(false);
     }
@@ -929,6 +1216,7 @@ function EmployeeCardView({
   return (
     <div
       ref={dragRef}
+      style={style}
       className={cn(
         "group rounded-xl border bg-background/60 p-2.5 shadow-sm transition-colors",
         isDragging && "opacity-40",
@@ -936,12 +1224,11 @@ function EmployeeCardView({
       )}
     >
       <div className="flex items-start gap-2">
-        {/* Drag handle — only the handle starts a drag, so clicks on the
-            card body (and the role × buttons) stay clickable. */}
+        {/* Drag handle */}
         {dragHandleProps ? (
           <button
             type="button"
-            aria-label={`Drag ${employee.discordName}`}
+            aria-label={`Drag ${card.discordName}`}
             className="mt-0.5 inline-flex size-5 shrink-0 cursor-grab touch-none items-center justify-center rounded text-muted-foreground/60 transition-colors hover:text-foreground active:cursor-grabbing"
             {...dragHandleProps}
           >
@@ -957,14 +1244,16 @@ function EmployeeCardView({
           <div
             className="flex items-center gap-1.5"
             onDoubleClick={() => {
-              if (onRefresh && !overlay) setAddingRole(true);
+              if (canEditPlacement) setAddingRole(true);
             }}
-            title={onRefresh ? "Double-click to add a role" : undefined}
+            title={
+              canEditPlacement ? "Double-click to add a role" : undefined
+            }
           >
             <span className="truncate text-sm font-medium">
-              {employee.discordName}
+              {card.discordName}
             </span>
-            {!employee.active && (
+            {!card.active && (
               <Badge
                 variant="outline"
                 className="shrink-0 px-1.5 py-0 text-[9px] font-medium leading-none text-muted-foreground"
@@ -975,16 +1264,16 @@ function EmployeeCardView({
           </div>
 
           {/* Role chips */}
-          {(employee.roles.length > 0 || addingRole) && (
+          {(card.roles.length > 0 || addingRole) && (
             <div className="mt-1.5 flex flex-wrap items-center gap-1">
-              {employee.roles.map((r) => (
+              {card.roles.map((r) => (
                 <Badge
                   key={r}
                   variant="outline"
                   className="flex items-center gap-1 border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] font-medium leading-none text-cyan-600 dark:text-cyan-400"
                 >
                   {r}
-                  {onRefresh && !overlay && (
+                  {canEditPlacement && (
                     <button
                       type="button"
                       onClick={() => handleRemoveRole(r)}
@@ -998,7 +1287,7 @@ function EmployeeCardView({
                 </Badge>
               ))}
 
-              {addingRole && onRefresh && !overlay && (
+              {addingRole && canEditPlacement && (
                 <span className="inline-flex items-center gap-1">
                   <Input
                     autoFocus
@@ -1034,8 +1323,8 @@ function EmployeeCardView({
             </div>
           )}
 
-          {/* Empty hint — only when no roles and not currently adding. */}
-          {employee.roles.length === 0 && !addingRole && onRefresh && !overlay && (
+          {/* Empty hint */}
+          {card.roles.length === 0 && !addingRole && canEditPlacement && (
             <button
               type="button"
               onClick={() => setAddingRole(true)}
@@ -1046,6 +1335,22 @@ function EmployeeCardView({
             </button>
           )}
         </div>
+
+        {/* Remove-from-section button — only on real placements that
+            sit in a real workspace (Unassigned is the implicit pool;
+            "removing" from there is a no-op). */}
+        {canEditPlacement && card.workspaceId && (
+          <button
+            type="button"
+            onClick={handleRemoveFromSection}
+            disabled={busy}
+            aria-label={`Remove ${card.discordName} from this section`}
+            title="Remove from this section"
+            className="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground/50 opacity-0 transition-all hover:bg-rose-500/10 hover:text-rose-500 focus-visible:opacity-100 group-hover:opacity-100 disabled:opacity-30"
+          >
+            <UserMinus className="size-3.5" />
+          </button>
+        )}
       </div>
     </div>
   );

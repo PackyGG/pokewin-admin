@@ -50,7 +50,7 @@ export async function ensureEmployeeBoardSchema(): Promise<void> {
     await adminDb.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS "employee_board_placements" (
         "id"           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        "employee_id"  UUID NOT NULL UNIQUE
+        "employee_id"  UUID NOT NULL
                          REFERENCES "salary_employees"("id") ON DELETE CASCADE,
         "workspace_id" UUID
                          REFERENCES "employee_workspaces"("id") ON DELETE SET NULL,
@@ -63,6 +63,27 @@ export async function ensureEmployeeBoardSchema(): Promise<void> {
     await adminDb.$executeRawUnsafe(`
       CREATE INDEX IF NOT EXISTS "employee_board_placements_workspace_id_idx"
         ON "employee_board_placements" ("workspace_id")
+    `);
+    await adminDb.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "employee_board_placements_employee_id_idx"
+        ON "employee_board_placements" ("employee_id")
+    `);
+    // Migrate the v1 single-placement model to the v2 multi-section
+    // model. v1 had `employee_id UNIQUE` (one section per employee);
+    // v2 allows multiple placements per employee (one per workspace)
+    // and enforces uniqueness as `(employee_id, workspace_id)`. Both
+    // statements are idempotent — they no-op on fresh installs that
+    // never had the v1 constraint, and on already-migrated installs.
+    // Postgres' auto-generated UNIQUE constraint name for the
+    // original `employee_id UUID NOT NULL UNIQUE` column was
+    // `employee_board_placements_employee_id_key`.
+    await adminDb.$executeRawUnsafe(`
+      ALTER TABLE "employee_board_placements"
+        DROP CONSTRAINT IF EXISTS "employee_board_placements_employee_id_key"
+    `);
+    await adminDb.$executeRawUnsafe(`
+      CREATE UNIQUE INDEX IF NOT EXISTS "employee_board_placements_employee_id_workspace_id_key"
+        ON "employee_board_placements" ("employee_id", "workspace_id")
     `);
     await adminDb.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS "employee_managers" (

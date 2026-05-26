@@ -28,13 +28,20 @@ export default async function EmployeesPage() {
       orderBy: { position: "asc" },
       select: { id: true, name: true, position: true },
     }),
+    // V2 multi-section model: one row per (employee, workspace), so an
+    // employee can appear in multiple sections. Each placement becomes
+    // its own card on the board, keyed by `id` (the placement id) — NOT
+    // the employee id, which would collide for someone who's in two
+    // sections.
     adminDb.employee_board_placements.findMany({
       select: {
+        id: true,
         employee_id: true,
         workspace_id: true,
         roles: true,
         position: true,
       },
+      orderBy: { position: "asc" },
     }),
     // Managers sit in the row above the columns. Each carries its linked
     // workspace ids (one connector line per id). Same security rule —
@@ -50,32 +57,60 @@ export default async function EmployeesPage() {
     }),
   ]);
 
-  // Join in code (no cross-table include needed): each employee → its
-  // placement by employee_id. Missing placement or workspace_id=null →
-  // the employee lives in the Unassigned pool.
-  const placementByEmployee = new Map(
-    placements.map((p) => [p.employee_id, p]),
-  );
-
-  // Managers are rendered in their own row, so they're excluded from the
-  // column cards below. Their column placement/roles are kept untouched
-  // in the DB so demoting returns them to where they were.
+  // Managers are rendered in their own row, so their placements are
+  // excluded from the columns below. Demoting a manager restores the
+  // placements (rows are kept untouched in the DB).
   const managerEmployeeIds = new Set(managers.map((m) => m.employee_id));
   const employeeById = new Map(employees.map((e) => [e.id, e]));
 
-  const employeeCards = employees
-    .filter((e) => !managerEmployeeIds.has(e.id))
-    .map((e) => {
-      const placement = placementByEmployee.get(e.id);
+  // Build placement cards by joining to the safe employee record.
+  // Skip rows whose employee is currently a manager OR has been removed
+  // from the salary registry (FK CASCADE makes the latter rare but
+  // possible during a race).
+  const placementCards = placements
+    .filter((p) => !managerEmployeeIds.has(p.employee_id))
+    .map((p) => {
+      const emp = employeeById.get(p.employee_id);
+      if (!emp) return null;
       return {
-        id: e.id,
-        discordName: e.discord_name,
-        active: e.active,
-        workspaceId: placement?.workspace_id ?? null,
-        roles: placement?.roles ?? [],
-        position: placement?.position ?? 0,
+        // Card identity = placement id (NOT employee id), so a person
+        // placed in 2 sections has 2 cards with distinct drag handles.
+        id: p.id,
+        employeeId: p.employee_id,
+        discordName: emp.discord_name,
+        active: emp.active,
+        workspaceId: p.workspace_id ?? null,
+        roles: p.roles,
+        position: p.position,
       };
-    });
+    })
+    .filter((c): c is NonNullable<typeof c> => c !== null);
+
+  // Real-customer employees that have ZERO placements show up in the
+  // Unassigned pool as a synthetic card (no placement id yet — adding
+  // them to a section will create one server-side). Skip managers.
+  const placedEmployeeIds = new Set(placements.map((p) => p.employee_id));
+  const unplacedCards = employees
+    .filter(
+      (e) => !managerEmployeeIds.has(e.id) && !placedEmployeeIds.has(e.id),
+    )
+    .map((e) => ({
+      // Synthetic id — the client uses the `synthetic` flag to know
+      // there's no real placement row behind this card yet.
+      id: `unplaced:${e.id}`,
+      employeeId: e.id,
+      discordName: e.discord_name,
+      active: e.active,
+      workspaceId: null as string | null,
+      roles: [] as string[],
+      position: Number.MAX_SAFE_INTEGER, // sort to the end of Unassigned
+      synthetic: true,
+    }));
+
+  const allCards = [
+    ...placementCards.map((c) => ({ ...c, synthetic: false })),
+    ...unplacedCards,
+  ];
 
   // Manager blocks: join each manager to the SAFE employee record for its
   // display name / active flag, and carry the workspace ids it links to.
@@ -103,6 +138,19 @@ export default async function EmployeesPage() {
       active: e.active,
     }));
 
+  // Section "+ Add member" pickers need the full non-manager employee
+  // list — the client filters out who's already placed in a section per
+  // its own data. Identical to managerCandidates today, but kept as its
+  // own list so a future change to "managers can also be placed in a
+  // column" doesn't silently re-include them.
+  const placeableEmployees = employees
+    .filter((e) => !managerEmployeeIds.has(e.id))
+    .map((e) => ({
+      id: e.id,
+      discordName: e.discord_name,
+      active: e.active,
+    }));
+
   const workspaceList = workspaces.map((w) => ({
     id: w.id,
     name: w.name,
@@ -118,8 +166,9 @@ export default async function EmployeesPage() {
           subtitle={
             <>
               Organize the team into workspace groups and tag each person
-              with roles. Drag a card between columns; double-click a card to
-              add a role.
+              with roles. Drag a card between columns to move; drop on
+              another card to reorder. Use &ldquo;Add member&rdquo; on a
+              section to place the same person in multiple sections.
             </>
           }
         />
@@ -127,10 +176,11 @@ export default async function EmployeesPage() {
 
       <FadeIn>
         <EmployeeBoard
-          employees={employeeCards}
+          cards={allCards}
           workspaces={workspaceList}
           managers={managerCards}
           managerCandidates={managerCandidates}
+          placeableEmployees={placeableEmployees}
         />
       </FadeIn>
     </div>
