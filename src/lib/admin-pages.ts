@@ -14,13 +14,12 @@ export const ADMIN_PAGES: AdminPage[] = [
   // Transactions
   { group: "Transactions", label: "All", key: "/transactions" },
   { group: "Transactions", label: "Packs", key: "/transactions/packs" },
-  { group: "Transactions", label: "Battles", key: "/transactions/battles" },
+  { group: "Transactions", label: "Battles", key: "/battles" },
   { group: "Transactions", label: "Rewards", key: "/transactions/rewards" },
   { group: "Transactions", label: "Deposits & Withdrawals", key: "/transactions/deposits" },
   // Content
   { group: "Content", label: "Packs", key: "/packs" },
   { group: "Content", label: "Cards", key: "/cards" },
-  { group: "Content", label: "Battles", key: "/battles" },
   { group: "Content", label: "Upgrader", key: "/upgrader" },
   // Rewards
   { group: "Rewards", label: "Rewards", key: "/rewards" },

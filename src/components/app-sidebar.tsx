@@ -202,7 +202,6 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Packs", href: "/packs", icon: "Package" },
       { label: "Cards", href: "/cards", icon: "Layers" },
-      { label: "Battles", href: "/battles", icon: "Swords" },
       { label: "Upgrader", href: "/upgrader", icon: "ArrowUpCircle", isNew: true },
     ],
   },
@@ -214,7 +213,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Transactions",
     items: [
       { label: "Packs", href: "/transactions/packs", icon: "Package" },
-      { label: "Battles", href: "/transactions/battles", icon: "Swords" },
+      { label: "Battles", href: "/battles", icon: "Swords" },
       { label: "Rewards", href: "/transactions/rewards", icon: "Award" },
     ],
   },

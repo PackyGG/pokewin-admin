@@ -311,14 +311,6 @@ export const NAV_COMMANDS: NavCommand[] = [
   },
   {
     kind: "nav",
-    id: "nav.transactions.battles",
-    label: "Battle Transactions",
-    icon: Swords,
-    href: "/transactions/battles",
-    pageKey: "/transactions/battles",
-  },
-  {
-    kind: "nav",
     id: "nav.transactions.rewards",
     label: "Reward Transactions",
     icon: Award,
@@ -620,14 +612,14 @@ export const DOCS_NAV_GROUPS: Array<{ label: string; pageKeys: string[] }> = [
   },
   {
     label: "Content",
-    pageKeys: ["/packs", "/cards", "/battles"],
+    pageKeys: ["/packs", "/cards"],
   },
   {
     label: "Transactions",
     pageKeys: [
       "/transactions",
       "/transactions/packs",
-      "/transactions/battles",
+      "/battles",
       "/transactions/rewards",
     ],
   },
