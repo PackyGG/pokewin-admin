@@ -7,11 +7,13 @@ import {
   Swords,
 } from "lucide-react";
 import { getAnalyticsData } from "@/lib/queries/analytics";
+import { getPnlBreakdownWindows } from "@/lib/queries/pnl";
 import { formatCurrency } from "@/lib/utils/format";
 import { StatCard } from "../dashboard/stat-card";
 import { AnalyticsCharts } from "./charts";
 import { FadeIn } from "@/components/fade-in";
 import { PnlBreakdown } from "@/components/pnl-breakdown";
+import { PeriodPnlBreakdown } from "@/components/period-pnl-breakdown";
 import type { AnalyticsPeriod } from "./types";
 
 /**
@@ -20,7 +22,12 @@ import type { AnalyticsPeriod } from "./types";
  * "Pack & Battle" tab so the overview stays focused on high-level KPIs.
  */
 export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
-  const data = await getAnalyticsData(period);
+  // Fetch the period KPIs and the windowed P&L breakdown in parallel —
+  // they're independent so they share the same render barrier.
+  const [data, pnlWindows] = await Promise.all([
+    getAnalyticsData(period),
+    getPnlBreakdownWindows(),
+  ]);
 
   const totalWager = data.packWager + data.battleWager;
   const packPct =
@@ -103,6 +110,10 @@ export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
           total={data.realizedProfit}
           breakdown={data.realizedProfitBreakdown}
         />
+      </FadeIn>
+
+      <FadeIn>
+        <PeriodPnlBreakdown data={pnlWindows} />
       </FadeIn>
 
       <FadeIn>

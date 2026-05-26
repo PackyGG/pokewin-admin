@@ -472,3 +472,238 @@ export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
       .sort((x, y) => x.date.localeCompare(y.date));
   });
 }
+
+// ─── Period P&L breakdown (24h / 3d / 7d) ────────────────────────────
+//
+// Windowed P&L per window using the same formula as calculateWindowedPnl
+//   pnl = deposits − withdrawals − balanceΔ − inventoryΔ − voucherΔ
+// PLUS a "payout breakdown" showing how much was paid out via each
+// major category (rain prizes, creator tips, race prizes, leaderboard
+// prizes, rakeback, affiliate, gift/promo, bonuses, card sales, battle
+// refunds). The payout rows are INFORMATIONAL — they're subsets of the
+// balance Δ already accounted for in the formula above (so they don't
+// add to the total).
+//
+// One ledger query GROUP BY type with CASE-per-window does all three
+// windows at once; card-withdrawals / inventory / vouchers run in
+// parallel with their own three-window CASE aggregations.
+
+export type PnlBreakdownRow = {
+  // P&L formula components — these sum to `total`.
+  deposits: number;
+  withdrawals: number;
+  balanceDelta: number;
+  inventoryDelta: number;
+  voucherDelta: number;
+  total: number;
+  // Payout breakdown (informational; already inside balanceDelta).
+  rainPrizes: number;
+  creatorTips: number;
+  racePrizes: number;
+  leaderboardPrizes: number;
+  rakebackClaims: number;
+  affiliateClaims: number;
+  giftPromoVoucher: number;
+  bonuses: number;
+  cardSalesExchanges: number;
+  battleRefundsExcess: number;
+};
+
+export type PnlBreakdownWindows = {
+  h24: PnlBreakdownRow;
+  d3: PnlBreakdownRow;
+  d7: PnlBreakdownRow;
+};
+
+// Which ledger types belong to which payout category. Each category sums
+// the POSITIVE balance delta (credits) for its types — i.e. how much
+// the house paid out to users via that surface. Sender/receiver types
+// (like creator_tip) only count the receiver-side credits this way.
+const PAYOUT_CATEGORY_TYPES = {
+  rainPrizes: ["rain_win"],
+  creatorTips: ["creator_tip"],
+  racePrizes: ["race_prize"],
+  leaderboardPrizes: ["affiliate_leaderboard_prize"],
+  rakebackClaims: ["rakeback_claim"],
+  affiliateClaims: ["affiliate_claim"],
+  giftPromoVoucher: [
+    "gift_card_redeemed",
+    "promo_code_redeemed",
+    "voucher_redeemed",
+  ],
+  bonuses: ["deposit_bonus", "balance_reward_claim", "waitlist_prize"],
+  cardSalesExchanges: [
+    "card_sale",
+    "reward_card_sale",
+    "card_exchange",
+    "voucher_exchange",
+    "exchange_excess_credit",
+  ],
+  battleRefundsExcess: [
+    "battle_refund",
+    "battle_excess_to_voucher",
+    "exchange_excess_to_voucher",
+  ],
+} as const;
+
+type PayoutCategoryKey = keyof typeof PAYOUT_CATEGORY_TYPES;
+
+export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
+  return withTiming("pnl.breakdownWindows", async () => {
+    const db = await getDb();
+    const now = Date.now();
+    const h24 = new Date(now - 24 * 60 * 60 * 1000);
+    const d3 = new Date(now - 3 * 24 * 60 * 60 * 1000);
+    const d7 = new Date(now - 7 * 24 * 60 * 60 * 1000);
+
+    const excluded = await getExcludedUserIds();
+    const blacklist = blacklistNotInClause("u.id", excluded);
+    // Real-user scope used identically in every query below.
+    const scope = `user_id IN (SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist})`;
+
+    type LedgerRow = {
+      type: string;
+      cr_h24: string; cr_d3: string; cr_d7: string;
+      dl_h24: string; dl_d3: string; dl_d7: string;
+      mwd_h24: string; mwd_d3: string; mwd_d7: string;
+    };
+    type CardWdRow = { cwd_h24: string; cwd_d3: string; cwd_d7: string };
+    type InvRow = {
+      obt_h24: string; obt_d3: string; obt_d7: string;
+      dis_h24: string; dis_d3: string; dis_d7: string;
+    };
+    type VchRow = {
+      iss_h24: string; iss_d3: string; iss_d7: string;
+      clm_h24: string; clm_d3: string; clm_d7: string;
+    };
+
+    // cr_* = credits (positive balance deltas only — "money out to users").
+    // dl_* = signed balance delta (used to compute the formula's balanceΔ).
+    // mwd_* = manual-withdrawal admin adjustments (subset of
+    //         admin_balance_adjustment); only non-zero on the
+    //         admin_balance_adjustment row in the grouped result.
+    const [ledger, cardWd, inv, vch] = await Promise.all([
+      db.$queryRawUnsafe<LedgerRow[]>(
+        `SELECT type,
+           COALESCE(SUM(CASE WHEN created_at >= $1 THEN GREATEST(balance_after - balance_before, 0)::numeric ELSE 0 END), 0)::text AS cr_h24,
+           COALESCE(SUM(CASE WHEN created_at >= $2 THEN GREATEST(balance_after - balance_before, 0)::numeric ELSE 0 END), 0)::text AS cr_d3,
+           COALESCE(SUM(CASE WHEN created_at >= $3 THEN GREATEST(balance_after - balance_before, 0)::numeric ELSE 0 END), 0)::text AS cr_d7,
+           COALESCE(SUM(CASE WHEN created_at >= $1 THEN (balance_after - balance_before)::numeric ELSE 0 END), 0)::text AS dl_h24,
+           COALESCE(SUM(CASE WHEN created_at >= $2 THEN (balance_after - balance_before)::numeric ELSE 0 END), 0)::text AS dl_d3,
+           COALESCE(SUM(CASE WHEN created_at >= $3 THEN (balance_after - balance_before)::numeric ELSE 0 END), 0)::text AS dl_d7,
+           COALESCE(SUM(CASE WHEN created_at >= $1 AND type = 'admin_balance_adjustment' AND balance_after < balance_before AND description ILIKE 'Manual withdrawal:%' THEN amount::numeric ELSE 0 END), 0)::text AS mwd_h24,
+           COALESCE(SUM(CASE WHEN created_at >= $2 AND type = 'admin_balance_adjustment' AND balance_after < balance_before AND description ILIKE 'Manual withdrawal:%' THEN amount::numeric ELSE 0 END), 0)::text AS mwd_d3,
+           COALESCE(SUM(CASE WHEN created_at >= $3 AND type = 'admin_balance_adjustment' AND balance_after < balance_before AND description ILIKE 'Manual withdrawal:%' THEN amount::numeric ELSE 0 END), 0)::text AS mwd_d7
+         FROM ledger_transactions
+         WHERE status = 'completed' AND created_at >= $3 AND ${scope}
+         GROUP BY type`,
+        h24, d3, d7,
+      ),
+      db.$queryRawUnsafe<CardWdRow[]>(
+        `SELECT
+           COALESCE(SUM(CASE WHEN COALESCE(shipped_at, completed_at) >= $1 THEN total_value_usd::numeric ELSE 0 END), 0)::text AS cwd_h24,
+           COALESCE(SUM(CASE WHEN COALESCE(shipped_at, completed_at) >= $2 THEN total_value_usd::numeric ELSE 0 END), 0)::text AS cwd_d3,
+           COALESCE(SUM(CASE WHEN COALESCE(shipped_at, completed_at) >= $3 THEN total_value_usd::numeric ELSE 0 END), 0)::text AS cwd_d7
+         FROM card_withdrawal_requests
+         WHERE status IN ('completed', 'shipped')
+           AND COALESCE(shipped_at, completed_at) >= $3
+           AND ${scope}`,
+        h24, d3, d7,
+      ),
+      db.$queryRawUnsafe<InvRow[]>(
+        `SELECT
+           COALESCE(SUM(CASE WHEN obtained_at >= $1 THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS obt_h24,
+           COALESCE(SUM(CASE WHEN obtained_at >= $2 THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS obt_d3,
+           COALESCE(SUM(CASE WHEN obtained_at >= $3 THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS obt_d7,
+           COALESCE(SUM(CASE WHEN (sold_at >= $1 OR exchanged_at >= $1) THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS dis_h24,
+           COALESCE(SUM(CASE WHEN (sold_at >= $2 OR exchanged_at >= $2) THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS dis_d3,
+           COALESCE(SUM(CASE WHEN (sold_at >= $3 OR exchanged_at >= $3) THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS dis_d7
+         FROM user_inventory
+         WHERE (obtained_at >= $3 OR sold_at >= $3 OR exchanged_at >= $3)
+           AND ${scope}`,
+        h24, d3, d7,
+      ),
+      db.$queryRawUnsafe<VchRow[]>(
+        `SELECT
+           COALESCE(SUM(CASE WHEN created_at >= $1 THEN value::numeric ELSE 0 END), 0)::text AS iss_h24,
+           COALESCE(SUM(CASE WHEN created_at >= $2 THEN value::numeric ELSE 0 END), 0)::text AS iss_d3,
+           COALESCE(SUM(CASE WHEN created_at >= $3 THEN value::numeric ELSE 0 END), 0)::text AS iss_d7,
+           COALESCE(SUM(CASE WHEN claimed_at >= $1 THEN value::numeric ELSE 0 END), 0)::text AS clm_h24,
+           COALESCE(SUM(CASE WHEN claimed_at >= $2 THEN value::numeric ELSE 0 END), 0)::text AS clm_d3,
+           COALESCE(SUM(CASE WHEN claimed_at >= $3 THEN value::numeric ELSE 0 END), 0)::text AS clm_d7
+         FROM vouchers
+         WHERE (created_at >= $3 OR claimed_at >= $3)
+           AND ${scope}`,
+        h24, d3, d7,
+      ),
+    ]);
+
+    // Build per-window aggregates.
+    const windows: Array<{
+      key: "h24" | "d3" | "d7";
+      crKey: "cr_h24" | "cr_d3" | "cr_d7";
+      dlKey: "dl_h24" | "dl_d3" | "dl_d7";
+      mwdKey: "mwd_h24" | "mwd_d3" | "mwd_d7";
+      cwdKey: "cwd_h24" | "cwd_d3" | "cwd_d7";
+      obtKey: "obt_h24" | "obt_d3" | "obt_d7";
+      disKey: "dis_h24" | "dis_d3" | "dis_d7";
+      issKey: "iss_h24" | "iss_d3" | "iss_d7";
+      clmKey: "clm_h24" | "clm_d3" | "clm_d7";
+    }> = [
+      { key: "h24", crKey: "cr_h24", dlKey: "dl_h24", mwdKey: "mwd_h24", cwdKey: "cwd_h24", obtKey: "obt_h24", disKey: "dis_h24", issKey: "iss_h24", clmKey: "clm_h24" },
+      { key: "d3",  crKey: "cr_d3",  dlKey: "dl_d3",  mwdKey: "mwd_d3",  cwdKey: "cwd_d3",  obtKey: "obt_d3",  disKey: "dis_d3",  issKey: "iss_d3",  clmKey: "clm_d3" },
+      { key: "d7",  crKey: "cr_d7",  dlKey: "dl_d7",  mwdKey: "mwd_d7",  cwdKey: "cwd_d7",  obtKey: "obt_d7",  disKey: "dis_d7",  issKey: "iss_d7",  clmKey: "clm_d7" },
+    ];
+
+    function buildRow(w: (typeof windows)[number]): PnlBreakdownRow {
+      // Sum balance delta + manual-withdrawal across all type rows.
+      let balanceDelta = 0;
+      let manualWd = 0;
+      let deposits = 0;
+      // Map type → credit amount in this window — used for payout cats.
+      const creditByType = new Map<string, number>();
+      for (const r of ledger) {
+        balanceDelta += toNumber(r[w.dlKey]);
+        manualWd += toNumber(r[w.mwdKey]);
+        const cr = toNumber(r[w.crKey]);
+        creditByType.set(r.type, cr);
+        if (r.type === "deposit") deposits = cr;
+      }
+      const cardWdAmount = toNumber(cardWd[0]?.[w.cwdKey]);
+      const withdrawals = manualWd + cardWdAmount;
+      const inventoryDelta =
+        toNumber(inv[0]?.[w.obtKey]) - toNumber(inv[0]?.[w.disKey]);
+      const voucherDelta =
+        toNumber(vch[0]?.[w.issKey]) - toNumber(vch[0]?.[w.clmKey]);
+      const total =
+        deposits - withdrawals - balanceDelta - inventoryDelta - voucherDelta;
+
+      // Payout categories (sum credits across the types each one covers).
+      const payouts = {} as Record<PayoutCategoryKey, number>;
+      for (const [cat, types] of Object.entries(PAYOUT_CATEGORY_TYPES) as [
+        PayoutCategoryKey,
+        readonly string[],
+      ][]) {
+        let s = 0;
+        for (const t of types) s += creditByType.get(t) ?? 0;
+        payouts[cat] = s;
+      }
+
+      return {
+        deposits,
+        withdrawals,
+        balanceDelta,
+        inventoryDelta,
+        voucherDelta,
+        total,
+        ...payouts,
+      };
+    }
+
+    return {
+      h24: buildRow(windows[0]),
+      d3: buildRow(windows[1]),
+      d7: buildRow(windows[2]),
+    };
+  });
+}
