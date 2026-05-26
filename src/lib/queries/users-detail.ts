@@ -19,33 +19,48 @@ const TIP_RECENT_LIMIT = 10;
  * metadata flag we fall back to the balance delta to infer direction.
  */
 async function getUserTips(db: Db, userId: string) {
-  const [rows, rainAgg, rainRecent] = await Promise.all([
-    db.ledger_transactions.findMany({
-      where: { user_id: userId, type: "creator_tip" },
-      orderBy: { created_at: "desc" },
-      select: {
-        id: true,
-        amount: true,
-        balance_before: true,
-        balance_after: true,
-        metadata: true,
-        created_at: true,
-      },
-    }),
-    // Rain prizes the user won (rain_win) — count + total in one pass…
-    db.ledger_transactions.aggregate({
-      where: { user_id: userId, type: "rain_win" },
-      _count: { _all: true },
-      _sum: { amount: true },
-    }),
-    // …plus the most recent few for the list.
-    db.ledger_transactions.findMany({
-      where: { user_id: userId, type: "rain_win" },
-      orderBy: { created_at: "desc" },
-      take: TIP_RECENT_LIMIT,
-      select: { id: true, amount: true, created_at: true },
-    }),
-  ]);
+  const [rows, rainAgg, rainRecent, leaderboardAgg, leaderboardRecent] =
+    await Promise.all([
+      db.ledger_transactions.findMany({
+        where: { user_id: userId, type: "creator_tip" },
+        orderBy: { created_at: "desc" },
+        select: {
+          id: true,
+          amount: true,
+          balance_before: true,
+          balance_after: true,
+          metadata: true,
+          created_at: true,
+        },
+      }),
+      // Rain prizes the user won (rain_win) — count + total in one pass…
+      db.ledger_transactions.aggregate({
+        where: { user_id: userId, type: "rain_win" },
+        _count: { _all: true },
+        _sum: { amount: true },
+      }),
+      // …plus the most recent few for the list.
+      db.ledger_transactions.findMany({
+        where: { user_id: userId, type: "rain_win" },
+        orderBy: { created_at: "desc" },
+        take: TIP_RECENT_LIMIT,
+        select: { id: true, amount: true, created_at: true },
+      }),
+      // Affiliate-leaderboard prize payouts — credits to users who placed
+      // on a creator-leaderboard ranking. Same pattern as rain_win: no
+      // counterparty (the pool pays out). House cost ⇒ rose color downstream.
+      db.ledger_transactions.aggregate({
+        where: { user_id: userId, type: "affiliate_leaderboard_prize" },
+        _count: { _all: true },
+        _sum: { amount: true },
+      }),
+      db.ledger_transactions.findMany({
+        where: { user_id: userId, type: "affiliate_leaderboard_prize" },
+        orderBy: { created_at: "desc" },
+        take: TIP_RECENT_LIMIT,
+        select: { id: true, amount: true, created_at: true },
+      }),
+    ]);
 
   type Entry = {
     id: string;
@@ -133,6 +148,20 @@ async function getUserTips(db: Db, userId: string) {
       count: rainAgg._count._all,
       totalUsd: toNumber(rainAgg._sum.amount ?? 0),
       recent: rainRecent.map((r) => ({
+        id: r.id,
+        amountUsd: toNumber(r.amount),
+        counterpartyId: null,
+        counterpartyName: null,
+        createdAt: r.created_at.toISOString(),
+      })),
+    },
+    // Affiliate-leaderboard wins (affiliate_leaderboard_prize) — credits
+    // paid out by creator-leaderboard rankings. Same shape as rain
+    // prizes: no counterparty.
+    leaderboardWins: {
+      count: leaderboardAgg._count._all,
+      totalUsd: toNumber(leaderboardAgg._sum.amount ?? 0),
+      recent: leaderboardRecent.map((r) => ({
         id: r.id,
         amountUsd: toNumber(r.amount),
         counterpartyId: null,
@@ -395,6 +424,21 @@ export async function getUserDetail(id: string) {
       createdAt: user.created_at.toISOString(),
       updatedAt: user.updated_at.toISOString(),
       providers: user.account.map((a) => a.providerId),
+      // The provider this user signed up with — i.e. the FIRST linked
+      // account. We sort by account.created_at ASC and take the oldest;
+      // if that timestamp is missing we fall back to the first entry
+      // in the array (BetterAuth orders by creation by default). Maps
+      // to discord / google / steam / credential (= email) etc. Null
+      // when the user has no linked account at all.
+      signupProvider: (() => {
+        if (user.account.length === 0) return null;
+        const sorted = [...user.account].sort((a, b) => {
+          const ta = a.created_at?.getTime() ?? Infinity;
+          const tb = b.created_at?.getTime() ?? Infinity;
+          return ta - tb;
+        });
+        return sorted[0]?.providerId ?? null;
+      })(),
       discord: (() => {
         const dc = user.account.find((a) => a.providerId === "discord");
         if (!dc) return null;

@@ -47,6 +47,7 @@ import {
   Sparkles,
   Dices,
   Percent,
+  Award,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/empty-state";
@@ -156,15 +157,18 @@ export function OverviewTab({
 
 // ───────────────────────────────────────────────────────────────────
 //  TIPS & RAIN SECTION (overview) — creator tips received/sent + rain
-//  prizes won
+//  prizes won + affiliate-leaderboard wins
 // ───────────────────────────────────────────────────────────────────
 
 function TipsSection({ tips }: { tips: UserDetail["tips"] }) {
   return (
-    <div className="grid gap-3 sm:gap-4 md:grid-cols-3">
+    // 4 panels — wraps to 2-up on md, 4-up on xl so the row stays
+    // readable on laptops while still fitting on phones.
+    <div className="grid gap-3 sm:gap-4 md:grid-cols-2 xl:grid-cols-4">
       <TipPanel kind="received" data={tips.received} />
       <TipPanel kind="sent" data={tips.sent} />
       <TipPanel kind="rain" data={tips.rainPrizes} />
+      <TipPanel kind="leaderboard" data={tips.leaderboardWins} />
     </div>
   );
 }
@@ -173,12 +177,12 @@ function TipPanel({
   kind,
   data,
 }: {
-  kind: "received" | "sent" | "rain";
+  kind: "received" | "sent" | "rain" | "leaderboard";
   data: { count: number; totalUsd: number; recent: TipEntry[] };
 }) {
   // House-POV (CLAUDE.md): money the user GAINS (tips received, rain
-  // prizes) → house loss → rose. Money the user SPENDS (tips sent) →
-  // house gain → emerald.
+  // prizes, leaderboard wins) → house loss → rose. Money the user
+  // SPENDS (tips sent) → house gain → emerald.
   const userGained = kind !== "sent";
   const amountColor = userGained
     ? "text-rose-600 dark:text-rose-400"
@@ -191,20 +195,27 @@ function TipPanel({
       ? ArrowDownToLine
       : kind === "sent"
         ? ArrowUpRight
-        : Trophy;
+        : kind === "rain"
+          ? Trophy
+          : Award;
   const label =
     kind === "received"
       ? "Tips Received"
       : kind === "sent"
         ? "Tips Sent"
-        : "Rain Prizes";
-  const unit = kind === "rain" ? "prize" : "tip";
+        : kind === "rain"
+          ? "Rain Prizes"
+          : "Leaderboard Wins";
+  const unit =
+    kind === "rain" ? "prize" : kind === "leaderboard" ? "win" : "tip";
   const emptyText =
     kind === "received"
       ? "No tips received."
       : kind === "sent"
         ? "No tips sent."
-        : "No rain prizes won.";
+        : kind === "rain"
+          ? "No rain prizes won."
+          : "No leaderboard wins.";
   const sign = userGained ? "+" : "-";
 
   return (
@@ -248,6 +259,8 @@ function TipPanel({
                 <span className="min-w-0 truncate text-muted-foreground">
                   {kind === "rain" ? (
                     <span className="text-foreground">Rain prize</span>
+                  ) : kind === "leaderboard" ? (
+                    <span className="text-foreground">Leaderboard win</span>
                   ) : (
                     <>
                       {kind === "received" ? "from " : "to "}

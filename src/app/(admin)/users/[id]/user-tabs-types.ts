@@ -51,6 +51,13 @@ export type UserDetail = {
     createdAt: string;
     updatedAt: string;
     providers: string[];
+    /**
+     * The provider this user signed up with — the FIRST linked
+     * account (sorted by account.created_at ASC). Common values:
+     * "discord", "google", "steam", "credential" (= email/password).
+     * Null when the user has no linked account.
+     */
+    signupProvider: string | null;
     discord: {
       id: string;
       linkedAt: string | null;
@@ -173,6 +180,7 @@ export type UserDetail = {
     received: { count: number; totalUsd: number; recent: TipEntry[] };
     sent: { count: number; totalUsd: number; recent: TipEntry[] };
     rainPrizes: { count: number; totalUsd: number; recent: TipEntry[] };
+    leaderboardWins: { count: number; totalUsd: number; recent: TipEntry[] };
   };
   sessionRole: string;
   // True when the user isn't a creator now but was one before (audit
