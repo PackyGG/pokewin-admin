@@ -355,6 +355,7 @@ async function dashboardStatsInner() {
     periodAggregates,
     activityTotals,
     uniqueDepositorsResult,
+    uniqueDepositors24hResult,
     realizedPnlResult,
     realizedPnl24hResult,
     totalInventoryValue,
@@ -451,6 +452,22 @@ async function dashboardStatsInner() {
     db.balances.count({
       where: { total_deposited: { gt: 0 }, user: staffRelation },
     }),
+    // Distinct users who completed at least one deposit in the rolling
+    // last 24h — the active-depositor count for the dashboard tile.
+    // COUNT(DISTINCT user_id) over a small recent slice of
+    // ledger_transactions; staff + blacklist excluded via the same
+    // subquery pattern used elsewhere in this file.
+    db.$queryRaw<{ count: string }[]>`
+      SELECT COUNT(DISTINCT user_id)::text AS count
+      FROM ledger_transactions
+      WHERE type = 'deposit'
+        AND status = 'completed'
+        AND created_at >= ${rolling24h}
+        AND user_id IN (
+          SELECT id FROM "user"
+          WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+        )
+    `,
     getRealizedPnlSnapshot(),
     // Rolling past-24h house P&L — windowed delta (deposits −
     // withdrawals − balanceΔ − inventoryΔ − voucherΔ over the last 24h),
@@ -733,6 +750,10 @@ async function dashboardStatsInner() {
       // a single user with five deposits = depositCount 5,
       // uniqueDepositors 1.
       uniqueDepositors: uniqueDepositorsResult,
+      // Distinct users who completed at least one deposit in the
+      // rolling last 24h. Counts users, not deposits — a user with
+      // three deposits in 24h still counts as 1.
+      uniqueDepositors24h: Number(uniqueDepositors24hResult[0]?.count ?? 0),
       // First-time depositors in the rolling last 24h: count, the
       // summed value of those first deposits, and the average. The 24h
       // counterpart to uniqueDepositors (lifetime distinct depositors).

@@ -244,8 +244,8 @@ async function DashboardStatStrips() {
 
       {/* Secondary stats — all-time / snapshot. These are simpler
           (no period chips) so they tolerate 2-up on phone, 3-up at
-          sm, then 6 across at lg+. */}
-      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-6 xl:grid-cols-7">
+          sm, then 6 across at lg, all 8 across at xl. */}
+      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-6 xl:grid-cols-8">
         <StatCard
           title="Total Users"
           animatedValue={stats.users.total}
@@ -287,6 +287,19 @@ async function DashboardStatStrips() {
           }
           icon={BadgeDollarSign}
           color="purple"
+        />
+        {/* Active depositors in the rolling last 24h — distinct USERS,
+            not deposits. Sits next to the lifetime Depositors tile so
+            admins see both "ever funded" and "funded today" at a glance.
+            Cyan to read as a separate signal from the purple lifetime
+            tile (and from FTDs amber). */}
+        <StatCard
+          title="Active Depositors (24h)"
+          animatedValue={stats.financials.uniqueDepositors24h}
+          formatKind="number"
+          subtitle="Distinct users who deposited in the last 24h"
+          icon={Activity}
+          color="cyan"
         />
         {/* Users Total Balance is a HOUSE LIABILITY but we accent it orange
             (not rose) so it's visually distinct from the Withdrawals / PnL
