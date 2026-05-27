@@ -473,17 +473,6 @@ export const FINANCIAL_TX_TYPES = [
   "gift_card_redeemed",
   "rain_win",
   "race_prize",
-  // Cash-movement events that used to be filtered out of both tabs:
-  // selling won cards back to the house, exchanging cards for vouchers,
-  // and the voucher → balance redemption chain. Belong here because
-  // they all move value into the user's cash balance.
-  "card_sale",
-  "reward_card_sale",
-  "card_exchange",
-  "voucher_exchange",
-  "exchange_excess_credit",
-  "exchange_excess_to_voucher",
-  "battle_excess_to_voucher",
 ] as const;
 export const CARD_SALE_TX_TYPES = ["card_sale", "reward_card_sale"] as const;
 export const EXCHANGE_TX_TYPES = [

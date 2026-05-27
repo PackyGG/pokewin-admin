@@ -39,14 +39,12 @@ export default async function UserDetailPage({
     "upgrader_payout",
     "voucher_redeemed",
   ];
-  // FINANCIAL covers every money-movement event:
-  //   • deposits + deposit bonuses
-  //   • cash withdrawals (card_withdrawal + manual via admin_balance_adjustment)
-  //   • card / voucher sales + exchanges that convert held value to cash
-  //   • rakeback / affiliate / rain / race / gift / promo payouts
-  // Card sales / exchanges used to be filtered out of both tabs, so the
-  // win → cash chain was invisible. Folded here keeps Gaming about
-  // gameplay while still making the cash conversions traceable.
+  // FINANCIAL covers deposits, withdrawals, and direct cash payouts
+  // (rakeback / affiliate / rain / race / gift / promo). Card sales +
+  // card / voucher exchanges intentionally live in NEITHER tab — they
+  // bloated the Deposits & Withdrawals view with rows admins did not
+  // consider cash events. If a future surface needs them they'll get
+  // their own section instead of being folded into Financial.
   const FINANCIAL_TYPES = [
     "deposit",
     "deposit_bonus",
@@ -60,13 +58,6 @@ export default async function UserDetailPage({
     "gift_card_redeemed",
     "rain_win",
     "race_prize",
-    "card_sale",
-    "reward_card_sale",
-    "card_exchange",
-    "voucher_exchange",
-    "exchange_excess_credit",
-    "exchange_excess_to_voucher",
-    "battle_excess_to_voucher",
   ];
 
   // Resolve permissions in parallel with the data queries — admins can
