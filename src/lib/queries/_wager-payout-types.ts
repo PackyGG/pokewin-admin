@@ -36,17 +36,10 @@ export const WAGER_PAYOUT_WAGER_TYPES = [
  * Payout-side ledger types — money flowing back to the user (winnings,
  * refunds, prizes, redemptions, claims). Subtracted from wagers to
  * compute GGR.
- *
- * NOTE — upgrader is deliberately NOT on this list. The backend never
- * writes an `upgrader_payout` ledger row (a win is handed out as an
- * inventory card / voucher, see backend upgrader.service.ts), so the
- * dashboard sources the upgrader payout straight off `upgrader_games`
- * (the `upgrader_pay` CTE in dashboard.ts) instead. Keeping
- * `upgrader_payout` here would double-subtract the upgrader margin the
- * moment that ledger row ever starts being emitted.
  */
 export const WAGER_PAYOUT_PAYOUT_TYPES = [
   "battle_refund",
+  "upgrader_payout",
   "card_sale",
   "reward_card_sale",
   "card_exchange",
