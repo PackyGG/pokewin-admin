@@ -12,6 +12,7 @@ import {
   Gauge,
 } from "lucide-react";
 import { getDashboardStats, getActiveRain } from "@/lib/queries/dashboard";
+import { getUpgraderStats } from "@/lib/queries/dashboard-upgrader";
 import { getDailyPnl } from "@/lib/queries/pnl";
 import { requirePageAccess } from "@/lib/dal";
 import { formatCurrency } from "@/lib/utils/format";
@@ -39,6 +40,7 @@ import {
   RecentActivitySkeleton,
 } from "./recent-activity";
 import { LiveDeposits } from "./live-deposits";
+import { UpgraderStatsSection } from "./upgrader-stats";
 import { ActiveRainChip } from "./active-rain-chip";
 import { PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
@@ -120,6 +122,18 @@ export default async function DashboardPage() {
         }
       >
         <DashboardStatStrips />
+      </Suspense>
+
+      {/* Upgrader Stats — its own section between the KPI strips and
+          the trend graphs. Streams behind its own Suspense (separate
+          query, not bolted onto getDashboardStats) so the headline
+          KPIs aren't blocked by the upgrader scan. */}
+      <Suspense
+        fallback={
+          <Skeleton className="h-[176px] w-full rounded-2xl" />
+        }
+      >
+        <DashboardUpgraderSection />
       </Suspense>
 
       {/* Charts. Three-up at lg+ but stacks to a single column on
@@ -349,6 +363,18 @@ async function DashboardStatStrips() {
       </div>
     </>
   );
+}
+
+/**
+ * Upgrader stats section — wager / payouts / P&L / edge / bets / avg
+ * bet / unique players. Its own query (separate from
+ * getDashboardStats) so the headline KPI strips don't pay for the
+ * upgrader scan. The query is per-request cached via `cache()` so
+ * mounting the section twice in one render is free.
+ */
+async function DashboardUpgraderSection() {
+  const stats = await getUpgraderStats();
+  return <UpgraderStatsSection stats={stats} />;
 }
 
 /**
