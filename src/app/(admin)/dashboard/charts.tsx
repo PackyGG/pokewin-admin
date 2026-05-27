@@ -61,6 +61,77 @@ const pnlConfig = {
 const PNL_UP = "#10b981"; // emerald-500 — house in profit that day
 const PNL_DOWN = "#f43f5e"; // rose-500 — house down that day
 
+/**
+ * Custom tooltip for the stacked Wagers chart — renders Packs + Battles
+ * with their colors, then a "Total" row showing both combined. The
+ * default ChartTooltipContent only lists individual stack segments, so
+ * an admin had to mentally add packs+battles to read the day's total.
+ *
+ * Styling mirrors ChartTooltipContent (see src/components/ui/chart.tsx)
+ * so the two tooltips stay visually consistent across the dashboard.
+ */
+function WagerTooltipContent({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: Array<{
+    dataKey?: string | number;
+    value?: number | string;
+    color?: string;
+  }>;
+  label?: string;
+}) {
+  if (!active || !payload || payload.length === 0) return null;
+  const packs = Number(
+    payload.find((p) => p.dataKey === "packs")?.value ?? 0,
+  );
+  const battles = Number(
+    payload.find((p) => p.dataKey === "battles")?.value ?? 0,
+  );
+  const total = packs + battles;
+  return (
+    <div className="grid min-w-32 items-start gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
+      {label && <div className="font-medium">{label}</div>}
+      <div className="grid gap-1.5">
+        {payload.map((item) => {
+          const isPacks = item.dataKey === "packs";
+          return (
+            <div
+              key={String(item.dataKey)}
+              className="flex items-center gap-2"
+            >
+              <div
+                className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
+                style={{ background: item.color }}
+              />
+              <div className="flex flex-1 items-center justify-between leading-none">
+                <span className="text-muted-foreground">
+                  {isPacks ? "Packs" : "Battles"}
+                </span>
+                <span className="font-mono font-medium tabular-nums text-foreground">
+                  {formatCurrency(Number(item.value ?? 0))}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+        <div className="mt-0.5 flex items-center gap-2 border-t border-border/50 pt-1.5">
+          {/* Spacer to align the Total label with the rows above. */}
+          <div className="h-2.5 w-2.5 shrink-0" />
+          <div className="flex flex-1 items-center justify-between leading-none">
+            <span className="font-semibold">Total</span>
+            <span className="font-mono font-semibold tabular-nums text-foreground">
+              {formatCurrency(total)}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function WagerChart({
   data,
 }: {
@@ -91,15 +162,7 @@ export function WagerChart({
               width={70}
               tickFormatter={formatCompactUsd}
             />
-            <ChartTooltip
-              content={
-                <ChartTooltipContent
-                  formatter={(value, name) =>
-                    `$${Number(value).toFixed(2)} ${name === "packs" ? "Packs" : "Battles"}`
-                  }
-                />
-              }
-            />
+            <ChartTooltip content={<WagerTooltipContent />} />
             <Bar
               dataKey="packs"
               stackId="wager"
