@@ -1441,7 +1441,7 @@ fw AS (
   SELECT MIN(created_at) AS first_at
   FROM ledger_transactions
   WHERE user_id = $1 AND status = 'completed'
-    AND type IN ('pack_opening','battle_bet','battle_sponsorship')
+    AND type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
 ),
 wad AS (
   -- withdrawals initiated within 1h of any deposit.
@@ -1518,7 +1518,7 @@ bsw AS (
   SELECT COALESCE(MAX(ABS(amount::numeric)), 0) AS v
   FROM ledger_transactions
   WHERE user_id = $1 AND status = 'completed'
-    AND type IN ('pack_opening','battle_bet','battle_sponsorship')
+    AND type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
 ),
 fl AS (
   SELECT (
@@ -1703,7 +1703,7 @@ LEFT JOIN (
     COUNT(*) FILTER (WHERE type='voucher_redeemed' AND status='completed') AS voucher_redeem_count,
     COUNT(*) FILTER (WHERE type='pack_opening' AND status='completed') AS pack_opens,
     COUNT(*) FILTER (WHERE type='battle_bet' AND status='completed') AS battles_played,
-    COALESCE(MAX(ABS(amount::numeric)) FILTER (WHERE status='completed' AND type IN ('pack_opening','battle_bet','battle_sponsorship')), 0) AS biggest_single_wager
+    COALESCE(MAX(ABS(amount::numeric)) FILTER (WHERE status='completed' AND type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')), 0) AS biggest_single_wager
   FROM ledger_transactions
   WHERE user_id IN (SELECT user_id FROM ids)
   GROUP BY user_id
@@ -1715,7 +1715,7 @@ LEFT JOIN (
 LEFT JOIN (
   SELECT user_id, MIN(created_at) AS first_at
   FROM ledger_transactions
-  WHERE status='completed' AND type IN ('pack_opening','battle_bet','battle_sponsorship')
+  WHERE status='completed' AND type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
     AND user_id IN (SELECT user_id FROM ids)
   GROUP BY user_id
 ) fw ON fw.user_id = u.id

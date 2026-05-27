@@ -17,7 +17,7 @@ import { blacklistNotInClause } from "./_blacklist";
  * strip.
  */
 
-const WAGER_TYPES = `('pack_opening','battle_bet','battle_sponsorship')`;
+const WAGER_TYPES = `('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')`;
 const COHORT_WINDOW_DAYS = 180;
 const CURVE_LENGTH = 91; // day 0 through day 90 inclusive
 

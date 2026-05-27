@@ -513,6 +513,7 @@ export type PnlBreakdownRow = {
   bonuses: number;
   cardSalesExchanges: number;
   battleRefundsExcess: number;
+  upgraderPayouts: number;
 };
 
 export type PnlBreakdownWindows = {
@@ -550,6 +551,7 @@ const PAYOUT_CATEGORY_TYPES = {
     "battle_excess_to_voucher",
     "exchange_excess_to_voucher",
   ],
+  upgraderPayouts: ["upgrader_payout"],
 } as const;
 
 type PayoutCategoryKey = keyof typeof PAYOUT_CATEGORY_TYPES;

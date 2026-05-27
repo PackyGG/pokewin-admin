@@ -8,6 +8,7 @@ import {
   Package,
   Swords,
   Trophy,
+  TrendingUp,
 } from "lucide-react";
 
 import {
@@ -39,7 +40,7 @@ import { CodeActivityNav } from "../_components/code-activity-nav";
 export const metadata = { title: "Last Wagers · Creator" };
 
 const WAGER_TYPE_META: Record<
-  "pack_opening" | "battle_bet" | "battle_sponsorship",
+  "pack_opening" | "battle_bet" | "battle_sponsorship" | "upgrader_bet",
   { label: string; icon: React.ElementType; className: string }
 > = {
   pack_opening: {
@@ -59,6 +60,12 @@ const WAGER_TYPE_META: Record<
     icon: Trophy,
     className:
       "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
+  },
+  upgrader_bet: {
+    label: "Upgrader",
+    icon: TrendingUp,
+    className:
+      "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-cyan-500/30",
   },
 };
 

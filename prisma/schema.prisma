@@ -1256,6 +1256,8 @@ enum ledger_transaction_type {
   affiliate_leaderboard_creation
   affiliate_leaderboard_refund
   affiliate_leaderboard_prize
+  upgrader_bet
+  upgrader_payout
 }
 
 enum race_type {

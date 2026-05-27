@@ -16,6 +16,7 @@ import {
   Award,
   Banknote,
   Swords,
+  TrendingUp,
   ArrowRight,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils/format";
@@ -171,6 +172,13 @@ const PAYOUT_ROWS: RowDef[] = [
     description: "battle_refund + battle/exchange excess credits",
     contribution: (b) => -b.battleRefundsExcess,
     icon: Swords,
+    accent: "rose",
+  },
+  {
+    label: "Upgrader Payouts",
+    description: "upgrader_payout credits paid to winners",
+    contribution: (b) => -b.upgraderPayouts,
+    icon: TrendingUp,
     accent: "rose",
   },
 ];

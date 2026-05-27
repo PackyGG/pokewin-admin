@@ -26,15 +26,17 @@ export default async function UserDetailPage({
   const session = await requirePageAccess("/users");
   const { id } = await params;
 
-  // GAMING is pack/battle play only — entry, payout, refund. Sale /
-  // exchange rows live in FINANCIAL_TYPES below so card sales appear
-  // alongside deposits and withdrawals as cash-movement events; the
-  // gaming tab stays focused on gameplay.
+  // GAMING is pack / battle / upgrader play — entry, payout, refund.
+  // Sale / exchange rows live in FINANCIAL_TYPES below so card sales
+  // appear alongside deposits and withdrawals as cash-movement events;
+  // the gaming tab stays focused on gameplay.
   const GAMING_TYPES = [
     "pack_opening",
     "battle_bet",
     "battle_sponsorship",
     "battle_refund",
+    "upgrader_bet",
+    "upgrader_payout",
     "voucher_redeemed",
   ];
   // FINANCIAL covers every money-movement event:

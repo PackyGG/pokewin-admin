@@ -72,8 +72,8 @@ export type CountryLeaderRow = {
 };
 
 const LIMIT = 20;
-const WAGER_TYPES = `('pack_opening','battle_bet','battle_sponsorship')`;
-const PAYOUT_TYPES = `('battle_refund','card_sale','reward_card_sale','card_exchange','exchange_excess_credit','deposit_bonus','race_prize','gift_card_redeemed','promo_code_redeemed','rakeback_claim','balance_reward_claim','affiliate_claim','rain_win','waitlist_prize','creator_tip','voucher_redeemed','voucher_exchange','exchange_excess_to_voucher','battle_excess_to_voucher')`;
+const WAGER_TYPES = `('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')`;
+const PAYOUT_TYPES = `('battle_refund','upgrader_payout','card_sale','reward_card_sale','card_exchange','exchange_excess_credit','deposit_bonus','race_prize','gift_card_redeemed','promo_code_redeemed','rakeback_claim','balance_reward_claim','affiliate_claim','rain_win','waitlist_prize','creator_tip','voucher_redeemed','voucher_exchange','exchange_excess_to_voucher','battle_excess_to_voucher')`;
 
 function periodFilter(period: LeaderboardPeriod, column = "lt.created_at"): string {
   const days = daysForPeriod(period);

@@ -35,8 +35,8 @@ export type CohortData = {
   rows: CohortRow[];
 };
 
-const WAGER_TYPES_SQL = `('pack_opening','battle_bet','battle_sponsorship')`;
-const PAYOUT_TYPES_SQL = `('battle_refund','card_sale','reward_card_sale')`;
+const WAGER_TYPES_SQL = `('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')`;
+const PAYOUT_TYPES_SQL = `('battle_refund','upgrader_payout','card_sale','reward_card_sale')`;
 
 const MAX_COHORTS = 16;
 const MAX_PERIODS = 10;

@@ -6,6 +6,7 @@ export type PnlBreakdown = {
   // Gambling revenue (platform perspective, positive = platform earned)
   packRevenue: number;
   battleRevenue: number;
+  upgraderRevenue: number;
   cardSalesPayouts: number;
   gamblingPnlRealized: number;
   unrealizedLiability: number;
@@ -54,6 +55,7 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
       WHERE user_id = ${userId} AND status = 'completed'
         AND type IN (
           'pack_opening','battle_bet','battle_sponsorship','battle_refund',
+          'upgrader_bet','upgrader_payout',
           'card_sale','reward_card_sale','card_exchange',
           'deposit_bonus','promo_code_redeemed','gift_card_redeemed','waitlist_prize',
           'rakeback_claim','affiliate_claim',
@@ -79,9 +81,15 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
   // Gambling revenue: user loses money → net is negative → negate for platform perspective
   const packRevenue = -sum("pack_opening");
   const battleRevenue = -sum("battle_bet", "battle_sponsorship", "battle_refund");
+  // Upgrader: bet (user loses balance → negative) netted against payout
+  // (user gains balance → positive). Negate for platform perspective so
+  // a winning Upgrader user reads negative (house lost) and a losing
+  // one reads positive (house gained).
+  const upgraderRevenue = -sum("upgrader_bet", "upgrader_payout");
   // Card sales: user gets money back → net is positive → negate = negative (cost to platform)
   const cardSalesPayouts = -sum("card_sale", "reward_card_sale", "card_exchange");
-  const gamblingPnlRealized = packRevenue + battleRevenue + cardSalesPayouts;
+  const gamblingPnlRealized =
+    packRevenue + battleRevenue + upgraderRevenue + cardSalesPayouts;
 
   // Unrealized: cards the user still holds = future liability
   const unrealizedLiability = inventoryValue._sum.value_at_obtained
@@ -120,7 +128,7 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
   const netPnlTrue = gamblingPnlTrue - totalCosts;
 
   return {
-    packRevenue, battleRevenue, cardSalesPayouts,
+    packRevenue, battleRevenue, upgraderRevenue, cardSalesPayouts,
     gamblingPnlRealized, unrealizedLiability, gamblingPnlTrue,
     bonusesCost, rakebackCost, affiliateCost, otherCosts, otherCostsDetail,
     netPnlRealized, netPnlTrue,

@@ -102,8 +102,10 @@ export async function getRevenueBreakdown(
       pack_wager: string;
       battle_wager: string;
       battle_sponsorship: string;
+      upgrader_wager: string;
       shipping_fees: string;
       battle_refund: string;
+      upgrader_payout: string;
       card_sale: string;
       bonuses: string;
       rakeback: string;
@@ -120,8 +122,10 @@ export async function getRevenueBreakdown(
       COALESCE(SUM(CASE WHEN type = 'pack_opening' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager,
       COALESCE(SUM(CASE WHEN type = 'battle_bet' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager,
       COALESCE(SUM(CASE WHEN type = 'battle_sponsorship' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_sponsorship,
+      COALESCE(SUM(CASE WHEN type = 'upgrader_bet' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS upgrader_wager,
       COALESCE(SUM(CASE WHEN type = 'withdrawal_shipping_fee' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS shipping_fees,
       COALESCE(SUM(CASE WHEN type = 'battle_refund' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_refund,
+      COALESCE(SUM(CASE WHEN type = 'upgrader_payout' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS upgrader_payout,
       COALESCE(SUM(CASE WHEN type IN ('card_sale','reward_card_sale','card_exchange','exchange_excess_credit') THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS card_sale,
       COALESCE(SUM(CASE WHEN type IN ('deposit_bonus','promo_code_redeemed','gift_card_redeemed') THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS bonuses,
       COALESCE(SUM(CASE WHEN type = 'rakeback_claim' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rakeback,
@@ -144,8 +148,10 @@ export async function getRevenueBreakdown(
     packWager: toNumber(r.pack_wager),
     battleWager: toNumber(r.battle_wager),
     battleSponsorship: toNumber(r.battle_sponsorship),
+    upgraderWager: toNumber(r.upgrader_wager),
     shippingFees: toNumber(r.shipping_fees),
     battleRefund: toNumber(r.battle_refund),
+    upgraderPayout: toNumber(r.upgrader_payout),
     cardSale: toNumber(r.card_sale),
     bonuses: toNumber(r.bonuses),
     rakeback: toNumber(r.rakeback),
@@ -164,12 +170,14 @@ export async function getRevenueBreakdown(
     { key: "pack_wager", label: "Pack Wagers", direction: "inflow", total: sum((d) => d.packWager) },
     { key: "battle_wager", label: "Battle Wagers", direction: "inflow", total: sum((d) => d.battleWager) },
     { key: "battle_sponsorship", label: "Battle Sponsorship", direction: "inflow", total: sum((d) => d.battleSponsorship) },
+    { key: "upgrader_wager", label: "Upgrader Wagers", direction: "inflow", total: sum((d) => d.upgraderWager) },
     { key: "shipping_fees", label: "Shipping Fees", direction: "inflow", total: sum((d) => d.shippingFees) },
   ];
 
   const outflows: RevenueSource[] = [
     { key: "card_sale", label: "Card Sales / Exchanges", direction: "outflow", total: sum((d) => d.cardSale) },
     { key: "battle_refund", label: "Battle Refunds", direction: "outflow", total: sum((d) => d.battleRefund) },
+    { key: "upgrader_payout", label: "Upgrader Payouts", direction: "outflow", total: sum((d) => d.upgraderPayout) },
     { key: "bonuses", label: "Bonuses & Promos", direction: "outflow", total: sum((d) => d.bonuses) },
     { key: "rakeback", label: "Rakeback", direction: "outflow", total: sum((d) => d.rakeback) },
     { key: "affiliate", label: "Affiliate Commissions", direction: "outflow", total: sum((d) => d.affiliate) },

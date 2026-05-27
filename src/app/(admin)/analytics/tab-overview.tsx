@@ -29,11 +29,13 @@ export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
     getPnlBreakdownWindows(),
   ]);
 
-  const totalWager = data.packWager + data.battleWager;
+  const totalWager = data.packWager + data.battleWager + data.upgraderWager;
   const packPct =
     totalWager > 0 ? ((data.packWager / totalWager) * 100).toFixed(1) : "0";
   const battlePct =
     totalWager > 0 ? ((data.battleWager / totalWager) * 100).toFixed(1) : "0";
+  const upgraderPct =
+    totalWager > 0 ? ((data.upgraderWager / totalWager) * 100).toFixed(1) : "0";
   const packBorrowPct =
     data.packWager > 0
       ? ((data.packWagerBorrowed / data.packWager) * 100).toFixed(1)
@@ -103,6 +105,14 @@ export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
             {battleBorrowPct}%)
           </p>
         </StatCard>
+        <StatCard
+          title="Upgrader Wagers"
+          animatedValue={data.upgraderWager}
+          formatKind="currency"
+          subtitle={`${upgraderPct}% of total wagers`}
+          icon={TrendingUp}
+          color="cyan"
+        />
       </div>
 
       <FadeIn>

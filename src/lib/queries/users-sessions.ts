@@ -51,7 +51,7 @@ export async function getUserSessions(userId: string): Promise<UserSession[]> {
 
   const timeline: TimelineEvent[] = [];
 
-  const wagerTypes = new Set(["pack_opening", "battle_bet", "battle_sponsorship"]);
+  const wagerTypes = new Set(["pack_opening", "battle_bet", "battle_sponsorship", "upgrader_bet"]);
   const winTypes = new Set(["card_sale", "reward_card_sale", "race_prize", "rain_win", "balance_reward_claim"]);
 
   for (const t of transactions) {
