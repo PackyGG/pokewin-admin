@@ -6,12 +6,10 @@ import { withTiming } from "@/lib/observability/query-timings";
 import { MS_PER_DAY, MS_PER_HOUR } from "@/lib/utils/time";
 import {
   excludeStaffAndBlacklisted,
-  excludeStaffAndBlacklistedDirect,
   blacklistNotInClause,
 } from "./_blacklist";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
-import { calculateWindowedPnl } from "./pnl";
 import { getCreatorSessionWindowsCte } from "./creator-session-windows";
 import {
   WAGER_TYPES_SQL,
@@ -91,13 +89,20 @@ function getPeriodAggregates(
       // period selector.
       deposit_count_1h: string; deposit_count_3h: string; deposit_count_6h: string; deposit_count_12h: string;
       deposit_count_24h: string; deposit_count_3d: string; deposit_count_7d: string; deposit_count_30d: string; deposit_count_all: string;
-      // Distinct real users who placed a wager (pack_opening / battle_bet /
-      // battle_sponsorship) in the rolling last 24h. Engagement headcount —
-      // not money — so it lives next to the wager columns but is a COUNT
-      // DISTINCT. Computed off the same `base` CTE (already staff +
-      // blacklist filtered, status='completed'), so it costs no extra
-      // round-trip.
-      active_users_24h: string;
+      // 24h windowed balance-change components used by the dashboard's
+      // realizedPnl24h figure. Computed off the same `base` CTE as the
+      // rest, so they cost no extra round-trip. Replaces the four
+      // separate queries that calculateWindowedPnl() used to fire just
+      // to gather these two values.
+      // `balance_change_24h` = sum of `balance_after − balance_before`
+      // over completed ledger rows in the rolling last 24h.
+      // `manual_wd_24h` = sum of `amount` for admin_balance_adjustment
+      // rows that look like manual withdrawals (description-tagged) in
+      // the same window — pulled out so the 24h withdrawals figure can
+      // include manuals alongside the card-withdrawal value already
+      // captured in `withdrawal_24h`.
+      balance_change_24h: string;
+      manual_wd_24h: string;
     }[]
   >`
     WITH real_users AS (
@@ -111,7 +116,13 @@ function getPeriodAggregates(
       -- balance on stream, which is not a real customer bet, so the
       -- customer wager figure drops these rows. The CASE keeps the
       -- EXISTS subquery off the hot path for non-creator rows.
+      -- lt_balance_*/lt_description are aliased through the CTE so the
+      -- 24h balance-change + manual-withdrawal sums at the bottom of
+      -- this SELECT can reach them without re-joining the ledger.
       SELECT lt.user_id, lt.type, lt.amount::numeric AS amount, lt.created_at,
+             lt.balance_after AS lt_balance_after,
+             lt.balance_before AS lt_balance_before,
+             lt.description AS lt_description,
              CASE WHEN ru.role = 'creator'
                   THEN EXISTS (
                     SELECT 1 FROM session_windows sw
@@ -239,16 +250,23 @@ function getPeriodAggregates(
       COUNT(CASE WHEN type = 'deposit' AND created_at >= ${thirtyDaysAgo}     THEN 1 END)::text AS deposit_count_30d,
       COUNT(CASE WHEN type = 'deposit'                                         THEN 1 END)::text AS deposit_count_all,
 
-      -- Active players in the rolling last 24h — distinct real users who
-      -- placed a wager (pack_opening / battle_bet / battle_sponsorship)
-      -- since now - 24h. The base CTE is already JOINed to real_users
-      -- (staff + blacklist excluded) and filtered to status='completed', so
-      -- this is a free COUNT(DISTINCT) off the same scan. Engagement metric
-      -- → neutral/blue tile, no money sign.
-      COUNT(DISTINCT CASE
-        WHEN type IN ('pack_opening','battle_bet','battle_sponsorship')
+      -- 24h windowed balance-change + manual-withdrawal sums for the
+      -- realizedPnl24h calculation. The base CTE is already filtered to
+      -- staff+blacklist exclusion and status='completed', so these are
+      -- free aggregates off the same scan — and they replace the
+      -- 4-query calculateWindowedPnl(rolling24h) call we used to fire
+      -- separately. balance_after − balance_before carries the signed
+      -- delta on every completed row (deposits +, withdrawals/payouts −),
+      -- so summing it across the window gives Δbalance directly.
+      COALESCE(SUM(CASE
+        WHEN created_at >= ${twentyFourHoursAgo}
+        THEN (lt_balance_after - lt_balance_before)::numeric ELSE 0 END), 0)::text AS balance_change_24h,
+      COALESCE(SUM(CASE
+        WHEN type = 'admin_balance_adjustment'
+             AND lt_description ILIKE 'Manual withdrawal:%'
+             AND lt_balance_after < lt_balance_before
              AND created_at >= ${twentyFourHoursAgo}
-        THEN user_id END)::text AS active_users_24h
+        THEN amount ELSE 0 END), 0)::text AS manual_wd_24h
     FROM base
   `;
 }
@@ -259,7 +277,7 @@ function getPeriodAggregates(
 /**
  * Per-request memoized. The dashboard page streams several independent
  * Suspense segments (KPI strips, charts, the activity count strip) that
- * each read these stats; `cache()` ensures the heavy 17-query aggregate
+ * each read these stats; `cache()` ensures the heavy 12-query aggregate
  * runs once per render, not once per segment. Cross-request caching is
  * intentionally omitted — these are live platform numbers and the page
  * already revalidates them via the 60s AutoRefresh.
@@ -281,16 +299,14 @@ async function dashboardStatsInner() {
   // every aggregate below applies the same exclusion set. The list is
   // cached via React `cache()` in fetch.ts → repeated invocations are
   // free.
-  const [staffRelation, staffRoleDirect, excluded, sessionWindowsCte] =
-    await Promise.all([
-      excludeStaffAndBlacklisted(),
-      excludeStaffAndBlacklistedDirect(),
-      getExcludedUserIds(),
-      // Creator deal/stream session windows (backend creators API;
-      // 5-min cached, best-effort) — drives the customer-wager
-      // exclusion in getPeriodAggregates.
-      getCreatorSessionWindowsCte(),
-    ]);
+  const [staffRelation, excluded, sessionWindowsCte] = await Promise.all([
+    excludeStaffAndBlacklisted(),
+    getExcludedUserIds(),
+    // Creator deal/stream session windows (backend creators API;
+    // 5-min cached, best-effort) — drives the customer-wager
+    // exclusion in getPeriodAggregates.
+    getCreatorSessionWindowsCte(),
+  ]);
   // Inline SQL fragment for `AND id NOT IN (...)` for the raw queries
   // that already do role NOT IN ('admin','support'). Empty string when
   // nothing is blacklisted so the query stays valid.
@@ -329,53 +345,59 @@ async function dashboardStatsInner() {
   // — all rolling. Making "24h" rolling too keeps the row coherent.
   const rolling24h = new Date(now.getTime() - 1 * MS_PER_DAY);
 
-  // Perf audit (2026-05-11): the Promise.all below previously fired
-  // 25 parallel queries per dashboard refresh, several of which fed
-  // return-shape fields that the UI no longer renders. Dropped queries:
-  //   • bannedUsers / lockedUsers  → users.banned/locked were unused
-  //   • pendingWithdrawals (status IN pending/processing)  → unused
-  //   • pendingConfirmationWithdrawals (status = pending) → unused
-  //   • totalAuditEvents (adminDb count) + totalTransactions (ledger count)
-  //     → only fed totalActivityCount, which was unused
-  // Plus two structural merges:
-  //   • two `balances.aggregate` calls collapsed into one (adds
-  //     available_balance to the existing _sum block — same plan, one
-  //     round-trip instead of two)
-  //   • depositCount now reuses `pa.deposit_count_all` from the period
-  //     aggregates CTE — the count was being recomputed redundantly
-  // Net: 25 queries → 17 queries per refresh (-8) and one fewer adminDb
-  // round-trip. Compounded with the 15s→60s AutoRefresh cadence change,
-  // dashboard polling load drops by roughly 8×.
+  // Perf audit (2026-05-27): cut the dashboard's parallel query batch
+  // from 17 to 12 queries, and dropped the 4-query
+  // calculateWindowedPnl() call for the 24h P&L. Net is roughly 9
+  // fewer round-trips per dashboard refresh.
+  // Dropped queries (the fields they fed were never read by the UI):
+  //   • packStats         — stats.packs.* unused
+  //   • activityTotals    — totalPacksOpened / totalBattlesPlayed unused
+  //   • pendingWithdrawals — operations.* unused
+  //   • active_users_24h column in periodAggregates — unused
+  // Merges (same plan, fewer round-trips):
+  //   • signups24h folded into userCounts (one user-table scan via
+  //     FILTER blocks, same as today/week/month)
+  //   • ftdResult (24h) + dailyFtds → one UNION ALL on a shared
+  //     first_deposits CTE, so the lifetime DISTINCT ON scan runs once
+  //   • dailyActiveDepositors folded into the dailyChart 30-day scan
+  //     (same ledger rows, extra COUNT DISTINCT column)
+  // Replacement of calculateWindowedPnl(24h):
+  //   • The 24h components come from the existing periodAggregates
+  //     query (revenue_24h, withdrawal_24h, balance_change_24h,
+  //     manual_wd_24h) PLUS a single composite query for the 24h
+  //     inventory + voucher deltas. Saves 2 ledger scans and 2
+  //     parallel round-trips.
   const [
     userCounts,
     balanceAggregates,
-    packStats,
     dailyChart,
     dailySignups,
     periodAggregates,
-    activityTotals,
     uniqueDepositorsResult,
     realizedPnlResult,
-    realizedPnl24hResult,
     totalInventoryValue,
     packsOpened24h,
     battlesPlayed24h,
-    signups24h,
-    ftdResult,
-    pendingWithdrawalsResult,
-    dailyFtds,
-    dailyActiveDepositors,
+    ftdCombined,
+    windowed24hDelta,
   ] = await Promise.all([
-    // All four user counts (total + new today/week/month) in ONE scan of
-    // the user table via COUNT(*) FILTER, instead of four separate
-    // round-trips. STAFF_ROLES (admin + support) + blacklist excluded so
-    // the KPI strip reads only real customers — matches staffRelation.
-    db.$queryRaw<{ total: string; today: string; week: string; month: string }[]>`
+    // All four user counts (total + today/week/month) PLUS the
+    // rolling-24h signup count in ONE scan of the user table via
+    // COUNT(*) FILTER. The 24h figure used to be a separate user.count
+    // call.
+    db.$queryRaw<{
+      total: string;
+      today: string;
+      week: string;
+      month: string;
+      rolling24h: string;
+    }[]>`
       SELECT
         COUNT(*)::text AS total,
         COUNT(*) FILTER (WHERE created_at >= ${startOfDay})::text AS today,
         COUNT(*) FILTER (WHERE created_at >= ${startOfWeek})::text AS week,
-        COUNT(*) FILTER (WHERE created_at >= ${startOfMonth})::text AS month
+        COUNT(*) FILTER (WHERE created_at >= ${startOfMonth})::text AS month,
+        COUNT(*) FILTER (WHERE created_at >= ${rolling24h})::text AS rolling24h
       FROM "user"
       WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
     `,
@@ -393,24 +415,25 @@ async function dashboardStatsInner() {
         available_balance: true,
       },
     }),
-    db.packs.aggregate({
-      _sum: {
-        total_openings: true,
-        total_revenue: true,
-        total_payout: true,
-      },
-      _avg: { actual_house_edge: true },
-    }),
-    // Daily wager + deposit series for the last 30 days in ONE ledger
-    // scan (was two separate 30-day scans). packs/battles feed the stacked
-    // wager bar chart; deposits feeds the deposits line. Split apart in JS
-    // below. Pure deposits only (deposit_bonus excluded by the type list).
-    db.$queryRaw<{ date: Date; packs: string; battles: string; deposits: string }[]>`
+    // Daily wager + deposit + active-depositor series for the last 30
+    // days in ONE ledger scan. packs/battles feed the stacked wager bar
+    // chart; deposits feeds the deposits line; active_depositors feeds
+    // the Active Depositors chart. The last column used to be its own
+    // 30-day ledger scan — merging saves one round-trip + one index
+    // scan over the same rows.
+    db.$queryRaw<{
+      date: Date;
+      packs: string;
+      battles: string;
+      deposits: string;
+      active_depositors: string;
+    }[]>`
       SELECT
         DATE(created_at) as date,
         COALESCE(SUM(CASE WHEN type = 'pack_opening' THEN ABS(amount::numeric) ELSE 0 END), 0)::text as packs,
         COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') THEN ABS(amount::numeric) ELSE 0 END), 0)::text as battles,
-        COALESCE(SUM(CASE WHEN type = 'deposit' THEN amount::numeric ELSE 0 END), 0)::text as deposits
+        COALESCE(SUM(CASE WHEN type = 'deposit' THEN amount::numeric ELSE 0 END), 0)::text as deposits,
+        COUNT(DISTINCT CASE WHEN type = 'deposit' THEN user_id END)::text as active_depositors
       FROM ledger_transactions
       WHERE type IN ('pack_opening','battle_bet','battle_sponsorship','deposit') AND status = 'completed'
         AND created_at >= NOW() - INTERVAL '30 days'
@@ -427,22 +450,12 @@ async function dashboardStatsInner() {
       GROUP BY DATE(created_at)
       ORDER BY date
     `,
-    // Single batched query replaces 20 independent aggregates (revenue, withdrawal,
-    // wager, ggr × 5 periods each). Same plan + same index scan — but one round-trip.
-    // 5th arg is the 24h cutoff — pass `rolling24h` (now − 24h), not
-    // `startOfDay`. The old behaviour reset every "24h" KPI to zero at
-    // UTC midnight, which read like a partial half-day for most of the
-    // morning; rolling matches the 1h / 3h / 12h chips on the same card.
+    // Single batched query replaces 20 independent aggregates (revenue,
+    // withdrawal, wager, ggr × 5 periods each). Same plan + same index
+    // scan — but one round-trip. Also produces `balance_change_24h` and
+    // `manual_wd_24h` so the dashboard's 24h P&L no longer needs the
+    // 4-query calculateWindowedPnl() call.
     getPeriodAggregates(db, oneHourAgo, threeHoursAgo, sixHoursAgo, twelveHoursAgo, rolling24h, threeDaysAgo, sevenDaysAgo, thirtyDaysAgo, blacklistIdNotIn, sessionWindowsCte),
-    db.user_statistics.aggregate({
-      where: { user: staffRelation },
-      _sum: { opened_packs_count: true, battles_played: true },
-    }),
-    // Distinct depositor count — # of unique real users who have
-    // completed at least one deposit. Powers the dashboard's
-    // "Depositors" KPI. Raw SQL with COUNT(DISTINCT) avoids
-    // materializing per-user rows; same staff-exclusion as everything
-    // else.
     // Distinct depositors = real users whose LIFETIME completed-deposit
     // total is > 0. Read from `balances` (one row per user — thousands)
     // with the same staff+blacklist exclusion, instead of COUNT(DISTINCT
@@ -453,11 +466,6 @@ async function dashboardStatsInner() {
       where: { total_deposited: { gt: 0 }, user: staffRelation },
     }),
     getRealizedPnlSnapshot(),
-    // Rolling past-24h house P&L — windowed delta (deposits −
-    // withdrawals − balanceΔ − inventoryΔ − voucherΔ over the last 24h),
-    // distinct from the lifetime realized snapshot above. Same staff +
-    // blacklist exclusion as the rest of the dashboard.
-    calculateWindowedPnl({ since: rolling24h, excludeUserIds: excluded }),
     db.user_inventory.aggregate({
       where: {
         sold_at: null,
@@ -491,22 +499,19 @@ async function dashboardStatsInner() {
         user: staffRelation,
       },
     }),
-    // Rolling-24h signup count — real users created in the last 24h.
-    // Pairs with packsOpened24h / battlesPlayed24h for the Recent
-    // Activity stats strip. staffRoleDirect (filter directly on the
-    // user table) matches the usersToday / Week / Month counts above.
-    db.user.count({
-      where: { ...staffRoleDirect, created_at: { gte: rolling24h } },
-    }),
-    // Rolling-24h FTDs — first-time depositors. Each real user's
-    // earliest completed deposit (DISTINCT ON … ORDER BY created_at) is
-    // their "FTD"; we keep those whose first deposit landed in the last
-    // 24h and return BOTH the headcount and the summed first-deposit
-    // value (so the dashboard tile can show total + average alongside
-    // the count). A user depositing again today after an older deposit
-    // is NOT an FTD — only the very first deposit counts. Same "first
+    // FTDs combined — rolling-24h figure (count + total) + per-day
+    // counts/totals for the last 30 days, sharing a single
+    // first_deposits CTE. Previously two separate queries that each
+    // re-ran the lifetime DISTINCT ON scan. The UNION ALL keeps the
+    // rolling row distinguished by a `tag` column (NULL bucket on the
+    // 24h row; one row per day on the 'daily' rows). Same "first
     // deposit" definition the fraud scorer uses.
-    db.$queryRaw<{ count: string; total: string }[]>`
+    db.$queryRaw<{
+      tag: string;
+      bucket: Date | null;
+      count: string;
+      total: string;
+    }[]>`
       WITH first_deposits AS (
         SELECT DISTINCT ON (user_id)
           user_id, amount::numeric AS amount, created_at
@@ -518,78 +523,52 @@ async function dashboardStatsInner() {
           )
         ORDER BY user_id, created_at ASC
       )
-      SELECT
-        COUNT(*)::text AS count,
-        COALESCE(SUM(amount), 0)::text AS total
+      SELECT 'rolling24h'::text AS tag,
+             NULL::date AS bucket,
+             COUNT(*)::text AS count,
+             COALESCE(SUM(amount), 0)::text AS total
       FROM first_deposits
       WHERE created_at >= ${rolling24h}
-    `,
-    // Withdrawals queued for payout — requests still in the pipeline
-    // (status pending / processing / shipped, i.e. money committed to leave
-    // the house but not yet finalized). Mirrors the source-of-truth used by
-    // the rest of the dashboard's withdrawal figures (card_withdrawal_requests)
-    // and the same status set the avg-session query treats as "in flight".
-    // We deliberately count pending+processing+shipped (NOT completed —
-    // those already left) so the tile reads as the operator's outstanding
-    // payout queue. Real users only (staff + blacklist excluded), matching
-    // every other dashboard aggregate. House-POV: a queued payout is a
-    // house outflow → rose tile.
-    db.$queryRaw<{ count: string; total: string }[]>`
-      SELECT
-        COUNT(*)::text AS count,
-        COALESCE(SUM(total_value_usd::numeric), 0)::text AS total
-      FROM card_withdrawal_requests
-      WHERE status IN ('pending', 'processing', 'shipped')
-        AND user_id IN (
-          SELECT id FROM "user"
-          WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
-        )
-    `,
-    // Daily FTDs (first-time depositors) for the last 30 days — the daily
-    // counterpart to the FTDs (24h) tile and the Signups chart. Uses the
-    // SAME "first deposit" definition (DISTINCT ON user_id → each user's
-    // earliest completed deposit), bucketed by the day that first deposit
-    // landed. Returns per-day count + summed first-deposit value so the
-    // chart hover can show count, total, and average. Appended last so the
-    // positional destructuring above is unaffected.
-    db.$queryRaw<{ date: Date; count: string; total: string }[]>`
-      WITH first_deposits AS (
-        SELECT DISTINCT ON (user_id)
-          user_id, amount::numeric AS amount, created_at
-        FROM ledger_transactions
-        WHERE type = 'deposit' AND status = 'completed'
-          AND user_id IN (
-            SELECT id FROM "user"
-            WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
-          )
-        ORDER BY user_id, created_at ASC
-      )
-      SELECT
-        DATE(created_at) AS date,
-        COUNT(*)::text AS count,
-        COALESCE(SUM(amount), 0)::text AS total
+      UNION ALL
+      SELECT 'daily'::text AS tag,
+             DATE(created_at) AS bucket,
+             COUNT(*)::text AS count,
+             COALESCE(SUM(amount), 0)::text AS total
       FROM first_deposits
       WHERE created_at >= NOW() - INTERVAL '30 days'
       GROUP BY DATE(created_at)
-      ORDER BY date
     `,
-    // Daily Active Depositors — distinct USERS who completed at least
-    // one deposit on each day in the last 30 days. A user with three
-    // deposits the same day still counts once. Same staff + blacklist
-    // exclusion as the rest of the dashboard.
-    db.$queryRaw<{ date: Date; count: string }[]>`
-      SELECT DATE(created_at) AS date,
-             COUNT(DISTINCT user_id)::text AS count
-      FROM ledger_transactions
-      WHERE type = 'deposit'
-        AND status = 'completed'
-        AND created_at >= NOW() - INTERVAL '30 days'
-        AND user_id IN (
-          SELECT id FROM "user"
-          WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
-        )
-      GROUP BY DATE(created_at)
-      ORDER BY date
+    // 24h windowed inventory + voucher deltas. The other three
+    // components of the 24h P&L (deposits, card-withdrawals, ledger
+    // balance change, manual withdrawals) already come from
+    // periodAggregates / the realized snapshot — these are the two
+    // pieces it doesn't carry, so we fetch them in one composite query
+    // instead of as part of calculateWindowedPnl's 4-query bundle. Each
+    // subselect is a narrow indexed range scan; PG materializes the
+    // common `real_users` CTE once.
+    db.$queryRaw<{
+      inv_obtained: string;
+      inv_disposed: string;
+      vch_issued: string;
+      vch_claimed: string;
+    }[]>`
+      WITH real_users AS (
+        SELECT id FROM "user"
+        WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+      )
+      SELECT
+        COALESCE((SELECT SUM(value_at_obtained::numeric) FROM user_inventory
+          WHERE obtained_at >= ${rolling24h}
+            AND user_id IN (SELECT id FROM real_users)), 0)::text AS inv_obtained,
+        COALESCE((SELECT SUM(value_at_obtained::numeric) FROM user_inventory
+          WHERE (sold_at >= ${rolling24h} OR exchanged_at >= ${rolling24h})
+            AND user_id IN (SELECT id FROM real_users)), 0)::text AS inv_disposed,
+        COALESCE((SELECT SUM(value::numeric) FROM vouchers
+          WHERE created_at >= ${rolling24h}
+            AND user_id IN (SELECT id FROM real_users)), 0)::text AS vch_issued,
+        COALESCE((SELECT SUM(value::numeric) FROM vouchers
+          WHERE claimed_at >= ${rolling24h}
+            AND user_id IN (SELECT id FROM real_users)), 0)::text AS vch_claimed
     `,
   ]);
 
@@ -612,22 +591,60 @@ async function dashboardStatsInner() {
     ggr_24h: "0", ggr_3d: "0", ggr_7d: "0", ggr_30d: "0", ggr_all: "0",
     deposit_count_1h: "0", deposit_count_3h: "0", deposit_count_6h: "0", deposit_count_12h: "0",
     deposit_count_24h: "0", deposit_count_3d: "0", deposit_count_7d: "0", deposit_count_30d: "0", deposit_count_all: "0",
-    active_users_24h: "0",
+    balance_change_24h: "0",
+    manual_wd_24h: "0",
   };
   const num = (s: string) => parseFloat(s) || 0;
   // Lifetime deposit transaction count — reused from the period
   // aggregates CTE (column `deposit_count_all`) so we don't pay a
   // dedicated `ledger_transactions.count()` round-trip just for this.
   const depositCount = num(pa.deposit_count_all);
-  // FTD headcount + summed first-deposit value for the rolling 24h.
-  // Average is derived (total / count) — mirrors how avgDeposit is
-  // computed below, and avoids a NaN when there are zero FTDs.
-  const ftdCount = Number(ftdResult[0]?.count ?? 0);
-  const ftdTotal = Number(ftdResult[0]?.total ?? 0);
-  // Outstanding withdrawal queue (pending + processing + shipped) — count
-  // and summed USD value. Drives the "Pending Payouts" ops tile.
-  const pendingWithdrawalsCount = Number(pendingWithdrawalsResult[0]?.count ?? 0);
-  const pendingWithdrawalsValue = Number(pendingWithdrawalsResult[0]?.total ?? 0);
+
+  // FTD rows come back via UNION: one 'rolling24h' row (bucket = NULL)
+  // and many 'daily' rows (bucket = a calendar date) — see the
+  // ftdCombined query above. Splitting them out here keeps the two
+  // downstream consumers (ftds24h tile + dailyFtds chart) clean.
+  const ftdRolling = ftdCombined.find((r) => r.tag === "rolling24h");
+  const ftdDailyRows = ftdCombined
+    .filter((r) => r.tag === "daily" && r.bucket !== null)
+    .sort((a, b) => {
+      // ascending by date — `bucket` is a Date or an ISO string from
+      // node-postgres depending on driver version, so we normalise.
+      const ta = new Date(a.bucket as Date | string).getTime();
+      const tb = new Date(b.bucket as Date | string).getTime();
+      return ta - tb;
+    });
+  const ftdCount = Number(ftdRolling?.count ?? 0);
+  const ftdTotal = Number(ftdRolling?.total ?? 0);
+
+  // 24h windowed house P&L — derived from existing aggregates instead
+  // of a separate calculateWindowedPnl() call. The 4 queries that
+  // function used to fire are now covered by:
+  //   • deposits_24h        ← pa.revenue_24h
+  //   • card-withdrawal_24h ← pa.withdrawal_24h
+  //   • balance_change_24h  ← pa.balance_change_24h (new column)
+  //   • manual_wd_24h       ← pa.manual_wd_24h (new column)
+  //   • inv/voucher Δ_24h   ← windowed24hDelta (single composite query)
+  // Formula matches calculateWindowedPnl exactly:
+  //   pnl = deposits − (manualWd + cardWd) − balanceChange − Δinv − Δvch
+  const deposits24h = num(pa.revenue_24h);
+  const cardWd24h = Math.abs(num(pa.withdrawal_24h));
+  const manualWd24h = num(pa.manual_wd_24h);
+  const balanceChange24h = num(pa.balance_change_24h);
+  const wd = windowed24hDelta[0] ?? {
+    inv_obtained: "0",
+    inv_disposed: "0",
+    vch_issued: "0",
+    vch_claimed: "0",
+  };
+  const inventoryChange24h = num(wd.inv_obtained) - num(wd.inv_disposed);
+  const voucherChange24h = num(wd.vch_issued) - num(wd.vch_claimed);
+  const realizedPnl24h =
+    deposits24h -
+    (manualWd24h + cardWd24h) -
+    balanceChange24h -
+    inventoryChange24h -
+    voucherChange24h;
 
   return {
     users: {
@@ -652,8 +669,10 @@ async function dashboardStatsInner() {
     // Lifetime realized P&L from the house perspective — see getRealizedPnlSnapshot.
     // This is a single snapshot value, not a period series.
     realizedPnl: realizedPnlResult.pnl,
-    // Rolling past-24h house P&L (windowed delta — see calculateWindowedPnl).
-    realizedPnl24h: realizedPnl24hResult.pnl,
+    // Rolling past-24h house P&L (windowed delta — same formula as
+    // calculateWindowedPnl but computed inline here from pieces that
+    // periodAggregates + the windowed24hDelta query already produce).
+    realizedPnl24h,
     deposits: {
       "1h": num(pa.revenue_1h),
       "3h": num(pa.revenue_3h),
@@ -759,32 +778,14 @@ async function dashboardStatsInner() {
       ftdTotal24h: ftdTotal,
       ftdAvg24h: ftdCount > 0 ? ftdTotal / ftdCount : 0,
     },
-    packs: {
-      totalOpenings: Number(packStats._sum.total_openings ?? 0),
-      totalRevenue: toNumber(packStats._sum.total_revenue),
-      totalPayout: toNumber(packStats._sum.total_payout),
-      avgHouseEdge: toNumber(packStats._avg.actual_house_edge),
-    },
     activity: {
-      totalPacksOpened: Number(activityTotals._sum?.opened_packs_count ?? 0),
-      totalBattlesPlayed: Number(activityTotals._sum?.battles_played ?? 0),
       // Rolling 24h counts — drive the Recent Activity stats strip.
       // Real users only; admins / support / blacklisted accounts excluded.
+      // signups24h now comes from the merged userCounts query (one
+      // user-table scan instead of two).
       packsOpened24h,
       battlesPlayed24h,
-      signups24h,
-      // Distinct real users who wagered in the last 24h (engagement
-      // headcount, from the period-aggregates CTE).
-      activeUsers24h: num(pa.active_users_24h),
-    },
-    // Operational / ops-desk figures that aren't revenue but need an eye
-    // on them. Currently the outstanding withdrawal payout queue.
-    operations: {
-      // Withdrawal requests still in flight (pending / processing /
-      // shipped) — count + summed USD value. A queued payout is committed
-      // house outflow, so the tile reads House-POV rose.
-      pendingWithdrawalsCount,
-      pendingWithdrawalsValue,
+      signups24h: Number(userCounts[0]?.rolling24h ?? 0),
     },
     dailyWagers: dailyChart.map((d) => ({
       date: new Date(d.date).toISOString().split("T")[0],
@@ -800,23 +801,25 @@ async function dashboardStatsInner() {
       count: Number(d.count),
     })),
     // Daily FTDs — count + summed first-deposit value per day, plus the
-    // derived average (total / count, guarded against div-by-zero). The
-    // chart shows count; the hover surfaces total + avg.
-    dailyFtds: dailyFtds.map((d) => {
+    // derived average (total / count, guarded against div-by-zero).
+    // Sourced from the ftdCombined UNION rows tagged 'daily'.
+    dailyFtds: ftdDailyRows.map((d) => {
       const count = Number(d.count);
       const total = Number(d.total);
       return {
-        date: new Date(d.date).toISOString().split("T")[0],
+        date: new Date(d.bucket as Date | string).toISOString().split("T")[0],
         count,
         total,
         avg: count > 0 ? total / count : 0,
       };
     }),
     // Daily Active Depositors — distinct users who deposited each day
-    // in the last 30 days. Drives the matching chart in the Trends row.
-    dailyActiveDepositors: dailyActiveDepositors.map((d) => ({
+    // in the last 30 days. Sourced from the dailyChart 30-day ledger
+    // scan (active_depositors column), which used to be a separate
+    // 30-day scan.
+    dailyActiveDepositors: dailyChart.map((d) => ({
       date: new Date(d.date).toISOString().split("T")[0],
-      count: Number(d.count),
+      count: Number(d.active_depositors),
     })),
     // Server-side compute metadata. `queryMs` is the wall-clock time spent
     // in this function (exclusion lists + the parallel query batch + the
