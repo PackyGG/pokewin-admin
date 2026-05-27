@@ -418,6 +418,57 @@ export async function getUserTransactions(
     }
   }
 
+  // Upgrader winnings — match each upgrader_bet row on this page to the
+  // upgrader_payout row that shares its game_session_id. The backend
+  // emits a payout row only on a winning upgrade, so the presence of a
+  // matching upgrader_payout = win, absence = loss. Payout value uses
+  // whichever field the backend populates (amount or balance delta).
+  const upgraderBetSessionIds = transactions
+    .filter((t) => t.type === "upgrader_bet" && t.game_session_id)
+    .map((t) => t.game_session_id as string);
+  const upgraderWinningsByGsid = new Map<string, number>();
+  if (upgraderBetSessionIds.length > 0) {
+    try {
+      const payouts = await db.ledger_transactions.findMany({
+        where: {
+          user_id: userId,
+          type: "upgrader_payout",
+          status: "completed",
+          game_session_id: { in: upgraderBetSessionIds },
+        },
+        select: {
+          game_session_id: true,
+          amount: true,
+          balance_before: true,
+          balance_after: true,
+        },
+      });
+      for (const p of payouts) {
+        if (!p.game_session_id) continue;
+        // Take the larger of |amount| and (balance_after - balance_before)
+        // so we pick up whichever field the backend wrote the won value
+        // into. Same fallback strategy the dashboard Upgrader Stats
+        // section uses (dashboard-upgrader.ts).
+        const amt = Math.abs(toNumber(p.amount));
+        const delta =
+          toNumber(p.balance_after) - toNumber(p.balance_before);
+        const won = Math.max(amt, delta, 0);
+        // Aggregate in case a single upgrader_bet ever maps to multiple
+        // payout rows (defensive — backend emits one, but the sum is
+        // safer than overwriting).
+        upgraderWinningsByGsid.set(
+          p.game_session_id,
+          (upgraderWinningsByGsid.get(p.game_session_id) ?? 0) + won,
+        );
+      }
+    } catch (e) {
+      console.error(
+        "[getUserTransactions] upgrader payout lookup failed (non-fatal):",
+        e,
+      );
+    }
+  }
+
   return {
     data: transactions.map((t) => {
       const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
@@ -496,6 +547,26 @@ export async function getUserTransactions(
               ? battleWinningsByGsid.get(t.game_session_id) ?? 0
               : 0
             : 0;
+        }
+      }
+
+      // Upgrader outcome — match this upgrader_bet to its
+      // upgrader_payout by game_session_id. Payout row present = win
+      // (with the payout amount as the user's take); absent = loss
+      // (won = 0). upgraderWinningsByGsid was populated above from a
+      // dedicated upgrader_payout fetch.
+      let upgraderResult: "win" | "lose" | null = null;
+      let upgraderWinnings: number | null = null;
+      if (t.type === "upgrader_bet") {
+        const won = t.game_session_id
+          ? upgraderWinningsByGsid.get(t.game_session_id)
+          : undefined;
+        if (won !== undefined && won > 0) {
+          upgraderResult = "win";
+          upgraderWinnings = won;
+        } else {
+          upgraderResult = "lose";
+          upgraderWinnings = 0;
         }
       }
 
@@ -579,6 +650,8 @@ export async function getUserTransactions(
         sponsorshipPercentage,
         battleId,
         battleWinnings,
+        upgraderResult,
+        upgraderWinnings,
       };
     }),
     total,

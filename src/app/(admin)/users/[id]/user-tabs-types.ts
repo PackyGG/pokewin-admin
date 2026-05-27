@@ -284,6 +284,21 @@ export type Transaction = {
    *            label instead of showing a fabricated number)
    */
   battleWinnings: number | null;
+  /**
+   * Upgrader-only outcome derived from the presence of a matching
+   * upgrader_payout row sharing this row's game_session_id.
+   *   - "win"  → a payout row exists (upgraderWinnings = its value)
+   *   - "lose" → no payout row (upgraderWinnings = 0)
+   *   - null   → not an upgrader_bet
+   */
+  upgraderResult: "win" | "lose" | null;
+  /**
+   * Realized take on a winning upgrader play. 0 on a loss; >0 on a
+   * win; null on non-upgrader rows. Backend-side fallback picks the
+   * larger of ABS(amount) and (balance_after − balance_before) on the
+   * matching upgrader_payout row so we catch both shipping shapes.
+   */
+  upgraderWinnings: number | null;
 };
 
 export type PaginatedTransactions = {
