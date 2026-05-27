@@ -73,7 +73,13 @@ export const ModelName = {
   admin_shifts: 'admin_shifts',
   admin_shift_assignments: 'admin_shift_assignments',
   salary_employees: 'salary_employees',
-  salary_payouts: 'salary_payouts'
+  salary_payouts: 'salary_payouts',
+  salary_payments: 'salary_payments',
+  employee_workspaces: 'employee_workspaces',
+  employee_board_placements: 'employee_board_placements',
+  employee_managers: 'employee_managers',
+  employee_manager_workspaces: 'employee_manager_workspaces',
+  admin_leaderboard_sponsorship: 'admin_leaderboard_sponsorship'
 } as const
 
 export type ModelName = (typeof ModelName)[keyof typeof ModelName]
@@ -419,6 +425,8 @@ export const Salary_employeesScalarFieldEnum = {
   salary_usdt: 'salary_usdt',
   max_per_payout: 'max_per_payout',
   active: 'active',
+  pay_day_of_week: 'pay_day_of_week',
+  pay_day_of_month: 'pay_day_of_month',
   last_paid_at: 'last_paid_at',
   notes: 'notes',
   created_at: 'created_at',
@@ -445,6 +453,75 @@ export const Salary_payoutsScalarFieldEnum = {
 } as const
 
 export type Salary_payoutsScalarFieldEnum = (typeof Salary_payoutsScalarFieldEnum)[keyof typeof Salary_payoutsScalarFieldEnum]
+
+
+export const Salary_paymentsScalarFieldEnum = {
+  id: 'id',
+  employee_id: 'employee_id',
+  payment_link: 'payment_link',
+  paid_at: 'paid_at',
+  created_by_id: 'created_by_id',
+  created_at: 'created_at'
+} as const
+
+export type Salary_paymentsScalarFieldEnum = (typeof Salary_paymentsScalarFieldEnum)[keyof typeof Salary_paymentsScalarFieldEnum]
+
+
+export const Employee_workspacesScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  position: 'position',
+  created_at: 'created_at',
+  updated_at: 'updated_at'
+} as const
+
+export type Employee_workspacesScalarFieldEnum = (typeof Employee_workspacesScalarFieldEnum)[keyof typeof Employee_workspacesScalarFieldEnum]
+
+
+export const Employee_board_placementsScalarFieldEnum = {
+  id: 'id',
+  employee_id: 'employee_id',
+  workspace_id: 'workspace_id',
+  roles: 'roles',
+  position: 'position',
+  created_at: 'created_at',
+  updated_at: 'updated_at'
+} as const
+
+export type Employee_board_placementsScalarFieldEnum = (typeof Employee_board_placementsScalarFieldEnum)[keyof typeof Employee_board_placementsScalarFieldEnum]
+
+
+export const Employee_managersScalarFieldEnum = {
+  id: 'id',
+  employee_id: 'employee_id',
+  position: 'position',
+  created_at: 'created_at',
+  updated_at: 'updated_at'
+} as const
+
+export type Employee_managersScalarFieldEnum = (typeof Employee_managersScalarFieldEnum)[keyof typeof Employee_managersScalarFieldEnum]
+
+
+export const Employee_manager_workspacesScalarFieldEnum = {
+  id: 'id',
+  manager_id: 'manager_id',
+  workspace_id: 'workspace_id',
+  created_at: 'created_at'
+} as const
+
+export type Employee_manager_workspacesScalarFieldEnum = (typeof Employee_manager_workspacesScalarFieldEnum)[keyof typeof Employee_manager_workspacesScalarFieldEnum]
+
+
+export const Admin_leaderboard_sponsorshipScalarFieldEnum = {
+  id: 'id',
+  leaderboard_id: 'leaderboard_id',
+  sponsored_percentage: 'sponsored_percentage',
+  set_by_admin_id: 'set_by_admin_id',
+  created_at: 'created_at',
+  updated_at: 'updated_at'
+} as const
+
+export type Admin_leaderboard_sponsorshipScalarFieldEnum = (typeof Admin_leaderboard_sponsorshipScalarFieldEnum)[keyof typeof Admin_leaderboard_sponsorshipScalarFieldEnum]
 
 
 export const SortOrder = {

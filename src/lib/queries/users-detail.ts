@@ -1,7 +1,15 @@
 import { getDb } from "@/lib/db";
 import { affiliate_usage_type } from "@/generated/prisma/enums";
 import { toNumber } from "@/lib/utils/decimal";
+import { filterLedgerTxTypes } from "./_ledger-tx-types";
 import { calculateUserPnl } from "./pnl";
+
+const USER_WAGER_BREAKDOWN_TYPES = filterLedgerTxTypes([
+  "pack_opening",
+  "battle_bet",
+  "battle_sponsorship",
+  "upgrader_bet",
+]);
 
 type Db = Awaited<ReturnType<typeof getDb>>;
 
@@ -183,7 +191,7 @@ export async function getUserDetail(id: string) {
       by: ["type"],
       where: {
         user_id: id,
-        type: { in: ["pack_opening", "battle_bet", "battle_sponsorship", "upgrader_bet"] },
+        type: { in: USER_WAGER_BREAKDOWN_TYPES },
         status: "completed",
       },
       _sum: { amount: true },

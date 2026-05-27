@@ -156,6 +156,30 @@ function getPeriodAggregates(
       FROM card_withdrawal_requests
       WHERE status IN ('completed', 'shipped')
         AND user_id IN (SELECT id FROM real_users)
+    ),
+    -- Upgrader payouts never land in ledger_transactions — a win is
+    -- handed out as an inventory card / voucher, so no upgrader_payout
+    -- row is ever written (see backend upgrader.service.ts —
+    -- payout_ledger_tx_id stays null). The ledger-based GGR below
+    -- therefore counts the upgrader_bet wager with NO offsetting payout,
+    -- which overstates the house margin by the entire upgrader payout.
+    -- upgrader_games carries the real won value (won_amount = gross
+    -- credited on a win, 0 on a loss), so we aggregate it per window
+    -- here and subtract it from each GGR figure. Same real_users
+    -- exclusion as every other dashboard aggregate.
+    upgrader_pay AS (
+      SELECT
+        COALESCE(SUM(CASE WHEN created_at >= ${oneHourAgo}        THEN won_amount::numeric ELSE 0 END), 0) AS won_1h,
+        COALESCE(SUM(CASE WHEN created_at >= ${threeHoursAgo}     THEN won_amount::numeric ELSE 0 END), 0) AS won_3h,
+        COALESCE(SUM(CASE WHEN created_at >= ${sixHoursAgo}       THEN won_amount::numeric ELSE 0 END), 0) AS won_6h,
+        COALESCE(SUM(CASE WHEN created_at >= ${twelveHoursAgo}    THEN won_amount::numeric ELSE 0 END), 0) AS won_12h,
+        COALESCE(SUM(CASE WHEN created_at >= ${twentyFourHoursAgo} THEN won_amount::numeric ELSE 0 END), 0) AS won_24h,
+        COALESCE(SUM(CASE WHEN created_at >= ${threeDaysAgo}      THEN won_amount::numeric ELSE 0 END), 0) AS won_3d,
+        COALESCE(SUM(CASE WHEN created_at >= ${sevenDaysAgo}      THEN won_amount::numeric ELSE 0 END), 0) AS won_7d,
+        COALESCE(SUM(CASE WHEN created_at >= ${thirtyDaysAgo}     THEN won_amount::numeric ELSE 0 END), 0) AS won_30d,
+        COALESCE(SUM(won_amount::numeric), 0) AS won_all
+      FROM upgrader_games
+      WHERE user_id IN (SELECT id FROM real_users)
     )
     SELECT
       COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${oneHourAgo}     THEN amount ELSE 0 END), 0)::text AS revenue_1h,
@@ -246,38 +270,47 @@ function getPeriodAggregates(
       (
         COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${oneHourAgo} THEN ABS(amount) ELSE 0 END), 0)
         - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${oneHourAgo} THEN ABS(amount) ELSE 0 END), 0)
+        - (SELECT won_1h FROM upgrader_pay)
       )::text AS ggr_1h,
       (
         COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${threeHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
         - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${threeHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
+        - (SELECT won_3h FROM upgrader_pay)
       )::text AS ggr_3h,
       (
         COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${sixHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
         - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${sixHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
+        - (SELECT won_6h FROM upgrader_pay)
       )::text AS ggr_6h,
       (
         COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${twelveHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
         - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${twelveHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
+        - (SELECT won_12h FROM upgrader_pay)
       )::text AS ggr_12h,
       (
         COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${twentyFourHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
         - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${twentyFourHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
+        - (SELECT won_24h FROM upgrader_pay)
       )::text AS ggr_24h,
       (
         COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${threeDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
         - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${threeDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
+        - (SELECT won_3d FROM upgrader_pay)
       )::text AS ggr_3d,
       (
         COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${sevenDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
         - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${sevenDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
+        - (SELECT won_7d FROM upgrader_pay)
       )::text AS ggr_7d,
       (
         COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${thirtyDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
         - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${thirtyDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
+        - (SELECT won_30d FROM upgrader_pay)
       )::text AS ggr_30d,
       (
         COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} THEN ABS(amount) ELSE 0 END), 0)
         - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} THEN ABS(amount) ELSE 0 END), 0)
+        - (SELECT won_all FROM upgrader_pay)
       )::text AS ggr_all,
 
       -- Deposit COUNT per period. Same window definitions as the

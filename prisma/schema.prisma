@@ -1202,6 +1202,7 @@ enum game_session_result {
 enum game_type {
   pack
   battle
+  upgrader
 }
 
 enum gift_card_region {
@@ -1302,6 +1303,7 @@ enum source_type {
   battle
   exchange
   raffle
+  upgrader
 }
 
 enum user_role {
@@ -1316,6 +1318,8 @@ enum voucher_origin {
   battle_excess_to_voucher
   pack_borrow_to_voucher
   creator_fill_conversion
+  creator_multiplier_payout
+  upgrader_excess_to_voucher
 }
 
 enum pack_tag {
