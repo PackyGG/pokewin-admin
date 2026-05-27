@@ -468,6 +468,13 @@ export const CategoryTransactionsTable = React.memo(
                           </>
                         );
                       }
+                      // Gaming is pack/battle only. Card sales /
+                      // exchanges live in the Financial tab now, so the
+                      // fallback below only has to handle pack_opening
+                      // (cardsValue present) and the few remaining
+                      // gaming types where cardsValue is absent
+                      // (voucher_redeemed — kept here since it can
+                      // unlock the borrow allowance in a battle).
                       const cv = t.cardsValue;
                       return (
                         <>

@@ -26,21 +26,38 @@ export default async function UserDetailPage({
   const session = await requirePageAccess("/users");
   const { id } = await params;
 
-  // GAMING covers the full gameplay cycle the user can see in one place:
-  //   • pack / battle entry (pack_opening, battle_bet, battle_sponsorship)
-  //   • payouts on a battle win (battle_refund)
-  //   • cashing out won cards (card_sale, reward_card_sale, card_exchange)
-  //   • voucher conversions of game-loop change (voucher_redeemed,
-  //     voucher_exchange, exchange_excess_*, battle_excess_to_voucher)
-  // The sale / exchange rows used to be filtered out of BOTH tabs, so an
-  // admin investigating a user saw battle WINS in Gaming and the final
-  // card_withdrawal in Deposits & Withdrawals but no link between them.
+  // GAMING is pack/battle play only — entry, payout, refund. Sale /
+  // exchange rows live in FINANCIAL_TYPES below so card sales appear
+  // alongside deposits and withdrawals as cash-movement events; the
+  // gaming tab stays focused on gameplay.
   const GAMING_TYPES = [
     "pack_opening",
     "battle_bet",
     "battle_sponsorship",
     "battle_refund",
     "voucher_redeemed",
+  ];
+  // FINANCIAL covers every money-movement event:
+  //   • deposits + deposit bonuses
+  //   • cash withdrawals (card_withdrawal + manual via admin_balance_adjustment)
+  //   • card / voucher sales + exchanges that convert held value to cash
+  //   • rakeback / affiliate / rain / race / gift / promo payouts
+  // Card sales / exchanges used to be filtered out of both tabs, so the
+  // win → cash chain was invisible. Folded here keeps Gaming about
+  // gameplay while still making the cash conversions traceable.
+  const FINANCIAL_TYPES = [
+    "deposit",
+    "deposit_bonus",
+    "admin_balance_adjustment",
+    "card_withdrawal",
+    "withdrawal_shipping_fee",
+    "rakeback_claim",
+    "balance_reward_claim",
+    "affiliate_claim",
+    "promo_code_redeemed",
+    "gift_card_redeemed",
+    "rain_win",
+    "race_prize",
     "card_sale",
     "reward_card_sale",
     "card_exchange",
@@ -49,7 +66,6 @@ export default async function UserDetailPage({
     "exchange_excess_to_voucher",
     "battle_excess_to_voucher",
   ];
-  const FINANCIAL_TYPES = ["deposit", "deposit_bonus", "admin_balance_adjustment", "card_withdrawal", "withdrawal_shipping_fee", "rakeback_claim", "balance_reward_claim", "affiliate_claim", "promo_code_redeemed", "gift_card_redeemed", "rain_win", "race_prize"];
 
   // Resolve permissions in parallel with the data queries — admins can
   // skip the permissions fetch entirely (they get all capabilities by

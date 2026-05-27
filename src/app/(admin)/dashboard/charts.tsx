@@ -19,6 +19,10 @@ const wagerConfig = {
     label: "Battles",
     color: "var(--color-chart-4)",
   },
+  upgrader: {
+    label: "Upgrader",
+    color: "var(--color-chart-5)",
+  },
 } satisfies ChartConfig;
 
 const depositsConfig = {
@@ -84,31 +88,30 @@ function WagerTooltipContent({
   label?: string;
 }) {
   if (!active || !payload || payload.length === 0) return null;
-  const packs = Number(
-    payload.find((p) => p.dataKey === "packs")?.value ?? 0,
+  const labelByKey: Record<string, string> = {
+    packs: "Packs",
+    battles: "Battles",
+    upgrader: "Upgrader",
+  };
+  const total = payload.reduce(
+    (sum, item) => sum + Number(item?.value ?? 0),
+    0,
   );
-  const battles = Number(
-    payload.find((p) => p.dataKey === "battles")?.value ?? 0,
-  );
-  const total = packs + battles;
   return (
     <div className="grid min-w-32 items-start gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
       {label && <div className="font-medium">{label}</div>}
       <div className="grid gap-1.5">
         {payload.map((item) => {
-          const isPacks = item.dataKey === "packs";
+          const key = String(item.dataKey ?? "");
           return (
-            <div
-              key={String(item.dataKey)}
-              className="flex items-center gap-2"
-            >
+            <div key={key} className="flex items-center gap-2">
               <div
                 className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
                 style={{ background: item.color }}
               />
               <div className="flex flex-1 items-center justify-between leading-none">
                 <span className="text-muted-foreground">
-                  {isPacks ? "Packs" : "Battles"}
+                  {labelByKey[key] ?? key}
                 </span>
                 <span className="font-mono font-medium tabular-nums text-foreground">
                   {formatCurrency(Number(item.value ?? 0))}
@@ -135,7 +138,7 @@ function WagerTooltipContent({
 export function WagerChart({
   data,
 }: {
-  data: { date: string; packs: number; battles: number }[];
+  data: { date: string; packs: number; battles: number; upgrader: number }[];
 }) {
   return (
     <Card>
@@ -163,6 +166,9 @@ export function WagerChart({
               tickFormatter={formatCompactUsd}
             />
             <ChartTooltip content={<WagerTooltipContent />} />
+            {/* Stacked bars: Packs at the bottom, Battles in the
+                middle, Upgrader on top. Only the top segment gets the
+                rounded corner so the stack reads as one bar. */}
             <Bar
               dataKey="packs"
               stackId="wager"
@@ -175,6 +181,14 @@ export function WagerChart({
               dataKey="battles"
               stackId="wager"
               fill="var(--color-battles)"
+              radius={[0, 0, 0, 0]}
+              animationDuration={700}
+              animationEasing="ease-out"
+            />
+            <Bar
+              dataKey="upgrader"
+              stackId="wager"
+              fill="var(--color-upgrader)"
               radius={[4, 4, 0, 0]}
               animationDuration={700}
               animationEasing="ease-out"
@@ -216,13 +230,7 @@ export function DepositsChart({
               width={70}
               tickFormatter={formatCompactUsd}
             />
-            <ChartTooltip
-              content={
-                <ChartTooltipContent
-                  formatter={(value) => `$${Number(value).toFixed(2)}`}
-                />
-              }
-            />
+            <ChartTooltip content={<DepositsTooltipContent />} />
             <Bar
               dataKey="amount"
               fill="var(--color-amount)"
@@ -234,6 +242,47 @@ export function DepositsChart({
         </ChartContainer>
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Tooltip for the Deposits chart — same visual weight as the Wagers
+ * tooltip (bold value, semibold figure, color chip), instead of the
+ * default ChartTooltipContent which rendered the formatter string
+ * unstyled and read as light grey text.
+ */
+function DepositsTooltipContent({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: Array<{
+    dataKey?: string | number;
+    value?: number | string;
+    color?: string;
+  }>;
+  label?: string;
+}) {
+  if (!active || !payload || payload.length === 0) return null;
+  const item = payload[0];
+  const amount = Number(item?.value ?? 0);
+  return (
+    <div className="grid min-w-32 items-start gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
+      {label && <div className="font-medium">{label}</div>}
+      <div className="flex items-center gap-2">
+        <div
+          className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
+          style={{ background: item?.color }}
+        />
+        <div className="flex flex-1 items-center justify-between leading-none">
+          <span className="text-muted-foreground">Deposits</span>
+          <span className="font-mono font-semibold tabular-nums text-foreground">
+            {formatCurrency(amount)}
+          </span>
+        </div>
+      </div>
+    </div>
   );
 }
 

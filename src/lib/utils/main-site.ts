@@ -11,7 +11,13 @@ export function mainSiteBase(): string {
   return (raw && raw.length > 0 ? raw : "https://packy.gg").replace(/\/+$/, "");
 }
 
-/** Live battle page on the public site: `<base>/games/battles/<id>`. */
+/**
+ * Live battle page on the public site: `<base>/battle/<id>` (singular,
+ * no `/games/` prefix). The previous helper emitted
+ * `/games/battles/<id>` which 404'd on packy.gg — the "Watch" button on
+ * the user-detail Gaming tab and the transaction-detail modal both go
+ * through this helper, so any drift here breaks both surfaces.
+ */
 export function battleUrl(battleId: string): string {
-  return `${mainSiteBase()}/games/battles/${battleId}`;
+  return `${mainSiteBase()}/battle/${battleId}`;
 }
