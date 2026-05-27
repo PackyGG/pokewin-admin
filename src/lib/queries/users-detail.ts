@@ -183,7 +183,7 @@ export async function getUserDetail(id: string) {
       by: ["type"],
       where: {
         user_id: id,
-        type: { in: ["pack_opening", "battle_bet", "battle_sponsorship"] },
+        type: { in: ["pack_opening", "battle_bet", "battle_sponsorship", "upgrader_bet"] },
         status: "completed",
       },
       _sum: { amount: true },

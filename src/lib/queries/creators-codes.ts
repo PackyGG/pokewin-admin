@@ -756,7 +756,7 @@ export async function getRecentWagersOnCode(
        FROM ledger_transactions lt
        JOIN code_users cu ON cu.referred_user_id = lt.user_id
        LEFT JOIN "user" u ON u.id = lt.user_id
-       WHERE lt.type IN ('pack_opening','battle_bet','battle_sponsorship')
+       WHERE lt.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
          AND lt.status = 'completed'
        ORDER BY lt.created_at DESC
        LIMIT ${safeLimit}`,

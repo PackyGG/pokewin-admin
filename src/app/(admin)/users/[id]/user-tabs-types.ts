@@ -336,6 +336,7 @@ export type BalanceHistoryPoint = { date: string; balance: number };
 export type PnlBreakdown = {
   packRevenue: number;
   battleRevenue: number;
+  upgraderRevenue: number;
   cardSalesPayouts: number;
   gamblingPnlRealized: number;
   unrealizedLiability: number;
@@ -447,14 +448,16 @@ export type GameSessionDetails = {
   createdAt: string;
 };
 
-// Gaming = pack / battle play only. Card sales + exchanges live in
-// FINANCIAL_TX_TYPES so the user-detail tabs stay coherent: Gaming for
-// gameplay, Deposits & Withdrawals for cash movement.
+// Gaming = pack / battle / upgrader play. Card sales + exchanges live
+// in FINANCIAL_TX_TYPES so the user-detail tabs stay coherent: Gaming
+// for gameplay, Deposits & Withdrawals for cash movement.
 export const GAMING_TX_TYPES = [
   "pack_opening",
   "battle_bet",
   "battle_sponsorship",
   "battle_refund",
+  "upgrader_bet",
+  "upgrader_payout",
   "voucher_redeemed",
 ] as const;
 export const FINANCIAL_TX_TYPES = [
