@@ -715,3 +715,145 @@ export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
     };
   });
 }
+
+// ─── Pack & Battle Pure P&L (24h / 3d / 7d) ──────────────────────────
+//
+// Raw gameplay outcome for packs and battles ONLY. The "outcome" is
+// what the house netted from gameplay alone:
+//
+//   pure_pnl = wager_in − cards_out
+//
+// where wager_in is the ledger amount on pack_opening / battle_bet /
+// battle_sponsorship rows in the window, and cards_out is the value
+// of inventory items the user obtained from those plays (source_type
+// IN ('pack','battle') with obtained_at in the same window). Card
+// values are taken at obtained_at — what they were worth the moment
+// they entered the user's inventory.
+//
+// EXCLUDED on purpose: upgrader, bonuses, rakeback, affiliate
+// commissions, rain prizes, race prizes, creator tips, gift / promo
+// redemptions, voucher redemptions, balance rewards. This is the
+// gambling outcome alone — every reward / discount surface is
+// elsewhere.
+
+export type PackBattlePnlRow = {
+  // Wager + payout per game type. Wager comes from the ledger,
+  // payouts from user_inventory (cards given to the user). pnl =
+  // wager − payouts, positive = house gained.
+  packWager: number;
+  packPayouts: number;
+  packPnl: number;
+  battleWager: number;
+  battlePayouts: number;
+  battlePnl: number;
+  // Combined totals for the row totals at the top of the panel.
+  totalWager: number;
+  totalPayouts: number;
+  totalPnl: number;
+};
+
+export type PackBattlePnlWindows = {
+  h24: PackBattlePnlRow;
+  d3: PackBattlePnlRow;
+  d7: PackBattlePnlRow;
+};
+
+export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
+  return withTiming("pnl.packBattlePure", async () => {
+    const db = await getDb();
+    const now = Date.now();
+    const h24 = new Date(now - 24 * 60 * 60 * 1000);
+    const d3 = new Date(now - 3 * 24 * 60 * 60 * 1000);
+    const d7 = new Date(now - 7 * 24 * 60 * 60 * 1000);
+
+    const excluded = await getExcludedUserIds();
+    const blacklist = blacklistNotInClause("u.id", excluded);
+    const scope = `user_id IN (SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist})`;
+
+    type LedgerRow = {
+      pack_wager_h24: string; pack_wager_d3: string; pack_wager_d7: string;
+      battle_wager_h24: string; battle_wager_d3: string; battle_wager_d7: string;
+    };
+    type InvRow = {
+      pack_payout_h24: string; pack_payout_d3: string; pack_payout_d7: string;
+      battle_payout_h24: string; battle_payout_d3: string; battle_payout_d7: string;
+    };
+
+    // Two parallel queries — same staff + blacklist filter on both.
+    // Ledger query reads the wager side (pack_opening + battle_bet +
+    // battle_sponsorship). Inventory query reads the payout side
+    // (cards the user got from a pack / battle session within the
+    // window). Both grouped by the three windows via CASE.
+    const [ledger, inv] = await Promise.all([
+      db.$queryRawUnsafe<LedgerRow[]>(
+        `SELECT
+           COALESCE(SUM(CASE WHEN type = 'pack_opening' AND created_at >= $1 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager_h24,
+           COALESCE(SUM(CASE WHEN type = 'pack_opening' AND created_at >= $2 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager_d3,
+           COALESCE(SUM(CASE WHEN type = 'pack_opening' AND created_at >= $3 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager_d7,
+           COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND created_at >= $1 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_h24,
+           COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND created_at >= $2 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_d3,
+           COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND created_at >= $3 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_d7
+         FROM ledger_transactions
+         WHERE status = 'completed'
+           AND type IN ('pack_opening','battle_bet','battle_sponsorship')
+           AND created_at >= $3
+           AND ${scope}`,
+        h24, d3, d7,
+      ),
+      db.$queryRawUnsafe<InvRow[]>(
+        `SELECT
+           COALESCE(SUM(CASE WHEN source_type = 'pack' AND obtained_at >= $1 THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS pack_payout_h24,
+           COALESCE(SUM(CASE WHEN source_type = 'pack' AND obtained_at >= $2 THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS pack_payout_d3,
+           COALESCE(SUM(CASE WHEN source_type = 'pack' AND obtained_at >= $3 THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS pack_payout_d7,
+           COALESCE(SUM(CASE WHEN source_type = 'battle' AND obtained_at >= $1 THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS battle_payout_h24,
+           COALESCE(SUM(CASE WHEN source_type = 'battle' AND obtained_at >= $2 THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS battle_payout_d3,
+           COALESCE(SUM(CASE WHEN source_type = 'battle' AND obtained_at >= $3 THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS battle_payout_d7
+         FROM user_inventory
+         WHERE source_type IN ('pack','battle')
+           AND obtained_at >= $3
+           AND ${scope}`,
+        h24, d3, d7,
+      ),
+    ]);
+
+    const l = ledger[0] ?? {
+      pack_wager_h24: "0", pack_wager_d3: "0", pack_wager_d7: "0",
+      battle_wager_h24: "0", battle_wager_d3: "0", battle_wager_d7: "0",
+    };
+    const i = inv[0] ?? {
+      pack_payout_h24: "0", pack_payout_d3: "0", pack_payout_d7: "0",
+      battle_payout_h24: "0", battle_payout_d3: "0", battle_payout_d7: "0",
+    };
+
+    const buildRow = (
+      packWagerKey: keyof LedgerRow,
+      battleWagerKey: keyof LedgerRow,
+      packPayoutKey: keyof InvRow,
+      battlePayoutKey: keyof InvRow,
+    ): PackBattlePnlRow => {
+      const packWager = toNumber(l[packWagerKey]);
+      const battleWager = toNumber(l[battleWagerKey]);
+      const packPayouts = toNumber(i[packPayoutKey]);
+      const battlePayouts = toNumber(i[battlePayoutKey]);
+      const packPnl = packWager - packPayouts;
+      const battlePnl = battleWager - battlePayouts;
+      return {
+        packWager,
+        packPayouts,
+        packPnl,
+        battleWager,
+        battlePayouts,
+        battlePnl,
+        totalWager: packWager + battleWager,
+        totalPayouts: packPayouts + battlePayouts,
+        totalPnl: packPnl + battlePnl,
+      };
+    };
+
+    return {
+      h24: buildRow("pack_wager_h24", "battle_wager_h24", "pack_payout_h24", "battle_payout_h24"),
+      d3:  buildRow("pack_wager_d3",  "battle_wager_d3",  "pack_payout_d3",  "battle_payout_d3"),
+      d7:  buildRow("pack_wager_d7",  "battle_wager_d7",  "pack_payout_d7",  "battle_payout_d7"),
+    };
+  });
+}

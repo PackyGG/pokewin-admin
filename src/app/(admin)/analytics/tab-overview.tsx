@@ -7,13 +7,17 @@ import {
   Swords,
 } from "lucide-react";
 import { getAnalyticsData } from "@/lib/queries/analytics";
-import { getPnlBreakdownWindows } from "@/lib/queries/pnl";
+import {
+  getPnlBreakdownWindows,
+  getPackBattlePurePnl,
+} from "@/lib/queries/pnl";
 import { formatCurrency } from "@/lib/utils/format";
 import { StatCard } from "../dashboard/stat-card";
 import { AnalyticsCharts } from "./charts";
 import { FadeIn } from "@/components/fade-in";
 import { PnlBreakdown } from "@/components/pnl-breakdown";
 import { PeriodPnlBreakdown } from "@/components/period-pnl-breakdown";
+import { PackBattlePurePnl } from "@/components/pack-battle-pure-pnl";
 import type { AnalyticsPeriod } from "./types";
 
 /**
@@ -22,11 +26,13 @@ import type { AnalyticsPeriod } from "./types";
  * "Pack & Battle" tab so the overview stays focused on high-level KPIs.
  */
 export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
-  // Fetch the period KPIs and the windowed P&L breakdown in parallel —
-  // they're independent so they share the same render barrier.
-  const [data, pnlWindows] = await Promise.all([
+  // Fetch the period KPIs, the windowed P&L breakdown, and the
+  // pack/battle pure P&L in parallel — they're independent so they
+  // share the same render barrier.
+  const [data, pnlWindows, packBattlePure] = await Promise.all([
     getAnalyticsData(period),
     getPnlBreakdownWindows(),
+    getPackBattlePurePnl(),
   ]);
 
   const totalWager = data.packWager + data.battleWager + data.upgraderWager;
@@ -124,6 +130,15 @@ export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
 
       <FadeIn>
         <PeriodPnlBreakdown data={pnlWindows} />
+      </FadeIn>
+
+      {/* Pack & Battle PURE P&L — raw outcome only, no rewards / no
+          upgrader. Separate from PeriodPnlBreakdown which is the full
+          house balance-sheet view; this panel isolates gambling
+          margin so admins can spot pack/battle edge drift without
+          rewards muddying the signal. */}
+      <FadeIn>
+        <PackBattlePurePnl data={packBattlePure} />
       </FadeIn>
 
       <FadeIn>
