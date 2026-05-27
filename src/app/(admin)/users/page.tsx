@@ -16,6 +16,10 @@ import { FadeIn } from "@/components/fade-in";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { ExportUsersButton } from "./export-dialog";
 import { SortByNetHoldingsButton } from "./sort-net-holdings-button";
+import {
+  SortByPnlLosersButton,
+  SortByPnlWinnersButton,
+} from "./sort-pnl-buttons";
 
 export const metadata = { title: "Users" };
 
@@ -122,6 +126,8 @@ export default async function UsersPage({
                 },
               ]}
             >
+              <SortByPnlLosersButton />
+              <SortByPnlWinnersButton />
               <SortByNetHoldingsButton />
               <ExportUsersButton />
             </DataTableToolbar>
