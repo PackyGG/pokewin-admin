@@ -30,10 +30,11 @@ export type AnalyticsTab =
 
 const TABS: { value: AnalyticsTab; label: string; icon: typeof BarChart3 }[] = [
   { value: "overview", label: "Overview", icon: BarChart3 },
-  // Pure pack/battle gambling margin — separate from Overview's broader
-  // realized + windowed P&L panels so admins can deep-link the pure
-  // gameplay outcome view without scrolling past the rest.
-  { value: "pure-pnl", label: "Pure P&L", icon: Coins },
+  // Raw pack/battle gambling margin — separate from Overview's broader
+  // realized + windowed P&L panels so admins can deep-link the
+  // real-money-only gameplay outcome view without scrolling past the
+  // rest. Excludes creator wagers AND borrow-mode plays.
+  { value: "pure-pnl", label: "Raw P&L", icon: Coins },
   { value: "cohorts", label: "Cohorts", icon: Users },
   { value: "funnel", label: "Funnel", icon: Filter },
   { value: "ltv", label: "Creator LTV", icon: TrendingUp },
