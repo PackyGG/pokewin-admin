@@ -10,6 +10,9 @@ import {
   Hash,
   Sigma,
   Users,
+  Trophy,
+  X,
+  Target,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -91,9 +94,11 @@ export function UpgraderStatsSection({
           </div>
         </div>
 
-        {/* Tile grid. 2-up on phones, 4-up on md, 7-up on xl so each
-            tile keeps a readable hero number on every viewport. */}
-        <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-4 xl:grid-cols-7">
+        {/* Tile grid. 2-up on phones, 5-up on md, 10-up on xl so each
+            tile keeps a readable hero number on every viewport. The
+            row scales as new metrics ship (Wins / Losses / Hit Rate
+            joined the original 7). */}
+        <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-5 xl:grid-cols-10">
           <UpgraderTile
             icon={Coins}
             label="Wager"
@@ -143,6 +148,32 @@ export function UpgraderStatsSection({
             label="Unique Players"
             value={cur.uniquePlayers}
             format="number"
+          />
+          {/* Outcome split — wins (user hit) / losses (user missed) /
+              hit rate. House-POV colors: every win is house loss
+              (rose), every loss is house gain (emerald). Hit rate is
+              neutral since the colour would just duplicate Wins. */}
+          <UpgraderTile
+            icon={Trophy}
+            label="Wins"
+            value={cur.wins}
+            format="number"
+            accent="rose"
+            valueClassName="text-rose-600 dark:text-rose-400"
+          />
+          <UpgraderTile
+            icon={X}
+            label="Losses"
+            value={cur.losses}
+            format="number"
+            accent="cyan"
+            valueClassName="text-emerald-600 dark:text-emerald-400"
+          />
+          <UpgraderTile
+            icon={Target}
+            label="Hit Rate"
+            value={cur.hitRate}
+            format="percent"
           />
         </div>
       </CardContent>
