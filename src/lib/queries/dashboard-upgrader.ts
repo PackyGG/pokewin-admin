@@ -71,6 +71,14 @@ async function upgraderStatsInner(): Promise<UpgraderStats> {
   // 36 columns: wager + payouts + bets + uniquePlayers per period × 9
   // periods. All driven off the same scan since the WHERE clause
   // narrows to just the upgrader rows.
+  //
+  // Wager is read from |amount| on upgrader_bet rows (always set).
+  // Payouts use GREATEST(balance_after - balance_before, 0) on
+  // upgrader_payout rows — the ledger value flows through the balance
+  // delta even on payout types where `amount` ends up zero (matching
+  // how getPnlBreakdownWindows reads payout credits in pnl.ts). The
+  // earlier `ABS(amount)` approach read 0 across every window when
+  // upgrader payouts ship their cash via balance_after only.
   type Row = Record<string, string>;
   const rows = await db.$queryRaw<Row[]>`
     WITH real_users AS (
@@ -88,15 +96,15 @@ async function upgraderStatsInner(): Promise<UpgraderStats> {
       COALESCE(SUM(CASE WHEN type = 'upgrader_bet'     AND created_at >= ${thirtyDaysAgo}    THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS wager_30d,
       COALESCE(SUM(CASE WHEN type = 'upgrader_bet'                                            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS wager_all,
 
-      COALESCE(SUM(CASE WHEN type = 'upgrader_payout'  AND created_at >= ${oneHourAgo}        THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS payouts_1h,
-      COALESCE(SUM(CASE WHEN type = 'upgrader_payout'  AND created_at >= ${threeHoursAgo}     THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS payouts_3h,
-      COALESCE(SUM(CASE WHEN type = 'upgrader_payout'  AND created_at >= ${sixHoursAgo}       THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS payouts_6h,
-      COALESCE(SUM(CASE WHEN type = 'upgrader_payout'  AND created_at >= ${twelveHoursAgo}    THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS payouts_12h,
-      COALESCE(SUM(CASE WHEN type = 'upgrader_payout'  AND created_at >= ${twentyFourHoursAgo} THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS payouts_24h,
-      COALESCE(SUM(CASE WHEN type = 'upgrader_payout'  AND created_at >= ${threeDaysAgo}     THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS payouts_3d,
-      COALESCE(SUM(CASE WHEN type = 'upgrader_payout'  AND created_at >= ${sevenDaysAgo}     THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS payouts_7d,
-      COALESCE(SUM(CASE WHEN type = 'upgrader_payout'  AND created_at >= ${thirtyDaysAgo}    THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS payouts_30d,
-      COALESCE(SUM(CASE WHEN type = 'upgrader_payout'                                         THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS payouts_all,
+      COALESCE(SUM(CASE WHEN type = 'upgrader_payout'  AND created_at >= ${oneHourAgo}        THEN GREATEST(balance_after - balance_before, 0)::numeric ELSE 0 END), 0)::text AS payouts_1h,
+      COALESCE(SUM(CASE WHEN type = 'upgrader_payout'  AND created_at >= ${threeHoursAgo}     THEN GREATEST(balance_after - balance_before, 0)::numeric ELSE 0 END), 0)::text AS payouts_3h,
+      COALESCE(SUM(CASE WHEN type = 'upgrader_payout'  AND created_at >= ${sixHoursAgo}       THEN GREATEST(balance_after - balance_before, 0)::numeric ELSE 0 END), 0)::text AS payouts_6h,
+      COALESCE(SUM(CASE WHEN type = 'upgrader_payout'  AND created_at >= ${twelveHoursAgo}    THEN GREATEST(balance_after - balance_before, 0)::numeric ELSE 0 END), 0)::text AS payouts_12h,
+      COALESCE(SUM(CASE WHEN type = 'upgrader_payout'  AND created_at >= ${twentyFourHoursAgo} THEN GREATEST(balance_after - balance_before, 0)::numeric ELSE 0 END), 0)::text AS payouts_24h,
+      COALESCE(SUM(CASE WHEN type = 'upgrader_payout'  AND created_at >= ${threeDaysAgo}     THEN GREATEST(balance_after - balance_before, 0)::numeric ELSE 0 END), 0)::text AS payouts_3d,
+      COALESCE(SUM(CASE WHEN type = 'upgrader_payout'  AND created_at >= ${sevenDaysAgo}     THEN GREATEST(balance_after - balance_before, 0)::numeric ELSE 0 END), 0)::text AS payouts_7d,
+      COALESCE(SUM(CASE WHEN type = 'upgrader_payout'  AND created_at >= ${thirtyDaysAgo}    THEN GREATEST(balance_after - balance_before, 0)::numeric ELSE 0 END), 0)::text AS payouts_30d,
+      COALESCE(SUM(CASE WHEN type = 'upgrader_payout'                                         THEN GREATEST(balance_after - balance_before, 0)::numeric ELSE 0 END), 0)::text AS payouts_all,
 
       COUNT(CASE WHEN type = 'upgrader_bet' AND created_at >= ${oneHourAgo}        THEN 1 END)::text AS bets_1h,
       COUNT(CASE WHEN type = 'upgrader_bet' AND created_at >= ${threeHoursAgo}     THEN 1 END)::text AS bets_3h,
@@ -118,20 +126,23 @@ async function upgraderStatsInner(): Promise<UpgraderStats> {
       COUNT(DISTINCT CASE WHEN type = 'upgrader_bet' AND created_at >= ${thirtyDaysAgo}    THEN user_id END)::text AS players_30d,
       COUNT(DISTINCT CASE WHEN type = 'upgrader_bet'                                        THEN user_id END)::text AS players_all,
 
-      -- Wins = upgrader_payout rows with a positive amount. A losing
-      -- upgrader play either produces no payout row or a zero one;
-      -- either way the >0 filter only counts real wins. Losses are
-      -- derived as bets − wins in Node so the row count stays a
-      -- single ledger scan.
-      COUNT(CASE WHEN type = 'upgrader_payout' AND ABS(amount::numeric) > 0 AND created_at >= ${oneHourAgo}        THEN 1 END)::text AS wins_1h,
-      COUNT(CASE WHEN type = 'upgrader_payout' AND ABS(amount::numeric) > 0 AND created_at >= ${threeHoursAgo}     THEN 1 END)::text AS wins_3h,
-      COUNT(CASE WHEN type = 'upgrader_payout' AND ABS(amount::numeric) > 0 AND created_at >= ${sixHoursAgo}       THEN 1 END)::text AS wins_6h,
-      COUNT(CASE WHEN type = 'upgrader_payout' AND ABS(amount::numeric) > 0 AND created_at >= ${twelveHoursAgo}    THEN 1 END)::text AS wins_12h,
-      COUNT(CASE WHEN type = 'upgrader_payout' AND ABS(amount::numeric) > 0 AND created_at >= ${twentyFourHoursAgo} THEN 1 END)::text AS wins_24h,
-      COUNT(CASE WHEN type = 'upgrader_payout' AND ABS(amount::numeric) > 0 AND created_at >= ${threeDaysAgo}     THEN 1 END)::text AS wins_3d,
-      COUNT(CASE WHEN type = 'upgrader_payout' AND ABS(amount::numeric) > 0 AND created_at >= ${sevenDaysAgo}     THEN 1 END)::text AS wins_7d,
-      COUNT(CASE WHEN type = 'upgrader_payout' AND ABS(amount::numeric) > 0 AND created_at >= ${thirtyDaysAgo}    THEN 1 END)::text AS wins_30d,
-      COUNT(CASE WHEN type = 'upgrader_payout' AND ABS(amount::numeric) > 0                                        THEN 1 END)::text AS wins_all
+      -- Wins = upgrader_payout rows where the user's balance went up
+      -- (balance_after > balance_before). A losing upgrader play
+      -- either produces no payout row or a zero-delta one; either way
+      -- the >0 filter only counts real wins. Reads the balance delta
+      -- instead of the amount field for the same reason the payouts
+      -- SUM does — amount is unreliable on payout-type rows.
+      -- Losses are derived as bets − wins in Node so the row count
+      -- stays a single ledger scan.
+      COUNT(CASE WHEN type = 'upgrader_payout' AND balance_after > balance_before AND created_at >= ${oneHourAgo}        THEN 1 END)::text AS wins_1h,
+      COUNT(CASE WHEN type = 'upgrader_payout' AND balance_after > balance_before AND created_at >= ${threeHoursAgo}     THEN 1 END)::text AS wins_3h,
+      COUNT(CASE WHEN type = 'upgrader_payout' AND balance_after > balance_before AND created_at >= ${sixHoursAgo}       THEN 1 END)::text AS wins_6h,
+      COUNT(CASE WHEN type = 'upgrader_payout' AND balance_after > balance_before AND created_at >= ${twelveHoursAgo}    THEN 1 END)::text AS wins_12h,
+      COUNT(CASE WHEN type = 'upgrader_payout' AND balance_after > balance_before AND created_at >= ${twentyFourHoursAgo} THEN 1 END)::text AS wins_24h,
+      COUNT(CASE WHEN type = 'upgrader_payout' AND balance_after > balance_before AND created_at >= ${threeDaysAgo}     THEN 1 END)::text AS wins_3d,
+      COUNT(CASE WHEN type = 'upgrader_payout' AND balance_after > balance_before AND created_at >= ${sevenDaysAgo}     THEN 1 END)::text AS wins_7d,
+      COUNT(CASE WHEN type = 'upgrader_payout' AND balance_after > balance_before AND created_at >= ${thirtyDaysAgo}    THEN 1 END)::text AS wins_30d,
+      COUNT(CASE WHEN type = 'upgrader_payout' AND balance_after > balance_before                                        THEN 1 END)::text AS wins_all
     FROM ledger_transactions
     WHERE type IN ('upgrader_bet', 'upgrader_payout')
       AND status = 'completed'
