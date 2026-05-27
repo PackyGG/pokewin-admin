@@ -37,6 +37,14 @@ export type UpgraderPeriodStats = {
   bets: number;
   avgBet: number;
   uniquePlayers: number;
+  // Outcome counts. A "win" is an upgrader_bet that produced an
+  // upgrader_payout row with amount > 0; a "loss" is everything else.
+  // Hit rate is `wins / bets` × 100. Decoupled from `bets` so a future
+  // change to losing-bets-produce-a-zero-payout-row doesn't double-
+  // count outcomes.
+  wins: number;
+  losses: number;
+  hitRate: number;
 };
 
 export type UpgraderStats = Record<UpgraderPeriod, UpgraderPeriodStats>;
@@ -108,7 +116,22 @@ async function upgraderStatsInner(): Promise<UpgraderStats> {
       COUNT(DISTINCT CASE WHEN type = 'upgrader_bet' AND created_at >= ${threeDaysAgo}     THEN user_id END)::text AS players_3d,
       COUNT(DISTINCT CASE WHEN type = 'upgrader_bet' AND created_at >= ${sevenDaysAgo}     THEN user_id END)::text AS players_7d,
       COUNT(DISTINCT CASE WHEN type = 'upgrader_bet' AND created_at >= ${thirtyDaysAgo}    THEN user_id END)::text AS players_30d,
-      COUNT(DISTINCT CASE WHEN type = 'upgrader_bet'                                        THEN user_id END)::text AS players_all
+      COUNT(DISTINCT CASE WHEN type = 'upgrader_bet'                                        THEN user_id END)::text AS players_all,
+
+      -- Wins = upgrader_payout rows with a positive amount. A losing
+      -- upgrader play either produces no payout row or a zero one;
+      -- either way the >0 filter only counts real wins. Losses are
+      -- derived as bets − wins in Node so the row count stays a
+      -- single ledger scan.
+      COUNT(CASE WHEN type = 'upgrader_payout' AND ABS(amount::numeric) > 0 AND created_at >= ${oneHourAgo}        THEN 1 END)::text AS wins_1h,
+      COUNT(CASE WHEN type = 'upgrader_payout' AND ABS(amount::numeric) > 0 AND created_at >= ${threeHoursAgo}     THEN 1 END)::text AS wins_3h,
+      COUNT(CASE WHEN type = 'upgrader_payout' AND ABS(amount::numeric) > 0 AND created_at >= ${sixHoursAgo}       THEN 1 END)::text AS wins_6h,
+      COUNT(CASE WHEN type = 'upgrader_payout' AND ABS(amount::numeric) > 0 AND created_at >= ${twelveHoursAgo}    THEN 1 END)::text AS wins_12h,
+      COUNT(CASE WHEN type = 'upgrader_payout' AND ABS(amount::numeric) > 0 AND created_at >= ${twentyFourHoursAgo} THEN 1 END)::text AS wins_24h,
+      COUNT(CASE WHEN type = 'upgrader_payout' AND ABS(amount::numeric) > 0 AND created_at >= ${threeDaysAgo}     THEN 1 END)::text AS wins_3d,
+      COUNT(CASE WHEN type = 'upgrader_payout' AND ABS(amount::numeric) > 0 AND created_at >= ${sevenDaysAgo}     THEN 1 END)::text AS wins_7d,
+      COUNT(CASE WHEN type = 'upgrader_payout' AND ABS(amount::numeric) > 0 AND created_at >= ${thirtyDaysAgo}    THEN 1 END)::text AS wins_30d,
+      COUNT(CASE WHEN type = 'upgrader_payout' AND ABS(amount::numeric) > 0                                        THEN 1 END)::text AS wins_all
     FROM ledger_transactions
     WHERE type IN ('upgrader_bet', 'upgrader_payout')
       AND status = 'completed'
@@ -123,6 +146,12 @@ async function upgraderStatsInner(): Promise<UpgraderStats> {
     const payouts = num(`payouts_${period}`);
     const bets = num(`bets_${period}`);
     const uniquePlayers = num(`players_${period}`);
+    const wins = num(`wins_${period}`);
+    // Losses are derived: every bet either won (had a positive payout)
+    // or lost. Clamp at 0 in case the wins count exceeds bets due to
+    // edge cases (e.g. an upgrader_payout that lacks a matching bet in
+    // the same window).
+    const losses = Math.max(0, bets - wins);
     const pnl = wager - payouts;
     return {
       wager,
@@ -134,6 +163,11 @@ async function upgraderStatsInner(): Promise<UpgraderStats> {
       bets,
       avgBet: bets > 0 ? wager / bets : 0,
       uniquePlayers,
+      wins,
+      losses,
+      // Hit rate as a % of all bets. 0 when there are no bets in the
+      // window so the tile reads "0.0%" instead of NaN.
+      hitRate: bets > 0 ? (wins / bets) * 100 : 0,
     };
   };
 
