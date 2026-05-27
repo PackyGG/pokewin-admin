@@ -28,6 +28,7 @@ export const WAGER_PAYOUT_WAGER_TYPES = [
   "pack_opening",
   "battle_bet",
   "battle_sponsorship",
+  "upgrader_bet",
   "withdrawal_shipping_fee",
 ] as const;
 
@@ -38,6 +39,7 @@ export const WAGER_PAYOUT_WAGER_TYPES = [
  */
 export const WAGER_PAYOUT_PAYOUT_TYPES = [
   "battle_refund",
+  "upgrader_payout",
   "card_sale",
   "reward_card_sale",
   "card_exchange",
