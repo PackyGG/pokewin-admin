@@ -216,13 +216,7 @@ export function DepositsChart({
               width={70}
               tickFormatter={formatCompactUsd}
             />
-            <ChartTooltip
-              content={
-                <ChartTooltipContent
-                  formatter={(value) => `$${Number(value).toFixed(2)}`}
-                />
-              }
-            />
+            <ChartTooltip content={<DepositsTooltipContent />} />
             <Bar
               dataKey="amount"
               fill="var(--color-amount)"
@@ -234,6 +228,47 @@ export function DepositsChart({
         </ChartContainer>
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Tooltip for the Deposits chart — same visual weight as the Wagers
+ * tooltip (bold value, semibold figure, color chip), instead of the
+ * default ChartTooltipContent which rendered the formatter string
+ * unstyled and read as light grey text.
+ */
+function DepositsTooltipContent({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: Array<{
+    dataKey?: string | number;
+    value?: number | string;
+    color?: string;
+  }>;
+  label?: string;
+}) {
+  if (!active || !payload || payload.length === 0) return null;
+  const item = payload[0];
+  const amount = Number(item?.value ?? 0);
+  return (
+    <div className="grid min-w-32 items-start gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
+      {label && <div className="font-medium">{label}</div>}
+      <div className="flex items-center gap-2">
+        <div
+          className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
+          style={{ background: item?.color }}
+        />
+        <div className="flex flex-1 items-center justify-between leading-none">
+          <span className="text-muted-foreground">Deposits</span>
+          <span className="font-mono font-semibold tabular-nums text-foreground">
+            {formatCurrency(amount)}
+          </span>
+        </div>
+      </div>
+    </div>
   );
 }
 
