@@ -447,12 +447,24 @@ export type GameSessionDetails = {
   createdAt: string;
 };
 
+// Gaming includes the full pack/battle CYCLE — entry, payout, AND the
+// sale/exchange rows that convert won cards back into balance. Keep
+// this aligned with the GAMING_TYPES literal in /users/[id]/page.tsx;
+// the page uses that for the server-side query, the table uses this
+// for the Type filter dropdown.
 export const GAMING_TX_TYPES = [
   "pack_opening",
   "battle_bet",
   "battle_sponsorship",
   "battle_refund",
   "voucher_redeemed",
+  "card_sale",
+  "reward_card_sale",
+  "card_exchange",
+  "voucher_exchange",
+  "exchange_excess_credit",
+  "exchange_excess_to_voucher",
+  "battle_excess_to_voucher",
 ] as const;
 export const FINANCIAL_TX_TYPES = [
   "deposit",

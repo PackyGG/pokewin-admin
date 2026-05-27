@@ -209,7 +209,19 @@ export async function getUserTransactions(
           user_id: userId,
           ...(maxTxTs ? { obtained_at: { lte: maxTxTs } } : {}),
         },
-        select: { value_at_obtained: true, obtained_at: true, sold_at: true, exchanged_at: true },
+        select: {
+          value_at_obtained: true,
+          obtained_at: true,
+          sold_at: true,
+          exchanged_at: true,
+          // Cards locked for card_withdrawal leave the user's holdings
+          // even before sold_at/exchanged_at flip — they're awaiting
+          // shipment. The worth sweep below treats this timestamp as a
+          // disposal event so a card_withdrawal row's Worth After
+          // drops by the withdrawn cards' value, matching the dashboard's
+          // inventory aggregate which already filters by this.
+          withdrawal_locked_at: true,
+        },
       }),
       // Vouchers are held value too — battle / exchange excess gets
       // parked as a voucher until the user redeems it. Pulled so the
@@ -246,13 +258,22 @@ export async function getUserTransactions(
   for (const item of allInventory) {
     const value = toNumber(item.value_at_obtained);
     sweepEvents.push({ t: item.obtained_at.getTime(), d: value });
-    const sold = item.sold_at ? item.sold_at.getTime() : null;
-    const exchanged = item.exchanged_at ? item.exchanged_at.getTime() : null;
-    let disposed: number | null = null;
-    if (sold !== null && exchanged !== null) disposed = Math.min(sold, exchanged);
-    else if (sold !== null) disposed = sold;
-    else if (exchanged !== null) disposed = exchanged;
-    if (disposed !== null) sweepEvents.push({ t: disposed, d: -value });
+    // Card leaves the user's holdings on the EARLIEST of: sold_at,
+    // exchanged_at, or withdrawal_locked_at. withdrawal_locked_at is
+    // included so cards en-route for a card_withdrawal are removed
+    // from "held value" at the moment they're locked (matches the
+    // dashboard's inventory aggregate, which already filters them
+    // out). Without this, a card_withdrawal row showed Worth Before
+    // == Worth After because the withdrawn cards stayed counted as
+    // held even after they left the platform.
+    const candidates = [
+      item.sold_at ? item.sold_at.getTime() : null,
+      item.exchanged_at ? item.exchanged_at.getTime() : null,
+      item.withdrawal_locked_at ? item.withdrawal_locked_at.getTime() : null,
+    ].filter((t): t is number => t !== null);
+    if (candidates.length > 0) {
+      sweepEvents.push({ t: Math.min(...candidates), d: -value });
+    }
   }
   for (const v of allVouchers) {
     const value = toNumber(v.value);

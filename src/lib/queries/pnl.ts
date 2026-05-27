@@ -96,6 +96,12 @@ export async function calculateUserPnl(userId: string): Promise<UserPnl> {
             user_id: userId,
             sold_at: null,
             exchanged_at: null,
+            // Cards locked for a card_withdrawal have effectively left
+            // the user's holdings (awaiting shipment). Exclude them
+            // from per-user PnL inventory so the User Detail / Users
+            // List PnL matches the dashboard's totalInventoryValue
+            // aggregate (which already filters the same way).
+            withdrawal_locked_at: null,
           },
           _sum: { value_at_obtained: true },
         }),
