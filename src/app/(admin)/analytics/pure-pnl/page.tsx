@@ -6,10 +6,16 @@ import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { PackBattlePurePnl } from "@/components/pack-battle-pure-pnl";
 
-export const metadata = { title: "Pack & Battle Pure P&L" };
+export const metadata = { title: "Raw P&L" };
 
 /**
- * Standalone admin page for the Pack & Battle Pure P&L breakdown.
+ * Standalone admin page for the Pack & Battle Raw P&L breakdown.
+ *
+ * "Raw" = real-money plays only. Creators are excluded (their plays
+ * are house-funded promo / stream content), and every borrow-mode
+ * play is dropped (the borrowed leg never reaches the ledger amount
+ * and the borrowed cards never reach inventory net of auto-resale —
+ * counting them would distort margin).
  *
  * Mirrors the panel that lives inside Analytics → Overview, but as
  * its own dedicated route so admins who only need this view can
@@ -17,9 +23,9 @@ export const metadata = { title: "Pack & Battle Pure P&L" };
  * carry the realized snapshot, period P&L breakdown, and KPI strip).
  *
  * Data fetch is identical to the analytics tab variant — same
- * staff + blacklist exclusion, same windows (24h / 3d / 7d /
- * lifetime). Cached per-request via the existing getPackBattlePurePnl
- * `withTiming` wrapper.
+ * staff + blacklist + creator + borrow exclusions, same windows
+ * (24h / 3d / 7d / lifetime). Cached per-request via the existing
+ * getPackBattlePurePnl `withTiming` wrapper.
  */
 export default async function PurePnlPage() {
   await requirePageAccess("/analytics/pure-pnl");
@@ -34,8 +40,8 @@ export default async function PurePnlPage() {
         <PageHeroIdentity
           icon={Coins}
           accent="cyan"
-          title="Pack & Battle Pure P&L"
-          subtitle="Raw gameplay outcome — user's actual cash wager minus net card value kept. Borrowed portion ignored on both sides. No bonuses, rakeback, upgrader, rain / race / leaderboard prizes, or other rewards."
+          title="Raw P&L"
+          subtitle="Real-money plays only — the stats we actually make money from. Excludes creator wagers (house-funded promo), borrow-mode plays (both wager and won inventory), and every reward surface (bonuses / rakeback / upgrader / rain / race / leaderboard prizes)."
         />
       </PageHero>
 

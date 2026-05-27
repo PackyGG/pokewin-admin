@@ -773,7 +773,30 @@ export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
 
     const excluded = await getExcludedUserIds();
     const blacklist = blacklistNotInClause("u.id", excluded);
-    const scope = `user_id IN (SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist})`;
+    // Raw P&L scope: real customers ONLY. Creators are excluded
+    // because their plays are house-funded promo / stream content;
+    // counting them would inflate the wager side with money that
+    // never came from a real customer.
+    const scope = `user_id IN (SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklist})`;
+
+    // Pre-computed filter fragments — kept as SQL strings so both the
+    // ledger and inventory queries below stay consistent. Borrow plays
+    // are excluded ENTIRELY (not just the borrowed leg): if a battle
+    // had any borrow_percentage > 0 OR a pack open was tagged borrow,
+    // both its wager row and its won inventory items drop out of the
+    // Raw P&L numbers — admins want to see margin from real-money
+    // plays only.
+    const nonBorrowPackSessions = `(
+      SELECT game_session_id FROM ledger_transactions
+      WHERE type = 'pack_opening' AND status = 'completed'
+        AND game_session_id IS NOT NULL
+        AND (description IS NULL OR description NOT ILIKE '%borrow%')
+    )`;
+    const nonBorrowBattleSessions = `(
+      SELECT bp.game_session_id FROM battle_participants bp
+      JOIN battles b ON b.id = bp.battle_id
+      WHERE COALESCE(b.borrow_percentage, 0) = 0
+    )`;
 
     type LedgerRow = {
       pack_wager_h24: string; pack_wager_d3: string; pack_wager_d7: string; pack_wager_all: string;
@@ -808,7 +831,14 @@ export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
          FROM ledger_transactions
          WHERE status = 'completed'
            AND type IN ('pack_opening','battle_bet','battle_sponsorship')
-           AND ${scope}`,
+           AND ${scope}
+           -- Borrow mode exclusion: drop pack opens tagged "borrow"
+           -- in their description, and drop battle wagers whose
+           -- linked battle has any borrow_percentage > 0.
+           AND (
+             (type = 'pack_opening' AND (description IS NULL OR description NOT ILIKE '%borrow%'))
+             OR (type IN ('battle_bet','battle_sponsorship') AND game_session_id IN ${nonBorrowBattleSessions})
+           )`,
         h24, d3, d7,
       ),
       db.$queryRawUnsafe<InvRow[]>(
@@ -823,7 +853,14 @@ export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
            COALESCE(SUM(CASE WHEN source_type = 'battle'                                    THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS battle_payout_all
          FROM user_inventory
          WHERE source_type IN ('pack','battle')
-           AND ${scope}`,
+           AND ${scope}
+           -- Drop inventory rows from borrow plays so the payout side
+           -- matches the wager-side exclusion. source_id is the
+           -- game_session_id when source_type IN ('pack','battle').
+           AND (
+             (source_type = 'pack' AND source_id IN ${nonBorrowPackSessions})
+             OR (source_type = 'battle' AND source_id IN ${nonBorrowBattleSessions})
+           )`,
         h24, d3, d7,
       ),
     ]);

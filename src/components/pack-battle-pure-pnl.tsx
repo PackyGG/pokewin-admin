@@ -38,15 +38,16 @@ export function PackBattlePurePnl({ data }: { data: PackBattlePnlWindows }) {
     <div className="rounded-2xl border bg-gradient-to-br from-card via-card to-card/80 p-4 sm:p-5">
       <div className="mb-4">
         <h3 className="text-base font-semibold leading-tight">
-          Pack &amp; Battle Pure P&amp;L
+          Pack &amp; Battle Raw P&amp;L
         </h3>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          Raw gameplay outcome — user&apos;s actual cash wager minus the
-          net value of cards they kept. Borrowed portion is ignored on
-          both sides: only the user&apos;s own money in counts as wager,
-          and the auto-resold borrow portion isn&apos;t counted as a
-          payout. No bonuses, rakeback, upgrader, rain / race /
-          leaderboard prizes, or other rewards.
+          Real-money plays only — the stats we actually make money
+          from. Wager = customer cash on pack opens / battle bets.
+          Payout = net card value the customer kept. Excludes:
+          creator wagers (house-funded promo), every borrow-mode
+          play (both wager and won inventory), and every reward
+          surface (bonuses / rakeback / upgrader / rain / race /
+          leaderboard prizes).
         </p>
       </div>
 
