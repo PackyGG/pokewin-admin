@@ -9,6 +9,7 @@ import { requirePageAccess, getUserPermissions } from "@/lib/dal";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { UserTabs } from "./user-tabs";
 import { UserTagsPanel } from "./user-tags-panel";
+import { AutoRefresh } from "../../dashboard/auto-refresh";
 import { computeRiskScore } from "@/lib/fraud/score";
 import {
   getSharedIpUsers,
@@ -109,6 +110,11 @@ export default async function UserDetailPage({
 
   return (
     <div className="space-y-4">
+      {/* Re-fetch server data every 60s so admins watching a user-detail
+          tab don't see stale gaming transactions / balances. The
+          CategoryTransactionsTable re-seeds when the user hasn't applied
+          a filter, so the gaming/financial tables update in place. */}
+      <AutoRefresh intervalMs={60_000} />
       <div className="space-y-2">
         <div className="flex items-center gap-3 flex-wrap">
           <Link href="/users" className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground">

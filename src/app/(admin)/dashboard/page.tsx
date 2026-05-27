@@ -230,6 +230,7 @@ async function DashboardStatStrips() {
         <WagerStatCard
           wagers={stats.wagers}
           caption="excl. creator sessions"
+          breakdown={stats.wagersBreakdown}
         />
         <WagerStatCard
           wagers={stats.wagersRaw}

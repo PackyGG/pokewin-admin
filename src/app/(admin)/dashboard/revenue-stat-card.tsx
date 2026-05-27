@@ -145,14 +145,25 @@ export function GgrStatCard({ ggr }: { ggr: Record<string, number> }) {
 // are dropped, since that is house-funded "sponsored" balance) and a
 // "Raw Wager" variant that includes them. `caption` carries the muted
 // hint that distinguishes the pair.
+//
+// `breakdown` (optional) drives the small Packs / Battles / Upgrader
+// chip row at the bottom of the card. Only the "Total Wager" instance
+// passes it today — the Raw Wager variant skips the chips. Upgrader
+// stays 0 until that product surface ships on the main site.
 export function WagerStatCard({
   wagers,
   title = "Total Wager",
   caption,
+  breakdown,
 }: {
   wagers: Record<string, number>;
   title?: string;
   caption?: string;
+  breakdown?: {
+    packs: Record<string, number>;
+    battles: Record<string, number>;
+    upgrader: Record<string, number>;
+  };
 }) {
   const [selected, setSelected] = useState<string>("24h");
 
@@ -186,15 +197,63 @@ export function WagerStatCard({
           </div>
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-3">
         <div className="text-stat-value truncate">
           <AnimatedNumber
             value={wagers[selected] ?? 0}
             format="currency"
           />
         </div>
+        {breakdown && (
+          // 3 chip-style mini-boxes — Packs · Battles · Upgrader — for
+          // the SELECTED window. Each chip carries its own label and a
+          // small dollar amount so admins can see at a glance where the
+          // window's wager volume comes from. Mobile: stacks 3-up at
+          // ≥ 360px (the cards already enforce a min-width that fits
+          // three lean chips in a row).
+          <div className="grid grid-cols-3 gap-1.5 -mx-0.5">
+            <WagerSourceChip
+              label="Packs"
+              value={breakdown.packs[selected] ?? 0}
+            />
+            <WagerSourceChip
+              label="Battles"
+              value={breakdown.battles[selected] ?? 0}
+            />
+            <WagerSourceChip
+              label="Upgrader"
+              value={breakdown.upgrader[selected] ?? 0}
+            />
+          </div>
+        )}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Small chip showing one of the wager sources (Packs / Battles /
+ * Upgrader) under the Total Wager card. Compact: a tiny uppercase
+ * label and a dollar value, sized so 3 chips fit on a phone-width
+ * card. Uses the same purple identity color as the parent card with a
+ * weaker fill so the chips read as a "secondary" row.
+ */
+function WagerSourceChip({
+  label,
+  value,
+}: {
+  label: string;
+  value: number;
+}) {
+  return (
+    <div className="rounded-md border border-purple-500/15 bg-background/40 px-2 py-1.5 min-w-0">
+      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground truncate">
+        {label}
+      </p>
+      <p className="text-xs font-semibold tabular-nums truncate">
+        <AnimatedNumber value={value} format="currency" />
+      </p>
+    </div>
   );
 }
 

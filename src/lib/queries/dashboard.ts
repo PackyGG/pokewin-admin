@@ -81,6 +81,15 @@ function getPeriodAggregates(
       // on a deal/stream (house-funded "sponsored" play).
       wager_excl_session_1h: string; wager_excl_session_3h: string; wager_excl_session_6h: string; wager_excl_session_12h: string;
       wager_excl_session_24h: string; wager_excl_session_3d: string; wager_excl_session_7d: string; wager_excl_session_30d: string; wager_excl_session_all: string;
+      // Customer wager broken down by source (Packs vs Battles) for the
+      // "Where the wager comes from" chip row under the Total Wager
+      // card. Same exclusion as wager_excl_session_* — creators' on-
+      // stream sponsored wagers are dropped. The two columns sum to
+      // wager_excl_session_* per window.
+      pack_wager_excl_session_1h: string; pack_wager_excl_session_3h: string; pack_wager_excl_session_6h: string; pack_wager_excl_session_12h: string;
+      pack_wager_excl_session_24h: string; pack_wager_excl_session_3d: string; pack_wager_excl_session_7d: string; pack_wager_excl_session_30d: string; pack_wager_excl_session_all: string;
+      battle_wager_excl_session_1h: string; battle_wager_excl_session_3h: string; battle_wager_excl_session_6h: string; battle_wager_excl_session_12h: string;
+      battle_wager_excl_session_24h: string; battle_wager_excl_session_3d: string; battle_wager_excl_session_7d: string; battle_wager_excl_session_30d: string; battle_wager_excl_session_all: string;
       ggr_1h: string; ggr_3h: string; ggr_6h: string; ggr_12h: string;
       ggr_24h: string; ggr_3d: string; ggr_7d: string; ggr_30d: string; ggr_all: string;
       // Deposit COUNT (number of completed deposit transactions) per
@@ -191,6 +200,31 @@ function getPeriodAggregates(
       COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${sevenDaysAgo}  THEN amount ELSE 0 END), 0)::text AS wager_excl_session_7d,
       COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${thirtyDaysAgo} THEN amount ELSE 0 END), 0)::text AS wager_excl_session_30d,
       COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship') AND NOT in_session                                    THEN amount ELSE 0 END), 0)::text AS wager_excl_session_all,
+
+      -- Packs vs Battles split of the customer wager. Both sums use
+      -- the same NOT in_session filter and the same time windows as
+      -- wager_excl_session_*, so pack + battle == wager_excl_session
+      -- per window. Drives the "Packs / Battles / Upgrader" chip row
+      -- under the Total Wager card (Upgrader stays 0 until that
+      -- product surface exists on the main site).
+      COALESCE(SUM(CASE WHEN type = 'pack_opening' AND NOT in_session AND created_at >= ${oneHourAgo}     THEN amount ELSE 0 END), 0)::text AS pack_wager_excl_session_1h,
+      COALESCE(SUM(CASE WHEN type = 'pack_opening' AND NOT in_session AND created_at >= ${threeHoursAgo}  THEN amount ELSE 0 END), 0)::text AS pack_wager_excl_session_3h,
+      COALESCE(SUM(CASE WHEN type = 'pack_opening' AND NOT in_session AND created_at >= ${sixHoursAgo}    THEN amount ELSE 0 END), 0)::text AS pack_wager_excl_session_6h,
+      COALESCE(SUM(CASE WHEN type = 'pack_opening' AND NOT in_session AND created_at >= ${twelveHoursAgo} THEN amount ELSE 0 END), 0)::text AS pack_wager_excl_session_12h,
+      COALESCE(SUM(CASE WHEN type = 'pack_opening' AND NOT in_session AND created_at >= ${twentyFourHoursAgo}    THEN amount ELSE 0 END), 0)::text AS pack_wager_excl_session_24h,
+      COALESCE(SUM(CASE WHEN type = 'pack_opening' AND NOT in_session AND created_at >= ${threeDaysAgo}  THEN amount ELSE 0 END), 0)::text AS pack_wager_excl_session_3d,
+      COALESCE(SUM(CASE WHEN type = 'pack_opening' AND NOT in_session AND created_at >= ${sevenDaysAgo}  THEN amount ELSE 0 END), 0)::text AS pack_wager_excl_session_7d,
+      COALESCE(SUM(CASE WHEN type = 'pack_opening' AND NOT in_session AND created_at >= ${thirtyDaysAgo} THEN amount ELSE 0 END), 0)::text AS pack_wager_excl_session_30d,
+      COALESCE(SUM(CASE WHEN type = 'pack_opening' AND NOT in_session                                    THEN amount ELSE 0 END), 0)::text AS pack_wager_excl_session_all,
+      COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${oneHourAgo}     THEN amount ELSE 0 END), 0)::text AS battle_wager_excl_session_1h,
+      COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${threeHoursAgo}  THEN amount ELSE 0 END), 0)::text AS battle_wager_excl_session_3h,
+      COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${sixHoursAgo}    THEN amount ELSE 0 END), 0)::text AS battle_wager_excl_session_6h,
+      COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${twelveHoursAgo} THEN amount ELSE 0 END), 0)::text AS battle_wager_excl_session_12h,
+      COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${twentyFourHoursAgo}    THEN amount ELSE 0 END), 0)::text AS battle_wager_excl_session_24h,
+      COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${threeDaysAgo}  THEN amount ELSE 0 END), 0)::text AS battle_wager_excl_session_3d,
+      COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${sevenDaysAgo}  THEN amount ELSE 0 END), 0)::text AS battle_wager_excl_session_7d,
+      COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${thirtyDaysAgo} THEN amount ELSE 0 END), 0)::text AS battle_wager_excl_session_30d,
+      COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND NOT in_session                                    THEN amount ELSE 0 END), 0)::text AS battle_wager_excl_session_all,
 
       -- GGR = wagers − payouts (industry-standard pure gaming margin).
       -- The wager (ggrWagerIn) + payout (ggrPayoutIn) type sets are
@@ -587,6 +621,10 @@ async function dashboardStatsInner() {
     wager_24h: "0", wager_3d: "0", wager_7d: "0", wager_30d: "0", wager_all: "0",
     wager_excl_session_1h: "0", wager_excl_session_3h: "0", wager_excl_session_6h: "0", wager_excl_session_12h: "0",
     wager_excl_session_24h: "0", wager_excl_session_3d: "0", wager_excl_session_7d: "0", wager_excl_session_30d: "0", wager_excl_session_all: "0",
+    pack_wager_excl_session_1h: "0", pack_wager_excl_session_3h: "0", pack_wager_excl_session_6h: "0", pack_wager_excl_session_12h: "0",
+    pack_wager_excl_session_24h: "0", pack_wager_excl_session_3d: "0", pack_wager_excl_session_7d: "0", pack_wager_excl_session_30d: "0", pack_wager_excl_session_all: "0",
+    battle_wager_excl_session_1h: "0", battle_wager_excl_session_3h: "0", battle_wager_excl_session_6h: "0", battle_wager_excl_session_12h: "0",
+    battle_wager_excl_session_24h: "0", battle_wager_excl_session_3d: "0", battle_wager_excl_session_7d: "0", battle_wager_excl_session_30d: "0", battle_wager_excl_session_all: "0",
     ggr_1h: "0", ggr_3h: "0", ggr_6h: "0", ggr_12h: "0",
     ggr_24h: "0", ggr_3d: "0", ggr_7d: "0", ggr_30d: "0", ggr_all: "0",
     deposit_count_1h: "0", deposit_count_3h: "0", deposit_count_6h: "0", deposit_count_12h: "0",
@@ -727,6 +765,39 @@ async function dashboardStatsInner() {
       "7d": Math.abs(num(pa.wager_excl_session_7d)),
       "30d": Math.abs(num(pa.wager_excl_session_30d)),
       all: Math.abs(num(pa.wager_excl_session_all)),
+    },
+    // Per-source breakdown of the customer wager. Packs + Battles +
+    // Upgrader add up to `wagers` per window. Upgrader is currently
+    // always 0 — the product surface isn't live yet; the slot stays
+    // here so the dashboard chip row doesn't have to be re-plumbed
+    // when it ships.
+    wagersBreakdown: {
+      packs: {
+        "1h": Math.abs(num(pa.pack_wager_excl_session_1h)),
+        "3h": Math.abs(num(pa.pack_wager_excl_session_3h)),
+        "6h": Math.abs(num(pa.pack_wager_excl_session_6h)),
+        "12h": Math.abs(num(pa.pack_wager_excl_session_12h)),
+        "24h": Math.abs(num(pa.pack_wager_excl_session_24h)),
+        "3d": Math.abs(num(pa.pack_wager_excl_session_3d)),
+        "7d": Math.abs(num(pa.pack_wager_excl_session_7d)),
+        "30d": Math.abs(num(pa.pack_wager_excl_session_30d)),
+        all: Math.abs(num(pa.pack_wager_excl_session_all)),
+      },
+      battles: {
+        "1h": Math.abs(num(pa.battle_wager_excl_session_1h)),
+        "3h": Math.abs(num(pa.battle_wager_excl_session_3h)),
+        "6h": Math.abs(num(pa.battle_wager_excl_session_6h)),
+        "12h": Math.abs(num(pa.battle_wager_excl_session_12h)),
+        "24h": Math.abs(num(pa.battle_wager_excl_session_24h)),
+        "3d": Math.abs(num(pa.battle_wager_excl_session_3d)),
+        "7d": Math.abs(num(pa.battle_wager_excl_session_7d)),
+        "30d": Math.abs(num(pa.battle_wager_excl_session_30d)),
+        all: Math.abs(num(pa.battle_wager_excl_session_all)),
+      },
+      upgrader: {
+        "1h": 0, "3h": 0, "6h": 0, "12h": 0,
+        "24h": 0, "3d": 0, "7d": 0, "30d": 0, all: 0,
+      },
     },
     // Raw wager — every non-staff user, INCLUDING creators' on-stream
     // sponsored play. The "Raw Wager" card shows this; (wagersRaw −

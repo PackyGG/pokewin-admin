@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useTransition } from "react";
+import React, { useEffect, useState, useTransition } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import {
@@ -99,6 +99,28 @@ export const CategoryTransactionsTable = React.memo(
     const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
     const [isPending, startTransition] = useTransition();
     const [currentPerPage, setCurrentPerPage] = useState(initialTx.perPage);
+
+    // The parent /users/[id] page re-renders every 60s via AutoRefresh.
+    // Each re-render produces a fresh `initialTx` from the server. If
+    // the admin hasn't applied a filter and is on page 1, re-seed the
+    // local table state so new gaming/financial events show up without
+    // a manual reload. Filters/pagination keep their state — the
+    // admin's view isn't yanked back to defaults mid-investigation.
+    const filtersUnchanged =
+      typeFilter === "all" &&
+      statusFilter === "all" &&
+      !dateFrom &&
+      !dateTo &&
+      txData.page === 1;
+    useEffect(() => {
+      if (filtersUnchanged) {
+        setTxData(initialTx);
+      }
+      // We deliberately do NOT depend on filtersUnchanged itself —
+      // we only want to re-seed when the server hands us a NEW
+      // initialTx, not when the admin toggles a filter back to "all".
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [initialTx]);
 
     function buildFilters(overrides?: {
       type?: string;
