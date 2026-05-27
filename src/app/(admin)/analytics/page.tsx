@@ -7,6 +7,7 @@ import { PageHero } from "@/components/modern-panels";
 import { AnalyticsTabNav, type AnalyticsTab } from "./tab-nav";
 import { parsePeriod } from "./types";
 import { OverviewTab } from "./tab-overview";
+import { PurePnlTab } from "./tab-pure-pnl";
 import { CohortsTab } from "./tab-cohorts";
 import { FunnelTab } from "./tab-funnel";
 import { LtvTab } from "./tab-ltv";
@@ -23,6 +24,7 @@ export const metadata = { title: "Analytics" };
 function parseTab(value: string | undefined): AnalyticsTab {
   switch (value) {
     case "overview":
+    case "pure-pnl":
     case "cohorts":
     case "funnel":
     case "ltv":
@@ -92,6 +94,7 @@ export default async function AnalyticsPage({
         fallback={<TabSkeleton />}
       >
         {tab === "overview" && <OverviewTab period={period} />}
+        {tab === "pure-pnl" && <PurePnlTab />}
         {tab === "cohorts" && (
           <CohortsTab period={period} granularity={cohortBy} />
         )}

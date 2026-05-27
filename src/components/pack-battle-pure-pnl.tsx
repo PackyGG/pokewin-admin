@@ -30,6 +30,7 @@ const WINDOWS = [
   { key: "h24", label: "Past 24h" },
   { key: "d3", label: "Past 3d" },
   { key: "d7", label: "Past 7d" },
+  { key: "all", label: "Lifetime" },
 ] as const;
 
 export function PackBattlePurePnl({ data }: { data: PackBattlePnlWindows }) {
@@ -40,10 +41,12 @@ export function PackBattlePurePnl({ data }: { data: PackBattlePnlWindows }) {
           Pack &amp; Battle Pure P&amp;L
         </h3>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          Raw gameplay outcome — wager in minus card value out. No
-          bonuses, rakeback, upgrader, rain / race / leaderboard
-          prizes, or other rewards. Pure pack &amp; battle gambling
-          margin only.
+          Raw gameplay outcome — user&apos;s actual cash wager minus the
+          net value of cards they kept. Borrowed portion is ignored on
+          both sides: only the user&apos;s own money in counts as wager,
+          and the auto-resold borrow portion isn&apos;t counted as a
+          payout. No bonuses, rakeback, upgrader, rain / race /
+          leaderboard prizes, or other rewards.
         </p>
       </div>
 
