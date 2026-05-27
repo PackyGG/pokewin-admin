@@ -468,6 +468,63 @@ export const CategoryTransactionsTable = React.memo(
                           </>
                         );
                       }
+                      // Upgrader: win/loss decided by whether the
+                      // matching upgrader_payout row exists. On a win,
+                      // Won Value = the payout amount (backend-side
+                      // fallback already picked between amount and
+                      // balance delta). House Profit = bet − won.
+                      if (t.type === "upgrader_bet") {
+                        if (t.upgraderResult === "lose") {
+                          return (
+                            <>
+                              <TableCell className="tabular-nums text-muted-foreground">
+                                {formatCurrency(0)}
+                              </TableCell>
+                              <TableCell className="tabular-nums">
+                                <span className="text-emerald-600 dark:text-emerald-400">
+                                  +{formatCurrency(t.amount)}
+                                </span>
+                              </TableCell>
+                            </>
+                          );
+                        }
+                        if (t.upgraderResult === "win" && t.upgraderWinnings != null) {
+                          const profit = t.amount - t.upgraderWinnings;
+                          return (
+                            <>
+                              <TableCell className="tabular-nums text-rose-600 dark:text-rose-400">
+                                {formatCurrency(t.upgraderWinnings)}
+                              </TableCell>
+                              <TableCell className="tabular-nums">
+                                <span
+                                  className={
+                                    profit > 0
+                                      ? "text-emerald-600 dark:text-emerald-400"
+                                      : profit < 0
+                                        ? "text-rose-600 dark:text-rose-400"
+                                        : "text-muted-foreground"
+                                  }
+                                >
+                                  {profit > 0 ? "+" : ""}
+                                  {formatCurrency(profit)}
+                                </span>
+                              </TableCell>
+                            </>
+                          );
+                        }
+                        // upgraderResult === null → row hasn't been
+                        // enriched (defensive — shouldn't happen).
+                        return (
+                          <>
+                            <TableCell className="tabular-nums text-muted-foreground">
+                              —
+                            </TableCell>
+                            <TableCell className="tabular-nums text-muted-foreground">
+                              —
+                            </TableCell>
+                          </>
+                        );
+                      }
                       // Gaming is pack/battle only. Card sales /
                       // exchanges live in the Financial tab now, so the
                       // fallback below only has to handle pack_opening
