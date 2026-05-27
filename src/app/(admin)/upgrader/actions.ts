@@ -70,6 +70,8 @@ export async function searchCardsForUpgraderPicker(params: {
   setId?: string;
   minPrice?: string;
   maxPrice?: string;
+  sortBy?: "name" | "price";
+  sortOrder?: "asc" | "desc";
 }) {
   await requirePageAccess("/upgrader");
   const result = await getCards({
@@ -80,8 +82,10 @@ export async function searchCardsForUpgraderPicker(params: {
     setId: params.setId,
     minPrice: params.minPrice,
     maxPrice: params.maxPrice,
-    sortBy: "name",
-    sortOrder: "asc",
+    // Default to most-valuable-first: when an admin filters by a price
+    // band to fill a tier, the priciest matches are what they scan for.
+    sortBy: params.sortBy ?? "price",
+    sortOrder: params.sortOrder ?? "desc",
   });
   return {
     data: result.data.map<UpgraderCardPickerItem>((c) => ({

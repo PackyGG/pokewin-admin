@@ -32,6 +32,26 @@ import {
   type UpgraderCardPickerItem,
 } from "./actions";
 
+// Sort options for the picker grid. The value encodes both field and
+// direction so the Select holds a single string; we split it back into
+// the action's { sortBy, sortOrder } pair at the fetch boundary.
+type SortOption = "price_desc" | "price_asc" | "name_asc";
+
+const SORT_PARAMS: Record<
+  SortOption,
+  { sortBy: "name" | "price"; sortOrder: "asc" | "desc" }
+> = {
+  price_desc: { sortBy: "price", sortOrder: "desc" },
+  price_asc: { sortBy: "price", sortOrder: "asc" },
+  name_asc: { sortBy: "name", sortOrder: "asc" },
+};
+
+const SORT_LABELS: Record<SortOption, string> = {
+  price_desc: "Price: High → Low",
+  price_asc: "Price: Low → High",
+  name_asc: "Name: A → Z",
+};
+
 const RARITY_COLORS: Record<string, string> = {
   common: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
   uncommon:
@@ -62,6 +82,7 @@ export function AddUpgraderCardsDialog({
   const [setId, setSetId] = useState("all");
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
+  const [sort, setSort] = useState<SortOption>("price_desc");
   const [page, setPage] = useState(1);
   const perPage = 40;
 
@@ -83,13 +104,14 @@ export function AddUpgraderCardsDialog({
           setId: setId !== "all" ? setId : undefined,
           minPrice: minPrice || undefined,
           maxPrice: maxPrice || undefined,
+          ...SORT_PARAMS[sort],
         });
         setCards(result.data);
         setTotal(result.total);
         setTotalPages(result.totalPages);
       });
     },
-    [search, rarity, setId, minPrice, maxPrice],
+    [search, rarity, setId, minPrice, maxPrice, sort],
   );
 
   useEffect(() => {
@@ -97,7 +119,7 @@ export function AddUpgraderCardsDialog({
     setPage(1);
     fetchCards(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, search, rarity, setId, minPrice, maxPrice]);
+  }, [open, search, rarity, setId, minPrice, maxPrice, sort]);
 
   // Reset selection whenever the dialog closes so reopening starts fresh.
   useEffect(() => {
@@ -220,6 +242,21 @@ export function AddUpgraderCardsDialog({
               step="0.01"
             />
           </div>
+          <Select
+            value={sort}
+            onValueChange={(v) => v && setSort(v as SortOption)}
+          >
+            <SelectTrigger className="w-[170px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(Object.keys(SORT_LABELS) as SortOption[]).map((key) => (
+                <SelectItem key={key} value={key}>
+                  {SORT_LABELS[key]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         {/* Grid */}
