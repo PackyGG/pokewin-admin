@@ -12,11 +12,13 @@ import {
   Trophy,
   Clock,
   Package,
+  Coins,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type AnalyticsTab =
   | "overview"
+  | "pure-pnl"
   | "cohorts"
   | "funnel"
   | "ltv"
@@ -28,6 +30,10 @@ export type AnalyticsTab =
 
 const TABS: { value: AnalyticsTab; label: string; icon: typeof BarChart3 }[] = [
   { value: "overview", label: "Overview", icon: BarChart3 },
+  // Pure pack/battle gambling margin — separate from Overview's broader
+  // realized + windowed P&L panels so admins can deep-link the pure
+  // gameplay outcome view without scrolling past the rest.
+  { value: "pure-pnl", label: "Pure P&L", icon: Coins },
   { value: "cohorts", label: "Cohorts", icon: Users },
   { value: "funnel", label: "Funnel", icon: Filter },
   { value: "ltv", label: "Creator LTV", icon: TrendingUp },

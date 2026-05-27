@@ -737,8 +737,10 @@ export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
 // elsewhere.
 
 export type PackBattlePnlRow = {
-  // Wager + payout per game type. Wager comes from the ledger,
-  // payouts from user_inventory (cards given to the user). pnl =
+  // Wager + payout per game type. Wager comes from the ledger
+  // (user's actual cash stake — the borrowed portion is NOT
+  // included). Payouts come from user_inventory (the net value the
+  // user kept after auto-resale of any borrowed portion). pnl =
   // wager − payouts, positive = house gained.
   packWager: number;
   packPayouts: number;
@@ -756,6 +758,9 @@ export type PackBattlePnlWindows = {
   h24: PackBattlePnlRow;
   d3: PackBattlePnlRow;
   d7: PackBattlePnlRow;
+  // Lifetime row — no created_at lower bound. Useful as the headline
+  // "all-time" pure margin alongside the rolling windows.
+  all: PackBattlePnlRow;
 };
 
 export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
@@ -771,32 +776,38 @@ export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
     const scope = `user_id IN (SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist})`;
 
     type LedgerRow = {
-      pack_wager_h24: string; pack_wager_d3: string; pack_wager_d7: string;
-      battle_wager_h24: string; battle_wager_d3: string; battle_wager_d7: string;
+      pack_wager_h24: string; pack_wager_d3: string; pack_wager_d7: string; pack_wager_all: string;
+      battle_wager_h24: string; battle_wager_d3: string; battle_wager_d7: string; battle_wager_all: string;
     };
     type InvRow = {
-      pack_payout_h24: string; pack_payout_d3: string; pack_payout_d7: string;
-      battle_payout_h24: string; battle_payout_d3: string; battle_payout_d7: string;
+      pack_payout_h24: string; pack_payout_d3: string; pack_payout_d7: string; pack_payout_all: string;
+      battle_payout_h24: string; battle_payout_d3: string; battle_payout_d7: string; battle_payout_all: string;
     };
 
     // Two parallel queries — same staff + blacklist filter on both.
-    // Ledger query reads the wager side (pack_opening + battle_bet +
-    // battle_sponsorship). Inventory query reads the payout side
-    // (cards the user got from a pack / battle session within the
-    // window). Both grouped by the three windows via CASE.
+    // Ledger query reads the wager side (pack_opening + battle_bet
+    // + battle_sponsorship) — only the user's actual cash stake,
+    // NOT the borrowed portion. Inventory query reads the payout
+    // side (cards the user keeps from a pack / battle session). On a
+    // borrow play the inventory rows already reflect the net keep
+    // after the borrowed portion is auto-resold to the house, so
+    // pack/battle PnL reads raw user money in / raw user keep out —
+    // ignoring the borrow leg entirely. All grouped by the four
+    // windows (24h / 3d / 7d / all) via CASE.
     const [ledger, inv] = await Promise.all([
       db.$queryRawUnsafe<LedgerRow[]>(
         `SELECT
            COALESCE(SUM(CASE WHEN type = 'pack_opening' AND created_at >= $1 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager_h24,
            COALESCE(SUM(CASE WHEN type = 'pack_opening' AND created_at >= $2 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager_d3,
            COALESCE(SUM(CASE WHEN type = 'pack_opening' AND created_at >= $3 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager_d7,
+           COALESCE(SUM(CASE WHEN type = 'pack_opening'                                    THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager_all,
            COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND created_at >= $1 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_h24,
            COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND created_at >= $2 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_d3,
-           COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND created_at >= $3 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_d7
+           COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND created_at >= $3 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_d7,
+           COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship')                                    THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_all
          FROM ledger_transactions
          WHERE status = 'completed'
            AND type IN ('pack_opening','battle_bet','battle_sponsorship')
-           AND created_at >= $3
            AND ${scope}`,
         h24, d3, d7,
       ),
@@ -805,24 +816,25 @@ export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
            COALESCE(SUM(CASE WHEN source_type = 'pack' AND obtained_at >= $1 THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS pack_payout_h24,
            COALESCE(SUM(CASE WHEN source_type = 'pack' AND obtained_at >= $2 THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS pack_payout_d3,
            COALESCE(SUM(CASE WHEN source_type = 'pack' AND obtained_at >= $3 THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS pack_payout_d7,
+           COALESCE(SUM(CASE WHEN source_type = 'pack'                                    THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS pack_payout_all,
            COALESCE(SUM(CASE WHEN source_type = 'battle' AND obtained_at >= $1 THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS battle_payout_h24,
            COALESCE(SUM(CASE WHEN source_type = 'battle' AND obtained_at >= $2 THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS battle_payout_d3,
-           COALESCE(SUM(CASE WHEN source_type = 'battle' AND obtained_at >= $3 THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS battle_payout_d7
+           COALESCE(SUM(CASE WHEN source_type = 'battle' AND obtained_at >= $3 THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS battle_payout_d7,
+           COALESCE(SUM(CASE WHEN source_type = 'battle'                                    THEN value_at_obtained::numeric ELSE 0 END), 0)::text AS battle_payout_all
          FROM user_inventory
          WHERE source_type IN ('pack','battle')
-           AND obtained_at >= $3
            AND ${scope}`,
         h24, d3, d7,
       ),
     ]);
 
     const l = ledger[0] ?? {
-      pack_wager_h24: "0", pack_wager_d3: "0", pack_wager_d7: "0",
-      battle_wager_h24: "0", battle_wager_d3: "0", battle_wager_d7: "0",
+      pack_wager_h24: "0", pack_wager_d3: "0", pack_wager_d7: "0", pack_wager_all: "0",
+      battle_wager_h24: "0", battle_wager_d3: "0", battle_wager_d7: "0", battle_wager_all: "0",
     };
     const i = inv[0] ?? {
-      pack_payout_h24: "0", pack_payout_d3: "0", pack_payout_d7: "0",
-      battle_payout_h24: "0", battle_payout_d3: "0", battle_payout_d7: "0",
+      pack_payout_h24: "0", pack_payout_d3: "0", pack_payout_d7: "0", pack_payout_all: "0",
+      battle_payout_h24: "0", battle_payout_d3: "0", battle_payout_d7: "0", battle_payout_all: "0",
     };
 
     const buildRow = (
@@ -833,6 +845,12 @@ export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
     ): PackBattlePnlRow => {
       const packWager = toNumber(l[packWagerKey]);
       const battleWager = toNumber(l[battleWagerKey]);
+      // Payouts = the NET value of cards the user keeps. On a borrow
+      // play the borrowed portion is auto-resold to the house before
+      // the inventory row materializes, so value_at_obtained on the
+      // surviving rows already reflects user-net-keep (not the gross
+      // pull). Counting voucher / excess credit on top of this would
+      // double-count the auto-resale leg.
       const packPayouts = toNumber(i[packPayoutKey]);
       const battlePayouts = toNumber(i[battlePayoutKey]);
       const packPnl = packWager - packPayouts;
@@ -854,6 +872,7 @@ export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
       h24: buildRow("pack_wager_h24", "battle_wager_h24", "pack_payout_h24", "battle_payout_h24"),
       d3:  buildRow("pack_wager_d3",  "battle_wager_d3",  "pack_payout_d3",  "battle_payout_d3"),
       d7:  buildRow("pack_wager_d7",  "battle_wager_d7",  "pack_payout_d7",  "battle_payout_d7"),
+      all: buildRow("pack_wager_all", "battle_wager_all", "pack_payout_all", "battle_payout_all"),
     };
   });
 }
