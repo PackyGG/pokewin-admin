@@ -92,6 +92,14 @@ function getPeriodAggregates(
       battle_wager_excl_session_24h: string; battle_wager_excl_session_3d: string; battle_wager_excl_session_7d: string; battle_wager_excl_session_30d: string; battle_wager_excl_session_all: string;
       upgrader_wager_excl_session_1h: string; upgrader_wager_excl_session_3h: string; upgrader_wager_excl_session_6h: string; upgrader_wager_excl_session_12h: string;
       upgrader_wager_excl_session_24h: string; upgrader_wager_excl_session_3d: string; upgrader_wager_excl_session_7d: string; upgrader_wager_excl_session_30d: string; upgrader_wager_excl_session_all: string;
+      // Wager from users who did NOT join under an official creator
+      // code — referred_by is null OR referred_by points to a non-
+      // creator-role user. Same exclusion as wager_excl_session_* on
+      // top (creator-on-stream play already dropped) so this surfaces
+      // pure organic customer wager: not attributed to creator
+      // marketing, not house-funded promo.
+      wager_organic_1h: string; wager_organic_3h: string; wager_organic_6h: string; wager_organic_12h: string;
+      wager_organic_24h: string; wager_organic_3d: string; wager_organic_7d: string; wager_organic_30d: string; wager_organic_all: string;
       ggr_1h: string; ggr_3h: string; ggr_6h: string; ggr_12h: string;
       ggr_24h: string; ggr_3d: string; ggr_7d: string; ggr_30d: string; ggr_all: string;
       // Deposit COUNT (number of completed deposit transactions) per
@@ -117,7 +125,18 @@ function getPeriodAggregates(
     }[]
   >`
     WITH real_users AS (
-      SELECT id, role FROM "user" WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+      SELECT u.id, u.role, u.referred_by,
+             -- under_creator flags users who joined under an official
+             -- creator code — referred_by points to a user with role
+             -- 'creator'. NULL referred_by (organic signup) is false.
+             -- Computed once per user here so the per-row CASE on the
+             -- ledger scan stays cheap.
+             EXISTS (
+               SELECT 1 FROM "user" ref
+               WHERE ref.id = u.referred_by AND ref.role = 'creator'
+             ) AS under_creator
+      FROM "user" u
+      WHERE u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
     ),
     ${Prisma.raw(sessionWindowsCte)},
     base AS (
@@ -130,10 +149,14 @@ function getPeriodAggregates(
       -- lt_balance_*/lt_description are aliased through the CTE so the
       -- 24h balance-change + manual-withdrawal sums at the bottom of
       -- this SELECT can reach them without re-joining the ledger.
+      -- under_creator carries forward whether the wagering user joined
+      -- under an official creator code — drives the wager_organic_*
+      -- aggregate at the bottom of the SELECT.
       SELECT lt.user_id, lt.type, lt.amount::numeric AS amount, lt.created_at,
              lt.balance_after AS lt_balance_after,
              lt.balance_before AS lt_balance_before,
              lt.description AS lt_description,
+             ru.under_creator,
              CASE WHEN ru.role = 'creator'
                   THEN EXISTS (
                     SELECT 1 FROM session_windows sw
@@ -236,6 +259,20 @@ function getPeriodAggregates(
       COALESCE(SUM(CASE WHEN type = 'upgrader_bet' AND NOT in_session AND created_at >= ${sevenDaysAgo}  THEN amount ELSE 0 END), 0)::text AS upgrader_wager_excl_session_7d,
       COALESCE(SUM(CASE WHEN type = 'upgrader_bet' AND NOT in_session AND created_at >= ${thirtyDaysAgo} THEN amount ELSE 0 END), 0)::text AS upgrader_wager_excl_session_30d,
       COALESCE(SUM(CASE WHEN type = 'upgrader_bet' AND NOT in_session                                    THEN amount ELSE 0 END), 0)::text AS upgrader_wager_excl_session_all,
+
+      -- Organic wager — pack / battle / upgrader wager from users who
+      -- did NOT join under an official creator code (and isn't a
+      -- creator's own on-stream play, via NOT in_session). Reads off
+      -- the under_creator flag set on the real_users CTE above.
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND NOT under_creator AND created_at >= ${oneHourAgo}        THEN amount ELSE 0 END), 0)::text AS wager_organic_1h,
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND NOT under_creator AND created_at >= ${threeHoursAgo}     THEN amount ELSE 0 END), 0)::text AS wager_organic_3h,
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND NOT under_creator AND created_at >= ${sixHoursAgo}       THEN amount ELSE 0 END), 0)::text AS wager_organic_6h,
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND NOT under_creator AND created_at >= ${twelveHoursAgo}    THEN amount ELSE 0 END), 0)::text AS wager_organic_12h,
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND NOT under_creator AND created_at >= ${twentyFourHoursAgo} THEN amount ELSE 0 END), 0)::text AS wager_organic_24h,
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND NOT under_creator AND created_at >= ${threeDaysAgo}     THEN amount ELSE 0 END), 0)::text AS wager_organic_3d,
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND NOT under_creator AND created_at >= ${sevenDaysAgo}     THEN amount ELSE 0 END), 0)::text AS wager_organic_7d,
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND NOT under_creator AND created_at >= ${thirtyDaysAgo}    THEN amount ELSE 0 END), 0)::text AS wager_organic_30d,
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND NOT under_creator                                       THEN amount ELSE 0 END), 0)::text AS wager_organic_all,
 
       -- GGR = wagers − payouts (industry-standard pure gaming margin).
       -- The wager (ggrWagerIn) + payout (ggrPayoutIn) type sets are
@@ -640,6 +677,8 @@ async function dashboardStatsInner() {
     battle_wager_excl_session_24h: "0", battle_wager_excl_session_3d: "0", battle_wager_excl_session_7d: "0", battle_wager_excl_session_30d: "0", battle_wager_excl_session_all: "0",
     upgrader_wager_excl_session_1h: "0", upgrader_wager_excl_session_3h: "0", upgrader_wager_excl_session_6h: "0", upgrader_wager_excl_session_12h: "0",
     upgrader_wager_excl_session_24h: "0", upgrader_wager_excl_session_3d: "0", upgrader_wager_excl_session_7d: "0", upgrader_wager_excl_session_30d: "0", upgrader_wager_excl_session_all: "0",
+    wager_organic_1h: "0", wager_organic_3h: "0", wager_organic_6h: "0", wager_organic_12h: "0",
+    wager_organic_24h: "0", wager_organic_3d: "0", wager_organic_7d: "0", wager_organic_30d: "0", wager_organic_all: "0",
     ggr_1h: "0", ggr_3h: "0", ggr_6h: "0", ggr_12h: "0",
     ggr_24h: "0", ggr_3d: "0", ggr_7d: "0", ggr_30d: "0", ggr_all: "0",
     deposit_count_1h: "0", deposit_count_3h: "0", deposit_count_6h: "0", deposit_count_12h: "0",
@@ -819,6 +858,22 @@ async function dashboardStatsInner() {
         "30d": Math.abs(num(pa.upgrader_wager_excl_session_30d)),
         all: Math.abs(num(pa.upgrader_wager_excl_session_all)),
       },
+    },
+    // Organic wager — customer wager from users who did NOT join under
+    // an official creator code (referrer is null or a non-creator
+    // user). Excludes creator on-stream play via the same NOT
+    // in_session filter as `wagers`. Surfaces the wager volume not
+    // attributed to creator marketing.
+    wagersOrganic: {
+      "1h": Math.abs(num(pa.wager_organic_1h)),
+      "3h": Math.abs(num(pa.wager_organic_3h)),
+      "6h": Math.abs(num(pa.wager_organic_6h)),
+      "12h": Math.abs(num(pa.wager_organic_12h)),
+      "24h": Math.abs(num(pa.wager_organic_24h)),
+      "3d": Math.abs(num(pa.wager_organic_3d)),
+      "7d": Math.abs(num(pa.wager_organic_7d)),
+      "30d": Math.abs(num(pa.wager_organic_30d)),
+      all: Math.abs(num(pa.wager_organic_all)),
     },
     // Raw wager — every non-staff user, INCLUDING creators' on-stream
     // sponsored play. The "Raw Wager" card shows this; (wagersRaw −

@@ -116,7 +116,7 @@ export default async function DashboardPage() {
       <Suspense
         fallback={
           <>
-            <KpiStripSkeleton count={6} />
+            <KpiStripSkeleton count={7} />
             <KpiStripSkeleton count={7} />
           </>
         }
@@ -233,8 +233,9 @@ async function DashboardStatStrips() {
           width and the dollar value never truncates (these cards
           contain a 5-chip period selector + a hero currency value;
           squeezing 2-up at 380px crushed both). 2-up at sm, 3 at lg,
-          6 across at xl. */}
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-6">
+          7 across at xl (PnL, GGR, Total Wager, Raw Wager, Organic
+          Wager, Deposits, Withdrawals). */}
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-7">
         <PnlStatCard pnl={stats.realizedPnl} pnl24h={stats.realizedPnl24h} />
         <GgrStatCard ggr={stats.ggr} />
         {/* Two wager cards: "Total Wager" drops wagers a creator made
@@ -250,6 +251,16 @@ async function DashboardStatStrips() {
           wagers={stats.wagersRaw}
           title="Raw Wager"
           caption="incl. creator sessions"
+        />
+        {/* Organic Wager — only counts users who did NOT join under an
+            official creator code. Drops creator-on-stream play AND
+            creator-attributed customer wager, so the gap between
+            "Total Wager" (excl. creator sessions) and this card is the
+            wager that's downstream of creator marketing. */}
+        <WagerStatCard
+          wagers={stats.wagersOrganic}
+          title="Organic Wager"
+          caption="no creator-code users"
         />
         <DepositsStatCard
           deposits={stats.deposits}
