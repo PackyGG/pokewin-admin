@@ -11,7 +11,13 @@ import {
   HandCoins,
   Gauge,
 } from "lucide-react";
-import { getDashboardStats, getActiveRain } from "@/lib/queries/dashboard";
+import {
+  getDashboardStats,
+  getActiveRain,
+  parseDashboardPeriod,
+  type DashboardPeriod,
+} from "@/lib/queries/dashboard";
+import { DashboardPeriodSelector } from "./dashboard-period-selector";
 import { getUpgraderStats } from "@/lib/queries/dashboard-upgrader";
 import { getDailyPnl } from "@/lib/queries/pnl";
 import { requirePageAccess } from "@/lib/dal";
@@ -53,16 +59,23 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export const metadata = { title: "Dashboard" };
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
   await requirePageAccess("/dashboard");
 
-  // The KPI numbers come from getDashboardStats — a heavy 17-query
-  // aggregate. Instead of awaiting it before the page renders anything,
-  // the static shell (hero, section headings, live feeds) paints
-  // immediately and each stats-fed segment streams in behind its own
-  // Suspense boundary. getDashboardStats is React-cached, so the three
-  // segments below share a single execution per render.
-  //
+  // The page's heavy aggregates (revenue / wager / GGR / windowed P&L)
+  // run for the SELECTED period only — sub-hour / day / lifetime windows
+  // are computed on demand when the admin picks a chip in the global
+  // <DashboardPeriodSelector>. Default falls back to 24h when the URL
+  // carries no `?period=` so a cold load still has a sensible window.
+  // getDashboardStats is React-cached and keyed on `period`, so the
+  // four Suspense segments below share a single fetch per render.
+  const params = await searchParams;
+  const period: DashboardPeriod = parseDashboardPeriod(params.period);
+
   // The two live feeds (Recent Activity, Live Deposits) bootstrap their
   // own snapshot on the client — that keeps the 60s router.refresh()
   // below scoped to the KPIs and stops it from re-running
@@ -102,12 +115,18 @@ export default async function DashboardPage() {
                   <Skeleton className="h-[26px] w-40 rounded-full" />
                 }
               >
-                <DashboardLoadTime />
+                <DashboardLoadTime period={period} />
               </Suspense>
             </div>
           }
         />
       </PageHero>
+
+      {/* Global period selector. Drives the `?period=` URL param;
+          every period-bound KPI / aggregate on the page reads from
+          that. Client component — server cards don't re-render when a
+          chip is hovered, only when it's clicked (router.replace). */}
+      <DashboardPeriodSelector />
 
       {/* Primary + secondary KPI strips stream together — they share the
           same getDashboardStats fetch, so splitting them into separate
@@ -115,6 +134,7 @@ export default async function DashboardPage() {
           instant. Fallback mirrors the 6-up primary + 7-up secondary
           grids in DashboardStatStrips. */}
       <Suspense
+        key={`stats-${period}`}
         fallback={
           <>
             <KpiStripSkeleton count={7} />
@@ -122,7 +142,7 @@ export default async function DashboardPage() {
           </>
         }
       >
-        <DashboardStatStrips />
+        <DashboardStatStrips period={period} />
       </Suspense>
 
       {/* Upgrader Stats — its own section between the KPI strips and
@@ -150,6 +170,7 @@ export default async function DashboardPage() {
             getDashboardStats and the standalone getDailyPnl runs in
             parallel with it. */}
         <Suspense
+          key={`charts-${period}`}
           fallback={
             <>
               <ChartRowSkeleton count={3} height={300} />
@@ -158,7 +179,7 @@ export default async function DashboardPage() {
             </>
           }
         >
-          <DashboardCharts />
+          <DashboardCharts period={period} />
         </Suspense>
       </div>
 
@@ -184,7 +205,7 @@ export default async function DashboardPage() {
                 RecentActivity) so we never open a throwaway SSE
                 connection that gets torn down the moment stats resolve. */}
             <Suspense fallback={<RecentActivitySkeleton />}>
-              <DashboardActivityFeed />
+              <DashboardActivityFeed period={period} />
             </Suspense>
           </FadeIn>
         </div>
@@ -205,8 +226,8 @@ export default async function DashboardPage() {
  * extra query — it just surfaces the queryMs / generatedAt that the
  * aggregate already measures.
  */
-async function DashboardLoadTime() {
-  const stats = await getDashboardStats();
+async function DashboardLoadTime({ period }: { period: DashboardPeriod }) {
+  const stats = await getDashboardStats(period);
   return (
     <LoadTimeIndicator
       queryMs={stats.queryMs}
@@ -220,15 +241,16 @@ async function DashboardLoadTime() {
  * streams behind the page-level Suspense; reads the React-cached
  * getDashboardStats.
  */
-async function DashboardStatStrips() {
-  const stats = await getDashboardStats();
+async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
+  const stats = await getDashboardStats(period);
 
-  // Average deposit transactions per hour. depositCounts holds the
-  // completed-deposit count per rolling window, so dividing by the
-  // window length in hours gives the per-hour rate. 24h is the hero
-  // (smooths a full peak/off-peak day); 7d is the longer baseline.
-  const depositsPerHour24h = (stats.depositCounts["24h"] ?? 0) / 24;
-  const depositsPerHour7d = (stats.depositCounts["7d"] ?? 0) / (7 * 24);
+  // Average deposit transactions per hour. depositCount24h / depositCount7d
+  // are FIXED windows (not period-bound) so the tile's "last 24h avg ·
+  // 7d baseline" semantic stays stable when the global selector
+  // changes — flipping the chip shouldn't reshape a tile that's
+  // explicitly labelled 24h / 7d.
+  const depositsPerHour24h = stats.depositCount24h / 24;
+  const depositsPerHour7d = stats.depositCount7d / (7 * 24);
 
   return (
     <>
@@ -240,19 +262,25 @@ async function DashboardStatStrips() {
           7 across at xl (PnL, GGR, Total Wager, Raw Wager, Organic
           Wager, Deposits, Withdrawals). */}
       <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-7">
-        <PnlStatCard pnl={stats.realizedPnl} pnl24h={stats.realizedPnl24h} />
-        <GgrStatCard ggr={stats.ggr} />
+        <PnlStatCard
+          pnl={stats.realizedPnl}
+          pnlPeriod={stats.realizedPnlPeriod}
+          periodLabel={stats.periodLabel}
+        />
+        <GgrStatCard ggr={stats.ggr} periodLabel={stats.periodLabel} />
         {/* Two wager cards: "Total Wager" drops wagers a creator made
             while live on a deal/stream (house-funded sponsored balance,
             not a real customer bet); "Raw Wager" includes them. The gap
             between the two is the creator on-stream sponsored wager. */}
         <WagerStatCard
-          wagers={stats.wagers}
+          wager={stats.wagers}
+          periodLabel={stats.periodLabel}
           caption="excl. creator sessions"
           breakdown={stats.wagersBreakdown}
         />
         <WagerStatCard
-          wagers={stats.wagersRaw}
+          wager={stats.wagersRaw}
+          periodLabel={stats.periodLabel}
           title="Raw Wager"
           caption="incl. creator sessions"
         />
@@ -262,15 +290,20 @@ async function DashboardStatStrips() {
             "Total Wager" (excl. creator sessions) and this card is the
             wager that's downstream of creator marketing. */}
         <WagerStatCard
-          wagers={stats.wagersOrganic}
+          wager={stats.wagersOrganic}
+          periodLabel={stats.periodLabel}
           title="Organic Wager"
           caption="no creator-code users"
         />
         <DepositsStatCard
           deposits={stats.deposits}
-          depositCounts={stats.depositCounts}
+          depositCount={stats.depositCountPeriod}
+          periodLabel={stats.periodLabel}
         />
-        <WithdrawalsStatCard withdrawals={stats.withdrawals} />
+        <WithdrawalsStatCard
+          withdrawals={stats.withdrawals}
+          periodLabel={stats.periodLabel}
+        />
       </div>
 
       {/* Secondary stats — all-time / snapshot. These are simpler
@@ -412,9 +445,9 @@ async function DashboardActiveRain() {
  * Wager Attribution chart gets its own row at full width so 30 daily bars
  * stay legible and the split between the two bands reads at a glance.
  */
-async function DashboardCharts() {
+async function DashboardCharts({ period }: { period: DashboardPeriod }) {
   const [stats, dailyPnl] = await Promise.all([
-    getDashboardStats(),
+    getDashboardStats(period),
     getDailyPnl(),
   ]);
   return (
@@ -441,8 +474,8 @@ async function DashboardCharts() {
  * live event list self-bootstraps on the client (SSE / polling). Async so
  * the count strip streams behind Suspense without blocking first paint.
  */
-async function DashboardActivityFeed() {
-  const stats = await getDashboardStats();
+async function DashboardActivityFeed({ period }: { period: DashboardPeriod }) {
+  const stats = await getDashboardStats(period);
   return (
     <RecentActivity
       signups24h={stats.activity.signups24h}
