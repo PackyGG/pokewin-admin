@@ -15,23 +15,43 @@ import {
   WAGER_TYPES_SQL,
   PAYOUT_TYPES_SQL,
 } from "./_wager-payout-types";
+import {
+  DASHBOARD_PERIOD_LABELS,
+  DEFAULT_DASHBOARD_PERIOD,
+  periodToCutoff,
+  type DashboardPeriod,
+} from "./dashboard-period";
+
+// Re-export the client-safe period constants so existing call sites
+// that import from "@/lib/queries/dashboard" don't have to change. The
+// actual definitions live in dashboard-period.ts (no DB imports) so
+// the <DashboardPeriodSelector> client component can pull them too.
+export {
+  DASHBOARD_PERIODS,
+  DASHBOARD_PERIOD_LABELS,
+  DEFAULT_DASHBOARD_PERIOD,
+  parseDashboardPeriod,
+  periodToCutoff,
+} from "./dashboard-period";
+export type { DashboardPeriod } from "./dashboard-period";
 
 /**
- * Single raw query that returns revenue (deposits), withdrawal, wager and GGR
- * totals bucketed by period in ONE round-trip. Previously this was 20
- * separate aggregate calls (4 metrics × 5 periods) — each requires its own
- * plan + execution, and the underlying index scan is the same. Collapsing
- * into one query shaves ~15 round-trips off the hot dashboard path.
+ * Single raw query that returns revenue (deposits), withdrawal, wager,
+ * GGR, and the windowed-P&L building blocks for the SELECTED period
+ * only. Previously this computed all 9 windows at once (1h … all) in
+ * one massive CASE-WHEN scan — fast in round-trip count but very heavy
+ * in plan + execution, because every aggregate had to evaluate 9 time
+ * predicates per row. Collapsing to ONE cutoff lets the planner index-
+ * scan just the relevant slice of `ledger_transactions`, and the
+ * column list shrinks from ~60 to ~12.
  *
- * All cutoffs are TRUE ROLLING WINDOWS from `now` (1h ago, 3h ago, …,
- * 24h ago, 3d ago …). The 24h bucket used to be `startOfDay` (UTC
- * midnight = calendar day) which made the card reset to zero every
- * midnight and read like a partial half-day for most of the morning
- * — out of step with the other rolling chips on the same card. The
- * fix unifies the semantic: every chip is now `now − N`.
+ * The cutoff is a TRUE ROLLING WINDOW from `now` (e.g. 24h = `now − 24h`,
+ * NOT UTC midnight). The "all" period maps to the unix epoch so the
+ * `created_at >= cutoff` filter degrades to a no-op without needing a
+ * special branch in the SQL.
  *
- * Row shape: one text column per (metric × period). Caller converts to
- * number via toNumber / parseFloat.
+ * Row shape: one text column per metric. Caller converts to number via
+ * toNumber / parseFloat.
  *
  * Note on withdrawals: revenue/wager/GGR come from `ledger_transactions`,
  * but withdrawals come from `card_withdrawal_requests` (status IN
@@ -43,17 +63,9 @@ import {
  */
 function getPeriodAggregates(
   db: PrismaClient,
-  oneHourAgo: Date,
-  threeHoursAgo: Date,
-  sixHoursAgo: Date,
-  twelveHoursAgo: Date,
-  // Rolling 24h cutoff — `now − 24h`. NOT the start of the UTC day.
-  // Renamed from the old `startOfDay` to make the new semantic
-  // obvious at every call site.
-  twentyFourHoursAgo: Date,
-  threeDaysAgo: Date,
-  sevenDaysAgo: Date,
-  thirtyDaysAgo: Date,
+  // Single rolling cutoff for the selected period. `new Date(0)` for
+  // the "all" period.
+  cutoff: Date,
   blacklistIdNotIn: string,
   // A `session_windows(uid, win_start, win_end)` CTE definition (built
   // by getCreatorSessionWindowsCte) — every creator deal/stream session.
@@ -63,65 +75,43 @@ function getPeriodAggregates(
 ) {
   // GGR wager/payout type sets — built ONCE from the canonical shared
   // constants (src/lib/queries/_wager-payout-types.ts) and interpolated
-  // into every GGR period block below via Prisma.raw, instead of being
-  // re-typed inline 9× (where the 19-item payout list inevitably drifts).
-  // The values are hardcoded ledger-type strings — no external input —
-  // so Prisma.raw is injection-safe here.
+  // via Prisma.raw, instead of being re-typed inline (where the 19-item
+  // payout list inevitably drifts). The values are hardcoded ledger-
+  // type strings — no external input — so Prisma.raw is injection-safe.
   const ggrWagerIn = Prisma.raw(WAGER_TYPES_SQL);
   const ggrPayoutIn = Prisma.raw(PAYOUT_TYPES_SQL);
   return db.$queryRaw<
     {
-      revenue_1h: string; revenue_3h: string; revenue_6h: string; revenue_12h: string;
-      revenue_24h: string; revenue_3d: string; revenue_7d: string; revenue_30d: string; revenue_all: string;
-      withdrawal_1h: string; withdrawal_3h: string; withdrawal_6h: string; withdrawal_12h: string;
-      withdrawal_24h: string; withdrawal_3d: string; withdrawal_7d: string; withdrawal_30d: string; withdrawal_all: string;
-      wager_1h: string; wager_3h: string; wager_6h: string; wager_12h: string;
-      wager_24h: string; wager_3d: string; wager_7d: string; wager_30d: string; wager_all: string;
-      // Customer wager — wager_* MINUS wagers a creator made while live
+      revenue: string;
+      withdrawal: string;
+      wager: string;
+      // Customer wager — wager MINUS wagers a creator made while live
       // on a deal/stream (house-funded "sponsored" play).
-      wager_excl_session_1h: string; wager_excl_session_3h: string; wager_excl_session_6h: string; wager_excl_session_12h: string;
-      wager_excl_session_24h: string; wager_excl_session_3d: string; wager_excl_session_7d: string; wager_excl_session_30d: string; wager_excl_session_all: string;
-      // Customer wager broken down by source (Packs vs Battles) for the
-      // "Where the wager comes from" chip row under the Total Wager
-      // card. Same exclusion as wager_excl_session_* — creators' on-
-      // stream sponsored wagers are dropped. The two columns sum to
-      // wager_excl_session_* per window.
-      pack_wager_excl_session_1h: string; pack_wager_excl_session_3h: string; pack_wager_excl_session_6h: string; pack_wager_excl_session_12h: string;
-      pack_wager_excl_session_24h: string; pack_wager_excl_session_3d: string; pack_wager_excl_session_7d: string; pack_wager_excl_session_30d: string; pack_wager_excl_session_all: string;
-      battle_wager_excl_session_1h: string; battle_wager_excl_session_3h: string; battle_wager_excl_session_6h: string; battle_wager_excl_session_12h: string;
-      battle_wager_excl_session_24h: string; battle_wager_excl_session_3d: string; battle_wager_excl_session_7d: string; battle_wager_excl_session_30d: string; battle_wager_excl_session_all: string;
-      upgrader_wager_excl_session_1h: string; upgrader_wager_excl_session_3h: string; upgrader_wager_excl_session_6h: string; upgrader_wager_excl_session_12h: string;
-      upgrader_wager_excl_session_24h: string; upgrader_wager_excl_session_3d: string; upgrader_wager_excl_session_7d: string; upgrader_wager_excl_session_30d: string; upgrader_wager_excl_session_all: string;
+      wager_excl_session: string;
+      // Customer wager broken down by source (Packs / Battles /
+      // Upgrader). Sum to wager_excl_session.
+      pack_wager_excl_session: string;
+      battle_wager_excl_session: string;
+      upgrader_wager_excl_session: string;
       // Wager from users who did NOT join under an official creator
-      // code — referred_by is null OR referred_by points to a non-
-      // creator-role user. Same exclusion as wager_excl_session_* on
-      // top (creator-on-stream play already dropped) so this surfaces
-      // pure organic customer wager: not attributed to creator
-      // marketing, not house-funded promo.
-      wager_organic_1h: string; wager_organic_3h: string; wager_organic_6h: string; wager_organic_12h: string;
-      wager_organic_24h: string; wager_organic_3d: string; wager_organic_7d: string; wager_organic_30d: string; wager_organic_all: string;
-      ggr_1h: string; ggr_3h: string; ggr_6h: string; ggr_12h: string;
-      ggr_24h: string; ggr_3d: string; ggr_7d: string; ggr_30d: string; ggr_all: string;
-      // Deposit COUNT (number of completed deposit transactions) per
-      // period. Pairs with the existing revenue_* (sum) columns so the
-      // Deposits KPI card can show "$X across N deposits" on the same
-      // period selector.
-      deposit_count_1h: string; deposit_count_3h: string; deposit_count_6h: string; deposit_count_12h: string;
-      deposit_count_24h: string; deposit_count_3d: string; deposit_count_7d: string; deposit_count_30d: string; deposit_count_all: string;
-      // 24h windowed balance-change components used by the dashboard's
-      // realizedPnl24h figure. Computed off the same `base` CTE as the
-      // rest, so they cost no extra round-trip. Replaces the four
-      // separate queries that calculateWindowedPnl() used to fire just
-      // to gather these two values.
-      // `balance_change_24h` = sum of `balance_after − balance_before`
-      // over completed ledger rows in the rolling last 24h.
-      // `manual_wd_24h` = sum of `amount` for admin_balance_adjustment
-      // rows that look like manual withdrawals (description-tagged) in
-      // the same window — pulled out so the 24h withdrawals figure can
-      // include manuals alongside the card-withdrawal value already
-      // captured in `withdrawal_24h`.
-      balance_change_24h: string;
-      manual_wd_24h: string;
+      // code AND are not creator on-stream play (NOT in_session AND
+      // NOT under_creator). Pure organic customer wager.
+      wager_organic: string;
+      ggr: string;
+      deposit_count: string;
+      // Windowed balance-change components used by the period P&L
+      // figure (was the 24h-only realizedPnl24h, now keyed on the
+      // selected period via the same cutoff). Same `base` CTE as the
+      // rest so these cost no extra round-trip. balance_after −
+      // balance_before carries the signed delta on every completed
+      // row; summing across the window gives Δbalance directly.
+      balance_change: string;
+      // admin_balance_adjustment rows that look like manual
+      // withdrawals (description-tagged) in the same window — pulled
+      // out so the period withdrawals figure can include manuals
+      // alongside the card-withdrawal value already captured in
+      // `withdrawal`.
+      manual_wd: string;
     }[]
   >`
     WITH real_users AS (
@@ -181,174 +171,66 @@ function getPeriodAggregates(
         AND user_id IN (SELECT id FROM real_users)
     )
     SELECT
-      COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${oneHourAgo}     THEN amount ELSE 0 END), 0)::text AS revenue_1h,
-      COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${threeHoursAgo}  THEN amount ELSE 0 END), 0)::text AS revenue_3h,
-      COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${sixHoursAgo}    THEN amount ELSE 0 END), 0)::text AS revenue_6h,
-      COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${twelveHoursAgo} THEN amount ELSE 0 END), 0)::text AS revenue_12h,
-      COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${twentyFourHoursAgo}    THEN amount ELSE 0 END), 0)::text AS revenue_24h,
-      COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${threeDaysAgo}  THEN amount ELSE 0 END), 0)::text AS revenue_3d,
-      COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${sevenDaysAgo}  THEN amount ELSE 0 END), 0)::text AS revenue_7d,
-      COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${thirtyDaysAgo} THEN amount ELSE 0 END), 0)::text AS revenue_30d,
-      COALESCE(SUM(CASE WHEN type = 'deposit'                                    THEN amount ELSE 0 END), 0)::text AS revenue_all,
+      COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS revenue,
 
-      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${oneHourAgo}     THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal_1h,
-      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${threeHoursAgo}  THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal_3h,
-      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${sixHoursAgo}    THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal_6h,
-      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${twelveHoursAgo} THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal_12h,
-      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${twentyFourHoursAgo}    THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal_24h,
-      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${threeDaysAgo}  THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal_3d,
-      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${sevenDaysAgo}  THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal_7d,
-      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${thirtyDaysAgo} THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal_30d,
-      COALESCE((SELECT SUM(amount)                                                            FROM withdrawals), 0)::text AS withdrawal_all,
+      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${cutoff} THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal,
 
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND created_at >= ${oneHourAgo}     THEN amount ELSE 0 END), 0)::text AS wager_1h,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND created_at >= ${threeHoursAgo}  THEN amount ELSE 0 END), 0)::text AS wager_3h,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND created_at >= ${sixHoursAgo}    THEN amount ELSE 0 END), 0)::text AS wager_6h,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND created_at >= ${twelveHoursAgo} THEN amount ELSE 0 END), 0)::text AS wager_12h,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND created_at >= ${twentyFourHoursAgo}    THEN amount ELSE 0 END), 0)::text AS wager_24h,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND created_at >= ${threeDaysAgo}  THEN amount ELSE 0 END), 0)::text AS wager_3d,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND created_at >= ${sevenDaysAgo}  THEN amount ELSE 0 END), 0)::text AS wager_7d,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND created_at >= ${thirtyDaysAgo} THEN amount ELSE 0 END), 0)::text AS wager_30d,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')                                    THEN amount ELSE 0 END), 0)::text AS wager_all,
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS wager,
 
-      -- Customer wager — the wager_* set MINUS wagers a creator made
+      -- Customer wager — the wager set MINUS wagers a creator made
       -- while live on a deal/stream (in_session). Creators wager
       -- house-funded "sponsored" balance on stream — recorded as
       -- ordinary pack_opening/battle_bet rows — which is not a real
       -- customer bet. A creator's OFF-session personal play stays in.
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND created_at >= ${oneHourAgo}     THEN amount ELSE 0 END), 0)::text AS wager_excl_session_1h,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND created_at >= ${threeHoursAgo}  THEN amount ELSE 0 END), 0)::text AS wager_excl_session_3h,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND created_at >= ${sixHoursAgo}    THEN amount ELSE 0 END), 0)::text AS wager_excl_session_6h,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND created_at >= ${twelveHoursAgo} THEN amount ELSE 0 END), 0)::text AS wager_excl_session_12h,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND created_at >= ${twentyFourHoursAgo}    THEN amount ELSE 0 END), 0)::text AS wager_excl_session_24h,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND created_at >= ${threeDaysAgo}  THEN amount ELSE 0 END), 0)::text AS wager_excl_session_3d,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND created_at >= ${sevenDaysAgo}  THEN amount ELSE 0 END), 0)::text AS wager_excl_session_7d,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND created_at >= ${thirtyDaysAgo} THEN amount ELSE 0 END), 0)::text AS wager_excl_session_30d,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session                                    THEN amount ELSE 0 END), 0)::text AS wager_excl_session_all,
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS wager_excl_session,
 
-      -- Packs vs Battles split of the customer wager. Both sums use
-      -- the same NOT in_session filter and the same time windows as
-      -- wager_excl_session_*, so pack + battle == wager_excl_session
-      -- per window. Drives the "Packs / Battles / Upgrader" chip row
-      -- under the Total Wager card (Upgrader stays 0 until that
-      -- product surface exists on the main site).
-      COALESCE(SUM(CASE WHEN type = 'pack_opening' AND NOT in_session AND created_at >= ${oneHourAgo}     THEN amount ELSE 0 END), 0)::text AS pack_wager_excl_session_1h,
-      COALESCE(SUM(CASE WHEN type = 'pack_opening' AND NOT in_session AND created_at >= ${threeHoursAgo}  THEN amount ELSE 0 END), 0)::text AS pack_wager_excl_session_3h,
-      COALESCE(SUM(CASE WHEN type = 'pack_opening' AND NOT in_session AND created_at >= ${sixHoursAgo}    THEN amount ELSE 0 END), 0)::text AS pack_wager_excl_session_6h,
-      COALESCE(SUM(CASE WHEN type = 'pack_opening' AND NOT in_session AND created_at >= ${twelveHoursAgo} THEN amount ELSE 0 END), 0)::text AS pack_wager_excl_session_12h,
-      COALESCE(SUM(CASE WHEN type = 'pack_opening' AND NOT in_session AND created_at >= ${twentyFourHoursAgo}    THEN amount ELSE 0 END), 0)::text AS pack_wager_excl_session_24h,
-      COALESCE(SUM(CASE WHEN type = 'pack_opening' AND NOT in_session AND created_at >= ${threeDaysAgo}  THEN amount ELSE 0 END), 0)::text AS pack_wager_excl_session_3d,
-      COALESCE(SUM(CASE WHEN type = 'pack_opening' AND NOT in_session AND created_at >= ${sevenDaysAgo}  THEN amount ELSE 0 END), 0)::text AS pack_wager_excl_session_7d,
-      COALESCE(SUM(CASE WHEN type = 'pack_opening' AND NOT in_session AND created_at >= ${thirtyDaysAgo} THEN amount ELSE 0 END), 0)::text AS pack_wager_excl_session_30d,
-      COALESCE(SUM(CASE WHEN type = 'pack_opening' AND NOT in_session                                    THEN amount ELSE 0 END), 0)::text AS pack_wager_excl_session_all,
-      COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${oneHourAgo}     THEN amount ELSE 0 END), 0)::text AS battle_wager_excl_session_1h,
-      COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${threeHoursAgo}  THEN amount ELSE 0 END), 0)::text AS battle_wager_excl_session_3h,
-      COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${sixHoursAgo}    THEN amount ELSE 0 END), 0)::text AS battle_wager_excl_session_6h,
-      COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${twelveHoursAgo} THEN amount ELSE 0 END), 0)::text AS battle_wager_excl_session_12h,
-      COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${twentyFourHoursAgo}    THEN amount ELSE 0 END), 0)::text AS battle_wager_excl_session_24h,
-      COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${threeDaysAgo}  THEN amount ELSE 0 END), 0)::text AS battle_wager_excl_session_3d,
-      COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${sevenDaysAgo}  THEN amount ELSE 0 END), 0)::text AS battle_wager_excl_session_7d,
-      COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${thirtyDaysAgo} THEN amount ELSE 0 END), 0)::text AS battle_wager_excl_session_30d,
-      COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND NOT in_session                                    THEN amount ELSE 0 END), 0)::text AS battle_wager_excl_session_all,
-      COALESCE(SUM(CASE WHEN type = 'upgrader_bet' AND NOT in_session AND created_at >= ${oneHourAgo}     THEN amount ELSE 0 END), 0)::text AS upgrader_wager_excl_session_1h,
-      COALESCE(SUM(CASE WHEN type = 'upgrader_bet' AND NOT in_session AND created_at >= ${threeHoursAgo}  THEN amount ELSE 0 END), 0)::text AS upgrader_wager_excl_session_3h,
-      COALESCE(SUM(CASE WHEN type = 'upgrader_bet' AND NOT in_session AND created_at >= ${sixHoursAgo}    THEN amount ELSE 0 END), 0)::text AS upgrader_wager_excl_session_6h,
-      COALESCE(SUM(CASE WHEN type = 'upgrader_bet' AND NOT in_session AND created_at >= ${twelveHoursAgo} THEN amount ELSE 0 END), 0)::text AS upgrader_wager_excl_session_12h,
-      COALESCE(SUM(CASE WHEN type = 'upgrader_bet' AND NOT in_session AND created_at >= ${twentyFourHoursAgo}    THEN amount ELSE 0 END), 0)::text AS upgrader_wager_excl_session_24h,
-      COALESCE(SUM(CASE WHEN type = 'upgrader_bet' AND NOT in_session AND created_at >= ${threeDaysAgo}  THEN amount ELSE 0 END), 0)::text AS upgrader_wager_excl_session_3d,
-      COALESCE(SUM(CASE WHEN type = 'upgrader_bet' AND NOT in_session AND created_at >= ${sevenDaysAgo}  THEN amount ELSE 0 END), 0)::text AS upgrader_wager_excl_session_7d,
-      COALESCE(SUM(CASE WHEN type = 'upgrader_bet' AND NOT in_session AND created_at >= ${thirtyDaysAgo} THEN amount ELSE 0 END), 0)::text AS upgrader_wager_excl_session_30d,
-      COALESCE(SUM(CASE WHEN type = 'upgrader_bet' AND NOT in_session                                    THEN amount ELSE 0 END), 0)::text AS upgrader_wager_excl_session_all,
+      -- Packs / Battles / Upgrader split of the customer wager. Same
+      -- NOT in_session filter as wager_excl_session, so the three sum
+      -- to it. Drives the "Where the wager comes from" chip row under
+      -- the Total Wager card.
+      COALESCE(SUM(CASE WHEN type = 'pack_opening' AND NOT in_session AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS pack_wager_excl_session,
+      COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS battle_wager_excl_session,
+      COALESCE(SUM(CASE WHEN type = 'upgrader_bet' AND NOT in_session AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS upgrader_wager_excl_session,
 
       -- Organic wager — pack / battle / upgrader wager from users who
       -- did NOT join under an official creator code (and isn't a
       -- creator's own on-stream play, via NOT in_session). Reads off
       -- the under_creator flag set on the real_users CTE above.
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND NOT under_creator AND created_at >= ${oneHourAgo}        THEN amount ELSE 0 END), 0)::text AS wager_organic_1h,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND NOT under_creator AND created_at >= ${threeHoursAgo}     THEN amount ELSE 0 END), 0)::text AS wager_organic_3h,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND NOT under_creator AND created_at >= ${sixHoursAgo}       THEN amount ELSE 0 END), 0)::text AS wager_organic_6h,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND NOT under_creator AND created_at >= ${twelveHoursAgo}    THEN amount ELSE 0 END), 0)::text AS wager_organic_12h,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND NOT under_creator AND created_at >= ${twentyFourHoursAgo} THEN amount ELSE 0 END), 0)::text AS wager_organic_24h,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND NOT under_creator AND created_at >= ${threeDaysAgo}     THEN amount ELSE 0 END), 0)::text AS wager_organic_3d,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND NOT under_creator AND created_at >= ${sevenDaysAgo}     THEN amount ELSE 0 END), 0)::text AS wager_organic_7d,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND NOT under_creator AND created_at >= ${thirtyDaysAgo}    THEN amount ELSE 0 END), 0)::text AS wager_organic_30d,
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND NOT under_creator                                       THEN amount ELSE 0 END), 0)::text AS wager_organic_all,
+      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND NOT under_creator AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS wager_organic,
 
       -- GGR = wagers − payouts (industry-standard pure gaming margin).
       -- The wager (ggrWagerIn) + payout (ggrPayoutIn) type sets are
       -- interpolated from the canonical shared constants in
-      -- src/lib/queries/_wager-payout-types.ts (the same lists creators-pnl.ts
-      -- uses), so the dashboard's global GGR can never drift from the
-      -- per-creator GGR. Change the lists in that one file, not here.
+      -- src/lib/queries/_wager-payout-types.ts (the same lists
+      -- creators-pnl.ts uses), so the dashboard's global GGR can never
+      -- drift from the per-creator GGR. Change the lists in that one
+      -- file, not here.
       (
-        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${oneHourAgo} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${oneHourAgo} THEN ABS(amount) ELSE 0 END), 0)
-      )::text AS ggr_1h,
-      (
-        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${threeHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${threeHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
-      )::text AS ggr_3h,
-      (
-        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${sixHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${sixHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
-      )::text AS ggr_6h,
-      (
-        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${twelveHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${twelveHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
-      )::text AS ggr_12h,
-      (
-        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${twentyFourHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${twentyFourHoursAgo} THEN ABS(amount) ELSE 0 END), 0)
-      )::text AS ggr_24h,
-      (
-        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${threeDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${threeDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
-      )::text AS ggr_3d,
-      (
-        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${sevenDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${sevenDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
-      )::text AS ggr_7d,
-      (
-        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${thirtyDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${thirtyDaysAgo} THEN ABS(amount) ELSE 0 END), 0)
-      )::text AS ggr_30d,
-      (
-        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} THEN ABS(amount) ELSE 0 END), 0)
-      )::text AS ggr_all,
+        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${cutoff} THEN ABS(amount) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${cutoff} THEN ABS(amount) ELSE 0 END), 0)
+      )::text AS ggr,
 
-      -- Deposit COUNT per period. Same window definitions as the
-      -- revenue_* (sum) columns so the Deposits card can show both
-      -- "$X" and "N deposits" on a single period selector. COUNT()
-      -- with FILTER (CASE WHEN ... THEN 1 END) — only counts rows
-      -- where the condition is true; null rows are skipped.
-      COUNT(CASE WHEN type = 'deposit' AND created_at >= ${oneHourAgo}        THEN 1 END)::text AS deposit_count_1h,
-      COUNT(CASE WHEN type = 'deposit' AND created_at >= ${threeHoursAgo}     THEN 1 END)::text AS deposit_count_3h,
-      COUNT(CASE WHEN type = 'deposit' AND created_at >= ${sixHoursAgo}       THEN 1 END)::text AS deposit_count_6h,
-      COUNT(CASE WHEN type = 'deposit' AND created_at >= ${twelveHoursAgo}    THEN 1 END)::text AS deposit_count_12h,
-      COUNT(CASE WHEN type = 'deposit' AND created_at >= ${twentyFourHoursAgo} THEN 1 END)::text AS deposit_count_24h,
-      COUNT(CASE WHEN type = 'deposit' AND created_at >= ${threeDaysAgo}      THEN 1 END)::text AS deposit_count_3d,
-      COUNT(CASE WHEN type = 'deposit' AND created_at >= ${sevenDaysAgo}      THEN 1 END)::text AS deposit_count_7d,
-      COUNT(CASE WHEN type = 'deposit' AND created_at >= ${thirtyDaysAgo}     THEN 1 END)::text AS deposit_count_30d,
-      COUNT(CASE WHEN type = 'deposit'                                         THEN 1 END)::text AS deposit_count_all,
+      -- Deposit COUNT — number of completed deposit transactions in
+      -- the selected period. Pairs with revenue so the Deposits
+      -- card can show "$X across N deposits".
+      COUNT(CASE WHEN type = 'deposit' AND created_at >= ${cutoff} THEN 1 END)::text AS deposit_count,
 
-      -- 24h windowed balance-change + manual-withdrawal sums for the
-      -- realizedPnl24h calculation. The base CTE is already filtered to
-      -- staff+blacklist exclusion and status='completed', so these are
-      -- free aggregates off the same scan — and they replace the
-      -- 4-query calculateWindowedPnl(rolling24h) call we used to fire
-      -- separately. balance_after − balance_before carries the signed
-      -- delta on every completed row (deposits +, withdrawals/payouts −),
-      -- so summing it across the window gives Δbalance directly.
+      -- Windowed balance-change + manual-withdrawal sums for the
+      -- windowed P&L figure (was 24h-only, now scoped to the selected
+      -- period via the same cutoff). The base CTE is already filtered
+      -- to staff+blacklist exclusion and status='completed', so these
+      -- are free aggregates off the same scan. balance_after −
+      -- balance_before carries the signed delta on every completed
+      -- row, so summing across the window gives Δbalance directly.
       COALESCE(SUM(CASE
-        WHEN created_at >= ${twentyFourHoursAgo}
-        THEN (lt_balance_after - lt_balance_before)::numeric ELSE 0 END), 0)::text AS balance_change_24h,
+        WHEN created_at >= ${cutoff}
+        THEN (lt_balance_after - lt_balance_before)::numeric ELSE 0 END), 0)::text AS balance_change,
       COALESCE(SUM(CASE
         WHEN type = 'admin_balance_adjustment'
              AND lt_description ILIKE 'Manual withdrawal:%'
              AND lt_balance_after < lt_balance_before
-             AND created_at >= ${twentyFourHoursAgo}
-        THEN amount ELSE 0 END), 0)::text AS manual_wd_24h
+             AND created_at >= ${cutoff}
+        THEN amount ELSE 0 END), 0)::text AS manual_wd
     FROM base
   `;
 }
@@ -359,16 +241,18 @@ function getPeriodAggregates(
 /**
  * Per-request memoized. The dashboard page streams several independent
  * Suspense segments (KPI strips, charts, the activity count strip) that
- * each read these stats; `cache()` ensures the heavy 12-query aggregate
- * runs once per render, not once per segment. Cross-request caching is
+ * each read these stats; `cache()` ensures the heavy aggregate runs
+ * once per render, not once per segment. Keyed on `period`, so flipping
+ * the global selector triggers a re-fetch but only the period-bound
+ * scans within a single render dedupe. Cross-request caching is
  * intentionally omitted — these are live platform numbers and the page
  * already revalidates them via the 60s AutoRefresh.
  */
-export const getDashboardStats = cache(async () => {
-  return withTiming("dashboard.getDashboardStats", () => dashboardStatsInner());
+export const getDashboardStats = cache(async (period: DashboardPeriod = DEFAULT_DASHBOARD_PERIOD) => {
+  return withTiming("dashboard.getDashboardStats", () => dashboardStatsInner(period));
 });
 
-async function dashboardStatsInner() {
+async function dashboardStatsInner(period: DashboardPeriod) {
   // Wall-clock start of the server-side compute. Returned as `queryMs`
   // (Date.now() − t0 just before the return) so the dashboard can show a
   // real "Loaded in N ms" indicator instead of a faked/animated one. This
@@ -412,20 +296,21 @@ async function dashboardStatsInner() {
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
   );
 
-  const oneHourAgo = new Date(now.getTime() - 1 * MS_PER_HOUR);
-  const threeHoursAgo = new Date(now.getTime() - 3 * MS_PER_HOUR);
-  const sixHoursAgo = new Date(now.getTime() - 6 * MS_PER_HOUR);
-  const twelveHoursAgo = new Date(now.getTime() - 12 * MS_PER_HOUR);
-  const threeDaysAgo = new Date(now.getTime() - 3 * MS_PER_DAY);
-  const sevenDaysAgo = new Date(now.getTime() - 7 * MS_PER_DAY);
-  const thirtyDaysAgo = new Date(now.getTime() - 30 * MS_PER_DAY);
-  // Rolling 24h cutoff (now − 24h, NOT UTC midnight). Used by every
-  // "24h" surface on the dashboard:
-  //   • Period aggregates (revenue / wager / GGR / withdrawal "24h" KPI cards)
-  //   • The 24h Activity tile (pack openings + battles count)
-  // The card chips next to "24h" are 1h / 3h / 6h / 12h / 3d / 7d / 30d
-  // — all rolling. Making "24h" rolling too keeps the row coherent.
+  // Fixed-window cutoffs the period-INDEPENDENT tiles still need:
+  //   • rolling24h drives the 24h Activity tile (pack openings + battles
+  //     count), FTDs, and one column of lifetimeDepositMetrics.
+  //   • sevenDaysAgo drives the 7d column of lifetimeDepositMetrics
+  //     (Deposits / hour tile's 7d baseline).
+  // The period-bound aggregates use the SELECTED period via the cutoff
+  // helper below; we don't precompute the rest of the 9-chip ladder.
   const rolling24h = new Date(now.getTime() - 1 * MS_PER_DAY);
+  const sevenDaysAgo = new Date(now.getTime() - 7 * MS_PER_DAY);
+  // Cutoff for the SELECTED period — drives every period-bound query
+  // (periodAggregates, windowed inventory/voucher delta, etc.). One
+  // value, one set of indexed scans — the whole point of the global
+  // selector. `new Date(0)` for "all" lets the cutoff filter degrade
+  // to a no-op without a special SQL branch.
+  const periodCutoff = periodToCutoff(period, now);
 
   // Perf audit (2026-05-27): cut the dashboard's parallel query batch
   // from 17 to 12 queries, and dropped the 4-query
@@ -462,7 +347,8 @@ async function dashboardStatsInner() {
     packsOpened24h,
     battlesPlayed24h,
     ftdCombined,
-    windowed24hDelta,
+    windowedPeriodDelta,
+    lifetimeDepositMetrics,
   ] = await Promise.all([
     // All four user counts (total + today/week/month) PLUS the
     // rolling-24h signup count in ONE scan of the user table via
@@ -567,12 +453,14 @@ async function dashboardStatsInner() {
       GROUP BY DATE(lt.created_at)
       ORDER BY date
     `,
-    // Single batched query replaces 20 independent aggregates (revenue,
-    // withdrawal, wager, ggr × 5 periods each). Same plan + same index
-    // scan — but one round-trip. Also produces `balance_change_24h` and
-    // `manual_wd_24h` so the dashboard's 24h P&L no longer needs the
-    // 4-query calculateWindowedPnl() call.
-    getPeriodAggregates(db, oneHourAgo, threeHoursAgo, sixHoursAgo, twelveHoursAgo, rolling24h, threeDaysAgo, sevenDaysAgo, thirtyDaysAgo, blacklistIdNotIn, sessionWindowsCte),
+    // Single batched query — computes revenue / withdrawal / wager /
+    // ggr / deposit_count / balance_change / manual_wd for the SELECTED
+    // period only. Previously this fanned out into 9 windows × many
+    // metrics per render; now only the chip the admin clicked gets
+    // computed, which is the headline perf win of the period selector.
+    // Also produces `balance_change` and `manual_wd` so the windowed
+    // P&L no longer needs a separate calculateWindowedPnl() call.
+    getPeriodAggregates(db, periodCutoff, blacklistIdNotIn, sessionWindowsCte),
     // Distinct depositors = real users whose LIFETIME completed-deposit
     // total is > 0. Read from `balances` (one row per user — thousands)
     // with the same staff+blacklist exclusion, instead of COUNT(DISTINCT
@@ -655,14 +543,13 @@ async function dashboardStatsInner() {
       WHERE created_at >= NOW() - INTERVAL '30 days'
       GROUP BY DATE(created_at)
     `,
-    // 24h windowed inventory + voucher deltas. The other three
-    // components of the 24h P&L (deposits, card-withdrawals, ledger
-    // balance change, manual withdrawals) already come from
-    // periodAggregates / the realized snapshot — these are the two
-    // pieces it doesn't carry, so we fetch them in one composite query
-    // instead of as part of calculateWindowedPnl's 4-query bundle. Each
-    // subselect is a narrow indexed range scan; PG materializes the
-    // common `real_users` CTE once.
+    // Windowed inventory + voucher deltas for the SELECTED period.
+    // The other three components of the period P&L (deposits, card-
+    // withdrawals, ledger balance change, manual withdrawals) already
+    // come from periodAggregates / the realized snapshot — these are
+    // the two pieces it doesn't carry, so we fetch them in one
+    // composite query. Each subselect is a narrow indexed range scan;
+    // PG materializes the common `real_users` CTE once.
     db.$queryRaw<{
       inv_obtained: string;
       inv_disposed: string;
@@ -675,17 +562,40 @@ async function dashboardStatsInner() {
       )
       SELECT
         COALESCE((SELECT SUM(value_at_obtained::numeric) FROM user_inventory
-          WHERE obtained_at >= ${rolling24h}
+          WHERE obtained_at >= ${periodCutoff}
             AND user_id IN (SELECT id FROM real_users)), 0)::text AS inv_obtained,
         COALESCE((SELECT SUM(value_at_obtained::numeric) FROM user_inventory
-          WHERE (sold_at >= ${rolling24h} OR exchanged_at >= ${rolling24h})
+          WHERE (sold_at >= ${periodCutoff} OR exchanged_at >= ${periodCutoff})
             AND user_id IN (SELECT id FROM real_users)), 0)::text AS inv_disposed,
         COALESCE((SELECT SUM(value::numeric) FROM vouchers
-          WHERE created_at >= ${rolling24h}
+          WHERE created_at >= ${periodCutoff}
             AND user_id IN (SELECT id FROM real_users)), 0)::text AS vch_issued,
         COALESCE((SELECT SUM(value::numeric) FROM vouchers
-          WHERE claimed_at >= ${rolling24h}
+          WHERE claimed_at >= ${periodCutoff}
             AND user_id IN (SELECT id FROM real_users)), 0)::text AS vch_claimed
+    `,
+    // Lifetime + 24h + 7d deposit transaction counts in one indexed
+    // scan. Cheap (a few-ms count over a single ledger type) and gives
+    // us the three fixed-window numbers the period-independent KPI
+    // tiles need: lifetime depositCount (drives the Depositors / Avg
+    // Deposit math), plus 24h / 7d counts feeding the "Deposits / hr"
+    // tile. None of these depend on the selected period.
+    db.$queryRaw<{
+      lifetime: string;
+      h24: string;
+      d7: string;
+    }[]>`
+      SELECT
+        COUNT(*)::text AS lifetime,
+        COUNT(*) FILTER (WHERE created_at >= ${rolling24h})::text AS h24,
+        COUNT(*) FILTER (WHERE created_at >= ${sevenDaysAgo})::text AS d7
+      FROM ledger_transactions
+      WHERE type = 'deposit'
+        AND status = 'completed'
+        AND user_id IN (
+          SELECT id FROM "user"
+          WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+        )
     `,
   ]);
 
@@ -694,36 +604,40 @@ async function dashboardStatsInner() {
 
   // Unpack the batched period aggregates. Each field is a text-encoded
   // numeric; parseFloat() is sufficient because we're always going
-  // through Number coercion anyway downstream.
+  // through Number coercion anyway downstream. Each field is scoped to
+  // the SELECTED period via `periodCutoff` — switching the global
+  // period selector picks a new cutoff and re-runs this one query.
   const pa = periodAggregates[0] ?? {
-    revenue_1h: "0", revenue_3h: "0", revenue_6h: "0", revenue_12h: "0",
-    revenue_24h: "0", revenue_3d: "0", revenue_7d: "0", revenue_30d: "0", revenue_all: "0",
-    withdrawal_1h: "0", withdrawal_3h: "0", withdrawal_6h: "0", withdrawal_12h: "0",
-    withdrawal_24h: "0", withdrawal_3d: "0", withdrawal_7d: "0", withdrawal_30d: "0", withdrawal_all: "0",
-    wager_1h: "0", wager_3h: "0", wager_6h: "0", wager_12h: "0",
-    wager_24h: "0", wager_3d: "0", wager_7d: "0", wager_30d: "0", wager_all: "0",
-    wager_excl_session_1h: "0", wager_excl_session_3h: "0", wager_excl_session_6h: "0", wager_excl_session_12h: "0",
-    wager_excl_session_24h: "0", wager_excl_session_3d: "0", wager_excl_session_7d: "0", wager_excl_session_30d: "0", wager_excl_session_all: "0",
-    pack_wager_excl_session_1h: "0", pack_wager_excl_session_3h: "0", pack_wager_excl_session_6h: "0", pack_wager_excl_session_12h: "0",
-    pack_wager_excl_session_24h: "0", pack_wager_excl_session_3d: "0", pack_wager_excl_session_7d: "0", pack_wager_excl_session_30d: "0", pack_wager_excl_session_all: "0",
-    battle_wager_excl_session_1h: "0", battle_wager_excl_session_3h: "0", battle_wager_excl_session_6h: "0", battle_wager_excl_session_12h: "0",
-    battle_wager_excl_session_24h: "0", battle_wager_excl_session_3d: "0", battle_wager_excl_session_7d: "0", battle_wager_excl_session_30d: "0", battle_wager_excl_session_all: "0",
-    upgrader_wager_excl_session_1h: "0", upgrader_wager_excl_session_3h: "0", upgrader_wager_excl_session_6h: "0", upgrader_wager_excl_session_12h: "0",
-    upgrader_wager_excl_session_24h: "0", upgrader_wager_excl_session_3d: "0", upgrader_wager_excl_session_7d: "0", upgrader_wager_excl_session_30d: "0", upgrader_wager_excl_session_all: "0",
-    wager_organic_1h: "0", wager_organic_3h: "0", wager_organic_6h: "0", wager_organic_12h: "0",
-    wager_organic_24h: "0", wager_organic_3d: "0", wager_organic_7d: "0", wager_organic_30d: "0", wager_organic_all: "0",
-    ggr_1h: "0", ggr_3h: "0", ggr_6h: "0", ggr_12h: "0",
-    ggr_24h: "0", ggr_3d: "0", ggr_7d: "0", ggr_30d: "0", ggr_all: "0",
-    deposit_count_1h: "0", deposit_count_3h: "0", deposit_count_6h: "0", deposit_count_12h: "0",
-    deposit_count_24h: "0", deposit_count_3d: "0", deposit_count_7d: "0", deposit_count_30d: "0", deposit_count_all: "0",
-    balance_change_24h: "0",
-    manual_wd_24h: "0",
+    revenue: "0",
+    withdrawal: "0",
+    wager: "0",
+    wager_excl_session: "0",
+    pack_wager_excl_session: "0",
+    battle_wager_excl_session: "0",
+    upgrader_wager_excl_session: "0",
+    wager_organic: "0",
+    ggr: "0",
+    deposit_count: "0",
+    balance_change: "0",
+    manual_wd: "0",
   };
   const num = (s: string) => parseFloat(s) || 0;
-  // Lifetime deposit transaction count — reused from the period
-  // aggregates CTE (column `deposit_count_all`) so we don't pay a
-  // dedicated `ledger_transactions.count()` round-trip just for this.
-  const depositCount = num(pa.deposit_count_all);
+  // Lifetime deposit transaction count comes from
+  // `lifetimeDepositMetrics` (a tiny indexed count, not the period
+  // aggregate). Independent of the selected period so the Avg Deposit
+  // / Depositors-derived math stays stable when the chip changes.
+  const depMetrics = lifetimeDepositMetrics[0] ?? {
+    lifetime: "0",
+    h24: "0",
+    d7: "0",
+  };
+  const depositCount = num(depMetrics.lifetime);
+  // Deposit counts for the two fixed windows the "Deposits / hr" tile
+  // uses. NOT period-bound (the tile's subtitle compares 24h to 7d
+  // baseline, always — flipping the global selector shouldn't reshape
+  // a tile labelled "last 24h avg").
+  const depositCount24h = num(depMetrics.h24);
+  const depositCount7d = num(depMetrics.d7);
 
   // FTD rows come back via UNION: one 'rolling24h' row (bucket = NULL)
   // and many 'daily' rows (bucket = a calendar date) — see the
@@ -742,186 +656,96 @@ async function dashboardStatsInner() {
   const ftdCount = Number(ftdRolling?.count ?? 0);
   const ftdTotal = Number(ftdRolling?.total ?? 0);
 
-  // 24h windowed house P&L — derived from existing aggregates instead
-  // of a separate calculateWindowedPnl() call. The 4 queries that
-  // function used to fire are now covered by:
-  //   • deposits_24h        ← pa.revenue_24h
-  //   • card-withdrawal_24h ← pa.withdrawal_24h
-  //   • balance_change_24h  ← pa.balance_change_24h (new column)
-  //   • manual_wd_24h       ← pa.manual_wd_24h (new column)
-  //   • inv/voucher Δ_24h   ← windowed24hDelta (single composite query)
-  // Formula matches calculateWindowedPnl exactly:
+  // Windowed house P&L for the SELECTED period — derived from existing
+  // aggregates instead of a separate calculateWindowedPnl() call. The
+  // four components come from the one period query + the one composite
+  // inventory/voucher query, both keyed off `periodCutoff`. Formula
+  // matches calculateWindowedPnl exactly:
   //   pnl = deposits − (manualWd + cardWd) − balanceChange − Δinv − Δvch
-  const deposits24h = num(pa.revenue_24h);
-  const cardWd24h = Math.abs(num(pa.withdrawal_24h));
-  const manualWd24h = num(pa.manual_wd_24h);
-  const balanceChange24h = num(pa.balance_change_24h);
-  const wd = windowed24hDelta[0] ?? {
+  const depositsPeriod = num(pa.revenue);
+  const cardWdPeriod = Math.abs(num(pa.withdrawal));
+  const manualWdPeriod = num(pa.manual_wd);
+  const balanceChangePeriod = num(pa.balance_change);
+  const wd = windowedPeriodDelta[0] ?? {
     inv_obtained: "0",
     inv_disposed: "0",
     vch_issued: "0",
     vch_claimed: "0",
   };
-  const inventoryChange24h = num(wd.inv_obtained) - num(wd.inv_disposed);
-  const voucherChange24h = num(wd.vch_issued) - num(wd.vch_claimed);
-  const realizedPnl24h =
-    deposits24h -
-    (manualWd24h + cardWd24h) -
-    balanceChange24h -
-    inventoryChange24h -
-    voucherChange24h;
+  const inventoryChangePeriod = num(wd.inv_obtained) - num(wd.inv_disposed);
+  const voucherChangePeriod = num(wd.vch_issued) - num(wd.vch_claimed);
+  const realizedPnlPeriod =
+    depositsPeriod -
+    (manualWdPeriod + cardWdPeriod) -
+    balanceChangePeriod -
+    inventoryChangePeriod -
+    voucherChangePeriod;
 
   return {
+    // Selected period meta — drives the UI labels (so a card title can
+    // read "Wager · Last 24h") without the client component re-deriving
+    // the chip's friendly label.
+    period,
+    periodLabel: DASHBOARD_PERIOD_LABELS[period],
     users: {
       total: Number(userCounts[0]?.total ?? 0),
       today: Number(userCounts[0]?.today ?? 0),
       week: Number(userCounts[0]?.week ?? 0),
       month: Number(userCounts[0]?.month ?? 0),
     },
-    // Gaming margin (wagers − payouts) per period. Pure GGR, no liability
-    // adjustment. Use realizedPnl for the balance-sheet-true number.
-    ggr: {
-      "1h": num(pa.ggr_1h),
-      "3h": num(pa.ggr_3h),
-      "6h": num(pa.ggr_6h),
-      "12h": num(pa.ggr_12h),
-      "24h": num(pa.ggr_24h),
-      "3d": num(pa.ggr_3d),
-      "7d": num(pa.ggr_7d),
-      "30d": num(pa.ggr_30d),
-      all: num(pa.ggr_all),
-    },
+    // Gaming margin (wagers − payouts) for the SELECTED period. Pure
+    // GGR, no liability adjustment. Use realizedPnl for the balance-
+    // sheet-true number.
+    ggr: num(pa.ggr),
     // Lifetime realized P&L from the house perspective — see getRealizedPnlSnapshot.
     // This is a single snapshot value, not a period series.
     realizedPnl: realizedPnlResult.pnl,
-    // Rolling past-24h house P&L (windowed delta — same formula as
+    // Rolling past-period house P&L (windowed delta — same formula as
     // calculateWindowedPnl but computed inline here from pieces that
-    // periodAggregates + the windowed24hDelta query already produce).
-    realizedPnl24h,
-    deposits: {
-      "1h": num(pa.revenue_1h),
-      "3h": num(pa.revenue_3h),
-      "6h": num(pa.revenue_6h),
-      "12h": num(pa.revenue_12h),
-      "24h": num(pa.revenue_24h),
-      "3d": num(pa.revenue_3d),
-      "7d": num(pa.revenue_7d),
-      "30d": num(pa.revenue_30d),
-      all: num(pa.revenue_all),
-    },
-    // Deposit COUNT (number of completed deposit transactions) per
-    // period. Same window definitions as `deposits` above — they pair
-    // 1:1 so the Deposits KPI card can show "$X across N deposits"
-    // synced to a single period selector.
-    depositCounts: {
-      "1h": num(pa.deposit_count_1h),
-      "3h": num(pa.deposit_count_3h),
-      "6h": num(pa.deposit_count_6h),
-      "12h": num(pa.deposit_count_12h),
-      "24h": num(pa.deposit_count_24h),
-      "3d": num(pa.deposit_count_3d),
-      "7d": num(pa.deposit_count_7d),
-      "30d": num(pa.deposit_count_30d),
-      all: num(pa.deposit_count_all),
-    },
-    // Sourced from card_withdrawal_requests (status IN completed/shipped)
-    // so the StatCard matches the PnL formula. Values are already positive
-    // outflow magnitudes; Math.abs is a defensive no-op.
-    withdrawals: {
-      "1h": Math.abs(num(pa.withdrawal_1h)),
-      "3h": Math.abs(num(pa.withdrawal_3h)),
-      "6h": Math.abs(num(pa.withdrawal_6h)),
-      "12h": Math.abs(num(pa.withdrawal_12h)),
-      "24h": Math.abs(num(pa.withdrawal_24h)),
-      "3d": Math.abs(num(pa.withdrawal_3d)),
-      "7d": Math.abs(num(pa.withdrawal_7d)),
-      "30d": Math.abs(num(pa.withdrawal_30d)),
-      all: Math.abs(num(pa.withdrawal_all)),
-    },
-    // Customer wager — wagers a creator made while live on a deal/stream
-    // are EXCLUDED (house-funded "sponsored" play, not a real customer
-    // bet). A creator's off-session personal play is kept. This is the
-    // figure the dashboard's "Total Wager" card shows.
-    wagers: {
-      "1h": Math.abs(num(pa.wager_excl_session_1h)),
-      "3h": Math.abs(num(pa.wager_excl_session_3h)),
-      "6h": Math.abs(num(pa.wager_excl_session_6h)),
-      "12h": Math.abs(num(pa.wager_excl_session_12h)),
-      "24h": Math.abs(num(pa.wager_excl_session_24h)),
-      "3d": Math.abs(num(pa.wager_excl_session_3d)),
-      "7d": Math.abs(num(pa.wager_excl_session_7d)),
-      "30d": Math.abs(num(pa.wager_excl_session_30d)),
-      all: Math.abs(num(pa.wager_excl_session_all)),
-    },
+    // periodAggregates + the windowedPeriodDelta query already produce).
+    // Tracks the selected period via `periodCutoff` instead of being
+    // 24h-only — flipping the global chip re-runs this.
+    realizedPnlPeriod,
+    // Total deposit dollar amount for the SELECTED period.
+    deposits: depositsPeriod,
+    // Deposit transaction COUNT for the SELECTED period. Pairs 1:1
+    // with `deposits` so the Deposits card can show "$X across N
+    // deposits" without a second roundtrip.
+    depositCountPeriod: num(pa.deposit_count),
+    // Fixed-window deposit counts (24h / 7d) for the "Deposits / hr"
+    // KPI tile. Independent of the global period selector — the tile
+    // always compares 24h average to a 7d baseline. Sourced from the
+    // lightweight lifetimeDepositMetrics query.
+    depositCount24h,
+    depositCount7d,
+    // Sourced from card_withdrawal_requests (status IN completed/
+    // shipped) so the StatCard matches the PnL formula. Already a
+    // positive magnitude; Math.abs is a defensive no-op.
+    withdrawals: Math.abs(num(pa.withdrawal)),
+    // Customer wager — wagers a creator made while live on a deal/
+    // stream are EXCLUDED (house-funded "sponsored" play, not a real
+    // customer bet). A creator's off-session personal play is kept.
+    // This is the figure the dashboard's "Total Wager" card shows.
+    wagers: Math.abs(num(pa.wager_excl_session)),
     // Per-source breakdown of the customer wager. Packs + Battles +
-    // Upgrader add up to `wagers` per window. All three are sourced
-    // from the same NOT in_session filter as wager_excl_session_*, so
-    // creator on-stream play is excluded consistently across surfaces.
+    // Upgrader add up to `wagers`. All three sourced from the same
+    // NOT in_session filter as wager_excl_session.
     wagersBreakdown: {
-      packs: {
-        "1h": Math.abs(num(pa.pack_wager_excl_session_1h)),
-        "3h": Math.abs(num(pa.pack_wager_excl_session_3h)),
-        "6h": Math.abs(num(pa.pack_wager_excl_session_6h)),
-        "12h": Math.abs(num(pa.pack_wager_excl_session_12h)),
-        "24h": Math.abs(num(pa.pack_wager_excl_session_24h)),
-        "3d": Math.abs(num(pa.pack_wager_excl_session_3d)),
-        "7d": Math.abs(num(pa.pack_wager_excl_session_7d)),
-        "30d": Math.abs(num(pa.pack_wager_excl_session_30d)),
-        all: Math.abs(num(pa.pack_wager_excl_session_all)),
-      },
-      battles: {
-        "1h": Math.abs(num(pa.battle_wager_excl_session_1h)),
-        "3h": Math.abs(num(pa.battle_wager_excl_session_3h)),
-        "6h": Math.abs(num(pa.battle_wager_excl_session_6h)),
-        "12h": Math.abs(num(pa.battle_wager_excl_session_12h)),
-        "24h": Math.abs(num(pa.battle_wager_excl_session_24h)),
-        "3d": Math.abs(num(pa.battle_wager_excl_session_3d)),
-        "7d": Math.abs(num(pa.battle_wager_excl_session_7d)),
-        "30d": Math.abs(num(pa.battle_wager_excl_session_30d)),
-        all: Math.abs(num(pa.battle_wager_excl_session_all)),
-      },
-      upgrader: {
-        "1h": Math.abs(num(pa.upgrader_wager_excl_session_1h)),
-        "3h": Math.abs(num(pa.upgrader_wager_excl_session_3h)),
-        "6h": Math.abs(num(pa.upgrader_wager_excl_session_6h)),
-        "12h": Math.abs(num(pa.upgrader_wager_excl_session_12h)),
-        "24h": Math.abs(num(pa.upgrader_wager_excl_session_24h)),
-        "3d": Math.abs(num(pa.upgrader_wager_excl_session_3d)),
-        "7d": Math.abs(num(pa.upgrader_wager_excl_session_7d)),
-        "30d": Math.abs(num(pa.upgrader_wager_excl_session_30d)),
-        all: Math.abs(num(pa.upgrader_wager_excl_session_all)),
-      },
+      packs: Math.abs(num(pa.pack_wager_excl_session)),
+      battles: Math.abs(num(pa.battle_wager_excl_session)),
+      upgrader: Math.abs(num(pa.upgrader_wager_excl_session)),
     },
-    // Organic wager — customer wager from users who did NOT join under
-    // an official creator code (referrer is null or a non-creator
-    // user). Excludes creator on-stream play via the same NOT
-    // in_session filter as `wagers`. Surfaces the wager volume not
-    // attributed to creator marketing.
-    wagersOrganic: {
-      "1h": Math.abs(num(pa.wager_organic_1h)),
-      "3h": Math.abs(num(pa.wager_organic_3h)),
-      "6h": Math.abs(num(pa.wager_organic_6h)),
-      "12h": Math.abs(num(pa.wager_organic_12h)),
-      "24h": Math.abs(num(pa.wager_organic_24h)),
-      "3d": Math.abs(num(pa.wager_organic_3d)),
-      "7d": Math.abs(num(pa.wager_organic_7d)),
-      "30d": Math.abs(num(pa.wager_organic_30d)),
-      all: Math.abs(num(pa.wager_organic_all)),
-    },
+    // Organic wager — customer wager from users who did NOT join
+    // under an official creator code (referrer null or non-creator).
+    // Excludes creator on-stream play via the same NOT in_session
+    // filter as `wagers`. Surfaces volume not attributed to creator
+    // marketing.
+    wagersOrganic: Math.abs(num(pa.wager_organic)),
     // Raw wager — every non-staff user, INCLUDING creators' on-stream
     // sponsored play. The "Raw Wager" card shows this; (wagersRaw −
-    // wagers) is the creator deal/stream sponsored-balance contribution.
-    wagersRaw: {
-      "1h": Math.abs(num(pa.wager_1h)),
-      "3h": Math.abs(num(pa.wager_3h)),
-      "6h": Math.abs(num(pa.wager_6h)),
-      "12h": Math.abs(num(pa.wager_12h)),
-      "24h": Math.abs(num(pa.wager_24h)),
-      "3d": Math.abs(num(pa.wager_3d)),
-      "7d": Math.abs(num(pa.wager_7d)),
-      "30d": Math.abs(num(pa.wager_30d)),
-      all: Math.abs(num(pa.wager_all)),
-    },
+    // wagers) is the creator deal/stream sponsored-balance
+    // contribution.
+    wagersRaw: Math.abs(num(pa.wager)),
     financials: {
       totalDeposited: toNumber(balanceAggregates._sum?.total_deposited),
       totalWithdrawn: toNumber(balanceAggregates._sum?.total_withdrawn),
