@@ -71,7 +71,7 @@ export function UpgraderStatsSection({
                 Upgrader Stats
               </h3>
               <p className="text-[11px] text-muted-foreground">
-                Volume, profit, and player counts for the Upgrader mode
+                Raw customer signal — staff and creators excluded
               </p>
             </div>
           </div>
