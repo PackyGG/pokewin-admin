@@ -136,7 +136,13 @@ export function EditDialog({
     const originalPool = Number(leaderboard.creator_prize_usd) + Number(leaderboard.site_bonus_usd);
 
     const tierSum = tiers.reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
-    const tierSumExceeds = tierSum > totalPool + 1e-6;
+    const sumDelta = tierSum - totalPool;
+    // Backend rule: tier sum MUST equal total pool exactly (not just
+    // ≤). Mirror that here so the save button stays disabled until
+    // the two match — `1e-6` tolerance for floating-point rounding
+    // when the admin types e.g. "1500.00".
+    const tierSumMismatch = Math.abs(sumDelta) > 1e-6;
+    const tierSumExceeds = sumDelta > 1e-6;
     const siteBonusInvalid = !Number.isFinite(siteBonusNum) || siteBonusNum < 0;
 
     useEffect(() => {
@@ -282,23 +288,28 @@ export function EditDialog({
             payload.site_bonus_usd = siteBonusNum;
         }
 
+        // Strict-equality guard. The backend rejects unless tier sum
+        // equals the resulting total pool exactly, so we mirror that
+        // here — the toast points at the real fix instead of the
+        // backend's generic "must equal" message.
+        const needsTierSumGuard = tiersChanged || siteBonusChanged;
         if (tiersChanged) {
             if (newTiersSorted.length < 5) {
                 toast.error("At least 5 prize tiers are required");
                 return;
             }
-            if (tierSumExceeds) {
-                toast.error(`Tier sum ($${tierSum.toFixed(2)}) exceeds total prize pool ($${totalPool.toFixed(2)})`);
-                return;
-            }
             payload.prize_tiers = newTiersSorted;
-        } else if (siteBonusChanged && tierSumExceeds) {
-            // Pool was lowered below the existing tier sum without
-            // adjusting tiers — explicit guard so the backend doesn't
-            // have to reject (and the toast points at the real fix).
-            toast.error(
-                `New pool ($${totalPool.toFixed(2)}) is below tier sum ($${tierSum.toFixed(2)}). Lower the tier amounts too.`,
-            );
+        }
+        if (needsTierSumGuard && tierSumMismatch) {
+            if (tierSumExceeds) {
+                toast.error(
+                    `Tier sum ($${tierSum.toFixed(2)}) exceeds total prize pool ($${totalPool.toFixed(2)}). Lower the tier amounts or raise the pool.`,
+                );
+            } else {
+                toast.error(
+                    `Tier sum ($${tierSum.toFixed(2)}) is below total prize pool ($${totalPool.toFixed(2)}). Raise the tier amounts or lower the pool — the two must match exactly.`,
+                );
+            }
             return;
         }
 
@@ -369,10 +380,11 @@ export function EditDialog({
                 <DialogHeader>
                     <DialogTitle>Edit leaderboard</DialogTitle>
                     <DialogDescription>
-                        Modify any fields. Empty fields are kept unchanged. The
-                        site-funded pool can be lowered or raised; the tier
-                        sum must not exceed the resulting total pool
-                        (creator-funded + site-funded).
+                        Edit any field. The site-funded pool can be raised or
+                        lowered. The prize-tier sum must equal the resulting
+                        total pool (creator-funded + site-funded) exactly —
+                        use the &ldquo;Scale tiers to pool&rdquo; button to
+                        snap them into alignment.
                     </DialogDescription>
                 </DialogHeader>
                 <form onSubmit={handleSubmit} className="space-y-4">
@@ -557,16 +569,118 @@ export function EditDialog({
                     </div>
 
                     <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                            <Label>Prize tiers</Label>
+                        <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                                <Label>Prize tiers</Label>
+                                {tierSumMismatch && (
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-6 px-2 text-[10px]"
+                                        onClick={() => {
+                                            // Auto-scale every tier
+                                            // proportionally so the sum
+                                            // lands exactly on the new
+                                            // pool. Zero-sum guard
+                                            // distributes evenly when
+                                            // every tier is empty.
+                                            const current = tiers.reduce(
+                                                (acc, t) =>
+                                                    acc +
+                                                    (Number(t.amount) || 0),
+                                                0,
+                                            );
+                                            const target = totalPool;
+                                            if (target <= 0) return;
+                                            const next = tiers.map((t) => {
+                                                if (current > 0) {
+                                                    const scaled =
+                                                        (Number(t.amount) ||
+                                                            0) *
+                                                        (target / current);
+                                                    return {
+                                                        ...t,
+                                                        amount: scaled.toFixed(
+                                                            2,
+                                                        ),
+                                                    };
+                                                }
+                                                // Empty tiers → spread the
+                                                // pool evenly so the admin
+                                                // gets a sensible
+                                                // starting point.
+                                                return {
+                                                    ...t,
+                                                    amount: (
+                                                        target / tiers.length
+                                                    ).toFixed(2),
+                                                };
+                                            });
+                                            // Floating-point drift: nudge
+                                            // the largest tier by the
+                                            // residual so the rounded sum
+                                            // matches exactly.
+                                            const rounded = next.reduce(
+                                                (acc, t) =>
+                                                    acc +
+                                                    (Number(t.amount) || 0),
+                                                0,
+                                            );
+                                            const residual = target - rounded;
+                                            if (
+                                                Math.abs(residual) > 0.001 &&
+                                                next.length > 0
+                                            ) {
+                                                let largestIdx = 0;
+                                                for (
+                                                    let i = 1;
+                                                    i < next.length;
+                                                    i++
+                                                ) {
+                                                    if (
+                                                        Number(
+                                                            next[i].amount,
+                                                        ) >
+                                                        Number(
+                                                            next[largestIdx]
+                                                                .amount,
+                                                        )
+                                                    ) {
+                                                        largestIdx = i;
+                                                    }
+                                                }
+                                                next[largestIdx] = {
+                                                    ...next[largestIdx],
+                                                    amount: (
+                                                        Number(
+                                                            next[largestIdx]
+                                                                .amount,
+                                                        ) + residual
+                                                    ).toFixed(2),
+                                                };
+                                            }
+                                            setTiers(next);
+                                        }}
+                                    >
+                                        Scale tiers to pool
+                                    </Button>
+                                )}
+                            </div>
                             <span
                                 className={
-                                    tierSumExceeds
-                                        ? "text-xs text-destructive font-medium"
-                                        : "text-xs text-muted-foreground"
+                                    tierSumMismatch
+                                        ? "text-xs font-medium text-destructive"
+                                        : "text-xs font-medium text-emerald-600 dark:text-emerald-400"
                                 }
                             >
                                 Sum: ${tierSum.toFixed(2)} / ${totalPool.toFixed(2)}
+                                {tierSumMismatch && (
+                                    <span className="ml-1">
+                                        ({sumDelta > 0 ? "+" : ""}
+                                        ${sumDelta.toFixed(2)})
+                                    </span>
+                                )}
                             </span>
                         </div>
                         <div className="space-y-2">
@@ -644,7 +758,7 @@ export function EditDialog({
                         </Button>
                         <Button
                             type="submit"
-                            disabled={isPending || tierSumExceeds || siteBonusInvalid}
+                            disabled={isPending || tierSumMismatch || siteBonusInvalid}
                             className="w-full sm:w-auto"
                         >
                             {isPending ? "Saving..." : "Save"}
