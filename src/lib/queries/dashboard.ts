@@ -454,6 +454,7 @@ async function dashboardStatsInner() {
     balanceAggregates,
     dailyChart,
     dailySignups,
+    dailyWagerAttribution,
     periodAggregates,
     uniqueDepositorsResult,
     realizedPnlResult,
@@ -532,6 +533,38 @@ async function dashboardStatsInner() {
       WHERE created_at >= NOW() - INTERVAL '30 days'
         AND role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
       GROUP BY DATE(created_at)
+      ORDER BY date
+    `,
+    // Daily wager attribution split — organic (no creator-code
+    // referral) vs creator-attributed (referred by a creator role
+    // user) — for the last 30 days. Excludes the creator role itself
+    // and staff from BOTH sides so the two bars represent customer
+    // wager only. Stacking organic + creator_attributed = total
+    // customer wager.
+    db.$queryRaw<{
+      date: Date;
+      organic: string;
+      creator_attributed: string;
+    }[]>`
+      WITH customers AS (
+        SELECT u.id,
+               EXISTS (
+                 SELECT 1 FROM "user" ref
+                 WHERE ref.id = u.referred_by AND ref.role = 'creator'
+               ) AS under_creator
+        FROM "user" u
+        WHERE u.role NOT IN ('admin', 'support', 'creator') ${Prisma.raw(blacklistIdNotIn)}
+      )
+      SELECT
+        DATE(lt.created_at) AS date,
+        COALESCE(SUM(CASE WHEN NOT c.under_creator THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS organic,
+        COALESCE(SUM(CASE WHEN c.under_creator     THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS creator_attributed
+      FROM ledger_transactions lt
+      JOIN customers c ON c.id = lt.user_id
+      WHERE lt.status = 'completed'
+        AND lt.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
+        AND lt.created_at >= NOW() - INTERVAL '30 days'
+      GROUP BY DATE(lt.created_at)
       ORDER BY date
     `,
     // Single batched query replaces 20 independent aggregates (revenue,
@@ -968,6 +1001,17 @@ async function dashboardStatsInner() {
     dailyActiveDepositors: dailyChart.map((d) => ({
       date: new Date(d.date).toISOString().split("T")[0],
       count: Number(d.active_depositors),
+    })),
+    // Daily Wager Attribution — organic (customers without a
+    // creator-code referral) vs creator-coded (customers whose
+    // referrer is a creator) per day for the last 30 days. The two
+    // stack to the day's total customer wager. Excludes the creator
+    // role itself + staff on both sides so neither bucket carries
+    // creator-on-stream play.
+    dailyWagerAttribution: dailyWagerAttribution.map((d) => ({
+      date: new Date(d.date).toISOString().split("T")[0],
+      organic: Number(d.organic),
+      creatorCoded: Number(d.creator_attributed),
     })),
     // Server-side compute metadata. `queryMs` is the wall-clock time spent
     // in this function (exclusion lists + the parallel query batch + the
