@@ -131,6 +131,193 @@ export async function getLiveDeposits(params: {
   };
 }
 
+// ─── Live Money Movements (Deposits + Withdrawals) ─────────────────
+
+export type LiveMoneyMovementKind = "deposit" | "withdrawal";
+
+export type LiveMoneyMovementItem = {
+  /** Prefixed id ("d:<uuid>" / "w:<uuid>") so deposit and withdrawal
+   *  rows never collide in the merged feed even on the rare chance
+   *  they share a uuid value. */
+  id: string;
+  kind: LiveMoneyMovementKind;
+  userId: string;
+  username: string;
+  image: string | null;
+  /** Always positive USD value. The UI signs it based on `kind`. */
+  amount: number;
+  cryptoAsset: string | null;
+  createdAt: string;
+  /** Deposit-only: deposit bonus paired to this deposit (USD), if any. */
+  bonusAmount?: number | null;
+  /** Withdrawal-only: card_withdrawal_method ("physical" | "crypto"). */
+  method?: string | null;
+};
+
+export type LiveMoneyMovementsResult = {
+  items: LiveMoneyMovementItem[];
+  total24hDeposits: number;
+  total24hWithdrawals: number;
+};
+
+/**
+ * Combined live feed of newest deposits AND newest withdrawal requests.
+ * Mirrors `getLiveDeposits` semantics for deposits (completed ledger rows,
+ * staff/blacklist excluded, bonus paired via balance_after = bonus's
+ * balance_before within a 2-minute window) and pulls withdrawals from
+ * `card_withdrawal_requests` keyed on `requested_at` — same source the
+ * mixed `getLiveActivity` feed uses, so a withdrawal appears the moment
+ * the user hits submit, not after admin processing.
+ *
+ * Two cursors in one call: `sinceCreatedAt` filters BOTH sources (deposits
+ * by `created_at > since`, withdrawals by `requested_at > since`). The
+ * merged list is sorted newest-first and trimmed to `limit`. The two 24h
+ * sums run in parallel with the row fetches and never block each other.
+ *
+ * 24h totals: deposits = sum of completed deposit ledger rows in the last
+ * 24h (matches the existing LiveDeposits hero); withdrawals = sum of
+ * withdrawal-request `total_value_usd` in the last 24h excluding the
+ * cancelled/failed terminal states (those didn't move money, current or
+ * pending). The live feed list itself does NOT filter by status — admins
+ * want to see every request as it comes in, even ones that may later
+ * fail or be cancelled.
+ */
+export async function getLiveDepositsAndWithdrawals(params: {
+  sinceCreatedAt: string | null;
+  limit: number;
+}): Promise<LiveMoneyMovementsResult> {
+  const db = await getDb();
+  const limit = Math.max(1, Math.min(50, Math.floor(params.limit)));
+  const since = params.sinceCreatedAt ? new Date(params.sinceCreatedAt) : null;
+  const staffRelation = await excludeStaffAndBlacklisted();
+
+  const dayAgo = new Date(Date.now() - MS_PER_DAY);
+
+  const [depositRows, withdrawalRows, depositTotalAgg, withdrawalTotalAgg] =
+    await Promise.all([
+      db.ledger_transactions.findMany({
+        where: {
+          type: "deposit",
+          status: "completed",
+          ...(since ? { created_at: { gt: since } } : {}),
+          user: staffRelation,
+        },
+        orderBy: { created_at: "desc" },
+        take: limit,
+        include: {
+          user: { select: { username: true, email: true, image: true } },
+        },
+      }),
+      db.card_withdrawal_requests.findMany({
+        where: {
+          ...(since ? { requested_at: { gt: since } } : {}),
+          user_card_withdrawal_requests_user_idTouser: staffRelation,
+        },
+        orderBy: { requested_at: "desc" },
+        take: limit,
+        include: {
+          user_card_withdrawal_requests_user_idTouser: {
+            select: { username: true, email: true, image: true },
+          },
+        },
+      }),
+      db.ledger_transactions.aggregate({
+        where: {
+          type: "deposit",
+          status: "completed",
+          created_at: { gte: dayAgo },
+          user: staffRelation,
+        },
+        _sum: { amount: true },
+      }),
+      db.card_withdrawal_requests.aggregate({
+        where: {
+          requested_at: { gte: dayAgo },
+          status: { notIn: ["cancelled", "failed"] },
+          user_card_withdrawal_requests_user_idTouser: staffRelation,
+        },
+        _sum: { total_value_usd: true },
+      }),
+    ]);
+
+  // Pair deposit_bonus rows to their parent deposit using the same rule as
+  // getLiveDeposits / getDepositTransactions (bonus.balance_before ==
+  // deposit.balance_after, fires within 2 minutes of the parent). Skipped
+  // entirely when no deposits in this page.
+  const userIds = Array.from(new Set(depositRows.map((r) => r.user_id)));
+  const bonusRows =
+    depositRows.length > 0
+      ? await db.ledger_transactions.findMany({
+          where: {
+            type: "deposit_bonus",
+            status: "completed",
+            user_id: { in: userIds },
+            created_at: {
+              gte: new Date(depositRows[depositRows.length - 1].created_at.getTime()),
+              lt: new Date(depositRows[0].created_at.getTime() + 2 * 60 * 1000),
+            },
+          },
+          select: {
+            user_id: true,
+            balance_before: true,
+            amount: true,
+            created_at: true,
+          },
+        })
+      : [];
+
+  const bonusByKey = new Map<string, number>();
+  for (const b of bonusRows) {
+    const key = `${b.user_id}|${toNumber(b.balance_before).toFixed(2)}`;
+    if (!bonusByKey.has(key)) {
+      bonusByKey.set(key, toNumber(b.amount));
+    }
+  }
+
+  const depositItems: LiveMoneyMovementItem[] = depositRows.map((r) => {
+    const key = `${r.user_id}|${toNumber(r.balance_after).toFixed(2)}`;
+    const bonus = bonusByKey.get(key) ?? null;
+    return {
+      id: `d:${r.id}`,
+      kind: "deposit" as const,
+      userId: r.user_id,
+      username: r.user?.username ?? r.user?.email ?? "Unknown",
+      image: r.user?.image ?? null,
+      amount: toNumber(r.amount),
+      bonusAmount: bonus,
+      cryptoAsset: r.crypto_asset,
+      createdAt: r.created_at.toISOString(),
+    };
+  });
+
+  const withdrawalItems: LiveMoneyMovementItem[] = withdrawalRows.map((r) => {
+    const u = r.user_card_withdrawal_requests_user_idTouser;
+    return {
+      id: `w:${r.id}`,
+      kind: "withdrawal" as const,
+      userId: r.user_id,
+      username: u?.username ?? u?.email ?? "Unknown",
+      image: u?.image ?? null,
+      amount: toNumber(r.total_value_usd),
+      cryptoAsset: r.crypto_asset,
+      createdAt: r.requested_at.toISOString(),
+      method: r.method,
+    };
+  });
+
+  const merged = [...depositItems, ...withdrawalItems]
+    .sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    )
+    .slice(0, limit);
+
+  return {
+    items: merged,
+    total24hDeposits: toNumber(depositTotalAgg._sum?.amount),
+    total24hWithdrawals: toNumber(withdrawalTotalAgg._sum?.total_value_usd),
+  };
+}
+
 // ─── Live Activity ────────────────────────────────────────────────
 
 export type LiveActivityEventKind =

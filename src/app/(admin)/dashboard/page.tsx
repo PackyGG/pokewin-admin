@@ -46,7 +46,7 @@ import {
   RecentActivityLivePulse,
   RecentActivitySkeleton,
 } from "./recent-activity";
-import { LiveDeposits } from "./live-deposits";
+import { LiveMoneyMovements } from "./live-money-movements";
 import { UpgraderStatsSection } from "./upgrader-stats";
 import { ActiveRainChip } from "./active-rain-chip";
 import { PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
@@ -76,18 +76,18 @@ export default async function DashboardPage({
   const params = await searchParams;
   const period: DashboardPeriod = parseDashboardPeriod(params.period);
 
-  // The two live feeds (Recent Activity, Live Deposits) bootstrap their
-  // own snapshot on the client — that keeps the 60s router.refresh()
+  // The two live feeds (Recent Activity, Live Money Movements) bootstrap
+  // their own snapshot on the client — that keeps the 60s router.refresh()
   // below scoped to the KPIs and stops it from re-running
-  // getLiveActivity/getLiveDeposits every minute for data the feeds
-  // already own via SSE / polling. LiveDeposits needs no server stats so
-  // it renders directly in the shell; RecentActivity's 24h count strip
-  // does, so it streams behind Suspense (its live feed still connects on
-  // client mount regardless).
+  // getLiveActivity/getLiveDepositsAndWithdrawals every minute for data
+  // the feeds already own via SSE / polling. LiveMoneyMovements needs no
+  // server stats so it renders directly in the shell; RecentActivity's
+  // 24h count strip does, so it streams behind Suspense (its live feed
+  // still connects on client mount regardless).
   return (
     <div className="space-y-6">
       {/* Dashboard polls at 60s for the KPI numbers only — KPIs settle
-          slowly and the live feeds (RecentActivity SSE, LiveDeposits
+          slowly and the live feeds (RecentActivity SSE, LiveMoneyMovements
           polling) own their own data on the client, so this refresh no
           longer re-queries the feeds. */}
       <AutoRefresh intervalMs={60_000} />
@@ -184,12 +184,13 @@ export default async function DashboardPage({
       </div>
 
       {/* Live feeds — Recent Activity (SSE, dashboard-side ledger events) on
-          the left, Live Deposits (6s polling) on the right. Both feeds
-          self-bootstrap their snapshot on the client (no server-rendered
-          seed), so the 60s dashboard refresh doesn't re-query them.
-          Stacks to a single column on smaller screens so the deposits
-          card keeps a usable width. Both cards manage their own height
-          cap via internal scroll so the grid stays symmetric. */}
+          the left, Live Money Movements (deposits + withdrawals, 6s
+          polling) on the right. Both feeds self-bootstrap their snapshot
+          on the client (no server-rendered seed), so the 60s dashboard
+          refresh doesn't re-query them. Stacks to a single column on
+          smaller screens so each card keeps a usable width. Both cards
+          manage their own height cap via internal scroll so the grid
+          stays symmetric. */}
       <div className="grid gap-3 sm:gap-4 xl:grid-cols-2">
         <div className="space-y-3">
           <SectionHeading
@@ -210,9 +211,9 @@ export default async function DashboardPage({
           </FadeIn>
         </div>
         <div className="space-y-3">
-          <SectionHeading icon={Wallet} title="Deposits" />
+          <SectionHeading icon={Wallet} title="Deposits & Withdrawals" />
           <FadeIn>
-            <LiveDeposits />
+            <LiveMoneyMovements />
           </FadeIn>
         </div>
       </div>
