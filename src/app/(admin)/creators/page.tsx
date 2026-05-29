@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Suspense } from "react";
 import {
   AlertTriangle,
@@ -17,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { cn } from "@/lib/utils";
 import { BackendApiError, BackendNetworkError } from "@/lib/backend-api";
 import {
   PageHero,
@@ -27,6 +29,7 @@ import {
 
 import { parseCreatorsSearchParams } from "./_lib/search-params";
 import { type CreatorsListPage } from "./_queries/list-creators";
+import { listCreatorsFiltered } from "./_queries/list-creators-filtered";
 import { getCreatorsListForTab } from "./_queries/list-creators-by-tab";
 import {
   getApprovedSocialsByUser,
@@ -135,13 +138,16 @@ export default async function CreatorsPage({
     leaderboardCost = lbCost;
     multiplierCreatorCount = multCount;
 
-    // Tab-aware fetch — a full creator-pool walk filtered to the active
-    // deal program (Fill / Multiplier), then search-filtered, sorted
-    // (recent / pnl) and sliced for pagination. Both tabs need the full
-    // walk because the backend's /admin/creators has no deal-program
-    // filter; getCreatorsGlobalStats already walks the pool for the KPI
-    // strip on this same render.
-    result = await getCreatorsListForTab(params, params.tab);
+    // List fetch — two paths:
+    //   1. KPI-tile filter is active (?filter=live / ?filter=active-
+    //      deals) → walk the whole creator pool and narrow in memory
+    //      via `listCreatorsFiltered`. Pagination collapses in this
+    //      mode (the filtered set fits on one screen).
+    //   2. No filter → main's tab-aware fetch (`getCreatorsListForTab`),
+    //      which respects the Fill / Multiplier tab + sortBy chip.
+    result = params.filter
+      ? await listCreatorsFiltered(params.filter, params.search)
+      : await getCreatorsListForTab(params, params.tab);
 
     // Code + lifetime wager from the main DB, keyed on the visible
     // page's creator IDs. Best-effort — if the main DB blows up the
@@ -263,6 +269,13 @@ export default async function CreatorsPage({
         // active/scheduled deals, and live-on-stream count. All GLOBAL
         // (not affected by search / pagination).
         //
+        // The Live Now + Active Deals tiles double as filter toggles
+        // — clicking one sets `?filter=live` / `?filter=active-deals`
+        // and the page re-renders the matching subset (via
+        // `listCreatorsFiltered`). Clicking the active tile clears
+        // the filter. The active tile gets a colored ring matching
+        // its accent so the filter state reads at a glance.
+        //
         // Global PnL is wrapped in Suspense because the
         // ledger+coverage reconstruction is the heaviest query on this
         // page (DISTINCT ON sort-merge over all completed deposits).
@@ -342,24 +355,63 @@ export default async function CreatorsPage({
             icon={Trophy}
             accent="rose"
           />
-          <KpiTile
-            label="Active Deals"
-            value={
-              stats ? formatNumber(stats.activeDealCount) : "—"
+          {/* Active Deals — click to filter the list to creators
+              whose current deal is `active`. */}
+          <Link
+            href={buildFilterHref("active-deals", params.filter, params.search)}
+            aria-label={
+              params.filter === "active-deals"
+                ? "Clear filter — show all creators"
+                : "Filter to creators with an active deal"
             }
-            sub="Active or scheduled this week"
-            icon={CalendarCheck}
-            accent="emerald"
-          />
-          <KpiTile
-            label="Live Now"
-            value={stats ? formatNumber(stats.liveCount) : "—"}
-            sub="Currently streaming with an active session"
-            icon={Radio}
-            // Rose to read "active broadcasting in progress" —
-            // matches the Live badge color elsewhere on the page.
-            accent="rose"
-          />
+            className={cn(
+              "block rounded-xl outline-none ring-offset-background transition focus-visible:ring-2 focus-visible:ring-emerald-500",
+              params.filter === "active-deals" &&
+                "ring-2 ring-emerald-500/60",
+            )}
+          >
+            <KpiTile
+              label="Active Deals"
+              value={
+                stats ? formatNumber(stats.activeDealCount) : "—"
+              }
+              sub={
+                params.filter === "active-deals"
+                  ? "Filter active — click to clear"
+                  : "Active or scheduled this week"
+              }
+              icon={CalendarCheck}
+              accent="emerald"
+            />
+          </Link>
+          {/* Live Now — click to filter the list to creators with a
+              non-null `active_session_id` (currently streaming). */}
+          <Link
+            href={buildFilterHref("live", params.filter, params.search)}
+            aria-label={
+              params.filter === "live"
+                ? "Clear filter — show all creators"
+                : "Filter to live creators"
+            }
+            className={cn(
+              "block rounded-xl outline-none ring-offset-background transition focus-visible:ring-2 focus-visible:ring-rose-500",
+              params.filter === "live" && "ring-2 ring-rose-500/60",
+            )}
+          >
+            <KpiTile
+              label="Live Now"
+              value={stats ? formatNumber(stats.liveCount) : "—"}
+              sub={
+                params.filter === "live"
+                  ? "Filter active — click to clear"
+                  : "Currently streaming with an active session"
+              }
+              icon={Radio}
+              // Rose to read "active broadcasting in progress" —
+              // matches the Live badge color elsewhere on the page.
+              accent="rose"
+            />
+          </Link>
         </div>
       )}
 
@@ -382,8 +434,18 @@ export default async function CreatorsPage({
       <div className="space-y-3">
         <SectionHeading
           icon={Users}
-          title="Creators"
-          action={<CreatorsTabSwitch />}
+          // When a KPI-tile filter is active, the heading reflects the
+          // filter so the page reads as "Live Creators" / "Creators
+          // with Active Deals". Otherwise we fall back to the default
+          // "Creators" + the Fill / Multiplier tab switch.
+          title={
+            params.filter === "live"
+              ? "Live Creators"
+              : params.filter === "active-deals"
+                ? "Creators with Active Deals"
+                : "Creators"
+          }
+          action={params.filter ? undefined : <CreatorsTabSwitch />}
         />
         <FadeIn className="space-y-4">
           <DataTableToolbar searchPlaceholder="Search by username or email..." />
@@ -445,7 +507,12 @@ export default async function CreatorsPage({
                 return bActive - aActive;
               })}
           />
-          {result && (
+          {/* Pagination is hidden while a tile filter is active because
+              `listCreatorsFiltered` collapses the result to a single
+              page — the filtered set is small enough to fit on one
+              screen, and showing fake "1 of 1" pagination would just
+              be visual noise. */}
+          {result && !params.filter && (
             <DataTablePagination
               page={result.page}
               totalPages={result.totalPages}
@@ -460,6 +527,35 @@ export default async function CreatorsPage({
 }
 
 // ─── Helpers — keep error-state copy near the page that uses it ───
+
+type CreatorFilter = "live" | "active-deals";
+
+/**
+ * Build the `href` for a KPI-tile filter toggle. Behaviour:
+ *   - tile NOT currently selected → set `?filter=<target>` (and keep
+ *     the current search query so the filter narrows whatever the
+ *     admin had already typed)
+ *   - tile IS currently selected → clear `filter` (still keeping
+ *     search). This makes every tile a one-click toggle.
+ *
+ * `page` / `perPage` are intentionally dropped on every toggle: the
+ * filtered view collapses pagination, and unfiltered → filtered →
+ * unfiltered should always return to page 1 instead of a stale page.
+ * `tab` / `sortBy` are also dropped on enter (the filter overrides
+ * those views) but preserved on exit so the admin lands back in their
+ * tab + sort.
+ */
+function buildFilterHref(
+  target: CreatorFilter,
+  current: CreatorFilter | undefined,
+  search: string | undefined,
+): string {
+  const params = new URLSearchParams();
+  if (search) params.set("search", search);
+  if (current !== target) params.set("filter", target);
+  const qs = params.toString();
+  return qs ? `/creators?${qs}` : "/creators";
+}
 
 /**
  * Map a fetch-failure cause code to a human-readable headline. Covers
