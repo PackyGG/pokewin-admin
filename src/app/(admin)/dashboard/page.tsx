@@ -28,6 +28,7 @@ import {
 import { AutoRefresh } from "./auto-refresh";
 import {
   WagerChart,
+  WagerAttributionChart,
   DepositsChart,
   SignupsChart,
   FtdsChart,
@@ -142,15 +143,18 @@ export default async function DashboardPage() {
           row stays balanced before we have room for the third. */}
       <div className="space-y-3">
         <SectionHeading icon={LineChart} title="Trends" />
-        {/* Row 1: Wagers · Deposits · FTDs. Row 2: Daily P&L · Signups.
-            One boundary — the row-1/Signups charts share the cached
+        {/* Row 1: Wagers · Deposits · FTDs.
+            Row 2: Daily P&L · Signups · Depositors.
+            Row 3: Wager Attribution (organic vs creator-coded, full width).
+            One boundary — the row-1/2 charts share the cached
             getDashboardStats and the standalone getDailyPnl runs in
             parallel with it. */}
         <Suspense
           fallback={
             <>
               <ChartRowSkeleton count={3} height={300} />
-              <ChartRowSkeleton count={2} height={300} />
+              <ChartRowSkeleton count={3} height={300} />
+              <ChartRowSkeleton count={1} height={300} />
             </>
           }
         >
@@ -399,11 +403,14 @@ async function DashboardActiveRain() {
 }
 
 /**
- * Trend charts in two rows:
- *   Row 1 (3): Wagers · Deposits · FTDs   — from the cached getDashboardStats
- *   Row 2 (2): Daily P&L · Signups        — P&L from standalone getDailyPnl
+ * Trend charts in three rows:
+ *   Row 1 (3): Wagers · Deposits · FTDs              — cached getDashboardStats
+ *   Row 2 (3): Daily P&L · Signups · Depositors      — P&L from getDailyPnl
+ *   Row 3 (1): Wager Attribution (organic vs creator-coded, full width)
  * Both data sources are awaited in parallel (getDashboardStats is cached, so
- * it's shared with the KPI strips; getDailyPnl runs alongside it).
+ * it's shared with the KPI strips; getDailyPnl runs alongside it). The
+ * Wager Attribution chart gets its own row at full width so 30 daily bars
+ * stay legible and the split between the two bands reads at a glance.
  */
 async function DashboardCharts() {
   const [stats, dailyPnl] = await Promise.all([
@@ -421,6 +428,9 @@ async function DashboardCharts() {
         <PnlChart data={dailyPnl} />
         <SignupsChart data={stats.dailySignups} />
         <ActiveDepositorsChart data={stats.dailyActiveDepositors} />
+      </div>
+      <div className="grid gap-3 sm:gap-4">
+        <WagerAttributionChart data={stats.dailyWagerAttribution} />
       </div>
     </FadeIn>
   );

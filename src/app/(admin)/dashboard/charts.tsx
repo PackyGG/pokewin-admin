@@ -25,6 +25,21 @@ const wagerConfig = {
   },
 } satisfies ChartConfig;
 
+// Wager Attribution split — organic vs creator-coded. Cyan for organic
+// (matches the dashboard's "Organic Wager" KPI tile) and amber for
+// creator-coded so the two bands read clearly and don't collide with
+// the Wagers chart's packs/battles/upgrader hues sitting beside it.
+const wagerAttributionConfig = {
+  organic: {
+    label: "Organic",
+    color: "#06b6d4",
+  },
+  creatorCoded: {
+    label: "Creator-coded",
+    color: "#f59e0b",
+  },
+} satisfies ChartConfig;
+
 const depositsConfig = {
   amount: {
     label: "Deposits",
@@ -469,6 +484,145 @@ function PnlTooltip({
         Withdrawals {formatCurrency(p.withdrawals)}
       </span>
     </div>
+  );
+}
+
+/**
+ * Tooltip for the Wager Attribution chart — same shape as the Wagers
+ * tooltip (per-segment row + Total row below the divider). Tooltip rows
+ * label the two attribution buckets explicitly, since the bars only
+ * show colour. Combined total reads = the day's total customer wager,
+ * which is exactly the "Total Wager" KPI for that day after staff +
+ * creator exclusion.
+ */
+function WagerAttributionTooltipContent({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: Array<{
+    dataKey?: string | number;
+    value?: number | string;
+    color?: string;
+  }>;
+  label?: string;
+}) {
+  if (!active || !payload || payload.length === 0) return null;
+  const labelByKey: Record<string, string> = {
+    organic: "Organic",
+    creatorCoded: "Creator-coded",
+  };
+  const total = payload.reduce(
+    (sum, item) => sum + Number(item?.value ?? 0),
+    0,
+  );
+  return (
+    <div className="grid min-w-32 items-start gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
+      {label && <div className="font-medium">{label}</div>}
+      <div className="grid gap-1.5">
+        {payload.map((item) => {
+          const key = String(item.dataKey ?? "");
+          return (
+            <div key={key} className="flex items-center gap-2">
+              <div
+                className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
+                style={{ background: item.color }}
+              />
+              <div className="flex flex-1 items-center justify-between leading-none">
+                <span className="text-muted-foreground">
+                  {labelByKey[key] ?? key}
+                </span>
+                <span className="font-mono font-medium tabular-nums text-foreground">
+                  {formatCurrency(Number(item.value ?? 0))}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+        <div className="mt-0.5 flex items-center gap-2 border-t border-border/50 pt-1.5">
+          <div className="h-2.5 w-2.5 shrink-0" />
+          <div className="flex flex-1 items-center justify-between leading-none">
+            <span className="font-semibold">Total</span>
+            <span className="font-mono font-semibold tabular-nums text-foreground">
+              {formatCurrency(total)}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Wager Attribution (30 days) — stacked daily wager split into
+ *   • Organic       → customers without a creator-code referral
+ *   • Creator-coded → customers whose referrer is a creator role user
+ *
+ * Both segments exclude staff (admin/support) AND the creator role
+ * itself on both sides, so the bars represent pure customer wager —
+ * the same scope the Organic Wager KPI tile uses. Stacking the two
+ * gives total customer wager per day; the divergence between the
+ * bands is the chart's point.
+ */
+export function WagerAttributionChart({
+  data,
+}: {
+  data: { date: string; organic: number; creatorCoded: number }[];
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm font-medium">
+          Wager Attribution (30 days)
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <ChartContainer
+          config={wagerAttributionConfig}
+          className="h-[220px] w-full md:h-[260px] lg:h-[300px]"
+        >
+          <BarChart data={data} accessibilityLayer>
+            <CartesianGrid vertical={false} />
+            <XAxis
+              dataKey="date"
+              tickLine={false}
+              axisLine={false}
+              tickMargin={8}
+              tickFormatter={(v) => v.slice(5)}
+            />
+            <YAxis
+              tickLine={false}
+              axisLine={false}
+              tickMargin={8}
+              width={70}
+              tickFormatter={formatCompactUsd}
+            />
+            <ChartTooltip content={<WagerAttributionTooltipContent />} />
+            {/* Organic at the bottom, Creator-coded on top — same
+                visual logic the Wagers chart uses (only the top
+                segment gets the rounded corner so the stack reads as
+                one bar). */}
+            <Bar
+              dataKey="organic"
+              stackId="wagerAttribution"
+              fill="var(--color-organic)"
+              radius={[0, 0, 0, 0]}
+              animationDuration={700}
+              animationEasing="ease-out"
+            />
+            <Bar
+              dataKey="creatorCoded"
+              stackId="wagerAttribution"
+              fill="var(--color-creatorCoded)"
+              radius={[4, 4, 0, 0]}
+              animationDuration={700}
+              animationEasing="ease-out"
+            />
+          </BarChart>
+        </ChartContainer>
+      </CardContent>
+    </Card>
   );
 }
 
