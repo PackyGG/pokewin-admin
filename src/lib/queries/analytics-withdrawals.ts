@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { blacklistNotInClause } from "./_blacklist";
 
 /**
  * Crypto-asset withdrawal breakdown — answers "which coins get withdrawn
@@ -67,10 +68,7 @@ export async function getWithdrawnCoinsBreakdown(
     ? `AND COALESCE(cwr.shipped_at, cwr.completed_at) >= NOW() - ${interval}`
     : "";
   const excluded = await getExcludedUserIds();
-  const blacklistIdNotIn =
-    excluded.length > 0
-      ? `AND u.id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
-      : "";
+  const blacklistIdNotIn = blacklistNotInClause("u.id", excluded);
 
   // Single round-trip: per-asset crypto totals + a single physical
   // bucket. Results merged in JS into the WithdrawnCoinsData shape so

@@ -1,13 +1,16 @@
 "use client";
 
 import React, { useEffect, useState, useTransition } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import {
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  ExternalLink,
   Loader2,
+  Receipt,
   X,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,17 +33,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
 import { STATUS_COLORS } from "@/lib/constants";
 import {
   formatCurrency,
-  formatDateTime,
   formatRelative,
 } from "@/lib/utils/format";
 import {
@@ -49,25 +44,27 @@ import {
   ledgerDirection,
 } from "@/lib/utils/ledger-direction";
 import { BorrowBadge } from "@/components/borrow-badge";
-import { fetchUserTransactions, getGameSessionDetails } from "./actions";
+import { EmptyState } from "@/components/empty-state";
+import { battleUrl } from "@/lib/utils/main-site";
+import { fetchUserTransactions } from "./actions";
 import type {
   Transaction,
   PaginatedTransactions,
   UserDetail,
-  GameSessionDetails,
 } from "./user-tabs-types";
 
-const TX_STATUSES = ["all", "pending", "completed", "failed"] as const;
+// The transaction detail modal is heavy (Dialog primitives + provably-fair
+// game-session viewer + a large metadata-label map) and only mounts when an
+// admin clicks a row, so it's lazy-loaded to keep it out of the table's
+// critical bundle. ssr:false is safe — the modal never renders on first
+// paint (it's gated on a selected transaction).
+const TransactionDetailModal = dynamic(
+  () =>
+    import("./transaction-detail-modal").then((m) => m.TransactionDetailModal),
+  { ssr: false },
+);
 
-const RARITY_COLORS: Record<string, string> = {
-  common: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400",
-  uncommon: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
-  rare: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
-  "ultra rare": "bg-purple-500/15 text-purple-600 dark:text-purple-400",
-  "secret rare": "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400",
-  legendary: "bg-orange-500/15 text-orange-600 dark:text-orange-400",
-  holo: "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400",
-};
+const TX_STATUSES = ["all", "pending", "completed", "failed"] as const;
 
 const CW_STATUS_COLORS: Record<string, string> = {
   pending: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400",
@@ -102,6 +99,28 @@ export const CategoryTransactionsTable = React.memo(
     const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
     const [isPending, startTransition] = useTransition();
     const [currentPerPage, setCurrentPerPage] = useState(initialTx.perPage);
+
+    // The parent /users/[id] page re-renders every 60s via AutoRefresh.
+    // Each re-render produces a fresh `initialTx` from the server. If
+    // the admin hasn't applied a filter and is on page 1, re-seed the
+    // local table state so new gaming/financial events show up without
+    // a manual reload. Filters/pagination keep their state — the
+    // admin's view isn't yanked back to defaults mid-investigation.
+    const filtersUnchanged =
+      typeFilter === "all" &&
+      statusFilter === "all" &&
+      !dateFrom &&
+      !dateTo &&
+      txData.page === 1;
+    useEffect(() => {
+      if (filtersUnchanged) {
+        setTxData(initialTx);
+      }
+      // We deliberately do NOT depend on filtersUnchanged itself —
+      // we only want to re-seed when the server hands us a NEW
+      // initialTx, not when the admin toggles a filter back to "all".
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [initialTx]);
 
     function buildFilters(overrides?: {
       type?: string;
@@ -259,12 +278,13 @@ export const CategoryTransactionsTable = React.memo(
             <TableHeader>
               <TableRow>
                 <TableHead>ID</TableHead>
+                {showCardsValue && <TableHead>Battle</TableHead>}
                 <TableHead>Type</TableHead>
                 <TableHead>Amount</TableHead>
-                {showCardsValue && <TableHead>Cards Value</TableHead>}
+                {showCardsValue && <TableHead>Won Value</TableHead>}
                 {showCardsValue && <TableHead>House Profit</TableHead>}
-                <TableHead>Before</TableHead>
-                <TableHead>After</TableHead>
+                <TableHead>Worth Before</TableHead>
+                <TableHead>Worth After</TableHead>
                 <TableHead>Inventory</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Description</TableHead>
@@ -282,6 +302,25 @@ export const CategoryTransactionsTable = React.memo(
                       {t.id.slice(0, 8)}...
                     </button>
                   </TableCell>
+                  {/* Dedicated "watch live" button — gaming tab, battle_bet
+                      only. Opens packy.gg/games/battles/<id> in a new tab.
+                      Empty cell on other gaming rows keeps the column aligned. */}
+                  {showCardsValue && (
+                    <TableCell>
+                      {t.type === "battle_bet" && t.battleId ? (
+                        <a
+                          href={battleUrl(t.battleId)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="Open the live battle on packy.gg"
+                          className="inline-flex h-7 items-center gap-1 rounded-md border border-blue-500/30 bg-blue-500/10 px-2 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-500/20 dark:text-blue-400"
+                        >
+                          <ExternalLink className="size-3 shrink-0" />
+                          Watch
+                        </a>
+                      ) : null}
+                    </TableCell>
+                  )}
                   <TableCell>
                     <div className="flex flex-col items-start gap-0.5">
                       <Badge variant="outline" className="font-mono text-xs">
@@ -296,43 +335,203 @@ export const CategoryTransactionsTable = React.memo(
                         amountUsd={t.borrowedAmountUsd}
                         size="sm"
                       />
+                      {/* Sponsorship signal — flags battle rows where the
+                          creator fronted the entry (others join free).
+                          100% = fully sponsored. Null/0 on everything
+                          else. */}
+                      {t.sponsorshipPercentage != null &&
+                        t.sponsorshipPercentage > 0 && (
+                          <Badge
+                            variant="outline"
+                            className="border-violet-500/30 bg-violet-500/15 text-[10px] font-medium text-violet-600 dark:text-violet-400"
+                          >
+                            {t.sponsorshipPercentage >= 100
+                              ? "Fully sponsored"
+                              : `Sponsored ${t.sponsorshipPercentage}%`}
+                          </Badge>
+                        )}
                     </div>
                   </TableCell>
-                  {(() => {
-                    // HOUSE-POV amount. The signed balance delta alone is
-                    // a user-perspective signal (wager and withdrawal
-                    // both make the balance go down), so we classify by
-                    // ledger type instead — matches Recent Activity and
-                    // every other transaction surface.
-                    const dir = ledgerDirection(t.type);
-                    return (
-                      <TableCell className={amountColorFor(dir)}>
-                        {amountSignFor(dir)}
-                        {formatCurrency(t.amount)}
-                      </TableCell>
-                    );
-                  })()}
+                  {showCardsValue ? (
+                    // Gaming tab: Amount is the raw stake/wager, not a
+                    // P&L. Keep it neutral so only the House Profit
+                    // column carries the green/red signal.
+                    <TableCell className="tabular-nums">
+                      {formatCurrency(t.amount)}
+                    </TableCell>
+                  ) : (
+                    (() => {
+                      // Finances / overview: Amount IS the signal, so
+                      // color + sign it from the HOUSE POV (classified by
+                      // ledger type, matching every other tx surface).
+                      const dir = ledgerDirection(t.type);
+                      return (
+                        <TableCell className={amountColorFor(dir)}>
+                          {amountSignFor(dir)}
+                          {formatCurrency(t.amount)}
+                        </TableCell>
+                      );
+                    })()
+                  )}
                   {showCardsValue &&
                     (() => {
-                      const isBattle =
-                        t.type === "battle_bet" ||
-                        t.type === "battle_sponsorship";
-                      // For battles, only trust the result once the session
-                      // has a win/lose outcome. Until then, provably_fair_results
-                      // are still being inserted one-round-at-a-time and any
-                      // cardsValue we compute is a moving target. Show
-                      // "Pending" so admins don't see a fake P&L.
-                      const isBattlePending = isBattle && t.gameResult === null;
-                      if (isBattlePending) {
+                      // Sponsorship funds someone else's play — the house
+                      // simply takes the amount in (shown in Amount). We
+                      // don't derive a win/loss P&L for it.
+                      if (t.type === "battle_sponsorship") {
                         return (
-                          <TableCell
-                            colSpan={2}
-                            className="text-xs italic text-muted-foreground"
-                          >
-                            Pending — battle still resolving
-                          </TableCell>
+                          <>
+                            <TableCell className="tabular-nums text-muted-foreground">
+                              —
+                            </TableCell>
+                            <TableCell className="tabular-nums">
+                              <span className="text-emerald-600 dark:text-emerald-400">
+                                +{formatCurrency(t.amount)}
+                              </span>
+                            </TableCell>
+                          </>
                         );
                       }
+                      if (t.type === "battle_bet") {
+                        // Win/loss is the battle outcome (winner_team vs
+                        // team_number), surfaced as gameResult. null = the
+                        // battle hasn't resolved yet.
+                        if (t.gameResult === null) {
+                          return (
+                            <TableCell
+                              colSpan={2}
+                              className="text-xs italic text-muted-foreground"
+                            >
+                              Pending — battle still resolving
+                            </TableCell>
+                          );
+                        }
+                        if (t.gameResult === "lose") {
+                          // LOSS: player won nothing → house keeps the
+                          // full bet. Won Value = $0, House Profit = +bet
+                          // (house gain = emerald).
+                          return (
+                            <>
+                              <TableCell className="tabular-nums text-muted-foreground">
+                                {formatCurrency(0)}
+                              </TableCell>
+                              <TableCell className="tabular-nums">
+                                <span className="text-emerald-600 dark:text-emerald-400">
+                                  +{formatCurrency(t.amount)}
+                                </span>
+                              </TableCell>
+                            </>
+                          );
+                        }
+                        // WIN: winnings = the cards the player actually took
+                        // from the battle (their battle-sourced inventory).
+                        if (
+                          t.battleWinnings == null ||
+                          t.battleWinnings <= 0
+                        ) {
+                          // Won, but no traceable kept cards — show the
+                          // truthful outcome rather than a misleading +bet.
+                          return (
+                            <>
+                              <TableCell className="tabular-nums text-muted-foreground">
+                                —
+                              </TableCell>
+                              <TableCell className="text-sm font-medium text-rose-600 dark:text-rose-400">
+                                Player won
+                              </TableCell>
+                            </>
+                          );
+                        }
+                        // House P&L on the battle = bet we took in minus the
+                        // winnings we paid out. Negative = house lost (rose),
+                        // positive = house won (emerald) — already house-POV.
+                        const profit = t.amount - t.battleWinnings;
+                        return (
+                          <>
+                            <TableCell className="tabular-nums text-rose-600 dark:text-rose-400">
+                              {formatCurrency(t.battleWinnings)}
+                            </TableCell>
+                            <TableCell className="tabular-nums">
+                              <span
+                                className={
+                                  profit > 0
+                                    ? "text-emerald-600 dark:text-emerald-400"
+                                    : profit < 0
+                                      ? "text-rose-600 dark:text-rose-400"
+                                      : "text-muted-foreground"
+                                }
+                              >
+                                {profit > 0 ? "+" : ""}
+                                {formatCurrency(profit)}
+                              </span>
+                            </TableCell>
+                          </>
+                        );
+                      }
+                      // Upgrader: win/loss decided by whether the
+                      // matching upgrader_payout row exists. On a win,
+                      // Won Value = the payout amount (backend-side
+                      // fallback already picked between amount and
+                      // balance delta). House Profit = bet − won.
+                      if (t.type === "upgrader_bet") {
+                        if (t.upgraderResult === "lose") {
+                          return (
+                            <>
+                              <TableCell className="tabular-nums text-muted-foreground">
+                                {formatCurrency(0)}
+                              </TableCell>
+                              <TableCell className="tabular-nums">
+                                <span className="text-emerald-600 dark:text-emerald-400">
+                                  +{formatCurrency(t.amount)}
+                                </span>
+                              </TableCell>
+                            </>
+                          );
+                        }
+                        if (t.upgraderResult === "win" && t.upgraderWinnings != null) {
+                          const profit = t.amount - t.upgraderWinnings;
+                          return (
+                            <>
+                              <TableCell className="tabular-nums text-rose-600 dark:text-rose-400">
+                                {formatCurrency(t.upgraderWinnings)}
+                              </TableCell>
+                              <TableCell className="tabular-nums">
+                                <span
+                                  className={
+                                    profit > 0
+                                      ? "text-emerald-600 dark:text-emerald-400"
+                                      : profit < 0
+                                        ? "text-rose-600 dark:text-rose-400"
+                                        : "text-muted-foreground"
+                                  }
+                                >
+                                  {profit > 0 ? "+" : ""}
+                                  {formatCurrency(profit)}
+                                </span>
+                              </TableCell>
+                            </>
+                          );
+                        }
+                        // upgraderResult === null → row hasn't been
+                        // enriched (defensive — shouldn't happen).
+                        return (
+                          <>
+                            <TableCell className="tabular-nums text-muted-foreground">
+                              —
+                            </TableCell>
+                            <TableCell className="tabular-nums text-muted-foreground">
+                              —
+                            </TableCell>
+                          </>
+                        );
+                      }
+                      // Gaming is pack/battle only. Card sales /
+                      // exchanges live in the Financial tab now, so the
+                      // fallback below only has to handle pack_opening
+                      // (cardsValue present) and the few remaining
+                      // gaming types where cardsValue is absent
+                      // (voucher_redeemed — kept here since it can
+                      // unlock the borrow allowance in a battle).
                       const cv = t.cardsValue;
                       return (
                         <>
@@ -343,8 +542,8 @@ export const CategoryTransactionsTable = React.memo(
                             {cv != null
                               ? (() => {
                                   // House profit on the session: bet we
-                                  // took in minus value of cards we
-                                  // handed back. Positive = house win
+                                  // took in minus value of cards + vouchers
+                                  // we handed back. Positive = house win
                                   // (emerald), negative = user pulled
                                   // above bet (rose) — already in
                                   // house-POV, no sign flip needed.
@@ -369,10 +568,24 @@ export const CategoryTransactionsTable = React.memo(
                         </>
                       );
                     })()}
-                  <TableCell className="text-muted-foreground">
-                    {formatCurrency(t.balanceBefore)}
+                  {/* Before / After show TOTAL WORTH (cash balance + held
+                      inventory worth), not cash alone — the raw cash is in
+                      the tooltip, and the held inventory has its own column
+                      to the right. Matches the detail modal's Worth rows. */}
+                  <TableCell
+                    className="text-muted-foreground tabular-nums"
+                    title={`Cash ${formatCurrency(t.balanceBefore)} + inventory worth`}
+                  >
+                    {formatCurrency(t.worthBefore)}
                   </TableCell>
-                  <TableCell>{formatCurrency(t.balanceAfter)}</TableCell>
+                  <TableCell
+                    className="tabular-nums"
+                    title={`Cash ${formatCurrency(
+                      t.balanceAfter,
+                    )} + inventory ${formatCurrency(t.inventoryValue)}`}
+                  >
+                    {formatCurrency(t.worthAfter)}
+                  </TableCell>
                   <TableCell className="text-muted-foreground tabular-nums">
                     {formatCurrency(t.inventoryValue)}
                   </TableCell>
@@ -406,12 +619,17 @@ export const CategoryTransactionsTable = React.memo(
                 </TableRow>
               ))}
               {txData.data.length === 0 && (
-                <TableRow>
+                <TableRow className="hover:bg-transparent">
                   <TableCell
-                    colSpan={showCardsValue ? 11 : 9}
-                    className="text-center text-muted-foreground"
+                    colSpan={showCardsValue ? 12 : 9}
+                    className="p-0"
                   >
-                    No transactions
+                    <EmptyState
+                      icon={Receipt}
+                      title="No transactions"
+                      description="Nothing matches the current filters."
+                      compact
+                    />
                   </TableCell>
                 </TableRow>
               )}
@@ -650,472 +868,5 @@ function CardWithdrawalsSubTable({
         </div>
       )}
     </div>
-  );
-}
-
-function TransactionDetailModal({
-  transaction,
-  userId,
-  onClose,
-}: {
-  transaction: Transaction | null;
-  userId: string;
-  onClose: () => void;
-}) {
-  const [gameSession, setGameSession] = useState<GameSessionDetails | null>(
-    null,
-  );
-  const [loadingSession, setLoadingSession] = useState(false);
-
-  useEffect(() => {
-    if (!transaction?.gameSessionId) {
-      setGameSession(null);
-      return;
-    }
-    setLoadingSession(true);
-    setGameSession(null);
-    // Pass the URL's userId through so the server can verify ownership
-    // before returning provably_fair_results (server-seed leak guard).
-    getGameSessionDetails(transaction.gameSessionId, userId)
-      .then((data) => setGameSession(data))
-      .finally(() => setLoadingSession(false));
-  }, [transaction?.id, transaction?.gameSessionId, userId]);
-
-  if (!transaction) return null;
-  const t = transaction;
-
-  const rows: { label: string; value: React.ReactNode }[] = [
-    {
-      label: "ID",
-      value: <span className="font-mono text-xs break-all">{t.id}</span>,
-    },
-    {
-      label: "Type",
-      value: (
-        <Badge variant="outline" className="font-mono text-xs">
-          {t.type}
-        </Badge>
-      ),
-    },
-    {
-      label: "Amount",
-      value: (() => {
-        // Same house-POV treatment as the list row above — classify by
-        // ledger type, not balance delta.
-        const dir = ledgerDirection(t.type);
-        return (
-          <span className={amountColorFor(dir)}>
-            {amountSignFor(dir)}
-            {formatCurrency(t.amount)}
-          </span>
-        );
-      })(),
-    },
-    { label: "Balance Before", value: formatCurrency(t.balanceBefore) },
-    { label: "Balance After", value: formatCurrency(t.balanceAfter) },
-    { label: "Inventory Value", value: formatCurrency(t.inventoryValue) },
-    {
-      label: "Status",
-      value: (
-        <Badge variant="outline" className={STATUS_COLORS[t.status] ?? ""}>
-          {t.status}
-        </Badge>
-      ),
-    },
-    { label: "Description", value: t.description },
-    { label: "Created", value: formatDateTime(t.createdAt) },
-    { label: "Updated", value: formatDateTime(t.updatedAt) },
-  ];
-
-  if (t.failureReason) {
-    rows.push({
-      label: "Failure Reason",
-      value: <span className="text-rose-400">{t.failureReason}</span>,
-    });
-  }
-  if (t.cryptoAsset) {
-    rows.push({ label: "Crypto Asset", value: t.cryptoAsset });
-  }
-  if (t.cryptoAmount != null) {
-    rows.push({ label: "Crypto Amount", value: String(t.cryptoAmount) });
-  }
-  if (t.exchangeRate != null) {
-    rows.push({ label: "Exchange Rate", value: String(t.exchangeRate) });
-  }
-  if (t.blockchainTxHash) {
-    rows.push({
-      label: "Blockchain TX",
-      value: (
-        <span className="font-mono text-xs break-all">
-          {t.blockchainTxHash}
-        </span>
-      ),
-    });
-  }
-  if (t.sourceAddress) {
-    rows.push({
-      label: "Source Address",
-      value: (
-        <span className="font-mono text-xs break-all">{t.sourceAddress}</span>
-      ),
-    });
-  }
-  if (t.destinationAddress) {
-    rows.push({
-      label: "Destination Address",
-      value: (
-        <span className="font-mono text-xs break-all">
-          {t.destinationAddress}
-        </span>
-      ),
-    });
-  }
-  if (t.depositAddressId) {
-    rows.push({
-      label: "Deposit Address ID",
-      value: (
-        <span className="font-mono text-xs break-all">
-          {t.depositAddressId}
-        </span>
-      ),
-    });
-  }
-  if (t.gameSessionId) {
-    rows.push({
-      label: "Game Session ID",
-      value: (
-        <span className="font-mono text-xs break-all">{t.gameSessionId}</span>
-      ),
-    });
-  }
-  if (t.fireblocksTxId) {
-    rows.push({
-      label: "Fireblocks TX ID",
-      value: (
-        <span className="font-mono text-xs break-all">{t.fireblocksTxId}</span>
-      ),
-    });
-  }
-  if (t.externalTxId) {
-    rows.push({
-      label: "External TX ID",
-      value: (
-        <span className="font-mono text-xs break-all">{t.externalTxId}</span>
-      ),
-    });
-  }
-  if (t.soldCard) {
-    rows.push({
-      label: "Card Sold",
-      value: (
-        <div className="flex items-center gap-3 rounded-lg border p-2">
-          {t.soldCard.imageUrl ? (
-            <img
-              src={t.soldCard.imageUrl}
-              alt={t.soldCard.name}
-              className="h-16 w-auto rounded object-contain"
-            />
-          ) : (
-            <div className="h-16 w-10 rounded bg-muted flex items-center justify-center text-xs text-muted-foreground">
-              ?
-            </div>
-          )}
-          <div>
-            <p className="text-sm font-medium">{t.soldCard.name}</p>
-            {t.soldCard.rarity && (
-              <Badge
-                variant="outline"
-                className={`text-[10px] ${RARITY_COLORS[t.soldCard.rarity.toLowerCase()] ?? ""}`}
-              >
-                {t.soldCard.rarity}
-              </Badge>
-            )}
-          </div>
-        </div>
-      ),
-    });
-  }
-  if (t.metadata && typeof t.metadata === "object") {
-    const meta = t.metadata as Record<string, unknown>;
-    const KNOWN_LABELS: Record<string, string> = {
-      source_type: "Source Type",
-      inventory_item_id: "Inventory Item",
-      card_id: "Card",
-      pack_id: "Pack",
-      pack_name: "Pack Name",
-      promo_code: "Promo Code",
-      promo_code_id: "Promo Code",
-      gift_card_code: "Gift Card Code",
-      gift_card_id: "Gift Card",
-      battle_id: "Battle",
-      vault_id: "Vault",
-      race_id: "Race",
-      race_name: "Race Name",
-      affiliate_code: "Affiliate Code",
-      affiliate_id: "Affiliate",
-      amount: "Amount",
-      reason: "Reason",
-      adjusted_by: "Adjusted By",
-      action: "Action",
-      bonus_percent: "Bonus %",
-      deposit_tx_id: "Deposit TX",
-      sender_id: "Sender",
-      sender_username: "Sender",
-      recipient_id: "Recipient",
-      recipient_username: "Recipient",
-      creator_id: "Creator",
-      creator_username: "Creator",
-      tip_amount: "Tip Amount",
-      voucher_id: "Voucher",
-      voucher_code: "Voucher Code",
-      exchange_id: "Exchange",
-      origin: "Origin",
-      origin_id: "Origin ID",
-      origin_type: "Origin Type",
-      battle_name: "Battle Name",
-      pack_count: "Pack Count",
-      cards_count: "Cards Count",
-      total_value: "Total Value",
-      fee: "Fee",
-      fee_percent: "Fee %",
-      level: "Level",
-      xp: "XP",
-      reward_type: "Reward Type",
-      reward_id: "Reward",
-      reward_name: "Reward Name",
-      claim_id: "Claim",
-      period: "Period",
-      tier: "Tier",
-      percentage: "Percentage",
-      shipping_fee: "Shipping Fee",
-      withdrawal_id: "Withdrawal",
-      rain_id: "Rain",
-    };
-
-    const knownEntries: { label: string; value: string }[] = [];
-    const unknownEntries: Record<string, unknown> = {};
-
-    for (const [key, val] of Object.entries(meta)) {
-      if (t.soldCard && key === "inventory_item_id") continue; // already shown as card
-      const label = KNOWN_LABELS[key];
-      if (label && val != null) {
-        knownEntries.push({ label, value: String(val) });
-      } else if (val != null) {
-        unknownEntries[key] = val;
-      }
-    }
-
-    for (const entry of knownEntries) {
-      rows.push({
-        label: entry.label,
-        value: (
-          <span className="font-mono text-xs break-all">{entry.value}</span>
-        ),
-      });
-    }
-
-    if (Object.keys(unknownEntries).length > 0) {
-      rows.push({
-        label: "Metadata",
-        value: (
-          <pre className="font-mono text-xs bg-muted rounded p-2 max-h-[200px] overflow-auto whitespace-pre-wrap break-all">
-            {JSON.stringify(unknownEntries, null, 2)}
-          </pre>
-        ),
-      });
-    }
-  }
-
-  return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-    >
-      <DialogContent className="sm:max-w-2xl flex flex-col max-h-[85vh]">
-        <DialogHeader>
-          <DialogTitle>Transaction Details</DialogTitle>
-        </DialogHeader>
-        <div className="overflow-y-auto flex-1 -mx-4 px-4 space-y-4">
-          <div className="grid grid-cols-2 gap-x-6 gap-y-3">
-            {rows.map((row) => (
-              <div key={row.label} className="flex flex-col gap-1">
-                <span className="text-xs text-muted-foreground">
-                  {row.label}
-                </span>
-                <div className="text-sm">{row.value}</div>
-              </div>
-            ))}
-          </div>
-
-          {t.gameSessionId && (
-            <div className="border-t pt-4 space-y-3">
-              {loadingSession ? (
-                <p className="text-sm text-muted-foreground text-center py-4">
-                  Loading game details...
-                </p>
-              ) : gameSession ? (
-                <>
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-medium">
-                      {gameSession.gameType === "pack"
-                        ? "Pack Opening"
-                        : "Battle"}{" "}
-                      Details
-                    </h3>
-                    <Badge variant="outline" className="font-mono text-xs">
-                      {gameSession.result}
-                    </Badge>
-                  </div>
-
-                  {gameSession.pack && (
-                    <Link
-                      href={`/packs/${gameSession.pack.id}`}
-                      className="flex items-center gap-4 py-2 group"
-                    >
-                      {gameSession.pack.imageUrl && (
-                        <img
-                          src={gameSession.pack.imageUrl}
-                          alt={gameSession.pack.name}
-                          className="h-20 w-auto rounded-lg object-contain drop-shadow-lg"
-                        />
-                      )}
-                      <div>
-                        <p className="text-sm font-semibold text-blue-400 group-hover:underline">
-                          {gameSession.pack.name}
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          Bet: {formatCurrency(gameSession.betAmount)}
-                        </p>
-                      </div>
-                    </Link>
-                  )}
-
-                  {gameSession.items.length > 0 && (
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-3">
-                        Cards Obtained ({gameSession.items.length})
-                      </p>
-                      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
-                        {gameSession.items.map((item) => (
-                          <div
-                            key={item.id}
-                            className="flex flex-col items-center gap-1.5"
-                          >
-                            {item.imageUrl ? (
-                              <img
-                                src={item.imageUrl}
-                                alt={item.cardName}
-                                className="h-28 w-auto rounded-lg object-contain drop-shadow-md"
-                              />
-                            ) : (
-                              <div className="h-28 w-20 rounded-lg bg-muted/50 flex items-center justify-center text-xs text-muted-foreground">
-                                ?
-                              </div>
-                            )}
-                            <p className="text-xs font-medium text-center truncate w-full">
-                              {item.cardName}
-                            </p>
-                            {item.rarity && (
-                              <Badge
-                                variant="outline"
-                                className={`text-[10px] ${RARITY_COLORS[item.rarity.toLowerCase()] ?? ""}`}
-                              >
-                                {item.rarity}
-                              </Badge>
-                            )}
-                            <p className="text-xs text-muted-foreground">
-                              {formatCurrency(item.valueAtObtained)}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {gameSession.pfResults.length > 0 && (
-                    <div className="border-t pt-3 space-y-2">
-                      <p className="text-xs text-muted-foreground">
-                        Provably Fair
-                      </p>
-                      {gameSession.pfResults.map((pf, i) => (
-                        <div
-                          key={pf.id}
-                          className="rounded-lg border bg-muted/30 p-3 space-y-1.5"
-                        >
-                          {gameSession.pfResults.length > 1 && (
-                            <p className="text-[11px] font-medium text-muted-foreground">
-                              Roll #{i + 1}
-                            </p>
-                          )}
-                          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                            <div>
-                              <p className="text-[10px] text-muted-foreground">
-                                Client Seed
-                              </p>
-                              <p className="text-[11px] font-mono break-all">
-                                {pf.clientSeed}
-                              </p>
-                            </div>
-                            <div>
-                              <p className="text-[10px] text-muted-foreground">
-                                Server Seed Hash
-                              </p>
-                              <p className="text-[11px] font-mono break-all">
-                                {pf.serverSeedHash}
-                              </p>
-                            </div>
-                            {pf.serverSeed && (
-                              <div className="col-span-2">
-                                <p className="text-[10px] text-muted-foreground">
-                                  Server Seed
-                                </p>
-                                <p className="text-[11px] font-mono break-all">
-                                  {pf.serverSeed}
-                                </p>
-                              </div>
-                            )}
-                            <div>
-                              <p className="text-[10px] text-muted-foreground">
-                                Nonce
-                              </p>
-                              <p className="text-[11px] font-mono">
-                                {pf.nonce}
-                              </p>
-                            </div>
-                            <div>
-                              <p className="text-[10px] text-muted-foreground">
-                                Ticket
-                              </p>
-                              <p className="text-[11px] font-mono">
-                                {pf.ticket}
-                              </p>
-                            </div>
-                            <div className="col-span-2">
-                              <p className="text-[10px] text-muted-foreground">
-                                Result Hash
-                              </p>
-                              <p className="text-[11px] font-mono break-all">
-                                {pf.resultHash}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </>
-              ) : (
-                <p className="text-sm text-muted-foreground text-center py-2">
-                  Game session not found
-                </p>
-              )}
-            </div>
-          )}
-        </div>
-        <DialogFooter showCloseButton />
-      </DialogContent>
-    </Dialog>
   );
 }

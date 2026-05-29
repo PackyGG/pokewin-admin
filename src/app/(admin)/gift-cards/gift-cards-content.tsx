@@ -12,6 +12,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatCurrency, formatDate, formatRelative } from "@/lib/utils/format";
+import { EmptyState } from "@/components/empty-state";
 import { CancelGiftCardDialog } from "./cancel-dialog";
 import type { GiftCardListItem } from "@/lib/queries/gift-cards";
 
@@ -91,8 +92,13 @@ export function GiftCardsContent({ data }: { data: GiftCardListItem[] }) {
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
         {data.length === 0 ? (
-          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
-            No gift cards found.
+          <div className="rounded-md border">
+            <EmptyState
+              icon={Gift}
+              title="No gift cards found"
+              description="Issued gift cards will appear here. Create one to grant credit to a player."
+              compact
+            />
           </div>
         ) : (
           <div className="overflow-hidden rounded-md border">
@@ -148,8 +154,15 @@ export function GiftCardsContent({ data }: { data: GiftCardListItem[] }) {
               </TableRow>
             ))}
             {data.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={9} className="h-24 text-center">No gift cards found.</TableCell>
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={9} className="p-0">
+                  <EmptyState
+                    icon={Gift}
+                    title="No gift cards found"
+                    description="Issued gift cards will appear here. Create one to grant credit to a player."
+                    compact
+                  />
+                </TableCell>
               </TableRow>
             )}
           </TableBody>

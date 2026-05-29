@@ -2,11 +2,13 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import {
   Activity,
+  AlertTriangle,
   ArrowLeft,
   Coins,
   Package,
   Swords,
   Trophy,
+  TrendingUp,
 } from "lucide-react";
 
 import {
@@ -26,6 +28,7 @@ import {
 } from "@/components/ui/table";
 import { PageHero, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { EmptyState } from "@/components/empty-state";
 import {
   formatCurrency,
   formatDateTime,
@@ -37,7 +40,7 @@ import { CodeActivityNav } from "../_components/code-activity-nav";
 export const metadata = { title: "Last Wagers · Creator" };
 
 const WAGER_TYPE_META: Record<
-  "pack_opening" | "battle_bet" | "battle_sponsorship",
+  "pack_opening" | "battle_bet" | "battle_sponsorship" | "upgrader_bet",
   { label: string; icon: React.ElementType; className: string }
 > = {
   pack_opening: {
@@ -58,6 +61,12 @@ const WAGER_TYPE_META: Record<
     className:
       "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
   },
+  upgrader_bet: {
+    label: "Upgrader",
+    icon: TrendingUp,
+    className:
+      "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-cyan-500/30",
+  },
 };
 
 // Dedicated full-width page for the "Last wagers" feed. Same shape +
@@ -74,9 +83,14 @@ export default async function CreatorWagersPage({
   const profile = await getCreatorHeader(userId);
   if (!profile) notFound();
 
-  const wagers = profile.code
+  // getRecentWagersOnCode returns a discriminated result so a failed /
+  // timed-out lookup is distinguishable from a genuinely empty feed.
+  // wagersResult is null only when the creator has no code at all.
+  const wagersResult = profile.code
     ? await getRecentWagersOnCode(profile.code, 100)
-    : [];
+    : null;
+  const loadFailed = wagersResult !== null && !wagersResult.ok;
+  const wagers = wagersResult && wagersResult.ok ? wagersResult.wagers : [];
 
   return (
     <div className="space-y-6">
@@ -182,15 +196,38 @@ export default async function CreatorWagersPage({
                     </TableRow>
                   );
                 })}
-                {wagers.length === 0 && (
+                {loadFailed && (
                   <TableRow>
-                    <TableCell
-                      colSpan={4}
-                      className="h-24 text-center text-muted-foreground"
-                    >
-                      {profile.code
-                        ? "No wager activity yet."
-                        : "Creator has no affiliate code."}
+                    <TableCell colSpan={4} className="h-24 text-center">
+                      <div className="flex flex-col items-center gap-1 text-sm">
+                        <span className="flex items-center gap-1.5 font-medium text-amber-600 dark:text-amber-400">
+                          <AlertTriangle className="size-4" />
+                          Couldn&apos;t load wagers for this code
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          The lookup timed out — refresh the page to try again.
+                        </span>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )}
+                {!loadFailed && wagers.length === 0 && (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={4} className="p-0">
+                      <EmptyState
+                        icon={Activity}
+                        title={
+                          profile.code
+                            ? "No wager activity yet"
+                            : "Creator has no affiliate code"
+                        }
+                        description={
+                          profile.code
+                            ? "Recent wagers from users tied to this creator's code will appear here."
+                            : "Once this creator owns an affiliate code, wager events from their users show up here."
+                        }
+                        compact
+                      />
                     </TableCell>
                   </TableRow>
                 )}

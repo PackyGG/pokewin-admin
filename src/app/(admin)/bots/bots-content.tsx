@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Pencil, Upload } from "lucide-react";
+import { Bot, Pencil, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +27,7 @@ import {
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { toggleBotActive, createBot, updateBot } from "./actions";
 import { uploadImageClient } from "@/lib/upload-image-client";
+import { EmptyState } from "@/components/empty-state";
 import type { BotListItem } from "@/lib/queries/bots";
 
 function ImageDropzone({
@@ -254,8 +255,13 @@ export function BotsContent({ data }: { data: BotListItem[] }) {
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
         {data.length === 0 ? (
-          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
-            No bots found.
+          <div className="rounded-md border">
+            <EmptyState
+              icon={Bot}
+              title="No bots found"
+              description="Create a bot to populate battles with house-controlled players."
+              compact
+            />
           </div>
         ) : (
           <div className="overflow-hidden rounded-md border">
@@ -407,9 +413,14 @@ export function BotsContent({ data }: { data: BotListItem[] }) {
               </TableRow>
             ))}
             {data.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={10} className="h-24 text-center">
-                  No bots found.
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={10} className="p-0">
+                  <EmptyState
+                    icon={Bot}
+                    title="No bots found"
+                    description="Create a bot to populate battles with house-controlled players."
+                    compact
+                  />
                 </TableCell>
               </TableRow>
             )}

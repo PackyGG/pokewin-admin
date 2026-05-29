@@ -1,8 +1,10 @@
 import { cache } from "react";
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { withTiming } from "@/lib/observability/query-timings";
 import { computeHousePnl } from "./pnl";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { blacklistNotInClause } from "./_blacklist";
 
 /**
  * Lifetime realized P&L from the house perspective — a balance-sheet snapshot.
@@ -33,17 +35,36 @@ export type RealizedPnlSnapshot = {
 };
 
 /**
- * Per-request memoized. The snapshot is called from BOTH
- * `getDashboardStats` and `getAnalyticsData` — when a request renders
- * both surfaces (or when a single render reaches into either bundle)
- * the React `cache()` wrapper ensures the heavy 8-aggregate raw query
- * runs once, not twice. Cross-request caching is intentionally NOT
- * added here: the snapshot tracks live balances and unclaimed
- * vouchers/rakeback, both of which can change between requests.
+ * Per-request memoized via React `cache()`, AND cross-request cached
+ * for 5 minutes via Next.js `unstable_cache`.
+ *
+ * The inner snapshot is the single heaviest query in the codebase — it
+ * walks `balances`, `card_withdrawal_requests`, `user_inventory`,
+ * `vouchers`, and `rakeback_claims` for every non-staff user to
+ * compute lifetime house P&L. On the dashboard's 60s auto-refresh
+ * this used to re-run the whole thing on every tick.
+ *
+ * The `revalidate: 300` (5 min) bound matches what an operator
+ * actually needs: lifetime P&L doesn't move by more than a few dollars
+ * minute-to-minute, so a 5-minute staleness is invisible to a human
+ * but cuts the per-render cost from ~hundreds-of-ms to ~0 on cache
+ * hits. The dashboard's wager / period-PnL numbers stay on the
+ * uncached hot path so they still refresh every 60s.
+ *
+ * The cache key is static (no args) because the inner function reads
+ * its own blacklist + dynamic state. The 5-min revalidate floor means
+ * a blacklist change becomes visible within 5 minutes — acceptable
+ * for an admin-only list.
  */
+const cachedSnapshot = unstable_cache(
+  realizedPnlSnapshotInner,
+  ["realized-pnl-snapshot"],
+  { revalidate: 300, tags: ["dashboard-lifetime"] },
+);
+
 export const getRealizedPnlSnapshot = cache(
   async (): Promise<RealizedPnlSnapshot> => {
-    return withTiming("realizedPnl.snapshot", () => realizedPnlSnapshotInner());
+    return withTiming("realizedPnl.snapshot", () => cachedSnapshot());
   },
 );
 
@@ -56,12 +77,7 @@ async function realizedPnlSnapshotInner(): Promise<RealizedPnlSnapshot> {
   // packy.gg user_ids — already alphanumeric — but we double-up any
   // embedded single quote defensively before inlining.
   const excluded = await getExcludedUserIds();
-  const blacklistFrag =
-    excluded.length > 0
-      ? `AND id NOT IN (${excluded
-          .map((id) => `'${id.replace(/'/g, "''")}'`)
-          .join(",")})`
-      : "";
+  const blacklistFrag = blacklistNotInClause("id", excluded);
   const rows = await db.$queryRawUnsafe<
     {
       deposited: string;

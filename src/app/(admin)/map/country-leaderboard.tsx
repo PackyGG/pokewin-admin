@@ -1,5 +1,6 @@
-import { Trophy } from "lucide-react";
+import { Trophy, Globe } from "lucide-react";
 import { SectionHeading } from "@/components/modern-panels";
+import { EmptyState } from "@/components/empty-state";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import type { CountryUserCount } from "@/lib/queries/map";
 import { flagEmoji, METRIC_META, metricValue, type MapMetric } from "./utils";
@@ -39,9 +40,12 @@ export function CountryLeaderboard({
         <SectionHeading icon={Trophy} title={`Top markets · ${meta.label}`} />
 
         {sorted.length === 0 ? (
-          <p className="mt-6 text-sm text-muted-foreground">
-            No data for this metric.
-          </p>
+          <EmptyState
+            icon={Globe}
+            title="No data for this metric"
+            description="No countries have activity for the selected metric yet."
+            compact
+          />
         ) : (
           <ol className="mt-4 space-y-2.5">
             {sorted.map(({ entry, value }, i) => {

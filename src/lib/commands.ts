@@ -23,7 +23,6 @@ import {
   FileText,
   Gift,
   Globe,
-  KeyRound,
   Keyboard,
   Layers,
   LayoutDashboard,
@@ -51,7 +50,6 @@ import {
   UserCircle,
   UserSearch,
   Users,
-  Wallet,
   type LucideIcon,
 } from "lucide-react";
 
@@ -313,14 +311,6 @@ export const NAV_COMMANDS: NavCommand[] = [
   },
   {
     kind: "nav",
-    id: "nav.transactions.battles",
-    label: "Battle Transactions",
-    icon: Swords,
-    href: "/transactions/battles",
-    pageKey: "/transactions/battles",
-  },
-  {
-    kind: "nav",
     id: "nav.transactions.rewards",
     label: "Reward Transactions",
     icon: Award,
@@ -387,18 +377,6 @@ export const NAV_COMMANDS: NavCommand[] = [
     pageKey: "/rewards/settings",
   },
 
-  // ── Finance ───────────────────────────────────────────────────────────
-  {
-    kind: "nav",
-    id: "nav.spending",
-    label: "Spending",
-    description: "Expense tracking",
-    icon: Wallet,
-    href: "/spending",
-    pageKey: "/spending",
-    keywords: ["expenses", "recurring"],
-  },
-
   // ── Creator Portal (creator-only) ─────────────────────────────────────
   {
     kind: "nav",
@@ -433,18 +411,9 @@ export const NAV_COMMANDS: NavCommand[] = [
   },
   {
     kind: "nav",
-    id: "nav.admin-users.roles",
-    label: "Roles",
-    description: "Custom admin roles",
-    icon: KeyRound,
-    href: "/admin-users/roles",
-    pageKey: "/admin-users/roles",
-  },
-  {
-    kind: "nav",
     id: "nav.settings.roles",
-    label: "Role Permissions",
-    description: "Legacy per-role permissions",
+    label: "Roles",
+    description: "Built-in & custom roles",
     icon: Shield,
     href: "/settings/roles",
     pageKey: "/settings/roles",
@@ -639,18 +608,18 @@ export const DOCS_NAV_GROUPS: Array<{ label: string; pageKeys: string[] }> = [
   },
   {
     label: "Employees",
-    pageKeys: ["/shifts", "/spending"],
+    pageKeys: ["/shifts"],
   },
   {
     label: "Content",
-    pageKeys: ["/packs", "/cards", "/battles"],
+    pageKeys: ["/packs", "/cards"],
   },
   {
     label: "Transactions",
     pageKeys: [
       "/transactions",
       "/transactions/packs",
-      "/transactions/battles",
+      "/battles",
       "/transactions/rewards",
     ],
   },
@@ -678,7 +647,6 @@ export const DOCS_NAV_GROUPS: Array<{ label: string; pageKeys: string[] }> = [
     label: "System",
     pageKeys: [
       "/admin-users",
-      "/admin-users/roles",
       "/settings/roles",
       "/bots",
       "/settings",

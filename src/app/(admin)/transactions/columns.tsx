@@ -100,9 +100,10 @@ export const columns: ColumnDef<TransactionListItem>[] = [
   },
   {
     accessorKey: "payout",
-    header: "Payout",
-    // Payout = value we returned to the user on a game session. House
-    // loss → rose.
+    header: "Items Won",
+    // Items Won = full value the user received on a game session =
+    // cards + voucher excess (invariant). User won it → it left the
+    // house → house loss → rose.
     cell: ({ row }) => {
       const p = row.original.payout;
       if (p == null) return <span className="text-muted-foreground">—</span>;
@@ -114,12 +115,28 @@ export const columns: ColumnDef<TransactionListItem>[] = [
     },
   },
   {
-    accessorKey: "houseEdge",
-    header: "House Edge",
+    accessorKey: "housePnl",
+    header: "House P&L",
+    // Per-row house profit/loss in USD on a game session: bet − items
+    // won (cards + vouchers). House POV: positive = house kept money
+    // (emerald), negative = user pulled above bet (rose). Replaces the
+    // old meaningless House Edge %.
     cell: ({ row }) => {
-      const he = row.original.houseEdge;
-      if (he == null) return <span className="text-muted-foreground">—</span>;
-      return <span>{he.toFixed(2)}%</span>;
+      const pnl = row.original.housePnl;
+      if (pnl == null) return <span className="text-muted-foreground">—</span>;
+      const positive = pnl >= 0;
+      return (
+        <span
+          className={
+            positive
+              ? "text-emerald-600 dark:text-emerald-400"
+              : "text-rose-600 dark:text-rose-400"
+          }
+        >
+          {positive ? "+" : "-"}
+          {formatCurrency(Math.abs(pnl))}
+        </span>
+      );
     },
   },
   {

@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { blacklistNotInClause } from "./_blacklist";
 
 /**
  * Cohort retention analysis.
@@ -34,8 +35,8 @@ export type CohortData = {
   rows: CohortRow[];
 };
 
-const WAGER_TYPES_SQL = `('pack_opening','battle_bet','battle_sponsorship')`;
-const PAYOUT_TYPES_SQL = `('battle_refund','card_sale','reward_card_sale')`;
+const WAGER_TYPES_SQL = `('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')`;
+const PAYOUT_TYPES_SQL = `('battle_refund','upgrader_payout','card_sale','reward_card_sale')`;
 
 const MAX_COHORTS = 16;
 const MAX_PERIODS = 10;
@@ -48,10 +49,7 @@ export async function getCohortRetention(
   const periodInterval = granularity === "week" ? "7 days" : "1 month";
   const cohortHorizon = granularity === "week" ? "140 days" : "36 months";
   const excluded = await getExcludedUserIds();
-  const blacklistIdNotIn =
-    excluded.length > 0
-      ? `AND u.id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
-      : "";
+  const blacklistIdNotIn = blacklistNotInClause("u.id", excluded);
 
   // Pull cohorts + activity in a single pass. `period_index` is integer
   // distance between activity bucket and signup bucket; clamp to the last

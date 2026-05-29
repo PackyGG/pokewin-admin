@@ -1,7 +1,184 @@
 import { getDb } from "@/lib/db";
 import { affiliate_usage_type } from "@/generated/prisma/enums";
 import { toNumber } from "@/lib/utils/decimal";
+import { filterLedgerTxTypes } from "./_ledger-tx-types";
 import { calculateUserPnl } from "./pnl";
+
+const USER_WAGER_BREAKDOWN_TYPES = filterLedgerTxTypes([
+  "pack_opening",
+  "battle_bet",
+  "battle_sponsorship",
+  "upgrader_bet",
+]);
+
+type Db = Awaited<ReturnType<typeof getDb>>;
+
+const TIP_RECENT_LIMIT = 10;
+
+/**
+ * Creator tips for a user, split into received vs sent.
+ *
+ * Both sides of a tip are `creator_tip` ledger rows (one on each user):
+ *   - on the recipient: metadata.direction = "received", balance ↑,
+ *     metadata.sender_user_id = who tipped them,
+ *   - on the sender:    metadata.direction = "sent",     balance ↓,
+ *     metadata.recipient_user_id = who they tipped.
+ * `amount` is the magnitude on both rows; for older rows that predate the
+ * metadata flag we fall back to the balance delta to infer direction.
+ */
+async function getUserTips(db: Db, userId: string) {
+  const [rows, rainAgg, rainRecent, leaderboardAgg, leaderboardRecent] =
+    await Promise.all([
+      db.ledger_transactions.findMany({
+        where: { user_id: userId, type: "creator_tip" },
+        orderBy: { created_at: "desc" },
+        select: {
+          id: true,
+          amount: true,
+          balance_before: true,
+          balance_after: true,
+          metadata: true,
+          created_at: true,
+        },
+      }),
+      // Rain prizes the user won (rain_win) — count + total in one pass…
+      db.ledger_transactions.aggregate({
+        where: { user_id: userId, type: "rain_win" },
+        _count: { _all: true },
+        _sum: { amount: true },
+      }),
+      // …plus the most recent few for the list.
+      db.ledger_transactions.findMany({
+        where: { user_id: userId, type: "rain_win" },
+        orderBy: { created_at: "desc" },
+        take: TIP_RECENT_LIMIT,
+        select: { id: true, amount: true, created_at: true },
+      }),
+      // Affiliate-leaderboard prize payouts — credits to users who placed
+      // on a creator-leaderboard ranking. Same pattern as rain_win: no
+      // counterparty (the pool pays out). House cost ⇒ rose color downstream.
+      db.ledger_transactions.aggregate({
+        where: { user_id: userId, type: "affiliate_leaderboard_prize" },
+        _count: { _all: true },
+        _sum: { amount: true },
+      }),
+      db.ledger_transactions.findMany({
+        where: { user_id: userId, type: "affiliate_leaderboard_prize" },
+        orderBy: { created_at: "desc" },
+        take: TIP_RECENT_LIMIT,
+        select: { id: true, amount: true, created_at: true },
+      }),
+    ]);
+
+  type Entry = {
+    id: string;
+    amountUsd: number;
+    counterpartyId: string | null;
+    counterpartyName: string | null;
+    createdAt: string;
+    sent: boolean;
+  };
+
+  const entries: Entry[] = rows.map((r) => {
+    const meta =
+      r.metadata && typeof r.metadata === "object" && !Array.isArray(r.metadata)
+        ? (r.metadata as Record<string, unknown>)
+        : {};
+    const dir = typeof meta.direction === "string" ? meta.direction : null;
+    const sent =
+      dir === "sent" ||
+      (dir == null && toNumber(r.balance_after) < toNumber(r.balance_before));
+    const counterpartyId =
+      typeof meta.sender_user_id === "string"
+        ? meta.sender_user_id
+        : typeof meta.recipient_user_id === "string"
+          ? meta.recipient_user_id
+          : null;
+    return {
+      id: r.id,
+      amountUsd: toNumber(r.amount),
+      counterpartyId,
+      counterpartyName: null,
+      createdAt: r.created_at.toISOString(),
+      sent,
+    };
+  });
+
+  const received = entries.filter((e) => !e.sent);
+  const sent = entries.filter((e) => e.sent);
+
+  // Resolve counterparty usernames only for the rows we'll render.
+  const shown = [
+    ...received.slice(0, TIP_RECENT_LIMIT),
+    ...sent.slice(0, TIP_RECENT_LIMIT),
+  ];
+  const ids = [
+    ...new Set(
+      shown.map((e) => e.counterpartyId).filter((x): x is string => !!x),
+    ),
+  ];
+  if (ids.length > 0) {
+    const users = await db.user.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, username: true, email: true },
+    });
+    const nameById = new Map(
+      users.map((u) => [u.id, u.username ?? u.email ?? u.id]),
+    );
+    for (const e of shown) {
+      if (e.counterpartyId)
+        e.counterpartyName = nameById.get(e.counterpartyId) ?? null;
+    }
+  }
+
+  const sum = (arr: Entry[]) => arr.reduce((s, e) => s + e.amountUsd, 0);
+  const strip = (e: Entry) => ({
+    id: e.id,
+    amountUsd: e.amountUsd,
+    counterpartyId: e.counterpartyId,
+    counterpartyName: e.counterpartyName,
+    createdAt: e.createdAt,
+  });
+
+  return {
+    received: {
+      count: received.length,
+      totalUsd: sum(received),
+      recent: received.slice(0, TIP_RECENT_LIMIT).map(strip),
+    },
+    sent: {
+      count: sent.length,
+      totalUsd: sum(sent),
+      recent: sent.slice(0, TIP_RECENT_LIMIT).map(strip),
+    },
+    // Rain prizes have no counterparty — they come from the rain pool.
+    rainPrizes: {
+      count: rainAgg._count._all,
+      totalUsd: toNumber(rainAgg._sum.amount ?? 0),
+      recent: rainRecent.map((r) => ({
+        id: r.id,
+        amountUsd: toNumber(r.amount),
+        counterpartyId: null,
+        counterpartyName: null,
+        createdAt: r.created_at.toISOString(),
+      })),
+    },
+    // Affiliate-leaderboard wins (affiliate_leaderboard_prize) — credits
+    // paid out by creator-leaderboard rankings. Same shape as rain
+    // prizes: no counterparty.
+    leaderboardWins: {
+      count: leaderboardAgg._count._all,
+      totalUsd: toNumber(leaderboardAgg._sum.amount ?? 0),
+      recent: leaderboardRecent.map((r) => ({
+        id: r.id,
+        amountUsd: toNumber(r.amount),
+        counterpartyId: null,
+        counterpartyName: null,
+        createdAt: r.created_at.toISOString(),
+      })),
+    },
+  };
+}
 
 export async function getUserDetail(id: string) {
   const db = await getDb();
@@ -14,7 +191,7 @@ export async function getUserDetail(id: string) {
       by: ["type"],
       where: {
         user_id: id,
-        type: { in: ["pack_opening", "battle_bet", "battle_sponsorship"] },
+        type: { in: USER_WAGER_BREAKDOWN_TYPES },
         status: "completed",
       },
       _sum: { amount: true },
@@ -39,9 +216,9 @@ export async function getUserDetail(id: string) {
     balances,
     statistics,
     featureLocks,
+    battleLimits,
     inventoryCount,
     affiliateAccount,
-    affiliateCodeRecord,
     shippingAddress,
     vault,
     mutes,
@@ -52,6 +229,8 @@ export async function getUserDetail(id: string) {
     withdrawalCount,
     userPnl,
     wagerBreakdownResolved,
+    ownedCodeRows,
+    tips,
   ] = await Promise.all([
     db.user.findUnique({
       where: { id },
@@ -64,6 +243,7 @@ export async function getUserDetail(id: string) {
     db.balances.findUnique({ where: { user_id: id } }),
     db.user_statistics.findUnique({ where: { user_id: id } }),
     db.user_feature_locks.findUnique({ where: { user_id: id } }),
+    db.user_battle_limits.findUnique({ where: { user_id: id } }),
     db.user_inventory.count({ where: { user_id: id, sold_at: null, exchanged_at: null } }),
     db.affiliate_accounts.findUnique({
       where: { user_id: id },
@@ -76,11 +256,6 @@ export async function getUserDetail(id: string) {
         total_bonus_distributed_usd: true,
         last_payout_at: true,
       },
-    }),
-    db.affiliate_codes.findFirst({
-      where: { user_id: id },
-      select: { code: true },
-      orderBy: { created_at: "desc" },
     }),
     db.shipping_addresses.findUnique({ where: { user_id: id } }),
     db.vaults.findUnique({ where: { user_id: id } }),
@@ -122,6 +297,20 @@ export async function getUserDetail(id: string) {
     }),
     userPnlPromise,
     wagerBreakdownPromise,
+    // Every code this user owns (rows in affiliate_codes). No dependency
+    // on any other query result — keyed on the id param — so it runs in
+    // the main batch instead of a serial tail. orderBy created_at ASC:
+    // the LAST row is the newest, used as the affiliate-code fallback
+    // below (replaces the dropped findFirst ... orderBy desc limit 1).
+    db.affiliate_codes.findMany({
+      where: { user_id: id },
+      orderBy: { created_at: "asc" },
+      select: { code: true, created_at: true },
+    }),
+    // Creator tips received + sent (both are creator_tip rows, split by
+    // metadata.direction). Runs in parallel; resolves counterparty names
+    // for the shown rows internally.
+    getUserTips(db, id),
   ]);
 
   const depositCount = depositAgg._count._all;
@@ -142,11 +331,13 @@ export async function getUserDetail(id: string) {
   let referredByUsername: string | null = null;
   let referredByCode: string | null = null;
   if (user.referred_by) {
-    const [referrer, signupUsage] = await Promise.all([
+    const [referrer, signupUsage, latestUsage] = await Promise.all([
       db.user.findUnique({
         where: { id: user.referred_by },
         select: { username: true, email: true, affiliate_code: true },
       }),
+      // Historical signup-time code — preferred, since it preserves the
+      // exact string even if the owner later rotated their code.
       db.affiliate_code_usages.findFirst({
         where: {
           referred_user_id: user.id,
@@ -155,13 +346,33 @@ export async function getUserDetail(id: string) {
         orderBy: { created_at: "desc" },
         select: { code: true },
       }),
+      // Most recent usage row of ANY type. The admin "set referrer"
+      // path writes a non-signup usage row, so this surfaces the code
+      // when there's no signup row — without it the code shows as
+      // "unknown" after a manual attribution.
+      db.affiliate_code_usages.findFirst({
+        where: { referred_user_id: user.id },
+        orderBy: { created_at: "desc" },
+        select: { code: true },
+      }),
     ]);
     referredByUsername =
       referrer?.username ?? referrer?.email ?? user.referred_by;
-    // Prefer the historical signup row; fall back to the referrer's
-    // current code if there's no signup row recorded (admin-assigned
-    // referrer paths used to skip writing the signup usage).
-    referredByCode = signupUsage?.code ?? referrer?.affiliate_code ?? null;
+    // Resolution order:
+    //   1. historical signup row (exact code at signup),
+    //   2. the active code the user is on now (user.affiliate_code —
+    //      set by the admin override), which is what wager income
+    //      follows,
+    //   3. any recorded usage row (catches manual/deposit attributions),
+    //   4. the referrer's own code as a last resort.
+    // NOTE: referrer.affiliate_code is the code the OWNER is carrying,
+    // not necessarily a code they own, so it's the weakest fallback.
+    referredByCode =
+      signupUsage?.code ??
+      user.affiliate_code ??
+      latestUsage?.code ??
+      referrer?.affiliate_code ??
+      null;
   }
 
   // Every code this user owns (rows in affiliate_codes). A user can
@@ -171,19 +382,19 @@ export async function getUserDetail(id: string) {
   // historical / extras. Surfacing the full list on /users/[id]
   // lets admins see drift between user.affiliate_code and what's
   // actually in the affiliate_codes table — and switch the primary
-  // without touching the DB.
-  const ownedCodeRows = await db.affiliate_codes.findMany({
-    where: { user_id: user.id },
-    orderBy: { created_at: "asc" },
-    select: { code: true, created_at: true },
-  });
+  // without touching the DB. (Rows fetched in the main Promise.all.)
   const ownedCodes = ownedCodeRows.map((c) => ({
     code: c.code,
     createdAt: c.created_at.toISOString(),
     isPrimary: c.code === user.affiliate_code,
   }));
+  // Newest owned code — preserves the dropped findFirst(orderBy desc)
+  // fallback: ownedCodeRows is sorted ASC, so the last element is the
+  // most-recently-created code.
+  const newestOwnedCode = ownedCodeRows.at(-1)?.code ?? null;
 
   return {
+    tips,
     user: {
       id: user.id,
       username: user.username,
@@ -221,6 +432,21 @@ export async function getUserDetail(id: string) {
       createdAt: user.created_at.toISOString(),
       updatedAt: user.updated_at.toISOString(),
       providers: user.account.map((a) => a.providerId),
+      // The provider this user signed up with — i.e. the FIRST linked
+      // account. We sort by account.created_at ASC and take the oldest;
+      // if that timestamp is missing we fall back to the first entry
+      // in the array (BetterAuth orders by creation by default). Maps
+      // to discord / google / steam / credential (= email) etc. Null
+      // when the user has no linked account at all.
+      signupProvider: (() => {
+        if (user.account.length === 0) return null;
+        const sorted = [...user.account].sort((a, b) => {
+          const ta = a.created_at?.getTime() ?? Infinity;
+          const tb = b.created_at?.getTime() ?? Infinity;
+          return ta - tb;
+        });
+        return sorted[0]?.providerId ?? null;
+      })(),
       discord: (() => {
         const dc = user.account.find((a) => a.providerId === "discord");
         if (!dc) return null;
@@ -277,10 +503,22 @@ export async function getUserDetail(id: string) {
           lockedVault: featureLocks.locked_vault,
         }
       : null,
+    battleLimits: battleLimits
+      ? {
+          maxValueUsd:
+            battleLimits.max_value_usd != null
+              ? toNumber(battleLimits.max_value_usd)
+              : null,
+          baseBetLimitUsd:
+            battleLimits.base_bet_limit_usd != null
+              ? toNumber(battleLimits.base_bet_limit_usd)
+              : null,
+        }
+      : null,
     inventoryCount,
     affiliate: affiliateAccount
       ? {
-          code: user?.affiliate_code ?? affiliateCodeRecord?.code ?? "",
+          code: user?.affiliate_code ?? newestOwnedCode ?? "",
           totalReferred: affiliateAccount.total_referred,
           totalWagerVolumeUsd: toNumber(affiliateAccount.total_wager_volume_usd),
           totalEarnedUsd: toNumber(affiliateAccount.total_earned_usd),

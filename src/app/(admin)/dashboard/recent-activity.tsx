@@ -3,16 +3,20 @@
 import * as React from "react";
 import Link from "next/link";
 import {
+  Activity,
   ArrowDownCircle,
   ArrowUpCircle,
-  Circle,
   Gift,
+  Package,
   Swords,
   UserPlus,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { EmptyState } from "@/components/empty-state";
+import { Skeleton } from "@/components/ui/skeleton";
 import { BorrowBadge } from "@/components/borrow-badge";
 import type {
   LiveActivityEventKind,
@@ -113,14 +117,27 @@ const TYPE_LABELS: Record<string, string> = {
   signup: "New signup",
 };
 
-export function RecentActivity({ initial }: { initial: LiveActivityItem[] }) {
-  const [items, setItems] = React.useState<LiveActivityItem[]>(() =>
-    initial.slice(0, MAX_ITEMS),
-  );
+export function RecentActivity({
+  signups24h,
+  packsOpened24h,
+  battlesPlayed24h,
+}: {
+  /** Rolling-24h counts for the stats strip at the top of the card.
+   *  Refreshed by the dashboard's 60s router.refresh(). */
+  signups24h: number;
+  packsOpened24h: number;
+  battlesPlayed24h: number;
+}) {
+  // The feed self-bootstraps from the SSE `init` snapshot (up to 30 rows
+  // delivered the moment the stream connects), so it no longer needs a
+  // server-rendered `initial` prop. Dropping that prop decouples the feed
+  // from the dashboard's 60s router.refresh(), which used to re-run
+  // getLiveActivity(50) only to re-seed a prop the lazy useState
+  // initializer ignored after first render. The polling fallback below
+  // bootstraps with a null cursor when SSE is unavailable.
+  const [items, setItems] = React.useState<LiveActivityItem[]>([]);
   const [newIds, setNewIds] = React.useState<Set<string>>(() => new Set());
-  const cursorRef = React.useRef<string | null>(
-    initial.length > 0 ? initial[0].createdAt : null,
-  );
+  const cursorRef = React.useRef<string | null>(null);
   // When SSE proves unavailable we flip to the old polling path. Default
   // stays on SSE for every modern browser.
   const [useFallback, setUseFallback] = React.useState<boolean>(
@@ -168,8 +185,9 @@ export function RecentActivity({ initial }: { initial: LiveActivityItem[] }) {
     {
       onInit: (rows) => {
         // The server emits an initial snapshot of up to 30 rows (newest-
-        // first). The parent already rendered `initial` SSR, so we just
-        // dedupe and advance the cursor to the freshest row we know about.
+        // first). This seeds the feed on first paint (it no longer relies
+        // on an SSR-rendered `initial` list) and advances the cursor to
+        // the freshest row we know about.
         if (rows.length === 0) return;
         const newest = rows[0].createdAt;
         if (
@@ -189,8 +207,10 @@ export function RecentActivity({ initial }: { initial: LiveActivityItem[] }) {
     { enabled: !useFallback },
   );
 
-  // Polling fallback — only active when SSE is unavailable / gave up. Kept
-  // verbatim from the original implementation so the UX degrades cleanly.
+  // Polling fallback — only active when SSE is unavailable / gave up.
+  // With a null cursor the first call returns the newest snapshot, so
+  // this also bootstraps the feed when SSE never connected. Runs once
+  // immediately, then on the interval.
   React.useEffect(() => {
     if (!useFallback) return;
     let alive = true;
@@ -211,6 +231,7 @@ export function RecentActivity({ initial }: { initial: LiveActivityItem[] }) {
         // Silent — polling will recover on the next tick.
       }
     };
+    poll();
     const id = setInterval(poll, POLL_INTERVAL_MS);
     return () => {
       alive = false;
@@ -224,9 +245,29 @@ export function RecentActivity({ initial }: { initial: LiveActivityItem[] }) {
         aria-hidden
         className="pointer-events-none absolute -right-24 -top-24 size-60 rounded-full bg-blue-500/10 blur-3xl"
       />
+      {/* Rolling-24h stats strip — signups + packs + battles. Each
+          cell mirrors the Live Deposits card header: icon chip +
+          uppercase label, count below. Blue chips tie into this
+          card's blue theme. Counts are volume, not money, so the
+          numbers stay neutral — no emerald/rose (a green count would
+          misread as a house gain). */}
+      <div className="relative grid grid-cols-3 divide-x divide-border/60 border-b border-border/60">
+        <ActivityStat icon={UserPlus} label="Signups" value={signups24h} />
+        <ActivityStat
+          icon={Package}
+          label="Packs opened"
+          value={packsOpened24h}
+        />
+        <ActivityStat icon={Swords} label="Battles" value={battlesPlayed24h} />
+      </div>
       <div className="relative max-h-[40rem] overflow-y-auto">
         {items.length === 0 ? (
-          <EmptyState label="Waiting for activity..." />
+          <EmptyState
+            icon={Activity}
+            title="Waiting for activity"
+            description="Deposits, wagers, payouts and signups will stream in here as they happen."
+            compact
+          />
         ) : (
           <ul className="divide-y divide-border/60">
             {items.map((item) => (
@@ -239,6 +280,46 @@ export function RecentActivity({ initial }: { initial: LiveActivityItem[] }) {
           </ul>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Loading skeleton for the Recent Activity card — mirrors the Live
+ * Deposits skeleton (structured rows, not a plain block) so both feed
+ * cards read as the same loading state. Card chrome + the 3-up 24h stat
+ * strip + row placeholders matching ActivityRow's layout.
+ */
+export function RecentActivitySkeleton() {
+  return (
+    <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -right-24 -top-24 size-60 rounded-full bg-blue-500/10 blur-3xl"
+      />
+      {/* 24h stat strip (Signups / Packs / Battles) */}
+      <div className="relative grid grid-cols-3 divide-x divide-border/60 border-b border-border/60">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div key={i} className="flex flex-col items-center gap-1.5 px-3 py-3">
+            <Skeleton className="size-7 rounded-lg" />
+            <Skeleton className="h-2.5 w-14" />
+            <Skeleton className="h-4 w-8" />
+          </div>
+        ))}
+      </div>
+      {/* Event rows — same shape as ActivityRow (chip + 2 lines + amount) */}
+      <ul className="divide-y divide-border/60" aria-hidden>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <li key={i} className="flex items-center gap-3 px-3 py-3 sm:px-5">
+            <Skeleton className="size-9 shrink-0 rounded-lg" />
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <Skeleton className="h-3.5 w-28" />
+              <Skeleton className="h-3 w-20" />
+            </div>
+            <Skeleton className="ml-auto h-4 w-14 shrink-0" />
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -321,6 +402,37 @@ function ActivityRow({
   );
 }
 
+// One cell of the rolling-24h stats strip. Title row (icon chip +
+// uppercase label) on top, count below — the same vocabulary as the
+// Live Deposits card header so the two cards read as a set.
+function ActivityStat({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: number;
+}) {
+  return (
+    <div className="flex min-w-0 flex-col gap-2 p-4">
+      <div className="flex items-center gap-2">
+        <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-blue-500/10">
+          <Icon className="size-3.5 text-blue-500" />
+        </div>
+        <span className="truncate text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          {label}
+        </span>
+      </div>
+      <AnimatedNumber
+        value={value}
+        format="number"
+        className="text-2xl font-bold tabular-nums"
+      />
+    </div>
+  );
+}
+
 export function RecentActivityLivePulse() {
   return (
     <span
@@ -333,14 +445,5 @@ export function RecentActivityLivePulse() {
       </span>
       Live
     </span>
-  );
-}
-
-function EmptyState({ label }: { label: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center gap-2 py-20 text-center">
-      <Circle className="size-5 animate-pulse text-muted-foreground motion-reduce:animate-none" />
-      <p className="text-sm text-muted-foreground">{label}</p>
-    </div>
   );
 }

@@ -3,7 +3,7 @@
 import React, { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Loader2, Trash2 } from "lucide-react";
+import { FileText, Loader2, LineChart, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ import {
   formatDateTime,
   formatRelative,
 } from "@/lib/utils/format";
+import { EmptyState } from "@/components/empty-state";
 import { toggleFeatureLock } from "./actions";
 import { createNote, deleteNote } from "./note-actions";
 import type { UserRewards } from "@/lib/queries/users";
@@ -263,6 +264,10 @@ export const PnlCard = React.memo(function PnlCard({
                     [
                       "Battle → Voucher",
                       p.otherCostsDetail.battleExcessToVoucher,
+                    ],
+                    [
+                      "Affiliate Leaderboard",
+                      p.otherCostsDetail.affiliateLeaderboard,
                     ],
                   ] as [string, number][]
                 )
@@ -562,6 +567,41 @@ export const FeatureLocksCard = React.memo(function FeatureLocksCard({
   );
 });
 
+/**
+ * Pretty-print the BetterAuth `account.providerId` for the Account
+ * card. Maps the common OAuth provider IDs to capitalised display
+ * names, and treats the email/password provider (`credential` or
+ * `credentials` depending on BetterAuth version) as plain "Email".
+ * Unknown providers are surfaced verbatim so we never hide data.
+ */
+function formatSignupProvider(provider: string | null): string {
+  if (!provider) return "-";
+  const key = provider.toLowerCase();
+  switch (key) {
+    case "credential":
+    case "credentials":
+    case "email":
+    case "email-password":
+      return "Email";
+    case "discord":
+      return "Discord";
+    case "google":
+      return "Google";
+    case "steam":
+      return "Steam";
+    case "twitch":
+      return "Twitch";
+    case "github":
+      return "GitHub";
+    case "apple":
+      return "Apple";
+    case "facebook":
+      return "Facebook";
+    default:
+      return provider;
+  }
+}
+
 export const AccountDetailsSection = React.memo(function AccountDetailsSection({
   user,
   shippingAddress,
@@ -583,7 +623,11 @@ export const AccountDetailsSection = React.memo(function AccountDetailsSection({
             Account
           </p>
           <div className="space-y-2.5">
-            <InfoRow label="Providers" value={user.providers.join(", ")} />
+            <InfoRow
+              label="Signed up with"
+              value={formatSignupProvider(user.signupProvider)}
+            />
+            <InfoRow label="Providers" value={user.providers.join(", ") || "-"} />
             <InfoRow label="API Key" value={user.hasApiKey ? "Yes" : "No"} />
             <InfoRow
               label="Signup IP"
@@ -738,9 +782,12 @@ export const BalanceHistoryChart = React.memo(function BalanceHistoryChart({
           <CardTitle className="text-sm font-medium">Balance History</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-muted-foreground text-center py-8">
-            No transaction history
-          </p>
+          <EmptyState
+            icon={LineChart}
+            title="No transaction history"
+            description="Balance changes will chart here once this user transacts."
+            compact
+          />
         </CardContent>
       </Card>
     );
@@ -931,7 +978,12 @@ export const NotesSection = React.memo(function NotesSection({
         )}
 
         {notes.length === 0 && (
-          <p className="text-sm text-muted-foreground">No notes yet</p>
+          <EmptyState
+            icon={FileText}
+            title="No notes yet"
+            description="Use the box above to leave the first note on this user."
+            compact
+          />
         )}
       </CardContent>
     </Card>

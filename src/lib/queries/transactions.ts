@@ -2,6 +2,20 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
+import {
+  ledger_transaction_type,
+  ledger_transaction_status,
+} from "@/generated/prisma/enums";
+import type { UserTagValue } from "@/lib/queries/user-tags";
+
+// Allowlists derived from the generated Prisma enums — used to validate
+// user-supplied filter values before they reach the query (instead of an
+// unchecked `as` cast). Object.values keeps them in sync with the schema
+// automatically.
+const LEDGER_TX_TYPES = new Set<string>(Object.values(ledger_transaction_type));
+const LEDGER_TX_STATUSES = new Set<string>(
+  Object.values(ledger_transaction_status),
+);
 
 export type TransactionListItem = {
   id: string;
@@ -15,8 +29,26 @@ export type TransactionListItem = {
   status: string;
   description: string;
   createdAt: string;
-  houseEdge: number | null;
+  /**
+   * USD value the user WON on a game-session row = card winnings
+   * (sum of `provably_fair_results.user_inventory.value_at_obtained`)
+   * PLUS the voucher excess that session spun off (battle/pack excess
+   * parked as a `vouchers` row whose `origin_id` is the game_session
+   * id). Honors the invariant inventory = cards + vouchers, so a row
+   * surfaces the full value handed to the user, not just cards. Null on
+   * non-game rows (deposit / withdrawal / manual adjustment). From the
+   * house POV this value left the house → render rose.
+   */
   payout: number | null;
+  /**
+   * Per-row house profit/loss in USD on a game-session row:
+   * `housePnl = bet − payout` (what we took in vs cards+vouchers we paid
+   * out). House POV: > 0 = house gain (emerald), < 0 = house loss
+   * (rose). Null on non-game rows (no "—" math there). Replaces the old
+   * meaningless `houseEdge` percentage which produced values like
+   * -203900% on high-multiplier hits.
+   */
+  housePnl: number | null;
   cryptoAsset: string | null;
   cryptoAmount: number | null;
   // Set by mergeDepositBonuses() when a deposit_bonus ledger row has been
@@ -40,6 +72,35 @@ export type TransactionListItem = {
    * fronted amount (bet × borrow%). Null when borrow doesn't apply.
    */
   borrowedAmountUsd: number | null;
+  /**
+   * Rolling 24h deposit total for THIS user (sum of completed deposits,
+   * type='deposit', last 24h). Used by the Deposits transactions list
+   * to show "user has deposited $X in the last 24h" next to the row's
+   * amount. Null on non-deposit transaction lists (we don't populate
+   * the field there since it isn't rendered).
+   */
+  userDeposit24h: number | null;
+  /**
+   * Rolling 3-day deposit total for THIS user. Same semantics as
+   * userDeposit24h. Null when not rendered.
+   */
+  userDeposit3d: number | null;
+  /**
+   * Admin-set VIP tags on this user, fetched alongside the
+   * deposits page so the row can show "Confirmed VIP" inline next
+   * to the username. Empty array when not populated (other views),
+   * empty array also when the user has no tags. Cross-DB lookup
+   * against admin_user_tags.
+   */
+  userTags: UserTagValue[];
+  /**
+   * Game-session multiplier: `payout / bet`. Populated for pack-
+   * opening + battle-bet rows (any row whose linked game_session
+   * has card-value PF results). Null on rows where it doesn't apply
+   * (deposits, withdrawals, manual adjustments). Used by the
+   * "Highest Multiplier" sort filter on /transactions/packs.
+   */
+  multiplier: number | null;
 };
 
 /**
@@ -69,12 +130,21 @@ export async function getDepositTransactions(params: {
   perPage?: number;
   search?: string;
   status?: string;
+  /**
+   * USD threshold — only return rows with `amount >= minAmount`. Used
+   * by the Deposits page's "$200+" filter to surface big-ticket
+   * deposits. Filters on the raw `t.amount` (deposit amount, before
+   * the bonus merge) since that's the natural reading of "deposit
+   * size". A $0 / falsy value disables the filter.
+   */
+  minAmount?: number;
 }): Promise<PaginatedResult<TransactionListItem>> {
   const {
     page = 1,
     perPage = 20,
     search,
     status,
+    minAmount,
   } = params;
   const db = await getDb();
   const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
@@ -84,6 +154,9 @@ export async function getDepositTransactions(params: {
   // Bind user-provided values via positional parameters to avoid SQL injection.
   const queryParams: unknown[] = [];
   let searchFilter = "";
+  // Username search needs the "user" join in the COUNT query too; a UUID
+  // search (or no search) keeps COUNT as a bare index scan over deposits.
+  let needsUserJoin = false;
   if (search) {
     const isUuid =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
@@ -97,6 +170,7 @@ export async function getDepositTransactions(params: {
       queryParams.push(`%${search.toLowerCase()}%`);
       const idx = queryParams.length;
       searchFilter = `AND LOWER(u.username) LIKE $${idx}`;
+      needsUserJoin = true;
     }
   }
 
@@ -107,34 +181,35 @@ export async function getDepositTransactions(params: {
       ? `AND t.status = '${status}'`
       : "";
 
-  // Exclude bonus rows that are paired with a deposit already in the set.
-  // This keeps page sizes exact and avoids showing the bonus twice (once
-  // merged into its deposit, once as its own row).
-  const bonusPairedExclusion = `
-    AND NOT (
-      t.type = 'deposit_bonus'
-      AND EXISTS (
-        SELECT 1 FROM ledger_transactions d
-        WHERE d.user_id = t.user_id
-          AND d.type = 'deposit'
-          AND d.balance_after = t.balance_before
-          AND d.created_at <= t.created_at
-          AND d.created_at > t.created_at - INTERVAL '2 minutes'
-      )
-    )
-  `;
+  // Min-amount filter. Bind via positional parameter; coerce to a
+  // safe finite non-negative number first so a NaN / negative URL
+  // value can't smuggle SQL through. A 0 / undefined value disables.
+  let minAmountFilter = "";
+  if (typeof minAmount === "number" && Number.isFinite(minAmount) && minAmount > 0) {
+    queryParams.push(minAmount);
+    const idx = queryParams.length;
+    minAmountFilter = `AND t.amount::numeric >= $${idx}`;
+  }
 
+  // Lean "Deposits" view — ONLY raw deposit rows. We no longer pull the
+  // standalone deposit_bonus / shipping-fee rows or run the correlated
+  // bonus-pair EXISTS exclusion; that scan across deposit + bonus +
+  // shipping was what made this page crawl. Each deposit still gets its
+  // paired bonus merged in via the LATERAL below — a per-page-row lookup,
+  // not a whole-table scan.
   const baseWhere = `
-    WHERE t.type IN ('deposit', 'deposit_bonus', 'withdrawal_shipping_fee')
+    WHERE t.type = 'deposit'
       ${searchFilter}
       ${statusFilter}
-      ${bonusPairedExclusion}
+      ${minAmountFilter}
   `;
 
+  // Cheap count — a bare index scan over type='deposit' (no EXISTS).
+  // Only joins "user" when the search filter is by username.
   const countSql = `
     SELECT COUNT(*)::text AS total
     FROM ledger_transactions t
-    LEFT JOIN "user" u ON u.id = t.user_id
+    ${needsUserJoin ? `LEFT JOIN "user" u ON u.id = t.user_id` : ""}
     ${baseWhere}
   `;
 
@@ -166,7 +241,7 @@ export async function getDepositTransactions(params: {
         AND created_at < t.created_at + INTERVAL '2 minutes'
       ORDER BY created_at ASC
       LIMIT 1
-    ) b ON t.type = 'deposit'
+    ) b ON true
     ${baseWhere}
     ORDER BY t.created_at DESC
     LIMIT ${safePerPage}
@@ -197,6 +272,11 @@ export async function getDepositTransactions(params: {
 
   const total = Number(countResult[0]?.total ?? "0");
 
+  // NOTE: per-user 24h/3d deposit totals and VIP tags are intentionally
+  // NOT preloaded here. They were the cross-DB / extra-aggregate round
+  // trips that made this list slow. The page now ships only the raw
+  // deposit rows; the totals/tags columns auto-hide when empty (see
+  // columns.tsx conditionals) and can be loaded on demand per row.
   const data: TransactionListItem[] = rows.map((r) => {
     const balanceBefore = Number(r.balance_before);
     const rawBalanceAfter = Number(r.balance_after);
@@ -219,16 +299,23 @@ export async function getDepositTransactions(params: {
       status: r.status,
       description: r.description,
       createdAt: r.created_at.toISOString(),
-      // houseEdge/payout are game-session metrics — not applicable here.
-      houseEdge: null,
+      // payout/housePnl are game-session metrics — not applicable here.
       payout: null,
+      housePnl: null,
       cryptoAsset: r.crypto_asset,
       cryptoAmount: r.crypto_amount != null ? Number(r.crypto_amount) : null,
       bonusAmount,
+      // Not preloaded — see note above. Columns auto-hide when null/empty.
+      userDeposit24h: null,
+      userDeposit3d: null,
+      userTags: [],
       // Deposits/withdrawals can't be borrowed — null both fields so
       // the BorrowBadge cell renders empty.
       borrowPercentage: null,
       borrowedAmountUsd: null,
+      // Multiplier is a game-session concept — doesn't apply to
+      // deposit / withdrawal / shipping-fee rows.
+      multiplier: null,
     };
   });
 
@@ -241,6 +328,22 @@ export async function getDepositTransactions(params: {
   };
 }
 
+/**
+ * Sort modes for the ledger transactions list.
+ *   • recent           — newest first (default site-wide behaviour).
+ *   • pack_multiplier  — pack-openings sorted by `payout / bet`
+ *                        DESC. Forces `types = ['pack_opening']`
+ *                        because multiplier is a game-session
+ *                        concept; admins typically reach this from
+ *                        /transactions/packs. Uses a SQL CTE pre-
+ *                        cap (top 500 by multiplier) then loads
+ *                        full rows for those IDs. Same pattern as
+ *                        the /battles "Biggest Hit" sort.
+ */
+export type TransactionSortMode = "recent" | "pack_multiplier";
+
+const PACK_MULTIPLIER_CAP = 500;
+
 export async function getTransactions(params: {
   page?: number;
   perPage?: number;
@@ -250,8 +353,19 @@ export async function getTransactions(params: {
   status?: string;
   minAmount?: number;
   maxAmount?: number;
+  sortBy?: TransactionSortMode;
 }): Promise<PaginatedResult<TransactionListItem>> {
-  const { page = 1, perPage = 20, search, type, types, status, minAmount, maxAmount } = params;
+  const {
+    page = 1,
+    perPage = 20,
+    search,
+    type,
+    types,
+    status,
+    minAmount,
+    maxAmount,
+    sortBy = "recent",
+  } = params;
   const db = await getDb();
 
   const where: Prisma.ledger_transactionsWhereInput = {};
@@ -265,13 +379,18 @@ export async function getTransactions(params: {
   }
 
   if (types && types.length > 0) {
-    where.type = { in: types } as unknown as Prisma.Enumledger_transaction_typeFieldUpdateOperationsInput["set"];
-  } else if (type && type !== "all") {
-    where.type = type as Prisma.Enumledger_transaction_typeFieldUpdateOperationsInput["set"];
+    // Drop any value not in the generated enum; only filter if some
+    // valid types remain (an all-invalid list shouldn't match nothing).
+    const validTypes = types.filter(
+      (t): t is ledger_transaction_type => LEDGER_TX_TYPES.has(t),
+    );
+    if (validTypes.length > 0) where.type = { in: validTypes };
+  } else if (type && type !== "all" && LEDGER_TX_TYPES.has(type)) {
+    where.type = type as ledger_transaction_type;
   }
 
-  if (status && status !== "all") {
-    where.status = status as Prisma.Enumledger_transaction_statusFieldUpdateOperationsInput["set"];
+  if (status && status !== "all" && LEDGER_TX_STATUSES.has(status)) {
+    where.status = status as ledger_transaction_status;
   }
 
   if (minAmount !== undefined || maxAmount !== undefined) {
@@ -285,44 +404,122 @@ export async function getTransactions(params: {
   // wide JSON `metadata` column plus blockchain/fireblocks/source/dest
   // columns that the table cells don't render. The page only renders the
   // fields below; everything else is detail-page concerns.
-  const [transactions, total] = await Promise.all([
-    db.ledger_transactions.findMany({
-      where,
-      orderBy: { created_at: "desc" },
-      skip: (page - 1) * perPage,
-      take: perPage,
+  const SELECT = {
+    id: true,
+    user_id: true,
+    type: true,
+    balance_before: true,
+    balance_after: true,
+    status: true,
+    description: true,
+    created_at: true,
+    crypto_asset: true,
+    crypto_amount: true,
+    user: { select: { username: true, image: true } },
+    game_sessions_ledger_transactions_game_session_idTogame_sessions: {
       select: {
         id: true,
-        user_id: true,
-        type: true,
-        balance_before: true,
-        balance_after: true,
-        status: true,
-        description: true,
-        created_at: true,
-        crypto_asset: true,
-        crypto_amount: true,
-        user: { select: { username: true, image: true } },
-        game_sessions_ledger_transactions_game_session_idTogame_sessions: {
+        bet_amount: true,
+        provably_fair_results: {
+          // result_metadata carries the per-result `borrow_percentage`
+          // for solo pack opens; for battle rows it's stored on the
+          // battle (separate join below). battle_id distinguishes the
+          // two so we don't accidentally double-attribute.
           select: {
-            bet_amount: true,
-            provably_fair_results: {
-              // result_metadata carries the per-result `borrow_percentage`
-              // for solo pack opens; for battle rows it's stored on the
-              // battle (separate join below). battle_id distinguishes the
-              // two so we don't accidentally double-attribute.
-              select: {
-                battle_id: true,
-                result_metadata: true,
-                user_inventory: { select: { value_at_obtained: true } },
-              },
-            },
+            battle_id: true,
+            result_metadata: true,
+            user_inventory: { select: { value_at_obtained: true } },
           },
         },
       },
-    }),
-    db.ledger_transactions.count({ where }),
-  ]);
+    },
+  } as const;
+
+  let transactions: Prisma.ledger_transactionsGetPayload<{
+    select: typeof SELECT;
+  }>[];
+  let total: number;
+
+  if (sortBy === "pack_multiplier") {
+    // SQL CTE pre-cap by computed multiplier (payout / bet). Same
+    // pattern as /battles "Biggest Hit": compute the metric in SQL,
+    // pull the top N IDs, then load the full rows. Without this,
+    // sorting by a derived field would require pulling every
+    // pack_opening row into memory.
+    //
+    // bet     = lt.amount (positive — debits are stored absolute in
+    //           this DB; the sign lives in balance_after-before).
+    // payout  = SUM(user_inventory.value_at_obtained) for the PF
+    //           results on the linked game_session. Cards sold/
+    //           exchanged BEFORE the snapshot still show up because
+    //           the user_inventory row stays — its sold_at/
+    //           exchanged_at columns are timestamps, not deletes.
+    //
+    // The CTE deliberately ignores status filter / search / minAmount
+    // — those are applied in the secondary findMany so combining
+    // them with the multiplier sort still narrows the result set
+    // honestly (potentially fewer than perPage rows on a narrow
+    // search, which is fine for the "find the biggest hit matching X"
+    // use case).
+    const topRows = await db.$queryRaw<{ id: string }[]>`
+      WITH pack_multipliers AS (
+        SELECT
+          lt.id,
+          lt.amount::numeric AS bet,
+          COALESCE(SUM(COALESCE(ui.value_at_obtained::numeric, 0)), 0) AS payout
+        FROM ledger_transactions lt
+        LEFT JOIN game_sessions gs ON gs.id = lt.game_session_id AND gs.game_type = 'pack'
+        LEFT JOIN provably_fair_results pf ON pf.game_session_id = gs.id
+        LEFT JOIN user_inventory ui ON ui.id = pf.inventory_item_id
+        WHERE lt.type = 'pack_opening'
+          AND lt.status = 'completed'
+          AND lt.amount::numeric > 0
+        GROUP BY lt.id, lt.amount
+      )
+      SELECT id::text AS id
+      FROM pack_multipliers
+      WHERE payout > 0
+      ORDER BY (payout / bet) DESC NULLS LAST
+      LIMIT ${PACK_MULTIPLIER_CAP}
+    `;
+    const topIds = topRows.map((r) => r.id);
+
+    // Apply the user's WHERE filters (search / status / minAmount)
+    // ON TOP of the pre-capped ID list — keeps the sort honest if
+    // the admin combines it with other filters.
+    const filterWhere: Prisma.ledger_transactionsWhereInput = {
+      ...where,
+      id: { in: topIds },
+    };
+    const [found, totalCount] = await Promise.all([
+      topIds.length === 0
+        ? Promise.resolve([])
+        : db.ledger_transactions.findMany({
+            where: filterWhere,
+            select: SELECT,
+          }),
+      db.ledger_transactions.count({ where: filterWhere }),
+    ]);
+    // Reorder to match the SQL CTE's multiplier order.
+    const byId = new Map(found.map((t) => [t.id, t]));
+    const orderedFull = topIds
+      .map((id) => byId.get(id))
+      .filter((t): t is NonNullable<typeof t> => t != null);
+    const sliceStart = (page - 1) * perPage;
+    transactions = orderedFull.slice(sliceStart, sliceStart + perPage);
+    total = totalCount;
+  } else {
+    [transactions, total] = await Promise.all([
+      db.ledger_transactions.findMany({
+        where,
+        orderBy: { created_at: "desc" },
+        skip: (page - 1) * perPage,
+        take: perPage,
+        select: SELECT,
+      }),
+      db.ledger_transactions.count({ where }),
+    ]);
+  }
 
   // Battle borrow lookup — for any battle_bet / battle_sponsorship row
   // that has a linked PF result with a battle_id, we need the
@@ -364,21 +561,74 @@ export async function getTransactions(params: {
     }
   }
 
+  // Per-session voucher excess — mirrors getUserTransactions'
+  // `voucherValueByGameSession`. Battle / pack excess gets parked as a
+  // `vouchers` row whose `origin_id` is the originating game_session id.
+  // That value is part of what the user WON (invariant: inventory =
+  // cards + vouchers), so it has to be added to `payout` alongside the
+  // card value — otherwise a high-multiplier hit that paid out mostly as
+  // a voucher reads as a tiny loss. Batched across the page's session
+  // ids in one round-trip (no N+1).
+  //
+  // Auxiliary lookup — same graceful-degrade convention as the borrow
+  // map above: a failure must not crash the whole /transactions page.
+  const sessionIds = new Set<string>();
+  for (const t of transactions) {
+    const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
+    if (gs?.id) sessionIds.add(gs.id);
+  }
+  const voucherValueBySession = new Map<string, number>();
+  if (sessionIds.size > 0) {
+    try {
+      const vouchers = await db.vouchers.findMany({
+        where: { origin_id: { in: [...sessionIds] } },
+        select: { origin_id: true, value: true },
+      });
+      for (const v of vouchers) {
+        if (!v.origin_id) continue;
+        voucherValueBySession.set(
+          v.origin_id,
+          (voucherValueBySession.get(v.origin_id) ?? 0) + toNumber(v.value),
+        );
+      }
+    } catch (e) {
+      console.error(
+        "[getTransactions] voucher excess lookup failed (non-fatal — payout falls back to card value only):",
+        e,
+      );
+    }
+  }
+
   return {
     data: transactions.map((t) => {
       const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
-      let houseEdge: number | null = null;
+      let housePnl: number | null = null;
       let payout: number | null = null;
       let borrowPercentage: number | null = null;
       let borrowedAmountUsd: number | null = null;
+      let multiplier: number | null = null;
       if (gs) {
         const cost = toNumber(gs.bet_amount);
-        payout = gs.provably_fair_results.reduce(
+        // Card winnings from the session's PF results...
+        const cardValue = gs.provably_fair_results.reduce(
           (sum, pf) => sum + (pf.user_inventory ? toNumber(pf.user_inventory.value_at_obtained) : 0),
           0
         );
+        // ...plus the voucher excess this session spun off. Together
+        // they're the full value the user won (cards + vouchers),
+        // honoring the inventory invariant.
+        const voucherExcess = voucherValueBySession.get(gs.id) ?? 0;
+        payout = cardValue + voucherExcess;
+        // Per-row HOUSE P&L in USD: bet taken in minus value paid out
+        // (cards + vouchers). House POV: >0 = house gain (emerald),
+        // <0 = house loss (rose). Replaces the old houseEdge %.
+        housePnl = cost - payout;
         if (cost > 0) {
-          houseEdge = ((cost - payout) / cost) * 100;
+          // `payout / bet` — total value the user got back (cards +
+          // vouchers) vs what they paid in for this game session. >1
+          // means they hit. Surfaced on the packs transactions page for
+          // the "Highest Multiplier" sort.
+          multiplier = payout / cost;
         }
         // Borrow %: pull from the linked battle for battle rows, else
         // from the first PF result's metadata for solo opens. All PF
@@ -414,8 +664,8 @@ export async function getTransactions(params: {
         status: t.status,
         description: t.description,
         createdAt: t.created_at.toISOString(),
-        houseEdge,
         payout,
+        housePnl,
         cryptoAsset: t.crypto_asset,
         cryptoAmount: t.crypto_amount ? toNumber(t.crypto_amount) : null,
         // Shared query doesn't pair deposit_bonus rows — only the
@@ -423,6 +673,14 @@ export async function getTransactions(params: {
         bonusAmount: null,
         borrowPercentage,
         borrowedAmountUsd,
+        // Per-user deposit totals are only populated by
+        // getDepositTransactions where the 24h/3d cells render. Null
+        // here so the type contract stays consistent across views.
+        userDeposit24h: null,
+        userDeposit3d: null,
+        // Tags only fetched on the deposits-specific path.
+        userTags: [],
+        multiplier,
       };
     }),
     total,
@@ -453,6 +711,27 @@ export async function getTransactionDetail(id: string) {
     gameType: string;
     betAmount: number;
     houseEdge: number | null;
+    /**
+     * Total card value handed to the user on this session (sum of
+     * value_at_obtained across obtained cards). House loss.
+     */
+    cardsValue: number;
+    /**
+     * Voucher excess this session spun off (battle/pack excess parked
+     * as a voucher whose origin_id is this game_session id). Part of
+     * what the user won. House loss.
+     */
+    voucherValue: number;
+    /**
+     * Full value the user won = cardsValue + voucherValue (invariant
+     * inventory = cards + vouchers). House loss → rose.
+     */
+    itemsWon: number;
+    /**
+     * House P&L on this session in USD = betAmount − itemsWon. >0 =
+     * house gain (emerald), <0 = house loss (rose).
+     */
+    housePnl: number;
     packs: { name: string; imageUrl: string | null; priceUsd: number; quantity: number }[];
     cardsObtained: {
       name: string;
@@ -555,25 +834,46 @@ export async function getTransactionDetail(id: string) {
         select: { id: true, type: true, amount: true, balance_before: true, balance_after: true, description: true },
       });
 
-      const [packsResolved, cards, relatedTxs] = await Promise.all([
+      // Voucher excess this session spun off — parked as a `vouchers`
+      // row whose origin_id is the game_session id. Part of what the
+      // user won (invariant inventory = cards + vouchers), so it's
+      // surfaced alongside the cards on the detail page.
+      const vouchersPromise = db.vouchers.findMany({
+        where: { origin_id: tx.game_session_id! },
+        select: { value: true },
+      });
+
+      const [packsResolved, cards, relatedTxs, sessionVouchers] = await Promise.all([
         packsPromise,
         cardsPromise,
         relatedTxsPromise,
+        vouchersPromise,
       ]);
       packs = packsResolved;
 
       const cardsMap = new Map(cards.map((c) => [c.id, c]));
 
       const betAmount = toNumber(session.bet_amount);
-      const totalPayout = session.provably_fair_results
+      const cardsValue = session.provably_fair_results
         .filter((pf) => pf.user_inventory?.card_id && cardsMap.has(pf.user_inventory.card_id))
         .reduce((sum, pf) => sum + toNumber(pf.user_inventory!.value_at_obtained), 0);
-      const houseEdge = betAmount > 0 ? ((betAmount - totalPayout) / betAmount) * 100 : null;
+      const voucherValue = sessionVouchers.reduce(
+        (sum, v) => sum + toNumber(v.value),
+        0,
+      );
+      // Full value won = cards + voucher excess; house P&L = bet − that.
+      const itemsWon = cardsValue + voucherValue;
+      const housePnl = betAmount - itemsWon;
+      const houseEdge = betAmount > 0 ? (housePnl / betAmount) * 100 : null;
 
       gameSession = {
         gameType: session.game_type,
         betAmount,
         houseEdge,
+        cardsValue,
+        voucherValue,
+        itemsWon,
+        housePnl,
         packs,
         cardsObtained: session.provably_fair_results
           .filter((pf) => pf.user_inventory?.card_id && cardsMap.has(pf.user_inventory.card_id))

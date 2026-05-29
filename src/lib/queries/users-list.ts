@@ -2,11 +2,17 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
+import { user_role } from "@/generated/prisma/enums";
 import {
   computeRiskScoresForList,
   type RiskTier,
 } from "@/lib/fraud/score";
 import { calculateUsersPnlBatch } from "./pnl";
+
+// Allowlist from the generated Prisma user_role enum — validate the
+// role filter before it reaches either the Prisma where or the raw-SQL
+// sort branch, instead of an unchecked cast.
+const USER_ROLES = new Set<string>(Object.values(user_role));
 
 type UserListItem = {
   id: string;
@@ -26,10 +32,12 @@ type UserListItem = {
   pnl: number;
   /**
    * Combined on-platform holdings = available + locked balance +
-   * unsold/unexchanged inventory value. This is the user's TOTAL
-   * position on-site right now, which from the house POV is the
-   * direct liability per user. Useful for spotting whales without
-   * having to mentally add the Balance + Inventory columns.
+   * unsold/unexchanged inventory value + unclaimed voucher value.
+   * Vouchers count as inventory exactly like cards (cards + vouchers
+   * = inventory), so they're part of the on-site position. This is the
+   * user's TOTAL position on-site right now, which from the house POV
+   * is the direct liability per user. Useful for spotting whales
+   * without having to mentally add the Balance + Inventory columns.
    */
   netHoldings: number;
   createdAt: string;
@@ -61,30 +69,40 @@ export async function getUsers(params: {
 
   const where: Prisma.UserWhereInput = {};
 
+  // Trim so stray leading/trailing whitespace (easy to paste in by
+  // accident) doesn't turn a valid handle into a miss.
+  const searchTerm = search?.trim();
+
   // Discord snowflake IDs are 17-20 digit numeric strings. We match the
   // linked Discord account (account.providerId = 'discord', account.accountId
   // = snowflake) only when the search looks like one — otherwise a generic
   // numeric username would trigger an unnecessary join.
-  const isDiscordId = /^\d{17,20}$/.test(search ?? "");
+  const isDiscordId = /^\d{17,20}$/.test(searchTerm ?? "");
 
-  if (search) {
+  if (searchTerm) {
+    // All text matches are case-insensitive (ILIKE under the hood). We
+    // search the handle, the display name + OAuth name (so a user can be
+    // found by what Discord/Google shows, not just the lowercase
+    // handle), and the email; id is an exact match.
     const or: Prisma.UserWhereInput[] = [
-      { username: { contains: search, mode: "insensitive" } },
-      { email: { contains: search, mode: "insensitive" } },
-      { id: search },
+      { username: { contains: searchTerm, mode: "insensitive" } },
+      { display_username: { contains: searchTerm, mode: "insensitive" } },
+      { name: { contains: searchTerm, mode: "insensitive" } },
+      { email: { contains: searchTerm, mode: "insensitive" } },
+      { id: searchTerm },
     ];
     if (isDiscordId) {
       or.push({
         account: {
-          some: { providerId: "discord", accountId: search },
+          some: { providerId: "discord", accountId: searchTerm },
         },
       });
     }
     where.OR = or;
   }
 
-  if (role && role !== "all") {
-    where.role = role as Prisma.Enumuser_roleFieldUpdateOperationsInput["set"];
+  if (role && role !== "all" && USER_ROLES.has(role)) {
+    where.role = role as user_role;
   }
 
   if (status === "banned") where.is_banned = true;
@@ -144,17 +162,19 @@ export async function getUsers(params: {
   if (rawSqlSorts.has(sortBy)) {
     const orderSql = order === "asc" ? "ASC" : "DESC";
     const whereSql: string[] = [];
-    if (search) {
-      const safe = search.replace(/'/g, "''");
+    if (searchTerm) {
+      const safe = searchTerm.replace(/'/g, "''");
       const discordClause = isDiscordId
         ? ` OR EXISTS (SELECT 1 FROM account a WHERE a."userId" = u.id AND a."providerId" = 'discord' AND a."accountId" = '${safe}')`
         : "";
       whereSql.push(
-        `(u.username ILIKE '%${safe}%' OR u.email ILIKE '%${safe}%' OR u.id = '${safe}'${discordClause})`,
+        `(u.username ILIKE '%${safe}%' OR u.display_username ILIKE '%${safe}%' OR u.name ILIKE '%${safe}%' OR u.email ILIKE '%${safe}%' OR u.id = '${safe}'${discordClause})`,
       );
     }
-    if (role && role !== "all") {
-      whereSql.push(`u.role = '${role.replace(/'/g, "''")}'::user_role`);
+    if (role && role !== "all" && USER_ROLES.has(role)) {
+      // role is validated against the user_role enum above, so it's a
+      // known alphanumeric member; inline it safely.
+      whereSql.push(`u.role = '${role}'::user_role`);
     }
     if (status === "banned") whereSql.push("u.is_banned = true");
     else if (status === "locked") whereSql.push("u.is_locked = true");
@@ -192,13 +212,18 @@ export async function getUsers(params: {
             ? `COALESCE(inv.inv_value, 0)`
             : sortBy === "netHoldings"
               ? // Net on-platform position from the house POV: cash
-                // (available + locked) + open inventory. This is the
-                // "what the user has on-site RIGHT NOW" snapshot —
-                // ignores lifetime deposits/withdrawals/PnL so big
-                // holders surface even if they never wagered.
+                // (available + locked) + open inventory + unclaimed
+                // vouchers. Vouchers count as inventory exactly like
+                // cards (cards + vouchers = inventory), so they belong
+                // in the on-site holdings snapshot. This is the "what
+                // the user has on-site RIGHT NOW" snapshot — ignores
+                // lifetime deposits/withdrawals/PnL so big holders
+                // surface even if they never wagered. Must stay in sync
+                // with the JS netHoldings computed in the data mapping.
                 `COALESCE(b.available_balance::numeric, 0)
                  + COALESCE(b.locked_balance::numeric, 0)
-                 + COALESCE(inv.inv_value, 0)`
+                 + COALESCE(inv.inv_value, 0)
+                 + COALESCE(vc.voucher_value, 0)`
               : `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)
                + COALESCE(b.available_balance::numeric, 0)
                + COALESCE(b.locked_balance::numeric, 0)
@@ -301,16 +326,21 @@ export async function getUsers(params: {
       const totalDeposited = userPnl?.deposits ?? 0;
       const totalWithdrawn = userPnl?.withdrawals ?? 0;
       const inventoryValue = userPnl?.inventoryValue ?? 0;
+      const unclaimedVouchers = userPnl?.unclaimedVouchers ?? 0;
       // The data-table renders user-POV pnl (positive = user winning,
       // shown red because that's our liability). The shared helper returns
       // House-POV; flip the sign here to keep the column semantics intact.
       const pnl = userPnl ? -userPnl.pnl : 0;
       // Net on-platform holdings = cash (available + locked vault) +
-      // open inventory. Mirrors the SQL ORDER BY expression for the
-      // `netHoldings` sort so client-side reordering matches what the
-      // server returned. Lifetime deposits/withdrawals deliberately
-      // excluded — this is "what's on-site RIGHT NOW", not PnL.
-      const netHoldings = availableBalance + lockedBalance + inventoryValue;
+      // open inventory + unclaimed vouchers. Vouchers are inventory
+      // exactly like cards (cards + vouchers = inventory), so they're
+      // part of what the user holds on-site. Mirrors the SQL ORDER BY
+      // expression for the `netHoldings` sort so client-side reordering
+      // matches what the server returned. Lifetime deposits/withdrawals
+      // deliberately excluded — this is "what's on-site RIGHT NOW", not
+      // PnL.
+      const netHoldings =
+        availableBalance + lockedBalance + inventoryValue + unclaimedVouchers;
       const risk = riskScoresMap.get(u.id);
       return {
         id: u.id,

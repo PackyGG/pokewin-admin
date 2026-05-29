@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import {
-  ArrowLeft,
   Receipt,
   Coins,
   ArrowRightLeft,
@@ -20,10 +19,27 @@ import {
   amountSignFor,
   ledgerDirection,
 } from "@/lib/utils/ledger-direction";
-import { PageHero, SectionHeading, KpiTile } from "@/components/modern-panels";
+import {
+  PageHero,
+  PageHeroIdentity,
+  SectionHeading,
+  KpiTile,
+} from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Transaction Detail" };
+
+// Voucher-excess ledger types are balance-neutral (balance_after ==
+// balance_before, so their balance delta is $0). The real value lives in
+// the `vouchers` table and is surfaced via `gameSession.voucherValue`, so
+// these rows are excluded from the breakdown's related-tx list and from
+// the `otherHouseImpact` sum to avoid relying on a $0 delta / double
+// counting. Mirrors the special-casing in queries/users-financial.ts.
+const VOUCHER_EXCESS_TYPES = new Set([
+  "battle_excess_to_voucher",
+  "pack_borrow_to_voucher",
+  "exchange_excess_to_voucher",
+]);
 
 const RARITY_COLORS: Record<string, string> = {
   common: "bg-zinc-700/90 text-zinc-100",
@@ -61,27 +77,21 @@ export default async function TransactionDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-start gap-3 sm:gap-4 flex-wrap">
-          <Link
-            href="/transactions"
-            className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground shrink-0"
-          >
-            <ArrowLeft className="size-4" />
-          </Link>
-          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 shrink-0">
-            <Receipt className="size-5 text-primary" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-xl sm:text-2xl font-bold leading-tight">Transaction</h1>
+        <PageHeroIdentity
+          icon={Receipt}
+          backHref="/transactions"
+          title="Transaction"
+          badges={
+            <>
               <Badge variant="outline" className={STATUS_COLORS[data.status] ?? ""}>
                 {data.status}
               </Badge>
               <Badge variant="outline">{data.type.replace(/_/g, " ")}</Badge>
-            </div>
-            <p className="font-mono text-xs text-muted-foreground truncate">{data.id}</p>
-          </div>
-        </div>
+            </>
+          }
+          subtitle={data.id}
+          subtitleClassName="font-mono truncate"
+        />
       </PageHero>
 
       {/* KPI strip — Amount KPI is colored from the HOUSE's perspective,
@@ -125,13 +135,17 @@ export default async function TransactionDetailPage({
                   <Badge variant="outline">{data.type.replace(/_/g, " ")}</Badge>
                 </InfoRow>
                 <InfoRow label="Amount">
-                  <span className={amountColor}>
+                  <span className={`font-medium tabular-nums ${amountColor}`}>
                     {amountSign}
                     {formatCurrency(absAmount)}
                   </span>
                 </InfoRow>
-                <InfoRow label="Balance Before">{formatCurrency(data.balanceBefore)}</InfoRow>
-                <InfoRow label="Balance After">{formatCurrency(data.balanceAfter)}</InfoRow>
+                <InfoRow label="Balance Before">
+                  <span className="tabular-nums">{formatCurrency(data.balanceBefore)}</span>
+                </InfoRow>
+                <InfoRow label="Balance After">
+                  <span className="tabular-nums">{formatCurrency(data.balanceAfter)}</span>
+                </InfoRow>
                 <InfoRow label="Status">
                   <Badge variant="outline" className={STATUS_COLORS[data.status] ?? ""}>
                     {data.status}
@@ -150,10 +164,37 @@ export default async function TransactionDetailPage({
                     <span className="font-mono text-xs">{data.gameSessionId}</span>
                   </InfoRow>
                 )}
-                {data.gameSession?.houseEdge != null && (
-                  <InfoRow label="House Edge">
-                    <span>{data.gameSession.houseEdge.toFixed(2)}%</span>
-                  </InfoRow>
+                {data.gameSession && (
+                  <>
+                    {/* Items Won = cards + voucher excess handed to the
+                        user. House loss → rose. */}
+                    <InfoRow label="Items Won">
+                      <span className="font-medium tabular-nums text-rose-600 dark:text-rose-400">
+                        {formatCurrency(data.gameSession.itemsWon)}
+                      </span>
+                    </InfoRow>
+                    {/* House P&L = bet − items won. House POV: positive =
+                        house kept money (emerald), negative = user pulled
+                        above bet (rose). Replaces the old House Edge %. */}
+                    <InfoRow label="House P&L">
+                      {(() => {
+                        const pnl = data.gameSession!.housePnl;
+                        const positive = pnl >= 0;
+                        return (
+                          <span
+                            className={`font-medium tabular-nums ${
+                              positive
+                                ? "text-emerald-600 dark:text-emerald-400"
+                                : "text-rose-600 dark:text-rose-400"
+                            }`}
+                          >
+                            {positive ? "+" : "-"}
+                            {formatCurrency(Math.abs(pnl))}
+                          </span>
+                        );
+                      })()}
+                    </InfoRow>
+                  </>
                 )}
 
                 {/* Breakdown — inside details card.
@@ -204,7 +245,17 @@ export default async function TransactionDetailPage({
                         </div>
                       ))}
                       {data.gameSession.relatedTransactions
-                        .filter((rt) => rt.id !== data.id && rt.type !== "pack_opening")
+                        // Skip pack_opening (the row itself) and the
+                        // voucher-excess rows: those are balance-neutral
+                        // ledger entries (delta = $0). The real voucher
+                        // value gets its own line below, sourced from the
+                        // vouchers table.
+                        .filter(
+                          (rt) =>
+                            rt.id !== data.id &&
+                            rt.type !== "pack_opening" &&
+                            !VOUCHER_EXCESS_TYPES.has(rt.type),
+                        )
                         .map((rt) => {
                           // Related ledger rows (battle refunds, voucher
                           // exchanges, etc.) — classify each individually.
@@ -222,21 +273,40 @@ export default async function TransactionDetailPage({
                             </div>
                           );
                         })}
+                      {/* Voucher excess this session spun off — value the
+                          user won that isn't a card. House loss → rose. */}
+                      {data.gameSession.voucherValue > 0 && (
+                        <div className="flex items-center justify-between text-rose-600 dark:text-rose-400">
+                          <span className="truncate mr-4">− Voucher excess</span>
+                          <span className="shrink-0">
+                            -{formatCurrency(data.gameSession.voucherValue)}
+                          </span>
+                        </div>
+                      )}
                       <div className="border-t pt-1 mt-2 flex items-center justify-between font-semibold">
                         <span className="text-foreground">House net</span>
                         {(() => {
                           const totalPayout = data.gameSession!.cardsObtained.reduce((s, c) => s + c.valueAtObtained, 0);
                           // `relatedTransactions.amount` is the user-side
                           // signed delta already. Flip its sign to get
-                          // the house contribution for this session.
+                          // the house contribution for this session. The
+                          // voucher-excess rows are excluded (balance-
+                          // neutral, counted via voucherValue below).
                           const otherHouseImpact = data.gameSession!.relatedTransactions
-                            .filter((rt) => rt.id !== data.id && rt.type !== "pack_opening")
+                            .filter(
+                              (rt) =>
+                                rt.id !== data.id &&
+                                rt.type !== "pack_opening" &&
+                                !VOUCHER_EXCESS_TYPES.has(rt.type),
+                            )
                             .reduce((s, rt) => s - rt.amount, 0);
                           // House net = what we received − what we paid
-                          // out (cards + related user-side credits).
+                          // out (cards + voucher excess + related user-side
+                          // credits).
                           const houseNet =
                             data.gameSession!.betAmount -
-                            totalPayout +
+                            totalPayout -
+                            data.gameSession!.voucherValue +
                             otherHouseImpact;
                           const positive = houseNet >= 0;
                           return (
@@ -262,9 +332,12 @@ export default async function TransactionDetailPage({
             {data.gameSession && (
               <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80">
                 <div className="relative p-4 sm:p-5 space-y-4">
-                  <h3 className="text-sm font-medium">
-                    {data.gameSession.gameType === "pack" ? "Pack Opening" : "Battle"} Details
-                  </h3>
+                  <div className="flex items-center gap-2">
+                    <Boxes className="size-4 text-blue-500" />
+                    <h3 className="text-sm font-medium">
+                      {data.gameSession.gameType === "pack" ? "Pack Opening" : "Battle"} Details
+                    </h3>
+                  </div>
                   {data.gameSession.packs.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-xs text-muted-foreground font-medium">
@@ -330,9 +403,12 @@ export default async function TransactionDetailPage({
                         ))}
                       </div>
                       <div className="pt-1 border-t">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between gap-3">
                           <span className="text-xs text-muted-foreground">Payout (at obtained)</span>
-                          <span className="text-sm font-medium">
+                          {/* House-POV: cards handed to the user are value
+                              leaving the house → house loss → rose. Matches
+                              the Payout column on the list views. */}
+                          <span className="text-sm font-medium tabular-nums text-rose-600 dark:text-rose-400">
                             {formatCurrency(data.gameSession.cardsObtained.reduce((s, c) => s + c.valueAtObtained, 0))}
                           </span>
                         </div>

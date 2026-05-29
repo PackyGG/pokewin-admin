@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatDate, formatNumber } from "@/lib/utils/format";
+import { EmptyState } from "@/components/empty-state";
 import type {
   CreatorListItem,
   CreatorDealStatus,
@@ -105,36 +106,54 @@ export type CreatorWithSocials = CreatorListItem & {
   deposits3dUsd: number;
   /** 3-day rolling wager volume — same source as deposits3dUsd. */
   wagers3dUsd: number;
+  // PnL fields (pnlByPeriod / lifetimePnl) removed from the list-page
+  // card — see comment at the (now-removed) PnlStrip call-site. Detail
+  // page /creators/[id] still surfaces the proper per-(creator, user)
+  // cap'd numbers.
   /**
-   * Per-period House P&L from this creator's referrals — same
-   * canonical balance-sheet formula as the dashboard's Lifetime PnL,
-   * evaluated as deltas over each window (1d / 3d / 7d / 14d / 30d):
-   *
-   *   pnl = deposits − withdrawals − balanceChange − inventoryChange − voucherChange
-   *
-   * Referred-user pool excludes admin / support / creator roles AND
-   * the creator's own user_id (so other streamers' on-site activity
-   * doesn't skew the per-creator number). House POV: positive = we
-   * made money, negative = we lost money. null when batch query
-   * failed.
+   * "Converted" — cap-usage (`withdraw_cap_used_usd`) on this
+   * creator's active/scheduled deal: how much of stream earnings have
+   * been converted into payout vouchers (against the deal's withdraw
+   * cap). Note the name is a slight misnomer — this is "converted",
+   * NOT necessarily "withdrawn off-platform". The withdraw-vs-still-
+   * playing breakdown lives in `withdrawnFromConverted` below.
+   * null when the creator has no such deal, or the per-deal fetch
+   * failed → the card shows "—".
    */
-  pnlByPeriod: {
-    "1d": CreatorPnlPeriodCell;
-    "3d": CreatorPnlPeriodCell;
-    "7d": CreatorPnlPeriodCell;
-    "14d": CreatorPnlPeriodCell;
-    "30d": CreatorPnlPeriodCell;
+  convertedUsd: number | null;
+  /**
+   * Of `convertedUsd` (payout vouchers minted from conversion), how
+   * much has actually left the platform via a card_withdrawal_requests
+   * row. Split into completed vs in-flight. null when the join failed
+   * OR the creator has no withdraw activity tied to conversion
+   * vouchers on this deal → the sub-line under Converted is hidden.
+   */
+  withdrawnFromConverted: {
+    withdrawnUsd: number;
+    withdrawPendingUsd: number;
   } | null;
+  /**
+   * 2-week MAX cost projections — worst-case house spend over the
+   * next fortnight. `deal2wkMaxUsd` = the active deal's total withdraw
+   * cap (`total_withdraw_cap_usd`) — the most the creator can ever
+   * withdraw on it. `leaderboard2wkMaxUsd` = the sponsored-weighted
+   * prize of every affiliate leaderboard running in the next 14 days.
+   * null when the creator has nothing to project → the card hides the
+   * row.
+   */
+  deal2wkMaxUsd: number | null;
+  leaderboard2wkMaxUsd: number | null;
+  /**
+   * Chips beside the creator's name. `withdrawalCapUsd` = the active
+   * deal's withdraw cap (`total_withdraw_cap_usd`) — the "max cap for
+   * withdrawal". `leaderboardSponsoredPct` = the blended "% we pay"
+   * across the creator's leaderboards running in the next 14 days.
+   * null when not applicable.
+   */
+  withdrawalCapUsd: number | null;
+  leaderboardSponsoredPct: number | null;
 };
 
-type CreatorPnlPeriodCell = {
-  deposits: number;
-  withdrawals: number;
-  balanceChange: number;
-  inventoryChange: number;
-  voucherChange: number;
-  pnl: number;
-};
 
 /**
  * Card-grid for /creators replacing the old wide-table layout. Each
@@ -152,8 +171,12 @@ export function CreatorCardGrid({
 }) {
   if (creators.length === 0) {
     return (
-      <div className="flex h-32 items-center justify-center rounded-xl border bg-muted/20 text-sm text-muted-foreground">
-        No creators found.
+      <div className="rounded-xl border bg-muted/20">
+        <EmptyState
+          icon={Crown}
+          title="No creators found"
+          description="No creators match the current search or tab. Try a different search term or switch the deal program."
+        />
       </div>
     );
   }
@@ -171,6 +194,12 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
     creator.username ?? creator.email ?? creator.id.slice(0, 8);
   const live = creator.active_session_id !== null;
   const deal = creator.current_deal;
+  // "Active" = has a deal in the active state. Distinct from "Live"
+  // (currently streaming via `active_session_id`). A creator can be
+  // Active (deal in progress this week) without being Live (not on
+  // stream right now), so both indicators can co-exist. Scheduled
+  // deals NOT counted here — they're not active yet.
+  const hasActiveDeal = deal?.status === "active";
   const initials = display.slice(0, 2).toUpperCase();
 
   return (
@@ -205,6 +234,26 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
               >
                 {display}
               </Link>
+              {/* "Active" deal indicator — steady emerald dot. Renders
+                  whenever the creator has a deal currently in the
+                  active state (this week's deal is running). Visually
+                  distinct from the pulsing "Live" badge below so
+                  both can show side-by-side on a creator who has a
+                  live deal AND is mid-stream. */}
+              {hasActiveDeal && (
+                <span
+                  className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
+                  title="Deal is currently active this week"
+                >
+                  <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
+                  Active
+                </span>
+              )}
+              {/* "Live" streaming indicator — pulsing emerald dot.
+                  Fires when the creator has an open session (kick
+                  stream / deal-day session started). Separate signal
+                  from "Active deal" — a creator can have an active
+                  deal without being live, and vice versa. */}
               {live && (
                 <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
                   <span className="relative flex size-1.5">
@@ -212,6 +261,33 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
                     <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
                   </span>
                   Live
+                </span>
+              )}
+              {/* Withdrawal cap — the max the creator can pull against
+                  their active deal. Rose: house cost exposure. */}
+              {creator.withdrawalCapUsd != null && (
+                <span
+                  className="inline-flex items-center gap-0.5 rounded-full border border-rose-500/30 bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-medium text-rose-600 dark:text-rose-400"
+                  title="Max withdrawal cap on the creator's active deal"
+                >
+                  Cap {formatCurrency(creator.withdrawalCapUsd)}
+                </span>
+              )}
+              {/* Leaderboard — the blended % the house sponsors of this
+                  creator's leaderboards running in the next 14 days,
+                  plus our dollar cost. */}
+              {creator.leaderboardSponsoredPct != null && (
+                <span
+                  className="inline-flex items-center gap-0.5 rounded-full border border-rose-500/30 bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-medium text-rose-600 dark:text-rose-400"
+                  title="Leaderboard: the % we sponsor + our 14-day leaderboard cost"
+                >
+                  LB {Math.round(creator.leaderboardSponsoredPct)}%
+                  {creator.leaderboard2wkMaxUsd != null && (
+                    <span className="text-rose-600/70 dark:text-rose-400/70">
+                      {" · "}
+                      {formatCurrency(creator.leaderboard2wkMaxUsd)}
+                    </span>
+                  )}
                 </span>
               )}
             </div>
@@ -235,12 +311,21 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
         {/* DEAL — borderless, just type + a clean progress bar */}
         <DealSummary deal={deal} />
 
-        {/* STATS — single 4-up row, divider-separated, no inner borders */}
+        {/* 2-WEEK MAX COST — worst-case house spend over the next
+            fortnight from this creator's deal + affiliate leaderboards. */}
+        <TwoWeekCostRow
+          dealUsd={creator.deal2wkMaxUsd}
+          leaderboardUsd={creator.leaderboard2wkMaxUsd}
+        />
+
+        {/* STATS — single 5-up row, divider-separated, no inner borders */}
         <StatsStrip
           code={creator.code}
           wagerVolumeUsd={creator.wagerVolumeUsd}
           signups={creator.signups}
           ftds={creator.ftds}
+          convertedUsd={creator.convertedUsd}
+          withdrawnFromConverted={creator.withdrawnFromConverted}
         />
 
         {/* MOMENTUM — last 3 days. Reads as a thin support line under
@@ -252,14 +337,10 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
           wagers3dUsd={creator.wagers3dUsd}
         />
 
-        {/* PNL STRIP — per-period GGR (wagers − payouts) from this
-            creator's referrals across 1d / 3d / 7d / 14d / 30d. House
-            POV: positive = we made money (emerald), negative = we lost
-            money (rose). Hidden when the batched query failed (null
-            input) so the card doesn't render dashes for everyone. */}
-        {creator.pnlByPeriod && (
-          <PnlStrip pnlByPeriod={creator.pnlByPeriod} />
-        )}
+        {/* PnL strip removed: the proper per-(creator, user) cap that
+            keeps a single non-code-depositing user from dragging a
+            creator's number into the red lives on /creators/[id]. The
+            per-card numbers without that cap were misleading. */}
 
         {/* SOCIALS */}
         <SocialsRow socials={creator.socials} />
@@ -268,25 +349,32 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
   );
 }
 
-// Single 4-up stats strip replacing the old 2x2-bordered-tile layout.
+// Single 5-up stats strip replacing the old 2x2-bordered-tile layout.
 // Borderless — just type + spacing + subtle vertical hairlines on
 // desktop. Cleaner, more scannable, and reads as a single row of
-// information rather than four separate boxes.
+// information rather than separate boxes.
 function StatsStrip({
   code,
   wagerVolumeUsd,
   signups,
   ftds,
+  convertedUsd,
+  withdrawnFromConverted,
 }: {
   code: string | null;
   wagerVolumeUsd: number;
   signups: number;
   ftds: number;
+  convertedUsd: number | null;
+  withdrawnFromConverted: {
+    withdrawnUsd: number;
+    withdrawPendingUsd: number;
+  } | null;
 }) {
   const conv =
     signups > 0 ? Math.min(100, (ftds / signups) * 100).toFixed(0) : null;
   return (
-    <div className="grid grid-cols-2 gap-x-3 gap-y-3 sm:grid-cols-4 sm:divide-x sm:divide-border/60">
+    <div className="grid grid-cols-2 gap-x-3 gap-y-3 sm:grid-cols-5 sm:divide-x sm:divide-border/60">
       <Stat label="Code">
         {code ? (
           <span
@@ -325,6 +413,51 @@ function StatsStrip({
         <span className="block truncate text-sm font-semibold tabular-nums">
           {ftds > 0 ? formatNumber(ftds) : "—"}
         </span>
+      </Stat>
+      {/* Converted — how much of stream earnings have been converted
+          into payout vouchers (against the deal's withdraw cap, via
+          `withdraw_cap_used_usd`). Neutral color: deal throughput,
+          not a house gain/loss.
+
+          Sub-line shows of that converted amount, how much actually
+          left the platform (completed card_withdrawal_requests) and
+          how much is in flight (pending/processing/shipped). Hidden
+          when there's no withdraw activity for this deal so dormant
+          creators stay visually quiet. */}
+      <Stat label="Converted">
+        <span
+          className="block truncate text-sm font-semibold tabular-nums"
+          title={
+            convertedUsd != null
+              ? `${convertedUsd} USD converted into payout vouchers (counted against this deal's withdraw cap)`
+              : "No active deal"
+          }
+        >
+          {convertedUsd != null ? formatCurrency(convertedUsd) : "—"}
+        </span>
+        {convertedUsd != null &&
+          withdrawnFromConverted != null &&
+          (withdrawnFromConverted.withdrawnUsd > 0 ||
+            withdrawnFromConverted.withdrawPendingUsd > 0) && (
+            <span
+              className="mt-0.5 block truncate font-mono text-[10px] text-muted-foreground/80"
+              title={
+                `${withdrawnFromConverted.withdrawnUsd} USD withdrawn off-platform` +
+                (withdrawnFromConverted.withdrawPendingUsd > 0
+                  ? ` · ${withdrawnFromConverted.withdrawPendingUsd} USD in flight (pending/processing/shipped)`
+                  : "")
+              }
+            >
+              ↳ {formatCurrency(withdrawnFromConverted.withdrawnUsd)} withdrawn
+              {withdrawnFromConverted.withdrawPendingUsd > 0 && (
+                <>
+                  {" "}
+                  · +{formatCurrency(withdrawnFromConverted.withdrawPendingUsd)}{" "}
+                  in flight
+                </>
+              )}
+            </span>
+          )}
       </Stat>
     </div>
   );
@@ -511,88 +644,41 @@ function MomentumRow({
   );
 }
 
-// Per-period PnL strip — 5 mini-cells (1d / 3d / 7d / 14d / 30d),
-// each showing the House P&L from this creator's referrals in that
-// window. House POV: positive emerald, negative rose, zero muted "—".
-//
-// PnL formula (same as the dashboard's Lifetime PnL, evaluated as
-// deltas over the window):
-//
-//   pnl = deposits − withdrawals − balanceChange − inventoryChange − voucherChange
-//
-// Referred-user pool excludes admin / support / creator role accounts
-// and the creator's own user_id, so other streamers' on-site activity
-// doesn't skew the number.
-//
-// Compact layout: 5-up grid, divider-separated, label above value.
-// Tabular nums so the dollar amounts line up across the row.
-function PnlStrip({
-  pnlByPeriod,
+// 2-week max-cost row — worst-case house spend over the next fortnight.
+//   Deal        = the active deal's total withdraw cap — the most the
+//                 creator can ever withdraw on it.
+//   Leaderboard = sponsored-weighted prize of affiliate leaderboards
+//                 whose run window overlaps the next 14d.
+// Both are money the house pays out → rose (house loss) per CLAUDE.md.
+// Hidden when the creator has neither so dormant cards stay quiet.
+function TwoWeekCostRow({
+  dealUsd,
+  leaderboardUsd,
 }: {
-  pnlByPeriod: NonNullable<CreatorWithSocials["pnlByPeriod"]>;
+  dealUsd: number | null;
+  leaderboardUsd: number | null;
 }) {
-  const periods: Array<{
-    key: keyof typeof pnlByPeriod;
-    label: string;
-  }> = [
-    { key: "1d", label: "1d" },
-    { key: "3d", label: "3d" },
-    { key: "7d", label: "7d" },
-    { key: "14d", label: "2w" },
-    { key: "30d", label: "1m" },
-  ];
+  const hasAny = (dealUsd ?? 0) > 0 || (leaderboardUsd ?? 0) > 0;
+  if (!hasAny) return null;
   return (
-    <div>
-      <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        <span>PnL</span>
-        <span
-          className="text-muted-foreground/60 normal-case"
-          title="Same balance-sheet formula as the dashboard's Lifetime PnL, evaluated per window. Positive = we made money, negative = we lost money."
-        >
-          (house POV)
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+      <span className="font-semibold uppercase tracking-wider text-muted-foreground">
+        2-Week Max Cost
+      </span>
+      <span className="text-muted-foreground">
+        Deal{" "}
+        <span className="font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+          {dealUsd != null && dealUsd > 0 ? formatCurrency(dealUsd) : "—"}
         </span>
-      </div>
-      <div className="grid grid-cols-5 divide-x divide-border/60">
-        {periods.map(({ key, label }) => {
-          const cell = pnlByPeriod[key];
-          const v = cell.pnl;
-          const color =
-            v > 0
-              ? "text-emerald-600 dark:text-emerald-400"
-              : v < 0
-                ? "text-rose-600 dark:text-rose-400"
-                : "text-muted-foreground/60";
-          // Full breakdown so admins can see why a number is the
-          // way it is — particularly helps when inventory or
-          // balance change dominates (a referral pulled a big
-          // card but didn't sell yet, etc.).
-          const tooltip =
-            `${label}: deposits ${formatCurrency(cell.deposits)} ` +
-            `− withdrawals ${formatCurrency(cell.withdrawals)} ` +
-            `− balance Δ ${formatCurrency(cell.balanceChange)} ` +
-            `− inventory Δ ${formatCurrency(cell.inventoryChange)} ` +
-            `− voucher Δ ${formatCurrency(cell.voucherChange)}`;
-          return (
-            <div
-              key={key}
-              className="min-w-0 px-2 first:pl-0 last:pr-0"
-              title={tooltip}
-            >
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
-                {label}
-              </div>
-              <div
-                className={cn(
-                  "truncate text-xs font-semibold tabular-nums",
-                  color,
-                )}
-              >
-                {v === 0 ? "—" : formatCurrency(v)}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      </span>
+      <span className="text-muted-foreground">
+        Leaderboard{" "}
+        <span className="font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+          {leaderboardUsd != null && leaderboardUsd > 0
+            ? formatCurrency(leaderboardUsd)
+            : "—"}
+        </span>
+      </span>
     </div>
   );
 }

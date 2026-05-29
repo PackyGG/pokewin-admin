@@ -1,6 +1,7 @@
 "use client";
 
 import { ColumnDef } from "@tanstack/react-table";
+import Link from "next/link";
 import { ShieldAlert, Link2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -148,7 +149,14 @@ export const columns: ColumnDef<UserRow>[] = [
     accessorKey: "username",
     header: () => <UsersSortHeader title="User" sortKey="username" />,
     cell: ({ row }) => (
-      <div className="flex items-center gap-3">
+      // Real <Link> so middle-click / Ctrl-click / right-click → "Open
+      // in new tab" works natively. stopPropagation prevents the row's
+      // onClick from double-firing the navigation on left-click.
+      <Link
+        href={`/users/${row.original.id}`}
+        onClick={(e) => e.stopPropagation()}
+        className="flex items-center gap-3 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:rounded-md"
+      >
         <Avatar className="size-8 shrink-0">
           {row.original.image && <AvatarImage src={row.original.image} alt="" />}
           <AvatarFallback className="text-xs">
@@ -156,14 +164,14 @@ export const columns: ColumnDef<UserRow>[] = [
           </AvatarFallback>
         </Avatar>
         <div className="min-w-0">
-          <div className="truncate font-medium">
+          <div className="truncate font-medium hover:underline">
             {row.original.username ?? row.original.email ?? "—"}
           </div>
           <div className="truncate text-xs text-muted-foreground">
             {row.original.email}
           </div>
         </div>
-      </div>
+      </Link>
     ),
   },
   {

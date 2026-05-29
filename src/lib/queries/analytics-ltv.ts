@@ -118,9 +118,9 @@ export async function getCreatorLtv(period: LtvPeriod): Promise<CreatorLtvData> 
           'deposit_bonus','race_prize','gift_card_redeemed','promo_code_redeemed',
           'rakeback_claim','balance_reward_claim','affiliate_claim','rain_win',
           'waitlist_prize','creator_tip','voucher_redeemed','voucher_exchange',
-          'exchange_excess_to_voucher','battle_excess_to_voucher','battle_refund'
+          'exchange_excess_to_voucher','battle_excess_to_voucher','battle_refund','upgrader_payout'
         ) THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS payouts,
-        COALESCE(SUM(CASE WHEN lt.type IN ('pack_opening','battle_bet','battle_sponsorship','withdrawal_shipping_fee')
+        COALESCE(SUM(CASE WHEN lt.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet','withdrawal_shipping_fee')
           THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS wagers
       FROM refs_distinct r
       LEFT JOIN ledger_transactions lt

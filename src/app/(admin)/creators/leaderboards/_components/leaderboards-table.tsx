@@ -10,7 +10,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatDateTime, formatRelative } from "@/lib/utils/format";
+import { EmptyState } from "@/components/empty-state";
 import { ListRowActions } from "./list-row-actions";
+import { InlineSponsoredPercentage } from "./inline-sponsored-percentage";
 import type {
   LeaderboardAdminRow,
   ApprovalStatus,
@@ -34,9 +36,12 @@ type CreatorInfo = { id: string; username: string | null; email: string | null }
 function LeaderboardMobileCard({
   r,
   creator,
+  sponsoredPct,
 }: {
   r: LeaderboardAdminRow;
   creator: CreatorInfo | undefined;
+  // Admin-side sponsored %; null = not annotated (defaults to 100%).
+  sponsoredPct: number | null;
 }) {
   return (
     <div className="border-b border-border/60 last:border-b-0 px-3 py-3">
@@ -91,6 +96,14 @@ function LeaderboardMobileCard({
                 cancelled
               </Badge>
             )}
+            {r.paid_manually && (
+              <Badge
+                variant="outline"
+                className="h-4 px-1 text-[9px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+              >
+                paid
+              </Badge>
+            )}
           </div>
           <div className="mt-1 text-[10px] text-muted-foreground">
             {formatRelative(r.start_date)} → {formatRelative(r.end_date)}
@@ -104,6 +117,15 @@ function LeaderboardMobileCard({
           <div className="text-[10px] text-muted-foreground tabular-nums">
             ${r.creator_prize_usd} + ${r.site_bonus_usd}
           </div>
+          {/* Admin-side sponsored % — counted in the /creators
+              Leaderboard Cost KPI. */}
+          <div className="flex items-center justify-end gap-1 text-[10px] text-muted-foreground">
+            <span>Sponsored</span>
+            <InlineSponsoredPercentage
+              leaderboardId={r.id}
+              current={sponsoredPct}
+            />
+          </div>
           <ListRowActions row={r} />
         </div>
       </div>
@@ -114,17 +136,25 @@ function LeaderboardMobileCard({
 export function LeaderboardsTable({
   rows,
   creatorMap,
+  sponsorshipMap,
 }: {
   rows: LeaderboardAdminRow[];
   creatorMap: Map<string, CreatorInfo>;
+  // leaderboard id → admin-side sponsored % (0–100). Absent = 100%.
+  sponsorshipMap: Map<string, number>;
 }) {
   return (
     <>
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
         {rows.length === 0 ? (
-          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
-            No leaderboards found for this filter.
+          <div className="rounded-md border">
+            <EmptyState
+              icon={Trophy}
+              title="No leaderboards found"
+              description="No creator leaderboards match this filter. Try a different status or clear the creator filter."
+              compact
+            />
           </div>
         ) : (
           <div className="overflow-hidden rounded-md border">
@@ -133,6 +163,7 @@ export function LeaderboardsTable({
                 key={r.id}
                 r={r}
                 creator={creatorMap.get(r.creator_user_id)}
+                sponsoredPct={sponsorshipMap.get(r.id) ?? null}
               />
             ))}
           </div>
@@ -151,6 +182,7 @@ export function LeaderboardsTable({
               <TableHead className="text-right">Creator $</TableHead>
               <TableHead className="text-right">Bonus $</TableHead>
               <TableHead className="text-right">Total $</TableHead>
+              <TableHead className="text-right">Sponsored %</TableHead>
               <TableHead>Starts</TableHead>
               <TableHead>Ends</TableHead>
               <TableHead className="w-[200px]" />
@@ -158,12 +190,14 @@ export function LeaderboardsTable({
           </TableHeader>
           <TableBody>
             {rows.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  colSpan={10}
-                  className="text-center text-muted-foreground py-8"
-                >
-                  No leaderboards found for this filter.
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={11} className="p-0">
+                  <EmptyState
+                    icon={Trophy}
+                    title="No leaderboards found"
+                    description="No creator leaderboards match this filter. Try a different status or clear the creator filter."
+                    compact
+                  />
                 </TableCell>
               </TableRow>
             ) : (
@@ -220,6 +254,14 @@ export function LeaderboardsTable({
                           cancelled
                         </Badge>
                       )}
+                      {r.paid_manually && (
+                        <Badge
+                          variant="outline"
+                          className="ml-2 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                        >
+                          paid
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell>
                       <Badge
@@ -237,6 +279,12 @@ export function LeaderboardsTable({
                     </TableCell>
                     <TableCell className="text-right tabular-nums font-semibold">
                       ${r.total_prize_usd}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <InlineSponsoredPercentage
+                        leaderboardId={r.id}
+                        current={sponsorshipMap.get(r.id) ?? null}
+                      />
                     </TableCell>
                     <TableCell className="text-xs">
                       {formatDateTime(r.start_date)}

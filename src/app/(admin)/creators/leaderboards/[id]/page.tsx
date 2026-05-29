@@ -12,6 +12,7 @@ import {
 import { BackendApiError } from "@/lib/backend-api/errors";
 import { PageHero } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
 import {
     Table,
@@ -24,8 +25,10 @@ import {
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { getAffiliateLeaderboardRankings } from "@/lib/queries/creators";
+import { getLeaderboardSponsorshipMap } from "../../_queries/leaderboard-sponsorship";
 
 import { DetailActions } from "../_components/detail-actions";
+import { ManualPaymentPanel } from "../_components/manual-payment-panel";
 
 export const metadata = { title: "Affiliate Leaderboard" };
 
@@ -60,7 +63,7 @@ export default async function AffiliateLeaderboardDetailPage({
     }
     const db = await getDb();
     const participatingCreatorIds = [lb.creator_user_id, ...(lb.co_creator_user_ids ?? [])];
-    const [creators, rankings] = await Promise.all([
+    const [creators, rankings, sponsorshipMap] = await Promise.all([
         // Hydrate the primary creator plus every co-creator in one query so we
         // can render names alongside each id on the definition card.
         db.user.findMany({
@@ -83,6 +86,12 @@ export default async function AffiliateLeaderboardDetailPage({
             console.error("[leaderboard] rankings query failed", err);
             return [];
         }),
+        // Admin-side sponsored % so the Edit dialog can pre-fill it.
+        // Best-effort — a failure just defaults the field to 100%.
+        getLeaderboardSponsorshipMap([id]).catch((err) => {
+            console.error("[leaderboard] sponsorship query failed", err);
+            return new Map<string, number>();
+        }),
     ]);
     const creatorById = new Map(creators.map((c) => [c.id, c]));
     const creator = creatorById.get(lb.creator_user_id) ?? null;
@@ -91,6 +100,7 @@ export default async function AffiliateLeaderboardDetailPage({
         username: creatorById.get(id)?.username ?? null,
         email: creatorById.get(id)?.email ?? null,
     }));
+    const currentSponsoredPct = sponsorshipMap.get(id) ?? null;
 
     return (
         <div className="space-y-6">
@@ -113,6 +123,14 @@ export default async function AffiliateLeaderboardDetailPage({
                                     {lb.time_status}
                                 </Badge>
                                 {lb.is_sponsored && <Badge variant="outline">sponsored</Badge>}
+                                {lb.paid_manually && (
+                                    <Badge
+                                        variant="outline"
+                                        className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                                    >
+                                        paid manually
+                                    </Badge>
+                                )}
                                 {lb.cancelled_at && (
                                     <Badge variant="outline" className="bg-zinc-500/15 text-zinc-600 border-zinc-500/30">
                                         cancelled
@@ -121,7 +139,10 @@ export default async function AffiliateLeaderboardDetailPage({
                             </div>
                         </div>
                     </div>
-                    <DetailActions row={lb} />
+                    <DetailActions
+                        row={lb}
+                        currentSponsoredPct={currentSponsoredPct}
+                    />
                 </div>
             </PageHero>
 
@@ -267,6 +288,14 @@ export default async function AffiliateLeaderboardDetailPage({
                         />
                     </div>
                 </FadeIn>
+
+                <FadeIn>
+                    <ManualPaymentPanel
+                        leaderboardId={lb.id}
+                        initialPaidManually={lb.paid_manually}
+                        initialPayoutNote={lb.payout_note}
+                    />
+                </FadeIn>
             </div>
 
             {/* Window-drift warning — surfaces when the event window
@@ -338,14 +367,22 @@ export default async function AffiliateLeaderboardDetailPage({
                         </TableHeader>
                         <TableBody>
                             {rankings.length === 0 ? (
-                                <TableRow>
-                                    <TableCell
-                                        colSpan={4}
-                                        className="text-center text-muted-foreground py-6"
-                                    >
-                                        {lb.time_status === "upcoming"
-                                            ? "Leaderboard hasn't started yet."
-                                            : "No qualifying wager activity in this window."}
+                                <TableRow className="hover:bg-transparent">
+                                    <TableCell colSpan={4} className="p-0">
+                                        <EmptyState
+                                            icon={Trophy}
+                                            title={
+                                                lb.time_status === "upcoming"
+                                                    ? "Leaderboard hasn't started yet"
+                                                    : "No qualifying wager activity"
+                                            }
+                                            description={
+                                                lb.time_status === "upcoming"
+                                                    ? "Standings populate once the event window opens and users start wagering on the code."
+                                                    : "No users tied to this leaderboard's code(s) wagered inside the event window."
+                                            }
+                                            compact
+                                        />
                                     </TableCell>
                                 </TableRow>
                             ) : (
@@ -441,9 +478,14 @@ export default async function AffiliateLeaderboardDetailPage({
                         </TableHeader>
                         <TableBody>
                             {lb.prize_tiers.length === 0 ? (
-                                <TableRow>
-                                    <TableCell colSpan={2} className="text-center text-muted-foreground py-6">
-                                        No prize tiers configured.
+                                <TableRow className="hover:bg-transparent">
+                                    <TableCell colSpan={2} className="p-0">
+                                        <EmptyState
+                                            icon={Trophy}
+                                            title="No prize tiers configured"
+                                            description="This leaderboard has no per-position prizes set."
+                                            compact
+                                        />
                                     </TableCell>
                                 </TableRow>
                             ) : (

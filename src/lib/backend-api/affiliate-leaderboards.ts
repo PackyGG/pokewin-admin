@@ -34,6 +34,8 @@ export type LeaderboardAdminRow = {
   refund_amount_usd: string | null;
   creation_ledger_tx_id: string | null;
   refund_ledger_tx_id: string | null;
+  paid_manually: boolean;
+  payout_note: string | null;
   time_status: TimeStatus;
   prize_tiers: PrizeTier[];
 };
@@ -58,6 +60,13 @@ export type ListResult = {
 export type RejectInput = { rejection_reason: string };
 
 export type SponsorInput = { additional_bonus_usd: number };
+
+export type ManualPaymentInput = {
+  paid_manually: boolean;
+  // Pass null (or omit) to clear. When paid_manually is false the backend
+  // always clears the note regardless of what's sent here.
+  payout_note?: string | null;
+};
 
 export type EditInput = {
   title?: string;
@@ -138,6 +147,19 @@ export const affiliateLeaderboardsApi = {
     backendApi
       .post<Success<LeaderboardAdminRow>>(
         `${BASE}/${encodeURIComponent(id)}/sponsor`,
+        input,
+        { headers: adminHeaders(adminUserId) },
+      )
+      .then((r) => r.data),
+
+  setManualPayment: (
+    id: string,
+    input: ManualPaymentInput,
+    adminUserId: string,
+  ) =>
+    backendApi
+      .post<Success<LeaderboardAdminRow>>(
+        `${BASE}/${encodeURIComponent(id)}/manual-payment`,
         input,
         { headers: adminHeaders(adminUserId) },
       )

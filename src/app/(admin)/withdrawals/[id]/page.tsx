@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, ArrowUpFromLine, Package, Ticket, Layers } from "lucide-react";
+import { ArrowUpFromLine, Package, Ticket, Layers } from "lucide-react";
 import { getWithdrawalDetail } from "@/lib/queries/withdrawals";
 import { requirePageAccess } from "@/lib/dal";
 import { Badge } from "@/components/ui/badge";
@@ -12,9 +12,11 @@ import { CardImage } from "@/components/card-image";
 import { CopyableAddress } from "./copyable-address";
 import {
   PageHero,
+  PageHeroIdentity,
   SectionHeading,
   KpiTile,
 } from "@/components/modern-panels";
+import { EmptyState } from "@/components/empty-state";
 import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Withdrawal Detail" };
@@ -60,32 +62,28 @@ export default async function WithdrawalDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-start gap-3 sm:gap-4 flex-wrap">
-          <Link
-            href="/withdrawals"
-            className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground shrink-0"
-          >
-            <ArrowLeft className="size-4" />
-          </Link>
-          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 shrink-0">
-            <ArrowUpFromLine className="size-5 text-primary" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-xl sm:text-2xl font-bold leading-tight">Withdrawal</h1>
+        <PageHeroIdentity
+          icon={ArrowUpFromLine}
+          backHref="/withdrawals"
+          title="Withdrawal"
+          badges={
+            <>
               <Badge variant="outline" className={STATUS_COLORS[data.status]}>{data.status}</Badge>
               <Badge variant="outline">{data.method}</Badge>
+            </>
+          }
+          subtitle={data.id}
+          subtitleClassName="font-mono truncate"
+          action={
+            <div className="w-full sm:w-auto">
+              <WithdrawalActionButtons
+                withdrawalId={data.id}
+                status={data.status}
+                method={data.method}
+              />
             </div>
-            <p className="font-mono text-xs text-muted-foreground mt-0.5 truncate">{data.id}</p>
-          </div>
-          <div className="w-full sm:w-auto">
-            <WithdrawalActionButtons
-              withdrawalId={data.id}
-              status={data.status}
-              method={data.method}
-            />
-          </div>
-        </div>
+          }
+        />
         <div className="mt-4 sm:mt-6 -mx-3 sm:-mx-0 px-3 sm:px-0 flex justify-start sm:justify-center overflow-x-auto">
           <StatusTimeline steps={timelineSteps} />
         </div>
@@ -140,9 +138,21 @@ export default async function WithdrawalDetailPage({
                 </Link>
               </InfoRow>
               <InfoRow label="Method">{data.method}</InfoRow>
-              <InfoRow label="Total Value">{formatCurrency(data.totalValueUsd)}</InfoRow>
+              {/* House-POV: the withdrawal value is money leaving the house
+                  (user takes it out) → house loss → rose. The shipping fee
+                  is paid BY the user to cover shipping → house gain →
+                  emerald. Matches the KPI strip above. */}
+              <InfoRow label="Total Value">
+                <span className="font-medium tabular-nums text-rose-600 dark:text-rose-400">
+                  {formatCurrency(data.totalValueUsd)}
+                </span>
+              </InfoRow>
               {data.shippingFeeUsd > 0 && (
-                <InfoRow label="Shipping Fee">{formatCurrency(data.shippingFeeUsd)}</InfoRow>
+                <InfoRow label="Shipping Fee">
+                  <span className="font-medium tabular-nums text-emerald-600 dark:text-emerald-400">
+                    {formatCurrency(data.shippingFeeUsd)}
+                  </span>
+                </InfoRow>
               )}
               <InfoRow label="Requested">{formatDateTime(data.requestedAt)}</InfoRow>
               {data.processingAt && <InfoRow label="Processing">{formatDateTime(data.processingAt)}</InfoRow>}
@@ -203,14 +213,18 @@ export default async function WithdrawalDetailPage({
             <div className="rounded-2xl border bg-card/60 p-4">
               <div className="divide-y">
                 {data.vouchers.map((voucher) => (
-                  <div key={voucher.id} className="flex items-center justify-between py-2">
-                    <div>
-                      <p className="text-sm font-medium">{formatCurrency(voucher.value)}</p>
-                      <p className="text-xs text-muted-foreground">
+                  <div key={voucher.id} className="flex items-center justify-between gap-3 py-2">
+                    <div className="min-w-0">
+                      {/* House-POV: a voucher is value the house owes the
+                          user (a perk we credited) → house loss → rose. */}
+                      <p className="text-sm font-medium tabular-nums text-rose-600 dark:text-rose-400">
+                        {formatCurrency(voucher.value)}
+                      </p>
+                      <p className="truncate text-xs text-muted-foreground">
                         {voucher.origin}{voucher.description ? ` — ${voucher.description}` : ""}
                       </p>
                     </div>
-                    <span className="font-mono text-xs text-muted-foreground">{voucher.id.slice(0, 8)}...</span>
+                    <span className="shrink-0 font-mono text-xs text-muted-foreground">{voucher.id.slice(0, 8)}...</span>
                   </div>
                 ))}
               </div>
@@ -228,7 +242,12 @@ export default async function WithdrawalDetailPage({
         <FadeIn>
           <div className="rounded-2xl border bg-card/60 p-3 sm:p-4">
             {data.items.length === 0 ? (
-              <p className="text-center text-sm text-muted-foreground py-8">No items</p>
+              <EmptyState
+                icon={Layers}
+                title="No items in this withdrawal"
+                description="This request has no card items attached — it may be a crypto-only or voucher-only withdrawal."
+                compact
+              />
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2.5 sm:gap-3">
                 {data.items.map((item) => (

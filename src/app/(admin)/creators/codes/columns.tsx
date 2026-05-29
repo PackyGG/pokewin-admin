@@ -12,7 +12,7 @@ export const columns: ColumnDef<CodeListItem>[] = [
     header: "Code",
     cell: ({ row }) => (
       <Link
-        href={`/creators/codes/${row.original.code}`}
+        href={`/creators/${row.original.ownerUserId}`}
         className="font-mono text-sm font-medium hover:underline"
       >
         {row.original.code}

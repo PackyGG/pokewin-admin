@@ -34,7 +34,14 @@ type Row = {
 // constant just gates the button visibility client-side.
 const HARD_DELETE_WINDOW_MS = 60 * 60 * 1000;
 
-export function DetailActions({ row }: { row: Row }) {
+export function DetailActions({
+    row,
+    currentSponsoredPct,
+}: {
+    row: Row;
+    // Admin-side sponsored % (cost-math input); null = not annotated.
+    currentSponsoredPct: number | null;
+}) {
     const [isPending, startTransition] = useTransition();
     const router = useRouter();
     const [rejectOpen, setRejectOpen] = useState(false);
@@ -143,6 +150,7 @@ export function DetailActions({ row }: { row: Row }) {
                 open={editOpen}
                 onOpenChange={setEditOpen}
                 leaderboard={row}
+                currentSponsoredPct={currentSponsoredPct}
             />
             <SponsorDialog
                 open={sponsorOpen}

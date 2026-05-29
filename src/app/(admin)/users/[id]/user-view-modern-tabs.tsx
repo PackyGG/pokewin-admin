@@ -47,8 +47,10 @@ import {
   Sparkles,
   Dices,
   Percent,
+  Award,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState } from "@/components/empty-state";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import {
@@ -72,7 +74,8 @@ import {
   GAMING_TX_TYPES,
   FINANCIAL_TX_TYPES,
 } from "./user-tabs";
-import type { PaginatedInventory } from "./user-tabs-types";
+import { UserBattleLimitsCard } from "./user-battle-limits-card";
+import type { PaginatedInventory, TipEntry } from "./user-tabs-types";
 import type { UserRewards } from "@/lib/queries/users";
 import {
   SectionHeading,
@@ -134,6 +137,12 @@ export function OverviewTab({
         cardWithdrawals={data.cardWithdrawals}
       />
 
+      {/* Tips & Rain — creator tips this user received/sent + rain
+          prizes won. Sits directly below deposits per admin request
+          (none of this was visible on any tab before). */}
+      <SectionHeading icon={Coins} title="Tips & Rain" />
+      <TipsSection tips={data.tips} />
+
       {/* Recent activity — unified timeline (gaming + financial). Colors
           are flipped to HOUSE perspective: if the user made money the
           dot/amount shows RED (we lost), user losses show GREEN. */}
@@ -143,6 +152,151 @@ export function OverviewTab({
         financialTx={financialTx.data.slice(0, 5)}
       />
     </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  TIPS & RAIN SECTION (overview) — creator tips received/sent + rain
+//  prizes won + affiliate-leaderboard wins
+// ───────────────────────────────────────────────────────────────────
+
+function TipsSection({ tips }: { tips: UserDetail["tips"] }) {
+  return (
+    // 4 panels — wraps to 2-up on md, 4-up on xl so the row stays
+    // readable on laptops while still fitting on phones.
+    <div className="grid gap-3 sm:gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <TipPanel kind="received" data={tips.received} />
+      <TipPanel kind="sent" data={tips.sent} />
+      <TipPanel kind="rain" data={tips.rainPrizes} />
+      <TipPanel kind="leaderboard" data={tips.leaderboardWins} />
+    </div>
+  );
+}
+
+function TipPanel({
+  kind,
+  data,
+}: {
+  kind: "received" | "sent" | "rain" | "leaderboard";
+  data: { count: number; totalUsd: number; recent: TipEntry[] };
+}) {
+  // House-POV (CLAUDE.md): money the user GAINS (tips received, rain
+  // prizes, leaderboard wins) → house loss → rose. Money the user
+  // SPENDS (tips sent) → house gain → emerald.
+  const userGained = kind !== "sent";
+  const amountColor = userGained
+    ? "text-rose-600 dark:text-rose-400"
+    : "text-emerald-600 dark:text-emerald-400";
+  const accentChip = userGained
+    ? "bg-rose-500/15 text-rose-500"
+    : "bg-emerald-500/15 text-emerald-500";
+  const Icon =
+    kind === "received"
+      ? ArrowDownToLine
+      : kind === "sent"
+        ? ArrowUpRight
+        : kind === "rain"
+          ? Trophy
+          : Award;
+  const label =
+    kind === "received"
+      ? "Tips Received"
+      : kind === "sent"
+        ? "Tips Sent"
+        : kind === "rain"
+          ? "Rain Prizes"
+          : "Leaderboard Wins";
+  const unit =
+    kind === "rain" ? "prize" : kind === "leaderboard" ? "win" : "tip";
+  const emptyText =
+    kind === "received"
+      ? "No tips received."
+      : kind === "sent"
+        ? "No tips sent."
+        : kind === "rain"
+          ? "No rain prizes won."
+          : "No leaderboard wins.";
+  const sign = userGained ? "+" : "-";
+
+  return (
+    <Card>
+      <CardContent className="space-y-3 p-4 sm:p-5">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span
+              className={cn(
+                "flex size-8 shrink-0 items-center justify-center rounded-lg",
+                accentChip,
+              )}
+            >
+              <Icon className="size-4" />
+            </span>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                {label}
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                {data.count} {data.count === 1 ? unit : `${unit}s`}
+              </p>
+            </div>
+          </div>
+          <p className={cn("text-lg font-bold tabular-nums", amountColor)}>
+            {data.count > 0
+              ? `${sign}${formatCurrency(data.totalUsd)}`
+              : formatCurrency(0)}
+          </p>
+        </div>
+
+        {data.recent.length === 0 ? (
+          <p className="text-xs text-muted-foreground">{emptyText}</p>
+        ) : (
+          <ul className="space-y-1.5">
+            {data.recent.map((t) => (
+              <li
+                key={t.id}
+                className="flex items-center justify-between gap-2 text-xs"
+              >
+                <span className="min-w-0 truncate text-muted-foreground">
+                  {kind === "rain" ? (
+                    <span className="text-foreground">Rain prize</span>
+                  ) : kind === "leaderboard" ? (
+                    <span className="text-foreground">Leaderboard win</span>
+                  ) : (
+                    <>
+                      {kind === "received" ? "from " : "to "}
+                      {t.counterpartyId ? (
+                        <Link
+                          href={`/users/${t.counterpartyId}`}
+                          className="font-medium text-foreground hover:text-primary hover:underline"
+                        >
+                          {t.counterpartyName ?? t.counterpartyId.slice(0, 8)}
+                        </Link>
+                      ) : (
+                        <span className="font-medium text-foreground">
+                          unknown
+                        </span>
+                      )}
+                    </>
+                  )}
+                  <span className="ml-1 text-muted-foreground/70">
+                    · {formatRelative(t.createdAt)}
+                  </span>
+                </span>
+                <span
+                  className={cn(
+                    "shrink-0 font-medium tabular-nums",
+                    amountColor,
+                  )}
+                >
+                  {sign}
+                  {formatCurrency(t.amountUsd)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -237,6 +391,7 @@ export function InventoryTab({
         userId={user.id}
         initialInventory={inventory}
         inventoryValue={balances?.inventoryValue ?? 0}
+        vouchersValue={balances?.vouchersValue ?? 0}
         statusFilter="owned"
       />
       <SectionHeading icon={Trophy} title="Sold & Exchanged" />
@@ -285,10 +440,13 @@ export function AffiliateTab({ data }: { data: UserDetail }) {
         </Card>
       )}
 
-      {/* Two visually distinct sections — each manages a DIFFERENT
-          column on the user table:
-            • ReferrerCard ↓ writes user.referred_by  (who referred them in)
-            • OwnCodeCard  → writes user.affiliate_code (what code they own)
+      {/* Two visually distinct sections — each manages DIFFERENT
+          columns on the user table:
+            • ReferrerCard ↓ writes user.referred_by (who referred them
+              in) AND user.affiliate_code/_active (the code they're on
+              right now → where wager affiliate income routes).
+            • OwnCodeCard  → writes the affiliate_codes table (the codes
+              this user OWNS to hand out).
           The labels and panel styling are deliberately different so
           admins can't confuse the two — the previous "Referral Code
           Used" / "Own Affiliate Code" naming was too symmetric. */}
@@ -352,13 +510,17 @@ export function AffiliateTab({ data }: { data: UserDetail }) {
   );
 }
 
-// ── Referrer card — sets user.referred_by via a code lookup ────────
+// ── Referrer card — sets the code this user is on, via a code lookup ─
 //
-// Admins enter a code (someone else's affiliate code), the action
-// looks up the owner and writes user.referred_by = owner.id, plus
-// bumps that owner's affiliate_accounts.total_referred. Exists for
-// the case where a referral signup got dropped and needs to be
-// reattributed manually.
+// Admins enter a code (someone else's affiliate code); the action looks
+// up the owner and writes BOTH:
+//   • user.referred_by = owner.id           (permanent attribution)
+//   • user.affiliate_code = code, _active=true, _expires_at=null
+//     (the ACTIVE code → routes WAGER affiliate income to the owner;
+//      no frontend lock so the user can still change it on the site)
+// and bumps that owner's affiliate_accounts.total_referred. Setting
+// referred_by alone does NOT move wager income — affiliate_code is the
+// live routing field — which is why this card writes both.
 function ReferrerCard({ user }: { user: UserDetail["user"] }) {
   const router = useRouter();
   const [codeInput, setCodeInput] = useState("");
@@ -374,7 +536,9 @@ function ReferrerCard({ user }: { user: UserDetail["user"] }) {
     startTransition(async () => {
       try {
         await assignAffiliateCode(user.id, trimmed);
-        toast.success(`Referrer set via code "${trimmed}"`);
+        toast.success(
+          `Code "${trimmed}" set — wager income now routes to its owner`,
+        );
         setCodeInput("");
         router.refresh();
       } catch (e) {
@@ -510,8 +674,8 @@ function ReferrerCard({ user }: { user: UserDetail["user"] }) {
         <div className="space-y-1.5">
           <Label className="text-xs text-muted-foreground">
             {user.referredBy
-              ? "Change which code they joined under"
-              : "Set the code they joined under"}
+              ? "Change the code this user is on (routes wager income)"
+              : "Set the code this user is on (routes wager income)"}
           </Label>
           <div className="flex flex-wrap items-center gap-2">
             <Input
@@ -535,10 +699,16 @@ function ReferrerCard({ user }: { user: UserDetail["user"] }) {
             </Button>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            ⚠ This sets <span className="font-mono">user.referred_by</span>{" "}
-            — i.e. WHO referred THIS user in. The code must already be
-            owned by another user. To give THIS user their own code to
-            hand out instead, use the section below.
+            ⚠ This sets the user&apos;s{" "}
+            <span className="font-mono">referred_by</span> (who referred
+            them in) <span className="font-semibold">and</span> their
+            active <span className="font-mono">affiliate_code</span> — so
+            their <span className="font-semibold">wager affiliate income
+            routes to this code&apos;s owner</span>. No frontend lock is
+            applied (it replaces any pending 1h lock; the user can still
+            change it on the site). The code must already be owned by
+            another user. To give THIS user their own code to hand out
+            instead, use the section below.
           </p>
         </div>
       </CardContent>
@@ -549,8 +719,11 @@ function ReferrerCard({ user }: { user: UserDetail["user"] }) {
             <AlertDialogTitle>Clear referrer?</AlertDialogTitle>
             <AlertDialogDescription>
               Removes this user&apos;s{" "}
-              <span className="font-mono">referred_by</span> link and
-              decrements the previous referrer&apos;s{" "}
+              <span className="font-mono">referred_by</span> link, clears
+              their active{" "}
+              <span className="font-mono">affiliate_code</span> (so wager
+              income stops routing to the old owner), and decrements the
+              previous referrer&apos;s{" "}
               <span className="font-mono">total_referred</span>{" "}
               counter. Historical{" "}
               <span className="font-mono">affiliate_code_usages</span>{" "}
@@ -701,7 +874,7 @@ export function AccountTab({
   notes: AdminNote[];
   isAdmin: boolean;
 }) {
-  const { user, balances, shippingAddress, vault, depositAddresses, featureLocks, mutes, capabilities } = data;
+  const { user, balances, shippingAddress, vault, depositAddresses, featureLocks, battleLimits, mutes, capabilities } = data;
   void isAdmin; // currently only consumed by downstream components
   return (
     <div className="space-y-6">
@@ -723,6 +896,12 @@ export function AccountTab({
         userId={user.id}
         featureLocks={featureLocks}
         canToggle={capabilities.canToggleFeatureLocks}
+      />
+      <SectionHeading icon={Dices} title="Custom Battle Limits" />
+      <UserBattleLimitsCard
+        userId={user.id}
+        limits={battleLimits}
+        canManage={data.sessionRole === "admin"}
       />
       <SectionHeading icon={ShieldCheck} title="Moderation" />
       <Card>
@@ -749,8 +928,13 @@ function WageringStatsCard({
   if (!balances) {
     return (
       <Card>
-        <CardContent className="py-12 text-center text-sm text-muted-foreground">
-          No wagering data yet.
+        <CardContent className="p-0">
+          <EmptyState
+            icon={Dices}
+            title="No wagering data yet"
+            description="Wager totals appear once this user places their first bet."
+            compact
+          />
         </CardContent>
       </Card>
     );
@@ -821,8 +1005,13 @@ function RecentActivityTimeline({
   if (merged.length === 0) {
     return (
       <Card>
-        <CardContent className="py-12 text-center text-sm text-muted-foreground">
-          No recent activity.
+        <CardContent className="p-0">
+          <EmptyState
+            icon={Activity}
+            title="No recent activity"
+            description="Gaming and financial events will show up here."
+            compact
+          />
         </CardContent>
       </Card>
     );

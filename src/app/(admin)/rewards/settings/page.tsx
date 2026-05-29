@@ -4,8 +4,13 @@ import { requirePageAccess } from "@/lib/dal";
 import { getRakebackConfigs } from "@/lib/queries/rewards";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { PageHero, SectionHeading } from "@/components/modern-panels";
+import {
+  PageHero,
+  PageHeroIdentity,
+  SectionHeading,
+} from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { EmptyState } from "@/components/empty-state";
 
 export const metadata = { title: "Rewards Settings" };
 
@@ -16,17 +21,11 @@ export default async function RewardsSettingsPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-            <Settings className="size-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold leading-tight">Rewards Settings</h1>
-            <p className="text-sm text-muted-foreground">
-              Global switches and rakeback configuration.
-            </p>
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={Settings}
+          title="Rewards Settings"
+          subtitle="Global switches and rakeback configuration."
+        />
       </PageHero>
 
       <div className="space-y-3">
@@ -40,11 +39,16 @@ export default async function RewardsSettingsPage() {
           }
         />
         <FadeIn>
-          <div className="rounded-2xl border bg-card/60 p-5">
+          <div className="rounded-2xl border bg-card/60">
             {configs.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No rakeback configs found.</p>
+              <EmptyState
+                icon={Percent}
+                title="No rakeback configs found"
+                description="Rakeback tiers will appear here once they are configured."
+                compact
+              />
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-3 p-5">
                 {configs.map((config) => (
                   <div key={config.id} className="flex items-center justify-between">
                     <div className="flex items-center gap-3">

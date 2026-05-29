@@ -1058,7 +1058,15 @@ export async function assignAffiliateCode(userId: string, affiliateCode: string 
 
     await db.user.update({
       where: { id: userId },
-      data: { referred_by: null },
+      data: {
+        referred_by: null,
+        // Clearing reverts BOTH columns: drop the active code too so
+        // wager income stops routing to the old owner, and leave no
+        // lock behind.
+        affiliate_code: null,
+        affiliate_code_active: false,
+        affiliate_code_expires_at: null,
+      },
     });
 
     if (currentUser?.referred_by) {
@@ -1095,7 +1103,24 @@ export async function assignAffiliateCode(userId: string, affiliateCode: string 
   await db.$transaction([
     db.user.update({
       where: { id: userId },
-      data: { referred_by: codeRecord.user_id },
+      data: {
+        // Formal attribution — WHO referred this user in.
+        referred_by: codeRecord.user_id,
+        // The ACTIVE code the user is "on" right now. This is the field
+        // the backend reads to route WAGER affiliate income to the
+        // code's owner — setting referred_by alone does NOT move wager
+        // income (referred_by is just the permanent attribution).
+        // Store the canonical code string (exact case from the codes
+        // table), not the raw admin input.
+        affiliate_code: codeRecord.code,
+        affiliate_code_active: true,
+        // No frontend lock on an admin override: a null expiry leaves
+        // the code active for attribution while letting the user change
+        // it again on the site. (The 1h lock only applies to fresh
+        // frontend entries; setting a code here REPLACES any pending
+        // lock.)
+        affiliate_code_expires_at: null,
+      },
     }),
     db.affiliate_accounts.update({
       where: { user_id: codeRecord.user_id },
@@ -1104,7 +1129,7 @@ export async function assignAffiliateCode(userId: string, affiliateCode: string 
     db.affiliate_code_usages.create({
       data: {
         affiliate_user_id: codeRecord.user_id,
-        code: affiliateCode.trim(),
+        code: codeRecord.code,
         referred_user_id: userId,
         usage_type: "deposit",
       },
@@ -1445,6 +1470,107 @@ export async function fetchCreatorWithdrawalLimits(userId: string) {
 }
 
 // ---------------------------------------------------------------------------
+// Per-user battle limit overrides (highroller / VIP support)
+// ---------------------------------------------------------------------------
+//
+// Each field is independently nullable: null means "fall back to site_config
+// default" (`battle_max_value_usd` / `battle_base_bet_limit_usd`). The
+// backend resolution lives in CreationService.createBattle and applies the
+// override-or-default per column at battle creation time.
+//
+// Admin-only — battle limits move real money exposure (the backend uses them
+// to gate `total_cost > maxBattleValueUsd` checks), so we keep them behind
+// `requireAdmin()` rather than a softer page-access gate.
+
+const userBattleLimitsSchema = z.object({
+  userId: z.string().min(1),
+  maxValueUsd: z.number().positive().nullable(),
+  baseBetLimitUsd: z.number().positive().nullable(),
+});
+
+export async function updateUserBattleLimits(data: {
+  userId: string;
+  maxValueUsd: number | null;
+  baseBetLimitUsd: number | null;
+}): Promise<{ success: true } | { success: false; error: string }> {
+  const db = await getDb();
+  const session = await requireAdmin();
+
+  const parseResult = userBattleLimitsSchema.safeParse(data);
+  if (!parseResult.success) {
+    return {
+      success: false,
+      error: parseResult.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+  const parsed = parseResult.data;
+
+  try {
+    await db.user_battle_limits.upsert({
+      where: { user_id: parsed.userId },
+      update: {
+        max_value_usd: parsed.maxValueUsd,
+        base_bet_limit_usd: parsed.baseBetLimitUsd,
+        updated_at: new Date(),
+      },
+      create: {
+        id: crypto.randomUUID(),
+        user_id: parsed.userId,
+        max_value_usd: parsed.maxValueUsd,
+        base_bet_limit_usd: parsed.baseBetLimitUsd,
+      },
+    });
+  } catch (err) {
+    console.error("[updateUserBattleLimits] upsert failed:", err);
+    return { success: false, error: "Failed to update battle limits" };
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "user_battle_limits_updated",
+    targetUserId: parsed.userId,
+    metadata: {
+      maxValueUsd: parsed.maxValueUsd,
+      baseBetLimitUsd: parsed.baseBetLimitUsd,
+    },
+  });
+
+  revalidatePath(`/users/${parsed.userId}`);
+  return { success: true };
+}
+
+export async function clearUserBattleLimits(
+  userId: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const db = await getDb();
+  const session = await requireAdmin();
+
+  if (!userId || typeof userId !== "string") {
+    return { success: false, error: "Invalid user id" };
+  }
+
+  try {
+    // deleteMany is idempotent — count: 0 when no row exists, no throw.
+    // Matches the removeUserTag pattern so a double-click on "Clear"
+    // can't crash the page.
+    await db.user_battle_limits.deleteMany({ where: { user_id: userId } });
+  } catch (err) {
+    console.error("[clearUserBattleLimits] delete failed:", err);
+    return { success: false, error: "Failed to clear battle limits" };
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "user_battle_limits_cleared",
+    targetUserId: userId,
+    metadata: {},
+  });
+
+  revalidatePath(`/users/${userId}`);
+  return { success: true };
+}
+
+// ---------------------------------------------------------------------------
 // Wipe Account Data — Alt Account Cleanup
 // ---------------------------------------------------------------------------
 // Permanently deletes ALL user activity data while keeping the User row and
@@ -1751,5 +1877,127 @@ export async function wipeUserAccount(
 
   revalidatePath(`/users/${userId}`);
   revalidatePath("/users");
+  return { success: true };
+}
+
+// ---------------------------------------------------------------------------
+// VIP Tags — admin-CRM metadata on packy.gg users
+// ---------------------------------------------------------------------------
+// Two-tag system today (Contacted VIP / Confirmed VIP). Stored in the
+// admin DB only — no main-DB write. The full set lives in the
+// `admin_user_tags` table; this action only knows about the allow-listed
+// tag values. Adding a new tag = update both the Zod enum here AND the
+// CHECK constraint in
+// prisma/admin/migrations/20260513000000_admin_user_tags/migration.sql.
+
+const USER_TAG_VALUES = ["contacted_vip", "confirmed_vip"] as const;
+export type UserTagValue = (typeof USER_TAG_VALUES)[number];
+
+const userTagSchema = z.object({
+  userId: z.string().min(1),
+  tag: z.enum(USER_TAG_VALUES),
+});
+
+/**
+ * Idempotent tag-set. Upserts the (user, tag) pair — re-tagging the
+ * same user is a no-op at the DB level (unique index handles it).
+ * Audit-logs the assignment with the admin who set it.
+ */
+export async function setUserTag(
+  userId: string,
+  tag: UserTagValue,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requirePageAccess("/users");
+  await requireCapability(
+    session,
+    "__can_manage_user_tags",
+    "manage user tags",
+  );
+
+  const parsed = userTagSchema.safeParse({ userId, tag });
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  try {
+    await adminDb.admin_user_tags.upsert({
+      where: {
+        target_user_id_tag: {
+          target_user_id: parsed.data.userId,
+          tag: parsed.data.tag,
+        },
+      },
+      update: {},
+      create: {
+        target_user_id: parsed.data.userId,
+        tag: parsed.data.tag,
+        set_by_admin_id: session.userId,
+      },
+    });
+  } catch (err) {
+    console.error("[setUserTag] upsert failed:", err);
+    return { success: false, error: "Failed to set tag" };
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "user_tag_set",
+    targetUserId: parsed.data.userId,
+    metadata: { tag: parsed.data.tag },
+  });
+
+  revalidatePath(`/users/${parsed.data.userId}`);
+  return { success: true };
+}
+
+/**
+ * Remove a single (user, tag) pair. Idempotent — `deleteMany` returns
+ * `{ count: 0 }` instead of throwing P2025 when the row is already
+ * gone, so a double-click on the toggle can't crash the page.
+ */
+export async function removeUserTag(
+  userId: string,
+  tag: UserTagValue,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requirePageAccess("/users");
+  await requireCapability(
+    session,
+    "__can_manage_user_tags",
+    "manage user tags",
+  );
+
+  const parsed = userTagSchema.safeParse({ userId, tag });
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  try {
+    const result = await adminDb.admin_user_tags.deleteMany({
+      where: {
+        target_user_id: parsed.data.userId,
+        tag: parsed.data.tag,
+      },
+    });
+
+    if (result.count > 0) {
+      await createAdminAuditEvent({
+        adminUserId: session.userId,
+        eventType: "user_tag_removed",
+        targetUserId: parsed.data.userId,
+        metadata: { tag: parsed.data.tag },
+      });
+    }
+  } catch (err) {
+    console.error("[removeUserTag] delete failed:", err);
+    return { success: false, error: "Failed to remove tag" };
+  }
+
+  revalidatePath(`/users/${parsed.data.userId}`);
   return { success: true };
 }

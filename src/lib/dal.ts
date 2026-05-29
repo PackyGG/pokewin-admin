@@ -4,10 +4,6 @@ import { getSession, type SessionPayload } from "./session";
 import { adminDb } from "./admin-db";
 import { getDefaultRoute } from "./admin-roles";
 import type { AdminRole } from "./admin-roles";
-import {
-  SYSTEM_ROLE_CAPABILITIES,
-  type CapabilityKey,
-} from "./permissions";
 
 export { getDefaultRoute };
 export type { AdminRole };
@@ -35,6 +31,16 @@ export const verifySession = cache(async (): Promise<SessionPayload> => {
   return { ...session, role: adminUser.role };
 });
 
+/**
+ * A non-admin user's effective permission set — the `allowed_pages`
+ * array. It holds page routes ("/users") AND `__can_*` capability flags;
+ * it is the single source of truth every gate reads. Real admins get an
+ * empty array here (they bypass all page/capability checks).
+ *
+ * For non-admins `allowed_pages` is materialized from their assigned
+ * role preset plus per-user adjustments — see the role tooling in
+ * src/app/(admin)/admin-users.
+ */
 export const getUserPermissions = cache(async (userId: string): Promise<string[]> => {
   const user = await adminDb.admin_users.findUnique({
     where: { id: userId },
@@ -77,120 +83,4 @@ export async function getDefaultRouteForUser(userId: string, role: string): Prom
   if (role === "admin") return "/dashboard";
   const allowedPages = await getUserPermissions(userId);
   return getDefaultRoute(role, allowedPages);
-}
-
-// ---------------------------------------------------------------------------
-// Granular capability helpers (additive — new custom-roles system)
-// ---------------------------------------------------------------------------
-//
-// Resolution order for a session user:
-//   1. If admin_users.role_id is set → use admin_roles.capabilities array.
-//   2. Otherwise fall back to SYSTEM_ROLE_CAPABILITIES[session.role].
-//
-// This coexists with the legacy `allowed_pages` + hardcoded `requireRole()`
-// checks — existing call sites are untouched. New code can opt in by
-// calling requireCapabilityForPage() / hasCapability() instead.
-//
-// Raw SQL is used for the lookup so this module compiles cleanly before
-// `admin:migrate` has been run (the generated Prisma client won't know
-// about `role_id` / `admin_roles` until then). After migration the raw
-// query returns the new columns; before migration it just yields null
-// role_id and the system-role fallback kicks in.
-
-type ResolvedCapabilities = {
-  role: string;
-  roleId: string | null;
-  capabilities: ReadonlySet<CapabilityKey>;
-};
-
-type RoleLookupRow = {
-  role: string;
-  role_id: string | null;
-  role_capabilities: string[] | null;
-};
-
-export const resolveSessionCapabilities = cache(
-  async (userId: string): Promise<ResolvedCapabilities> => {
-    let role = "creator";
-    let roleId: string | null = null;
-    let customCaps: string[] | null = null;
-
-    try {
-      const rows = await adminDb.$queryRawUnsafe<RoleLookupRow[]>(
-        `SELECT u.role::text AS role,
-                u.role_id::text AS role_id,
-                r.capabilities AS role_capabilities
-           FROM admin_users u
-           LEFT JOIN admin_roles r ON r.id = u.role_id
-           WHERE u.id = $1::uuid`,
-        userId,
-      );
-      if (rows.length > 0) {
-        role = rows[0].role;
-        roleId = rows[0].role_id;
-        customCaps = rows[0].role_capabilities;
-      }
-    } catch {
-      // Pre-migration: columns don't exist yet. Fall back to the enum role
-      // via the typed client. This keeps the helper safe to import before
-      // the user runs admin:migrate.
-      const user = await adminDb.admin_users.findUnique({
-        where: { id: userId },
-        select: { role: true },
-      });
-      if (user) role = user.role;
-    }
-
-    if (roleId && customCaps) {
-      return {
-        role,
-        roleId,
-        capabilities: new Set(customCaps as CapabilityKey[]),
-      };
-    }
-
-    const systemRole = role as keyof typeof SYSTEM_ROLE_CAPABILITIES;
-    const keys = SYSTEM_ROLE_CAPABILITIES[systemRole] ?? [];
-    return {
-      role,
-      roleId: null,
-      capabilities: new Set(keys),
-    };
-  },
-);
-
-/** Non-throwing check used by UI to conditionally render actions. */
-export async function hasCapability(
-  session: Pick<SessionPayload, "userId" | "role">,
-  key: CapabilityKey,
-): Promise<boolean> {
-  if (session.role === "admin") return true;
-  const resolved = await resolveSessionCapabilities(session.userId);
-  if (resolved.role === "admin") return true;
-  return resolved.capabilities.has(key);
-}
-
-/**
- * Enforce that the current session user has `key` for a PAGE (Server
- * Component) load. On failure, calls Next.js `redirect()` to the user's
- * default route — mirroring `requireAdmin` / `requirePageAccess`. Because
- * `redirect()` throws an internal Next signal that the framework handles,
- * this function never returns when access is denied.
- *
- * For server-action capability gating (where you want a catchable error
- * to surface a toast in the client), use `requireCapability` from
- * `@/lib/require-capability` instead. The two helpers intentionally diverge:
- *   • `requireCapabilityForPage` (this file)  → redirect-based, page-level
- *   • `requireCapability`        (other file) → throw-based,    action-level
- */
-export async function requireCapabilityForPage(key: CapabilityKey): Promise<SessionPayload> {
-  const session = await verifySession();
-  if (session.role === "admin") return session;
-
-  const resolved = await resolveSessionCapabilities(session.userId);
-  if (resolved.role === "admin") return session;
-  if (resolved.capabilities.has(key)) return session;
-
-  const allowedPages = await getUserPermissions(session.userId);
-  redirect(getDefaultRoute(session.role, allowedPages));
 }

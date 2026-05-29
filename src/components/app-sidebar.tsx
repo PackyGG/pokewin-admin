@@ -30,18 +30,19 @@ import {
   Ticket,
   Award,
   Layers,
+  Library,
   Percent,
   TrendingUp,
   UserCircle,
-  Wallet,
   Globe,
   Megaphone,
   CalendarClock,
   Coins,
   ChevronRight,
   FlaskConical,
-  ListChecks,
   Ban,
+  Network,
+  ArrowUpCircle,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -92,17 +93,18 @@ const ICONS: Record<string, LucideIcon> = {
   Ticket,
   Award,
   Layers,
+  Library,
   Percent,
   TrendingUp,
   UserCircle,
-  Wallet,
   Globe,
   Megaphone,
   CalendarClock,
   Coins,
   FlaskConical,
-  ListChecks,
   Ban,
+  Network,
+  ArrowUpCircle,
 };
 
 type NavItem = {
@@ -115,6 +117,10 @@ type NavItem = {
   // server-side via requireMotha — this flag is purely cosmetic /
   // discoverability.
   usernameAllowlist?: string[];
+  // Renders a small "NEW" badge next to the label to surface a
+  // recently-added page. Purely cosmetic — remove once the team has
+  // discovered the page.
+  isNew?: boolean;
 };
 
 type NavGroup = {
@@ -159,10 +165,6 @@ const NAV_GROUPS: NavGroup[] = [
       // expanding the group.
       { label: "Analytics", href: "/creators/analytics", icon: "BarChart3" },
       { label: "Creators", href: "/creators", icon: "Users" },
-      // Deal Estimates — scratchpad for prospective creators / deal
-      // budgeting. Sits right under Creators because it's a sibling
-      // planning surface to the live creator list.
-      { label: "Deal Estimates", href: "/creators/list", icon: "ListChecks" },
       // Ads is the more frequently-used surface (third-party promo
       // codes attached to specific campaigns) so it sits above Codes
       // (which is the raw code list).
@@ -187,14 +189,14 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "Employees",
     items: [
-      { label: "Shifts", href: "/shifts", icon: "CalendarClock" },
-      { label: "Spending", href: "/spending", icon: "Wallet" },
       {
         label: "Salaries",
         href: "/salaries",
         icon: "Coins",
         usernameAllowlist: ["motha", "void", "kotha"],
       },
+      { label: "Employee Board", href: "/employees", icon: "Network" },
+      { label: "Shifts", href: "/shifts", icon: "CalendarClock" },
     ],
   },
   {
@@ -202,7 +204,8 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Packs", href: "/packs", icon: "Package" },
       { label: "Cards", href: "/cards", icon: "Layers" },
-      { label: "Battles", href: "/battles", icon: "Swords" },
+      { label: "Sets", href: "/sets", icon: "Library", isNew: true },
+      { label: "Upgrader", href: "/upgrader", icon: "ArrowUpCircle", isNew: true },
     ],
   },
   {
@@ -213,7 +216,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Transactions",
     items: [
       { label: "Packs", href: "/transactions/packs", icon: "Package" },
-      { label: "Battles", href: "/transactions/battles", icon: "Swords" },
+      { label: "Battles", href: "/battles", icon: "Swords" },
       { label: "Rewards", href: "/transactions/rewards", icon: "Award" },
     ],
   },
@@ -221,6 +224,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Rewards",
     items: [
       { label: "Rewards", href: "/rewards", icon: "Award" },
+      { label: "Analytics", href: "/rewards/analytics", icon: "BarChart3" },
       { label: "Rakeback", href: "/rewards/rakeback", icon: "Percent" },
       { label: "Raffles", href: "/rewards/raffles", icon: "Ticket" },
       { label: "Rain", href: "/rain", icon: "CloudRain" },
@@ -253,8 +257,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "System",
     items: [
       { label: "Users", href: "/admin-users", icon: "ShieldCheck" },
-      { label: "Roles", href: "/admin-users/roles", icon: "KeyRound" },
-      { label: "Role Permissions", href: "/settings/roles", icon: "Shield" },
+      { label: "Roles", href: "/settings/roles", icon: "KeyRound" },
       { label: "Bots", href: "/bots", icon: "Bot" },
       { label: "Settings", href: "/settings", icon: "Settings" },
       // Excluded users blacklist — motha-only entry point. The page
@@ -394,9 +397,15 @@ export function AppSidebar({
           onClick={handleNavTap}
           className="flex justify-center"
         >
-          {/* Expanded mode: wordmark (same logo for both light and dark theme) */}
+          {/* Expanded wordmark. Light mode uses logo-light.png — the exact
+              same artwork as logo.png (identical 390×91 geometry, so sizing
+              and placement match dark mode pixel-for-pixel), just with the
+              wordmark recolored to dark ink so it's visible on a light
+              background. Dark mode keeps logo.png. Both hide when collapsed. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.png" alt="Pokewin" className="h-6 group-data-[collapsible=icon]:hidden" />
+          <img src="/logo-light.png" alt="PackyGG" className="h-6 group-data-[collapsible=icon]:hidden dark:hidden" />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt="Pokewin" className="h-6 hidden dark:block group-data-[collapsible=icon]:hidden" />
           {/* Collapsed (icon) mode: show the compact favicon-sized mark */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/icon.png" alt="Pokewin" className="h-7 w-7 hidden group-data-[collapsible=icon]:block" />
@@ -436,6 +445,11 @@ export function AppSidebar({
                     >
                       <Icon className={cn("size-4", isActive ? "text-primary" : "text-muted-foreground")} />
                       <span>{item.label}</span>
+                      {item.isNew && (
+                        <span className="ml-auto rounded-sm bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-emerald-600 group-data-[collapsible=icon]:hidden dark:text-emerald-400">
+                          New
+                        </span>
+                      )}
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 );

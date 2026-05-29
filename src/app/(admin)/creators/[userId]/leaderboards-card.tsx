@@ -6,10 +6,13 @@ import { BackendApiError } from "@/lib/backend-api/errors";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/empty-state";
 import { formatDateTime } from "@/lib/utils/format";
 
 import { CreateDialog } from "../leaderboards/_components/create-dialog";
 import { CancelLeaderboardButton } from "../leaderboards/_components/cancel-leaderboard-button";
+import { InlineSponsoredPercentage } from "../leaderboards/_components/inline-sponsored-percentage";
+import { getLeaderboardSponsorshipMap } from "../_queries/leaderboard-sponsorship";
 
 type ApprovalStatus = "pending" | "approved" | "rejected";
 type TimeStatus = "upcoming" | "active" | "ended";
@@ -91,6 +94,13 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
     const total = response?.data.total ?? 0;
     const manageHref = `/creators/leaderboards?creator_user_id=${encodeURIComponent(userId)}`;
 
+    // Admin-side sponsored % per leaderboard (admin DB) so each row can
+    // edit it inline — no trip to the leaderboards page. Best-effort:
+    // a failure just renders every row at the 100% default.
+    const sponsorshipMap = await getLeaderboardSponsorshipMap(
+        rows.map((r) => r.id),
+    ).catch(() => new Map<string, number>());
+
     return (
         <Card>
             <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -123,9 +133,12 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
             </CardHeader>
             <CardContent>
                 {rows.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">
-                        This creator has not submitted any affiliate leaderboards yet.
-                    </p>
+                    <EmptyState
+                        icon={Trophy}
+                        title="No affiliate leaderboards yet"
+                        description="This creator hasn't submitted any leaderboards. Use Create to set one up on their behalf."
+                        compact
+                    />
                 ) : (
                     <div className="space-y-2">
                         {rows.map((r) => (
@@ -171,10 +184,24 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
                                         )}
                                     </div>
                                 </Link>
-                                {/* Cancel button — disabled if already
-                                    cancelled. Sits outside the Link so the
-                                    button click doesn't navigate. */}
-                                <div className="flex items-center pr-2">
+                                {/* Sponsored % editor + Cancel button —
+                                    both sit outside the Link so their
+                                    clicks don't navigate the row. The
+                                    Sponsored % feeds the /creators
+                                    Leaderboard Cost KPI; editing it here
+                                    saves a trip to the leaderboards page. */}
+                                <div className="flex items-center gap-2 pr-2">
+                                    <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                                        <span className="hidden sm:inline">
+                                            Sponsored
+                                        </span>
+                                        <InlineSponsoredPercentage
+                                            leaderboardId={r.id}
+                                            current={
+                                                sponsorshipMap.get(r.id) ?? null
+                                            }
+                                        />
+                                    </div>
                                     <CancelLeaderboardButton
                                         id={r.id}
                                         title={r.title}

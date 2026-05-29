@@ -64,6 +64,24 @@ export type admin_users = Prisma.admin_usersModel
  */
 export type admin_giveaway_actions = Prisma.admin_giveaway_actionsModel
 /**
+ * Model admin_user_tags
+ * Admin-set VIP tags on packy.gg users. Lives in the admin DB because
+ * it's admin-internal CRM metadata — never exposed to the user side
+ * and not part of the game DB's user schema (we can't cross-DB FK to
+ * the main `user` table anyway).
+ * 
+ * Two tags supported today, enforced by the `tag` text + a CHECK
+ * constraint at the SQL layer (see migration):
+ * • contacted_vip — sales/CRM reached out to this user
+ * • confirmed_vip — user is verified as an active VIP (deposits,
+ * wagers, communication patterns, etc.)
+ * 
+ * Each (user, tag) pair is unique — re-tagging is idempotent. Removing
+ * a tag is a DELETE; we don't soft-delete because the audit trail
+ * already lives in `admin_audit_events`.
+ */
+export type admin_user_tags = Prisma.admin_user_tagsModel
+/**
  * Model excluded_users
  * 
  */
@@ -154,11 +172,6 @@ export type admin_shifts = Prisma.admin_shiftsModel
  */
 export type admin_shift_assignments = Prisma.admin_shift_assignmentsModel
 /**
- * Model creator_deal_estimates
- * 
- */
-export type creator_deal_estimates = Prisma.creator_deal_estimatesModel
-/**
  * Model salary_employees
  * 
  */
@@ -168,3 +181,33 @@ export type salary_employees = Prisma.salary_employeesModel
  * 
  */
 export type salary_payouts = Prisma.salary_payoutsModel
+/**
+ * Model salary_payments
+ * 
+ */
+export type salary_payments = Prisma.salary_paymentsModel
+/**
+ * Model employee_workspaces
+ * 
+ */
+export type employee_workspaces = Prisma.employee_workspacesModel
+/**
+ * Model employee_board_placements
+ * 
+ */
+export type employee_board_placements = Prisma.employee_board_placementsModel
+/**
+ * Model employee_managers
+ * 
+ */
+export type employee_managers = Prisma.employee_managersModel
+/**
+ * Model employee_manager_workspaces
+ * 
+ */
+export type employee_manager_workspaces = Prisma.employee_manager_workspacesModel
+/**
+ * Model admin_leaderboard_sponsorship
+ * 
+ */
+export type admin_leaderboard_sponsorship = Prisma.admin_leaderboard_sponsorshipModel

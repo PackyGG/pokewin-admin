@@ -3,7 +3,6 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,9 +16,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { toggleCountryRestriction, updateCountryRestrictionArray, upsertVaultLockTime, deleteVaultLockTime } from "./actions";
-import { Pencil, Trash2, X, Check, ChevronDown } from "lucide-react";
+import { Pencil, Trash2, X, Check, ChevronDown, Globe, Timer, Plus } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Badge } from "@/components/ui/badge";
+import { SectionHeading } from "@/components/modern-panels";
+import { EmptyState } from "@/components/empty-state";
 
 type SettingsData = {
   vaultLockTimes: {
@@ -67,11 +67,9 @@ export function SettingsContent({ data }: { data: SettingsData }) {
       />
 
       {/* Country Restrictions */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium">Country Restrictions</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <div className="space-y-3">
+        <SectionHeading icon={Globe} title="Country Restrictions" />
+        <div className="rounded-md border overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
@@ -161,16 +159,21 @@ export function SettingsContent({ data }: { data: SettingsData }) {
                 </TableRow>
               ))}
               {data.countryRestrictions.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={9} className="h-24 text-center text-muted-foreground">
-                    No country restrictions configured.
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={9} className="p-0">
+                    <EmptyState
+                      icon={Globe}
+                      title="No country restrictions configured"
+                      description="Every country is unrestricted until a row is added."
+                      compact
+                    />
                   </TableCell>
                 </TableRow>
               )}
             </TableBody>
           </Table>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }
@@ -335,11 +338,10 @@ function VaultLockTimesCard({
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-sm font-medium">Vault Lock Times</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <div className="space-y-3">
+      <SectionHeading icon={Timer} title="Vault Lock Times" />
+      <div className="space-y-4 rounded-md border p-4">
+        <div className="overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow>
@@ -417,16 +419,22 @@ function VaultLockTimesCard({
               )
             )}
             {vaultLockTimes.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={3} className="text-center text-muted-foreground">
-                  No vault lock times configured.
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={3} className="p-0">
+                  <EmptyState
+                    icon={Timer}
+                    title="No vault lock times configured"
+                    description="Add a duration below to offer it as a vault option."
+                    compact
+                  />
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
+        </div>
 
-        <div className="flex items-end gap-4">
+        <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-end sm:gap-4">
           <div className="space-y-1">
             <Label>Hours</Label>
             <Input
@@ -434,7 +442,7 @@ function VaultLockTimesCard({
               placeholder="e.g. 48"
               value={newHours}
               onChange={(e) => setNewHours(e.target.value)}
-              className="w-24"
+              className="sm:w-24"
             />
           </div>
           <div className="space-y-1 flex-1">
@@ -446,10 +454,11 @@ function VaultLockTimesCard({
             />
           </div>
           <Button onClick={handleAdd} disabled={isPending}>
+            <Plus className="size-4" />
             Add
           </Button>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }

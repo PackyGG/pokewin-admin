@@ -57,9 +57,12 @@ export function HeatmapGrid({ data }: { data: HeatmapData }) {
 
       {/* Heatmap grid is 7×24 cells × 28px each ≈ 720px wide. Phones
           can't fit it, so wrap in a horizontal scroller with an explicit
-          min-w so cell sizes stay readable when the user pans. */}
-      <div className="overflow-x-auto">
-        <div className="inline-block min-w-[720px]">
+          min-w so cell sizes stay readable when the user pans.
+          `overscroll-x-contain` keeps the momentum swipe inside the grid,
+          and a right-edge fade hints there are more hours off-screen. */}
+      <div className="relative">
+        <div className="overflow-x-auto overscroll-x-contain">
+          <div className="inline-block min-w-[720px]">
           {/* Header row: hour labels */}
           <div className="flex">
             <div className="w-10 shrink-0" />
@@ -103,7 +106,14 @@ export function HeatmapGrid({ data }: { data: HeatmapData }) {
               })}
             </div>
           ))}
+          </div>
         </div>
+        {/* Right-edge fade affordance — signals more hours off-screen.
+            pointer-events-none so it never blocks the scroll/tap. */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-card to-transparent"
+        />
       </div>
 
       {/* Intensity legend — gradient ramp on the left, total on the

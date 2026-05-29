@@ -331,6 +331,18 @@ model creator_withdrawal_limits {
   user                      User      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "creator_withdrawal_limits_user_id_user_id_fk")
 }
 
+model user_battle_limits {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id            String   @unique(map: "user_battle_limits_user_id_unique")
+  max_value_usd      Decimal? @db.Decimal(20, 2)
+  base_bet_limit_usd Decimal? @db.Decimal(20, 2)
+  created_at         DateTime @default(now()) @db.Timestamp(6)
+  updated_at         DateTime @default(now()) @db.Timestamp(6)
+  user               User     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "user_battle_limits_user_id_user_id_fk")
+
+  @@index([user_id], map: "user_battle_limits_user_id_idx")
+}
+
 model deposit_addresses {
   id                  String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   user_id             String
@@ -502,7 +514,10 @@ model promo_codes {
   minimum_wager_amount     Decimal                  @default(0) @db.Decimal(20, 2)
   wager_period_days        Int                      @default(0)
   minimum_account_age_days Int                      @default(0)
+  maximum_account_age_hours Int                     @default(0)
   minimum_deposit_amount   Decimal                  @default(0) @db.Decimal(20, 2)
+  minimum_recent_deposit_amount Decimal             @default(0) @db.Decimal(20, 2)
+  recent_deposit_period_minutes Int                 @default(0)
   required_affiliate_code  String?
   requires_discord         Boolean                  @default(true)
   max_uses                 Int                      @default(1)
@@ -846,6 +861,7 @@ model User {
   chat_messages_chat_messages_deleted_byTouser                          chat_messages[]              @relation("chat_messages_deleted_byTouser")
   chat_messages_chat_messages_user_idTouser                             chat_messages[]              @relation("chat_messages_user_idTouser")
   creator_withdrawal_limits                                             creator_withdrawal_limits?
+  user_battle_limits                                                    user_battle_limits?
   deposit_addresses                                                     deposit_addresses[]
   fingerprints                                                          fingerprints[]
   game_sessions                                                         game_sessions[]
@@ -1186,6 +1202,7 @@ enum game_session_result {
 enum game_type {
   pack
   battle
+  upgrader
 }
 
 enum gift_card_region {
@@ -1240,6 +1257,8 @@ enum ledger_transaction_type {
   affiliate_leaderboard_creation
   affiliate_leaderboard_refund
   affiliate_leaderboard_prize
+  upgrader_bet
+  upgrader_payout
 }
 
 enum race_type {
@@ -1284,6 +1303,7 @@ enum source_type {
   battle
   exchange
   raffle
+  upgrader
 }
 
 enum user_role {
@@ -1298,6 +1318,8 @@ enum voucher_origin {
   battle_excess_to_voucher
   pack_borrow_to_voucher
   creator_fill_conversion
+  creator_multiplier_payout
+  upgrader_excess_to_voucher
 }
 
 enum pack_tag {

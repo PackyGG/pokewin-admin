@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, UserX } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,7 +27,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatDateTime } from "@/lib/utils/format";
+import { formatCurrency, formatDateTime } from "@/lib/utils/format";
+import { cn } from "@/lib/utils";
+import { EmptyState } from "@/components/empty-state";
 
 import type { ExcludedUserRow } from "@/lib/excluded-users/fetch";
 
@@ -134,56 +136,112 @@ export function ExcludedUsersClient({
       </div>
 
       {/* Existing blacklist */}
-      <div className="rounded-xl border bg-card">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>User ID</TableHead>
-              <TableHead>Reason</TableHead>
-              <TableHead>Excluded by</TableHead>
-              <TableHead>Added</TableHead>
-              <TableHead className="w-[80px] text-right" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {initial.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  colSpan={5}
-                  className="h-24 text-center text-sm text-muted-foreground"
-                >
-                  No excluded users yet.
-                </TableCell>
-              </TableRow>
-            ) : (
-              initial.map((row) => (
-                <TableRow key={row.userId}>
-                  <TableCell className="font-mono text-xs">
-                    {row.userId}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {row.reason ?? "—"}
-                  </TableCell>
-                  <TableCell className="text-xs">
-                    {row.excludedByUsername}
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    {formatDateTime(row.createdAt)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <RemoveButton userId={row.userId} />
-                  </TableCell>
+      {initial.length === 0 ? (
+        <div className="rounded-xl border bg-card">
+          <EmptyState
+            icon={UserX}
+            title="No excluded users yet"
+            description="Excluded user IDs are dropped from dashboard, analytics, and PnL aggregates."
+            compact
+          />
+        </div>
+      ) : (
+        <>
+          {/* Desktop table (>=md). */}
+          <div className="hidden rounded-xl border bg-card overflow-x-auto md:block">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>User ID</TableHead>
+                  <TableHead className="text-right">Total Deposited</TableHead>
+                  <TableHead>Reason</TableHead>
+                  <TableHead>Excluded by</TableHead>
+                  <TableHead>Added</TableHead>
+                  <TableHead className="w-[80px] text-right" />
                 </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+              </TableHeader>
+              <TableBody>
+                {initial.map((row) => (
+                  <TableRow key={row.userId}>
+                    <TableCell className="font-mono text-xs">
+                      {row.userId}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-xs tabular-nums">
+                      {row.totalDeposited > 0 ? (
+                        <span className="text-emerald-600 dark:text-emerald-400">
+                          {formatCurrency(row.totalDeposited)}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {row.reason ?? "—"}
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      {row.excludedByUsername}
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {formatDateTime(row.createdAt)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <RemoveButton userId={row.userId} />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+
+          {/* Mobile card list (<md) — the 6-col table overflows at
+              360px (the user ID alone is 32 mono chars). */}
+          <div className="space-y-2 md:hidden">
+            {initial.map((row) => (
+              <div
+                key={row.userId}
+                className="rounded-xl border bg-card p-3"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <span className="min-w-0 break-all font-mono text-xs">
+                    {row.userId}
+                  </span>
+                  <RemoveButton userId={row.userId} className="size-9" />
+                </div>
+                <div className="mt-2 flex items-center justify-between gap-2 text-xs">
+                  <span className="text-muted-foreground">Total deposited</span>
+                  {row.totalDeposited > 0 ? (
+                    <span className="font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
+                      {formatCurrency(row.totalDeposited)}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </div>
+                {row.reason && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {row.reason}
+                  </p>
+                )}
+                <p className="mt-2 text-[11px] text-muted-foreground">
+                  Excluded by {row.excludedByUsername} ·{" "}
+                  {formatDateTime(row.createdAt)}
+                </p>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
-function RemoveButton({ userId }: { userId: string }) {
+function RemoveButton({
+  userId,
+  className,
+}: {
+  userId: string;
+  className?: string;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -210,7 +268,10 @@ function RemoveButton({ userId }: { userId: string }) {
             variant="ghost"
             size="icon"
             disabled={isPending}
-            className="size-8 text-muted-foreground hover:text-rose-600 dark:hover:text-rose-400"
+            className={cn(
+              "size-8 text-muted-foreground hover:text-rose-600 dark:hover:text-rose-400",
+              className,
+            )}
             aria-label="Remove from blacklist"
           />
         }

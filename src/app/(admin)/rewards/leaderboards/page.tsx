@@ -20,7 +20,7 @@ import { RaceTiersTable } from "./race-tiers-table";
 import { StandingsTable } from "./standings-table";
 import { HistoryTable } from "./history-table";
 import { PeriodsTable } from "./periods-table";
-import { PageHero } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Leaderboards" };
@@ -75,17 +75,11 @@ export default async function LeaderboardsPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-            <Trophy className="size-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold leading-tight">Leaderboards</h1>
-            <p className="text-sm text-muted-foreground">
-              Wager standings, prize tiers, race periods, and historical claims.
-            </p>
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={Trophy}
+          title="Leaderboards"
+          subtitle="Wager standings, prize tiers, race periods, and historical claims."
+        />
       </PageHero>
 
       <div className="space-y-4">

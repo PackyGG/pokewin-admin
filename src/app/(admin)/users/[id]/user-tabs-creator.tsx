@@ -11,7 +11,9 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Loader2,
+  MousePointerClick,
   Pencil,
+  Users,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +50,7 @@ import type {
   WithdrawalLimits,
 } from "./user-tabs-types";
 import { InfoRow } from "./user-tabs-shared";
+import { EmptyState } from "@/components/empty-state";
 
 /* ── Creator Section ── */
 
@@ -627,12 +630,14 @@ function ReferralClicksTable({
             </TableRow>
           ))}
           {data.data.length === 0 && (
-            <TableRow>
-              <TableCell
-                colSpan={6}
-                className="h-24 text-center text-muted-foreground"
-              >
-                No clicks yet.
+            <TableRow className="hover:bg-transparent">
+              <TableCell colSpan={6} className="p-0">
+                <EmptyState
+                  icon={MousePointerClick}
+                  title="No clicks yet"
+                  description="Referral link clicks on this code will appear here."
+                  compact
+                />
               </TableCell>
             </TableRow>
           )}
@@ -747,12 +752,14 @@ function CodeUsagesTable({
             </TableRow>
           ))}
           {data.data.length === 0 && (
-            <TableRow>
-              <TableCell
-                colSpan={7}
-                className="h-24 text-center text-muted-foreground"
-              >
-                No code usages yet.
+            <TableRow className="hover:bg-transparent">
+              <TableCell colSpan={7} className="p-0">
+                <EmptyState
+                  icon={Users}
+                  title="No code usages yet"
+                  description="Sign-ups and deposits made with this code will appear here."
+                  compact
+                />
               </TableCell>
             </TableRow>
           )}

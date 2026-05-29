@@ -3,7 +3,7 @@ import { test, expect } from "../fixtures/base";
 import { cleanupE2EAdminRoles, scratchPrefix } from "../helpers/db";
 
 /**
- * /admin-users/roles — custom roles system.
+ * /settings/roles — custom roles system.
  *
  * Lightweight coverage:
  *   - the four built-in system roles are present and badged "System"
@@ -20,7 +20,7 @@ test.describe("permissions — admin roles", () => {
   });
 
   test("system roles listed as read-only", async ({ adminPage }) => {
-    await adminPage.goto("/admin-users/roles");
+    await adminPage.goto("/settings/roles");
     await expect(
       adminPage.getByRole("heading", { name: /admin roles/i }),
     ).toBeVisible();
@@ -39,7 +39,7 @@ test.describe("permissions — admin roles", () => {
   test("create custom role → persists + redirects to editor", async ({
     adminPage,
   }) => {
-    await adminPage.goto("/admin-users/roles");
+    await adminPage.goto("/settings/roles");
 
     const suffix = crypto.randomBytes(3).toString("hex");
     const roleName = `${scratchPrefix}${suffix}`;
@@ -57,15 +57,15 @@ test.describe("permissions — admin roles", () => {
 
     await dialog.getByRole("button", { name: /^create$/i }).click();
 
-    // After create, the client redirects to /admin-users/roles/{id} —
+    // After create, the client redirects to /settings/roles/{id} —
     // the editor page. Wait for that URL shape before asserting.
-    await adminPage.waitForURL(/\/admin-users\/roles\/[0-9a-f-]{36}/, {
+    await adminPage.waitForURL(/\/settings\/roles\/[0-9a-f-]{36}/, {
       timeout: 10_000,
     });
 
     // Now navigate back to the list; the new role must be listed as
     // "Custom" (not System).
-    await adminPage.goto("/admin-users/roles");
+    await adminPage.goto("/settings/roles");
     const row = adminPage.locator("tr", {
       has: adminPage.getByRole("link", { name: roleName }),
     });

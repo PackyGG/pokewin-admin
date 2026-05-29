@@ -179,6 +179,45 @@
   .text-tiny { @apply text-[10px] text-muted-foreground; }
 }
 
+/* ──────────────────────────────────────────────────────────────
+   Premium surface utilities (additive — opt-in only)
+   ──────────────────────────────────────────────────────────────
+   These give the shared modern primitives (PageHero, StatPanel,
+   KpiTile, MetricTile) an "expensive SaaS" feel without changing
+   any component APIs. They are pure CSS class hooks applied inside
+   modern-panels.tsx; nothing here alters existing shadcn cards.
+
+   - .surface-sheen   — a hairline inner ring + a faint top-edge
+       light catch, giving panels a crisp, lifted glass edge. The
+       ring uses the theme `--border` token (so light/dark both
+       look right) and a low-opacity white top highlight that reads
+       as a soft sheen on the dark navy theme. inset box-shadow so
+       it never affects layout.
+   - .surface-raise   — a soft, layered drop shadow tuned for the
+       dark theme (shadows are near-invisible on dark unless they
+       are large + soft). Pairs with hover transitions on tiles.
+   - .hover-raise      — no-op kept as a class hook. Data/KPI/stat tiles
+       must be COMPLETELY static on hover (no zoom, no lift, no shadow
+       change) per request; surface-sheen still gives the static edge.
+*/
+@layer utilities {
+  .surface-sheen {
+    box-shadow:
+      inset 0 0 0 1px color-mix(in oklch, var(--border) 70%, transparent),
+      inset 0 1px 0 0 color-mix(in oklch, white 8%, transparent);
+  }
+  .surface-raise {
+    box-shadow:
+      0 1px 2px -1px color-mix(in oklch, black 30%, transparent),
+      0 8px 24px -12px color-mix(in oklch, black 45%, transparent);
+  }
+}
+
+/* .hover-raise intentionally does nothing on hover — data/KPI/stat tiles
+   stay completely static (no zoom, no lift, no shadow change) per
+   request. Left as a class hook so existing className references stay
+   valid; .surface-sheen still provides the static lifted edge. */
+
 /* react-datasheet-grid theme overrides */
 .dsg-container {
   --dsg-selection-border-color: var(--primary);

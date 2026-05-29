@@ -158,6 +158,8 @@ const BALANCE_ADJUST_REASONS = [
   { value: "deposit_problem", label: "Deposit problem" },
   { value: "giveaway", label: "Giveaway" },
   { value: "bonus", label: "Bonus" },
+  { value: "challenge", label: "Challenge" },
+  { value: "reload", label: "Reload" },
   { value: "lossback", label: "Lossback" },
   { value: "streamer", label: "Streamer" },
   { value: "other", label: "Other" },
@@ -817,11 +819,19 @@ export function ChangeRoleDialog({
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Change Role</DialogTitle>
+          <DialogTitle>Change Site Role</DialogTitle>
         </DialogHeader>
         <div className="space-y-3 py-2">
+          {/* Disambiguates from admin-panel roles — this control only
+              governs the user's role on the game platform. */}
+          <p className="rounded-md bg-muted/60 px-2.5 py-2 text-xs text-muted-foreground">
+            Sets the user&apos;s role on the game platform (packy.gg). This
+            does <span className="font-medium text-foreground">not</span> grant
+            access to this admin panel — admin-panel access is managed
+            separately under Admin Users.
+          </p>
           <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Role</Label>
+            <Label className="text-xs text-muted-foreground">Site role</Label>
             <Select
               value={newRole}
               onValueChange={(v) => {

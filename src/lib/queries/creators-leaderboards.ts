@@ -1,12 +1,7 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-
-// Wager events the platform counts as "wagered for leaderboard
-// purposes". Same set used by analytics-cohorts / analytics-top so
-// every leaderboard-style ranking in the admin agrees on what
-// counts as wager volume.
-const WAGER_TYPES = "('pack_opening','battle_bet','battle_sponsorship')";
+import { blacklistNotInClause } from "./_blacklist";
 
 export type LeaderboardRanking = {
   position: number;
@@ -32,18 +27,26 @@ export type LeaderboardRanking = {
  * panel can show "who's at #1, #2, …" alongside the configuration.
  *
  * Methodology:
- *   1. Determine the population of users tied to this leaderboard.
- *      Drives off `affiliateCodes` if the leaderboard names specific
- *      codes; otherwise falls back to every code the creator owns
- *      (the "all codes" case the page surfaces explicitly). Casing
- *      is normalised because `affiliate_code_usages` is mixed-case
- *      for legacy rows — see the casing notes in creators-codes.ts.
- *   2. Sum each user's wager-type ledger transactions inside the
- *      [start_date, end_date) window. amounts are stored negative
- *      on the user's side (it's a debit), so we ABS them.
- *   3. Order DESC by wagered, dedupe per user, exclude staff
- *      (admin/support) so internal accounts never appear on the
- *      ranking.
+ *   1. Resolve the code set this leaderboard is scoped to. Drives
+ *      off `affiliateCodes` if the leaderboard names specific codes;
+ *      otherwise falls back to every code the participating creators
+ *      own (the "all codes" case the page surfaces explicitly).
+ *      Casing is normalised because `affiliate_code_usages` is
+ *      mixed-case for legacy rows — see creators-codes.ts.
+ *   2. Sum each user's wager *attributed to those codes*, not their
+ *      total wager volume. `affiliate_code_usages` writes one
+ *      `usage_type = 'wager'` row per wager carrying the
+ *      `wager_amount_usd` booked against whichever code was active
+ *      at the time. Summing that column — rather than the user's
+ *      whole ledger — splits a user who wagers under code A then
+ *      switches to code B correctly: A's leaderboard sees only the
+ *      A wager, B's only the B wager. (The previous implementation
+ *      summed each participant's entire ledger wager, so switching
+ *      codes double-counted the volume onto every leaderboard the
+ *      user had ever touched.)
+ *   3. Order DESC by wagered, exclude staff (admin/support) so
+ *      internal accounts never appear on the ranking. GROUP BY
+ *      referred_user_id already yields one row per user.
  *   4. Match each row's index (1-based) against the prize tier
  *      table to assign prizeUsd. Tiers are looked up by exact
  *      position; a row whose position has no tier just gets null.
@@ -70,10 +73,7 @@ export async function getAffiliateLeaderboardRankings(opts: {
 
   const db = await getDb();
   const excluded = await getExcludedUserIds();
-  const blacklistIdNotIn =
-    excluded.length > 0
-      ? `AND u.id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
-      : "";
+  const blacklistIdNotIn = blacklistNotInClause("u.id", excluded);
 
   // Resolve the code set this leaderboard is scoped to. Empty array
   // on the input = "all codes this creator owns" (matches what the
@@ -127,29 +127,30 @@ export async function getAffiliateLeaderboardRankings(opts: {
     ? [upperCodes, startDate, endDate, participatingCreatorIds]
     : [upperCodes, startDate, endDate];
 
+  // Sum wager booked against the leaderboard's code(s) directly from
+  // affiliate_code_usages: one `usage_type = 'wager'` row per wager,
+  // each carrying the wager_amount_usd attributed to the code that was
+  // active at the time. Grouping by referred_user_id collapses a user's
+  // many wager rows into a single standing. usage_type is compared via
+  // ::text because the dev DB's enum can lag the schema (enum-drift
+  // guard, same convention as the rest of the queries layer).
   const rows = await db.$queryRawUnsafe<Row[]>(
-    `WITH leaderboard_users AS (
-       SELECT DISTINCT acu.referred_user_id
-       FROM affiliate_code_usages acu
-       WHERE UPPER(acu.code) = ANY($1::text[])
-       ${whereExtra}
-     )
-     SELECT
-       lt.user_id,
+    `SELECT
+       acu.referred_user_id AS user_id,
        u.username,
        u.email,
-       SUM(ABS(lt.amount::numeric))::text AS total_wagered
-     FROM ledger_transactions lt
-     JOIN leaderboard_users lu ON lu.referred_user_id = lt.user_id
-     JOIN "user" u ON u.id = lt.user_id
-     WHERE lt.status = 'completed'
-       AND lt.type IN ${WAGER_TYPES}
-       AND lt.created_at >= $2
-       AND lt.created_at <  $3
+       SUM(acu.wager_amount_usd::numeric)::text AS total_wagered
+     FROM affiliate_code_usages acu
+     JOIN "user" u ON u.id = acu.referred_user_id
+     WHERE acu.usage_type::text = 'wager'
+       AND UPPER(acu.code) = ANY($1::text[])
+       AND acu.created_at >= $2
+       AND acu.created_at <  $3
        AND u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
-     GROUP BY lt.user_id, u.username, u.email
-     HAVING SUM(ABS(lt.amount::numeric)) > 0
-     ORDER BY SUM(ABS(lt.amount::numeric)) DESC
+       ${whereExtra}
+     GROUP BY acu.referred_user_id, u.username, u.email
+     HAVING SUM(acu.wager_amount_usd::numeric) > 0
+     ORDER BY SUM(acu.wager_amount_usd::numeric) DESC
      LIMIT ${limit}`,
     ...params,
   );

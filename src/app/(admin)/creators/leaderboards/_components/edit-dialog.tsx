@@ -17,7 +17,12 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 
-import { editLeaderboard, searchCreators, type CreatorSearchResult } from "../actions";
+import {
+    editLeaderboard,
+    searchCreators,
+    setLeaderboardSponsorship,
+    type CreatorSearchResult,
+} from "../actions";
 
 type Tier = { position: number; prize_amount_usd: string };
 
@@ -49,6 +54,9 @@ type Props = {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     leaderboard: Leaderboard;
+    // Admin-side sponsored % (cost-math input); null = not annotated
+    // yet, in which case the field starts at the 100% default.
+    currentSponsoredPct: number | null;
 };
 
 function toLocalDateTimeInput(iso: string): string {
@@ -73,7 +81,12 @@ function isTopOfHour(date: Date): boolean {
     );
 }
 
-export function EditDialog({ open, onOpenChange, leaderboard }: Props) {
+export function EditDialog({
+    open,
+    onOpenChange,
+    leaderboard,
+    currentSponsoredPct,
+}: Props) {
     const [title, setTitle] = useState(leaderboard.title);
     const [codesText, setCodesText] = useState(leaderboard.affiliate_codes.join(", "));
     const [startDate, setStartDate] = useState(toLocalDateTimeInput(leaderboard.start_date));
@@ -83,6 +96,11 @@ export function EditDialog({ open, onOpenChange, leaderboard }: Props) {
             position: String(t.position),
             amount: t.prize_amount_usd,
         })),
+    );
+    // Sponsored % — cost-math annotation. Starts at the saved value or
+    // the 100% default.
+    const [sponsoredPct, setSponsoredPct] = useState(
+        String(currentSponsoredPct ?? 100),
     );
 
     // Co-creators editing: seed from the row's existing array, then let the
@@ -100,7 +118,6 @@ export function EditDialog({ open, onOpenChange, leaderboard }: Props) {
     const [coSearchOpen, setCoSearchOpen] = useState(false);
     const [isCoSearching, setIsCoSearching] = useState(false);
     const coSearchSeqRef = useRef(0);
-
     const [isPending, startTransition] = useTransition();
     const router = useRouter();
 
@@ -237,8 +254,8 @@ export function EditDialog({ open, onOpenChange, leaderboard }: Props) {
         if (startChanged) payload.start_date = startISO;
         if (endChanged) payload.end_date = endISO;
         if (tiersChanged) {
-            if (newTiersSorted.length === 0) {
-                toast.error("At least one prize tier is required");
+            if (newTiersSorted.length < 5) {
+                toast.error("At least 5 prize tiers are required");
                 return;
             }
             if (tierSumExceeds) {
@@ -248,17 +265,43 @@ export function EditDialog({ open, onOpenChange, leaderboard }: Props) {
             payload.prize_tiers = newTiersSorted;
         }
 
-        if (Object.keys(payload).length === 0) {
+        const backendChanged = Object.keys(payload).length > 0;
+
+        // Sponsored % — saved to the admin DB, separately from the
+        // backend leaderboard fields above.
+        const pctNum = Number(sponsoredPct);
+        const sponsoredChanged = pctNum !== (currentSponsoredPct ?? 100);
+        if (
+            sponsoredChanged &&
+            (!Number.isFinite(pctNum) || pctNum < 0 || pctNum > 100)
+        ) {
+            toast.error("Sponsored % must be between 0 and 100");
+            return;
+        }
+
+        if (!backendChanged && !sponsoredChanged) {
             toast.info("No changes to save");
             onOpenChange(false);
             return;
         }
 
         startTransition(async () => {
-            const r = await editLeaderboard(leaderboard.id, payload);
-            if (!r.success) {
-                toast.error(r.error);
-                return;
+            if (backendChanged) {
+                const r = await editLeaderboard(leaderboard.id, payload);
+                if (!r.success) {
+                    toast.error(r.error);
+                    return;
+                }
+            }
+            if (sponsoredChanged) {
+                const r = await setLeaderboardSponsorship(
+                    leaderboard.id,
+                    pctNum,
+                );
+                if (!r.success) {
+                    toast.error(r.error);
+                    return;
+                }
             }
             toast.success("Updated");
             onOpenChange(false);
@@ -476,6 +519,31 @@ export function EditDialog({ open, onOpenChange, leaderboard }: Props) {
                                 <Plus className="size-4 mr-1" /> Add tier
                             </Button>
                         </div>
+                    </div>
+
+                    {/* Sponsored % — admin-side cost-accounting input.
+                        Saved to the admin DB, NOT the backend leaderboard;
+                        it weights this leaderboard in the /creators
+                        Leaderboard Cost KPI. */}
+                    <div className="space-y-2">
+                        <Label htmlFor="sponsored_pct">
+                            Sponsored % (cost math only)
+                        </Label>
+                        <Input
+                            id="sponsored_pct"
+                            type="number"
+                            min={0}
+                            max={100}
+                            step="1"
+                            value={sponsoredPct}
+                            onChange={(e) => setSponsoredPct(e.target.value)}
+                            placeholder="100"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                            Share of this leaderboard counted in the
+                            /creators Leaderboard Cost KPI. Doesn&apos;t
+                            change the leaderboard itself. Default 100%.
+                        </p>
                     </div>
 
                     <DialogFooter>

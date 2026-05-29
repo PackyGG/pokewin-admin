@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/table";
 import { formatCurrency, formatDateTime, formatRelative } from "@/lib/utils/format";
 import type { RewardItem } from "@/lib/queries/rewards";
+import { EmptyState } from "@/components/empty-state";
 import { EditRewardButton } from "../edit-reward-button";
 import { DeleteRewardButton } from "../delete-reward-button";
 
@@ -76,8 +77,13 @@ export function LevelUpTable({ data }: { data: RewardItem[] }) {
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
         {data.length === 0 ? (
-          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
-            No level-up rewards found.
+          <div className="rounded-md border">
+            <EmptyState
+              icon={TrendingUp}
+              title="No level-up rewards found"
+              description="Add a level-up reward to grant cash or packs when players reach a level."
+              compact
+            />
           </div>
         ) : (
           <div className="overflow-hidden rounded-md border">
@@ -150,12 +156,14 @@ export function LevelUpTable({ data }: { data: RewardItem[] }) {
               </TableRow>
             ))}
             {data.length === 0 && (
-              <TableRow>
-                <TableCell
-                  colSpan={7}
-                  className="h-24 text-center text-muted-foreground"
-                >
-                  No level-up rewards found.
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={7} className="p-0">
+                  <EmptyState
+                    icon={TrendingUp}
+                    title="No level-up rewards found"
+                    description="Add a level-up reward to grant cash or packs when players reach a level."
+                    compact
+                  />
                 </TableCell>
               </TableRow>
             )}

@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import {
-  ArrowLeft,
   Ticket,
   Users as UsersIcon,
   Gift,
@@ -23,8 +22,14 @@ import { formatCurrency, formatDateTime, formatNumber } from "@/lib/utils/format
 import type { EnrichedPrize } from "@/lib/queries/raffles";
 import { CancelRaffleButton } from "./cancel-raffle-button";
 import { EditRaffleButton } from "../edit-raffle-button";
-import { PageHero, SectionHeading, KpiTile } from "@/components/modern-panels";
+import {
+  PageHero,
+  PageHeroIdentity,
+  SectionHeading,
+  KpiTile,
+} from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { EmptyState } from "@/components/empty-state";
 
 export const metadata = { title: "Raffle Detail" };
 
@@ -54,43 +59,34 @@ export default async function RaffleDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-4 flex-wrap">
-          <Link
-            href="/rewards/raffles"
-            className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground shrink-0"
-          >
-            <ArrowLeft className="size-4" />
-          </Link>
-          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 shrink-0">
-            <Ticket className="size-5 text-primary" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-2xl font-bold leading-tight">{data.name}</h1>
-              <Badge variant="outline" className={STATUS_COLORS[data.status] ?? ""}>
-                {data.status}
-              </Badge>
-            </div>
-            {data.description && (
-              <p className="text-sm text-muted-foreground mt-0.5">{data.description}</p>
-            )}
-          </div>
-          {data.status === "active" && (
-            <div className="flex items-center gap-2">
-              <EditRaffleButton
-                raffleId={data.id}
-                name={data.name}
-                description={data.description}
-                startsAt={data.startsAt}
-                endsAt={data.endsAt}
-                minPointsPerEntry={data.minPointsPerEntry}
-                maxPointsPerEntry={data.maxPointsPerEntry}
-                prizes={data.prizes as EnrichedPrize[]}
-              />
-              <CancelRaffleButton raffleId={data.id} />
-            </div>
-          )}
-        </div>
+        <PageHeroIdentity
+          icon={Ticket}
+          backHref="/rewards/raffles"
+          title={data.name}
+          badges={
+            <Badge variant="outline" className={STATUS_COLORS[data.status] ?? ""}>
+              {data.status}
+            </Badge>
+          }
+          subtitle={data.description || undefined}
+          action={
+            data.status === "active" ? (
+              <>
+                <EditRaffleButton
+                  raffleId={data.id}
+                  name={data.name}
+                  description={data.description}
+                  startsAt={data.startsAt}
+                  endsAt={data.endsAt}
+                  minPointsPerEntry={data.minPointsPerEntry}
+                  maxPointsPerEntry={data.maxPointsPerEntry}
+                  prizes={data.prizes as EnrichedPrize[]}
+                />
+                <CancelRaffleButton raffleId={data.id} />
+              </>
+            ) : undefined
+          }
+        />
       </PageHero>
 
       {/* KPI strip */}
@@ -195,9 +191,14 @@ export default async function RaffleDetailPage({
                   </TableRow>
                 ))}
                 {data.entries.data.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={3} className="h-24 text-center text-muted-foreground">
-                      No entries yet.
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={3} className="p-0">
+                      <EmptyState
+                        icon={UsersIcon}
+                        title="No entries yet"
+                        description="Entries appear here as players spend points to join this raffle."
+                        compact
+                      />
                     </TableCell>
                   </TableRow>
                 )}

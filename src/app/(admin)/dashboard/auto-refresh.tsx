@@ -14,9 +14,10 @@ import { useRouter } from "next/navigation";
  * concurrent admins that was ~17k queries/hour from polling alone.
  *
  * `intervalMs` is now a per-page knob:
- *   • Dashboard: 60s — KPIs don't shift meaningfully in <1 min, and
- *     the live feeds (recent activity SSE, live pulls WS) stream
- *     independently so the user keeps real-time visibility.
+ *   • Dashboard: 60s — refreshes the KPI numbers only. The live feeds
+ *     (Recent Activity over SSE, Live Deposits via polling) bootstrap
+ *     and update on the client, so they are NOT re-queried by this
+ *     refresh and the user keeps real-time visibility independently.
  *   • Analytics: 300s (5 min) — reporting view; cohorts/funnel/LTV
  *     numbers don't change second-to-second.
  *   • Anywhere else: default 60s.

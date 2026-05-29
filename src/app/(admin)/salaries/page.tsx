@@ -1,12 +1,40 @@
-import { Coins, Users, Receipt, CalendarDays } from "lucide-react";
+import { Coins, Users, Receipt, Wallet } from "lucide-react";
 import { adminDb } from "@/lib/admin-db";
 import { requireMotha } from "@/lib/salary/motha-gate";
 import { ensureSalarySchema } from "@/lib/salary/ensure-schema";
-import { PageHero, KpiTile } from "@/components/modern-panels";
+import { addressKind } from "@/lib/salary/wallet";
+import { PageHero, PageHeroIdentity, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { SalariesClient } from "./salaries-client";
 
 export const metadata = { title: "Employee Salaries" };
+
+/**
+ * Pay-day proximity status, computed server-side per request so there's
+ * no client/server hydration mismatch.
+ *   - "due"  → the pay date is today or tomorrow (within ~24h) → red
+ *   - "ok"   → not imminent → green
+ *   - null   → no pay day set
+ * payDay is a day of the month (1-31), clamped to the month's actual
+ * length so e.g. 31 on a 30-day month means the 30th and Feb is handled.
+ */
+function payDayStatus(payDay: number | null, now: Date): "due" | "ok" | null {
+  if (payDay == null) return null;
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth();
+  const today = now.getUTCDate();
+  // Day 0 of the next month === last day of this month.
+  const daysInThisMonth = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  const dayThisMonth = Math.min(payDay, daysInThisMonth);
+  let diff = dayThisMonth - today;
+  if (diff < 0) {
+    // This month's pay date already passed → count to next month's.
+    const daysInNextMonth = new Date(Date.UTC(y, m + 2, 0)).getUTCDate();
+    const dayNextMonth = Math.min(payDay, daysInNextMonth);
+    diff = daysInThisMonth - today + dayNextMonth;
+  }
+  return diff <= 1 ? "due" : "ok";
+}
 
 export default async function SalariesPage() {
   await requireMotha();
@@ -17,35 +45,18 @@ export default async function SalariesPage() {
     /* swallow — the queries below will surface a clearer error */
   });
 
-  const now = new Date();
-  const startOfMonth = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0),
-  );
-  const startOfYear = new Date(Date.UTC(now.getUTCFullYear(), 0, 1, 0, 0, 0));
-
-  const [employees, recentPayouts, paidThisMonth, paidYtd] = await Promise.all([
+  const [employees, payments] = await Promise.all([
     adminDb.salary_employees.findMany({
       orderBy: [{ active: "desc" }, { discord_name: "asc" }],
     }),
-    adminDb.salary_payouts.findMany({
-      orderBy: { created_at: "desc" },
-      take: 50,
-      include: {
-        employee: { select: { discord_name: true, eth_address: true } },
-      },
-    }),
-    // Sum what founders have already logged as paid this calendar
-    // month (UTC-anchored — same as startOfMonth above).
-    adminDb.salary_payouts.aggregate({
-      where: { created_at: { gte: startOfMonth } },
-      _sum: { amount_usdt: true },
-    }),
-    adminDb.salary_payouts.aggregate({
-      where: { created_at: { gte: startOfYear } },
-      _sum: { amount_usdt: true },
+    adminDb.salary_payments.findMany({
+      orderBy: { paid_at: "desc" },
+      take: 100,
+      include: { employee: { select: { discord_name: true } } },
     }),
   ]);
 
+  const now = new Date();
   const activeEmployees = employees.filter((e) => e.active).length;
   // Monthly budget = sum of (salary × periods-per-month) across all
   // active employees, normalized to a calendar month. Per-period
@@ -66,30 +77,34 @@ export default async function SalariesPage() {
       (sum, e) => sum + Number(e.salary_usdt) * periodsPerMonth(e.cadence),
       0,
     );
-  const paidThisMonthUsd = Number(paidThisMonth._sum.amount_usdt ?? 0);
-  const paidYtdUsd = Number(paidYtd._sum.amount_usdt ?? 0);
+  // Address-type breakdown for the overview tile — derived purely from
+  // each saved address's format (ERC-20 0x… vs Solana base58).
+  const erc20Count = employees.filter(
+    (e) => addressKind(e.eth_address) === "erc20",
+  ).length;
+  const solCount = employees.filter(
+    (e) => addressKind(e.eth_address) === "sol",
+  ).length;
+  const unknownCount = employees.length - erc20Count - solCount;
 
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-amber-500/10">
-            <Coins className="size-5 text-amber-500" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold leading-tight">
-              Employee Salaries
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              Saved recipient registry. Click an employee&apos;s
-              address to scan it as a QR code, send USDT manually
-              from your wallet, then log the payment here.
-            </p>
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={Coins}
+          accent="amber"
+          title="Employee Salaries"
+          subtitle={
+            <>
+              Saved recipient registry. Click an employee&apos;s address to
+              scan it as a QR code and pay them manually from your wallet.
+              Each address is tagged ERC-20 or Solana.
+            </>
+          }
+        />
       </PageHero>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
         <KpiTile
           label="Active Employees"
           value={String(activeEmployees)}
@@ -103,20 +118,13 @@ export default async function SalariesPage() {
           accent="amber"
         />
         <KpiTile
-          label="Paid This Month"
-          value={`$${paidThisMonthUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
+          label="Address Types"
+          value={`${erc20Count} ERC-20`}
           sub={
-            monthlyBudget > 0
-              ? `${Math.min(100, (paidThisMonthUsd / monthlyBudget) * 100).toFixed(0)}% of budget`
-              : undefined
+            `${solCount} SOL` +
+            (unknownCount > 0 ? ` · ${unknownCount} other` : "")
           }
-          icon={CalendarDays}
-          accent="emerald"
-        />
-        <KpiTile
-          label="Paid YTD"
-          value={`$${paidYtdUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
-          icon={Coins}
+          icon={Wallet}
           accent="purple"
         />
       </div>
@@ -127,6 +135,7 @@ export default async function SalariesPage() {
             id: e.id,
             discordName: e.discord_name,
             ethAddress: e.eth_address,
+            addressKind: addressKind(e.eth_address),
             cadence: (e.cadence === "weekly" ||
             e.cadence === "biweekly" ||
             e.cadence === "monthly"
@@ -134,19 +143,16 @@ export default async function SalariesPage() {
               : "monthly") as "weekly" | "biweekly" | "monthly",
             salaryUsdt: Number(e.salary_usdt),
             active: e.active,
-            lastPaidAt: e.last_paid_at?.toISOString() ?? null,
+            payDayOfMonth: e.pay_day_of_month ?? null,
+            payStatus: payDayStatus(e.pay_day_of_month ?? null, now),
             notes: e.notes,
           }))}
-          payouts={recentPayouts.map((p) => ({
+          payments={payments.map((p) => ({
             id: p.id,
             employeeId: p.employee_id,
             employeeDiscordName: p.employee.discord_name,
-            amountUsdt: Number(p.amount_usdt),
-            toAddress: p.to_address,
-            txHash: p.tx_hash,
-            notes: p.error_message,
-            paidAt: (p.confirmed_at ?? p.broadcast_at ?? p.created_at).toISOString(),
-            createdAt: p.created_at.toISOString(),
+            paymentLink: p.payment_link,
+            paidAt: p.paid_at.toISOString(),
           }))}
         />
       </FadeIn>

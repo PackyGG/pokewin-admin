@@ -54,6 +54,19 @@ export async function ensureSalarySchema(): Promise<void> {
       ALTER TABLE "salary_employees"
         ADD COLUMN IF NOT EXISTS "cadence" TEXT NOT NULL DEFAULT 'monthly'
     `);
+    // Optional recurring pay day. pay_day_of_week (0=Sun…6=Sat) is the
+    // legacy weekday column — kept for back-compat but no longer used by
+    // the UI. pay_day_of_month (1-31) is the current setting: the day of
+    // the month the employee is paid (clamped to month length at render).
+    // Both nullable — no pay day = no due/ok badge.
+    await adminDb.$executeRawUnsafe(`
+      ALTER TABLE "salary_employees"
+        ADD COLUMN IF NOT EXISTS "pay_day_of_week" SMALLINT
+    `);
+    await adminDb.$executeRawUnsafe(`
+      ALTER TABLE "salary_employees"
+        ADD COLUMN IF NOT EXISTS "pay_day_of_month" SMALLINT
+    `);
     await adminDb.$executeRawUnsafe(`
       DO $$
       BEGIN
@@ -105,6 +118,29 @@ export async function ensureSalarySchema(): Promise<void> {
     await adminDb.$executeRawUnsafe(`
       CREATE INDEX IF NOT EXISTS "salary_payouts_created_at_idx"
         ON "salary_payouts" ("created_at" DESC)
+    `);
+    // Lightweight payment tracking: a saved payment link per employee
+    // with a date. Separate from the (legacy, unused) salary_payouts
+    // table — this is just "who got paid, link, when". CASCADE so
+    // removing an employee clears their records.
+    await adminDb.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "salary_payments" (
+        "id"            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        "employee_id"   UUID NOT NULL
+                          REFERENCES "salary_employees"("id") ON DELETE CASCADE,
+        "payment_link"  TEXT NOT NULL,
+        "paid_at"       TIMESTAMPTZ(6) NOT NULL DEFAULT now(),
+        "created_by_id" UUID NOT NULL REFERENCES "admin_users"("id"),
+        "created_at"    TIMESTAMPTZ(6) NOT NULL DEFAULT now()
+      )
+    `);
+    await adminDb.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "salary_payments_employee_id_idx"
+        ON "salary_payments" ("employee_id")
+    `);
+    await adminDb.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "salary_payments_paid_at_idx"
+        ON "salary_payments" ("paid_at" DESC)
     `);
     ensured = true;
   } catch (err) {

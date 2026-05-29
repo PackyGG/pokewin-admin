@@ -1,41 +1,20 @@
 "use client";
 
-import * as React from "react";
-
 /**
  * Client for the packy.gg live event stream via a server-side proxy.
  *
  * Uses an EventSource to /api/packy-live. The Node.js route on our
  * server opens the real WebSocket with the exact reference browser
  * handshake (headers the browser can't set directly) and forwards
- * every frame as an SSE `packy` event. All hooks below keep the same
- * public API so consumers don't care about the transport.
+ * every frame as an SSE `packy` event.
+ *
+ * Public API is the `subscribePackyWs(eventType, handler)` imperative
+ * subscription (one shared EventSource fans out to every subscriber).
+ * Consumers call it from their own `useEffect`. The chat panel is the
+ * only current consumer (`chat.pull.history`).
  */
 
 // ─── Types ────────────────────────────────────────────────────────
-
-export type Pull = {
-  card: {
-    pack_id: string;
-    pack_name: string;
-    pack_image_url: string;
-    id: string;
-    name: string;
-    price: string;
-    image_url: string;
-    color: string;
-    hp: number;
-    rarity: string;
-    artist: string;
-    set_name: string | null;
-    card_number: string | null;
-    animation: boolean;
-    source: "pack" | "battle" | "reward";
-    battle_id: string | null;
-    private: boolean;
-  };
-  timestamp: string;
-};
 
 export type ChatMessage = {
   id: string;
@@ -49,16 +28,16 @@ export type ChatMessage = {
 };
 
 export type PackyEvent =
+  // `active.users.count` is broadcast by the gateway without a
+  // subscription; kept in the union as protocol documentation even
+  // though no component currently renders it.
   | { type: "active.users.count"; payload: { count: number }; timestamp: string }
-  | { type: "live.pull.history"; payload: { pulls: Pull[] }; timestamp: string }
   | {
       type: "chat.pull.history";
       payload: { messages: ChatMessage[] };
       timestamp: string;
     }
   | { type: string; payload: unknown; timestamp: string };
-
-export type ConnectionStatus = "connecting" | "open" | "reconnecting" | "closed";
 
 // ─── Singleton state ──────────────────────────────────────────────
 
@@ -67,24 +46,8 @@ const SSE_PATH = "/api/packy-live";
 type Handler = (evt: PackyEvent) => void;
 const handlers = new Map<string, Set<Handler>>();
 
-type StatusHandler = (status: ConnectionStatus) => void;
-const statusHandlers = new Set<StatusHandler>();
-
 let source: EventSource | null = null;
 let visibilityBound = false;
-let currentStatus: ConnectionStatus = "closed";
-
-function setStatus(next: ConnectionStatus) {
-  if (next === currentStatus) return;
-  currentStatus = next;
-  for (const h of statusHandlers) {
-    try {
-      h(next);
-    } catch {
-      // ignore — keep broadcasting
-    }
-  }
-}
 
 function totalSubscribers(): number {
   let count = 0;
@@ -137,7 +100,6 @@ function closeSource(reason: "manual" | "hidden" | "teardown" | "rotation") {
     }
     source = null;
   }
-  setStatus("closed");
   if (reason === "rotation") {
     openSource();
   }
@@ -154,23 +116,15 @@ function openSource() {
     return;
   }
 
-  setStatus("connecting");
-
   let es: EventSource;
   try {
     es = new EventSource(SSE_PATH, { withCredentials: true });
   } catch (err) {
     console.error("[packy-ws] failed to construct EventSource", err);
-    setStatus("closed");
+    source = null;
     return;
   }
   source = es;
-
-  // Proxy emits `event: open` the moment the upstream WS opens — we
-  // care about upstream readiness, not the SSE handshake.
-  es.addEventListener("open", () => {
-    setStatus("open");
-  });
 
   es.addEventListener("packy", (ev: MessageEvent) => {
     if (typeof ev.data !== "string") return;
@@ -196,17 +150,7 @@ function openSource() {
         // non-JSON payload — ignore
       }
     }
-    setStatus("reconnecting");
   });
-
-  es.onerror = () => {
-    if (source !== es) return;
-    if (es.readyState === 2) {
-      setStatus("closed");
-    } else {
-      setStatus("reconnecting");
-    }
-  };
 }
 
 function handleVisibility() {
@@ -261,115 +205,4 @@ export function subscribePackyWs<T extends PackyEvent>(
       closeSource("teardown");
     }
   };
-}
-
-export function subscribePackyWsStatus(
-  handler: (status: ConnectionStatus) => void,
-): () => void {
-  statusHandlers.add(handler);
-  try {
-    handler(currentStatus);
-  } catch {
-    // ignore
-  }
-  return () => {
-    statusHandlers.delete(handler);
-  };
-}
-
-// ─── React hooks ──────────────────────────────────────────────────
-
-export function usePackyWsActiveUsers(): number | null {
-  const [count, setCount] = React.useState<number | null>(null);
-
-  React.useEffect(() => {
-    return subscribePackyWs<
-      Extract<PackyEvent, { type: "active.users.count" }>
-    >("active.users.count", (evt) => {
-      const next = evt.payload?.count;
-      if (typeof next === "number" && Number.isFinite(next)) {
-        setCount(next);
-      }
-    });
-  }, []);
-
-  return count;
-}
-
-export function usePackyWsLivePulls(max: number = 50): Pull[] {
-  const [pulls, setPulls] = React.useState<Pull[]>([]);
-
-  React.useEffect(() => {
-    return subscribePackyWs<
-      Extract<PackyEvent, { type: "live.pull.history" }>
-    >("live.pull.history", (evt) => {
-      const incoming = evt.payload?.pulls;
-      if (!Array.isArray(incoming) || incoming.length === 0) return;
-
-      setPulls((prev) => {
-        const existing = new Set(prev.map((p) => `${p.card.id}|${p.timestamp}`));
-        const fresh: Pull[] = [];
-        for (const p of incoming) {
-          const key = `${p?.card?.id ?? ""}|${p?.timestamp ?? ""}`;
-          if (existing.has(key)) continue;
-          fresh.push(p);
-          existing.add(key);
-        }
-        if (fresh.length === 0) return prev;
-
-        const combined = [...fresh, ...prev].sort((a, b) => {
-          const ta = new Date(a.timestamp).getTime();
-          const tb = new Date(b.timestamp).getTime();
-          return tb - ta;
-        });
-        return combined.slice(0, max);
-      });
-    });
-  }, [max]);
-
-  return pulls;
-}
-
-export function usePackyWsChat(max: number = 50): ChatMessage[] {
-  const [messages, setMessages] = React.useState<ChatMessage[]>([]);
-
-  React.useEffect(() => {
-    return subscribePackyWs<
-      Extract<PackyEvent, { type: "chat.pull.history" }>
-    >("chat.pull.history", (evt) => {
-      const incoming = evt.payload?.messages;
-      if (!Array.isArray(incoming) || incoming.length === 0) return;
-
-      setMessages((prev) => {
-        const existing = new Set(prev.map((m) => m.id));
-        const fresh: ChatMessage[] = [];
-        for (const m of incoming) {
-          if (!m || typeof m.id !== "string") continue;
-          if (existing.has(m.id)) continue;
-          fresh.push(m);
-          existing.add(m.id);
-        }
-        if (fresh.length === 0) return prev;
-
-        const combined = [...prev, ...fresh].sort((a, b) => {
-          const ta = new Date(a.created_at).getTime();
-          const tb = new Date(b.created_at).getTime();
-          return ta - tb;
-        });
-        return combined.slice(Math.max(0, combined.length - max));
-      });
-    });
-  }, [max]);
-
-  return messages;
-}
-
-export function usePackyWsStatus(): ConnectionStatus {
-  const [status, setStatus] = React.useState<ConnectionStatus>("closed");
-
-  React.useEffect(() => {
-    return subscribePackyWsStatus(setStatus);
-  }, []);
-
-  return status;
 }

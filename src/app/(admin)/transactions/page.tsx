@@ -10,8 +10,13 @@ import { ValueRangeFilter } from "@/app/(admin)/withdrawals/value-range-filter";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TableSkeleton, PaginationSkeleton } from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
-import { PageHero } from "@/components/modern-panels";
+import {
+  PageHero,
+  PageHeroIdentity,
+  SectionHeading,
+} from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { ListChecks } from "lucide-react";
 
 export const metadata = { title: "Transactions" };
 
@@ -114,35 +119,31 @@ export default async function TransactionsPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-            <Receipt className="size-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold leading-tight">Transactions</h1>
-            <p className="text-sm text-muted-foreground">
-              Every ledger-backed movement — filter by status, type, or value.
-            </p>
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={Receipt}
+          title="Transactions"
+          subtitle="Every ledger-backed movement — filter by status, type, or value."
+        />
       </PageHero>
 
       <div className="space-y-4">
-        <div className="flex gap-1 rounded-lg bg-muted p-1">
-          {STATUS_TABS.map((t) => (
-            <Link
-              key={t.value}
-              href={`/transactions?tab=${t.value}${params.type ? `&type=${params.type}` : ""}`}
-              className={cn(
-                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                tab === t.value
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              {t.label}
-            </Link>
-          ))}
+        <div className="-mx-1 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="inline-flex gap-1 rounded-lg bg-muted p-1">
+            {STATUS_TABS.map((t) => (
+              <Link
+                key={t.value}
+                href={`/transactions?tab=${t.value}${params.type ? `&type=${params.type}` : ""}`}
+                className={cn(
+                  "shrink-0 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                  tab === t.value
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {t.label}
+              </Link>
+            ))}
+          </div>
         </div>
         <Suspense fallback={<Skeleton className="h-10 w-full" />}>
           <DataTableToolbar
@@ -158,6 +159,10 @@ export default async function TransactionsPage({
             <ValueRangeFilter />
           </DataTableToolbar>
         </Suspense>
+      </div>
+
+      <div className="space-y-3">
+        <SectionHeading icon={ListChecks} title="Ledger entries" />
         <Suspense
           key={suspenseKey}
           fallback={

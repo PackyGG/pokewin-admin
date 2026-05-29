@@ -6,7 +6,9 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  Gem,
   Loader2,
+  Package,
   Search,
   X,
 } from "lucide-react";
@@ -23,6 +25,7 @@ import {
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import { CardImage } from "@/components/card-image";
+import { EmptyState } from "@/components/empty-state";
 import { fetchInventory } from "./actions";
 import type {
   InventoryItem,
@@ -44,11 +47,16 @@ export const InventoryGrid = React.memo(function InventoryGrid({
   userId,
   initialInventory,
   inventoryValue,
+  vouchersValue = 0,
   statusFilter = "owned",
 }: {
   userId: string;
   initialInventory: PaginatedInventory;
   inventoryValue: number;
+  /** Unclaimed voucher value the user is holding. Shown next to the
+   *  card value so "Current Inventory" reflects all held value — a
+   *  voucher is held value just like a card. */
+  vouchersValue?: number;
   statusFilter?: string;
 }) {
   const [inventory, setInventory] = useState(initialInventory);
@@ -149,6 +157,14 @@ export const InventoryGrid = React.memo(function InventoryGrid({
                 —{" "}
                 <span className="text-muted-foreground">
                   {formatCurrency(inventoryValue)}
+                </span>
+              </>
+            ) : null}
+            {vouchersValue > 0 ? (
+              <>
+                {" "}
+                <span className="text-muted-foreground">
+                  + {formatCurrency(vouchersValue)} in vouchers
                 </span>
               </>
             ) : null}
@@ -316,11 +332,18 @@ export const InventoryGrid = React.memo(function InventoryGrid({
               {data.length > 0 ? (
                 <div className={gridClass}>{data.map(renderCard)}</div>
               ) : (
-                <p className="text-center text-sm text-muted-foreground py-8">
-                  {hasFilters
-                    ? "No items match your filters"
-                    : "No items in inventory"}
-                </p>
+                <EmptyState
+                  icon={Gem}
+                  title={
+                    hasFilters ? "No items match your filters" : "No items in inventory"
+                  }
+                  description={
+                    hasFilters
+                      ? "Try clearing or adjusting the filters above."
+                      : "This user is not holding any cards right now."
+                  }
+                  compact
+                />
               )}
             </>
           );
@@ -561,11 +584,18 @@ export const DisposedCardsTable = React.memo(function DisposedCardsTable({
             })}
           </div>
         ) : (
-          <p className="text-center text-sm text-muted-foreground py-8">
-            {hasFilters
-              ? "No items match your filters"
-              : "No sold or exchanged cards"}
-          </p>
+          <EmptyState
+            icon={Package}
+            title={
+              hasFilters ? "No items match your filters" : "No sold or exchanged cards"
+            }
+            description={
+              hasFilters
+                ? "Try clearing or adjusting the filters above."
+                : "This user has not sold or exchanged any cards yet."
+            }
+            compact
+          />
         )}
 
         {totalPages > 1 && (

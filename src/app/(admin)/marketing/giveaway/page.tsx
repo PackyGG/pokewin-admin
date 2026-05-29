@@ -2,8 +2,9 @@ import Link from "next/link";
 import { Gift, ExternalLink, Twitter, MessageCircle, Link2 } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
-import { PageHero, KpiTile } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { EmptyState } from "@/components/empty-state";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
@@ -32,20 +33,19 @@ export default async function GiveawayPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-start gap-3">
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-pink-500/10">
-            <Gift className="size-5 text-pink-500" />
-          </div>
-          <div className="min-w-0">
-            <h1 className="text-2xl font-bold leading-tight">Giveaway</h1>
-            <p className="text-sm text-muted-foreground">
+        <PageHeroIdentity
+          icon={Gift}
+          accent="pink"
+          title="Giveaway"
+          subtitle={
+            <>
               Every balance adjustment tagged as a giveaway, with a link to
               the tweet or Discord message that advertised it. New entries
               land here automatically when admins adjust a balance with
               reason = &ldquo;Giveaway&rdquo;.
-            </p>
-          </div>
-        </div>
+            </>
+          }
+        />
       </PageHero>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-2">
@@ -68,10 +68,13 @@ export default async function GiveawayPage() {
 
       <FadeIn>
         {cards.length === 0 ? (
-          <div className="rounded-xl border bg-card p-8 text-center text-sm text-muted-foreground">
-            No giveaways yet. They appear here as soon as an admin adjusts a
-            user&apos;s balance with the &ldquo;Giveaway&rdquo; reason and a
-            source URL.
+          <div className="rounded-xl border bg-card">
+            <EmptyState
+              icon={Gift}
+              title="No giveaways yet"
+              description="They appear here as soon as an admin adjusts a user's balance with the “Giveaway” reason and a source URL."
+              accent="pink"
+            />
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">

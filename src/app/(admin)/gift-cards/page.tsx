@@ -9,6 +9,7 @@ import { GiftCardsContent } from "./gift-cards-content";
 import { CreateGiftCardDialog } from "./create-dialog";
 import {
   PageHero,
+  PageHeroIdentity,
   SectionHeading,
   KpiTile,
 } from "@/components/modern-panels";
@@ -42,20 +43,12 @@ export default async function GiftCardsPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-              <Gift className="size-5 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold leading-tight">Gift Cards</h1>
-              <p className="text-sm text-muted-foreground">
-                Manage and issue gift card codes with regional and value controls.
-              </p>
-            </div>
-          </div>
-          <CreateGiftCardDialog />
-        </div>
+        <PageHeroIdentity
+          icon={Gift}
+          title="Gift Cards"
+          subtitle="Manage and issue gift card codes with regional and value controls."
+          action={<CreateGiftCardDialog />}
+        />
       </PageHero>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">

@@ -35,7 +35,10 @@ export function CreatePromoCodeButton() {
   const [minimumWagerAmount, setMinimumWagerAmount] = useState("0");
   const [wagerPeriodDays, setWagerPeriodDays] = useState("0");
   const [minimumAccountAgeDays, setMinimumAccountAgeDays] = useState("0");
+  const [maximumAccountAgeHours, setMaximumAccountAgeHours] = useState("0");
   const [minimumDepositAmount, setMinimumDepositAmount] = useState("0");
+  const [minimumRecentDepositAmount, setMinimumRecentDepositAmount] = useState("0");
+  const [recentDepositPeriodMinutes, setRecentDepositPeriodMinutes] = useState("0");
   const [requiredAffiliateCode, setRequiredAffiliateCode] = useState("");
   const [requiresDiscord, setRequiresDiscord] = useState(true);
   const [maxUses, setMaxUses] = useState("1");
@@ -49,7 +52,10 @@ export function CreatePromoCodeButton() {
     setMinimumWagerAmount("0");
     setWagerPeriodDays("0");
     setMinimumAccountAgeDays("0");
+    setMaximumAccountAgeHours("0");
     setMinimumDepositAmount("0");
+    setMinimumRecentDepositAmount("0");
+    setRecentDepositPeriodMinutes("0");
     setRequiredAffiliateCode("");
     setRequiresDiscord(true);
     setMaxUses("1");
@@ -77,7 +83,12 @@ export function CreatePromoCodeButton() {
           minimumWagerAmount: parseFloat(minimumWagerAmount) || 0,
           wagerPeriodDays: parseInt(wagerPeriodDays) || 0,
           minimumAccountAgeDays: parseInt(minimumAccountAgeDays) || 0,
+          maximumAccountAgeHours: parseInt(maximumAccountAgeHours) || 0,
           minimumDepositAmount: parseFloat(minimumDepositAmount) || 0,
+          minimumRecentDepositAmount:
+            parseFloat(minimumRecentDepositAmount) || 0,
+          recentDepositPeriodMinutes:
+            parseInt(recentDepositPeriodMinutes) || 0,
           requiredAffiliateCode: requiredAffiliateCode,
           requiresDiscord,
           maxUses: parseInt(maxUses) || 1,
@@ -204,7 +215,7 @@ export function CreatePromoCodeButton() {
               </div>
             </div>
 
-            {/* Min Account Age + Min Deposit */}
+            {/* Min Account Age + Max Account Age */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mt-3">
               <div className="space-y-1">
                 <Label className="text-xs">Min Account Age (days)</Label>
@@ -216,6 +227,22 @@ export function CreatePromoCodeButton() {
                 />
               </div>
               <div className="space-y-1">
+                <Label className="text-xs">Max Account Age (hours)</Label>
+                <Input
+                  type="number"
+                  value={maximumAccountAgeHours}
+                  onChange={(e) => setMaximumAccountAgeHours(e.target.value)}
+                  placeholder="0 = no maximum"
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  New-signup gate. 24 = first 24h after signup only.
+                </p>
+              </div>
+            </div>
+
+            {/* Min Deposit */}
+            <div className="grid grid-cols-1 gap-4 mt-3">
+              <div className="space-y-1">
                 <Label className="text-xs">Min Deposit (USD, all-time)</Label>
                 <Input
                   type="number"
@@ -223,6 +250,37 @@ export function CreatePromoCodeButton() {
                   onChange={(e) => setMinimumDepositAmount(e.target.value)}
                   placeholder="0 = no minimum"
                 />
+              </div>
+            </div>
+
+            {/* Recent Deposit Window */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mt-3">
+              <div className="space-y-1">
+                <Label className="text-xs">Min Recent Deposit (USD)</Label>
+                <Input
+                  type="number"
+                  value={minimumRecentDepositAmount}
+                  onChange={(e) =>
+                    setMinimumRecentDepositAmount(e.target.value)
+                  }
+                  placeholder="0 = no minimum"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">
+                  Recent Deposit Window (minutes)
+                </Label>
+                <Input
+                  type="number"
+                  value={recentDepositPeriodMinutes}
+                  onChange={(e) =>
+                    setRecentDepositPeriodMinutes(e.target.value)
+                  }
+                  placeholder="0 = disabled"
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Both must be &gt; 0. e.g. 5 + 60 = &quot;$5 in the last hour&quot;.
+                </p>
               </div>
             </div>
 

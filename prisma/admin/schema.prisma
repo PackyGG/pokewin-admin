@@ -46,9 +46,9 @@ model admin_users {
   shift_assignments     admin_shift_assignments[]
   salary_employees      salary_employees[]
   salary_payouts        salary_payouts[]
-  creator_deal_estimates creator_deal_estimates[] @relation("creator_deal_estimates_created_by")
   excluded_users         excluded_users[]
   giveaway_actions       admin_giveaway_actions[]
+  user_tags              admin_user_tags[]
 }
 
 /// Admin-DB metadata for balance adjustments tagged as "Giveaway" on the
@@ -96,6 +96,41 @@ model admin_giveaway_actions {
 
   @@index([created_at(sort: Desc)], map: "admin_giveaway_actions_created_at_idx")
   @@index([target_user_id], map: "admin_giveaway_actions_target_user_id_idx")
+}
+
+/// Admin-set VIP tags on packy.gg users. Lives in the admin DB because
+/// it's admin-internal CRM metadata — never exposed to the user side
+/// and not part of the game DB's user schema (we can't cross-DB FK to
+/// the main `user` table anyway).
+///
+/// Two tags supported today, enforced by the `tag` text + a CHECK
+/// constraint at the SQL layer (see migration):
+///   • contacted_vip — sales/CRM reached out to this user
+///   • confirmed_vip — user is verified as an active VIP (deposits,
+///     wagers, communication patterns, etc.)
+///
+/// Each (user, tag) pair is unique — re-tagging is idempotent. Removing
+/// a tag is a DELETE; we don't soft-delete because the audit trail
+/// already lives in `admin_audit_events`.
+model admin_user_tags {
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // packy.gg user_id (text — main DB lives in a separate Postgres
+  // cluster, can't be an FK).
+  target_user_id  String
+  // Tag value — currently 'contacted_vip' | 'confirmed_vip'.
+  // The set is also enforced server-side in the action (Zod enum) so
+  // even if a future code path bypasses the SQL CHECK we still catch
+  // bad values.
+  tag             String
+  // Who set the tag. Used for the audit panel and to know which admin
+  // owns a CRM assignment.
+  set_by_admin_id String      @db.Uuid
+  created_at      DateTime    @default(now()) @db.Timestamptz(6)
+  admin_user      admin_users @relation(fields: [set_by_admin_id], references: [id])
+
+  @@unique([target_user_id, tag], map: "admin_user_tags_user_tag_unique")
+  @@index([target_user_id], map: "admin_user_tags_target_user_id_idx")
+  @@index([tag], map: "admin_user_tags_tag_idx")
 }
 
 // Admin-managed blacklist of packy.gg user IDs whose activity should
@@ -459,68 +494,6 @@ model admin_shift_assignments {
 }
 
 
-// ─── Creator deal estimates (planning scratchpad) ────────────────
-// Standalone tracking of prospective creator deals — admins enter
-// the deal terms here BEFORE any account / actual deal exists in
-// the main system, just to estimate "how much are we spending on
-// creators each month" and compare proposals. NOT linked to
-// admin_users, NOT linked to creator_deals on main DB. Pure
-// scratchpad — name is a free-text label.
-model creator_deal_estimates {
-  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  // Free-text label — usually the creator's display name / handle.
-  // No FK constraint; this list is intentionally decoupled from
-  // any real user record.
-  name                String
-  // ── Daily / weekly spend (USD, all optional) ───────────────────
-  // daily_fill_usd: USD topped up onto the creator's balance per
-  // day. Weekly raw fill is daily_fill × 7 (computed at render time).
-  daily_fill_usd      Decimal? @db.Decimal(20, 2)
-  // withdrawal_cap_usd: max creator withdrawal per WEEK (USD).
-  // Treated as weekly for the Max Cost rollup so it lines up with
-  // daily_fill × 7. Document this on the form so admins enter the
-  // right number.
-  withdrawal_cap_usd  Decimal? @db.Decimal(20, 2)
-  // withdrawal_percent: cap on how much of their wagering they're
-  // allowed to withdraw (%). E.g. 30 = up to 30% of wager.
-  withdrawal_percent  Decimal? @db.Decimal(5, 2)
-  // ── Leaderboard sponsorship (one-time prize pool) ──────────────
-  // leaderboard_cost_usd: total prize pool of the leaderboard
-  // contest.
-  leaderboard_cost_usd Decimal? @db.Decimal(20, 2)
-  // packy_paid_percent: % of the prize pool we (the house) cover.
-  // Raw LB cost = leaderboard_cost × (packy_paid_percent / 100).
-  packy_paid_percent  Decimal? @db.Decimal(5, 2)
-  // ── Deal duration ──────────────────────────────────────────────
-  // deal_length_weeks: how long the deal runs (in WEEKS). Combined
-  // with the daily / weekly spend to compute Max Cost.
-  deal_length_weeks   Int?
-  // ── Video deal terms ───────────────────────────────────────────
-  // Same shape as the daily fill (amount + recoup % + count) but
-  // for video deliverables. Per the user spec: video cost counts
-  // into the same weekly bucket as the withdraw cap — added to
-  // weekly outflow alongside it, scaled by deal_length_weeks.
-  // video_amount_usd:   USD paid PER VIDEO
-  // video_percent:      % of video cost the house recoups
-  // video_fills_per_week: number of videos per week
-  video_amount_usd       Decimal? @db.Decimal(20, 2)
-  video_percent          Decimal? @db.Decimal(5, 2)
-  video_fills_per_week   Int?
-  // ── Flat balances added straight to Max Cost ───────────────────
-  // tip_balance_usd / battle_balance_usd: one-time pre-loaded
-  // balances we hand the creator for tips / sponsored battles.
-  // Added straight to Max Cost — no per-week scaling, no recoup.
-  tip_balance_usd     Decimal? @db.Decimal(20, 2)
-  battle_balance_usd  Decimal? @db.Decimal(20, 2)
-  notes               String?
-  created_at          DateTime @default(now()) @db.Timestamptz(6)
-  updated_at          DateTime @updatedAt @db.Timestamptz(6)
-  created_by_id       String   @db.Uuid
-  created_by          admin_users @relation("creator_deal_estimates_created_by", fields: [created_by_id], references: [id])
-
-  @@index([created_at(sort: Desc)])
-}
-
 // ─── Employee salaries (motha-only manual payout register) ────────
 // We dropped the on-chain auto-payment system — motha sends USDT
 // from their own wallet manually (clicks an employee → QR code of
@@ -550,6 +523,12 @@ model salary_employees {
   // amount even if the admin types it explicitly. Catches typos.
   max_per_payout   Decimal?            @db.Decimal(20, 6)
   active           Boolean             @default(true)
+  // Legacy weekday pay day (0=Sun…6=Sat). Superseded by
+  // pay_day_of_month; kept for back-compat, not used by the UI.
+  pay_day_of_week  Int?                @db.SmallInt
+  // Recurring pay day as a day of the month (1-31, clamped to the
+  // month's length at render). Null = none set.
+  pay_day_of_month Int?                @db.SmallInt
   last_paid_at     DateTime?           @db.Timestamptz(6)
   notes            String?
   created_at       DateTime            @default(now()) @db.Timestamptz(6)
@@ -558,6 +537,7 @@ model salary_employees {
   created_by       admin_users         @relation(fields: [created_by_id], references: [id])
 
   payouts          salary_payouts[]
+  payments         salary_payments[]
 
   @@index([active])
 }
@@ -588,4 +568,121 @@ model salary_payouts {
   @@index([employee_id])
   @@index([status])
   @@index([created_at(sort: Desc)])
+}
+
+// Lightweight payment tracking — a saved payment link + date per
+// employee. Distinct from the legacy salary_payouts table; this is just
+// "who was paid, the link, and when". created_by_id is a loose FK to
+// admin_users (DB-level only, no Prisma relation) to keep the admin_users
+// model untouched.
+model salary_payments {
+  id            String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id   String           @db.Uuid
+  payment_link  String
+  paid_at       DateTime         @default(now()) @db.Timestamptz(6)
+  created_by_id String           @db.Uuid
+  created_at    DateTime         @default(now()) @db.Timestamptz(6)
+  employee      salary_employees @relation(fields: [employee_id], references: [id], onDelete: Cascade)
+
+  @@index([employee_id])
+  @@index([paid_at(sort: Desc)])
+}
+
+// ─── Employee org board (drag-and-drop workspace grouping) ─────────
+// A Kanban-style board (page /employees, all-admin access) where the
+// employees from the salary registry are organized into named
+// "workspace" columns and tagged with free-form roles. This board is
+// broader-access than the founders-only /salaries page, so it stores
+// NOTHING sensitive — pay/wallet data never leaves the salary tables.
+// Tables are also created via a runtime IF-NOT-EXISTS fallback in
+// src/lib/employee-board/ensure-schema.ts (no migration file, matching
+// the salary self-heal pattern).
+model employee_workspaces {
+  id         String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Display name of the column ("Marketing", "Dev", …).
+  name       String
+  // Manual ordering of the columns left-to-right.
+  position      Int                           @default(0)
+  created_at    DateTime                      @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime                      @updatedAt @db.Timestamptz(6)
+  placements    employee_board_placements[]
+  manager_links employee_manager_workspaces[]
+}
+
+// One row per (employee, workspace) placement — an employee can be
+// placed in multiple sections (someone who handles both areas). Roles
+// are per-placement, so the same person can hold different roles in
+// different sections. employee_id is salary_employees.id but
+// intentionally kept as a LOOSE column (DB-level FK only, no Prisma
+// relation field on salary_employees) so the salary model stays
+// untouched. workspace_id null = legacy roles-only "Unassigned" row
+// (older rows created when an employee had roles but no section);
+// new rows created by the multi-section UI always carry a workspace.
+model employee_board_placements {
+  id           String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id  String               @db.Uuid
+  workspace_id String?              @db.Uuid
+  roles        String[]             @default([])
+  position     Int                  @default(0)
+  created_at   DateTime             @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime             @updatedAt @db.Timestamptz(6)
+  workspace    employee_workspaces? @relation(fields: [workspace_id], references: [id], onDelete: SetNull)
+
+  // An employee can be placed in any given workspace at most once.
+  // Postgres treats NULL workspace_id rows as distinct under unique
+  // constraints, so legacy roles-only Unassigned rows are not blocked.
+  @@unique([employee_id, workspace_id])
+  @@index([workspace_id])
+  @@index([employee_id])
+}
+
+// An employee promoted to "manager" — rendered in the row above the
+// workspace columns. employee_id is salary_employees.id (loose column,
+// DB-level FK only, same convention as employee_board_placements). A
+// manager can oversee many workspaces via employee_manager_workspaces.
+model employee_managers {
+  id          String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id String                        @unique @db.Uuid
+  // Manual ordering of the manager blocks left-to-right.
+  position    Int                           @default(0)
+  created_at  DateTime                      @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime                      @updatedAt @db.Timestamptz(6)
+  workspaces  employee_manager_workspaces[]
+}
+
+// Many-to-many link manager ↔ workspace. One row per connector line on
+// the board. Both FKs CASCADE so deleting a manager or a workspace
+// removes its lines automatically.
+model employee_manager_workspaces {
+  id           String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  manager_id   String              @db.Uuid
+  workspace_id String              @db.Uuid
+  created_at   DateTime            @default(now()) @db.Timestamptz(6)
+  manager      employee_managers   @relation(fields: [manager_id], references: [id], onDelete: Cascade)
+  workspace    employee_workspaces @relation(fields: [workspace_id], references: [id], onDelete: Cascade)
+
+  @@unique([manager_id, workspace_id])
+  @@index([manager_id])
+  @@index([workspace_id])
+}
+
+// Admin-side "sponsored %" annotation on a creator (affiliate)
+// leaderboard. Purely a cost-accounting input — it does NOT touch the
+// backend leaderboard in any way. The /creators "Leaderboard Cost" KPI
+// counts each approved leaderboard's prize pool × this percentage;
+// leaderboards with no row default to 100% (full cost).
+model admin_leaderboard_sponsorship {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // packy.gg backend affiliate-leaderboard id (uuid string — separate
+  // system, can't be an FK). One row per leaderboard; the
+  // setLeaderboardSponsorship upsert keys on this.
+  leaderboard_id       String   @unique
+  // 0–100. Share of this leaderboard's cost the house sponsored.
+  // Range is enforced server-side in the action (Zod).
+  sponsored_percentage Decimal  @db.Decimal(5, 2)
+  // admin_users.id of whoever last set it (plain column — no FK, so
+  // adding this table doesn't touch the admin_users model).
+  set_by_admin_id      String   @db.Uuid
+  created_at           DateTime @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime @default(now()) @db.Timestamptz(6)
 }

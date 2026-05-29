@@ -78,7 +78,20 @@ if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prismaClients = clients;
 }
 
+// Bust the dev client cache when `prisma generate` updates the client
+// (HMR keeps the old PrismaClient instance otherwise → stale enum validation).
+const PRISMA_CLIENT_BUILD_ID = "2026-05-28-upgrader-enums";
+let cachedBuildId: string | undefined;
+
 function getClient(env: DbEnv): PrismaClient {
+  if (
+    process.env.NODE_ENV !== "production" &&
+    cachedBuildId !== PRISMA_CLIENT_BUILD_ID
+  ) {
+    clients.clear();
+    cachedBuildId = PRISMA_CLIENT_BUILD_ID;
+  }
+
   let client = clients.get(env);
   if (client) return client;
 

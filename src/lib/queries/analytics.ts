@@ -2,6 +2,7 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { blacklistNotInClause, escapeBlacklistIds } from "./_blacklist";
 
 // SQL fragment builder for user_id filtering — admin + support are
 // internal accounts so we drop them from analytics. Creators stay in
@@ -13,11 +14,7 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 // double-up embedded single quotes defensively.
 function buildExclStaffFrag(excluded: string[]): string {
   const tail =
-    excluded.length > 0
-      ? ` AND id NOT IN (${excluded
-          .map((id) => `'${id.replace(/'/g, "''")}'`)
-          .join(",")})`
-      : "";
+    excluded.length > 0 ? ` AND id NOT IN (${escapeBlacklistIds(excluded)})` : "";
   return `AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','support')${tail})`;
 }
 
@@ -82,6 +79,7 @@ export type AnalyticsData = {
   newSignups: number;
   packWager: number;
   battleWager: number;
+  upgraderWager: number;
   packWagerBorrowed: number;
   battleWagerBorrowed: number;
   battleStats: BattleModeStats;
@@ -122,12 +120,7 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
   // Inline `AND id NOT IN (...)` for queries that filter directly on
   // the user table (rather than on `user_id IN (subquery)`). Empty
   // string when nothing is blacklisted.
-  const blacklistIdNotIn =
-    excluded.length > 0
-      ? `AND id NOT IN (${excluded
-          .map((id) => `'${id.replace(/'/g, "''")}'`)
-          .join(",")})`
-      : "";
+  const blacklistIdNotIn = blacklistNotInClause("id", excluded);
   // Same filter, but without the leading "AND " because it'll be the only WHERE condition
   // Exclude battles created by admin/creator (support counts as normal user)
   const battleStaffExcl = `user_id IN (SELECT id FROM "user" WHERE role != 'admin')`;
@@ -162,16 +155,17 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
           total_bonuses: string;
           pack_wager: string;
           battle_wager: string;
+          upgrader_wager: string;
           pack_wager_borrowed: string;
           battle_wager_borrowed: string;
         }[]
       >(`
         SELECT
           COALESCE(SUM(CASE
-            WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
+            WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship', 'upgrader_bet')
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS total_wagers,
           COALESCE(SUM(CASE
-            WHEN type IN ('battle_refund', 'card_sale', 'reward_card_sale')
+            WHEN type IN ('battle_refund', 'upgrader_payout', 'card_sale', 'reward_card_sale')
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS total_payouts,
           COALESCE(SUM(CASE
             WHEN type IN ('deposit_bonus', 'promo_code_redeemed', 'gift_card_redeemed',
@@ -185,6 +179,9 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
           COALESCE(SUM(CASE
             WHEN type IN ('battle_bet', 'battle_sponsorship')
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager,
+          COALESCE(SUM(CASE
+            WHEN type = 'upgrader_bet'
+            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS upgrader_wager,
           COALESCE(SUM(CASE
             WHEN type = 'pack_opening' AND description ILIKE '%borrow%'
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager_borrowed,
@@ -227,7 +224,7 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
         SELECT
           DATE(created_at) AS date,
           COALESCE(SUM(CASE
-            WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
+            WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship', 'upgrader_bet')
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS total_wagers,
           COALESCE(SUM(CASE
             WHEN type IN ('battle_refund', 'card_sale', 'reward_card_sale')
@@ -250,14 +247,14 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
               THEN ABS(amount::numeric) END
           ), 0)::text AS avg_deposit,
           COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY
-            CASE WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
+            CASE WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship', 'upgrader_bet')
               THEN ABS(amount::numeric) END
           ), 0)::text AS avg_bet,
           COALESCE(SUM(CASE
             WHEN type = 'deposit'
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS total_deposit,
           COALESCE(SUM(CASE
-            WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
+            WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship', 'upgrader_bet')
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS total_bet,
           COALESCE(MIN(CASE
             WHEN type = 'deposit'
@@ -266,10 +263,10 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
             WHEN type = 'deposit'
             THEN ABS(amount::numeric) END), 0)::text AS max_deposit,
           COALESCE(MIN(CASE
-            WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
+            WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship', 'upgrader_bet')
             THEN ABS(amount::numeric) END), 0)::text AS min_bet,
           COALESCE(MAX(CASE
-            WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
+            WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship', 'upgrader_bet')
             THEN ABS(amount::numeric) END), 0)::text AS max_bet,
           COALESCE(SUM(CASE
             WHEN type = 'rakeback_claim'
@@ -471,6 +468,7 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
     newSignups: signups,
     packWager: toNumber(agg?.pack_wager),
     battleWager: toNumber(agg?.battle_wager),
+    upgraderWager: toNumber(agg?.upgrader_wager),
     packWagerBorrowed: toNumber(agg?.pack_wager_borrowed),
     battleWagerBorrowed: toNumber(agg?.battle_wager_borrowed),
     battleStats: {
@@ -558,12 +556,7 @@ export async function getPackAndBattleStats(
   const db = await getDb();
   const dateFilter = periodToDateFilter(period);
   const excluded = await getExcludedUserIds();
-  const blacklistIdNotIn =
-    excluded.length > 0
-      ? `AND id NOT IN (${excluded
-          .map((id) => `'${id.replace(/'/g, "''")}'`)
-          .join(",")})`
-      : "";
+  const blacklistIdNotIn = blacklistNotInClause("id", excluded);
   const battleStaffExcl = `user_id IN (SELECT id FROM "user" WHERE role != 'admin')`;
   const battleStaffExclAliased = `b.user_id IN (SELECT id FROM "user" WHERE role != 'admin')`;
   const battleDateWhere =

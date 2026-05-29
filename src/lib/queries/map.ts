@@ -85,7 +85,7 @@ export async function getUsersByCountry(period: Period): Promise<MapData> {
           u.country_code,
           COALESCE(SUM(CASE WHEN lt.type = 'deposit' AND lt.status = 'completed' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS total_deposits,
           COUNT(*) FILTER (WHERE lt.type = 'deposit' AND lt.status = 'completed')::text AS deposit_count,
-          COALESCE(SUM(CASE WHEN lt.type IN ('pack_opening','battle_bet','battle_sponsorship') AND lt.status = 'completed' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS total_wager
+          COALESCE(SUM(CASE WHEN lt.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND lt.status = 'completed' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS total_wager
         FROM "user" u
         INNER JOIN ledger_transactions lt ON lt.user_id = u.id
         WHERE u.${staffFilter}

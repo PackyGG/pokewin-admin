@@ -51,6 +51,13 @@ export type UserDetail = {
     createdAt: string;
     updatedAt: string;
     providers: string[];
+    /**
+     * The provider this user signed up with — the FIRST linked
+     * account (sorted by account.created_at ASC). Common values:
+     * "discord", "google", "steam", "credential" (= email/password).
+     * Null when the user has no linked account.
+     */
+    signupProvider: string | null;
     discord: {
       id: string;
       linkedAt: string | null;
@@ -89,6 +96,16 @@ export type UserDetail = {
     lockedExchanges: boolean;
     lockedOpenings: boolean;
     lockedVault: boolean;
+  } | null;
+  /**
+   * Per-user battle limit overrides. `null` row → user falls back to
+   * site_config defaults (battle_max_value_usd / battle_base_bet_limit_usd).
+   * Each field is independently nullable: a row may override one limit
+   * while leaving the other on the platform default.
+   */
+  battleLimits: {
+    maxValueUsd: number | null;
+    baseBetLimitUsd: number | null;
   } | null;
   inventoryCount: number;
   affiliate: {
@@ -159,7 +176,19 @@ export type UserDetail = {
     withdrawals: number;
     avgDeposit: number;
   };
+  tips: {
+    received: { count: number; totalUsd: number; recent: TipEntry[] };
+    sent: { count: number; totalUsd: number; recent: TipEntry[] };
+    rainPrizes: { count: number; totalUsd: number; recent: TipEntry[] };
+    leaderboardWins: { count: number; totalUsd: number; recent: TipEntry[] };
+  };
   sessionRole: string;
+  // True when the user isn't a creator now but was one before (audit
+  // role-change to creator, or owns creator-only affiliate codes).
+  wasCreator: boolean;
+  // When they were promoted to creator (ISO), if known from the audit
+  // trail. Null when only inferred from owned codes.
+  creatorSince: string | null;
   capabilities: {
     canAdjustBalance: boolean;
     canAdjustXp: boolean;
@@ -174,12 +203,28 @@ export type UserDetail = {
   };
 };
 
+export type TipEntry = {
+  id: string;
+  amountUsd: number;
+  counterpartyId: string | null;
+  counterpartyName: string | null;
+  createdAt: string;
+};
+
 export type Transaction = {
   id: string;
   type: string;
   amount: number;
   balanceBefore: number;
   balanceAfter: number;
+  /**
+   * Total worth (cash balance + held inventory worth) before/after this
+   * transaction. inventoryValue is the held value AT the tx; worthBefore
+   * removes the items this tx itself won. Mirrors the detail modal's
+   * "Worth Before / Worth After" so the table and modal never disagree.
+   */
+  worthBefore: number;
+  worthAfter: number;
   description: string;
   status: string;
   gameSessionId: string | null;
@@ -215,6 +260,45 @@ export type Transaction = {
   borrowPercentage: number | null;
   /** USD the house fronted on this row (bet × borrow%). */
   borrowedAmountUsd: number | null;
+  /**
+   * Sponsorship % of the linked battle (0 = none, 100 = fully
+   * sponsored — the creator paid the whole entry so others join free).
+   * null on non-battle rows — drives the "Sponsored" badge.
+   */
+  sponsorshipPercentage: number | null;
+  /**
+   * Battle id for battle rows (battle_bet / battle_sponsorship /
+   * battle_refund) — powers the "watch live" link to
+   * packy.gg/battle/<id>. Null on non-battle rows.
+   */
+  battleId: string | null;
+  /**
+   * Winnings for a WON battle_bet row — the battle's total card value
+   * (a battle is winner-takes-all: the winner walks away with every card
+   * pulled across all participants). Same definition the battles
+   * list/detail pages use.
+   *   - 0    → battle resolved as a LOSS (won nothing; house keeps the bet)
+   *   - >0   → battle WON; total card value the winner took
+   *   - null → not a resolved battle_bet, OR a win whose battle id could
+   *            not be derived (the UI falls back to a truthful outcome
+   *            label instead of showing a fabricated number)
+   */
+  battleWinnings: number | null;
+  /**
+   * Upgrader-only outcome derived from the presence of a matching
+   * upgrader_payout row sharing this row's game_session_id.
+   *   - "win"  → a payout row exists (upgraderWinnings = its value)
+   *   - "lose" → no payout row (upgraderWinnings = 0)
+   *   - null   → not an upgrader_bet
+   */
+  upgraderResult: "win" | "lose" | null;
+  /**
+   * Realized take on a winning upgrader play. 0 on a loss; >0 on a
+   * win; null on non-upgrader rows. Backend-side fallback picks the
+   * larger of ABS(amount) and (balance_after − balance_before) on the
+   * matching upgrader_payout row so we catch both shipping shapes.
+   */
+  upgraderWinnings: number | null;
 };
 
 export type PaginatedTransactions = {
@@ -267,6 +351,7 @@ export type BalanceHistoryPoint = { date: string; balance: number };
 export type PnlBreakdown = {
   packRevenue: number;
   battleRevenue: number;
+  upgraderRevenue: number;
   cardSalesPayouts: number;
   gamblingPnlRealized: number;
   unrealizedLiability: number;
@@ -285,9 +370,18 @@ export type PnlBreakdown = {
     exchangeExcessCredit: number;
     exchangeExcessToVoucher: number;
     battleExcessToVoucher: number;
+    affiliateLeaderboard: number;
   };
   netPnlRealized: number;
   netPnlTrue: number;
+  // Rolling windowed house P&L (past 12h / 24h / 3d / 7d) — see
+  // getUserPnlBreakdown. Four rungs so the row reads from acute to
+  // baseline; same rolling-window convention as the dashboard's
+  // global period selector.
+  pnl12h: number;
+  pnl24h: number;
+  pnl3d: number;
+  pnl7d: number;
 };
 
 export type AdminNote = {
@@ -374,11 +468,16 @@ export type GameSessionDetails = {
   createdAt: string;
 };
 
+// Gaming = pack / battle / upgrader play. Card sales + exchanges live
+// in FINANCIAL_TX_TYPES so the user-detail tabs stay coherent: Gaming
+// for gameplay, Deposits & Withdrawals for cash movement.
 export const GAMING_TX_TYPES = [
   "pack_opening",
   "battle_bet",
   "battle_sponsorship",
   "battle_refund",
+  "upgrader_bet",
+  "upgrader_payout",
   "voucher_redeemed",
 ] as const;
 export const FINANCIAL_TX_TYPES = [

@@ -2,11 +2,14 @@
 
 import type { ColumnDef } from "@tanstack/react-table";
 import Link from "next/link";
+import { Crown, Phone } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { columns as sharedColumns } from "../columns";
 import { formatCurrency } from "@/lib/utils/format";
+import { cn } from "@/lib/utils";
 import type { TransactionListItem } from "@/lib/queries/transactions";
+import type { UserTagValue } from "@/lib/queries/user-tags";
 
 /**
  * Column set for the Deposits & Withdrawals transactions view.
@@ -26,7 +29,7 @@ import type { TransactionListItem } from "@/lib/queries/transactions";
  */
 
 // Hidden because they are game-session metrics only.
-const HIDDEN_KEYS = new Set(["payout", "houseEdge"]);
+const HIDDEN_KEYS = new Set(["payout", "housePnl"]);
 
 // House-POV tones: deposit itself is cash IN (house gain, emerald).
 // Bonus credits are house-paid perks (house loss, rose). Shipping fee is
@@ -65,27 +68,78 @@ function initialsFor(username: string | null, userId: string): string {
   return src.slice(0, 2).toUpperCase();
 }
 
+// Compact tag badge — mirrors the colors / icons from the user-detail
+// tag panel so the same VIP signal looks the same site-wide. Tooltip-
+// free here (less hover noise on a busy table); the user-detail page
+// still shows the full set-by + when info.
+const TAG_META: Record<
+  UserTagValue,
+  { label: string; icon: typeof Phone; color: string }
+> = {
+  contacted_vip: {
+    label: "Contacted",
+    icon: Phone,
+    color:
+      "border-amber-500/30 bg-amber-500/15 text-amber-700 dark:text-amber-300",
+  },
+  confirmed_vip: {
+    label: "VIP",
+    icon: Crown,
+    color:
+      "border-purple-500/30 bg-purple-500/15 text-purple-700 dark:text-purple-300",
+  },
+};
+
+function UserTagBadge({ tag }: { tag: UserTagValue }) {
+  const meta = TAG_META[tag];
+  const Icon = meta.icon;
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        "h-4 gap-0.5 px-1 text-[9px] font-medium uppercase tracking-wide",
+        meta.color,
+      )}
+    >
+      <Icon className="size-2.5" />
+      {meta.label}
+    </Badge>
+  );
+}
+
 // Deposit-specific User cell: profile picture on the left, username on the
-// right, linking to the user detail page. The shared column is text-only.
+// right, linking to the user detail page. Underneath the username, any VIP
+// tags (Contacted VIP / Confirmed VIP) render as small inline badges so a
+// reviewer scanning the deposits list can spot known whales without
+// clicking into each profile.
 const userColumn: ColumnDef<TransactionListItem> = {
   accessorKey: "username",
   header: "User",
   cell: ({ row }) => {
-    const { userId, username, image } = row.original;
+    const { userId, username, image, userTags } = row.original;
     const label = username ?? userId.slice(0, 8);
     return (
-      <Link
-        href={`/users/${userId}`}
-        className="flex items-center gap-2 hover:underline"
-      >
-        <Avatar size="sm" className="shrink-0">
-          {image && <AvatarImage src={image} alt="" />}
-          <AvatarFallback className="text-[10px]">
-            {initialsFor(username, userId)}
-          </AvatarFallback>
-        </Avatar>
-        <span className="truncate">{label}</span>
-      </Link>
+      <div className="flex items-center gap-2 min-w-0">
+        <Link
+          href={`/users/${userId}`}
+          className="flex items-center gap-2 hover:underline min-w-0"
+        >
+          <Avatar size="sm" className="shrink-0">
+            {image && <AvatarImage src={image} alt="" />}
+            <AvatarFallback className="text-[10px]">
+              {initialsFor(username, userId)}
+            </AvatarFallback>
+          </Avatar>
+          <span className="truncate">{label}</span>
+        </Link>
+        {userTags.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1 shrink-0">
+            {userTags.map((t) => (
+              <UserTagBadge key={t} tag={t} />
+            ))}
+          </div>
+        )}
+      </div>
     );
   },
 };
@@ -136,8 +190,40 @@ const coinColumn: ColumnDef<TransactionListItem> = {
   },
 };
 
-// Start from the shared columns, drop payout + houseEdge, then replace the
-// User and Type columns with our deposit-specific ones.
+// Deposit-specific Amount cell: hero figure (the row's amount in
+// house-POV emerald — deposit = cash in) with the user's rolling
+// 24h / 3d deposit totals stacked underneath as a small badge.
+// Lets admins judge at a glance whether a $300 deposit is a one-off
+// or someone's 5th in 24 hours.
+const amountColumn: ColumnDef<TransactionListItem> = {
+  accessorKey: "amount",
+  header: "Amount",
+  cell: ({ row }) => {
+    const amount = row.original.amount;
+    const d24 = row.original.userDeposit24h;
+    const d3d = row.original.userDeposit3d;
+    return (
+      <div className="flex flex-col items-start gap-0.5">
+        <span className="font-medium tabular-nums text-emerald-600 dark:text-emerald-400">
+          {formatCurrency(amount)}
+        </span>
+        {(d24 != null || d3d != null) && (
+          <span className="text-[10px] tabular-nums text-muted-foreground">
+            {/* 24h on the left, 3d on the right — both labels short
+                so the badge stays on one line on phones. Reads
+                "$300 / $1.2k" with the slash separator. */}
+            24h: {formatCurrency(d24 ?? 0)} · 3d:{" "}
+            {formatCurrency(d3d ?? 0)}
+          </span>
+        )}
+      </div>
+    );
+  },
+};
+
+// Start from the shared columns, drop payout + housePnl, then replace the
+// User, Type, and Amount columns with our deposit-specific ones (Amount
+// gains the per-user 24h / 3d totals subtitle).
 const baseColumns = sharedColumns
   .filter((col) => {
     const key = getColumnKey(col);
@@ -147,6 +233,7 @@ const baseColumns = sharedColumns
     const key = getColumnKey(col);
     if (key === "username") return userColumn;
     if (key === "type") return typeColumn;
+    if (key === "amount") return amountColumn;
     return col;
   });
 

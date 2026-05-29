@@ -21,6 +21,8 @@ import { STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import type { WithdrawalListItem } from "@/lib/queries/withdrawals";
 import { WithdrawalRowActions } from "./row-actions";
+import { EmptyState } from "@/components/empty-state";
+import { ArrowUpFromLine } from "lucide-react";
 
 interface WithdrawalsDataTableProps<T> {
   columns: ColumnDef<T, unknown>[];
@@ -114,8 +116,13 @@ export function WithdrawalsDataTable<T>({ columns, data }: WithdrawalsDataTableP
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
         {mobileItems.length === 0 ? (
-          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
-            No withdrawals found.
+          <div className="rounded-md border">
+            <EmptyState
+              icon={ArrowUpFromLine}
+              title="No withdrawals found"
+              description="No withdrawal requests match the current filters. Try a different status, method, or value range."
+              compact
+            />
           </div>
         ) : (
           <div className="overflow-hidden rounded-md border">
@@ -154,9 +161,14 @@ export function WithdrawalsDataTable<T>({ columns, data }: WithdrawalsDataTableP
                 </TableRow>
               ))
             ) : (
-              <TableRow>
-                <TableCell colSpan={columns.length} className="h-24 text-center">
-                  No withdrawals found.
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={columns.length} className="p-0">
+                  <EmptyState
+                    icon={ArrowUpFromLine}
+                    title="No withdrawals found"
+                    description="No withdrawal requests match the current filters. Try a different status, method, or value range."
+                    compact
+                  />
                 </TableCell>
               </TableRow>
             )}

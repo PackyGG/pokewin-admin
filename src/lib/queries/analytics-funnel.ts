@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { blacklistNotInClause } from "./_blacklist";
 
 /**
  * Acquisition funnel: clicks → signups → first-deposit → first-wager →
@@ -49,10 +50,7 @@ export async function getFunnelData(period: FunnelPeriod): Promise<FunnelData> {
     days !== null ? `AND u.created_at >= NOW() - INTERVAL '${days} days'` : "";
   const maWCutoff = 30; // MAW = wager in the last 30 days
   const excluded = await getExcludedUserIds();
-  const blacklistIdNotIn =
-    excluded.length > 0
-      ? `AND u.id NOT IN (${excluded.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`
-      : "";
+  const blacklistIdNotIn = blacklistNotInClause("u.id", excluded);
 
   // Two parallel queries: one for the time-bounded top of the funnel
   // (clicks, taken from affiliate_clicks) and one for the cohort-scoped
@@ -93,11 +91,11 @@ export async function getFunnelData(period: FunnelPeriod): Promise<FunnelData> {
             WHERE lt.type = 'deposit' AND lt.status = 'completed'
           ) AS deposit_count,
           COUNT(*) FILTER (
-            WHERE lt.type IN ('pack_opening','battle_bet','battle_sponsorship')
+            WHERE lt.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
               AND lt.status = 'completed'
           ) AS wager_count,
           COUNT(*) FILTER (
-            WHERE lt.type IN ('pack_opening','battle_bet','battle_sponsorship')
+            WHERE lt.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
               AND lt.status = 'completed'
               AND lt.created_at >= NOW() - INTERVAL '${maWCutoff} days'
           ) AS wager_count_30d,

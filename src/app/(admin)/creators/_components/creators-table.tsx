@@ -37,13 +37,29 @@ const columns: ColumnDef<CreatorListItem>[] = [
     cell: ({ row }) => {
       const { id, username, email } = row.original;
       const display = username ?? email ?? id.slice(0, 8);
+      const hasActiveDeal =
+        row.original.current_deal?.status === "active";
       return (
-        <Link
-          href={`/creators/${id}`}
-          className="font-medium hover:underline"
-        >
-          {display}
-        </Link>
+        <div className="flex items-center gap-2">
+          {/* Steady emerald dot when the creator has a deal in the
+              active state right now. Lets admins scan the table for
+              creators currently mid-deal without reading the This
+              Week column. Distinct from the Streaming column's
+              pulsing dot — that one fires on active_session_id. */}
+          {hasActiveDeal && (
+            <span
+              className="relative inline-flex size-2 shrink-0 rounded-full bg-emerald-500"
+              aria-label="Active deal"
+              title="Deal is currently active this week"
+            />
+          )}
+          <Link
+            href={`/creators/${id}`}
+            className="font-medium hover:underline"
+          >
+            {display}
+          </Link>
+        </div>
       );
     },
   },
@@ -127,6 +143,7 @@ function CreatorMobileCard({ creator }: { creator: CreatorListItem }) {
     creator.username ?? creator.email ?? creator.id.slice(0, 8);
   const live = creator.active_session_id !== null;
   const deal = creator.current_deal;
+  const hasActiveDeal = deal?.status === "active";
   return (
     <div className="border-b border-border/60 last:border-b-0 px-3 py-3">
       <div className="flex items-start gap-3">
@@ -141,6 +158,15 @@ function CreatorMobileCard({ creator }: { creator: CreatorListItem }) {
             >
               {display}
             </Link>
+            {hasActiveDeal && (
+              <span
+                className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-medium text-emerald-600 dark:text-emerald-400"
+                title="Deal is currently active this week"
+              >
+                <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
+                Active
+              </span>
+            )}
             {live && (
               <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
                 <span className="relative flex size-1.5">

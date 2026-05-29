@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import {
-  ArrowLeft,
   Code,
   Users,
   UserCheck,
@@ -29,10 +28,12 @@ import { CountryBreakdown } from "../../[userId]/country-breakdown";
 import { AcquisitionChart } from "../../[userId]/acquisition-chart";
 import {
   PageHero,
+  PageHeroIdentity,
   SectionHeading,
   KpiTile,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { EmptyState } from "@/components/empty-state";
 
 export const metadata = { title: "Creator Code Detail" };
 
@@ -50,33 +51,25 @@ export default async function CodeAnalyticsPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-center gap-3">
-          <Link
-            href="/creators/codes"
-            className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground"
-          >
-            <ArrowLeft className="size-4" />
-          </Link>
-          <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-            <Code className="size-5 text-primary" />
-          </div>
-          <div>
-            <div className="flex items-center gap-3 flex-wrap">
-              <h1 className="text-2xl font-bold leading-tight font-mono">
-                {data.code}
-              </h1>
-              <Badge
-                variant="outline"
-                className={
-                  data.isActive
-                    ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
-                    : "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"
-                }
-              >
-                {data.isActive ? "Active" : "Inactive"}
-              </Badge>
-            </div>
-            <p className="text-sm text-muted-foreground">
+        <PageHeroIdentity
+          icon={Code}
+          backHref="/creators/codes"
+          title={data.code}
+          titleClassName="font-mono"
+          badges={
+            <Badge
+              variant="outline"
+              className={
+                data.isActive
+                  ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                  : "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"
+              }
+            >
+              {data.isActive ? "Active" : "Inactive"}
+            </Badge>
+          }
+          subtitle={
+            <>
               Owner:{" "}
               <Link
                 href={`/creators/${data.ownerUserId}`}
@@ -84,9 +77,9 @@ export default async function CodeAnalyticsPage({
               >
                 {data.ownerUsername ?? data.ownerUserId.slice(0, 8)}
               </Link>
-            </p>
-          </div>
-        </div>
+            </>
+          }
+        />
       </PageHero>
 
       {/* Signups + Active broken out as separate tiles so both numbers
@@ -276,12 +269,14 @@ export default async function CodeAnalyticsPage({
                 );
               })}
               {data.recentReferrals.length === 0 && (
-                <TableRow>
-                  <TableCell
-                    colSpan={7}
-                    className="h-24 text-center text-muted-foreground"
-                  >
-                    No referrals yet.
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={7} className="p-0">
+                    <EmptyState
+                      icon={Activity}
+                      title="No referrals yet"
+                      description="When a user signs up, deposits, or wagers on this code, they'll appear here."
+                      compact
+                    />
                   </TableCell>
                 </TableRow>
               )}

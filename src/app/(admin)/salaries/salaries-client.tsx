@@ -7,11 +7,11 @@ import { toast } from "sonner";
 import {
   Copy,
   ExternalLink,
+  Link2,
   Pencil,
   Plus,
   QrCode,
   Receipt,
-  RefreshCw,
   Trash2,
   Wallet,
 } from "lucide-react";
@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { formatDate } from "@/lib/utils/format";
 import {
   Dialog,
   DialogContent,
@@ -40,27 +41,76 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { formatRelative } from "@/lib/utils/format";
+import { cn } from "@/lib/utils";
+import { EmptyState } from "@/components/empty-state";
 import {
   addSalaryEmployee,
+  addSalaryPayment,
   deleteSalaryEmployee,
-  deleteSalaryPayout,
-  recordSalaryPayout,
+  deleteSalaryPayment,
   updateSalaryEmployee,
 } from "./actions";
 
 type Cadence = "weekly" | "biweekly" | "monthly";
 
+// Chain the saved address belongs to — derived server-side from the
+// address format and passed down (the client never re-detects).
+type AddressKind = "erc20" | "sol" | "unknown";
+
 type Employee = {
   id: string;
   discordName: string;
   ethAddress: string;
+  addressKind: AddressKind;
   cadence: Cadence;
   salaryUsdt: number;
   active: boolean;
-  lastPaidAt: string | null;
+  // Recurring pay day as a day of the month (1-31) or null if unset,
+  // plus the server-computed proximity status used to color the badge.
+  payDayOfMonth: number | null;
+  payStatus: "due" | "ok" | null;
   notes: string | null;
 };
+
+// Day-of-month options for the pay-day dropdown (1-31).
+const PAY_DAY_OPTIONS = Array.from({ length: 31 }, (_, i) => i + 1);
+
+// 1 → "1st", 2 → "2nd", 3 → "3rd", 11 → "11th", 21 → "21st", 31 → "31st".
+function ordinal(n: number): string {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return `${n}${s[(v - 20) % 10] || s[v] || s[0]}`;
+}
+
+// Pay-day badge. Red = "due" (today/tomorrow is the pay date, ~24h out),
+// green = "ok" (not imminent). These are status colors the admin asked
+// for, not House-POV money colors.
+function PayDayBadge({
+  payDayOfMonth,
+  payStatus,
+}: {
+  payDayOfMonth: number | null;
+  payStatus: "due" | "ok" | null;
+}) {
+  if (payDayOfMonth == null) {
+    return <span className="text-xs text-muted-foreground">—</span>;
+  }
+  const due = payStatus === "due";
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        "text-[10px] font-medium",
+        due
+          ? "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400"
+          : "border-emerald-500/30 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+      )}
+      title={due ? "Pay day is within ~24h" : "Pay day not imminent"}
+    >
+      {ordinal(payDayOfMonth)}
+    </Badge>
+  );
+}
 
 const CADENCE_LABELS: Record<Cadence, string> = {
   weekly: "Weekly",
@@ -77,29 +127,90 @@ const CADENCE_COLORS: Record<Cadence, string> = {
     "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
 };
 
-type Payout = {
+// ── Address-type tag (ERC-20 / SOL) ─────────────────────────────────
+
+const ADDRESS_KIND_META: Record<
+  AddressKind,
+  { label: string; className: string }
+> = {
+  erc20: {
+    label: "ERC-20",
+    className:
+      "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 border-indigo-500/30",
+  },
+  sol: {
+    label: "SOL",
+    className:
+      "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
+  },
+  unknown: {
+    label: "Unknown",
+    className: "bg-muted text-muted-foreground border-border",
+  },
+};
+
+function AddressTag({ kind }: { kind: AddressKind }) {
+  const meta = ADDRESS_KIND_META[kind];
+  return (
+    <Badge
+      variant="outline"
+      className={cn("shrink-0 text-[10px] font-medium", meta.className)}
+    >
+      {meta.label}
+    </Badge>
+  );
+}
+
+// Per-chain QR-dialog copy + block explorer. `null` explorer = no link
+// (unknown format).
+const EXPLORER: Record<
+  AddressKind,
+  { name: string; addressUrl: (a: string) => string } | null
+> = {
+  erc20: {
+    name: "Etherscan",
+    addressUrl: (a) => `https://etherscan.io/address/${a}`,
+  },
+  sol: {
+    name: "Solscan",
+    addressUrl: (a) => `https://solscan.io/account/${a}`,
+  },
+  unknown: null,
+};
+
+const SCAN_HINT: Record<AddressKind, string> = {
+  erc20: "Scan with any Ethereum wallet to send USDT (ERC-20) on mainnet.",
+  sol: "Scan with any Solana wallet to send to this address.",
+  unknown: "Scan with the matching wallet — verify the network first.",
+};
+
+const NETWORK_NOTE: Record<AddressKind, string> = {
+  erc20:
+    "Network: Ethereum Mainnet (USDT contract 0xdAC17F95…1ec7). Sending other tokens or the wrong network = lost funds.",
+  sol: "Network: Solana. Sending the wrong token or network = lost funds.",
+  unknown:
+    "Unrecognized address format — double-check which network this belongs to before sending.",
+};
+
+type Payment = {
   id: string;
   employeeId: string;
   employeeDiscordName: string;
-  amountUsdt: number;
-  toAddress: string;
-  txHash: string | null;
-  notes: string | null;
+  paymentLink: string;
   paidAt: string;
-  createdAt: string;
 };
 
 export function SalariesClient({
   employees,
-  payouts,
+  payments,
 }: {
   employees: Employee[];
-  payouts: Payout[];
+  payments: Payment[];
 }) {
   return (
     <div className="space-y-4">
       <EmployeesCard employees={employees} />
-      <PayoutsCard payouts={payouts} employees={employees} />
+      <PaymentTrackingCard employees={employees} payments={payments} />
     </div>
   );
 }
@@ -122,50 +233,66 @@ function EmployeesCard({ employees }: { employees: Employee[] }) {
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          Saved recipients with their default salary. Click the
-          address to view a QR code, then scan it with your wallet
-          (MetaMask, Trust, etc.) to send USDT (ERC-20) on Ethereum
-          mainnet manually. Log the payment here afterwards so the
-          monthly totals stay accurate.
+          Saved recipients with their default salary. Each address is
+          tagged ERC-20 or Solana. Click an address to view its QR code,
+          then scan it with your wallet to pay manually.
         </p>
       </CardHeader>
       <CardContent>
         {employees.length === 0 ? (
-          <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-            No employees yet. Add one to start tracking salaries.
+          <div className="rounded-md border border-dashed">
+            <EmptyState
+              icon={Wallet}
+              title="No employees yet"
+              description="Add one to start tracking salaries."
+              compact
+            />
           </div>
         ) : (
-          <div className="rounded-md border overflow-hidden">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b bg-muted/50">
-                  <th className="px-3 py-2 text-left text-xs font-medium">
-                    Discord
-                  </th>
-                  <th className="px-3 py-2 text-left text-xs font-medium">
-                    Address (click for QR)
-                  </th>
-                  <th className="px-3 py-2 text-left text-xs font-medium">
-                    Cadence
-                  </th>
-                  <th className="px-3 py-2 text-right text-xs font-medium">
-                    Salary
-                  </th>
-                  <th className="px-3 py-2 text-left text-xs font-medium">
-                    Last Paid
-                  </th>
-                  <th className="px-3 py-2 text-right text-xs font-medium">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {employees.map((e) => (
-                  <EmployeeRow key={e.id} employee={e} />
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            {/* Desktop table (>=md). Horizontal scroll guard so the
+                columns never blow up the layout on tablet widths. */}
+            <div className="hidden rounded-md border overflow-x-auto md:block">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b bg-muted/50">
+                    <th className="px-3 py-2 text-left text-xs font-medium">
+                      Discord
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-medium">
+                      Address (click for QR)
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-medium">
+                      Cadence
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-medium">
+                      Pay Day
+                    </th>
+                    <th className="px-3 py-2 text-right text-xs font-medium">
+                      Salary
+                    </th>
+                    <th className="px-3 py-2 text-right text-xs font-medium">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {employees.map((e) => (
+                    <EmployeeRow key={e.id} employee={e} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile card list (<md) — the table overflows at 360px, so
+                each employee renders as a stacked card with ≥40px touch
+                targets for the actions. */}
+            <div className="space-y-2 md:hidden">
+              {employees.map((e) => (
+                <EmployeeMobileCard key={e.id} employee={e} />
+              ))}
+            </div>
+          </>
         )}
       </CardContent>
       <EmployeeFormDialog
@@ -179,7 +306,6 @@ function EmployeesCard({ employees }: { employees: Employee[] }) {
 
 function EmployeeRow({ employee }: { employee: Employee }) {
   const [qrOpen, setQrOpen] = useState(false);
-  const [logOpen, setLogOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   return (
     <>
@@ -195,15 +321,18 @@ function EmployeeRow({ employee }: { employee: Employee }) {
           )}
         </td>
         <td className="px-3 py-2">
-          <button
-            type="button"
-            onClick={() => setQrOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs font-mono text-blue-500 hover:bg-blue-500/10 hover:underline"
-            title="Click to view QR code"
-          >
-            <QrCode className="size-3" />
-            {employee.ethAddress.slice(0, 6)}…{employee.ethAddress.slice(-4)}
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setQrOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs font-mono text-blue-500 hover:bg-blue-500/10 hover:underline"
+              title="Click to view QR code"
+            >
+              <QrCode className="size-3" />
+              {employee.ethAddress.slice(0, 6)}…{employee.ethAddress.slice(-4)}
+            </button>
+            <AddressTag kind={employee.addressKind} />
+          </div>
         </td>
         <td className="px-3 py-2">
           <Badge
@@ -212,6 +341,12 @@ function EmployeeRow({ employee }: { employee: Employee }) {
           >
             {CADENCE_LABELS[employee.cadence]}
           </Badge>
+        </td>
+        <td className="px-3 py-2">
+          <PayDayBadge
+            payDayOfMonth={employee.payDayOfMonth}
+            payStatus={employee.payStatus}
+          />
         </td>
         <td className="px-3 py-2 text-right text-sm tabular-nums">
           ${employee.salaryUsdt.toFixed(2)}
@@ -229,26 +364,8 @@ function EmployeeRow({ employee }: { employee: Employee }) {
             </div>
           )}
         </td>
-        <td className="px-3 py-2 text-xs text-muted-foreground">
-          {employee.lastPaidAt ? formatRelative(employee.lastPaidAt) : "never"}
-        </td>
         <td className="px-3 py-2 text-right">
           <div className="flex items-center justify-end gap-1">
-            <Button
-              size="sm"
-              variant="default"
-              className="h-7 text-xs bg-emerald-500 hover:bg-emerald-500/90"
-              disabled={!employee.active}
-              onClick={() => setLogOpen(true)}
-              title={
-                employee.active
-                  ? "Record a manual payment"
-                  : "Employee is inactive"
-              }
-            >
-              <Receipt className="size-3" />
-              Log Payment
-            </Button>
             <Button
               size="icon"
               variant="ghost"
@@ -267,9 +384,108 @@ function EmployeeRow({ employee }: { employee: Employee }) {
         onClose={() => setQrOpen(false)}
         employee={employee}
       />
-      <RecordPayoutDialog
-        open={logOpen}
-        onClose={() => setLogOpen(false)}
+      <EmployeeFormDialog
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        employee={employee}
+      />
+    </>
+  );
+}
+
+// Mobile equivalent of EmployeeRow — same data + actions + dialogs,
+// laid out as a stacked card so the table doesn't overflow on phones.
+function EmployeeMobileCard({ employee }: { employee: Employee }) {
+  const [qrOpen, setQrOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const perMonth =
+    employee.cadence === "monthly"
+      ? null
+      : employee.salaryUsdt *
+        (employee.cadence === "weekly" ? 52 / 12 : 26 / 12);
+  return (
+    <div
+      className={cn(
+        "rounded-lg border bg-card p-3",
+        !employee.active && "opacity-60",
+      )}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <span className="font-mono text-sm font-medium">
+            {employee.discordName}
+          </span>
+          {!employee.active && (
+            <Badge variant="outline" className="text-[10px]">
+              inactive
+            </Badge>
+          )}
+          <Badge
+            variant="outline"
+            className={cn("text-[10px]", CADENCE_COLORS[employee.cadence])}
+          >
+            {CADENCE_LABELS[employee.cadence]}
+          </Badge>
+          {employee.payDayOfMonth != null && (
+            <PayDayBadge
+              payDayOfMonth={employee.payDayOfMonth}
+              payStatus={employee.payStatus}
+            />
+          )}
+        </div>
+        <div className="text-right">
+          <div className="text-sm font-semibold tabular-nums">
+            ${employee.salaryUsdt.toFixed(2)}
+            <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+              /
+              {employee.cadence === "monthly"
+                ? "mo"
+                : employee.cadence === "weekly"
+                  ? "wk"
+                  : "2wk"}
+            </span>
+          </div>
+          {perMonth != null && (
+            <div className="text-[10px] text-muted-foreground tabular-nums">
+              ≈ $
+              {perMonth.toLocaleString(undefined, {
+                maximumFractionDigits: 2,
+              })}{" "}
+              /mo
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => setQrOpen(true)}
+          className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 text-xs font-mono text-blue-500 hover:bg-blue-500/10 hover:underline"
+          title="Click to view QR code"
+        >
+          <QrCode className="size-3" />
+          {employee.ethAddress.slice(0, 6)}…{employee.ethAddress.slice(-4)}
+        </button>
+        <AddressTag kind={employee.addressKind} />
+      </div>
+
+      <div className="mt-3 flex items-center gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-9 flex-1"
+          onClick={() => setEditOpen(true)}
+        >
+          <Pencil className="size-4" />
+          Edit
+        </Button>
+        <DeleteEmployeeButton employee={employee} className="size-9" />
+      </div>
+
+      <AddressQrDialog
+        open={qrOpen}
+        onClose={() => setQrOpen(false)}
         employee={employee}
       />
       <EmployeeFormDialog
@@ -277,7 +493,7 @@ function EmployeeRow({ employee }: { employee: Employee }) {
         onClose={() => setEditOpen(false)}
         employee={employee}
       />
-    </>
+    </div>
   );
 }
 
@@ -293,6 +509,7 @@ function AddressQrDialog({
   employee: Employee;
 }) {
   const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const explorer = EXPLORER[employee.addressKind];
 
   useEffect(() => {
     if (!open) {
@@ -300,8 +517,8 @@ function AddressQrDialog({
       return;
     }
     let cancelled = false;
-    // Generate the QR for the bare 0x address — universally
-    // scannable by any Ethereum wallet.
+    // Generate the QR for the bare address — universally scannable by
+    // any wallet on the matching network.
     QRCode.toDataURL(employee.ethAddress, {
       errorCorrectionLevel: "M",
       margin: 2,
@@ -337,11 +554,11 @@ function AddressQrDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <QrCode className="size-4 text-amber-500" />
-            {employee.discordName} — USDT Address
+            {employee.discordName} — Wallet Address
+            <AddressTag kind={employee.addressKind} />
           </DialogTitle>
           <DialogDescription>
-            Scan with any Ethereum wallet to send USDT (ERC-20) on
-            mainnet. Default monthly salary: $
+            {SCAN_HINT[employee.addressKind]} Salary per period: $
             {employee.salaryUsdt.toFixed(2)}.
           </DialogDescription>
         </DialogHeader>
@@ -375,161 +592,29 @@ function AddressQrDialog({
               >
                 <Copy className="size-3.5" />
               </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="size-7 shrink-0"
-                render={
-                  <a
-                    href={`https://etherscan.io/address/${employee.ethAddress}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    aria-label="Open in Etherscan"
-                  >
-                    <ExternalLink className="size-3.5" />
-                  </a>
-                }
-              />
+              {explorer && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="size-7 shrink-0"
+                  render={
+                    <a
+                      href={explorer.addressUrl(employee.ethAddress)}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label={`Open in ${explorer.name}`}
+                    >
+                      <ExternalLink className="size-3.5" />
+                    </a>
+                  }
+                />
+              )}
             </div>
             <p className="text-[10px] text-muted-foreground">
-              Network: Ethereum Mainnet (USDT contract
-              0xdAC17F95…1ec7). Sending other tokens or wrong
-              network = lost funds.
+              {NETWORK_NOTE[employee.addressKind]}
             </p>
           </div>
         </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ── Record payout dialog (per-employee) ────────────────────────────
-
-function RecordPayoutDialog({
-  open,
-  onClose,
-  employee,
-}: {
-  open: boolean;
-  onClose: () => void;
-  employee: Employee;
-}) {
-  const router = useRouter();
-  const [amount, setAmount] = useState(String(employee.salaryUsdt));
-  const [txHash, setTxHash] = useState("");
-  const [notes, setNotes] = useState("");
-  const [pending, startTransition] = useTransition();
-
-  // Reset on (re-)open so a stale form from a previous employee
-  // doesn't leak across rows.
-  useEffect(() => {
-    if (open) {
-      setAmount(String(employee.salaryUsdt));
-      setTxHash("");
-      setNotes("");
-    }
-  }, [open, employee.id, employee.salaryUsdt]);
-
-  function handleSubmit() {
-    const amt = parseFloat(amount);
-    if (!Number.isFinite(amt) || amt <= 0) {
-      toast.error("Enter a positive amount");
-      return;
-    }
-    // Auto-extract hash if motha pastes a full URL.
-    const m = txHash.match(/0x[a-fA-F0-9]{64}/);
-    const cleanedHash = m ? m[0] : txHash.trim() || undefined;
-    startTransition(async () => {
-      const result = await recordSalaryPayout({
-        employeeId: employee.id,
-        amountUsdt: amt,
-        txHash: cleanedHash,
-        notes: notes.trim() || undefined,
-      });
-      if (!result.success) {
-        toast.error(result.error);
-        return;
-      }
-      toast.success(`Logged $${amt.toFixed(2)} payout to ${employee.discordName}`);
-      onClose();
-      router.refresh();
-    });
-  }
-
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(o) => {
-        if (!o) onClose();
-      }}
-    >
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Receipt className="size-4 text-emerald-500" />
-            Log payment to {employee.discordName}
-          </DialogTitle>
-          <DialogDescription>
-            Record a USDT salary payment you already sent from your
-            own wallet. Pasting the etherscan tx link is optional but
-            recommended — the audit log + dedup checks key off it.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-3 py-2">
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">
-              Amount (USDT)
-            </Label>
-            <Input
-              type="number"
-              step="0.01"
-              min="0"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">
-              Etherscan Tx Hash{" "}
-              <span className="font-normal text-muted-foreground/60">
-                (optional)
-              </span>
-            </Label>
-            <Input
-              value={txHash}
-              onChange={(e) => setTxHash(e.target.value)}
-              placeholder="0x… or full etherscan URL"
-              className="font-mono text-xs"
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">
-              Notes{" "}
-              <span className="font-normal text-muted-foreground/60">
-                (optional)
-              </span>
-            </Label>
-            <Textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={2}
-              placeholder="e.g. April 2026 — paid via Ledger"
-              maxLength={500}
-            />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={pending}>
-            Cancel
-          </Button>
-          <Button
-            onClick={handleSubmit}
-            disabled={pending}
-            className="bg-emerald-500 hover:bg-emerald-500/90"
-          >
-            {pending ? "Logging…" : "Log Payment"}
-          </Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
@@ -550,6 +635,9 @@ function EmployeeFormDialog({
   const [discordName, setDiscordName] = useState(employee?.discordName ?? "");
   const [address, setAddress] = useState(employee?.ethAddress ?? "");
   const [cadence, setCadence] = useState<Cadence>(employee?.cadence ?? "monthly");
+  const [payDay, setPayDay] = useState<number | null>(
+    employee?.payDayOfMonth ?? null,
+  );
   const [salary, setSalary] = useState(
     employee ? String(employee.salaryUsdt) : "",
   );
@@ -562,6 +650,7 @@ function EmployeeFormDialog({
     setDiscordName(employee?.discordName ?? "");
     setAddress(employee?.ethAddress ?? "");
     setCadence(employee?.cadence ?? "monthly");
+    setPayDay(employee?.payDayOfMonth ?? null);
     setSalary(employee ? String(employee.salaryUsdt) : "");
     setActive(employee?.active ?? true);
     setNotes(employee?.notes ?? "");
@@ -590,6 +679,7 @@ function EmployeeFormDialog({
             cadence,
             salaryUsdt: sal,
             active,
+            payDayOfMonth: payDay,
             notes: notes.trim() || null,
           })
         : await addSalaryEmployee({
@@ -598,6 +688,7 @@ function EmployeeFormDialog({
             cadence,
             salaryUsdt: sal,
             active,
+            payDayOfMonth: payDay,
             notes: notes.trim() || null,
           });
       if (!result.success) {
@@ -641,14 +732,17 @@ function EmployeeFormDialog({
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">
-              Ethereum Address
+              Wallet Address (ERC-20 or Solana)
             </Label>
             <Input
               value={address}
               onChange={(e) => setAddress(e.target.value)}
-              placeholder="0x…"
+              placeholder="0x… (ERC-20) or a Solana address"
               className="font-mono text-xs"
             />
+            <p className="text-[10px] text-muted-foreground">
+              Auto-tagged ERC-20 or Solana from the address format.
+            </p>
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Cadence</Label>
@@ -669,6 +763,30 @@ function EmployeeFormDialog({
                   ? " 2 weeks"
                   : " month"}
               ).
+            </p>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Pay Day</Label>
+            <select
+              value={payDay === null ? "" : String(payDay)}
+              onChange={(e) =>
+                setPayDay(
+                  e.target.value === "" ? null : Number(e.target.value),
+                )
+              }
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            >
+              <option value="">No pay day</option>
+              {PAY_DAY_OPTIONS.map((d) => (
+                <option key={d} value={d}>
+                  {ordinal(d)}
+                </option>
+              ))}
+            </select>
+            <p className="text-[10px] text-muted-foreground">
+              Day of the month. Shown on the list and flagged red ~24h
+              before. Days past a short month&apos;s end fall on its last
+              day.
             </p>
           </div>
           <div className="space-y-1">
@@ -735,7 +853,13 @@ function EmployeeFormDialog({
   );
 }
 
-function DeleteEmployeeButton({ employee }: { employee: Employee }) {
+function DeleteEmployeeButton({
+  employee,
+  className,
+}: {
+  employee: Employee;
+  className?: string;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -758,7 +882,10 @@ function DeleteEmployeeButton({ employee }: { employee: Employee }) {
       <Button
         size="icon"
         variant="ghost"
-        className="size-7 text-muted-foreground hover:text-rose-500"
+        className={cn(
+          "size-7 text-muted-foreground hover:text-rose-500",
+          className,
+        )}
         onClick={() => setOpen(true)}
         aria-label="Remove"
       >
@@ -789,192 +916,219 @@ function DeleteEmployeeButton({ employee }: { employee: Employee }) {
   );
 }
 
-// ── Payouts log ─────────────────────────────────────────────────────
+// ── Payment tracking ────────────────────────────────────────────────
 
-function PayoutsCard({
-  payouts,
+function PaymentTrackingCard({
   employees,
+  payments,
 }: {
-  payouts: Payout[];
   employees: Employee[];
+  payments: Payment[];
 }) {
-  const router = useRouter();
   const [adding, setAdding] = useState(false);
-
   return (
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2 text-base">
             <Receipt className="size-4 text-emerald-500" />
-            Payment Log
+            Payment Tracking
           </CardTitle>
-          <div className="flex items-center gap-1">
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => router.refresh()}
-              title="Refresh"
-            >
-              <RefreshCw className="size-3.5" />
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setAdding(true)}
-              disabled={employees.length === 0}
-            >
-              <Plus className="size-4" />
-              Log Payment
-            </Button>
-          </div>
+          <Button
+            size="sm"
+            onClick={() => setAdding(true)}
+            disabled={employees.length === 0}
+          >
+            <Plus className="size-4" />
+            Track payment
+          </Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          Manual record of payments sent off-system. Etherscan link
-          is optional but recommended for auditability — the
-          &quot;Paid This Month&quot; / &quot;Paid YTD&quot; KPIs
-          above sum every row in here.
+          Log a payment you sent: pick the employee, paste the payment
+          link, and save it with a date.
         </p>
       </CardHeader>
       <CardContent>
-        {payouts.length === 0 ? (
-          <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-            No payments logged yet.
+        {payments.length === 0 ? (
+          <div className="rounded-md border border-dashed">
+            <EmptyState
+              icon={Receipt}
+              title="No payments tracked yet"
+              description="Use the Track payment button to save one."
+              compact
+            />
           </div>
         ) : (
-          <div className="rounded-md border overflow-hidden">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b bg-muted/50">
-                  <th className="px-3 py-2 text-left text-xs font-medium">
-                    Employee
-                  </th>
-                  <th className="px-3 py-2 text-right text-xs font-medium">
-                    Amount
-                  </th>
-                  <th className="px-3 py-2 text-left text-xs font-medium">
-                    Etherscan
-                  </th>
-                  <th className="px-3 py-2 text-left text-xs font-medium">
-                    Notes
-                  </th>
-                  <th className="px-3 py-2 text-left text-xs font-medium">
-                    When
-                  </th>
-                  <th className="px-3 py-2 text-right text-xs font-medium">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {payouts.map((p) => (
-                  <PayoutRow key={p.id} payout={p} />
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            {/* Desktop table (>=md). */}
+            <div className="hidden rounded-md border overflow-x-auto md:block">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b bg-muted/50">
+                    <th className="px-3 py-2 text-left text-xs font-medium">
+                      Employee
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-medium">
+                      Payment Link
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-medium">
+                      Date
+                    </th>
+                    <th className="px-3 py-2 text-right text-xs font-medium">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {payments.map((p) => (
+                    <PaymentRow key={p.id} payment={p} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile cards (<md). */}
+            <div className="space-y-2 md:hidden">
+              {payments.map((p) => (
+                <PaymentMobileCard key={p.id} payment={p} />
+              ))}
+            </div>
+          </>
         )}
       </CardContent>
-      <StandalonePayoutDialog
+      <TrackPaymentDialog
         open={adding}
         onClose={() => setAdding(false)}
-        employees={employees.filter((e) => e.active)}
+        employees={employees}
       />
     </Card>
   );
 }
 
-function PayoutRow({ payout }: { payout: Payout }) {
-  const router = useRouter();
-  const [pending, startTransition] = useTransition();
-  const [confirmOpen, setConfirmOpen] = useState(false);
+function PaymentLink({ href }: { href: string }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer noopener"
+      className="inline-flex max-w-full items-center gap-1 text-xs text-blue-500 hover:underline"
+      title={href}
+    >
+      <Link2 className="size-3 shrink-0" />
+      <span className="truncate">{href}</span>
+      <ExternalLink className="size-3 shrink-0" />
+    </a>
+  );
+}
 
-  function handleDelete() {
-    startTransition(async () => {
-      const result = await deleteSalaryPayout(payout.id);
-      if (!result.success) {
-        toast.error(result.error);
-        return;
-      }
-      toast.success("Payment removed from log");
-      setConfirmOpen(false);
-      router.refresh();
-    });
-  }
-
+function PaymentRow({ payment }: { payment: Payment }) {
   return (
     <tr className="border-b last:border-b-0">
-      <td className="px-3 py-2 text-sm">{payout.employeeDiscordName}</td>
-      <td className="px-3 py-2 text-right text-sm tabular-nums">
-        ${payout.amountUsdt.toFixed(2)}
+      <td className="px-3 py-2 text-sm font-medium">
+        <span className="font-mono">{payment.employeeDiscordName}</span>
       </td>
-      <td className="px-3 py-2">
-        {payout.txHash ? (
-          <a
-            href={`https://etherscan.io/tx/${payout.txHash}`}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 text-xs text-blue-500 hover:underline font-mono"
-          >
-            {payout.txHash.slice(0, 10)}…
-            <ExternalLink className="size-3" />
-          </a>
-        ) : (
-          <span className="text-xs text-muted-foreground italic">
-            no tx link
-          </span>
-        )}
-      </td>
-      <td className="px-3 py-2 text-xs text-muted-foreground max-w-xs truncate">
-        {payout.notes ?? "—"}
+      <td className="max-w-[280px] px-3 py-2">
+        <PaymentLink href={payment.paymentLink} />
       </td>
       <td className="px-3 py-2 text-xs text-muted-foreground">
-        {formatRelative(payout.paidAt)}
+        {formatDate(payment.paidAt)}
       </td>
       <td className="px-3 py-2 text-right">
-        <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="size-7 text-muted-foreground hover:text-rose-500"
-            onClick={() => setConfirmOpen(true)}
-            aria-label="Remove from log"
-          >
-            <Trash2 className="size-3.5" />
-          </Button>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Remove this entry?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Drops the $
-                {payout.amountUsdt.toFixed(2)} payment to{" "}
-                <span className="font-medium">{payout.employeeDiscordName}</span>{" "}
-                from the log. The on-chain transaction (if any)
-                isn&apos;t affected — this is bookkeeping only. Use
-                if you logged it twice or by mistake.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={handleDelete}
-                disabled={pending}
-                className="bg-rose-500 hover:bg-rose-500/90"
-              >
-                {pending ? "Removing…" : "Remove"}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        <DeletePaymentButton paymentId={payment.id} />
       </td>
     </tr>
   );
 }
 
-// Variant of RecordPayoutDialog opened from the payouts card itself
-// (rather than a specific employee row). Shows a dropdown of active
-// employees instead of pre-selecting one.
-function StandalonePayoutDialog({
+function PaymentMobileCard({ payment }: { payment: Payment }) {
+  return (
+    <div className="rounded-lg border bg-card p-3">
+      <div className="flex items-start justify-between gap-2">
+        <span className="font-mono text-sm font-medium">
+          {payment.employeeDiscordName}
+        </span>
+        <span className="shrink-0 text-[11px] text-muted-foreground">
+          {formatDate(payment.paidAt)}
+        </span>
+      </div>
+      <div className="mt-2 min-w-0">
+        <PaymentLink href={payment.paymentLink} />
+      </div>
+      <DeletePaymentButton
+        paymentId={payment.id}
+        className="mt-2 h-9 w-full"
+        withLabel
+      />
+    </div>
+  );
+}
+
+function DeletePaymentButton({
+  paymentId,
+  className,
+  withLabel,
+}: {
+  paymentId: string;
+  className?: string;
+  withLabel?: boolean;
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [pending, startTransition] = useTransition();
+
+  function handleDelete() {
+    startTransition(async () => {
+      const result = await deleteSalaryPayment(paymentId);
+      if (!result.success) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success("Payment removed");
+      setOpen(false);
+      router.refresh();
+    });
+  }
+
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <Button
+        size={withLabel ? "sm" : "icon"}
+        variant="ghost"
+        className={cn(
+          "text-muted-foreground hover:text-rose-500",
+          !withLabel && "size-7",
+          className,
+        )}
+        onClick={() => setOpen(true)}
+        aria-label="Remove payment"
+      >
+        <Trash2 className="size-3.5" />
+        {withLabel ? "Remove" : null}
+      </Button>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Remove this payment?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Deletes the tracked payment record. Bookkeeping only — it does
+            not affect anything off-system.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={handleDelete}
+            disabled={pending}
+            className="bg-rose-500 hover:bg-rose-500/90"
+          >
+            {pending ? "Removing…" : "Remove"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+function TrackPaymentDialog({
   open,
   onClose,
   employees,
@@ -985,17 +1139,17 @@ function StandalonePayoutDialog({
 }) {
   const router = useRouter();
   const [employeeId, setEmployeeId] = useState("");
-  const [amount, setAmount] = useState("");
-  const [txHash, setTxHash] = useState("");
-  const [notes, setNotes] = useState("");
+  const [link, setLink] = useState("");
+  // Init empty; set to today in the effect on open so there's no
+  // server/client date mismatch during render.
+  const [date, setDate] = useState("");
   const [pending, startTransition] = useTransition();
 
   useEffect(() => {
     if (!open) return;
     setEmployeeId("");
-    setAmount("");
-    setTxHash("");
-    setNotes("");
+    setLink("");
+    setDate(new Date().toISOString().slice(0, 10));
   }, [open]);
 
   function handleSubmit() {
@@ -1003,27 +1157,23 @@ function StandalonePayoutDialog({
       toast.error("Pick an employee");
       return;
     }
-    const amt = parseFloat(amount);
-    if (!Number.isFinite(amt) || amt <= 0) {
-      toast.error("Enter a positive amount");
+    if (!link.trim()) {
+      toast.error("Enter a payment link");
       return;
     }
-    const hashMatch = txHash.match(/0x[a-fA-F0-9]{64}/);
-    const cleanedHash = hashMatch ? hashMatch[0] : txHash.trim() || undefined;
     startTransition(async () => {
-      const result = await recordSalaryPayout({
+      const result = await addSalaryPayment({
         employeeId,
-        amountUsdt: amt,
-        txHash: cleanedHash,
-        notes: notes.trim() || undefined,
+        paymentLink: link.trim(),
+        paidAt: date || undefined,
       });
       if (!result.success) {
         toast.error(result.error);
         return;
       }
-      const empName =
+      const name =
         employees.find((e) => e.id === employeeId)?.discordName ?? "employee";
-      toast.success(`Logged $${amt.toFixed(2)} payout to ${empName}`);
+      toast.success(`Tracked payment to ${name}`);
       onClose();
       router.refresh();
     });
@@ -1040,11 +1190,10 @@ function StandalonePayoutDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Receipt className="size-4 text-emerald-500" />
-            Log a payment
+            Track a payment
           </DialogTitle>
           <DialogDescription>
-            Record a payment you sent from your own wallet. Pick the
-            recipient + amount + (optionally) the etherscan link.
+            Save a payment link against an employee, with a date.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 py-2">
@@ -1052,60 +1201,35 @@ function StandalonePayoutDialog({
             <Label className="text-xs text-muted-foreground">Employee</Label>
             <select
               value={employeeId}
-              onChange={(e) => {
-                const id = e.target.value;
-                setEmployeeId(id);
-                const emp = employees.find((x) => x.id === id);
-                if (emp && !amount) setAmount(String(emp.salaryUsdt));
-              }}
+              onChange={(e) => setEmployeeId(e.target.value)}
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
             >
               <option value="">Pick an employee…</option>
               {employees.map((e) => (
                 <option key={e.id} value={e.id}>
-                  {e.discordName} — ${e.salaryUsdt.toFixed(2)}
+                  {e.discordName}
+                  {e.active ? "" : " (inactive)"}
                 </option>
               ))}
             </select>
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">
-              Amount (USDT)
+              Payment Link
             </Label>
             <Input
-              type="number"
-              step="0.01"
-              min="0"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">
-              Etherscan Tx Hash{" "}
-              <span className="font-normal text-muted-foreground/60">
-                (optional)
-              </span>
-            </Label>
-            <Input
-              value={txHash}
-              onChange={(e) => setTxHash(e.target.value)}
-              placeholder="0x… or full etherscan URL"
+              value={link}
+              onChange={(e) => setLink(e.target.value)}
+              placeholder="https://…"
               className="font-mono text-xs"
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">
-              Notes{" "}
-              <span className="font-normal text-muted-foreground/60">
-                (optional)
-              </span>
-            </Label>
-            <Textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={2}
-              maxLength={500}
+            <Label className="text-xs text-muted-foreground">Date</Label>
+            <Input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
             />
           </div>
         </div>
@@ -1118,7 +1242,7 @@ function StandalonePayoutDialog({
             disabled={pending}
             className="bg-emerald-500 hover:bg-emerald-500/90"
           >
-            {pending ? "Logging…" : "Log Payment"}
+            {pending ? "Saving…" : "Save payment"}
           </Button>
         </DialogFooter>
       </DialogContent>

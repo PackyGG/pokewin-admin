@@ -7,6 +7,8 @@
 // String[] column — prefixed with "__" so they don't collide with page
 // routes. This avoids DB migrations entirely.
 
+import { ALL_PAGE_KEYS } from "@/lib/admin-pages";
+
 // ---------------------------------------------------------------------------
 // Capability definitions
 // ---------------------------------------------------------------------------
@@ -80,6 +82,17 @@ export const CAPABILITIES: CapabilityDef[] = [
     label: "Export User Emails",
     description:
       "Download a CSV of user emails (PII) via /api/users/export. Admin-only by default — grant manually to any non-admin role that needs it.",
+    group: "User Management",
+  },
+  {
+    // VIP-CRM tagging on user profiles. Today the allow-list is
+    // 'contacted_vip' + 'confirmed_vip'. Stored admin-side only —
+    // never written to the main game DB / never exposed to users.
+    // Useful for sales / support reaching out to high-value players.
+    key: "__can_manage_user_tags",
+    label: "Manage User Tags",
+    description:
+      "Set or remove VIP tags (Contacted VIP, Confirmed VIP) on user profiles. Tags are admin-internal CRM metadata — never visible to the user themselves.",
     group: "User Management",
   },
 
@@ -277,6 +290,20 @@ export const CAPABILITIES: CapabilityDef[] = [
     label: "Upload Card Image",
     description: "Upload or replace a card image",
     group: "Cards",
+  },
+
+  // ── Sets ────────────────────────────────────────────────────────────
+  {
+    key: "__can_create_set",
+    label: "Create Set",
+    description: "Add a new set / series (name, series, language) to the catalog",
+    group: "Sets",
+  },
+  {
+    key: "__can_upload_set_image",
+    label: "Upload Set Image",
+    description: "Upload or replace a set logo image",
+    group: "Sets",
   },
 
   // ── Battles ─────────────────────────────────────────────────────────
@@ -542,6 +569,39 @@ export const CAPABILITIES: CapabilityDef[] = [
     label: "Rotate Creator API Key",
     description:
       "Generate or regenerate a creator's external API key (affiliate stats, leaderboards)",
+    group: "Creators",
+  },
+
+  // ── Multiplier deals (parallel program, separate capabilities) ─────
+  // Split into four keys so the "Review" action — which moves real money
+  // at settlement — is gated independently of the offer-management
+  // actions. Existing creator-deal capabilities don't carry over; admins
+  // must be explicitly granted multiplier permissions.
+  {
+    key: "__can_create_multiplier_deal",
+    label: "Create Multiplier Deal",
+    description:
+      "Create a multiplier deal offer for a creator (covers cancel of pending offers)",
+    group: "Creators",
+  },
+  {
+    key: "__can_update_multiplier_deal",
+    label: "Update Multiplier Deal",
+    description: "Edit a pending_deposit multiplier deal's contract terms",
+    group: "Creators",
+  },
+  {
+    key: "__can_force_end_multiplier_stream",
+    label: "Force-End Multiplier Stream",
+    description:
+      "Force-end a live multiplier stream (bypasses VOD requirement; deal moves to flagged)",
+    group: "Creators",
+  },
+  {
+    key: "__can_review_multiplier_deal",
+    label: "Review Multiplier Deal",
+    description:
+      "Approve, reject, or manually flag a multiplier deal at settlement — moves real money (voucher creation or deposit refund/forfeit)",
     group: "Creators",
   },
 
@@ -846,4 +906,61 @@ function parseBalanceLimitLegacy(
 ): { period: "daily" | "weekly"; amount: number } | null {
   if (capKey !== "__can_adjust_balance") return null;
   return parseBalanceLimit(pages);
+}
+
+// ---------------------------------------------------------------------------
+// Unified permission catalog — pages + capabilities in one vocabulary.
+//
+// `allowed_pages` (and `admin_roles.capabilities`, which now uses the same
+// format) holds two kinds of entry:
+//   • page routes      — "/dashboard", "/users", …   (from ADMIN_PAGES)
+//   • capability flags — "__can_ban_users", …         (from CAPABILITIES)
+// These helpers validate against that combined set and recompute a user's
+// effective permissions when their assigned role preset changes.
+// ---------------------------------------------------------------------------
+
+/** Every valid permission key — page routes ∪ capability flags. */
+export const ALL_PERMISSION_KEYS: readonly string[] = [
+  ...ALL_PAGE_KEYS,
+  ...CAPABILITY_KEYS,
+];
+
+const PERMISSION_KEY_SET: ReadonlySet<string> = new Set(ALL_PERMISSION_KEYS);
+
+/** True for a recognized page route or `__can_*` capability key. */
+export function isPermissionKey(key: string): boolean {
+  return PERMISSION_KEY_SET.has(key);
+}
+
+/** Keep only recognized permission keys, de-duplicated (drops stale entries). */
+export function sanitizePermissionKeys(keys: string[]): string[] {
+  return Array.from(new Set(keys.filter(isPermissionKey)));
+}
+
+/**
+ * Recompute a user's effective `allowed_pages` when their role preset
+ * changes — either the role was re-assigned, or the role itself edited.
+ *
+ * "Role + adjustments" model: effective = role preset, plus per-user
+ * grants, minus per-user revokes. The adjustment delta is derived by
+ * diffing the user's CURRENT allowed_pages against the OLD preset:
+ *   extra  = currentAllowed \ oldPreset   (granted manually on top)
+ *   denied = oldPreset \ currentAllowed   (revoked manually)
+ * New effective = (newPreset ∪ extra) \ denied.
+ *
+ * With no previous role (oldPreset = []), the user's whole current set
+ * becomes "extra" and merges onto the new preset — nothing is lost.
+ */
+export function materializeAllowedPages(
+  newPreset: string[],
+  currentAllowed: string[],
+  oldPreset: string[],
+): string[] {
+  const oldSet = new Set(oldPreset);
+  const curSet = new Set(currentAllowed);
+  const extra = currentAllowed.filter((k) => !oldSet.has(k));
+  const denied = new Set(oldPreset.filter((k) => !curSet.has(k)));
+  const out = new Set<string>([...newPreset, ...extra]);
+  for (const d of denied) out.delete(d);
+  return Array.from(out);
 }

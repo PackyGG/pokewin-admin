@@ -27,34 +27,12 @@ const employeeSchema = z.object({
     .max(1_000_000),
   notes: z.string().trim().max(500).nullable().optional(),
   active: z.boolean().optional(),
+  // Recurring pay day as a day of the month (1-31). null clears it.
+  payDayOfMonth: z.number().int().min(1).max(31).nullable().optional(),
 });
 
 const updateEmployeeSchema = employeeSchema.partial().extend({
   id: z.string().uuid(),
-});
-
-// Manual payout entry — a founder sent USDT from their own wallet
-// and is recording it after the fact. tx_hash is optional but the
-// UI strongly encourages pasting the etherscan link.
-const recordPayoutSchema = z.object({
-  employeeId: z.string().uuid(),
-  amountUsdt: z.number().finite().positive().max(10_000_000),
-  txHash: z
-    .string()
-    .trim()
-    .regex(/^0x[a-fA-F0-9]{64}$/, "Tx hash must be 0x + 64 hex chars")
-    .optional()
-    .or(z.literal("").transform(() => undefined)),
-  notes: z.string().trim().max(500).optional().or(z.literal("").transform(() => undefined)),
-  paidAt: z
-    .string()
-    .datetime()
-    .optional()
-    .or(z.literal("").transform(() => undefined)),
-});
-
-const deletePayoutSchema = z.object({
-  payoutId: z.string().uuid(),
 });
 
 // All write actions self-heal the schema so a missing migration
@@ -79,7 +57,10 @@ export async function addSalaryEmployee(
   }
   const address = parsed.data.ethAddress.trim();
   if (!isAddress(address)) {
-    return { success: false, error: "Invalid Ethereum address" };
+    return {
+      success: false,
+      error: "Invalid wallet address — use an ERC-20 (0x…) or Solana address",
+    };
   }
 
   const created = await adminDb.salary_employees.create({
@@ -91,6 +72,7 @@ export async function addSalaryEmployee(
       max_per_payout: null,
       notes: parsed.data.notes?.trim() || null,
       active: parsed.data.active ?? true,
+      pay_day_of_month: parsed.data.payDayOfMonth ?? null,
       created_by_id: session.userId,
     },
     select: { id: true },
@@ -129,7 +111,10 @@ export async function updateSalaryEmployee(
     updateData.discord_name = parsed.data.discordName;
   if (parsed.data.ethAddress !== undefined) {
     if (!isAddress(parsed.data.ethAddress.trim())) {
-      return { success: false, error: "Invalid Ethereum address" };
+      return {
+        success: false,
+        error: "Invalid wallet address — use an ERC-20 (0x…) or Solana address",
+      };
     }
     updateData.eth_address = normalizeAddress(parsed.data.ethAddress);
   }
@@ -140,6 +125,8 @@ export async function updateSalaryEmployee(
     updateData.notes = parsed.data.notes?.trim() || null;
   }
   if (parsed.data.active !== undefined) updateData.active = parsed.data.active;
+  if (parsed.data.payDayOfMonth !== undefined)
+    updateData.pay_day_of_month = parsed.data.payDayOfMonth;
 
   if (Object.keys(updateData).length === 0) {
     return { success: false, error: "Nothing to update" };
@@ -196,24 +183,46 @@ export async function deleteSalaryEmployee(
   return { success: true };
 }
 
-// ── Manual payout log ───────────────────────────────────────────────
+// ── Payment tracking ────────────────────────────────────────────────
+// Lightweight: a saved payment link + date per employee. Distinct from
+// the legacy salary_payouts table (kept, unused). Stored in
+// salary_payments.
 
-/**
- * Record a payment that was sent off-system (a founder scanned the
- * QR, sent USDT from their personal wallet). Optionally store the
- * etherscan tx hash so future founders (or audit) can verify on
- * chain.
- *
- * No 2FA gate — recording history is informational, not a money-
- * moving operation. The founder username gate is the access
- * boundary.
- */
-export async function recordSalaryPayout(
-  data: z.infer<typeof recordPayoutSchema>,
-): Promise<{ success: true; payoutId: string } | { success: false; error: string }> {
+const paymentLinkSchema = z
+  .string()
+  .trim()
+  .min(1, "Payment link is required")
+  .max(2000, "Link is too long")
+  .refine((v) => {
+    // Only allow real http(s) links — blocks javascript:/data: etc. so
+    // the rendered <a href> can't execute anything.
+    try {
+      const u = new URL(v);
+      return u.protocol === "http:" || u.protocol === "https:";
+    } catch {
+      return false;
+    }
+  }, "Enter a valid http(s) link");
+
+const addPaymentSchema = z.object({
+  employeeId: z.string().uuid("Invalid employee id"),
+  paymentLink: paymentLinkSchema,
+  // Date the payment was made (date-input string). Defaults to now.
+  paidAt: z.string().trim().optional(),
+});
+
+const deletePaymentSchema = z.object({
+  paymentId: z.string().uuid("Invalid id"),
+});
+
+export async function addSalaryPayment(data: {
+  employeeId: string;
+  paymentLink: string;
+  paidAt?: string;
+}): Promise<{ success: true; id: string } | { success: false; error: string }> {
   const session = await requireMotha();
   await ensure();
-  const parsed = recordPayoutSchema.safeParse(data);
+  const parsed = addPaymentSchema.safeParse(data);
   if (!parsed.success) {
     return {
       success: false,
@@ -223,86 +232,67 @@ export async function recordSalaryPayout(
 
   const employee = await adminDb.salary_employees.findUnique({
     where: { id: parsed.data.employeeId },
+    select: { id: true, discord_name: true },
   });
   if (!employee) return { success: false, error: "Employee not found" };
 
-  // Pre-check tx_hash uniqueness so we can return a friendly error
-  // instead of letting the unique-index violation bubble up.
-  if (parsed.data.txHash) {
-    const existing = await adminDb.salary_payouts.findUnique({
-      where: { tx_hash: parsed.data.txHash },
-    });
-    if (existing) {
-      return {
-        success: false,
-        error: "That tx hash is already recorded against another payout",
-      };
+  let paidAt = new Date();
+  if (parsed.data.paidAt) {
+    const d = new Date(parsed.data.paidAt);
+    if (Number.isNaN(d.getTime())) {
+      return { success: false, error: "Invalid date" };
     }
+    paidAt = d;
   }
 
-  const paidAt = parsed.data.paidAt ? new Date(parsed.data.paidAt) : new Date();
-
-  const payout = await adminDb.salary_payouts.create({
+  const created = await adminDb.salary_payments.create({
     data: {
       employee_id: employee.id,
-      amount_usdt: parsed.data.amountUsdt,
-      to_address: employee.eth_address,
-      tx_hash: parsed.data.txHash ?? null,
-      // We reuse the existing schema; "confirmed" means a founder
-      // logged the payment. There's no on-chain polling anymore.
-      status: "confirmed",
-      broadcast_at: paidAt,
-      confirmed_at: paidAt,
-      error_message: parsed.data.notes ?? null,
-      paid_by_id: session.userId,
+      payment_link: parsed.data.paymentLink,
+      paid_at: paidAt,
+      created_by_id: session.userId,
     },
-    select: { id: true },
-  });
-
-  // last_paid_at is the cheapest "when did we last pay" badge for
-  // the employees table.
-  await adminDb.salary_employees.update({
-    where: { id: employee.id },
-    data: { last_paid_at: paidAt },
     select: { id: true },
   });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
-    eventType: "salary_payout_recorded",
+    eventType: "salary_payment_tracked",
     metadata: {
-      payoutId: payout.id,
+      paymentId: created.id,
       employeeId: employee.id,
       employeeDiscordName: employee.discord_name,
-      amountUsdt: parsed.data.amountUsdt,
-      txHash: parsed.data.txHash ?? null,
       paidAt: paidAt.toISOString(),
     },
   });
 
   revalidatePath("/salaries");
-  return { success: true, payoutId: payout.id };
+  return { success: true, id: created.id };
 }
 
-export async function deleteSalaryPayout(
-  payoutId: string,
+export async function deleteSalaryPayment(
+  paymentId: string,
 ): Promise<{ success: true } | { success: false; error: string }> {
   const session = await requireMotha();
   await ensure();
-  const parsed = deletePayoutSchema.safeParse({ payoutId });
+  const parsed = deletePaymentSchema.safeParse({ paymentId });
   if (!parsed.success) {
     return { success: false, error: "Invalid id" };
   }
 
-  await adminDb.salary_payouts.delete({
-    where: { id: parsed.data.payoutId },
-    select: { id: true },
-  });
+  try {
+    await adminDb.salary_payments.delete({
+      where: { id: parsed.data.paymentId },
+      select: { id: true },
+    });
+  } catch {
+    return { success: false, error: "Payment not found" };
+  }
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
-    eventType: "salary_payout_deleted",
-    metadata: { payoutId: parsed.data.payoutId },
+    eventType: "salary_payment_deleted",
+    metadata: { paymentId: parsed.data.paymentId },
   });
 
   revalidatePath("/salaries");

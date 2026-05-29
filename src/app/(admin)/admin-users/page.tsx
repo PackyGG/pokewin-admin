@@ -9,6 +9,7 @@ import { AdminUserActions } from "./admin-user-actions";
 import { CreateAdminDialog } from "./create-dialog";
 import {
   PageHero,
+  PageHeroIdentity,
   SectionHeading,
   KpiTile,
 } from "@/components/modern-panels";
@@ -62,34 +63,28 @@ export default async function AdminUsersPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10">
-              <Shield className="size-5 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold leading-tight">Users</h1>
-              <p className="text-sm text-muted-foreground">
-                Staff accounts — roles, 2FA status, and activation state.
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {isCurrentUserAdmin && (
-              <Button
-                variant="outline"
-                size="sm"
-                render={
-                  <Link href="/admin-users/balance-limits">
-                    <Wallet className="mr-1.5 size-4" />
-                    Balance Limits
-                  </Link>
-                }
-              />
-            )}
-            <CreateAdminDialog />
-          </div>
-        </div>
+        <PageHeroIdentity
+          icon={Shield}
+          title="Users"
+          subtitle="Staff accounts — roles, 2FA status, and activation state."
+          action={
+            <>
+              {isCurrentUserAdmin && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  render={
+                    <Link href="/admin-users/balance-limits">
+                      <Wallet className="mr-1.5 size-4" />
+                      Balance Limits
+                    </Link>
+                  }
+                />
+              )}
+              <CreateAdminDialog />
+            </>
+          }
+        />
       </PageHero>
 
       <div
@@ -126,7 +121,7 @@ export default async function AdminUsersPage() {
         {isCurrentUserAdmin && (
           <Link
             href="/admin-users/balance-limits"
-            className="block transition-transform hover:scale-[1.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded-xl"
+            className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
             aria-label="Open balance limits overview"
           >
             <KpiTile
@@ -141,7 +136,10 @@ export default async function AdminUsersPage() {
 
       <div className="space-y-3">
         <SectionHeading icon={Shield} title="All Admins" />
-        <FadeIn className="rounded-md border overflow-hidden">
+        <FadeIn className="space-y-2">
+          {/* Desktop table (>=md). Horizontal scroll guard so the
+              8 columns never blow up the layout on tablet widths. */}
+          <div className="hidden rounded-md border overflow-x-auto md:block">
           <table className="w-full">
             <thead>
               <tr className="border-b bg-muted/50">
@@ -235,6 +233,77 @@ export default async function AdminUsersPage() {
               ))}
             </tbody>
           </table>
+          </div>
+
+          {/* Mobile card list (<md) — the 8-col table overflows badly
+              at 360px, so each admin renders as a stacked card. */}
+          <div className="space-y-2 md:hidden">
+            {users.map((user) => (
+              <div key={user.id} className="rounded-lg border bg-card p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <Link
+                      href={`/admin-users/${user.id}`}
+                      className="font-medium text-blue-400 hover:underline"
+                    >
+                      {user.username}
+                    </Link>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {user.email}
+                    </p>
+                  </div>
+                  <AdminUserActions
+                    userId={user.id}
+                    isActive={user.is_active}
+                    totpEnabled={user.totp_enabled}
+                    role={user.role}
+                  />
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <Badge variant="outline" className="text-xs uppercase">
+                    {user.role}
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    className={
+                      user.is_active
+                        ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                        : "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30"
+                    }
+                  >
+                    {user.is_active ? "Active" : "Inactive"}
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    className={
+                      user.totp_enabled
+                        ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                        : "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30"
+                    }
+                  >
+                    {user.totp_enabled ? "2FA on" : "2FA off"}
+                  </Badge>
+                  {isCurrentUserAdmin && limitsByAdmin.has(user.id) && (
+                    <Link
+                      href={`/admin-users/${user.id}#balance-limits`}
+                      className="inline-block rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    >
+                      <Badge
+                        variant="outline"
+                        className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30 cursor-pointer hover:bg-amber-500/25"
+                      >
+                        {limitsByAdmin.get(user.id)} cap
+                        {limitsByAdmin.get(user.id) === 1 ? "" : "s"}
+                      </Badge>
+                    </Link>
+                  )}
+                </div>
+                <p className="mt-2 text-[11px] text-muted-foreground">
+                  Created {formatDateTime(user.created_at.toISOString())}
+                </p>
+              </div>
+            ))}
+          </div>
         </FadeIn>
       </div>
     </div>

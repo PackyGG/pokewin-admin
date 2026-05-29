@@ -1,28 +1,36 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import {
   AlertTriangle,
-  Handshake,
+  CalendarCheck,
+  LineChart,
   Megaphone,
   Radio,
+  Trophy,
   Users,
-  X,
+  Wallet,
+  Zap,
 } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
 import { FadeIn } from "@/components/fade-in";
+import { Skeleton } from "@/components/ui/skeleton";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
-import { formatNumber } from "@/lib/utils/format";
+import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { BackendApiError, BackendNetworkError } from "@/lib/backend-api";
-import { PageHero, KpiTile, SectionHeading } from "@/components/modern-panels";
+import {
+  PageHero,
+  PageHeroIdentity,
+  KpiTile,
+  SectionHeading,
+} from "@/components/modern-panels";
 
 import { parseCreatorsSearchParams } from "./_lib/search-params";
-import {
-  listCreatorsForPage,
-  type CreatorsListPage,
-} from "./_queries/list-creators";
+import { type CreatorsListPage } from "./_queries/list-creators";
 import { listCreatorsFiltered } from "./_queries/list-creators-filtered";
+import { getCreatorsListForTab } from "./_queries/list-creators-by-tab";
 import {
   getApprovedSocialsByUser,
   type CreatorSocialSummary,
@@ -32,14 +40,31 @@ import {
   type CreatorCodeAndWager,
 } from "./_queries/code-and-wager-by-user";
 import {
-  getCreatorTopCounts,
-  type CreatorTopCounts,
-} from "./_queries/get-creator-counts";
+  getCreatorsGlobalStats,
+  type CreatorsGlobalStats,
+} from "./_queries/creators-stats";
+import { getMultiplierCreatorCount } from "./_queries/multiplier-creator-count";
+import {
+  getDealCapInfoByUser,
+  type DealCapInfo,
+} from "./_queries/deal-cap-by-user";
+import {
+  getWithdrawnFromConvertedByDeal,
+  type WithdrawnFromConverted,
+} from "./_queries/withdrawn-from-converted-by-deal";
+import {
+  getLeaderboardCostTotal,
+  getLeaderboard2wkCostByUser,
+  type Lb2wkInfo,
+} from "./_queries/leaderboard-cost";
 import {
   CreatorCardGrid,
   type CreatorWithSocials,
 } from "./_components/creator-card-grid";
 import { AddCreatorDialog } from "./_components/add-creator-dialog";
+import { CreatorsTabSwitch } from "./_components/creators-tab-switch";
+import { GlobalPnlByCreatorPopover } from "./_components/global-pnl-by-creator-popover";
+import { getAllCreatorsLifetimePnl } from "./_queries/all-creators-lifetime-pnl";
 
 export const metadata = { title: "Creators" };
 
@@ -61,26 +86,24 @@ export default async function CreatorsPage({
   let result: CreatorsListPage | null = null;
   let socialsByUser: Map<string, CreatorSocialSummary[]> = new Map();
   let codeAndWagerByUser: Map<string, CreatorCodeAndWager> = new Map();
-  // Tiles tally across ALL creators, not just the current page. Loaded
-  // in parallel with the list. Falls back to null on backend hiccup so
-  // the tiles render "—" without crashing the rest of the page.
-  let counts: CreatorTopCounts | null = null;
+  // Global counts for the KPI strip — independent from the paginated
+  // list so the tiles don't shift when the admin types in the search
+  // box. Best-effort: a stats fetch failure falls back to nullish so
+  // the tiles render "—" instead of crashing the whole page.
+  let stats: CreatorsGlobalStats | null = null;
+  // Combined cost of every approved creator leaderboard (net of
+  // refunds). Independent best-effort fetch — null → tile shows "—".
+  let leaderboardCost: number | null = null;
+  // Count of creators with a multiplier deal — its own best-effort
+  // backend fan-out (5-min cached). null → the tile renders "—".
+  let multiplierCreatorCount: number | null = null;
   let loadError: { title: string; detail: string } | null = null;
   try {
-    // Wave 1 — creators list + socials + top-level counts (all
-    // independent). Socials and counts are best-effort; backend hiccup
-    // on either falls back to empty / null so the page still renders.
-    //
-    // When a KPI tile filter is active (?filter=live or
-    // ?filter=active-deals) we route through `listCreatorsFiltered`
-    // instead, which paginates the whole population and narrows in
-    // memory. Pagination is collapsed in that mode — the filtered
-    // set is small enough to fit on one page comfortably.
-    const listPromise = params.filter
-      ? listCreatorsFiltered(params.filter, params.search)
-      : listCreatorsForPage(params);
-    const [creators, socials, topCounts] = await Promise.all([
-      listPromise,
+    // Wave 1 — socials + global stats are needed for every sort mode.
+    // The creators list itself diverges by sortBy: "recent" uses the
+    // cheap backend-paginated fetch; pnl_* forces a full pool walk
+    // because PnL isn't a backend-side sortable field.
+    const [socials, globalStats, lbCost, multCount] = await Promise.all([
       getApprovedSocialsByUser().catch((e) => {
         console.error(
           "[creators] socials fetch failed (rendering without):",
@@ -88,24 +111,49 @@ export default async function CreatorsPage({
         );
         return new Map<string, CreatorSocialSummary[]>();
       }),
-      getCreatorTopCounts().catch((e) => {
+      getCreatorsGlobalStats().catch((e) => {
         console.error(
-          "[creators] top counts fetch failed (rendering tiles as —):",
+          "[creators] global stats fetch failed (rendering tiles empty):",
           e,
         );
-        return null as CreatorTopCounts | null;
+        return null;
+      }),
+      getLeaderboardCostTotal().catch((e) => {
+        console.error(
+          "[creators] leaderboard cost fetch failed (tile renders '—'):",
+          e,
+        );
+        return null;
+      }),
+      getMultiplierCreatorCount().catch((e) => {
+        console.error(
+          "[creators] multiplier creator count failed (tile renders '—'):",
+          e,
+        );
+        return null;
       }),
     ]);
-    result = creators;
     socialsByUser = socials;
-    counts = topCounts;
+    stats = globalStats;
+    leaderboardCost = lbCost;
+    multiplierCreatorCount = multCount;
 
-    // Wave 2 — code + lifetime wager from the main DB, keyed on the
-    // user IDs we just got from the backend list. Best-effort too —
-    // if main DB blows up the cards still render with the rest of
-    // the data and just show "—" for code/wager.
+    // List fetch — two paths:
+    //   1. KPI-tile filter is active (?filter=live / ?filter=active-
+    //      deals) → walk the whole creator pool and narrow in memory
+    //      via `listCreatorsFiltered`. Pagination collapses in this
+    //      mode (the filtered set fits on one screen).
+    //   2. No filter → main's tab-aware fetch (`getCreatorsListForTab`),
+    //      which respects the Fill / Multiplier tab + sortBy chip.
+    result = params.filter
+      ? await listCreatorsFiltered(params.filter, params.search)
+      : await getCreatorsListForTab(params, params.tab);
+
+    // Code + lifetime wager from the main DB, keyed on the visible
+    // page's creator IDs. Best-effort — if the main DB blows up the
+    // cards still render and just show "—" for code/wager.
     codeAndWagerByUser = await getCodeAndWagerByUser(
-      creators.data.map((c) => c.id),
+      result.data.map((c) => c.id),
     ).catch((e) => {
       console.error(
         "[creators] code+wager fetch failed (rendering without):",
@@ -145,45 +193,199 @@ export default async function CreatorsPage({
     console.error("[creators] listCreatorsForPage failed:", err);
   }
 
+  // Per-card deal cap info — resolved from the backend deal of each
+  // visible creator's active/scheduled deal. The lite `current_deal`
+  // doesn't carry the cap fields, so we resolve each deal by id. Yields
+  // both `usedUsd` ("Converted") and `totalCapUsd` (the "Cap" chip +
+  // the deal side of the "2-Week Max Cost" row). Best-effort: a failure
+  // leaves the map empty and the cards render "—". Only the page's rows
+  // are fetched, so the fan-out is bounded by perPage.
+  //
+  // Withdrawn-from-converted is the sub-breakdown shown under the
+  // Converted stat: of the amount the creator converted into payout
+  // vouchers, how much actually left the platform via a withdraw
+  // request vs is still sitting on-platform (continued play / sold).
+  // Single batched DB round-trip (admin's own DB connection — no
+  // backend round-trip per deal). Best-effort: a failure leaves the
+  // map empty and the sub-line just isn't rendered.
+  let dealCapByUser = new Map<string, DealCapInfo>();
+  let withdrawnFromConvertedByUser = new Map<string, WithdrawnFromConverted>();
+  // Affiliate-leaderboard 2-week cost per creator. Best-effort — a
+  // failure leaves the map empty and the card row renders "—".
+  let leaderboard2wkByUser = new Map<string, Lb2wkInfo>();
+  if (result) {
+    const pageActiveDeals = result.data
+      .filter(
+        (c) =>
+          c.current_deal != null &&
+          (c.current_deal.status === "active" ||
+            c.current_deal.status === "scheduled"),
+      )
+      .map((c) => ({ userId: c.id, dealId: c.current_deal!.id }));
+    const [capInfo, withdrawn, lb2wk] = await Promise.all([
+      getDealCapInfoByUser(pageActiveDeals).catch((e) => {
+        console.error(
+          "[creators] deal-cap fetch failed (cards render '—'):",
+          e,
+        );
+        return new Map<string, DealCapInfo>();
+      }),
+      getWithdrawnFromConvertedByDeal(pageActiveDeals).catch((e) => {
+        console.error(
+          "[creators] withdrawn-from-converted fetch failed (sub-line hidden):",
+          e,
+        );
+        return new Map<string, WithdrawnFromConverted>();
+      }),
+      getLeaderboard2wkCostByUser().catch((e) => {
+        console.error(
+          "[creators] leaderboard 2-week cost fetch failed (cards render '—'):",
+          e,
+        );
+        return new Map<string, Lb2wkInfo>();
+      }),
+    ]);
+    dealCapByUser = capInfo;
+    withdrawnFromConvertedByUser = withdrawn;
+    leaderboard2wkByUser = lb2wk;
+  }
+
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-pink-500/10">
-              <Megaphone className="size-5 text-pink-500" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold leading-tight">Creators</h1>
-              <p className="text-sm text-muted-foreground">
-                Weekly fill deals, stream sessions, and payouts.
-              </p>
-            </div>
-          </div>
-          <AddCreatorDialog />
-        </div>
+        <PageHeroIdentity
+          icon={Megaphone}
+          accent="pink"
+          title="Creators"
+          subtitle="Weekly fill deals, stream sessions, and payouts."
+          action={<AddCreatorDialog />}
+        />
       </PageHero>
 
       {result && (
-        // Top KPI strip: live + active-deal counts read across the whole
-        // creator population (not just this page), then the page-scope
-        // tiles. 2-up on phones, 4-up at md+ so the operationally
-        // interesting counts (live, active deals) sit alongside the
-        // pagination context.
+        // KPI strip — global signals: fill-deal creators, multiplier-
+        // deal creators, global lifetime PnL (coverage-aware), deal
+        // conversion (withdraw-cap usage), leaderboard cost,
+        // active/scheduled deals, and live-on-stream count. All GLOBAL
+        // (not affected by search / pagination).
         //
-        // The first two tiles double as filter toggles. Clicking the
-        // Live Now tile sets `?filter=live` and the page re-renders
-        // showing only live creators; clicking again clears the
-        // filter. Same for Active Deals. The active tile gets a
-        // colored ring matching its accent so it reads as "this is
-        // the filter you're in right now".
+        // The Live Now + Active Deals tiles double as filter toggles
+        // — clicking one sets `?filter=live` / `?filter=active-deals`
+        // and the page re-renders the matching subset (via
+        // `listCreatorsFiltered`). Clicking the active tile clears
+        // the filter. The active tile gets a colored ring matching
+        // its accent so the filter state reads at a glance.
         //
-        // `buildFilterHref` preserves the current search query when
-        // toggling so an admin who has "alice" typed in the search
-        // box doesn't lose it just because they clicked a tile.
-        // Page/perPage are intentionally dropped — the filter
-        // collapses pagination anyway.
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        // Global PnL is wrapped in Suspense because the
+        // ledger+coverage reconstruction is the heaviest query on this
+        // page (DISTINCT ON sort-merge over all completed deposits).
+        // Streaming it in lets the rest of the strip + the cards paint
+        // immediately instead of blocking the whole page TTFB.
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
+          {/* Fill Creators — creators with ≥1 fill (weekly) deal. Fill
+              and multiplier are the two creator-deal programs. */}
+          <KpiTile
+            label="Fill Creators"
+            value={stats ? formatNumber(stats.fillCreatorCount) : "—"}
+            sub="Creators with a fill deal"
+            icon={Megaphone}
+            accent="pink"
+          />
+          {/* Multiplier Creators — creators with ≥1 multiplier deal
+              (any status). A separate backend program from fill deals;
+              its count is a best-effort, 5-min-cached fan-out. */}
+          <KpiTile
+            label="Multiplier Creators"
+            value={
+              multiplierCreatorCount != null
+                ? formatNumber(multiplierCreatorCount)
+                : "—"
+            }
+            sub="Creators with a multiplier deal"
+            icon={Zap}
+            accent="purple"
+          />
+          {/* Global PnL — coverage-aware aggregate across all
+              creators. Streamed via Suspense to keep page TTFB
+              snappy. Drill-in popover lives in the tile's top-right
+              action slot — opens on hover, sorted ascending by pnl so
+              the worst creator surfaces first. */}
+          <Suspense fallback={<GlobalPnlTileSkeleton />}>
+            <GlobalPnlTile />
+          </Suspense>
+          {/* Converted — combined cap-usage across every active/
+              scheduled deal: how much stream earnings have been
+              converted into payout vouchers. Sits next to Global PnL
+              per admin spec. Neutral (blue) accent — it's a deal-
+              throughput figure, not a house-POV gain/loss direction.
+
+              Sub-line shows of that converted total, how much has
+              actually walked out via a completed withdraw request
+              (+ in-flight pending/processing/shipped when non-zero).
+              Falls back to the static "Withdrawn against active deal
+              caps" label when stats failed to load. */}
+          <KpiTile
+            label="Converted"
+            value={stats ? formatCurrency(stats.convertedTotal) : "—"}
+            sub={
+              stats
+                ? `${formatCurrency(stats.withdrawnFromConvertedTotal)} withdrawn` +
+                  (stats.withdrawPendingFromConvertedTotal > 0
+                    ? ` · +${formatCurrency(stats.withdrawPendingFromConvertedTotal)} in flight`
+                    : "")
+                : "Converted to payout vouchers"
+            }
+            icon={Wallet}
+            accent="blue"
+          />
+          {/* Leaderboard Cost — combined prize pool of every approved
+              creator leaderboard, net of refunds, each weighted by its
+              admin-set sponsored % (set inline on /creators/leaderboards;
+              defaults to 100%). Rose: prize money paid out to users is a
+              house cost (matches the rose total-prize coloring on the
+              leaderboards table). */}
+          <KpiTile
+            label="Leaderboard Cost"
+            value={
+              leaderboardCost != null
+                ? formatCurrency(leaderboardCost)
+                : "—"
+            }
+            sub="Approved leaderboard prizes × sponsored %"
+            icon={Trophy}
+            accent="rose"
+          />
+          {/* Active Deals — click to filter the list to creators
+              whose current deal is `active`. */}
+          <Link
+            href={buildFilterHref("active-deals", params.filter, params.search)}
+            aria-label={
+              params.filter === "active-deals"
+                ? "Clear filter — show all creators"
+                : "Filter to creators with an active deal"
+            }
+            className={cn(
+              "block rounded-xl outline-none ring-offset-background transition focus-visible:ring-2 focus-visible:ring-emerald-500",
+              params.filter === "active-deals" &&
+                "ring-2 ring-emerald-500/60",
+            )}
+          >
+            <KpiTile
+              label="Active Deals"
+              value={
+                stats ? formatNumber(stats.activeDealCount) : "—"
+              }
+              sub={
+                params.filter === "active-deals"
+                  ? "Filter active — click to clear"
+                  : "Active or scheduled this week"
+              }
+              icon={CalendarCheck}
+              accent="emerald"
+            />
+          </Link>
+          {/* Live Now — click to filter the list to creators with a
+              non-null `active_session_id` (currently streaming). */}
           <Link
             href={buildFilterHref("live", params.filter, params.search)}
             aria-label={
@@ -192,69 +394,24 @@ export default async function CreatorsPage({
                 : "Filter to live creators"
             }
             className={cn(
-              "block rounded-xl outline-none ring-offset-background transition focus-visible:ring-2 focus-visible:ring-emerald-500",
-              params.filter === "live" &&
-                "ring-2 ring-emerald-500/60",
+              "block rounded-xl outline-none ring-offset-background transition focus-visible:ring-2 focus-visible:ring-rose-500",
+              params.filter === "live" && "ring-2 ring-rose-500/60",
             )}
           >
             <KpiTile
               label="Live Now"
-              value={counts ? formatNumber(counts.liveNow) : "—"}
+              value={stats ? formatNumber(stats.liveCount) : "—"}
               sub={
                 params.filter === "live"
                   ? "Filter active — click to clear"
-                  : "Active stream sessions"
+                  : "Currently streaming with an active session"
               }
               icon={Radio}
-              accent="emerald"
+              // Rose to read "active broadcasting in progress" —
+              // matches the Live badge color elsewhere on the page.
+              accent="rose"
             />
           </Link>
-          <Link
-            href={buildFilterHref(
-              "active-deals",
-              params.filter,
-              params.search,
-            )}
-            aria-label={
-              params.filter === "active-deals"
-                ? "Clear filter — show all creators"
-                : "Filter to creators with an active deal"
-            }
-            className={cn(
-              "block rounded-xl outline-none ring-offset-background transition focus-visible:ring-2 focus-visible:ring-amber-500",
-              params.filter === "active-deals" &&
-                "ring-2 ring-amber-500/60",
-            )}
-          >
-            <KpiTile
-              label="Active Deals"
-              value={counts ? formatNumber(counts.activeDeals) : "—"}
-              sub={
-                params.filter === "active-deals"
-                  ? "Filter active — click to clear"
-                  : "Running this week"
-              }
-              icon={Handshake}
-              accent="amber"
-            />
-          </Link>
-          <KpiTile
-            label="Total Creators"
-            value={formatNumber(result.total)}
-            icon={Megaphone}
-            accent="pink"
-          />
-          <KpiTile
-            label="On This Page"
-            value={String(result.data.length)}
-            sub={
-              params.filter
-                ? "Filter active — pagination disabled"
-                : `Page ${result.page} of ${result.totalPages}`
-            }
-            icon={Users}
-            accent="purple"
-          />
         </div>
       )}
 
@@ -277,13 +434,18 @@ export default async function CreatorsPage({
       <div className="space-y-3">
         <SectionHeading
           icon={Users}
+          // When a KPI-tile filter is active, the heading reflects the
+          // filter so the page reads as "Live Creators" / "Creators
+          // with Active Deals". Otherwise we fall back to the default
+          // "Creators" + the Fill / Multiplier tab switch.
           title={
             params.filter === "live"
               ? "Live Creators"
               : params.filter === "active-deals"
                 ? "Creators with Active Deals"
-                : "All Creators"
+                : "Creators"
           }
+          action={params.filter ? undefined : <CreatorsTabSwitch />}
         />
         <FadeIn className="space-y-4">
           <DataTableToolbar searchPlaceholder="Search by username or email..." />
@@ -300,16 +462,38 @@ export default async function CreatorsPage({
                   ftds: cw?.ftds ?? 0,
                   deposits3dUsd: cw?.deposits3dUsd ?? 0,
                   wagers3dUsd: cw?.wagers3dUsd ?? 0,
-                  pnlByPeriod: cw?.pnlByPeriod ?? null,
+                  // null = no active/scheduled deal, or the deal fetch
+                  // failed → the card's Converted stat renders "—".
+                  convertedUsd: dealCapByUser.get(c.id)?.usedUsd ?? null,
+                  // null = no withdraw activity tied to this deal's
+                  // conversion vouchers (or the join failed) → the
+                  // card hides the sub-line.
+                  withdrawnFromConverted:
+                    withdrawnFromConvertedByUser.get(c.id) ?? null,
+                  // 2-week max-cost projections. Deal side = the active
+                  // deal's total withdraw cap (worst-case payout);
+                  // leaderboard side = the sponsored-weighted prize of
+                  // affiliate leaderboards in the next 14 days. null →
+                  // the card's "2-Week Max Cost" row hides that side.
+                  deal2wkMaxUsd:
+                    dealCapByUser.get(c.id)?.totalCapUsd ?? null,
+                  leaderboard2wkMaxUsd:
+                    leaderboard2wkByUser.get(c.id)?.costUsd ?? null,
+                  // Chips beside the name: the active deal's withdraw
+                  // cap, and the blended leaderboard sponsored % ("the
+                  // % we pay") + its dollar cost.
+                  withdrawalCapUsd:
+                    dealCapByUser.get(c.id)?.totalCapUsd ?? null,
+                  leaderboardSponsoredPct:
+                    leaderboard2wkByUser.get(c.id)?.effectivePct ?? null,
                 };
               })
-              // Pin creators with an active or scheduled deal to the top of
-              // the page. The backend's /admin/creators endpoint doesn't
-              // expose a sort param yet, so this is a per-page client-side
-              // re-order — within a page it surfaces "who has a deal right
-              // now". Stable Array.prototype.sort preserves the backend's
-              // creation-order tiebreak.
+              // Pin creators with an active or scheduled deal to the
+              // top of the page — ONLY in the default "recent" sort.
+              // When the user is explicitly sorting by PnL, this
+              // re-order would scramble the PnL ranking.
               .sort((a, b) => {
+                if (params.sortBy !== "recent") return 0;
                 const aActive =
                   a.current_deal?.status === "active" ||
                   a.current_deal?.status === "scheduled"
@@ -357,6 +541,9 @@ type CreatorFilter = "live" | "active-deals";
  * `page` / `perPage` are intentionally dropped on every toggle: the
  * filtered view collapses pagination, and unfiltered → filtered →
  * unfiltered should always return to page 1 instead of a stale page.
+ * `tab` / `sortBy` are also dropped on enter (the filter overrides
+ * those views) but preserved on exit so the admin lands back in their
+ * tab + sort.
  */
 function buildFilterHref(
   target: CreatorFilter,
@@ -426,4 +613,63 @@ function networkErrorDetail(err: BackendNetworkError): string {
       break;
   }
   return `URL: ${err.url} · ${cause}.${hint}`;
+}
+
+// ─── Global PnL tile (streamed via Suspense) ──────────────────────
+//
+// The ledger+coverage reconstruction does a sort-merge join across all
+// completed deposits — heaviest query on this page. Rendered as its
+// own server component + Suspense fallback so it doesn't block the
+// rest of the strip + the cards from painting immediately.
+//
+// Best-effort: a query failure renders the tile in its empty state
+// rather than crashing the page.
+
+async function GlobalPnlTile() {
+  const lifetimePnl = await getAllCreatorsLifetimePnl().catch((err) => {
+    console.error(
+      "[creators] global lifetime PnL query failed (tile will render '—'):",
+      err,
+    );
+    return null;
+  });
+
+  const pnl = lifetimePnl?.pnl;
+  const byCreator = lifetimePnl?.byCreator ?? [];
+  const accent: "emerald" | "rose" | "blue" =
+    pnl == null ? "blue" : pnl > 0 ? "emerald" : pnl < 0 ? "rose" : "blue";
+
+  return (
+    <KpiTile
+      label="Global PnL"
+      value={
+        pnl == null
+          ? "—"
+          : `${pnl > 0 ? "+" : ""}${formatCurrency(pnl)}`
+      }
+      sub="All creators' affiliates combined, lifetime"
+      icon={LineChart}
+      accent={accent}
+      action={
+        byCreator.length > 0 ? (
+          <GlobalPnlByCreatorPopover creators={byCreator} />
+        ) : undefined
+      }
+    />
+  );
+}
+
+function GlobalPnlTileSkeleton() {
+  return (
+    <div className="relative overflow-hidden rounded-xl border bg-blue-500/10 border-blue-500/20 px-3 py-2.5 sm:px-4 sm:py-3">
+      <div className="flex items-center gap-1.5 sm:gap-2">
+        <LineChart className="size-3.5 shrink-0 text-blue-500 sm:size-4" />
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[11px]">
+          Global PnL
+        </span>
+      </div>
+      <Skeleton className="mt-1 h-6 w-24 sm:h-7" />
+      <Skeleton className="mt-1 h-3 w-32" />
+    </div>
+  );
 }

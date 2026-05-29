@@ -10,6 +10,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatCurrency, formatDateTime, formatRelative } from "@/lib/utils/format";
+import { EmptyState } from "@/components/empty-state";
 import { InlineBaseCell } from "./inline-base-cell";
 
 const RAIN_STATUS_COLORS: Record<string, string> = {
@@ -95,8 +96,13 @@ export function RainsTable({ data }: { data: RainRow[] }) {
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
         {data.length === 0 ? (
-          <div className="flex h-24 items-center justify-center rounded-md border text-sm text-muted-foreground">
-            No rains found.
+          <div className="rounded-md border">
+            <EmptyState
+              icon={CloudRain}
+              title="No rains found"
+              description="Rain events appear here once they are scheduled or run on the platform."
+              compact
+            />
           </div>
         ) : (
           <div className="overflow-hidden rounded-md border">
@@ -155,9 +161,14 @@ export function RainsTable({ data }: { data: RainRow[] }) {
               </TableRow>
             ))}
             {data.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={9} className="h-24 text-center">
-                  No rains found.
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={9} className="p-0">
+                  <EmptyState
+                    icon={CloudRain}
+                    title="No rains found"
+                    description="Rain events appear here once they are scheduled or run on the platform."
+                    compact
+                  />
                 </TableCell>
               </TableRow>
             )}
