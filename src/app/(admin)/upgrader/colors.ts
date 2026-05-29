@@ -23,3 +23,25 @@ export const UPGRADER_OUTPUT_COLORS = [
 ] as const;
 
 export type UpgraderOutputColor = (typeof UPGRADER_OUTPUT_COLORS)[number];
+
+/**
+ * Default color tone derived from a card's USD price, applied automatically
+ * when a card is first added to the upgrader pool. Admins can still override
+ * it afterward via the per-card color Select — this only sets the initial
+ * value (cards added before are left untouched, see `addUpgraderOutputs`).
+ *
+ * Thresholds are the lower bound of each tier, ascending and contiguous.
+ * Note green sits below blue here (cheaper than blue), unlike a rarity
+ * scale — the bands are price-driven:
+ *   gray $0–$0.99 · white $1–$14.99 · green $15–$149.99 · blue $150–$499.99 ·
+ *   purple $500–$1,499.99 · red $1,500–$4,999.99 · gold $5,000+
+ */
+export function colorForPrice(priceUsd: number): UpgraderOutputColor {
+  if (priceUsd < 1) return "gray";
+  if (priceUsd < 15) return "white";
+  if (priceUsd < 150) return "green";
+  if (priceUsd < 500) return "blue";
+  if (priceUsd < 1500) return "purple";
+  if (priceUsd < 5000) return "red";
+  return "gold";
+}

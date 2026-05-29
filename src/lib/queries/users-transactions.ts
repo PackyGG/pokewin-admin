@@ -1,6 +1,8 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { Prisma } from "@/generated/prisma/client";
+import { filterLedgerTxTypes, LEDGER_TX_TYPES } from "./_ledger-tx-types";
+import type { ledger_transaction_type } from "@/generated/prisma/enums";
 
 export async function getUserTransactions(
   userId: string,
@@ -11,10 +13,11 @@ export async function getUserTransactions(
   const db = await getDb();
   const where: Prisma.ledger_transactionsWhereInput = { user_id: userId };
 
-  if (filters?.type && filters.type !== "all") {
-    where.type = filters.type as Prisma.Enumledger_transaction_typeFilter["equals"];
+  if (filters?.type && filters.type !== "all" && LEDGER_TX_TYPES.has(filters.type)) {
+    where.type = filters.type as ledger_transaction_type;
   } else if (filters?.types && filters.types.length > 0) {
-    where.type = { in: filters.types as Prisma.Enumledger_transaction_typeFilter["in"] };
+    const validTypes = filterLedgerTxTypes(filters.types);
+    if (validTypes.length > 0) where.type = { in: validTypes };
   }
   if (filters?.status && filters.status !== "all") {
     where.status = filters.status as Prisma.Enumledger_transaction_statusFilter["equals"];

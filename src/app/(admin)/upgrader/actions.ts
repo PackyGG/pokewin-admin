@@ -10,6 +10,7 @@ import {
 } from "@/lib/backend-api";
 import {
   UPGRADER_OUTPUT_COLORS,
+  colorForPrice,
   type UpgraderOutputColor,
 } from "./colors";
 import { requirePageAccess } from "@/lib/dal";
@@ -69,6 +70,8 @@ export async function searchCardsForUpgraderPicker(params: {
   setId?: string;
   minPrice?: string;
   maxPrice?: string;
+  sortBy?: "name" | "price";
+  sortOrder?: "asc" | "desc";
 }) {
   await requirePageAccess("/upgrader");
   const result = await getCards({
@@ -79,8 +82,10 @@ export async function searchCardsForUpgraderPicker(params: {
     setId: params.setId,
     minPrice: params.minPrice,
     maxPrice: params.maxPrice,
-    sortBy: "name",
-    sortOrder: "asc",
+    // Default to most-valuable-first: when an admin filters by a price
+    // band to fill a tier, the priciest matches are what they scan for.
+    sortBy: params.sortBy ?? "price",
+    sortOrder: params.sortOrder ?? "desc",
   });
   return {
     data: result.data.map<UpgraderCardPickerItem>((c) => ({
@@ -126,6 +131,31 @@ export async function addUpgraderOutputs(card_ids: string[]) {
   try {
     const result = await upgraderApi.addOutputs(parsed.card_ids);
 
+    // Auto-assign an initial color to the freshly added cards based on
+    // their price (the backend add does not set one — color starts NULL).
+    // We re-list outputs to resolve the new output-card ids, then PATCH
+    // only the requested cards that still have no override, so admins who
+    // re-add an already-colored card keep their manual choice. This is
+    // best-effort: a color failure must not fail the add that succeeded.
+    let colored = 0;
+    if (result.inserted > 0) {
+      try {
+        const outputs = await upgraderApi.listOutputs();
+        const requested = new Set(parsed.card_ids);
+        const targets = outputs.filter(
+          (o) => requested.has(o.card_id) && o.color === null,
+        );
+        const settled = await Promise.allSettled(
+          targets.map((o) =>
+            upgraderApi.update(o.id, { color: colorForPrice(o.price) }),
+          ),
+        );
+        colored = settled.filter((s) => s.status === "fulfilled").length;
+      } catch {
+        // Swallow: the cards are in the pool; admins can set colors manually.
+      }
+    }
+
     await createAdminAuditEvent({
       adminUserId: session.userId,
       eventType: "upgrader_output_added",
@@ -134,6 +164,7 @@ export async function addUpgraderOutputs(card_ids: string[]) {
         requested: parsed.card_ids.length,
         inserted: result.inserted,
         skipped: result.skipped,
+        colored,
         card_ids: parsed.card_ids,
       },
     });

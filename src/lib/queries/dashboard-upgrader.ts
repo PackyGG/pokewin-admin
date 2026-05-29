@@ -14,23 +14,30 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
  * creator role itself, and the excluded-users blacklist are all
  * dropped, so the tile reads the raw customer signal only.
  *
- * Metrics (all lifetime, all house-POV):
- *   wager         = SUM(|amount|) over upgrader_bet rows
- *   payouts       = SUM(GREATEST(|amount|, balance_delta, 0)) over
- *                   upgrader_payout rows. Different game modes ship
- *                   the won value through different fields; the
- *                   GREATEST picks whichever the backend populated.
- *   pnl           = wager − payouts (positive = house gained)
- *   edge          = pnl / wager * 100 (house edge %)
- *   bets          = COUNT(upgrader_bet rows)
- *   avgBet        = wager / bets
- *   uniquePlayers = COUNT(DISTINCT user_id) on upgrader_bet rows
- *   wins          = COUNT(upgrader_payout rows) — the backend only
- *                   emits this type on a winning upgrade, so the row
- *                   count holds even when the actual won value lives
- *                   in a different field
- *   losses        = bets − wins
- *   hitRate       = wins / bets * 100
+ * SOURCE OF TRUTH — `upgrader_games`, NOT `ledger_transactions`.
+ * The backend debits the wager as an `upgrader_bet` ledger row but
+ * never emits a matching `upgrader_payout` credit (see
+ * backend/src/services/upgrader.service.ts — payout_ledger_tx_id is
+ * always null). Aggregating payouts off the ledger therefore reads
+ * 0, which pins the section at a fake 100% house edge. Both the
+ * wager and the won value already live on `upgrader_games`, so every
+ * number here is computed straight off that table:
+ *
+ *   wager   = SUM(bet_amount)            — what players risked
+ *   payouts = SUM(won_amount)            — gross value returned (0 on a loss)
+ *   pnl     = wager − payouts (positive = house gained)
+ *   edge    = pnl / wager * 100 (house edge %)
+ *   bets    = COUNT(*) rows
+ *   avgBet  = wager / bets
+ *   players = COUNT(DISTINCT user_id)
+ *   wins    = COUNT(*) WHERE won_amount > 0
+ *   losses  = bets − wins (won_amount = 0 ⇔ lost)
+ *   hitRate = wins / bets * 100
+ *
+ * `won_amount` is the GROSS amount credited on a win (bet × cashout
+ * multiplier, persisted to 2dp) and is 0 for losing plays, so
+ * wager − SUM(won_amount) is the true house margin without any
+ * ledger round-trip.
  */
 export type UpgraderStats = {
   wager: number;
@@ -49,12 +56,12 @@ export type UpgraderStats = {
  * 5-minute cross-request cache. The Upgrader section is lifetime data
  * that drifts very slowly compared to the dashboard's wager / PnL
  * tiles, so a 5-minute floor is invisible to operators and saves the
- * scan over every Upgrader ledger row on each 60s dashboard refresh.
+ * full scan over `upgrader_games` on each 60s dashboard refresh.
  * The 5-minute TTL matches the realized P&L snapshot's cache.
  */
 const cachedUpgraderStats = unstable_cache(
   upgraderStatsInner,
-  ["dashboard-upgrader-lifetime-v1"],
+  ["dashboard-upgrader-lifetime-v2"],
   { revalidate: 300, tags: ["dashboard-lifetime"] },
 );
 
@@ -67,9 +74,11 @@ async function upgraderStatsInner(): Promise<UpgraderStats> {
   const excluded = await getExcludedUserIds();
   const blacklistIdNotIn = blacklistNotInClause("id", excluded);
 
-  // Single lifetime scan over upgrader_bet + upgrader_payout rows.
-  // Same staff + creator + blacklist exclusion the Wager Attribution
-  // chart and Organic Wager card use.
+  // Single lifetime scan over `upgrader_games`, narrowed to real
+  // users (no staff, no creators, no blacklisted accounts). Five
+  // aggregates in one pass — wager (SUM bet_amount), payouts (SUM
+  // won_amount), bets (COUNT *), unique players (COUNT DISTINCT
+  // user_id), wins (COUNT * WHERE won_amount > 0).
   type Row = Record<string, string>;
   const rows = await db.$queryRaw<Row[]>`
     WITH real_users AS (
@@ -77,15 +86,13 @@ async function upgraderStatsInner(): Promise<UpgraderStats> {
       WHERE role NOT IN ('admin', 'support', 'creator') ${Prisma.raw(blacklistIdNotIn)}
     )
     SELECT
-      COALESCE(SUM(CASE WHEN type = 'upgrader_bet' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS wager,
-      COALESCE(SUM(CASE WHEN type = 'upgrader_payout' THEN GREATEST(ABS(amount::numeric), (balance_after - balance_before)::numeric, 0) ELSE 0 END), 0)::text AS payouts,
-      COUNT(CASE WHEN type = 'upgrader_bet' THEN 1 END)::text AS bets,
-      COUNT(DISTINCT CASE WHEN type = 'upgrader_bet' THEN user_id END)::text AS players,
-      COUNT(CASE WHEN type = 'upgrader_payout' THEN 1 END)::text AS wins
-    FROM ledger_transactions
-    WHERE type IN ('upgrader_bet', 'upgrader_payout')
-      AND status = 'completed'
-      AND user_id IN (SELECT id FROM real_users)
+      COALESCE(SUM(bet_amount::numeric), 0)::text AS wager,
+      COALESCE(SUM(won_amount::numeric), 0)::text AS payouts,
+      COUNT(*)::text AS bets,
+      COUNT(DISTINCT user_id)::text AS players,
+      COUNT(CASE WHEN won_amount::numeric > 0 THEN 1 END)::text AS wins
+    FROM upgrader_games
+    WHERE user_id IN (SELECT id FROM real_users)
   `;
 
   const r = rows[0] ?? {};
@@ -95,9 +102,9 @@ async function upgraderStatsInner(): Promise<UpgraderStats> {
   const bets = num("bets");
   const uniquePlayers = num("players");
   const wins = num("wins");
-  // Losses are derived: every bet either won (had a positive payout) or
-  // lost. Clamp at 0 in case wins count exceeds bets due to edge cases
-  // (e.g. an upgrader_payout that lacks a matching bet).
+  // Every game either won (won_amount > 0) or lost (won_amount = 0).
+  // wins is a strict subset of bets so the subtraction is safe; clamp
+  // at 0 defensively.
   const losses = Math.max(0, bets - wins);
   const pnl = wager - payouts;
   return {

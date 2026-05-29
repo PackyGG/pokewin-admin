@@ -3,7 +3,7 @@
 	"version": "0.1.0",
 	"private": true,
 	"scripts": {
-		"dev": "next dev --turbopack",
+		"dev": "prisma generate && prisma generate --schema=prisma/admin/schema.prisma --config=prisma/admin/prisma.config.ts && next dev --turbopack",
 		"build": "prisma generate && prisma generate --schema=prisma/admin/schema.prisma --config=prisma/admin/prisma.config.ts && next build --turbopack",
 		"start": "next start",
 		"lint": "eslint",

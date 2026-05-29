@@ -406,7 +406,13 @@ export const ModelName = {
   admin_shifts: 'admin_shifts',
   admin_shift_assignments: 'admin_shift_assignments',
   salary_employees: 'salary_employees',
-  salary_payouts: 'salary_payouts'
+  salary_payouts: 'salary_payouts',
+  salary_payments: 'salary_payments',
+  employee_workspaces: 'employee_workspaces',
+  employee_board_placements: 'employee_board_placements',
+  employee_managers: 'employee_managers',
+  employee_manager_workspaces: 'employee_manager_workspaces',
+  admin_leaderboard_sponsorship: 'admin_leaderboard_sponsorship'
 } as const
 
 export type ModelName = (typeof ModelName)[keyof typeof ModelName]
@@ -422,7 +428,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "admin_users" | "admin_giveaway_actions" | "admin_user_tags" | "excluded_users" | "admin_roles" | "admin_sessions" | "admin_notes" | "admin_audit_events" | "admin_gift_card_actions" | "admin_voucher_actions" | "creator_webhooks" | "creator_deals" | "creator_socials" | "webhook_deliveries" | "creator_balance_fills" | "admin_balance_limits" | "expenses" | "recurring_expenses" | "admin_settings" | "admin_shifts" | "admin_shift_assignments" | "salary_employees" | "salary_payouts"
+    modelProps: "admin_users" | "admin_giveaway_actions" | "admin_user_tags" | "excluded_users" | "admin_roles" | "admin_sessions" | "admin_notes" | "admin_audit_events" | "admin_gift_card_actions" | "admin_voucher_actions" | "creator_webhooks" | "creator_deals" | "creator_socials" | "webhook_deliveries" | "creator_balance_fills" | "admin_balance_limits" | "expenses" | "recurring_expenses" | "admin_settings" | "admin_shifts" | "admin_shift_assignments" | "salary_employees" | "salary_payouts" | "salary_payments" | "employee_workspaces" | "employee_board_placements" | "employee_managers" | "employee_manager_workspaces" | "admin_leaderboard_sponsorship"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -2128,6 +2134,450 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         }
       }
     }
+    salary_payments: {
+      payload: Prisma.$salary_paymentsPayload<ExtArgs>
+      fields: Prisma.salary_paymentsFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.salary_paymentsFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$salary_paymentsPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.salary_paymentsFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$salary_paymentsPayload>
+        }
+        findFirst: {
+          args: Prisma.salary_paymentsFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$salary_paymentsPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.salary_paymentsFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$salary_paymentsPayload>
+        }
+        findMany: {
+          args: Prisma.salary_paymentsFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$salary_paymentsPayload>[]
+        }
+        create: {
+          args: Prisma.salary_paymentsCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$salary_paymentsPayload>
+        }
+        createMany: {
+          args: Prisma.salary_paymentsCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.salary_paymentsCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$salary_paymentsPayload>[]
+        }
+        delete: {
+          args: Prisma.salary_paymentsDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$salary_paymentsPayload>
+        }
+        update: {
+          args: Prisma.salary_paymentsUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$salary_paymentsPayload>
+        }
+        deleteMany: {
+          args: Prisma.salary_paymentsDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.salary_paymentsUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.salary_paymentsUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$salary_paymentsPayload>[]
+        }
+        upsert: {
+          args: Prisma.salary_paymentsUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$salary_paymentsPayload>
+        }
+        aggregate: {
+          args: Prisma.Salary_paymentsAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateSalary_payments>
+        }
+        groupBy: {
+          args: Prisma.salary_paymentsGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Salary_paymentsGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.salary_paymentsCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Salary_paymentsCountAggregateOutputType> | number
+        }
+      }
+    }
+    employee_workspaces: {
+      payload: Prisma.$employee_workspacesPayload<ExtArgs>
+      fields: Prisma.employee_workspacesFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.employee_workspacesFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_workspacesPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.employee_workspacesFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_workspacesPayload>
+        }
+        findFirst: {
+          args: Prisma.employee_workspacesFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_workspacesPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.employee_workspacesFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_workspacesPayload>
+        }
+        findMany: {
+          args: Prisma.employee_workspacesFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_workspacesPayload>[]
+        }
+        create: {
+          args: Prisma.employee_workspacesCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_workspacesPayload>
+        }
+        createMany: {
+          args: Prisma.employee_workspacesCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.employee_workspacesCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_workspacesPayload>[]
+        }
+        delete: {
+          args: Prisma.employee_workspacesDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_workspacesPayload>
+        }
+        update: {
+          args: Prisma.employee_workspacesUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_workspacesPayload>
+        }
+        deleteMany: {
+          args: Prisma.employee_workspacesDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.employee_workspacesUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.employee_workspacesUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_workspacesPayload>[]
+        }
+        upsert: {
+          args: Prisma.employee_workspacesUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_workspacesPayload>
+        }
+        aggregate: {
+          args: Prisma.Employee_workspacesAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateEmployee_workspaces>
+        }
+        groupBy: {
+          args: Prisma.employee_workspacesGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Employee_workspacesGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.employee_workspacesCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Employee_workspacesCountAggregateOutputType> | number
+        }
+      }
+    }
+    employee_board_placements: {
+      payload: Prisma.$employee_board_placementsPayload<ExtArgs>
+      fields: Prisma.employee_board_placementsFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.employee_board_placementsFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_board_placementsPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.employee_board_placementsFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_board_placementsPayload>
+        }
+        findFirst: {
+          args: Prisma.employee_board_placementsFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_board_placementsPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.employee_board_placementsFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_board_placementsPayload>
+        }
+        findMany: {
+          args: Prisma.employee_board_placementsFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_board_placementsPayload>[]
+        }
+        create: {
+          args: Prisma.employee_board_placementsCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_board_placementsPayload>
+        }
+        createMany: {
+          args: Prisma.employee_board_placementsCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.employee_board_placementsCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_board_placementsPayload>[]
+        }
+        delete: {
+          args: Prisma.employee_board_placementsDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_board_placementsPayload>
+        }
+        update: {
+          args: Prisma.employee_board_placementsUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_board_placementsPayload>
+        }
+        deleteMany: {
+          args: Prisma.employee_board_placementsDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.employee_board_placementsUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.employee_board_placementsUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_board_placementsPayload>[]
+        }
+        upsert: {
+          args: Prisma.employee_board_placementsUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_board_placementsPayload>
+        }
+        aggregate: {
+          args: Prisma.Employee_board_placementsAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateEmployee_board_placements>
+        }
+        groupBy: {
+          args: Prisma.employee_board_placementsGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Employee_board_placementsGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.employee_board_placementsCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Employee_board_placementsCountAggregateOutputType> | number
+        }
+      }
+    }
+    employee_managers: {
+      payload: Prisma.$employee_managersPayload<ExtArgs>
+      fields: Prisma.employee_managersFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.employee_managersFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_managersPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.employee_managersFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_managersPayload>
+        }
+        findFirst: {
+          args: Prisma.employee_managersFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_managersPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.employee_managersFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_managersPayload>
+        }
+        findMany: {
+          args: Prisma.employee_managersFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_managersPayload>[]
+        }
+        create: {
+          args: Prisma.employee_managersCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_managersPayload>
+        }
+        createMany: {
+          args: Prisma.employee_managersCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.employee_managersCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_managersPayload>[]
+        }
+        delete: {
+          args: Prisma.employee_managersDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_managersPayload>
+        }
+        update: {
+          args: Prisma.employee_managersUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_managersPayload>
+        }
+        deleteMany: {
+          args: Prisma.employee_managersDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.employee_managersUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.employee_managersUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_managersPayload>[]
+        }
+        upsert: {
+          args: Prisma.employee_managersUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_managersPayload>
+        }
+        aggregate: {
+          args: Prisma.Employee_managersAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateEmployee_managers>
+        }
+        groupBy: {
+          args: Prisma.employee_managersGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Employee_managersGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.employee_managersCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Employee_managersCountAggregateOutputType> | number
+        }
+      }
+    }
+    employee_manager_workspaces: {
+      payload: Prisma.$employee_manager_workspacesPayload<ExtArgs>
+      fields: Prisma.employee_manager_workspacesFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.employee_manager_workspacesFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_manager_workspacesPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.employee_manager_workspacesFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_manager_workspacesPayload>
+        }
+        findFirst: {
+          args: Prisma.employee_manager_workspacesFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_manager_workspacesPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.employee_manager_workspacesFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_manager_workspacesPayload>
+        }
+        findMany: {
+          args: Prisma.employee_manager_workspacesFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_manager_workspacesPayload>[]
+        }
+        create: {
+          args: Prisma.employee_manager_workspacesCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_manager_workspacesPayload>
+        }
+        createMany: {
+          args: Prisma.employee_manager_workspacesCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.employee_manager_workspacesCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_manager_workspacesPayload>[]
+        }
+        delete: {
+          args: Prisma.employee_manager_workspacesDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_manager_workspacesPayload>
+        }
+        update: {
+          args: Prisma.employee_manager_workspacesUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_manager_workspacesPayload>
+        }
+        deleteMany: {
+          args: Prisma.employee_manager_workspacesDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.employee_manager_workspacesUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.employee_manager_workspacesUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_manager_workspacesPayload>[]
+        }
+        upsert: {
+          args: Prisma.employee_manager_workspacesUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$employee_manager_workspacesPayload>
+        }
+        aggregate: {
+          args: Prisma.Employee_manager_workspacesAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateEmployee_manager_workspaces>
+        }
+        groupBy: {
+          args: Prisma.employee_manager_workspacesGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Employee_manager_workspacesGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.employee_manager_workspacesCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Employee_manager_workspacesCountAggregateOutputType> | number
+        }
+      }
+    }
+    admin_leaderboard_sponsorship: {
+      payload: Prisma.$admin_leaderboard_sponsorshipPayload<ExtArgs>
+      fields: Prisma.admin_leaderboard_sponsorshipFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.admin_leaderboard_sponsorshipFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_leaderboard_sponsorshipPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.admin_leaderboard_sponsorshipFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_leaderboard_sponsorshipPayload>
+        }
+        findFirst: {
+          args: Prisma.admin_leaderboard_sponsorshipFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_leaderboard_sponsorshipPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.admin_leaderboard_sponsorshipFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_leaderboard_sponsorshipPayload>
+        }
+        findMany: {
+          args: Prisma.admin_leaderboard_sponsorshipFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_leaderboard_sponsorshipPayload>[]
+        }
+        create: {
+          args: Prisma.admin_leaderboard_sponsorshipCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_leaderboard_sponsorshipPayload>
+        }
+        createMany: {
+          args: Prisma.admin_leaderboard_sponsorshipCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.admin_leaderboard_sponsorshipCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_leaderboard_sponsorshipPayload>[]
+        }
+        delete: {
+          args: Prisma.admin_leaderboard_sponsorshipDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_leaderboard_sponsorshipPayload>
+        }
+        update: {
+          args: Prisma.admin_leaderboard_sponsorshipUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_leaderboard_sponsorshipPayload>
+        }
+        deleteMany: {
+          args: Prisma.admin_leaderboard_sponsorshipDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.admin_leaderboard_sponsorshipUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.admin_leaderboard_sponsorshipUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_leaderboard_sponsorshipPayload>[]
+        }
+        upsert: {
+          args: Prisma.admin_leaderboard_sponsorshipUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_leaderboard_sponsorshipPayload>
+        }
+        aggregate: {
+          args: Prisma.Admin_leaderboard_sponsorshipAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateAdmin_leaderboard_sponsorship>
+        }
+        groupBy: {
+          args: Prisma.admin_leaderboard_sponsorshipGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Admin_leaderboard_sponsorshipGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.admin_leaderboard_sponsorshipCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Admin_leaderboard_sponsorshipCountAggregateOutputType> | number
+        }
+      }
+    }
   }
 } & {
   other: {
@@ -2494,6 +2944,8 @@ export const Salary_employeesScalarFieldEnum = {
   salary_usdt: 'salary_usdt',
   max_per_payout: 'max_per_payout',
   active: 'active',
+  pay_day_of_week: 'pay_day_of_week',
+  pay_day_of_month: 'pay_day_of_month',
   last_paid_at: 'last_paid_at',
   notes: 'notes',
   created_at: 'created_at',
@@ -2520,6 +2972,75 @@ export const Salary_payoutsScalarFieldEnum = {
 } as const
 
 export type Salary_payoutsScalarFieldEnum = (typeof Salary_payoutsScalarFieldEnum)[keyof typeof Salary_payoutsScalarFieldEnum]
+
+
+export const Salary_paymentsScalarFieldEnum = {
+  id: 'id',
+  employee_id: 'employee_id',
+  payment_link: 'payment_link',
+  paid_at: 'paid_at',
+  created_by_id: 'created_by_id',
+  created_at: 'created_at'
+} as const
+
+export type Salary_paymentsScalarFieldEnum = (typeof Salary_paymentsScalarFieldEnum)[keyof typeof Salary_paymentsScalarFieldEnum]
+
+
+export const Employee_workspacesScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  position: 'position',
+  created_at: 'created_at',
+  updated_at: 'updated_at'
+} as const
+
+export type Employee_workspacesScalarFieldEnum = (typeof Employee_workspacesScalarFieldEnum)[keyof typeof Employee_workspacesScalarFieldEnum]
+
+
+export const Employee_board_placementsScalarFieldEnum = {
+  id: 'id',
+  employee_id: 'employee_id',
+  workspace_id: 'workspace_id',
+  roles: 'roles',
+  position: 'position',
+  created_at: 'created_at',
+  updated_at: 'updated_at'
+} as const
+
+export type Employee_board_placementsScalarFieldEnum = (typeof Employee_board_placementsScalarFieldEnum)[keyof typeof Employee_board_placementsScalarFieldEnum]
+
+
+export const Employee_managersScalarFieldEnum = {
+  id: 'id',
+  employee_id: 'employee_id',
+  position: 'position',
+  created_at: 'created_at',
+  updated_at: 'updated_at'
+} as const
+
+export type Employee_managersScalarFieldEnum = (typeof Employee_managersScalarFieldEnum)[keyof typeof Employee_managersScalarFieldEnum]
+
+
+export const Employee_manager_workspacesScalarFieldEnum = {
+  id: 'id',
+  manager_id: 'manager_id',
+  workspace_id: 'workspace_id',
+  created_at: 'created_at'
+} as const
+
+export type Employee_manager_workspacesScalarFieldEnum = (typeof Employee_manager_workspacesScalarFieldEnum)[keyof typeof Employee_manager_workspacesScalarFieldEnum]
+
+
+export const Admin_leaderboard_sponsorshipScalarFieldEnum = {
+  id: 'id',
+  leaderboard_id: 'leaderboard_id',
+  sponsored_percentage: 'sponsored_percentage',
+  set_by_admin_id: 'set_by_admin_id',
+  created_at: 'created_at',
+  updated_at: 'updated_at'
+} as const
+
+export type Admin_leaderboard_sponsorshipScalarFieldEnum = (typeof Admin_leaderboard_sponsorshipScalarFieldEnum)[keyof typeof Admin_leaderboard_sponsorshipScalarFieldEnum]
 
 
 export const SortOrder = {
@@ -2896,6 +3417,12 @@ export type GlobalOmitConfig = {
   admin_shift_assignments?: Prisma.admin_shift_assignmentsOmit
   salary_employees?: Prisma.salary_employeesOmit
   salary_payouts?: Prisma.salary_payoutsOmit
+  salary_payments?: Prisma.salary_paymentsOmit
+  employee_workspaces?: Prisma.employee_workspacesOmit
+  employee_board_placements?: Prisma.employee_board_placementsOmit
+  employee_managers?: Prisma.employee_managersOmit
+  employee_manager_workspaces?: Prisma.employee_manager_workspacesOmit
+  admin_leaderboard_sponsorship?: Prisma.admin_leaderboard_sponsorshipOmit
 }
 
 /* Types for Logging */

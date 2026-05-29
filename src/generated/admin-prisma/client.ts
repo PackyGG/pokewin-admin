@@ -181,3 +181,33 @@ export type salary_employees = Prisma.salary_employeesModel
  * 
  */
 export type salary_payouts = Prisma.salary_payoutsModel
+/**
+ * Model salary_payments
+ * 
+ */
+export type salary_payments = Prisma.salary_paymentsModel
+/**
+ * Model employee_workspaces
+ * 
+ */
+export type employee_workspaces = Prisma.employee_workspacesModel
+/**
+ * Model employee_board_placements
+ * 
+ */
+export type employee_board_placements = Prisma.employee_board_placementsModel
+/**
+ * Model employee_managers
+ * 
+ */
+export type employee_managers = Prisma.employee_managersModel
+/**
+ * Model employee_manager_workspaces
+ * 
+ */
+export type employee_manager_workspaces = Prisma.employee_manager_workspacesModel
+/**
+ * Model admin_leaderboard_sponsorship
+ * 
+ */
+export type admin_leaderboard_sponsorship = Prisma.admin_leaderboard_sponsorshipModel

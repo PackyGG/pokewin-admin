@@ -29,11 +29,15 @@ export type AggregateSalary_employees = {
 export type Salary_employeesAvgAggregateOutputType = {
   salary_usdt: runtime.Decimal | null
   max_per_payout: runtime.Decimal | null
+  pay_day_of_week: number | null
+  pay_day_of_month: number | null
 }
 
 export type Salary_employeesSumAggregateOutputType = {
   salary_usdt: runtime.Decimal | null
   max_per_payout: runtime.Decimal | null
+  pay_day_of_week: number | null
+  pay_day_of_month: number | null
 }
 
 export type Salary_employeesMinAggregateOutputType = {
@@ -44,6 +48,8 @@ export type Salary_employeesMinAggregateOutputType = {
   salary_usdt: runtime.Decimal | null
   max_per_payout: runtime.Decimal | null
   active: boolean | null
+  pay_day_of_week: number | null
+  pay_day_of_month: number | null
   last_paid_at: Date | null
   notes: string | null
   created_at: Date | null
@@ -59,6 +65,8 @@ export type Salary_employeesMaxAggregateOutputType = {
   salary_usdt: runtime.Decimal | null
   max_per_payout: runtime.Decimal | null
   active: boolean | null
+  pay_day_of_week: number | null
+  pay_day_of_month: number | null
   last_paid_at: Date | null
   notes: string | null
   created_at: Date | null
@@ -74,6 +82,8 @@ export type Salary_employeesCountAggregateOutputType = {
   salary_usdt: number
   max_per_payout: number
   active: number
+  pay_day_of_week: number
+  pay_day_of_month: number
   last_paid_at: number
   notes: number
   created_at: number
@@ -86,11 +96,15 @@ export type Salary_employeesCountAggregateOutputType = {
 export type Salary_employeesAvgAggregateInputType = {
   salary_usdt?: true
   max_per_payout?: true
+  pay_day_of_week?: true
+  pay_day_of_month?: true
 }
 
 export type Salary_employeesSumAggregateInputType = {
   salary_usdt?: true
   max_per_payout?: true
+  pay_day_of_week?: true
+  pay_day_of_month?: true
 }
 
 export type Salary_employeesMinAggregateInputType = {
@@ -101,6 +115,8 @@ export type Salary_employeesMinAggregateInputType = {
   salary_usdt?: true
   max_per_payout?: true
   active?: true
+  pay_day_of_week?: true
+  pay_day_of_month?: true
   last_paid_at?: true
   notes?: true
   created_at?: true
@@ -116,6 +132,8 @@ export type Salary_employeesMaxAggregateInputType = {
   salary_usdt?: true
   max_per_payout?: true
   active?: true
+  pay_day_of_week?: true
+  pay_day_of_month?: true
   last_paid_at?: true
   notes?: true
   created_at?: true
@@ -131,6 +149,8 @@ export type Salary_employeesCountAggregateInputType = {
   salary_usdt?: true
   max_per_payout?: true
   active?: true
+  pay_day_of_week?: true
+  pay_day_of_month?: true
   last_paid_at?: true
   notes?: true
   created_at?: true
@@ -233,6 +253,8 @@ export type Salary_employeesGroupByOutputType = {
   salary_usdt: runtime.Decimal
   max_per_payout: runtime.Decimal | null
   active: boolean
+  pay_day_of_week: number | null
+  pay_day_of_month: number | null
   last_paid_at: Date | null
   notes: string | null
   created_at: Date
@@ -271,6 +293,8 @@ export type salary_employeesWhereInput = {
   salary_usdt?: Prisma.DecimalFilter<"salary_employees"> | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.DecimalNullableFilter<"salary_employees"> | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolFilter<"salary_employees"> | boolean
+  pay_day_of_week?: Prisma.IntNullableFilter<"salary_employees"> | number | null
+  pay_day_of_month?: Prisma.IntNullableFilter<"salary_employees"> | number | null
   last_paid_at?: Prisma.DateTimeNullableFilter<"salary_employees"> | Date | string | null
   notes?: Prisma.StringNullableFilter<"salary_employees"> | string | null
   created_at?: Prisma.DateTimeFilter<"salary_employees"> | Date | string
@@ -278,6 +302,7 @@ export type salary_employeesWhereInput = {
   created_by_id?: Prisma.UuidFilter<"salary_employees"> | string
   created_by?: Prisma.XOR<Prisma.Admin_usersScalarRelationFilter, Prisma.admin_usersWhereInput>
   payouts?: Prisma.Salary_payoutsListRelationFilter
+  payments?: Prisma.Salary_paymentsListRelationFilter
 }
 
 export type salary_employeesOrderByWithRelationInput = {
@@ -288,6 +313,8 @@ export type salary_employeesOrderByWithRelationInput = {
   salary_usdt?: Prisma.SortOrder
   max_per_payout?: Prisma.SortOrderInput | Prisma.SortOrder
   active?: Prisma.SortOrder
+  pay_day_of_week?: Prisma.SortOrderInput | Prisma.SortOrder
+  pay_day_of_month?: Prisma.SortOrderInput | Prisma.SortOrder
   last_paid_at?: Prisma.SortOrderInput | Prisma.SortOrder
   notes?: Prisma.SortOrderInput | Prisma.SortOrder
   created_at?: Prisma.SortOrder
@@ -295,6 +322,7 @@ export type salary_employeesOrderByWithRelationInput = {
   created_by_id?: Prisma.SortOrder
   created_by?: Prisma.admin_usersOrderByWithRelationInput
   payouts?: Prisma.salary_payoutsOrderByRelationAggregateInput
+  payments?: Prisma.salary_paymentsOrderByRelationAggregateInput
 }
 
 export type salary_employeesWhereUniqueInput = Prisma.AtLeast<{
@@ -308,6 +336,8 @@ export type salary_employeesWhereUniqueInput = Prisma.AtLeast<{
   salary_usdt?: Prisma.DecimalFilter<"salary_employees"> | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.DecimalNullableFilter<"salary_employees"> | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolFilter<"salary_employees"> | boolean
+  pay_day_of_week?: Prisma.IntNullableFilter<"salary_employees"> | number | null
+  pay_day_of_month?: Prisma.IntNullableFilter<"salary_employees"> | number | null
   last_paid_at?: Prisma.DateTimeNullableFilter<"salary_employees"> | Date | string | null
   notes?: Prisma.StringNullableFilter<"salary_employees"> | string | null
   created_at?: Prisma.DateTimeFilter<"salary_employees"> | Date | string
@@ -315,6 +345,7 @@ export type salary_employeesWhereUniqueInput = Prisma.AtLeast<{
   created_by_id?: Prisma.UuidFilter<"salary_employees"> | string
   created_by?: Prisma.XOR<Prisma.Admin_usersScalarRelationFilter, Prisma.admin_usersWhereInput>
   payouts?: Prisma.Salary_payoutsListRelationFilter
+  payments?: Prisma.Salary_paymentsListRelationFilter
 }, "id">
 
 export type salary_employeesOrderByWithAggregationInput = {
@@ -325,6 +356,8 @@ export type salary_employeesOrderByWithAggregationInput = {
   salary_usdt?: Prisma.SortOrder
   max_per_payout?: Prisma.SortOrderInput | Prisma.SortOrder
   active?: Prisma.SortOrder
+  pay_day_of_week?: Prisma.SortOrderInput | Prisma.SortOrder
+  pay_day_of_month?: Prisma.SortOrderInput | Prisma.SortOrder
   last_paid_at?: Prisma.SortOrderInput | Prisma.SortOrder
   notes?: Prisma.SortOrderInput | Prisma.SortOrder
   created_at?: Prisma.SortOrder
@@ -348,6 +381,8 @@ export type salary_employeesScalarWhereWithAggregatesInput = {
   salary_usdt?: Prisma.DecimalWithAggregatesFilter<"salary_employees"> | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.DecimalNullableWithAggregatesFilter<"salary_employees"> | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolWithAggregatesFilter<"salary_employees"> | boolean
+  pay_day_of_week?: Prisma.IntNullableWithAggregatesFilter<"salary_employees"> | number | null
+  pay_day_of_month?: Prisma.IntNullableWithAggregatesFilter<"salary_employees"> | number | null
   last_paid_at?: Prisma.DateTimeNullableWithAggregatesFilter<"salary_employees"> | Date | string | null
   notes?: Prisma.StringNullableWithAggregatesFilter<"salary_employees"> | string | null
   created_at?: Prisma.DateTimeWithAggregatesFilter<"salary_employees"> | Date | string
@@ -363,12 +398,15 @@ export type salary_employeesCreateInput = {
   salary_usdt: runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: boolean
+  pay_day_of_week?: number | null
+  pay_day_of_month?: number | null
   last_paid_at?: Date | string | null
   notes?: string | null
   created_at?: Date | string
   updated_at?: Date | string
   created_by: Prisma.admin_usersCreateNestedOneWithoutSalary_employeesInput
   payouts?: Prisma.salary_payoutsCreateNestedManyWithoutEmployeeInput
+  payments?: Prisma.salary_paymentsCreateNestedManyWithoutEmployeeInput
 }
 
 export type salary_employeesUncheckedCreateInput = {
@@ -379,12 +417,15 @@ export type salary_employeesUncheckedCreateInput = {
   salary_usdt: runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: boolean
+  pay_day_of_week?: number | null
+  pay_day_of_month?: number | null
   last_paid_at?: Date | string | null
   notes?: string | null
   created_at?: Date | string
   updated_at?: Date | string
   created_by_id: string
   payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutEmployeeInput
+  payments?: Prisma.salary_paymentsUncheckedCreateNestedManyWithoutEmployeeInput
 }
 
 export type salary_employeesUpdateInput = {
@@ -395,12 +436,15 @@ export type salary_employeesUpdateInput = {
   salary_usdt?: Prisma.DecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.NullableDecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  pay_day_of_week?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  pay_day_of_month?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   last_paid_at?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notes?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   created_by?: Prisma.admin_usersUpdateOneRequiredWithoutSalary_employeesNestedInput
   payouts?: Prisma.salary_payoutsUpdateManyWithoutEmployeeNestedInput
+  payments?: Prisma.salary_paymentsUpdateManyWithoutEmployeeNestedInput
 }
 
 export type salary_employeesUncheckedUpdateInput = {
@@ -411,12 +455,15 @@ export type salary_employeesUncheckedUpdateInput = {
   salary_usdt?: Prisma.DecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.NullableDecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  pay_day_of_week?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  pay_day_of_month?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   last_paid_at?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notes?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   created_by_id?: Prisma.StringFieldUpdateOperationsInput | string
   payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutEmployeeNestedInput
+  payments?: Prisma.salary_paymentsUncheckedUpdateManyWithoutEmployeeNestedInput
 }
 
 export type salary_employeesCreateManyInput = {
@@ -427,6 +474,8 @@ export type salary_employeesCreateManyInput = {
   salary_usdt: runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: boolean
+  pay_day_of_week?: number | null
+  pay_day_of_month?: number | null
   last_paid_at?: Date | string | null
   notes?: string | null
   created_at?: Date | string
@@ -442,6 +491,8 @@ export type salary_employeesUpdateManyMutationInput = {
   salary_usdt?: Prisma.DecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.NullableDecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  pay_day_of_week?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  pay_day_of_month?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   last_paid_at?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notes?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -456,6 +507,8 @@ export type salary_employeesUncheckedUpdateManyInput = {
   salary_usdt?: Prisma.DecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.NullableDecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  pay_day_of_week?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  pay_day_of_month?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   last_paid_at?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notes?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -481,6 +534,8 @@ export type salary_employeesCountOrderByAggregateInput = {
   salary_usdt?: Prisma.SortOrder
   max_per_payout?: Prisma.SortOrder
   active?: Prisma.SortOrder
+  pay_day_of_week?: Prisma.SortOrder
+  pay_day_of_month?: Prisma.SortOrder
   last_paid_at?: Prisma.SortOrder
   notes?: Prisma.SortOrder
   created_at?: Prisma.SortOrder
@@ -491,6 +546,8 @@ export type salary_employeesCountOrderByAggregateInput = {
 export type salary_employeesAvgOrderByAggregateInput = {
   salary_usdt?: Prisma.SortOrder
   max_per_payout?: Prisma.SortOrder
+  pay_day_of_week?: Prisma.SortOrder
+  pay_day_of_month?: Prisma.SortOrder
 }
 
 export type salary_employeesMaxOrderByAggregateInput = {
@@ -501,6 +558,8 @@ export type salary_employeesMaxOrderByAggregateInput = {
   salary_usdt?: Prisma.SortOrder
   max_per_payout?: Prisma.SortOrder
   active?: Prisma.SortOrder
+  pay_day_of_week?: Prisma.SortOrder
+  pay_day_of_month?: Prisma.SortOrder
   last_paid_at?: Prisma.SortOrder
   notes?: Prisma.SortOrder
   created_at?: Prisma.SortOrder
@@ -516,6 +575,8 @@ export type salary_employeesMinOrderByAggregateInput = {
   salary_usdt?: Prisma.SortOrder
   max_per_payout?: Prisma.SortOrder
   active?: Prisma.SortOrder
+  pay_day_of_week?: Prisma.SortOrder
+  pay_day_of_month?: Prisma.SortOrder
   last_paid_at?: Prisma.SortOrder
   notes?: Prisma.SortOrder
   created_at?: Prisma.SortOrder
@@ -526,6 +587,8 @@ export type salary_employeesMinOrderByAggregateInput = {
 export type salary_employeesSumOrderByAggregateInput = {
   salary_usdt?: Prisma.SortOrder
   max_per_payout?: Prisma.SortOrder
+  pay_day_of_week?: Prisma.SortOrder
+  pay_day_of_month?: Prisma.SortOrder
 }
 
 export type Salary_employeesScalarRelationFilter = {
@@ -589,6 +652,20 @@ export type salary_employeesUpdateOneRequiredWithoutPayoutsNestedInput = {
   update?: Prisma.XOR<Prisma.XOR<Prisma.salary_employeesUpdateToOneWithWhereWithoutPayoutsInput, Prisma.salary_employeesUpdateWithoutPayoutsInput>, Prisma.salary_employeesUncheckedUpdateWithoutPayoutsInput>
 }
 
+export type salary_employeesCreateNestedOneWithoutPaymentsInput = {
+  create?: Prisma.XOR<Prisma.salary_employeesCreateWithoutPaymentsInput, Prisma.salary_employeesUncheckedCreateWithoutPaymentsInput>
+  connectOrCreate?: Prisma.salary_employeesCreateOrConnectWithoutPaymentsInput
+  connect?: Prisma.salary_employeesWhereUniqueInput
+}
+
+export type salary_employeesUpdateOneRequiredWithoutPaymentsNestedInput = {
+  create?: Prisma.XOR<Prisma.salary_employeesCreateWithoutPaymentsInput, Prisma.salary_employeesUncheckedCreateWithoutPaymentsInput>
+  connectOrCreate?: Prisma.salary_employeesCreateOrConnectWithoutPaymentsInput
+  upsert?: Prisma.salary_employeesUpsertWithoutPaymentsInput
+  connect?: Prisma.salary_employeesWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.salary_employeesUpdateToOneWithWhereWithoutPaymentsInput, Prisma.salary_employeesUpdateWithoutPaymentsInput>, Prisma.salary_employeesUncheckedUpdateWithoutPaymentsInput>
+}
+
 export type salary_employeesCreateWithoutCreated_byInput = {
   id?: string
   discord_name: string
@@ -597,11 +674,14 @@ export type salary_employeesCreateWithoutCreated_byInput = {
   salary_usdt: runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: boolean
+  pay_day_of_week?: number | null
+  pay_day_of_month?: number | null
   last_paid_at?: Date | string | null
   notes?: string | null
   created_at?: Date | string
   updated_at?: Date | string
   payouts?: Prisma.salary_payoutsCreateNestedManyWithoutEmployeeInput
+  payments?: Prisma.salary_paymentsCreateNestedManyWithoutEmployeeInput
 }
 
 export type salary_employeesUncheckedCreateWithoutCreated_byInput = {
@@ -612,11 +692,14 @@ export type salary_employeesUncheckedCreateWithoutCreated_byInput = {
   salary_usdt: runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: boolean
+  pay_day_of_week?: number | null
+  pay_day_of_month?: number | null
   last_paid_at?: Date | string | null
   notes?: string | null
   created_at?: Date | string
   updated_at?: Date | string
   payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutEmployeeInput
+  payments?: Prisma.salary_paymentsUncheckedCreateNestedManyWithoutEmployeeInput
 }
 
 export type salary_employeesCreateOrConnectWithoutCreated_byInput = {
@@ -656,6 +739,8 @@ export type salary_employeesScalarWhereInput = {
   salary_usdt?: Prisma.DecimalFilter<"salary_employees"> | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.DecimalNullableFilter<"salary_employees"> | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolFilter<"salary_employees"> | boolean
+  pay_day_of_week?: Prisma.IntNullableFilter<"salary_employees"> | number | null
+  pay_day_of_month?: Prisma.IntNullableFilter<"salary_employees"> | number | null
   last_paid_at?: Prisma.DateTimeNullableFilter<"salary_employees"> | Date | string | null
   notes?: Prisma.StringNullableFilter<"salary_employees"> | string | null
   created_at?: Prisma.DateTimeFilter<"salary_employees"> | Date | string
@@ -671,11 +756,14 @@ export type salary_employeesCreateWithoutPayoutsInput = {
   salary_usdt: runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: boolean
+  pay_day_of_week?: number | null
+  pay_day_of_month?: number | null
   last_paid_at?: Date | string | null
   notes?: string | null
   created_at?: Date | string
   updated_at?: Date | string
   created_by: Prisma.admin_usersCreateNestedOneWithoutSalary_employeesInput
+  payments?: Prisma.salary_paymentsCreateNestedManyWithoutEmployeeInput
 }
 
 export type salary_employeesUncheckedCreateWithoutPayoutsInput = {
@@ -686,11 +774,14 @@ export type salary_employeesUncheckedCreateWithoutPayoutsInput = {
   salary_usdt: runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: boolean
+  pay_day_of_week?: number | null
+  pay_day_of_month?: number | null
   last_paid_at?: Date | string | null
   notes?: string | null
   created_at?: Date | string
   updated_at?: Date | string
   created_by_id: string
+  payments?: Prisma.salary_paymentsUncheckedCreateNestedManyWithoutEmployeeInput
 }
 
 export type salary_employeesCreateOrConnectWithoutPayoutsInput = {
@@ -717,11 +808,14 @@ export type salary_employeesUpdateWithoutPayoutsInput = {
   salary_usdt?: Prisma.DecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.NullableDecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  pay_day_of_week?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  pay_day_of_month?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   last_paid_at?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notes?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   created_by?: Prisma.admin_usersUpdateOneRequiredWithoutSalary_employeesNestedInput
+  payments?: Prisma.salary_paymentsUpdateManyWithoutEmployeeNestedInput
 }
 
 export type salary_employeesUncheckedUpdateWithoutPayoutsInput = {
@@ -732,11 +826,102 @@ export type salary_employeesUncheckedUpdateWithoutPayoutsInput = {
   salary_usdt?: Prisma.DecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.NullableDecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  pay_day_of_week?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  pay_day_of_month?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   last_paid_at?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notes?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   created_by_id?: Prisma.StringFieldUpdateOperationsInput | string
+  payments?: Prisma.salary_paymentsUncheckedUpdateManyWithoutEmployeeNestedInput
+}
+
+export type salary_employeesCreateWithoutPaymentsInput = {
+  id?: string
+  discord_name: string
+  eth_address: string
+  cadence?: string
+  salary_usdt: runtime.Decimal | runtime.DecimalJsLike | number | string
+  max_per_payout?: runtime.Decimal | runtime.DecimalJsLike | number | string | null
+  active?: boolean
+  pay_day_of_week?: number | null
+  pay_day_of_month?: number | null
+  last_paid_at?: Date | string | null
+  notes?: string | null
+  created_at?: Date | string
+  updated_at?: Date | string
+  created_by: Prisma.admin_usersCreateNestedOneWithoutSalary_employeesInput
+  payouts?: Prisma.salary_payoutsCreateNestedManyWithoutEmployeeInput
+}
+
+export type salary_employeesUncheckedCreateWithoutPaymentsInput = {
+  id?: string
+  discord_name: string
+  eth_address: string
+  cadence?: string
+  salary_usdt: runtime.Decimal | runtime.DecimalJsLike | number | string
+  max_per_payout?: runtime.Decimal | runtime.DecimalJsLike | number | string | null
+  active?: boolean
+  pay_day_of_week?: number | null
+  pay_day_of_month?: number | null
+  last_paid_at?: Date | string | null
+  notes?: string | null
+  created_at?: Date | string
+  updated_at?: Date | string
+  created_by_id: string
+  payouts?: Prisma.salary_payoutsUncheckedCreateNestedManyWithoutEmployeeInput
+}
+
+export type salary_employeesCreateOrConnectWithoutPaymentsInput = {
+  where: Prisma.salary_employeesWhereUniqueInput
+  create: Prisma.XOR<Prisma.salary_employeesCreateWithoutPaymentsInput, Prisma.salary_employeesUncheckedCreateWithoutPaymentsInput>
+}
+
+export type salary_employeesUpsertWithoutPaymentsInput = {
+  update: Prisma.XOR<Prisma.salary_employeesUpdateWithoutPaymentsInput, Prisma.salary_employeesUncheckedUpdateWithoutPaymentsInput>
+  create: Prisma.XOR<Prisma.salary_employeesCreateWithoutPaymentsInput, Prisma.salary_employeesUncheckedCreateWithoutPaymentsInput>
+  where?: Prisma.salary_employeesWhereInput
+}
+
+export type salary_employeesUpdateToOneWithWhereWithoutPaymentsInput = {
+  where?: Prisma.salary_employeesWhereInput
+  data: Prisma.XOR<Prisma.salary_employeesUpdateWithoutPaymentsInput, Prisma.salary_employeesUncheckedUpdateWithoutPaymentsInput>
+}
+
+export type salary_employeesUpdateWithoutPaymentsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  discord_name?: Prisma.StringFieldUpdateOperationsInput | string
+  eth_address?: Prisma.StringFieldUpdateOperationsInput | string
+  cadence?: Prisma.StringFieldUpdateOperationsInput | string
+  salary_usdt?: Prisma.DecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string
+  max_per_payout?: Prisma.NullableDecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string | null
+  active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  pay_day_of_week?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  pay_day_of_month?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  last_paid_at?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  notes?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  created_by?: Prisma.admin_usersUpdateOneRequiredWithoutSalary_employeesNestedInput
+  payouts?: Prisma.salary_payoutsUpdateManyWithoutEmployeeNestedInput
+}
+
+export type salary_employeesUncheckedUpdateWithoutPaymentsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  discord_name?: Prisma.StringFieldUpdateOperationsInput | string
+  eth_address?: Prisma.StringFieldUpdateOperationsInput | string
+  cadence?: Prisma.StringFieldUpdateOperationsInput | string
+  salary_usdt?: Prisma.DecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string
+  max_per_payout?: Prisma.NullableDecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string | null
+  active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  pay_day_of_week?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  pay_day_of_month?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  last_paid_at?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  notes?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  created_by_id?: Prisma.StringFieldUpdateOperationsInput | string
+  payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutEmployeeNestedInput
 }
 
 export type salary_employeesCreateManyCreated_byInput = {
@@ -747,6 +932,8 @@ export type salary_employeesCreateManyCreated_byInput = {
   salary_usdt: runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: boolean
+  pay_day_of_week?: number | null
+  pay_day_of_month?: number | null
   last_paid_at?: Date | string | null
   notes?: string | null
   created_at?: Date | string
@@ -761,11 +948,14 @@ export type salary_employeesUpdateWithoutCreated_byInput = {
   salary_usdt?: Prisma.DecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.NullableDecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  pay_day_of_week?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  pay_day_of_month?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   last_paid_at?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notes?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   payouts?: Prisma.salary_payoutsUpdateManyWithoutEmployeeNestedInput
+  payments?: Prisma.salary_paymentsUpdateManyWithoutEmployeeNestedInput
 }
 
 export type salary_employeesUncheckedUpdateWithoutCreated_byInput = {
@@ -776,11 +966,14 @@ export type salary_employeesUncheckedUpdateWithoutCreated_byInput = {
   salary_usdt?: Prisma.DecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.NullableDecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  pay_day_of_week?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  pay_day_of_month?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   last_paid_at?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notes?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   payouts?: Prisma.salary_payoutsUncheckedUpdateManyWithoutEmployeeNestedInput
+  payments?: Prisma.salary_paymentsUncheckedUpdateManyWithoutEmployeeNestedInput
 }
 
 export type salary_employeesUncheckedUpdateManyWithoutCreated_byInput = {
@@ -791,6 +984,8 @@ export type salary_employeesUncheckedUpdateManyWithoutCreated_byInput = {
   salary_usdt?: Prisma.DecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string
   max_per_payout?: Prisma.NullableDecimalFieldUpdateOperationsInput | runtime.Decimal | runtime.DecimalJsLike | number | string | null
   active?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  pay_day_of_week?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
+  pay_day_of_month?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   last_paid_at?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notes?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -804,10 +999,12 @@ export type salary_employeesUncheckedUpdateManyWithoutCreated_byInput = {
 
 export type Salary_employeesCountOutputType = {
   payouts: number
+  payments: number
 }
 
 export type Salary_employeesCountOutputTypeSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   payouts?: boolean | Salary_employeesCountOutputTypeCountPayoutsArgs
+  payments?: boolean | Salary_employeesCountOutputTypeCountPaymentsArgs
 }
 
 /**
@@ -827,6 +1024,13 @@ export type Salary_employeesCountOutputTypeCountPayoutsArgs<ExtArgs extends runt
   where?: Prisma.salary_payoutsWhereInput
 }
 
+/**
+ * Salary_employeesCountOutputType without action
+ */
+export type Salary_employeesCountOutputTypeCountPaymentsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.salary_paymentsWhereInput
+}
+
 
 export type salary_employeesSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
@@ -836,6 +1040,8 @@ export type salary_employeesSelect<ExtArgs extends runtime.Types.Extensions.Inte
   salary_usdt?: boolean
   max_per_payout?: boolean
   active?: boolean
+  pay_day_of_week?: boolean
+  pay_day_of_month?: boolean
   last_paid_at?: boolean
   notes?: boolean
   created_at?: boolean
@@ -843,6 +1049,7 @@ export type salary_employeesSelect<ExtArgs extends runtime.Types.Extensions.Inte
   created_by_id?: boolean
   created_by?: boolean | Prisma.admin_usersDefaultArgs<ExtArgs>
   payouts?: boolean | Prisma.salary_employees$payoutsArgs<ExtArgs>
+  payments?: boolean | Prisma.salary_employees$paymentsArgs<ExtArgs>
   _count?: boolean | Prisma.Salary_employeesCountOutputTypeDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["salary_employees"]>
 
@@ -854,6 +1061,8 @@ export type salary_employeesSelectCreateManyAndReturn<ExtArgs extends runtime.Ty
   salary_usdt?: boolean
   max_per_payout?: boolean
   active?: boolean
+  pay_day_of_week?: boolean
+  pay_day_of_month?: boolean
   last_paid_at?: boolean
   notes?: boolean
   created_at?: boolean
@@ -870,6 +1079,8 @@ export type salary_employeesSelectUpdateManyAndReturn<ExtArgs extends runtime.Ty
   salary_usdt?: boolean
   max_per_payout?: boolean
   active?: boolean
+  pay_day_of_week?: boolean
+  pay_day_of_month?: boolean
   last_paid_at?: boolean
   notes?: boolean
   created_at?: boolean
@@ -886,6 +1097,8 @@ export type salary_employeesSelectScalar = {
   salary_usdt?: boolean
   max_per_payout?: boolean
   active?: boolean
+  pay_day_of_week?: boolean
+  pay_day_of_month?: boolean
   last_paid_at?: boolean
   notes?: boolean
   created_at?: boolean
@@ -893,10 +1106,11 @@ export type salary_employeesSelectScalar = {
   created_by_id?: boolean
 }
 
-export type salary_employeesOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "discord_name" | "eth_address" | "cadence" | "salary_usdt" | "max_per_payout" | "active" | "last_paid_at" | "notes" | "created_at" | "updated_at" | "created_by_id", ExtArgs["result"]["salary_employees"]>
+export type salary_employeesOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "discord_name" | "eth_address" | "cadence" | "salary_usdt" | "max_per_payout" | "active" | "pay_day_of_week" | "pay_day_of_month" | "last_paid_at" | "notes" | "created_at" | "updated_at" | "created_by_id", ExtArgs["result"]["salary_employees"]>
 export type salary_employeesInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   created_by?: boolean | Prisma.admin_usersDefaultArgs<ExtArgs>
   payouts?: boolean | Prisma.salary_employees$payoutsArgs<ExtArgs>
+  payments?: boolean | Prisma.salary_employees$paymentsArgs<ExtArgs>
   _count?: boolean | Prisma.Salary_employeesCountOutputTypeDefaultArgs<ExtArgs>
 }
 export type salary_employeesIncludeCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
@@ -911,6 +1125,7 @@ export type $salary_employeesPayload<ExtArgs extends runtime.Types.Extensions.In
   objects: {
     created_by: Prisma.$admin_usersPayload<ExtArgs>
     payouts: Prisma.$salary_payoutsPayload<ExtArgs>[]
+    payments: Prisma.$salary_paymentsPayload<ExtArgs>[]
   }
   scalars: runtime.Types.Extensions.GetPayloadResult<{
     id: string
@@ -920,6 +1135,8 @@ export type $salary_employeesPayload<ExtArgs extends runtime.Types.Extensions.In
     salary_usdt: runtime.Decimal
     max_per_payout: runtime.Decimal | null
     active: boolean
+    pay_day_of_week: number | null
+    pay_day_of_month: number | null
     last_paid_at: Date | null
     notes: string | null
     created_at: Date
@@ -1321,6 +1538,7 @@ export interface Prisma__salary_employeesClient<T, Null = never, ExtArgs extends
   readonly [Symbol.toStringTag]: "PrismaPromise"
   created_by<T extends Prisma.admin_usersDefaultArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.admin_usersDefaultArgs<ExtArgs>>): Prisma.Prisma__admin_usersClient<runtime.Types.Result.GetResult<Prisma.$admin_usersPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | Null, Null, ExtArgs, GlobalOmitOptions>
   payouts<T extends Prisma.salary_employees$payoutsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.salary_employees$payoutsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$salary_payoutsPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  payments<T extends Prisma.salary_employees$paymentsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.salary_employees$paymentsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$salary_paymentsPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   /**
    * Attaches callbacks for the resolution and/or rejection of the Promise.
    * @param onfulfilled The callback to execute when the Promise is resolved.
@@ -1357,6 +1575,8 @@ export interface salary_employeesFieldRefs {
   readonly salary_usdt: Prisma.FieldRef<"salary_employees", 'Decimal'>
   readonly max_per_payout: Prisma.FieldRef<"salary_employees", 'Decimal'>
   readonly active: Prisma.FieldRef<"salary_employees", 'Boolean'>
+  readonly pay_day_of_week: Prisma.FieldRef<"salary_employees", 'Int'>
+  readonly pay_day_of_month: Prisma.FieldRef<"salary_employees", 'Int'>
   readonly last_paid_at: Prisma.FieldRef<"salary_employees", 'DateTime'>
   readonly notes: Prisma.FieldRef<"salary_employees", 'String'>
   readonly created_at: Prisma.FieldRef<"salary_employees", 'DateTime'>
@@ -1784,6 +2004,30 @@ export type salary_employees$payoutsArgs<ExtArgs extends runtime.Types.Extension
   take?: number
   skip?: number
   distinct?: Prisma.Salary_payoutsScalarFieldEnum | Prisma.Salary_payoutsScalarFieldEnum[]
+}
+
+/**
+ * salary_employees.payments
+ */
+export type salary_employees$paymentsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the salary_payments
+   */
+  select?: Prisma.salary_paymentsSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the salary_payments
+   */
+  omit?: Prisma.salary_paymentsOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.salary_paymentsInclude<ExtArgs> | null
+  where?: Prisma.salary_paymentsWhereInput
+  orderBy?: Prisma.salary_paymentsOrderByWithRelationInput | Prisma.salary_paymentsOrderByWithRelationInput[]
+  cursor?: Prisma.salary_paymentsWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.Salary_paymentsScalarFieldEnum | Prisma.Salary_paymentsScalarFieldEnum[]
 }
 
 /**
