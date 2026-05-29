@@ -33,11 +33,14 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
  * wager − SUM(won_amount) is the true house margin without any ledger
  * round-trip.
  *
- * Staff (admin / support) + the excluded-users blacklist are dropped,
- * matching every other dashboard aggregate. Returns the full chip set
- * the other period cards use (1h / 3h / 6h / 12h / 24h / 3d / 7d /
- * 30d / all) so the section can flip windows client-side without a
- * roundtrip.
+ * Staff (admin / support), the creator role itself, and the
+ * excluded-users blacklist are all dropped — so the tile reads the
+ * raw customer signal only, with no creator-on-stream play inflating
+ * any of wager / payouts / pnl / bets / players / wins. Same scope
+ * the Organic Wager card + Wager Attribution chart use. Returns the
+ * full chip set the other period cards use (1h / 3h / 6h / 12h /
+ * 24h / 3d / 7d / 30d / all) so the section can flip windows
+ * client-side without a roundtrip.
  */
 
 const RANGES = ["1h", "3h", "6h", "12h", "24h", "3d", "7d", "30d", "all"] as const;
@@ -92,7 +95,7 @@ async function upgraderStatsInner(): Promise<UpgraderStats> {
   const rows = await db.$queryRaw<Row[]>`
     WITH real_users AS (
       SELECT id FROM "user"
-      WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+      WHERE role NOT IN ('admin', 'support', 'creator') ${Prisma.raw(blacklistIdNotIn)}
     )
     SELECT
       COALESCE(SUM(CASE WHEN created_at >= ${oneHourAgo}        THEN bet_amount::numeric ELSE 0 END), 0)::text AS wager_1h,
