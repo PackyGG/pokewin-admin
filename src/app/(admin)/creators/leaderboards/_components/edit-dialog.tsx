@@ -97,6 +97,12 @@ export function EditDialog({
             amount: t.prize_amount_usd,
         })),
     );
+    // Editable site-funded portion of the total prize pool. Lets the
+    // admin lower the pool when they want to shrink the leaderboard;
+    // previously this was create-only and a leaderboard couldn't be
+    // lowered after creation. Validation below stops a save that would
+    // push the tier sum above the new pool.
+    const [siteBonus, setSiteBonus] = useState(leaderboard.site_bonus_usd);
     // Sponsored % — cost-math annotation. Starts at the saved value or
     // the 100% default.
     const [sponsoredPct, setSponsoredPct] = useState(
@@ -121,10 +127,17 @@ export function EditDialog({
     const [isPending, startTransition] = useTransition();
     const router = useRouter();
 
-    const totalPool = Number(leaderboard.creator_prize_usd) + Number(leaderboard.site_bonus_usd);
+    // Total pool = creator-funded (locked, set at deal time) + the
+    // site-funded portion the admin is editing now. The validation
+    // recomputes live as either the tiers or the site bonus changes
+    // so the admin sees the new ratio immediately.
+    const siteBonusNum = Number(siteBonus) || 0;
+    const totalPool = Number(leaderboard.creator_prize_usd) + siteBonusNum;
+    const originalPool = Number(leaderboard.creator_prize_usd) + Number(leaderboard.site_bonus_usd);
 
     const tierSum = tiers.reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
     const tierSumExceeds = tierSum > totalPool + 1e-6;
+    const siteBonusInvalid = !Number.isFinite(siteBonusNum) || siteBonusNum < 0;
 
     useEffect(() => {
         const trimmed = coCreatorQuery.trim();
@@ -246,6 +259,7 @@ export function EditDialog({
             start_date?: string;
             end_date?: string;
             prize_tiers?: Array<{ position: number; prize_amount_usd: number }>;
+            site_bonus_usd?: number;
         } = {};
 
         if (titleChanged) payload.title = title.trim();
@@ -253,6 +267,21 @@ export function EditDialog({
         if (coCreatorsChanged) payload.co_creator_user_ids = coCreatorIds;
         if (startChanged) payload.start_date = startISO;
         if (endChanged) payload.end_date = endISO;
+
+        // Site-funded pool — only included when the admin actually changed
+        // it. The tier-sum guard below uses the NEW pool when present so
+        // an admin can lower the pool + the tier amounts in a single
+        // save without the validation flagging the intermediate state.
+        const siteBonusChanged =
+            Math.abs(siteBonusNum - Number(leaderboard.site_bonus_usd)) > 1e-6;
+        if (siteBonusChanged) {
+            if (siteBonusInvalid) {
+                toast.error("Site-funded pool must be 0 or greater");
+                return;
+            }
+            payload.site_bonus_usd = siteBonusNum;
+        }
+
         if (tiersChanged) {
             if (newTiersSorted.length < 5) {
                 toast.error("At least 5 prize tiers are required");
@@ -263,6 +292,14 @@ export function EditDialog({
                 return;
             }
             payload.prize_tiers = newTiersSorted;
+        } else if (siteBonusChanged && tierSumExceeds) {
+            // Pool was lowered below the existing tier sum without
+            // adjusting tiers — explicit guard so the backend doesn't
+            // have to reject (and the toast points at the real fix).
+            toast.error(
+                `New pool ($${totalPool.toFixed(2)}) is below tier sum ($${tierSum.toFixed(2)}). Lower the tier amounts too.`,
+            );
+            return;
         }
 
         const backendChanged = Object.keys(payload).length > 0;
@@ -332,8 +369,10 @@ export function EditDialog({
                 <DialogHeader>
                     <DialogTitle>Edit leaderboard</DialogTitle>
                     <DialogDescription>
-                        Modify any fields. Empty fields are kept unchanged. Prize tier sum must not exceed
-                        the total prize pool of ${totalPool.toFixed(2)} (creator funded + site bonus).
+                        Modify any fields. Empty fields are kept unchanged. The
+                        site-funded pool can be lowered or raised; the tier
+                        sum must not exceed the resulting total pool
+                        (creator-funded + site-funded).
                     </DialogDescription>
                 </DialogHeader>
                 <form onSubmit={handleSubmit} className="space-y-4">
@@ -470,6 +509,53 @@ export function EditDialog({
                         and cache jobs run on hourly ticks.
                     </p>
 
+                    {/* Total prize pool (site-funded portion) — editable
+                        so admins can shrink a leaderboard after
+                        creation. The creator-funded part is locked at
+                        deal time; only the site-funded portion can be
+                        adjusted here. Total = creator + site. */}
+                    <div className="space-y-2">
+                        <Label htmlFor="site_bonus_usd">
+                            Site-funded pool (USD)
+                        </Label>
+                        <Input
+                            id="site_bonus_usd"
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            value={siteBonus}
+                            onChange={(e) => setSiteBonus(e.target.value)}
+                            placeholder="5000"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                            {Number(leaderboard.creator_prize_usd) > 0 ? (
+                                <>
+                                    Creator-funded ${Number(leaderboard.creator_prize_usd).toFixed(2)} (locked) +
+                                    site-funded ${siteBonusNum.toFixed(2)} = total ${totalPool.toFixed(2)}.
+                                </>
+                            ) : (
+                                <>
+                                    Total prize pool = ${totalPool.toFixed(2)}.
+                                </>
+                            )}
+                            {Math.abs(totalPool - originalPool) > 1e-6 && (
+                                <>
+                                    {" "}
+                                    <span
+                                        className={
+                                            totalPool < originalPool
+                                                ? "text-rose-600 dark:text-rose-400"
+                                                : "text-emerald-600 dark:text-emerald-400"
+                                        }
+                                    >
+                                        ({totalPool < originalPool ? "−" : "+"}
+                                        ${Math.abs(totalPool - originalPool).toFixed(2)} vs current)
+                                    </span>
+                                </>
+                            )}
+                        </p>
+                    </div>
+
                     <div className="space-y-2">
                         <div className="flex items-center justify-between">
                             <Label>Prize tiers</Label>
@@ -558,7 +644,7 @@ export function EditDialog({
                         </Button>
                         <Button
                             type="submit"
-                            disabled={isPending || tierSumExceeds}
+                            disabled={isPending || tierSumExceeds || siteBonusInvalid}
                             className="w-full sm:w-auto"
                         >
                             {isPending ? "Saving..." : "Save"}

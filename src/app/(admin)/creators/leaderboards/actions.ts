@@ -136,6 +136,11 @@ const editSchema = z.object({
         )
         .min(5)
         .optional(),
+    // Site-funded prize pool. Editable so admins can lower / raise a
+    // leaderboard after creation; the creator-funded portion stays
+    // locked at deal time. 0 is allowed (leaderboard with creator-only
+    // funding); negatives are rejected.
+    site_bonus_usd: z.number().min(0).optional(),
 });
 
 // Admin-side "sponsored %" — a cost-accounting annotation, 0–100.
