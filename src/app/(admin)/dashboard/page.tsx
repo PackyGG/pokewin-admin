@@ -187,11 +187,12 @@ export default async function DashboardPage({
           the left, Live Money Movements (deposits + withdrawals, 6s
           polling) on the right. Both feeds self-bootstrap their snapshot
           on the client (no server-rendered seed), so the 60s dashboard
-          refresh doesn't re-query them. Stacks to a single column on
-          smaller screens so each card keeps a usable width. Both cards
-          manage their own height cap via internal scroll so the grid
-          stays symmetric. */}
-      <div className="grid gap-3 sm:gap-4 xl:grid-cols-2">
+          refresh doesn't re-query them. Goes 2-up from `lg` (1024px)
+          so the right-side feed is visible on every common laptop /
+          desktop width; stacks on tablet/phone. Both cards manage
+          their own height cap via internal scroll so the grid stays
+          symmetric. */}
+      <div className="grid gap-3 sm:gap-4 lg:grid-cols-2">
         <div className="space-y-3">
           <SectionHeading
             icon={Activity}
