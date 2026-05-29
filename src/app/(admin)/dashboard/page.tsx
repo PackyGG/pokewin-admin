@@ -2,7 +2,6 @@ import { Suspense } from "react";
 import {
   Users,
   Percent,
-  Wallet,
   Coins,
   LayoutDashboard,
   Activity,
@@ -46,7 +45,7 @@ import {
   RecentActivityLivePulse,
   RecentActivitySkeleton,
 } from "./recent-activity";
-import { LiveMoneyMovements } from "./live-money-movements";
+import { LiveMoneyChat } from "@/components/live-money-chat";
 import { UpgraderStatsSection } from "./upgrader-stats";
 import { ActiveRainChip } from "./active-rain-chip";
 import { PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
@@ -183,41 +182,31 @@ export default async function DashboardPage({
         </Suspense>
       </div>
 
-      {/* Live feeds — Recent Activity (SSE, dashboard-side ledger events) on
-          the left, Live Money Movements (deposits + withdrawals, 6s
-          polling) on the right. Both feeds self-bootstrap their snapshot
-          on the client (no server-rendered seed), so the 60s dashboard
-          refresh doesn't re-query them. Goes 2-up from `lg` (1024px)
-          so the right-side feed is visible on every common laptop /
-          desktop width; stacks on tablet/phone. Both cards manage
-          their own height cap via internal scroll so the grid stays
-          symmetric. */}
-      <div className="grid gap-3 sm:gap-4 lg:grid-cols-2">
-        <div className="space-y-3">
-          <SectionHeading
-            icon={Activity}
-            title="Recent Activity"
-            action={<RecentActivityLivePulse />}
-          />
-          <FadeIn>
-            {/* Only the 24h count strip atop this card needs server
-                stats; the live event list self-bootstraps on the client.
-                Streaming it keeps the heavy stats query off the page's
-                first paint. The fallback is a plain skeleton (NOT a live
-                RecentActivity) so we never open a throwaway SSE
-                connection that gets torn down the moment stats resolve. */}
-            <Suspense fallback={<RecentActivitySkeleton />}>
-              <DashboardActivityFeed period={period} />
-            </Suspense>
-          </FadeIn>
-        </div>
-        <div className="space-y-3">
-          <SectionHeading icon={Wallet} title="Deposits & Withdrawals" />
-          <FadeIn>
-            <LiveMoneyMovements />
-          </FadeIn>
-        </div>
+      {/* Recent Activity feed — the in-flow SSE feed of every platform
+          event (signups + deposits + wagers + payouts + withdrawals).
+          The deposits + withdrawals stream now lives in the docked
+          `<LiveMoneyChat />` widget on the right edge of the page, so
+          this section runs full-width and surfaces the broader event
+          stream. */}
+      <div className="space-y-3">
+        <SectionHeading
+          icon={Activity}
+          title="Recent Activity"
+          action={<RecentActivityLivePulse />}
+        />
+        <FadeIn>
+          <Suspense fallback={<RecentActivitySkeleton />}>
+            <DashboardActivityFeed period={period} />
+          </Suspense>
+        </FadeIn>
       </div>
+
+      {/* Docked Live Money widget — persistent right-side panel that
+          streams every deposit + withdrawal request as it lands.
+          Floats above the page (position: fixed) so the admin can
+          watch the live feed while scrolling the rest of the
+          dashboard. Reusable on other pages — just import + render. */}
+      <LiveMoneyChat />
     </div>
   );
 }
