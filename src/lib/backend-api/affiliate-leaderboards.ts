@@ -75,6 +75,11 @@ export type EditInput = {
   start_date?: string;
   end_date?: string;
   prize_tiers?: Array<{ position: number; prize_amount_usd: number }>;
+  // Site-funded prize pool — editable so admins can lower / raise a
+  // leaderboard after creation. The backend rejects a new pool that
+  // would fall below the existing tier sum; the admin edit dialog
+  // guards that case client-side too with a friendlier message.
+  site_bonus_usd?: number;
 };
 
 export type CreateInput = {
