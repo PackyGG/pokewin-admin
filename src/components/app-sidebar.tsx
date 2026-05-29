@@ -30,6 +30,7 @@ import {
   Ticket,
   Award,
   Layers,
+  Library,
   Percent,
   TrendingUp,
   UserCircle,
@@ -92,6 +93,7 @@ const ICONS: Record<string, LucideIcon> = {
   Ticket,
   Award,
   Layers,
+  Library,
   Percent,
   TrendingUp,
   UserCircle,
@@ -202,6 +204,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Packs", href: "/packs", icon: "Package" },
       { label: "Cards", href: "/cards", icon: "Layers" },
+      { label: "Sets", href: "/sets", icon: "Library", isNew: true },
       { label: "Upgrader", href: "/upgrader", icon: "ArrowUpCircle", isNew: true },
     ],
   },
