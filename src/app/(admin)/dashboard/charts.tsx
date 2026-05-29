@@ -1,7 +1,13 @@
 "use client";
 
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis, Cell } from "recharts";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import {
   type ChartConfig,
   ChartContainer,
@@ -489,11 +495,13 @@ function PnlTooltip({
 
 /**
  * Tooltip for the Wager Attribution chart — same shape as the Wagers
- * tooltip (per-segment row + Total row below the divider). Tooltip rows
- * label the two attribution buckets explicitly, since the bars only
- * show colour. Combined total reads = the day's total customer wager,
- * which is exactly the "Total Wager" KPI for that day after staff +
- * creator exclusion.
+ * tooltip (per-segment row + Total row below the divider). Each row
+ * shows the segment's dollar value AND its share of the day's total
+ * (`Organic 65%`, `Creator-coded 35%`), since the point of the chart
+ * is the split between the two bands — not the absolute dollars,
+ * which the Wagers chart already covers. The Total row carries the
+ * day's combined customer wager. Percentages fall back to 0 % on
+ * zero-volume days so the row reads "0%" instead of NaN%.
  */
 function WagerAttributionTooltipContent({
   active,
@@ -518,11 +526,13 @@ function WagerAttributionTooltipContent({
     0,
   );
   return (
-    <div className="grid min-w-32 items-start gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
+    <div className="grid min-w-40 items-start gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
       {label && <div className="font-medium">{label}</div>}
       <div className="grid gap-1.5">
         {payload.map((item) => {
           const key = String(item.dataKey ?? "");
+          const value = Number(item.value ?? 0);
+          const pct = total > 0 ? (value / total) * 100 : 0;
           return (
             <div key={key} className="flex items-center gap-2">
               <div
@@ -534,7 +544,10 @@ function WagerAttributionTooltipContent({
                   {labelByKey[key] ?? key}
                 </span>
                 <span className="font-mono font-medium tabular-nums text-foreground">
-                  {formatCurrency(Number(item.value ?? 0))}
+                  {formatCurrency(value)}
+                  <span className="ml-1 text-muted-foreground">
+                    ({pct.toFixed(1)}%)
+                  </span>
                 </span>
               </div>
             </div>
@@ -570,12 +583,58 @@ export function WagerAttributionChart({
 }: {
   data: { date: string; organic: number; creatorCoded: number }[];
 }) {
+  // 30-day rollup for the card header. The bars expose per-day
+  // numbers; the title strip carries the period sum + the organic /
+  // creator-coded share so admins read the headline split without
+  // having to mentally sum the bars.
+  const organicTotal = data.reduce((sum, d) => sum + d.organic, 0);
+  const creatorCodedTotal = data.reduce((sum, d) => sum + d.creatorCoded, 0);
+  const periodTotal = organicTotal + creatorCodedTotal;
+  const organicPct = periodTotal > 0 ? (organicTotal / periodTotal) * 100 : 0;
+  const creatorCodedPct = periodTotal > 0 ? (creatorCodedTotal / periodTotal) * 100 : 0;
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-sm font-medium">
-          Wager Attribution (30 days)
-        </CardTitle>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle className="text-sm font-medium">
+            Wager Attribution (30 days)
+          </CardTitle>
+          <span className="font-mono text-xs font-semibold tabular-nums text-foreground">
+            {formatCurrency(periodTotal)}
+          </span>
+        </div>
+        {/* Mini legend — each colour chip carries its 30-day dollar
+            total + share of the period. Reads bottom-to-top with the
+            stack: organic first (the bigger band on most days),
+            creator-coded second. */}
+        <CardDescription className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+          <span className="flex items-center gap-1.5">
+            <span
+              className="h-2 w-2 shrink-0 rounded-[2px]"
+              style={{ background: "var(--color-organic)" }}
+            />
+            <span className="text-muted-foreground">Organic</span>
+            <span className="font-mono font-medium tabular-nums text-foreground">
+              {formatCurrency(organicTotal)}
+            </span>
+            <span className="text-muted-foreground">
+              ({organicPct.toFixed(1)}%)
+            </span>
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span
+              className="h-2 w-2 shrink-0 rounded-[2px]"
+              style={{ background: "var(--color-creatorCoded)" }}
+            />
+            <span className="text-muted-foreground">Creator-coded</span>
+            <span className="font-mono font-medium tabular-nums text-foreground">
+              {formatCurrency(creatorCodedTotal)}
+            </span>
+            <span className="text-muted-foreground">
+              ({creatorCodedPct.toFixed(1)}%)
+            </span>
+          </span>
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <ChartContainer
