@@ -31,18 +31,34 @@ export type PnlBreakdown = {
   // Net
   netPnlRealized: number;
   netPnlTrue: number;
-  // Rolling windowed house P&L (past 24h / 7d, now − N) — windowed
-  // delta form. Positive = house gain (emerald), per CLAUDE.md.
+  // Rolling windowed house P&L (past 12h / 24h / 3d / 7d, now − N) —
+  // windowed delta form. Positive = house gain (emerald), per
+  // CLAUDE.md. Four windows so the row reads as a short-to-long ladder
+  // of how this user has been performing for the house.
+  pnl12h: number;
   pnl24h: number;
+  pnl3d: number;
   pnl7d: number;
 };
 
 export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown> {
   const db = await getDb();
   const nowMs = Date.now();
+  // Rolling cutoffs for the four-rung ladder shown in the Rolling P&L
+  // section. All are `now − N` (true rolling windows, NOT calendar
+  // boundaries). Same convention as the dashboard's period selector.
+  const since12h = new Date(nowMs - 12 * 60 * 60 * 1000);
   const since24h = new Date(nowMs - 24 * 60 * 60 * 1000);
+  const since3d = new Date(nowMs - 3 * 24 * 60 * 60 * 1000);
   const since7d = new Date(nowMs - 7 * 24 * 60 * 60 * 1000);
-  const [rows, inventoryValue, windowed24h, windowed7d] = await Promise.all([
+  const [
+    rows,
+    inventoryValue,
+    windowed12h,
+    windowed24h,
+    windowed3d,
+    windowed7d,
+  ] = await Promise.all([
     db.$queryRaw<{ type: string; net: string }[]>`
       SELECT type,
              COALESCE(SUM(
@@ -70,8 +86,13 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
       where: { user_id: userId, sold_at: null, exchanged_at: null },
       _sum: { value_at_obtained: true },
     }),
-    // Rolling windowed house P&L for this user (past 24h / 7d).
+    // Rolling windowed house P&L for this user (past 12h / 24h / 3d
+    // / 7d). Four parallel calls — each is a focused per-user windowed
+    // delta scan over the same ledger; PG plans them independently
+    // but they share index access patterns.
+    calculateWindowedPnl({ userId, since: since12h }),
     calculateWindowedPnl({ userId, since: since24h }),
+    calculateWindowedPnl({ userId, since: since3d }),
     calculateWindowedPnl({ userId, since: since7d }),
   ]);
 
@@ -132,7 +153,9 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
     gamblingPnlRealized, unrealizedLiability, gamblingPnlTrue,
     bonusesCost, rakebackCost, affiliateCost, otherCosts, otherCostsDetail,
     netPnlRealized, netPnlTrue,
+    pnl12h: windowed12h.pnl,
     pnl24h: windowed24h.pnl,
+    pnl3d: windowed3d.pnl,
     pnl7d: windowed7d.pnl,
   };
 }

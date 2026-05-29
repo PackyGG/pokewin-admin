@@ -7,12 +7,14 @@
  */
 
 import * as React from "react";
-import { useState } from "react";
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import {
   Wallet,
   TrendingUp,
   TrendingDown,
   Activity,
+  RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
@@ -96,11 +98,15 @@ export function StatPanel({
   title,
   icon: Icon,
   accent,
+  action,
   children,
 }: {
   title: string;
   icon: React.ElementType;
   accent: keyof typeof TILE_COLORS;
+  // Optional right-aligned slot in the header, e.g. for the Balances
+  // panel's refresh icon button.
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const colors = TILE_COLORS[accent] ?? TILE_COLORS.blue;
@@ -114,13 +120,16 @@ export function StatPanel({
         )}
       />
       <div className="relative p-4 sm:p-5">
-        <div className="mb-3 flex items-center gap-2">
-          <div className={cn("flex size-7 items-center justify-center rounded-lg shrink-0", colors.bg)}>
-            <Icon className={cn("size-3.5", colors.icon)} />
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <div className={cn("flex size-7 items-center justify-center rounded-lg shrink-0", colors.bg)}>
+              <Icon className={cn("size-3.5", colors.icon)} />
+            </div>
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground truncate">
+              {title}
+            </h3>
           </div>
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground truncate">
-            {title}
-          </h3>
+          {action}
         </div>
         {children}
       </div>
@@ -158,10 +167,43 @@ export function ModernBalancePanel({
 }) {
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
+  // Soft-refresh the page server data when the admin clicks the icon —
+  // re-runs the parent server components without a hard browser
+  // reload, so the user keeps their tab focus / scroll position and
+  // the rest of the page DOM stays intact while the balance numbers
+  // re-fetch. useTransition wraps the call so the icon can show a
+  // pending spinner without blocking the rest of the UI.
+  const router = useRouter();
+  const [refreshing, startRefresh] = useTransition();
+  const handleRefresh = () => {
+    startRefresh(() => {
+      router.refresh();
+    });
+  };
+  const refreshAction = (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={handleRefresh}
+      disabled={refreshing}
+      className="size-7"
+      title="Reload balances"
+      aria-label="Reload balances"
+    >
+      <RefreshCw
+        className={cn("size-3.5", refreshing && "animate-spin")}
+      />
+    </Button>
+  );
 
   if (!balances) {
     return (
-      <StatPanel title="Balances" icon={Wallet} accent="emerald">
+      <StatPanel
+        title="Balances"
+        icon={Wallet}
+        accent="emerald"
+        action={refreshAction}
+      >
         <p className="text-sm text-muted-foreground">No balance data</p>
       </StatPanel>
     );
@@ -174,7 +216,12 @@ export function ModernBalancePanel({
   // historical off-platform payouts so P&L counts them.
   const showManual = canRecordManualWithdrawal && Boolean(userId);
   return (
-    <StatPanel title="Balances" icon={Wallet} accent="emerald">
+    <StatPanel
+      title="Balances"
+      icon={Wallet}
+      accent="emerald"
+      action={refreshAction}
+    >
       <div className="space-y-0.5">
         <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
           Total Value
@@ -292,13 +339,30 @@ export function ModernPnlPanel({
           }
         />
       </div>
-      {/* Rolling windowed P&L — house P&L over the past 24h / 7d (now − N,
-          NOT calendar buckets), as a windowed delta. House POV: gain =
-          emerald, loss = rose. */}
+      {/* Rolling windowed P&L — house P&L over the past 12h / 24h / 3d
+          / 7d (now − N, NOT calendar buckets), as a windowed delta.
+          House POV: gain = emerald, loss = rose. Four rungs so the row
+          reads from acute (12h) to baseline (7d) and admins can spot
+          short-term spikes vs longer trends. */}
       <div className="mt-3 space-y-0.5 border-t pt-3">
         <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
           Rolling P&amp;L
         </p>
+        <PanelRow
+          label="Past 12h"
+          value={
+            <span
+              className={cn(
+                pnlBreakdown.pnl12h >= 0
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-rose-600 dark:text-rose-400",
+              )}
+            >
+              {pnlBreakdown.pnl12h >= 0 ? "+" : ""}
+              {formatCurrency(pnlBreakdown.pnl12h)}
+            </span>
+          }
+        />
         <PanelRow
           label="Past 24h"
           value={
@@ -311,6 +375,21 @@ export function ModernPnlPanel({
             >
               {pnlBreakdown.pnl24h >= 0 ? "+" : ""}
               {formatCurrency(pnlBreakdown.pnl24h)}
+            </span>
+          }
+        />
+        <PanelRow
+          label="Past 3d"
+          value={
+            <span
+              className={cn(
+                pnlBreakdown.pnl3d >= 0
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-rose-600 dark:text-rose-400",
+              )}
+            >
+              {pnlBreakdown.pnl3d >= 0 ? "+" : ""}
+              {formatCurrency(pnlBreakdown.pnl3d)}
             </span>
           }
         />

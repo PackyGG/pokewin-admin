@@ -374,8 +374,13 @@ export type PnlBreakdown = {
   };
   netPnlRealized: number;
   netPnlTrue: number;
-  // Rolling windowed house P&L (past 24h / 7d) — see getUserPnlBreakdown.
+  // Rolling windowed house P&L (past 12h / 24h / 3d / 7d) — see
+  // getUserPnlBreakdown. Four rungs so the row reads from acute to
+  // baseline; same rolling-window convention as the dashboard's
+  // global period selector.
+  pnl12h: number;
   pnl24h: number;
+  pnl3d: number;
   pnl7d: number;
 };
 
