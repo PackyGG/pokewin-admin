@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { Prisma, type PrismaClient } from "@/generated/prisma/client";
 import { toNumber } from "@/lib/utils/decimal";
@@ -238,6 +239,205 @@ function getPeriodAggregates(
 // Lifetime realized P&L lives in src/lib/queries/_realized-pnl.ts so the
 // Analytics page can use the exact same definition. Do not inline it here.
 
+// ============================================================
+// Cross-request cached lifetime queries (5-minute TTL).
+//
+// The user's mental model after the perf pass:
+//   • Wager + period P&L refresh every 60s (auto-refresh tick)
+//   • Everything else refreshes every 5 minutes
+//
+// The "everything else" bucket is the slow lifetime stuff: 30-day
+// daily series, lifetime depositor counts, FTDs, signups, etc. None
+// of these move meaningfully minute-to-minute, so capping them at
+// 5-minute staleness with `unstable_cache` means the 60s refresh
+// hits cache for the heavy scans and only re-executes the wager/
+// period stuff. Each helper takes its dynamic input as serializable
+// arguments so the cache key reflects the blacklist (admin-managed
+// /system/excluded-users page) and re-fetches when it changes.
+// ============================================================
+
+const cachedDailyChart = unstable_cache(
+  async (blacklistIdNotIn: string) => {
+    const db = await getDb();
+    return db.$queryRaw<{
+      date: Date;
+      packs: string;
+      battles: string;
+      upgrader: string;
+      deposits: string;
+      active_depositors: string;
+    }[]>`
+      SELECT
+        DATE(created_at) as date,
+        COALESCE(SUM(CASE WHEN type = 'pack_opening' THEN ABS(amount::numeric) ELSE 0 END), 0)::text as packs,
+        COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') THEN ABS(amount::numeric) ELSE 0 END), 0)::text as battles,
+        COALESCE(SUM(CASE WHEN type = 'upgrader_bet' THEN ABS(amount::numeric) ELSE 0 END), 0)::text as upgrader,
+        COALESCE(SUM(CASE WHEN type = 'deposit' THEN amount::numeric ELSE 0 END), 0)::text as deposits,
+        COUNT(DISTINCT CASE WHEN type = 'deposit' THEN user_id END)::text as active_depositors
+      FROM ledger_transactions
+      WHERE type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet','deposit') AND status = 'completed'
+        AND created_at >= NOW() - INTERVAL '30 days'
+        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)})
+      GROUP BY DATE(created_at)
+      ORDER BY date
+    `;
+  },
+  ["dashboard-daily-chart-v1"],
+  { revalidate: 300, tags: ["dashboard-lifetime"] },
+);
+
+const cachedDailySignups = unstable_cache(
+  async (blacklistIdNotIn: string) => {
+    const db = await getDb();
+    return db.$queryRaw<{ date: Date; count: string }[]>`
+      SELECT DATE(created_at) as date, COUNT(*)::text as count
+      FROM "user"
+      WHERE created_at >= NOW() - INTERVAL '30 days'
+        AND role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+      GROUP BY DATE(created_at)
+      ORDER BY date
+    `;
+  },
+  ["dashboard-daily-signups-v1"],
+  { revalidate: 300, tags: ["dashboard-lifetime"] },
+);
+
+const cachedDailyWagerAttribution = unstable_cache(
+  async (blacklistIdNotIn: string) => {
+    const db = await getDb();
+    return db.$queryRaw<{
+      date: Date;
+      organic: string;
+      creator_attributed: string;
+    }[]>`
+      WITH customers AS (
+        SELECT u.id,
+               EXISTS (
+                 SELECT 1 FROM "user" ref
+                 WHERE ref.id = u.referred_by AND ref.role = 'creator'
+               ) AS under_creator
+        FROM "user" u
+        WHERE u.role NOT IN ('admin', 'support', 'creator') ${Prisma.raw(blacklistIdNotIn)}
+      )
+      SELECT
+        DATE(lt.created_at) AS date,
+        COALESCE(SUM(CASE WHEN NOT c.under_creator THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS organic,
+        COALESCE(SUM(CASE WHEN c.under_creator     THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS creator_attributed
+      FROM ledger_transactions lt
+      JOIN customers c ON c.id = lt.user_id
+      WHERE lt.status = 'completed'
+        AND lt.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
+        AND lt.created_at >= NOW() - INTERVAL '30 days'
+      GROUP BY DATE(lt.created_at)
+      ORDER BY date
+    `;
+  },
+  ["dashboard-daily-wager-attribution-v1"],
+  { revalidate: 300, tags: ["dashboard-lifetime"] },
+);
+
+const cachedFtdCombined = unstable_cache(
+  async (blacklistIdNotIn: string) => {
+    const db = await getDb();
+    return db.$queryRaw<{
+      tag: string;
+      bucket: Date | null;
+      count: string;
+      total: string;
+    }[]>`
+      WITH first_deposits AS (
+        SELECT DISTINCT ON (user_id)
+          user_id, amount::numeric AS amount, created_at
+        FROM ledger_transactions
+        WHERE type = 'deposit' AND status = 'completed'
+          AND user_id IN (
+            SELECT id FROM "user"
+            WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+          )
+        ORDER BY user_id, created_at ASC
+      )
+      SELECT 'rolling24h'::text AS tag,
+             NULL::date AS bucket,
+             COUNT(*)::text AS count,
+             COALESCE(SUM(amount), 0)::text AS total
+      FROM first_deposits
+      WHERE created_at >= NOW() - INTERVAL '24 hours'
+      UNION ALL
+      SELECT 'daily'::text AS tag,
+             DATE(created_at) AS bucket,
+             COUNT(*)::text AS count,
+             COALESCE(SUM(amount), 0)::text AS total
+      FROM first_deposits
+      WHERE created_at >= NOW() - INTERVAL '30 days'
+      GROUP BY DATE(created_at)
+    `;
+  },
+  ["dashboard-ftd-combined-v1"],
+  { revalidate: 300, tags: ["dashboard-lifetime"] },
+);
+
+const cachedLifetimeDepositMetrics = unstable_cache(
+  async (blacklistIdNotIn: string) => {
+    const db = await getDb();
+    return db.$queryRaw<{
+      lifetime: string;
+      h24: string;
+      d7: string;
+    }[]>`
+      SELECT
+        COUNT(*)::text AS lifetime,
+        COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::text AS h24,
+        COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')::text AS d7
+      FROM ledger_transactions
+      WHERE type = 'deposit'
+        AND status = 'completed'
+        AND user_id IN (
+          SELECT id FROM "user"
+          WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+        )
+    `;
+  },
+  ["dashboard-lifetime-deposit-metrics-v1"],
+  { revalidate: 300, tags: ["dashboard-lifetime"] },
+);
+
+const cachedUserCounts = unstable_cache(
+  async (
+    blacklistIdNotIn: string,
+    startOfDayIso: string,
+    startOfWeekIso: string,
+    startOfMonthIso: string,
+  ) => {
+    const db = await getDb();
+    // Re-hydrate the ISO strings into Date objects on the SQL side so
+    // Prisma binds them as timestamps. rolling24h is recomputed from
+    // `now` here too — the cache TTL (5 min) bounds how stale this
+    // number can get, so the slight rounding error is acceptable.
+    const startOfDay = new Date(startOfDayIso);
+    const startOfWeek = new Date(startOfWeekIso);
+    const startOfMonth = new Date(startOfMonthIso);
+    const rolling24h = new Date(Date.now() - 1 * MS_PER_DAY);
+    return db.$queryRaw<{
+      total: string;
+      today: string;
+      week: string;
+      month: string;
+      rolling24h: string;
+    }[]>`
+      SELECT
+        COUNT(*)::text AS total,
+        COUNT(*) FILTER (WHERE created_at >= ${startOfDay})::text AS today,
+        COUNT(*) FILTER (WHERE created_at >= ${startOfWeek})::text AS week,
+        COUNT(*) FILTER (WHERE created_at >= ${startOfMonth})::text AS month,
+        COUNT(*) FILTER (WHERE created_at >= ${rolling24h})::text AS rolling24h
+      FROM "user"
+      WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+    `;
+  },
+  ["dashboard-user-counts-v1"],
+  { revalidate: 300, tags: ["dashboard-lifetime"] },
+);
+
 /**
  * Per-request memoized. The dashboard page streams several independent
  * Suspense segments (KPI strips, charts, the activity count strip) that
@@ -296,15 +496,10 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
   );
 
-  // Fixed-window cutoffs the period-INDEPENDENT tiles still need:
-  //   • rolling24h drives the 24h Activity tile (pack openings + battles
-  //     count), FTDs, and one column of lifetimeDepositMetrics.
-  //   • sevenDaysAgo drives the 7d column of lifetimeDepositMetrics
-  //     (Deposits / hour tile's 7d baseline).
-  // The period-bound aggregates use the SELECTED period via the cutoff
-  // helper below; we don't precompute the rest of the 9-chip ladder.
+  // rolling24h drives the 24h Activity tile (pack openings + battles
+  // count) — the FTD / depositMetrics queries are now in cached helpers
+  // that compute their own rolling cutoffs inside the cached fn.
   const rolling24h = new Date(now.getTime() - 1 * MS_PER_DAY);
-  const sevenDaysAgo = new Date(now.getTime() - 7 * MS_PER_DAY);
   // Cutoff for the SELECTED period — drives every period-bound query
   // (periodAggregates, windowed inventory/voucher delta, etc.). One
   // value, one set of indexed scans — the whole point of the global
@@ -343,7 +538,6 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     periodAggregates,
     uniqueDepositorsResult,
     realizedPnlResult,
-    totalInventoryValue,
     packsOpened24h,
     battlesPlayed24h,
     ftdCombined,
@@ -352,24 +546,14 @@ async function dashboardStatsInner(period: DashboardPeriod) {
   ] = await Promise.all([
     // All four user counts (total + today/week/month) PLUS the
     // rolling-24h signup count in ONE scan of the user table via
-    // COUNT(*) FILTER. The 24h figure used to be a separate user.count
-    // call.
-    db.$queryRaw<{
-      total: string;
-      today: string;
-      week: string;
-      month: string;
-      rolling24h: string;
-    }[]>`
-      SELECT
-        COUNT(*)::text AS total,
-        COUNT(*) FILTER (WHERE created_at >= ${startOfDay})::text AS today,
-        COUNT(*) FILTER (WHERE created_at >= ${startOfWeek})::text AS week,
-        COUNT(*) FILTER (WHERE created_at >= ${startOfMonth})::text AS month,
-        COUNT(*) FILTER (WHERE created_at >= ${rolling24h})::text AS rolling24h
-      FROM "user"
-      WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
-    `,
+    // COUNT(*) FILTER. 5-min cached — user counts don't move by more
+    // than a handful per minute, so the 5-min cap is invisible.
+    cachedUserCounts(
+      blacklistIdNotIn,
+      startOfDay.toISOString(),
+      startOfWeek.toISOString(),
+      startOfMonth.toISOString(),
+    ),
     // Single balances aggregate — `available_balance` is folded in with
     // the lifetime _sums so the dashboard pays one round-trip, not two.
     // The `Users Total Balance` tile + lifetime financial KPIs all draw
@@ -385,74 +569,15 @@ async function dashboardStatsInner(period: DashboardPeriod) {
       },
     }),
     // Daily wager + deposit + active-depositor series for the last 30
-    // days in ONE ledger scan. packs/battles feed the stacked wager bar
-    // chart; deposits feeds the deposits line; active_depositors feeds
-    // the Active Depositors chart. The last column used to be its own
-    // 30-day ledger scan — merging saves one round-trip + one index
-    // scan over the same rows.
-    db.$queryRaw<{
-      date: Date;
-      packs: string;
-      battles: string;
-      upgrader: string;
-      deposits: string;
-      active_depositors: string;
-    }[]>`
-      SELECT
-        DATE(created_at) as date,
-        COALESCE(SUM(CASE WHEN type = 'pack_opening' THEN ABS(amount::numeric) ELSE 0 END), 0)::text as packs,
-        COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') THEN ABS(amount::numeric) ELSE 0 END), 0)::text as battles,
-        COALESCE(SUM(CASE WHEN type = 'upgrader_bet' THEN ABS(amount::numeric) ELSE 0 END), 0)::text as upgrader,
-        COALESCE(SUM(CASE WHEN type = 'deposit' THEN amount::numeric ELSE 0 END), 0)::text as deposits,
-        COUNT(DISTINCT CASE WHEN type = 'deposit' THEN user_id END)::text as active_depositors
-      FROM ledger_transactions
-      WHERE type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet','deposit') AND status = 'completed'
-        AND created_at >= NOW() - INTERVAL '30 days'
-        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)})
-      GROUP BY DATE(created_at)
-      ORDER BY date
-    `,
-    // Signups last 30 days
-    db.$queryRaw<{ date: Date; count: string }[]>`
-      SELECT DATE(created_at) as date, COUNT(*)::text as count
-      FROM "user"
-      WHERE created_at >= NOW() - INTERVAL '30 days'
-        AND role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
-      GROUP BY DATE(created_at)
-      ORDER BY date
-    `,
+    // days in ONE ledger scan. 5-min cached — historic days don't
+    // change and today's row moves slowly enough that operators
+    // wouldn't notice a 5-min lag.
+    cachedDailyChart(blacklistIdNotIn),
+    // Signups last 30 days. 5-min cached for the same reason.
+    cachedDailySignups(blacklistIdNotIn),
     // Daily wager attribution split — organic (no creator-code
-    // referral) vs creator-attributed (referred by a creator role
-    // user) — for the last 30 days. Excludes the creator role itself
-    // and staff from BOTH sides so the two bars represent customer
-    // wager only. Stacking organic + creator_attributed = total
-    // customer wager.
-    db.$queryRaw<{
-      date: Date;
-      organic: string;
-      creator_attributed: string;
-    }[]>`
-      WITH customers AS (
-        SELECT u.id,
-               EXISTS (
-                 SELECT 1 FROM "user" ref
-                 WHERE ref.id = u.referred_by AND ref.role = 'creator'
-               ) AS under_creator
-        FROM "user" u
-        WHERE u.role NOT IN ('admin', 'support', 'creator') ${Prisma.raw(blacklistIdNotIn)}
-      )
-      SELECT
-        DATE(lt.created_at) AS date,
-        COALESCE(SUM(CASE WHEN NOT c.under_creator THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS organic,
-        COALESCE(SUM(CASE WHEN c.under_creator     THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS creator_attributed
-      FROM ledger_transactions lt
-      JOIN customers c ON c.id = lt.user_id
-      WHERE lt.status = 'completed'
-        AND lt.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
-        AND lt.created_at >= NOW() - INTERVAL '30 days'
-      GROUP BY DATE(lt.created_at)
-      ORDER BY date
-    `,
+    // referral) vs creator-attributed. 5-min cached.
+    cachedDailyWagerAttribution(blacklistIdNotIn),
     // Single batched query — computes revenue / withdrawal / wager /
     // ggr / deposit_count / balance_change / manual_wd for the SELECTED
     // period only. Previously this fanned out into 9 windows × many
@@ -471,18 +596,6 @@ async function dashboardStatsInner(period: DashboardPeriod) {
       where: { total_deposited: { gt: 0 }, user: staffRelation },
     }),
     getRealizedPnlSnapshot(),
-    db.user_inventory.aggregate({
-      where: {
-        sold_at: null,
-        exchanged_at: null,
-        // Exclude items that are locked for a pending card withdrawal —
-        // they are effectively "on their way out" of the user's on-site
-        // holdings and shouldn't inflate the aggregate balance.
-        withdrawal_locked_at: null,
-        user: staffRelation,
-      },
-      _sum: { value_at_obtained: true },
-    }),
     // Rolling-24h pack opening count for the "24h Activity" tile.
     // Filter game_sessions by game_type='pack' to match the same
     // definition the existing pack profitability queries use.
@@ -506,43 +619,10 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     }),
     // FTDs combined — rolling-24h figure (count + total) + per-day
     // counts/totals for the last 30 days, sharing a single
-    // first_deposits CTE. Previously two separate queries that each
-    // re-ran the lifetime DISTINCT ON scan. The UNION ALL keeps the
-    // rolling row distinguished by a `tag` column (NULL bucket on the
-    // 24h row; one row per day on the 'daily' rows). Same "first
-    // deposit" definition the fraud scorer uses.
-    db.$queryRaw<{
-      tag: string;
-      bucket: Date | null;
-      count: string;
-      total: string;
-    }[]>`
-      WITH first_deposits AS (
-        SELECT DISTINCT ON (user_id)
-          user_id, amount::numeric AS amount, created_at
-        FROM ledger_transactions
-        WHERE type = 'deposit' AND status = 'completed'
-          AND user_id IN (
-            SELECT id FROM "user"
-            WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
-          )
-        ORDER BY user_id, created_at ASC
-      )
-      SELECT 'rolling24h'::text AS tag,
-             NULL::date AS bucket,
-             COUNT(*)::text AS count,
-             COALESCE(SUM(amount), 0)::text AS total
-      FROM first_deposits
-      WHERE created_at >= ${rolling24h}
-      UNION ALL
-      SELECT 'daily'::text AS tag,
-             DATE(created_at) AS bucket,
-             COUNT(*)::text AS count,
-             COALESCE(SUM(amount), 0)::text AS total
-      FROM first_deposits
-      WHERE created_at >= NOW() - INTERVAL '30 days'
-      GROUP BY DATE(created_at)
-    `,
+    // first_deposits CTE. 5-min cached — first deposits don't change
+    // that often, and FTD math involves a lifetime DISTINCT ON scan
+    // which was one of the heavier queries on the hot path.
+    cachedFtdCombined(blacklistIdNotIn),
     // Windowed inventory + voucher deltas for the SELECTED period.
     // The other three components of the period P&L (deposits, card-
     // withdrawals, ledger balance change, manual withdrawals) already
@@ -575,28 +655,10 @@ async function dashboardStatsInner(period: DashboardPeriod) {
             AND user_id IN (SELECT id FROM real_users)), 0)::text AS vch_claimed
     `,
     // Lifetime + 24h + 7d deposit transaction counts in one indexed
-    // scan. Cheap (a few-ms count over a single ledger type) and gives
-    // us the three fixed-window numbers the period-independent KPI
-    // tiles need: lifetime depositCount (drives the Depositors / Avg
-    // Deposit math), plus 24h / 7d counts feeding the "Deposits / hr"
-    // tile. None of these depend on the selected period.
-    db.$queryRaw<{
-      lifetime: string;
-      h24: string;
-      d7: string;
-    }[]>`
-      SELECT
-        COUNT(*)::text AS lifetime,
-        COUNT(*) FILTER (WHERE created_at >= ${rolling24h})::text AS h24,
-        COUNT(*) FILTER (WHERE created_at >= ${sevenDaysAgo})::text AS d7
-      FROM ledger_transactions
-      WHERE type = 'deposit'
-        AND status = 'completed'
-        AND user_id IN (
-          SELECT id FROM "user"
-          WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
-        )
-    `,
+    // scan. 5-min cached. The rolling-24h / 7d cutoffs are recomputed
+    // inside the cached fn from Date.now() — within the 5-min TTL
+    // there's no meaningful drift.
+    cachedLifetimeDepositMetrics(blacklistIdNotIn),
   ]);
 
   const totalWagered = toNumber(balanceAggregates._sum?.total_wagered);
@@ -751,19 +813,14 @@ async function dashboardStatsInner(period: DashboardPeriod) {
       totalWithdrawn: toNumber(balanceAggregates._sum?.total_withdrawn),
       totalWagered,
       totalWon,
-      // `available_balance` lives on the merged balanceAggregates row
-      // (was a second `.aggregate()` call previously — folded into one
-      // round-trip during the 2026-05-11 perf pass).
-      totalSiteBalance: toNumber(balanceAggregates._sum?.available_balance),
-      totalInventoryValue: toNumber(totalInventoryValue._sum?.value_at_obtained),
-      // Outstanding (unclaimed) voucher liability — the third leg of the
-      // house's balance liability alongside on-site cash + held inventory.
-      // Pulled from the realized-P&L snapshot (already fetched + React-
-      // cached above), so this adds no extra round-trip and uses the SAME
-      // staff+blacklist exclusion. The dashboard previously surfaced only
-      // cash + inventory in "Users Total Balance"; vouchers were tracked
-      // inside realizedPnl but never shown as part of the liability total.
-      totalUnclaimedVouchers: realizedPnlResult.vouchers,
+      // totalSiteBalance / totalInventoryValue / totalUnclaimedVouchers
+      // used to live here to drive the "Users Total Balance" liability
+      // tile. The tile was retired during the perf pass (the underlying
+      // user_inventory.aggregate scan was one of the heaviest queries on
+      // the dashboard, and the figure is folded into realizedPnl
+      // anyway), so we no longer surface the per-component breakdown
+      // here. Lifetime PnL still consumes them internally via
+      // getRealizedPnlSnapshot.
       avgDeposit:
         depositCount > 0
           ? toNumber(balanceAggregates._sum?.total_deposited) / depositCount

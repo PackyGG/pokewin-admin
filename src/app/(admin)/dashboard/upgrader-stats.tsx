@@ -1,6 +1,3 @@
-"use client";
-
-import { useState } from "react";
 import {
   TrendingUp,
   TrendingDown,
@@ -18,41 +15,35 @@ import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { AnimatedNumber } from "@/components/animated-number";
 import { formatNumber } from "@/lib/utils/format";
-import type {
-  UpgraderStats,
-  UpgraderPeriod,
-} from "@/lib/queries/dashboard-upgrader";
-
-// Chip set matches the other dashboard period cards so admins read one
-// consistent vocabulary across the page.
-const RANGES = ["1h", "3h", "6h", "12h", "24h", "3d", "7d", "30d", "all"] as const;
+import type { UpgraderStats } from "@/lib/queries/dashboard-upgrader";
 
 /**
  * Dedicated Upgrader stats section between the KPI strips and the
- * Trends graphs. All seven tiles share a single period selector at
- * the top so admins can flip the whole row to the window they care
- * about — no per-tile selector means no clicking through different
- * windows just to compare wager vs payouts vs players for the same
- * period.
+ * Trends graphs. Lifetime-only after the perf pass — the period chip
+ * selector that used to drive a 9-window CASE-WHEN scan was removed in
+ * favor of a single lifetime aggregate. The underlying query is also
+ * 5-minute cross-request cached so the section costs ~0 on the
+ * dashboard's 60s refresh cycle.
+ *
+ * Server component now (no `"use client"`) — the only client behaviour
+ * was the period selector, and that's gone.
  */
 export function UpgraderStatsSection({
   stats,
 }: {
   stats: UpgraderStats;
 }) {
-  const [selected, setSelected] = useState<UpgraderPeriod>("24h");
-  const cur = stats[selected];
   // House-POV color for the P&L tile: positive = house gained
   // (emerald), negative = house lost (rose). Matches the dashboard's
   // PnL StatCard convention.
-  const pnlPositive = cur.pnl >= 0;
+  const pnlPositive = stats.pnl >= 0;
   const pnlColor = pnlPositive
     ? "text-emerald-600 dark:text-emerald-400"
     : "text-rose-600 dark:text-rose-400";
   const PnlIcon = pnlPositive ? TrendingUp : TrendingDown;
-  // Edge can also go negative if a window's payouts exceeded wagers
-  // (variance). Same color rule.
-  const edgePositive = cur.edge >= 0;
+  // Edge can also go negative if payouts exceeded wagers (variance).
+  // Same color rule.
+  const edgePositive = stats.edge >= 0;
   const edgeColor = edgePositive
     ? "text-emerald-600 dark:text-emerald-400"
     : "text-rose-600 dark:text-rose-400";
@@ -60,7 +51,8 @@ export function UpgraderStatsSection({
   return (
     <Card className="bg-cyan-500/5 border-cyan-500/20">
       <CardContent className="space-y-4 p-4 sm:p-5">
-        {/* Header: title + identity chip + period selector. */}
+        {/* Header: title + scope chip. No period selector — this is
+            lifetime only after the perf pass. */}
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
             <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-cyan-500/15 text-cyan-500">
@@ -71,52 +63,33 @@ export function UpgraderStatsSection({
                 Upgrader Stats
               </h3>
               <p className="text-[11px] text-muted-foreground">
-                Raw customer signal — staff and creators excluded
+                Lifetime · raw customer signal — staff and creators excluded
               </p>
             </div>
-          </div>
-          <div className="flex flex-wrap gap-0.5">
-            {RANGES.map((r) => (
-              <button
-                key={r}
-                type="button"
-                onClick={() => setSelected(r)}
-                className={cn(
-                  "rounded px-1.5 py-0.5 text-tiny font-medium transition-colors",
-                  selected === r
-                    ? "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {r}
-              </button>
-            ))}
           </div>
         </div>
 
         {/* Tile grid. 2-up on phones, 5-up on md, 10-up on xl so each
-            tile keeps a readable hero number on every viewport. The
-            row scales as new metrics ship (Wins / Losses / Hit Rate
-            joined the original 7). */}
+            tile keeps a readable hero number on every viewport. */}
         <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-5 xl:grid-cols-10">
           <UpgraderTile
             icon={Coins}
             label="Wager"
-            value={cur.wager}
+            value={stats.wager}
             format="currency"
             accent="cyan"
           />
           <UpgraderTile
             icon={HandCoins}
             label="Payouts"
-            value={cur.payouts}
+            value={stats.payouts}
             format="currency"
             accent="rose"
           />
           <UpgraderTile
             icon={PnlIcon}
             label="House P&L"
-            value={cur.pnl}
+            value={stats.pnl}
             format="currency"
             valueClassName={pnlColor}
             sign={pnlPositive ? "+" : "−"}
@@ -127,26 +100,26 @@ export function UpgraderStatsSection({
           <UpgraderTile
             icon={Percent}
             label="House Edge"
-            value={cur.edge}
+            value={stats.edge}
             format="percent"
             valueClassName={edgeColor}
           />
           <UpgraderTile
             icon={Hash}
             label="Bets"
-            value={cur.bets}
+            value={stats.bets}
             format="number"
           />
           <UpgraderTile
             icon={Sigma}
             label="Avg Bet"
-            value={cur.avgBet}
+            value={stats.avgBet}
             format="currency"
           />
           <UpgraderTile
             icon={Users}
             label="Unique Players"
-            value={cur.uniquePlayers}
+            value={stats.uniquePlayers}
             format="number"
           />
           {/* Outcome split — wins (user hit) / losses (user missed) /
@@ -156,7 +129,7 @@ export function UpgraderStatsSection({
           <UpgraderTile
             icon={Trophy}
             label="Wins"
-            value={cur.wins}
+            value={stats.wins}
             format="number"
             accent="rose"
             valueClassName="text-rose-600 dark:text-rose-400"
@@ -164,7 +137,7 @@ export function UpgraderStatsSection({
           <UpgraderTile
             icon={X}
             label="Losses"
-            value={cur.losses}
+            value={stats.losses}
             format="number"
             accent="cyan"
             valueClassName="text-emerald-600 dark:text-emerald-400"
@@ -172,7 +145,7 @@ export function UpgraderStatsSection({
           <UpgraderTile
             icon={Target}
             label="Hit Rate"
-            value={cur.hitRate}
+            value={stats.hitRate}
             format="percent"
           />
         </div>
@@ -183,7 +156,7 @@ export function UpgraderStatsSection({
 
 /**
  * Compact stat tile used inside the Upgrader section. Smaller than the
- * dashboard's main StatCard — this row has 7 tiles, so each one
+ * dashboard's main StatCard — this row has 10 tiles, so each one
  * carries less hero presence and relies on the section card around it
  * to read as a coherent unit.
  */
@@ -246,4 +219,3 @@ function UpgraderTile({
     </div>
   );
 }
-

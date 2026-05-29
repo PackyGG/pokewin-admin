@@ -306,10 +306,15 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
         />
       </div>
 
-      {/* Secondary stats — all-time / snapshot. These are simpler
-          (no period chips) so they tolerate 2-up on phone, 3-up at
-          sm, then 6 across at lg+. */}
-      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-6 xl:grid-cols-7">
+      {/* Secondary stats — all-time / snapshot. Users Total Balance
+          (user-held cash + unsold inventory + unclaimed vouchers) was
+          dropped from this row — the figure is a HOUSE LIABILITY that
+          tells you what you owe out, but operators rarely act on it
+          and the underlying query (full-table user_inventory scan)
+          was one of the heaviest on the dashboard. The realized P&L
+          snapshot still factors all three into the lifetime PnL tile,
+          so the information isn't gone — just folded into PnL. */}
+      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-6">
         <StatCard
           title="Total Users"
           animatedValue={stats.users.total}
@@ -351,27 +356,6 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
           }
           icon={BadgeDollarSign}
           color="purple"
-        />
-        {/* Users Total Balance is a HOUSE LIABILITY but we accent it orange
-            (not rose) so it's visually distinct from the Withdrawals / PnL
-            cards that also use rose. The magnitude is what admins care about
-            here, not a direction signal.
-
-            Liability total = on-site cash + held inventory (unsold cards) +
-            unclaimed vouchers. Vouchers are real owed balance the user can
-            still redeem, so they belong in the same liability figure as cash
-            and inventory (they were previously omitted from this tile). */}
-        <StatCard
-          title="Users Total Balance"
-          animatedValue={
-            stats.financials.totalSiteBalance +
-            stats.financials.totalInventoryValue +
-            stats.financials.totalUnclaimedVouchers
-          }
-          formatKind="currency"
-          subtitle={`${formatCurrency(stats.financials.totalSiteBalance)} cash · ${formatCurrency(stats.financials.totalInventoryValue)} inventory · ${formatCurrency(stats.financials.totalUnclaimedVouchers)} vouchers`}
-          icon={Wallet}
-          color="orange"
         />
         {/* Avg Deposit is an inflow stat. Using cyan here so each secondary
             card has its own identity color. */}
