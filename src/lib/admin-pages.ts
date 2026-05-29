@@ -21,6 +21,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   // Content
   { group: "Content", label: "Packs", key: "/packs" },
   { group: "Content", label: "Cards", key: "/cards" },
+  { group: "Content", label: "Sets", key: "/sets" },
   { group: "Content", label: "Upgrader", key: "/upgrader" },
   // Rewards
   { group: "Rewards", label: "Rewards", key: "/rewards" },

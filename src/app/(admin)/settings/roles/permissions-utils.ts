@@ -292,6 +292,20 @@ export const CAPABILITIES: CapabilityDef[] = [
     group: "Cards",
   },
 
+  // ── Sets ────────────────────────────────────────────────────────────
+  {
+    key: "__can_create_set",
+    label: "Create Set",
+    description: "Add a new set / series (name, series, language) to the catalog",
+    group: "Sets",
+  },
+  {
+    key: "__can_upload_set_image",
+    label: "Upload Set Image",
+    description: "Upload or replace a set logo image",
+    group: "Sets",
+  },
+
   // ── Battles ─────────────────────────────────────────────────────────
   {
     key: "__can_cancel_battle",
