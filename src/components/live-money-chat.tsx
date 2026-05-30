@@ -203,8 +203,17 @@ export function LiveMoneyChat() {
         "fixed right-0 top-20 z-30 flex flex-col overflow-hidden rounded-l-2xl border border-r-0 bg-card/95 shadow-xl backdrop-blur",
       )}
     >
-      {/* Header — title + live pulse + minimize. */}
-      <div className="flex items-center justify-between gap-2 border-b bg-gradient-to-r from-emerald-500/5 via-card to-rose-500/5 px-3 py-2">
+      {/* Header — title + live pulse + minimize chevron. The whole
+          strip is the click target so admins don't have to hit the
+          small chevron icon to collapse the panel; the chevron is
+          kept as the affordance cue. */}
+      <button
+        type="button"
+        onClick={() => setOpen(false)}
+        aria-label="Minimize live money feed"
+        title="Minimize"
+        className="flex w-full items-center justify-between gap-2 border-b bg-gradient-to-r from-emerald-500/5 via-card to-rose-500/5 px-3 py-2 text-left transition-colors hover:from-emerald-500/10 hover:to-rose-500/10"
+      >
         <div className="flex min-w-0 items-center gap-2">
           <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-emerald-500/10">
             <Wallet className="size-3.5 text-emerald-500" />
@@ -214,16 +223,17 @@ export function LiveMoneyChat() {
           </h3>
           <LivePulse />
         </div>
-        <button
-          type="button"
-          onClick={() => setOpen(false)}
-          aria-label="Minimize live money feed"
-          title="Minimize"
-          className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        {/* Affordance cue — visually mimics the inner button but is
+            non-interactive (the outer header button handles the click).
+            `pointer-events-none` lets the click pass through to the
+            parent button even when the user clicks the chevron. */}
+        <span
+          aria-hidden
+          className="pointer-events-none rounded-md p-1 text-muted-foreground"
         >
           <ChevronRight className="size-3.5" />
-        </button>
-      </div>
+        </span>
+      </button>
 
       {/* Summary — compact 24h totals. */}
       <div className="grid grid-cols-2 gap-2 border-b px-3 py-2 text-xs">

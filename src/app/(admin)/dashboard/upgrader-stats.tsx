@@ -85,12 +85,13 @@ export function UpgraderStatsSection({
         className="pointer-events-none absolute -left-12 -bottom-12 size-40 rounded-full bg-cyan-500/10 blur-3xl"
       />
 
-      <div className="relative flex h-full flex-col gap-4 p-4 sm:p-5">
-        {/* Header — title + lifetime scope chip. */}
+      <div className="relative flex h-full flex-col gap-3 p-3 sm:p-4">
+        {/* Header — title + lifetime scope chip. Compact so the panel
+            matches the Wager Attribution chart's overall height. */}
         <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-cyan-500/15 text-cyan-500 ring-1 ring-inset ring-cyan-500/20">
-              <Zap className="size-4" />
+          <div className="flex items-center gap-2">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-cyan-500/15 text-cyan-500 ring-1 ring-inset ring-cyan-500/20">
+              <Zap className="size-3.5" />
             </span>
             <div className="min-w-0">
               <h3 className="text-sm font-semibold leading-tight">
@@ -174,7 +175,7 @@ export function UpgraderStatsSection({
             (rose); every player loss is a house gain (emerald). The
             bar visualises win% directly so an admin can eyeball the
             ratio without reading the digits. */}
-        <div className="mt-auto rounded-xl border bg-background/40 p-3">
+        <div className="mt-auto rounded-xl border bg-background/40 px-3 py-2">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
               <Target className="size-3.5 text-cyan-500" />
@@ -188,14 +189,14 @@ export function UpgraderStatsSection({
               flip means a "good" hit rate for the user is bad for the
               house, so the colors swap from the conventional
               "good = green" mapping. */}
-          <div className="mt-2 h-2 overflow-hidden rounded-full bg-emerald-500/15">
+          <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-emerald-500/15">
             <div
               className="h-full rounded-full bg-gradient-to-r from-rose-500 to-rose-400 transition-all"
               style={{ width: `${hitRateClamped}%` }}
               aria-hidden
             />
           </div>
-          <div className="mt-2 flex items-center justify-between text-[11px]">
+          <div className="mt-1.5 flex items-center justify-between text-[11px]">
             <span className="flex items-center gap-1 text-rose-600 dark:text-rose-400">
               <Trophy className="size-3" />
               Wins{" "}
@@ -240,7 +241,7 @@ function HeroCard({
   return (
     <div
       className={cn(
-        "relative overflow-hidden rounded-xl border bg-gradient-to-br p-3",
+        "relative overflow-hidden rounded-xl border bg-gradient-to-br px-3 py-2.5",
         gradientClass,
       )}
     >
@@ -252,7 +253,7 @@ function HeroCard({
       </div>
       <p
         className={cn(
-          "mt-1.5 truncate text-xl font-bold tabular-nums sm:text-2xl",
+          "mt-1 truncate text-lg font-bold tabular-nums sm:text-xl",
           colorClass,
         )}
       >
@@ -282,7 +283,7 @@ function SubCard({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border bg-background/40 p-3">
+    <div className="rounded-xl border bg-background/40 px-3 py-2">
       <div className="flex items-center gap-1.5">
         <span
           className={cn(
@@ -298,7 +299,7 @@ function SubCard({
       </div>
       <p
         className={cn(
-          "mt-1.5 truncate text-base font-semibold tabular-nums",
+          "mt-1 truncate text-sm font-semibold tabular-nums",
           valueClass,
         )}
       >
@@ -323,12 +324,12 @@ function MicroCard({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-lg border bg-background/30 px-2.5 py-2 min-w-0">
+    <div className="rounded-lg border bg-background/30 px-2.5 py-1.5 min-w-0">
       <div className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
         <Icon className="size-3 shrink-0 text-cyan-500/80" />
         <span className="truncate">{label}</span>
       </div>
-      <p className="mt-1 truncate text-sm font-semibold tabular-nums">
+      <p className="mt-0.5 truncate text-sm font-semibold tabular-nums">
         {children}
       </p>
     </div>

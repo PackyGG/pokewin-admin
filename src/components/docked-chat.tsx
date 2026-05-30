@@ -79,9 +79,16 @@ export function DockedChat({ role }: { role: string }) {
         "fixed right-0 bottom-6 z-30 flex flex-col overflow-hidden rounded-l-2xl border border-r-0 bg-card/95 shadow-xl backdrop-blur",
       )}
     >
-      {/* Header — title + minimize chevron. Mirrors LiveMoneyChat's
-          header styling so the two stacked panels read as a unit. */}
-      <div className="flex items-center justify-between gap-2 border-b bg-gradient-to-r from-blue-500/5 via-card to-purple-500/5 px-3 py-2">
+      {/* Header — title + minimize chevron. Whole strip is the click
+          target (mirrors LiveMoneyChat) so admins don't have to hit
+          the small chevron. The chevron stays as the affordance cue. */}
+      <button
+        type="button"
+        onClick={() => setOpen(false)}
+        aria-label="Minimize chat & mutes panel"
+        title="Minimize"
+        className="flex w-full items-center justify-between gap-2 border-b bg-gradient-to-r from-blue-500/5 via-card to-purple-500/5 px-3 py-2 text-left transition-colors hover:from-blue-500/10 hover:to-purple-500/10"
+      >
         <div className="flex min-w-0 items-center gap-2">
           <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-blue-500/10">
             <MessagesSquare className="size-3.5 text-blue-500" />
@@ -90,16 +97,13 @@ export function DockedChat({ role }: { role: string }) {
             Chat &amp; Mutes
           </h3>
         </div>
-        <button
-          type="button"
-          onClick={() => setOpen(false)}
-          aria-label="Minimize chat & mutes panel"
-          title="Minimize"
-          className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        <span
+          aria-hidden
+          className="pointer-events-none rounded-md p-1 text-muted-foreground"
         >
           <ChevronRight className="size-3.5" />
-        </button>
-      </div>
+        </span>
+      </button>
 
       {/* ChatPanelContent owns the Chat/Mutes tab switcher + lazy
           data fetching. Wrap in a flex container so the inner Tabs

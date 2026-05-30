@@ -159,7 +159,7 @@ export default async function DashboardPage({
       <div className="grid gap-3 sm:gap-4 lg:grid-cols-2">
         <Suspense
           fallback={
-            <Skeleton className="h-[376px] w-full rounded-2xl" />
+            <Skeleton className="h-[340px] w-full rounded-2xl" />
           }
         >
           <DashboardUpgraderSection />
