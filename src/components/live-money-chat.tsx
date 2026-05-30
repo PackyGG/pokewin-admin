@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
+import { UserMiniDialog } from "@/components/user-mini-dialog";
 import {
   ArrowDownCircle,
   ArrowUpCircle,
@@ -66,6 +66,10 @@ export function LiveMoneyChat() {
     setLiveOpen: setOpen,
     chatOpen,
   } = useRightRail();
+  // Clicking a username in a row opens a compact preview dialog in
+  // the middle of the screen — admins can peek balance + recent
+  // activity without leaving the dashboard. `null` = closed.
+  const [activeUserId, setActiveUserId] = React.useState<string | null>(null);
   const [items, setItems] = React.useState<LiveMoneyMovementItem[]>([]);
   const [total24hDeposits, setTotal24hDeposits] = React.useState(0);
   const [total24hWithdrawals, setTotal24hWithdrawals] = React.useState(0);
@@ -286,11 +290,23 @@ export function LiveMoneyChat() {
                 key={item.id}
                 item={item}
                 isNew={newIds.has(item.id)}
+                onUsernameClick={setActiveUserId}
               />
             ))}
           </ul>
         )}
       </div>
+      {/* Mini preview pop-up — opens in the middle of the screen when
+          an admin clicks a username in a row. Centralised here so all
+          rows share one dialog instance rather than mounting 30+
+          dialogs. */}
+      <UserMiniDialog
+        userId={activeUserId}
+        open={Boolean(activeUserId)}
+        onOpenChange={(o) => {
+          if (!o) setActiveUserId(null);
+        }}
+      />
     </aside>
   );
 }
@@ -322,9 +338,14 @@ export function LiveMoneyChatSpacer() {
 function ChatRow({
   item,
   isNew,
+  onUsernameClick,
 }: {
   item: LiveMoneyMovementItem;
   isNew: boolean;
+  /** Called with the row's user id when the admin clicks the
+   *  username or the avatar — opens the parent's mini preview
+   *  dialog. */
+  onUsernameClick: (userId: string) => void;
 }) {
   const fallback = (item.username ?? "?").slice(0, 2).toUpperCase();
   const isDeposit = item.kind === "deposit";
@@ -362,12 +383,15 @@ function ChatRow({
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
-          <Link
-            href={`/users/${item.userId}`}
-            className="truncate text-xs font-medium hover:underline"
+          <button
+            type="button"
+            onClick={() => onUsernameClick(item.userId)}
+            className="truncate text-xs font-medium hover:underline focus-visible:outline-none focus-visible:underline"
+            aria-label={`Preview ${item.username}`}
+            title={`Preview ${item.username}`}
           >
             {item.username}
-          </Link>
+          </button>
           <span
             className={cn(
               "shrink-0 font-mono text-xs font-bold tabular-nums",
