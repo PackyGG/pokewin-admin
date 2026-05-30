@@ -142,12 +142,9 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Dashboard", href: "/dashboard", icon: "LayoutDashboard" },
       { label: "Analytics", href: "/analytics", icon: "BarChart3" },
-      // Top-level shortcut to the all-types ledger. The narrower
-      // sub-views (Packs / Battles / Rewards) still live under the
-      // Transactions group below — this entry is the catch-all entry
-      // point admins reach for most often.
-      { label: "Transactions", href: "/transactions", icon: "Receipt" },
-      { label: "Map", href: "/map", icon: "Globe" },
+      // /transactions overview was removed — admins go straight to a
+      // specific sub-ledger via the "Transactions" group below.
+      // /map was folded into /analytics as a tab; the standalone link is gone.
       { label: "Users", href: "/users", icon: "Users" },
       // Deleted-user recovery bin. Visibility follows the same
       // permission key as the page itself — non-admins only see it
@@ -216,14 +213,17 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    // "All" was promoted to the Overview group up top — admins reach
-    // for that one most often. The narrower per-type ledgers stay
-    // here so they don't clutter Overview but remain discoverable
-    // when an admin already knows they want a single category.
+    // The standalone /transactions overview was removed — admins
+    // land on a specific sub-ledger here instead. Each per-type
+    // entry filters the same ledger by the relevant ledger_type set.
+    // Deposits + Withdrawals live in the Overview group at the top
+    // (where they were before — keeping them discoverable as the
+    // catch-all entry points for those money flows).
     label: "Transactions",
     items: [
       { label: "Packs", href: "/transactions/packs", icon: "Package" },
       { label: "Battles", href: "/battles", icon: "Swords" },
+      { label: "Upgrader", href: "/transactions/upgrader", icon: "ArrowUpCircle" },
       { label: "Rewards", href: "/transactions/rewards", icon: "Award" },
     ],
   },

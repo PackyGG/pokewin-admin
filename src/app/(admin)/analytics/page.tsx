@@ -16,6 +16,8 @@ import { RevenueTab } from "./tab-revenue";
 import { TopPerformersTab } from "./tab-top";
 import { HeatmapTab } from "./tab-heatmap";
 import { PacksBattlesTab } from "./tab-packs";
+import { MapTab } from "./tab-map";
+import { parseMetric } from "./map/utils";
 import { TabSkeleton } from "./tab-skeleton";
 import type { CohortGranularity } from "@/lib/queries/analytics-cohorts";
 
@@ -33,6 +35,7 @@ function parseTab(value: string | undefined): AnalyticsTab {
     case "top":
     case "heatmap":
     case "packs":
+    case "map":
       return value;
     default:
       return "overview";
@@ -55,6 +58,11 @@ export default async function AnalyticsPage({
   const cohortBy = parseCohortBy(params.cohortBy);
   const topTab = params.topTab;
   const packsSort = params.packsSort;
+  // Map tab uses its own URL param for the heat metric (users /
+  // deposits / wagers / multiplier). Parsed here so the param flows
+  // into the Suspense key and the tab segment re-renders when the
+  // user toggles metrics.
+  const mapMetric = parseMetric(params.metric);
 
   return (
     <div className="space-y-6">
@@ -90,7 +98,7 @@ export default async function AnalyticsPage({
           several of these tabs run heavy raw SQL. Suspense + per-tab skeleton
           keeps navigation snappy between tabs. */}
       <Suspense
-        key={`${tab}-${period}-${cohortBy}-${topTab ?? ""}-${packsSort ?? ""}`}
+        key={`${tab}-${period}-${cohortBy}-${topTab ?? ""}-${packsSort ?? ""}-${mapMetric}`}
         fallback={<TabSkeleton />}
       >
         {tab === "overview" && <OverviewTab period={period} />}
@@ -109,6 +117,7 @@ export default async function AnalyticsPage({
         {tab === "packs" && (
           <PacksBattlesTab period={period} sortKey={packsSort} />
         )}
+        {tab === "map" && <MapTab period={period} metric={mapMetric} />}
       </Suspense>
     </div>
   );

@@ -2,47 +2,41 @@ import {
   Globe,
   Users,
   MapPinOff,
-  Map as MapIcon,
   TrendingUp,
   Swords,
 } from "lucide-react";
-import { requirePageAccess } from "@/lib/dal";
-import { getUsersByCountry, type Period } from "@/lib/queries/map";
+import { getUsersByCountry } from "@/lib/queries/map";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import {
-  PageHero,
-  KpiTile,
-  SectionHeading,
-} from "@/components/modern-panels";
+import { KpiTile, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
-import { PeriodFilter } from "./period-filter";
-import { MetricToggle } from "./metric-toggle";
-import { WorldMap } from "./world-map";
-import { CountryLeaderboard } from "./country-leaderboard";
-import { ContinentBreakdown } from "./continent-breakdown";
-import { parseMetric } from "./utils";
+import { MetricToggle } from "./map/metric-toggle";
+import { WorldMap } from "./map/world-map";
+import { CountryLeaderboard } from "./map/country-leaderboard";
+import { ContinentBreakdown } from "./map/continent-breakdown";
+import { type MapMetric } from "./map/utils";
+import type { AnalyticsPeriod } from "./types";
 
-export const metadata = { title: "Map" };
-
-const VALID_PERIODS: readonly Period[] = ["today", "7d", "30d", "90d", "all"];
-
-function parsePeriod(value: string | undefined): Period {
-  if (value && (VALID_PERIODS as readonly string[]).includes(value)) {
-    return value as Period;
-  }
-  return "30d";
-}
-
-export default async function MapPage({
-  searchParams,
+/**
+ * Map tab — geographic distribution of users + per-country money flows
+ * for the period selected on the analytics hero.
+ *
+ * Migrated from the standalone /map page into an analytics tab so all
+ * timeline-bounded views share a single hero / period filter / shell.
+ * The map's own MetricToggle is rendered inside this tab (not in the
+ * hero) since metric is map-specific and would clutter the shared
+ * analytics chrome on tabs that don't use it.
+ *
+ * `getUsersByCountry`'s `Period` type matches `AnalyticsPeriod`
+ * one-for-one (today | 7d | 30d | 90d | all), so no period mapping is
+ * needed — we pass the hero period through directly.
+ */
+export async function MapTab({
+  period,
+  metric,
 }: {
-  searchParams: Promise<Record<string, string | undefined>>;
+  period: AnalyticsPeriod;
+  metric: MapMetric;
 }) {
-  await requirePageAccess("/map");
-  const params = await searchParams;
-  const period = parsePeriod(params.period);
-  const metric = parseMetric(params.metric);
-
   const data = await getUsersByCountry(period);
   const topCountry = data.byCountry[0];
 
@@ -61,30 +55,18 @@ export default async function MapPage({
 
   return (
     <div className="space-y-6">
-      <PageHero>
-        {/* Identity stacks above the controls on phones — both
-            metric toggle (4 chips) and period filter (5 chips) need
-            their own breathing room and won't fit beside the title
-            at 360px. */}
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between md:gap-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
-              <MapIcon className="size-5 text-primary" />
-            </div>
-            <div className="min-w-0">
-              <h1 className="text-xl font-bold leading-tight sm:text-2xl">Map</h1>
-              <p className="text-xs text-muted-foreground sm:text-sm">
-                Where users live, deposit, and wager — across {data.byCountry.length}{" "}
-                countr{data.byCountry.length === 1 ? "y" : "ies"}.
-              </p>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <MetricToggle />
-            <PeriodFilter />
-          </div>
+      {/* Metric selector — map-specific (users / deposits / wagers /
+          multiplier) so it lives inside the tab, not on the shared
+          hero. Aligned right at sm+ so it sits beside the section
+          heading like other in-tab controls. */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="text-sm text-muted-foreground">
+          Where users live, deposit, and wager — across{" "}
+          {data.byCountry.length}{" "}
+          countr{data.byCountry.length === 1 ? "y" : "ies"}.
         </div>
-      </PageHero>
+        <MetricToggle />
+      </div>
 
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <KpiTile

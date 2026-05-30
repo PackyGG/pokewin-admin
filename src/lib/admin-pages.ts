@@ -9,7 +9,8 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Navigation", label: "Dashboard", key: "/dashboard" },
   { group: "Navigation", label: "Analytics", key: "/analytics" },
   { group: "Navigation", label: "Raw P&L", key: "/analytics/pure-pnl" },
-  { group: "Navigation", label: "Map", key: "/map" },
+  // /map was folded into /analytics as a tab — its permission inherits
+  // from /analytics. The standalone page no longer exists.
   { group: "Navigation", label: "Users", key: "/users" },
   // Recovery bin for hard-deleted users — 7-day snapshot window. Gated
   // by the same __can_delete_user capability since restoring is the
@@ -17,11 +18,14 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Navigation", label: "Deleted Users", key: "/users/deleted" },
   { group: "Navigation", label: "Withdrawals", key: "/withdrawals" },
   // Transactions
-  { group: "Transactions", label: "All", key: "/transactions" },
+  // Standalone /transactions overview removed — admins land on a
+  // specific sub-ledger instead. Each sub-page carries its own
+  // permission key.
   { group: "Transactions", label: "Packs", key: "/transactions/packs" },
   { group: "Transactions", label: "Battles", key: "/battles" },
   { group: "Transactions", label: "Rewards", key: "/transactions/rewards" },
   { group: "Transactions", label: "Deposits & Withdrawals", key: "/transactions/deposits" },
+  { group: "Transactions", label: "Upgrader", key: "/transactions/upgrader" },
   // Content
   { group: "Content", label: "Packs", key: "/packs" },
   { group: "Content", label: "Cards", key: "/cards" },
