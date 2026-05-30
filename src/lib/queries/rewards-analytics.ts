@@ -9,8 +9,8 @@ import { toNumber } from "@/lib/utils/decimal";
  * Aggregates every ledger payout that is a *reward* — money the house
  * GIVES users for free (bonuses, rakeback, affiliate commissions, rain /
  * race prizes, gift / promo redemptions, creator tips, signup-pack
- * balance rewards, waitlist prizes, redeemed vouchers). All of these are
- * house COSTS, so per CLAUDE.md House-POV they render ROSE everywhere.
+ * balance rewards, waitlist prizes). All of these are house COSTS, so
+ * per CLAUDE.md House-POV they render ROSE everywhere.
  *
  * Reward ledger types (verified against prisma/schema.prisma
  * `ledger_transaction_type` + the existing payout buckets in
@@ -23,13 +23,12 @@ import { toNumber } from "@/lib/utils/decimal";
  *   • balance_reward_claim                                      → signup packs
  *   • creator_tip                                               → creator tips
  *   • waitlist_prize                                            → waitlist
- *   • voucher_redeemed                                          → vouchers
  *
- * Deliberately EXCLUDED (not free-gift rewards): the voucher/exchange
- * types that originate from the user's OWN gambling winnings/excess
- * (exchange_excess_to_voucher, exchange_excess_credit,
- * battle_excess_to_voucher, voucher_exchange, card_sale, card_exchange).
- * Those are handled by the gambling P&L / exchange buckets, not here.
+ * Deliberately EXCLUDED: every voucher-related ledger type
+ * (voucher_redeemed, voucher_exchange, exchange_excess_to_voucher,
+ * battle_excess_to_voucher, exchange_excess_credit, card_sale,
+ * card_exchange). Vouchers are tracked in their own dedicated views and
+ * do not belong in the rewards-cost lens.
  *
  * Staff (admin/support) excluded via the same subquery the revenue/
  * leaderboard queries use; the admin blacklist (`excluded_users`) is
@@ -60,8 +59,7 @@ export type RewardCategoryKey =
   | "rainRace"
   | "signupPack"
   | "creatorTip"
-  | "waitlist"
-  | "vouchers";
+  | "waitlist";
 
 export type RewardCategory = {
   key: RewardCategoryKey;
@@ -81,7 +79,6 @@ export type RewardsDailyPoint = {
   signupPack: number;
   creatorTip: number;
   waitlist: number;
-  vouchers: number;
   /** Sum of all reward categories on this day. */
   total: number;
 };
@@ -115,17 +112,19 @@ const CATEGORY_LABELS: Record<RewardCategoryKey, string> = {
   signupPack: "Signup / Balance Rewards",
   creatorTip: "Creator Tips",
   waitlist: "Waitlist Prizes",
-  vouchers: "Vouchers",
 };
 
 // All reward ledger types as a single inlined SQL list — used for the
 // per-user / per-day totals and the recipient leaderboard. Hardcoded
 // enum values only (no user input), so safe to inline.
+//
+// Vouchers are deliberately omitted from this list — they live under a
+// dedicated voucher view and don't belong to the rewards-cost lens.
 const REWARD_TYPES_SQL = `(
   'deposit_bonus','promo_code_redeemed','gift_card_redeemed',
   'rakeback_claim','affiliate_claim',
   'rain_win','race_prize','balance_reward_claim','creator_tip',
-  'waitlist_prize','voucher_redeemed'
+  'waitlist_prize'
 )`;
 
 export async function getRewardsAnalytics(
@@ -150,7 +149,6 @@ export async function getRewardsAnalytics(
         signup_pack: string;
         creator_tip: string;
         waitlist: string;
-        vouchers: string;
         bonuses_n: string;
         rakeback_n: string;
         affiliate_n: string;
@@ -158,7 +156,6 @@ export async function getRewardsAnalytics(
         signup_pack_n: string;
         creator_tip_n: string;
         waitlist_n: string;
-        vouchers_n: string;
       }[]
     >(`
       SELECT
@@ -170,15 +167,13 @@ export async function getRewardsAnalytics(
         COALESCE(SUM(CASE WHEN lt.type = 'balance_reward_claim' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS signup_pack,
         COALESCE(SUM(CASE WHEN lt.type = 'creator_tip' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS creator_tip,
         COALESCE(SUM(CASE WHEN lt.type = 'waitlist_prize' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS waitlist,
-        COALESCE(SUM(CASE WHEN lt.type = 'voucher_redeemed' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS vouchers,
         COUNT(*) FILTER (WHERE lt.type IN ('deposit_bonus','promo_code_redeemed','gift_card_redeemed'))::text AS bonuses_n,
         COUNT(*) FILTER (WHERE lt.type = 'rakeback_claim')::text AS rakeback_n,
         COUNT(*) FILTER (WHERE lt.type = 'affiliate_claim')::text AS affiliate_n,
         COUNT(*) FILTER (WHERE lt.type IN ('rain_win','race_prize'))::text AS rain_race_n,
         COUNT(*) FILTER (WHERE lt.type = 'balance_reward_claim')::text AS signup_pack_n,
         COUNT(*) FILTER (WHERE lt.type = 'creator_tip')::text AS creator_tip_n,
-        COUNT(*) FILTER (WHERE lt.type = 'waitlist_prize')::text AS waitlist_n,
-        COUNT(*) FILTER (WHERE lt.type = 'voucher_redeemed')::text AS vouchers_n
+        COUNT(*) FILTER (WHERE lt.type = 'waitlist_prize')::text AS waitlist_n
       FROM ledger_transactions lt
       WHERE lt.status = 'completed'
         AND lt.type IN ${REWARD_TYPES_SQL}
@@ -222,7 +217,6 @@ export async function getRewardsAnalytics(
     const signupPack = toNumber(r.signup_pack);
     const creatorTip = toNumber(r.creator_tip);
     const waitlist = toNumber(r.waitlist);
-    const vouchers = toNumber(r.vouchers);
     return {
       date: new Date(r.date).toISOString().split("T")[0],
       bonuses,
@@ -232,7 +226,6 @@ export async function getRewardsAnalytics(
       signupPack,
       creatorTip,
       waitlist,
-      vouchers,
       total:
         bonuses +
         rakeback +
@@ -240,8 +233,7 @@ export async function getRewardsAnalytics(
         rainRace +
         signupPack +
         creatorTip +
-        waitlist +
-        vouchers,
+        waitlist,
     };
   });
 
@@ -256,7 +248,6 @@ export async function getRewardsAnalytics(
     signupPack: { total: 0, count: 0 },
     creatorTip: { total: 0, count: 0 },
     waitlist: { total: 0, count: 0 },
-    vouchers: { total: 0, count: 0 },
   };
   for (const r of dailyRows) {
     totals.bonuses.total += toNumber(r.bonuses);
@@ -273,8 +264,6 @@ export async function getRewardsAnalytics(
     totals.creatorTip.count += Number(r.creator_tip_n);
     totals.waitlist.total += toNumber(r.waitlist);
     totals.waitlist.count += Number(r.waitlist_n);
-    totals.vouchers.total += toNumber(r.vouchers);
-    totals.vouchers.count += Number(r.vouchers_n);
   }
 
   const totalCost = Object.values(totals).reduce((a, t) => a + t.total, 0);
@@ -288,7 +277,6 @@ export async function getRewardsAnalytics(
     "signupPack",
     "creatorTip",
     "waitlist",
-    "vouchers",
   ];
   const categories: RewardCategory[] = categoryKeys
     .map((key) => ({

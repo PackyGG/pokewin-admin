@@ -11,6 +11,9 @@ import {
   PieChart,
   LineChart as LineChartIcon,
   Trophy,
+  CalendarDays,
+  CalendarRange,
+  Crown,
 } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import {
@@ -32,14 +35,19 @@ import {
   TableBody,
   TableCell,
 } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { formatCurrency, formatDate, formatNumber } from "@/lib/utils/format";
 import {
   getRewardsAnalytics,
   type RewardsPeriod,
   type RewardCategoryKey,
   type RewardRecipientRow,
 } from "@/lib/queries/rewards-analytics";
+import {
+  getRewardsLeaderboards,
+  type RaceLeaderboardSummary,
+} from "@/lib/queries/rewards-analytics-leaderboards";
 import { RewardsPeriodFilter } from "./period-filter";
 import { RewardsCostChart } from "./rewards-chart";
 
@@ -81,7 +89,6 @@ const CATEGORY_ICONS: Record<RewardCategoryKey, React.ElementType> = {
   signupPack: Sparkles,
   creatorTip: Sparkles,
   waitlist: Hash,
-  vouchers: Gift,
 };
 
 export default async function RewardsAnalyticsPage({
@@ -92,7 +99,13 @@ export default async function RewardsAnalyticsPage({
   await requirePageAccess("/rewards/analytics");
   const params = await searchParams;
   const period = parsePeriod(params.period);
-  const data = await getRewardsAnalytics(period);
+  // Reward-cost analytics and the platform-leaderboard summary are
+  // independent of each other (different tables, no shared filters)
+  // so they're fetched in parallel.
+  const [data, leaderboards] = await Promise.all([
+    getRewardsAnalytics(period),
+    getRewardsLeaderboards(),
+  ]);
 
   // KPI strip: total cost + the five biggest reward buckets. Categories
   // are pre-sorted by total; we look each one up by key so the strip
@@ -212,6 +225,60 @@ export default async function RewardsAnalyticsPage({
         </div>
       </FadeIn>
 
+      {/* Platform leaderboards — site-wide daily + weekly cash races
+          (NOT per-creator affiliate leaderboards, which live on
+          /creators/leaderboards). Prize money flows OUT to users → rose
+          accent (house cost) per CLAUDE.md House-POV rule. */}
+      <FadeIn>
+        <div className="space-y-3">
+          <SectionHeading
+            icon={Trophy}
+            title="Platform leaderboards"
+            action={
+              <Link
+                href="/rewards/leaderboards"
+                className="text-xs font-medium text-muted-foreground hover:text-foreground"
+              >
+                Manage leaderboards →
+              </Link>
+            }
+          />
+          {/* Lifetime prize-payout KPI sits on its own row above the
+              two race summaries — it spans every race type (daily,
+              weekly, monthly) so it doesn't belong to either panel. */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <KpiTile
+              label="Lifetime prizes paid"
+              value={formatCurrency(leaderboards.lifetimePrizesPaid)}
+              sub={`${formatNumber(leaderboards.lifetimeClaimsCount)} prize claims`}
+              icon={Crown}
+              accent="rose"
+            />
+            <KpiTile
+              label="Per-race prize budget"
+              value={formatCurrency(
+                leaderboards.daily.prizePool + leaderboards.weekly.prizePool,
+              )}
+              sub={`${leaderboards.daily.prizePositions + leaderboards.weekly.prizePositions} tiered positions (daily + weekly)`}
+              icon={Trophy}
+              accent="rose"
+            />
+          </div>
+          <div className="grid gap-4 xl:grid-cols-2">
+            <LeaderboardPanel
+              summary={leaderboards.daily}
+              icon={CalendarDays}
+              kindLabel="Daily race"
+            />
+            <LeaderboardPanel
+              summary={leaderboards.weekly}
+              icon={CalendarRange}
+              kindLabel="Weekly race"
+            />
+          </div>
+        </div>
+      </FadeIn>
+
       {/* Top recipients. */}
       <FadeIn>
         <div className="space-y-3">
@@ -221,6 +288,151 @@ export default async function RewardsAnalyticsPage({
           </div>
         </div>
       </FadeIn>
+    </div>
+  );
+}
+
+/**
+ * Single race-summary panel — header row with kind label + state badge
+ * + period dates, hero prize pool, and a top-5 winners table. Used twice
+ * on /rewards/analytics (daily + weekly). All amounts render rose
+ * because prize money is a house cost (money out to users) per
+ * CLAUDE.md's House-POV rule.
+ */
+function LeaderboardPanel({
+  summary,
+  icon: Icon,
+  kindLabel,
+}: {
+  summary: RaceLeaderboardSummary;
+  icon: React.ElementType;
+  kindLabel: string;
+}) {
+  const stateLabel =
+    summary.state === "active"
+      ? "Active"
+      : summary.state === "ended"
+        ? "Most recent"
+        : "Not configured";
+  const stateBadgeClasses =
+    summary.state === "active"
+      ? "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30"
+      : summary.state === "ended"
+        ? "bg-muted text-muted-foreground border-border"
+        : "bg-muted/50 text-muted-foreground border-border";
+  // Period range — only shown when we have a chosen period at all.
+  const periodRange =
+    summary.periodStart && summary.periodEnd
+      ? `${formatDate(summary.periodStart)} → ${formatDate(summary.periodEnd)}`
+      : null;
+  return (
+    <StatPanel title={kindLabel} icon={Icon} accent="rose">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="outline" className={cn("text-[10px]", stateBadgeClasses)}>
+          {stateLabel}
+        </Badge>
+        {periodRange && (
+          <span className="text-[11px] tabular-nums text-muted-foreground">
+            {periodRange}
+          </span>
+        )}
+      </div>
+      <p className="mt-2 text-2xl font-bold leading-tight tracking-tight tabular-nums text-rose-600 dark:text-rose-400 sm:text-3xl">
+        <AnimatedNumber
+          value={summary.prizePool}
+          format="currency"
+          duration={700}
+        />
+      </p>
+      <p className="mt-0.5 text-xs text-muted-foreground">
+        Prize pool · {summary.prizePositions}{" "}
+        {summary.prizePositions === 1 ? "position" : "positions"}
+      </p>
+      <div className="mt-3 border-t pt-3">
+        <LeaderboardTopWinners summary={summary} />
+      </div>
+    </StatPanel>
+  );
+}
+
+/**
+ * Top-5 winners table for a race summary. Renders an inline mini-table
+ * (rank, user, wagered, prize). Empty state when no claims/snapshots
+ * exist yet. Prize column is rose to stay House-POV.
+ */
+function LeaderboardTopWinners({
+  summary,
+}: {
+  summary: RaceLeaderboardSummary;
+}) {
+  if (summary.state === "none") {
+    return (
+      <EmptyState
+        icon={Trophy}
+        title="No race configured"
+        description="Start a race on /rewards/leaderboards to populate this panel."
+        compact
+      />
+    );
+  }
+  if (summary.topWinners.length === 0) {
+    return (
+      <EmptyState
+        icon={Trophy}
+        title={
+          summary.state === "active"
+            ? "No standings yet"
+            : "No prize claims recorded"
+        }
+        description={
+          summary.state === "active"
+            ? "Standings populate as players wager during this race."
+            : "Prize claims for this period have not been filed yet."
+        }
+        compact
+      />
+    );
+  }
+  const projectedNote = summary.state === "active";
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between text-[11px] uppercase tracking-wider text-muted-foreground">
+        <span>Top winners</span>
+        {projectedNote && <span>Projected</span>}
+      </div>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-[50px]">Rank</TableHead>
+            <TableHead>User</TableHead>
+            <TableHead className="text-right">Wagered</TableHead>
+            <TableHead className="text-right">Prize</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {summary.topWinners.map((w) => (
+            <TableRow key={`${w.position}-${w.userId}`}>
+              <TableCell className="tabular-nums text-muted-foreground">
+                #{w.position}
+              </TableCell>
+              <TableCell className="font-medium">
+                <Link
+                  href={`/users/${w.userId}`}
+                  className="hover:underline"
+                >
+                  {w.username ?? w.userId.slice(0, 8)}
+                </Link>
+              </TableCell>
+              <TableCell className="text-right tabular-nums text-muted-foreground">
+                {formatCurrency(w.wageredUsd)}
+              </TableCell>
+              <TableCell className="text-right tabular-nums text-rose-600 dark:text-rose-400">
+                {formatCurrency(w.prizeAmountUsd)}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
     </div>
   );
 }
