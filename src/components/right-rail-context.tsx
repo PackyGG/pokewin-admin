@@ -89,25 +89,64 @@ export function useRightRail(): RightRailState {
 // `bottom` from the same values and the geometry stays in sync.
 //
 // When BOTH panels are open the right edge splits at the viewport
-// midpoint. When live is COLLAPSED its thin tab occupies the top
-// `COLLAPSED_LIVE_HEIGHT_REM` rem and the chat panel takes everything
-// below it (so chat slides UP to fill the freed space).
+// midpoint. When one is COLLAPSED its thin tab occupies a fixed
+// height and the other panel expands to take everything else.
 export const RAIL_TOP_REM = 5; // matches `top-20` (under the admin header)
 export const RAIL_BOTTOM_REM = 1.5; // matches `bottom-6`
 export const COLLAPSED_LIVE_HEIGHT_REM = 7; // fixed live-tab height
+export const COLLAPSED_CHAT_HEIGHT_REM = 6; // fixed chat-tab height
 export const PANEL_GAP_REM = 0.25; // breathing room between stacked panels
 
 /**
- * Where the docked-chat panel (or its collapsed tab) starts. Resolves
- * to a CSS `top` value string suitable for inline-style usage.
+ * Where the docked-chat panel (or its collapsed tab) starts when it's
+ * positioned with `top:`. Resolves to a CSS value suitable for inline
+ * `style.top` usage.
  *
- *   - live OPEN   → chat starts at the viewport midpoint (bottom half)
- *   - live CLOSED → chat starts just below live's collapsed tab so it
- *                   takes most of the right edge
+ *   - chat OPEN, live OPEN   → midpoint (bottom half)
+ *   - chat OPEN, live CLOSED → just below live's collapsed tab (chat
+ *                              takes the full remaining height)
+ *   - chat CLOSED, live OPEN → not used; the collapsed tab sticks to
+ *                              the BOTTOM of the rail instead (see
+ *                              `chatTabUsesBottom`)
+ *   - chat CLOSED, live CLOSED → just below live's collapsed tab so
+ *                                the two tabs stack from the top
  */
 export function chatTopCss(liveOpen: boolean): string {
     if (liveOpen) {
         return `calc(50vh + ${PANEL_GAP_REM}rem)`;
     }
     return `calc(${RAIL_TOP_REM}rem + ${COLLAPSED_LIVE_HEIGHT_REM}rem + ${PANEL_GAP_REM}rem)`;
+}
+
+/**
+ * Where the live-money panel ends (its CSS `bottom`).
+ *
+ *   - chat OPEN  → midpoint (top half, leaves the bottom half for chat)
+ *   - chat CLOSED → just above chat's collapsed tab at the bottom of
+ *                   the rail (live expands DOWN to fill the freed
+ *                   space — symmetric with chat expanding UP when
+ *                   live is collapsed)
+ */
+export function liveBottomCss(chatOpen: boolean): string {
+    if (chatOpen) {
+        return `calc(50vh + ${PANEL_GAP_REM}rem)`;
+    }
+    return `calc(${RAIL_BOTTOM_REM}rem + ${COLLAPSED_CHAT_HEIGHT_REM}rem + ${PANEL_GAP_REM}rem)`;
+}
+
+/**
+ * Chat's collapsed tab anchors differently depending on the live
+ * panel's state. When live is open and taking most of the rail, the
+ * chat tab sticks to the BOTTOM of the rail (out of live's way). When
+ * live is collapsed, the chat tab anchors via `top:` right below
+ * live's tab so the two stack from the top.
+ *
+ * Returns the inline-style object both anchors can spread into the
+ * tab button.
+ */
+export function chatTabAnchor(liveOpen: boolean): React.CSSProperties {
+    if (liveOpen) {
+        return { bottom: `${RAIL_BOTTOM_REM}rem` };
+    }
+    return { top: chatTopCss(false) };
 }

@@ -16,6 +16,7 @@ import type { LiveMoneyMovementItem } from "@/lib/queries/dashboard-live";
 import { fetchRecentMoneyMovements } from "@/app/(admin)/dashboard/live-actions";
 import {
   COLLAPSED_LIVE_HEIGHT_REM,
+  liveBottomCss,
   useRightRail,
 } from "@/components/right-rail-context";
 
@@ -60,7 +61,11 @@ export function LiveMoneyChat() {
   // chat dock below can react: collapsing the live feed pulls the
   // chat up to fill the freed space; expanding it pushes chat back
   // into the bottom half.
-  const { liveOpen: open, setLiveOpen: setOpen } = useRightRail();
+  const {
+    liveOpen: open,
+    setLiveOpen: setOpen,
+    chatOpen,
+  } = useRightRail();
   const [items, setItems] = React.useState<LiveMoneyMovementItem[]>([]);
   const [total24hDeposits, setTotal24hDeposits] = React.useState(0);
   const [total24hWithdrawals, setTotal24hWithdrawals] = React.useState(0);
@@ -186,13 +191,15 @@ export function LiveMoneyChat() {
   return (
     <aside
       aria-label="Live money feed"
-      style={{ width: PANEL_WIDTH_PX, bottom: "calc(50vh + 0.25rem)" }}
+      style={{ width: PANEL_WIDTH_PX, bottom: liveBottomCss(chatOpen) }}
       className={cn(
-        // Top HALF of the right edge — leaves the bottom half for the
-        // docked chat. `top-20` tucks under the admin header; the
-        // `bottom` inline-style splits the viewport at the midpoint
-        // with a small gap (0.25rem) between the two stacked panels.
-        // `z-30` sits above normal content but below modals (z-50).
+        // Top portion of the right edge. The `bottom` value depends
+        // on the chat dock state: when chat is open, live ends at the
+        // viewport midpoint (50/50 split); when chat is collapsed,
+        // live expands DOWN to just above chat's collapsed tab so it
+        // takes most of the rail. `top-20` tucks under the admin
+        // header. `z-30` sits above normal content but below modals
+        // (z-50).
         "fixed right-0 top-20 z-30 flex flex-col overflow-hidden rounded-l-2xl border border-r-0 bg-card/95 shadow-xl backdrop-blur",
       )}
     >
