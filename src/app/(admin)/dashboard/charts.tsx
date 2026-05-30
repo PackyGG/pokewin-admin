@@ -602,7 +602,10 @@ export function WagerAttributionChart({
   const organicPct = periodTotal > 0 ? (organicTotal / periodTotal) * 100 : 0;
   const creatorCodedPct = periodTotal > 0 ? (creatorCodedTotal / periodTotal) * 100 : 0;
   return (
-    <Card>
+    // `h-full` stretches the card to fill the grid row in the 50/50
+    // pair with Upgrader Stats so the two cards always align at the
+    // bottom, regardless of which side resolved first.
+    <Card className="h-full">
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle className="text-sm font-medium">

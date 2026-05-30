@@ -156,10 +156,18 @@ export default async function DashboardPage({
               cross-segment, so it's a free render.
           Stacks single-column on smaller screens so each card keeps
           a usable width. */}
-      <div className="grid gap-3 sm:gap-4 lg:grid-cols-2">
+      {/* Both Suspense fallbacks use the SAME height so the grid row
+          stays stable while one side loads ahead of the other —
+          previously the row jumped from the shorter skeleton up to
+          the chart's natural height when the chart resolved, which
+          briefly cropped the upgrader content. The shared
+          `min-h-[400px]` on the row guarantees the layout reserves
+          the chart's natural height from the first paint, regardless
+          of which side resolves first. */}
+      <div className="grid min-h-[400px] gap-3 sm:gap-4 lg:grid-cols-2 lg:items-stretch">
         <Suspense
           fallback={
-            <Skeleton className="h-[340px] w-full rounded-2xl" />
+            <Skeleton className="h-full min-h-[400px] w-full rounded-2xl" />
           }
         >
           <DashboardUpgraderSection />
@@ -167,7 +175,7 @@ export default async function DashboardPage({
         <Suspense
           key={`wager-attr-${period}`}
           fallback={
-            <Skeleton className="h-[300px] w-full rounded-xl" />
+            <Skeleton className="h-full min-h-[400px] w-full rounded-xl" />
           }
         >
           <DashboardWagerAttribution period={period} />
