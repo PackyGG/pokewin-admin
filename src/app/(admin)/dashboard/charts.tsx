@@ -88,9 +88,11 @@ const PNL_DOWN = "#f43f5e"; // rose-500 — house down that day
 
 /**
  * Custom tooltip for the stacked Wagers chart — renders Packs + Battles
- * with their colors, then a "Total" row showing both combined. The
- * default ChartTooltipContent only lists individual stack segments, so
- * an admin had to mentally add packs+battles to read the day's total.
+ * + Upgrader with their colors, the share of the day each contributed
+ * (% of total), then a "Total" row showing all three combined. The
+ * default ChartTooltipContent only lists individual stack segments
+ * without proportions, so an admin had to mentally add the segments
+ * AND compute the ratio.
  *
  * Styling mirrors ChartTooltipContent (see src/components/ui/chart.tsx)
  * so the two tooltips stay visually consistent across the dashboard.
@@ -119,11 +121,15 @@ function WagerTooltipContent({
     0,
   );
   return (
-    <div className="grid min-w-32 items-start gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
+    <div className="grid min-w-40 items-start gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
       {label && <div className="font-medium">{label}</div>}
       <div className="grid gap-1.5">
         {payload.map((item) => {
           const key = String(item.dataKey ?? "");
+          const value = Number(item.value ?? 0);
+          // Share of the day's total. Falls back to 0% on zero-volume
+          // days so the row reads "0.0%" instead of NaN%.
+          const pct = total > 0 ? (value / total) * 100 : 0;
           return (
             <div key={key} className="flex items-center gap-2">
               <div
@@ -135,7 +141,10 @@ function WagerTooltipContent({
                   {labelByKey[key] ?? key}
                 </span>
                 <span className="font-mono font-medium tabular-nums text-foreground">
-                  {formatCurrency(Number(item.value ?? 0))}
+                  {formatCurrency(value)}
+                  <span className="ml-1 text-muted-foreground">
+                    ({pct.toFixed(1)}%)
+                  </span>
                 </span>
               </div>
             </div>
