@@ -57,10 +57,13 @@ export default async function TransactionDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  // Gate on /transactions page access — transaction detail shows balances,
-  // crypto addresses, metadata, and should only be visible to roles the
-  // admin panel lets view the transactions list itself.
-  await requirePageAccess("/transactions");
+  // Gate on /transactions/deposits page access — transaction detail shows
+  // balances, crypto addresses, metadata. After the standalone /transactions
+  // overview was removed, the canonical entry-point into the ledger is the
+  // Deposits view, so its permission key is the right gate for the detail
+  // pages too. Any role that can read /transactions/deposits can drill into
+  // an individual ledger row from any sub-page (packs, rewards, upgrader).
+  await requirePageAccess("/transactions/deposits");
   const { id } = await params;
   const data = await getTransactionDetail(id);
 
@@ -79,7 +82,7 @@ export default async function TransactionDetailPage({
       <PageHero>
         <PageHeroIdentity
           icon={Receipt}
-          backHref="/transactions"
+          backHref="/transactions/deposits"
           title="Transaction"
           badges={
             <>

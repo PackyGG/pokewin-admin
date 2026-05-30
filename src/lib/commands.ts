@@ -14,6 +14,7 @@
 import {
   Activity,
   ArrowDownToLine,
+  ArrowUpCircle,
   Award,
   BarChart3,
   Bot,
@@ -34,7 +35,6 @@ import {
   Package,
   Percent,
   Plus,
-  Receipt,
   Search,
   Settings,
   Share2,
@@ -149,8 +149,11 @@ export const NAV_COMMANDS: NavCommand[] = [
     label: "Map",
     description: "Geographic user distribution",
     icon: Globe,
-    href: "/map",
-    pageKey: "/map",
+    // /map was folded into /analytics as a tab — link still surfaces in
+    // the palette under "Map", just routes through the analytics shell.
+    // Permission inherits from /analytics.
+    href: "/analytics?tab=map",
+    pageKey: "/analytics",
     keywords: ["geo", "world", "country"],
   },
   {
@@ -292,15 +295,8 @@ export const NAV_COMMANDS: NavCommand[] = [
   },
 
   // ── Transactions ──────────────────────────────────────────────────────
-  {
-    kind: "nav",
-    id: "nav.transactions",
-    label: "All Transactions",
-    description: "Unified ledger view",
-    icon: Receipt,
-    href: "/transactions",
-    pageKey: "/transactions",
-  },
+  // Standalone /transactions overview was removed; per-type sub-pages
+  // are the canonical entry-points now.
   {
     kind: "nav",
     id: "nav.transactions.packs",
@@ -308,6 +304,15 @@ export const NAV_COMMANDS: NavCommand[] = [
     icon: Package,
     href: "/transactions/packs",
     pageKey: "/transactions/packs",
+  },
+  {
+    kind: "nav",
+    id: "nav.transactions.upgrader",
+    label: "Upgrader Transactions",
+    icon: ArrowUpCircle,
+    href: "/transactions/upgrader",
+    pageKey: "/transactions/upgrader",
+    keywords: ["upgrader", "bet", "payout"],
   },
   {
     kind: "nav",
@@ -586,7 +591,7 @@ export const DOCS_NAV_GROUPS: Array<{ label: string; pageKeys: string[] }> = [
     pageKeys: [
       "/dashboard",
       "/analytics",
-      "/map",
+      // /map removed — now a tab inside /analytics, inherits its permission.
       "/users",
       "/transactions/deposits",
       "/withdrawals",
@@ -617,9 +622,11 @@ export const DOCS_NAV_GROUPS: Array<{ label: string; pageKeys: string[] }> = [
   {
     label: "Transactions",
     pageKeys: [
-      "/transactions",
+      // Standalone /transactions overview removed — per-type sub-pages
+      // are the canonical entry-points.
       "/transactions/packs",
       "/battles",
+      "/transactions/upgrader",
       "/transactions/rewards",
     ],
   },

@@ -63,7 +63,7 @@ export default function TransactionsError({
         <Button
           variant="outline"
           size="sm"
-          render={<Link href="/transactions" />}
+          render={<Link href="/transactions/deposits" />}
         >
           <Receipt className="size-4" />
           Reload ledger

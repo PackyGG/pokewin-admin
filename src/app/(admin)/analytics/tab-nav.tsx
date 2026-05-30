@@ -13,6 +13,7 @@ import {
   Clock,
   Package,
   Coins,
+  Globe,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -26,7 +27,8 @@ export type AnalyticsTab =
   | "revenue"
   | "top"
   | "heatmap"
-  | "packs";
+  | "packs"
+  | "map";
 
 const TABS: { value: AnalyticsTab; label: string; icon: typeof BarChart3 }[] = [
   { value: "overview", label: "Overview", icon: BarChart3 },
@@ -43,6 +45,10 @@ const TABS: { value: AnalyticsTab; label: string; icon: typeof BarChart3 }[] = [
   { value: "top", label: "Top Performers", icon: Trophy },
   { value: "heatmap", label: "Activity Heatmap", icon: Clock },
   { value: "packs", label: "Pack & Battle", icon: Package },
+  // Migrated from the standalone /map page — geographic breakdown of
+  // users + per-country money flows. Lives here so it shares the
+  // analytics hero's period filter instead of carrying its own.
+  { value: "map", label: "Map", icon: Globe },
 ];
 
 /**
