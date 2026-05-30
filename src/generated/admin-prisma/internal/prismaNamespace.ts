@@ -412,6 +412,7 @@ export const ModelName = {
   employee_board_placements: 'employee_board_placements',
   employee_managers: 'employee_managers',
   employee_manager_workspaces: 'employee_manager_workspaces',
+  admin_deleted_users: 'admin_deleted_users',
   admin_leaderboard_sponsorship: 'admin_leaderboard_sponsorship'
 } as const
 
@@ -428,7 +429,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "admin_users" | "admin_giveaway_actions" | "admin_user_tags" | "excluded_users" | "admin_roles" | "admin_sessions" | "admin_notes" | "admin_audit_events" | "admin_gift_card_actions" | "admin_voucher_actions" | "creator_webhooks" | "creator_deals" | "creator_socials" | "webhook_deliveries" | "creator_balance_fills" | "admin_balance_limits" | "expenses" | "recurring_expenses" | "admin_settings" | "admin_shifts" | "admin_shift_assignments" | "salary_employees" | "salary_payouts" | "salary_payments" | "employee_workspaces" | "employee_board_placements" | "employee_managers" | "employee_manager_workspaces" | "admin_leaderboard_sponsorship"
+    modelProps: "admin_users" | "admin_giveaway_actions" | "admin_user_tags" | "excluded_users" | "admin_roles" | "admin_sessions" | "admin_notes" | "admin_audit_events" | "admin_gift_card_actions" | "admin_voucher_actions" | "creator_webhooks" | "creator_deals" | "creator_socials" | "webhook_deliveries" | "creator_balance_fills" | "admin_balance_limits" | "expenses" | "recurring_expenses" | "admin_settings" | "admin_shifts" | "admin_shift_assignments" | "salary_employees" | "salary_payouts" | "salary_payments" | "employee_workspaces" | "employee_board_placements" | "employee_managers" | "employee_manager_workspaces" | "admin_deleted_users" | "admin_leaderboard_sponsorship"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -2504,6 +2505,80 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         }
       }
     }
+    admin_deleted_users: {
+      payload: Prisma.$admin_deleted_usersPayload<ExtArgs>
+      fields: Prisma.admin_deleted_usersFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.admin_deleted_usersFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_deleted_usersPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.admin_deleted_usersFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_deleted_usersPayload>
+        }
+        findFirst: {
+          args: Prisma.admin_deleted_usersFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_deleted_usersPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.admin_deleted_usersFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_deleted_usersPayload>
+        }
+        findMany: {
+          args: Prisma.admin_deleted_usersFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_deleted_usersPayload>[]
+        }
+        create: {
+          args: Prisma.admin_deleted_usersCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_deleted_usersPayload>
+        }
+        createMany: {
+          args: Prisma.admin_deleted_usersCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.admin_deleted_usersCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_deleted_usersPayload>[]
+        }
+        delete: {
+          args: Prisma.admin_deleted_usersDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_deleted_usersPayload>
+        }
+        update: {
+          args: Prisma.admin_deleted_usersUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_deleted_usersPayload>
+        }
+        deleteMany: {
+          args: Prisma.admin_deleted_usersDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.admin_deleted_usersUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.admin_deleted_usersUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_deleted_usersPayload>[]
+        }
+        upsert: {
+          args: Prisma.admin_deleted_usersUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_deleted_usersPayload>
+        }
+        aggregate: {
+          args: Prisma.Admin_deleted_usersAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateAdmin_deleted_users>
+        }
+        groupBy: {
+          args: Prisma.admin_deleted_usersGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Admin_deleted_usersGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.admin_deleted_usersCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Admin_deleted_usersCountAggregateOutputType> | number
+        }
+      }
+    }
     admin_leaderboard_sponsorship: {
       payload: Prisma.$admin_leaderboard_sponsorshipPayload<ExtArgs>
       fields: Prisma.admin_leaderboard_sponsorshipFieldRefs
@@ -3031,6 +3106,21 @@ export const Employee_manager_workspacesScalarFieldEnum = {
 export type Employee_manager_workspacesScalarFieldEnum = (typeof Employee_manager_workspacesScalarFieldEnum)[keyof typeof Employee_manager_workspacesScalarFieldEnum]
 
 
+export const Admin_deleted_usersScalarFieldEnum = {
+  id: 'id',
+  username: 'username',
+  email: 'email',
+  deleted_at: 'deleted_at',
+  deleted_by: 'deleted_by',
+  expires_at: 'expires_at',
+  snapshot: 'snapshot',
+  restored_at: 'restored_at',
+  restored_by: 'restored_by'
+} as const
+
+export type Admin_deleted_usersScalarFieldEnum = (typeof Admin_deleted_usersScalarFieldEnum)[keyof typeof Admin_deleted_usersScalarFieldEnum]
+
+
 export const Admin_leaderboard_sponsorshipScalarFieldEnum = {
   id: 'id',
   leaderboard_id: 'leaderboard_id',
@@ -3422,6 +3512,7 @@ export type GlobalOmitConfig = {
   employee_board_placements?: Prisma.employee_board_placementsOmit
   employee_managers?: Prisma.employee_managersOmit
   employee_manager_workspaces?: Prisma.employee_manager_workspacesOmit
+  admin_deleted_users?: Prisma.admin_deleted_usersOmit
   admin_leaderboard_sponsorship?: Prisma.admin_leaderboard_sponsorshipOmit
 }
 

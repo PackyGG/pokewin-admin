@@ -11,6 +11,10 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Navigation", label: "Raw P&L", key: "/analytics/pure-pnl" },
   { group: "Navigation", label: "Map", key: "/map" },
   { group: "Navigation", label: "Users", key: "/users" },
+  // Recovery bin for hard-deleted users — 7-day snapshot window. Gated
+  // by the same __can_delete_user capability since restoring is the
+  // inverse of deleting.
+  { group: "Navigation", label: "Deleted Users", key: "/users/deleted" },
   { group: "Navigation", label: "Withdrawals", key: "/withdrawals" },
   // Transactions
   { group: "Transactions", label: "All", key: "/transactions" },

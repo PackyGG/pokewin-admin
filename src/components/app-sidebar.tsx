@@ -43,6 +43,7 @@ import {
   Ban,
   Network,
   ArrowUpCircle,
+  Archive,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -105,6 +106,7 @@ const ICONS: Record<string, LucideIcon> = {
   Ban,
   Network,
   ArrowUpCircle,
+  Archive,
 };
 
 type NavItem = {
@@ -147,6 +149,11 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Transactions", href: "/transactions", icon: "Receipt" },
       { label: "Map", href: "/map", icon: "Globe" },
       { label: "Users", href: "/users", icon: "Users" },
+      // Deleted-user recovery bin. Visibility follows the same
+      // permission key as the page itself — non-admins only see it
+      // when /users/deleted is in their allowed_pages. Real admins
+      // always see it.
+      { label: "Deleted Users", href: "/users/deleted", icon: "Archive" },
       { label: "Deposits", href: "/transactions/deposits", icon: "ArrowDownToLine" },
       { label: "Withdrawals", href: "/withdrawals", icon: "ArrowDownToLine" },
     ],

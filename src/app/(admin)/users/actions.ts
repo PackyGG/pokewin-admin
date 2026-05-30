@@ -2,12 +2,23 @@
 
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
+import { adminDb } from "@/lib/admin-db";
 import { requirePageAccess, requireAdmin } from "@/lib/dal";
 import { require2FA } from "@/lib/require-2fa";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { resolveAdminMainUserId } from "@/lib/resolve-admin-main-user-id";
 import { getDistinctUserCountries } from "@/lib/queries/users-export";
+import {
+  buildUserSnapshot,
+  snapshotToJsonValue,
+} from "@/lib/deleted-users/snapshot";
+import type { Prisma as AdminPrisma } from "@/generated/admin-prisma/client";
+
+// 7-day soft-delete window for admin_deleted_users snapshots. Mirrored
+// in /users/deleted's purge-on-read scan and the restore action's
+// expiry check.
+const SNAPSHOT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * Lazily-fetched list of distinct user countries. Used by the Export
@@ -162,19 +173,82 @@ export async function deleteUser(userId: string, totpCode: string) {
 
   const label = user.username ?? user.email ?? userId;
 
-  // Audit BEFORE the destructive delete so a failed/aborted attempt is still
-  // captured. If the audit insert itself fails, abort — never delete without
-  // a paper trail.
+  // Build the 7-day backup snapshot BEFORE the destructive delete.
+  // buildUserSnapshot fans out parallel reads on the main DB for the
+  // user + their satellite tables (balances, inventory, vouchers,
+  // rakeback, recent ledger/sessions). If snapshot building throws
+  // here we abort the delete entirely — better to refuse than to wipe
+  // a user we couldn't back up.
+  const snapshot = await buildUserSnapshot(db, userId);
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + SNAPSHOT_RETENTION_MS);
+
+  // Insert the snapshot first so any error here surfaces BEFORE we
+  // touch the main DB. `upsert` keyed on the user id covers the rare
+  // case where a previous snapshot for the same id still exists (e.g.
+  // a prior restored snapshot that hasn't expired yet) — the new
+  // delete overwrites it, with restored_at cleared since this is a
+  // fresh deletion.
+  const snapshotJson = snapshotToJsonValue(snapshot) as AdminPrisma.InputJsonValue;
+  await adminDb.admin_deleted_users.upsert({
+    where: { id: userId },
+    create: {
+      id: userId,
+      username: user.username ?? null,
+      email: user.email ?? null,
+      deleted_at: now,
+      deleted_by: session.userId,
+      expires_at: expiresAt,
+      snapshot: snapshotJson,
+    },
+    update: {
+      username: user.username ?? null,
+      email: user.email ?? null,
+      deleted_at: now,
+      deleted_by: session.userId,
+      expires_at: expiresAt,
+      snapshot: snapshotJson,
+      restored_at: null,
+      restored_by: null,
+    },
+  });
+
+  // Audit AFTER the snapshot lands so the audit row references the
+  // backup that actually exists. The metadata records the snapshot id
+  // (== user id) and the expires_at deadline so anyone reading the
+  // audit feed knows the recovery window.
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "user_deleted",
     targetUserId: userId,
-    metadata: { deleted_user_id: userId, username: label },
+    metadata: {
+      deleted_user_id: userId,
+      username: label,
+      snapshot_id: userId,
+      snapshot_expires_at: expiresAt.toISOString(),
+      truncated: snapshot._truncated,
+    },
   });
 
-  await db.user.delete({ where: { id: userId } });
+  // Destructive delete. If this fails AFTER the snapshot landed we
+  // roll the snapshot back so /users/deleted doesn't list a ghost.
+  try {
+    await db.user.delete({ where: { id: userId } });
+  } catch (err) {
+    await adminDb.admin_deleted_users
+      .delete({ where: { id: userId } })
+      .catch(() => {
+        // Best-effort rollback — log but don't shadow the original
+        // error. The audit event above already captured the attempt.
+        console.error(
+          `[deleteUser] failed to roll back snapshot ${userId} after main-DB delete failure`,
+        );
+      });
+    throw err;
+  }
 
   revalidatePath("/users");
+  revalidatePath("/users/deleted");
 }
 
 export async function bulkDeleteUsers(userIds: string[], totpCode: string) {
@@ -194,19 +268,84 @@ export async function bulkDeleteUsers(userIds: string[], totpCode: string) {
   const labels = new Map(
     users.map((u) => [u.id, u.username ?? u.email ?? u.id]),
   );
+  const emails = new Map(users.map((u) => [u.id, u.email ?? null]));
+  const usernames = new Map(users.map((u) => [u.id, u.username ?? null]));
 
-  // Audit BEFORE the destructive delete so a failed bulk-delete is still
-  // captured. The metadata snapshot is taken pre-delete from `users` above.
+  // Build snapshots in parallel — each user's reads are independent.
+  // If any snapshot build throws we abort the whole bulk delete; no
+  // main-DB writes have happened yet so this is safe.
+  const snapshots = await Promise.all(
+    userIds.map((id) => buildUserSnapshot(db, id)),
+  );
+
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + SNAPSHOT_RETENTION_MS);
+
+  // Upsert all snapshots before touching the main DB. We use Promise.all
+  // over individual upserts (not createMany) because JSONB + upsert
+  // semantics + restored_at-clear-on-overwrite need per-row handling.
+  // If the admin DB blows up here, the main DB hasn't been touched yet.
+  await Promise.all(
+    userIds.map((id, idx) => {
+      const snapshotJson = snapshotToJsonValue(
+        snapshots[idx],
+      ) as AdminPrisma.InputJsonValue;
+      return adminDb.admin_deleted_users.upsert({
+        where: { id },
+        create: {
+          id,
+          username: usernames.get(id) ?? null,
+          email: emails.get(id) ?? null,
+          deleted_at: now,
+          deleted_by: session.userId,
+          expires_at: expiresAt,
+          snapshot: snapshotJson,
+        },
+        update: {
+          username: usernames.get(id) ?? null,
+          email: emails.get(id) ?? null,
+          deleted_at: now,
+          deleted_by: session.userId,
+          expires_at: expiresAt,
+          snapshot: snapshotJson,
+          restored_at: null,
+          restored_by: null,
+        },
+      });
+    }),
+  );
+
+  // Audit AFTER the snapshots land so the audit row references the
+  // backups that actually exist.
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "users_bulk_deleted",
     metadata: {
       count: userIds.length,
-      users: userIds.map((id) => ({ id, username: labels.get(id) ?? id })),
+      users: userIds.map((id, idx) => ({
+        id,
+        username: labels.get(id) ?? id,
+        truncated: snapshots[idx]._truncated,
+      })),
+      snapshot_expires_at: expiresAt.toISOString(),
     },
   });
 
-  await db.user.deleteMany({ where: { id: { in: userIds } } });
+  // Destructive delete. On failure we roll back the snapshots we just
+  // inserted — best-effort so /users/deleted doesn't fill with ghosts.
+  try {
+    await db.user.deleteMany({ where: { id: { in: userIds } } });
+  } catch (err) {
+    await adminDb.admin_deleted_users
+      .deleteMany({ where: { id: { in: userIds } } })
+      .catch(() => {
+        console.error(
+          `[bulkDeleteUsers] failed to roll back ${userIds.length} snapshots after main-DB deleteMany failure`,
+        );
+      });
+    throw err;
+  }
 
   revalidatePath("/users");
+  revalidatePath("/users/deleted");
 }

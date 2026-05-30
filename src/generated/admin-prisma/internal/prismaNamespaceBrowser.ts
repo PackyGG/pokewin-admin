@@ -79,6 +79,7 @@ export const ModelName = {
   employee_board_placements: 'employee_board_placements',
   employee_managers: 'employee_managers',
   employee_manager_workspaces: 'employee_manager_workspaces',
+  admin_deleted_users: 'admin_deleted_users',
   admin_leaderboard_sponsorship: 'admin_leaderboard_sponsorship'
 } as const
 
@@ -510,6 +511,21 @@ export const Employee_manager_workspacesScalarFieldEnum = {
 } as const
 
 export type Employee_manager_workspacesScalarFieldEnum = (typeof Employee_manager_workspacesScalarFieldEnum)[keyof typeof Employee_manager_workspacesScalarFieldEnum]
+
+
+export const Admin_deleted_usersScalarFieldEnum = {
+  id: 'id',
+  username: 'username',
+  email: 'email',
+  deleted_at: 'deleted_at',
+  deleted_by: 'deleted_by',
+  expires_at: 'expires_at',
+  snapshot: 'snapshot',
+  restored_at: 'restored_at',
+  restored_by: 'restored_by'
+} as const
+
+export type Admin_deleted_usersScalarFieldEnum = (typeof Admin_deleted_usersScalarFieldEnum)[keyof typeof Admin_deleted_usersScalarFieldEnum]
 
 
 export const Admin_leaderboard_sponsorshipScalarFieldEnum = {
