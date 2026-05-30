@@ -401,6 +401,111 @@ const cachedLifetimeDepositMetrics = unstable_cache(
   { revalidate: 300, tags: ["dashboard-lifetime"] },
 );
 
+// ============================================================
+// Caches added in the 2026-05-30 perf pass.
+//
+// `balanceAggregates`, `uniqueDepositors`, `packsOpened24h`,
+// `battlesPlayed24h` were the only uncached lifetime / 24h
+// rolling queries left in the dashboard. The first two scan the
+// entire `balances` table; the second two are smaller counts
+// but still ran on every 60s auto-refresh. Each is wrapped here
+// with a TTL appropriate for how fast the underlying number
+// actually moves (5 min for lifetime aggregates, 60s for the
+// rolling-24h counts so they stay close to live without
+// hammering the DB on every refresh).
+// ============================================================
+
+const cachedBalanceAggregates = unstable_cache(
+  async (blacklistIdNotIn: string) => {
+    const db = await getDb();
+    // Raw SQL instead of Prisma's `db.balances.aggregate` because
+    // the unstable_cache key argument must be serializable —
+    // passing the Prisma `where` object would either fail (the
+    // staffRelation contains Prisma helpers) or hash to a string
+    // that drifts when the helper rebuilds. The raw query takes
+    // the blacklist string fragment directly.
+    const rows = await db.$queryRaw<
+      {
+        total_deposited: string;
+        total_withdrawn: string;
+        total_wagered: string;
+        total_won: string;
+        available_balance: string;
+      }[]
+    >`
+      SELECT
+        COALESCE(SUM(total_deposited::numeric), 0)::text AS total_deposited,
+        COALESCE(SUM(total_withdrawn::numeric), 0)::text AS total_withdrawn,
+        COALESCE(SUM(total_wagered::numeric), 0)::text AS total_wagered,
+        COALESCE(SUM(total_won::numeric), 0)::text AS total_won,
+        COALESCE(SUM(available_balance::numeric), 0)::text AS available_balance
+      FROM balances
+      WHERE user_id IN (
+        SELECT id FROM "user"
+        WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+      )
+    `;
+    return rows[0] ?? null;
+  },
+  ["dashboard-balance-aggregates-v1"],
+  { revalidate: 300, tags: ["dashboard-lifetime"] },
+);
+
+const cachedUniqueDepositors = unstable_cache(
+  async (blacklistIdNotIn: string) => {
+    const db = await getDb();
+    const rows = await db.$queryRaw<{ count: string }[]>`
+      SELECT COUNT(*)::text AS count
+      FROM balances
+      WHERE total_deposited::numeric > 0
+        AND user_id IN (
+          SELECT id FROM "user"
+          WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+        )
+    `;
+    return Number(rows[0]?.count ?? 0);
+  },
+  ["dashboard-unique-depositors-v1"],
+  { revalidate: 300, tags: ["dashboard-lifetime"] },
+);
+
+const cached24hPackOpens = unstable_cache(
+  async (blacklistIdNotIn: string) => {
+    const db = await getDb();
+    const rows = await db.$queryRaw<{ count: string }[]>`
+      SELECT COUNT(*)::text AS count
+      FROM game_sessions
+      WHERE game_type = 'pack'
+        AND created_at >= NOW() - INTERVAL '24 hours'
+        AND user_id IN (
+          SELECT id FROM "user"
+          WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+        )
+    `;
+    return Number(rows[0]?.count ?? 0);
+  },
+  ["dashboard-packs-opened-24h-v1"],
+  { revalidate: 60, tags: ["dashboard-activity"] },
+);
+
+const cached24hBattles = unstable_cache(
+  async (blacklistIdNotIn: string) => {
+    const db = await getDb();
+    const rows = await db.$queryRaw<{ count: string }[]>`
+      SELECT COUNT(*)::text AS count
+      FROM battles
+      WHERE created_at >= NOW() - INTERVAL '24 hours'
+        AND user_id IN (
+          SELECT id FROM "user"
+          WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+        )
+    `;
+    return Number(rows[0]?.count ?? 0);
+  },
+  ["dashboard-battles-played-24h-v1"],
+  { revalidate: 60, tags: ["dashboard-activity"] },
+);
+
 const cachedUserCounts = unstable_cache(
   async (
     blacklistIdNotIn: string,
@@ -566,19 +671,12 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     ),
     // Single balances aggregate — `available_balance` is folded in with
     // the lifetime _sums so the dashboard pays one round-trip, not two.
-    // The `Users Total Balance` tile + lifetime financial KPIs all draw
-    // from this row. NOT cached — runs every render.
+    // 5-min cross-request cached — these are lifetime sums that move
+    // by at most a few users per minute, so 5-min staleness is
+    // invisible. Switched from Prisma's aggregate to raw SQL so the
+    // blacklist string fragment can serve as a stable cache key.
     withTiming("dashboard.balanceAggregates", () =>
-      db.balances.aggregate({
-        where: { user: staffRelation },
-        _sum: {
-          total_deposited: true,
-          total_withdrawn: true,
-          total_wagered: true,
-          total_won: true,
-          available_balance: true,
-        },
-      }),
+      cachedBalanceAggregates(blacklistIdNotIn),
     ),
     // Daily wager + deposit + active-depositor series for the last 30
     // days in ONE ledger scan. 5-min cached — historic days don't
@@ -605,13 +703,10 @@ async function dashboardStatsInner(period: DashboardPeriod) {
       getPeriodAggregates(db, periodCutoff, blacklistIdNotIn, sessionWindowsCte),
     ),
     // Distinct depositors = real users whose LIFETIME completed-deposit
-    // total is > 0. Read from `balances` (one row per user — thousands)
-    // with the same staff+blacklist exclusion. NOT cached — runs every
-    // render.
+    // total is > 0. 5-min cached — lifetime depositor count moves
+    // slower than 5 minutes.
     withTiming("dashboard.uniqueDepositors", () =>
-      db.balances.count({
-        where: { total_deposited: { gt: 0 }, user: staffRelation },
-      }),
+      cachedUniqueDepositors(blacklistIdNotIn),
     ),
     // Lifetime realized P&L snapshot — single heaviest query in the
     // codebase. Cached cross-request 5 minutes via unstable_cache, so
@@ -619,29 +714,14 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     // miss reveals the full scan duration.
     withTiming("dashboard.realizedPnlSnapshot", () => getRealizedPnlSnapshot()),
     // Rolling-24h pack opening count for the "24h Activity" tile.
-    // Filter game_sessions by game_type='pack' to match the same
-    // definition the existing pack profitability queries use.
+    // 60s cached — matches the dashboard's auto-refresh cadence so the
+    // tile stays close to live without re-counting on every render.
     withTiming("dashboard.packsOpened24h", () =>
-      db.game_sessions.count({
-        where: {
-          game_type: "pack",
-          created_at: { gte: rolling24h },
-          user: staffRelation,
-        },
-      }),
+      cached24hPackOpens(blacklistIdNotIn),
     ),
-    // Rolling-24h battle count — counts battles created in the last 24h
-    // regardless of status (started = counts as "happened today").
-    // `user` on battles points to the battle creator; that's the row we
-    // exclude staff/blacklist on (matching the staff-exclusion in every
-    // other dashboard aggregate).
+    // Rolling-24h battle count — 60s cached for the same reason.
     withTiming("dashboard.battlesPlayed24h", () =>
-      db.battles.count({
-        where: {
-          created_at: { gte: rolling24h },
-          user: staffRelation,
-        },
-      }),
+      cached24hBattles(blacklistIdNotIn),
     ),
     // FTDs combined — rolling-24h figure (count + total) + per-day
     // counts/totals for the last 30 days, sharing a single
@@ -691,8 +771,20 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     ),
   ]);
 
-  const totalWagered = toNumber(balanceAggregates._sum?.total_wagered);
-  const totalWon = toNumber(balanceAggregates._sum?.total_won);
+  // balanceAggregates was switched to raw SQL so it could be wrapped
+  // with unstable_cache (Prisma's `where` object isn't a stable cache
+  // key). Field shape changed from `{ _sum: { total_wagered, ... } }`
+  // to `{ total_wagered, ... }` with string numeric values — parse via
+  // parseFloat at each read site.
+  const ba = balanceAggregates ?? {
+    total_deposited: "0",
+    total_withdrawn: "0",
+    total_wagered: "0",
+    total_won: "0",
+    available_balance: "0",
+  };
+  const totalWagered = parseFloat(ba.total_wagered) || 0;
+  const totalWon = parseFloat(ba.total_won) || 0;
 
   // Unpack the batched period aggregates. Each field is a text-encoded
   // numeric; parseFloat() is sufficient because we're always going
@@ -839,8 +931,8 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     // contribution.
     wagersRaw: Math.abs(num(pa.wager)),
     financials: {
-      totalDeposited: toNumber(balanceAggregates._sum?.total_deposited),
-      totalWithdrawn: toNumber(balanceAggregates._sum?.total_withdrawn),
+      totalDeposited: parseFloat(ba.total_deposited) || 0,
+      totalWithdrawn: parseFloat(ba.total_withdrawn) || 0,
       totalWagered,
       totalWon,
       // totalSiteBalance / totalInventoryValue / totalUnclaimedVouchers
@@ -853,7 +945,7 @@ async function dashboardStatsInner(period: DashboardPeriod) {
       // getRealizedPnlSnapshot.
       avgDeposit:
         depositCount > 0
-          ? toNumber(balanceAggregates._sum?.total_deposited) / depositCount
+          ? (parseFloat(ba.total_deposited) || 0) / depositCount
           : 0,
       depositCount,
       // Unique players who have ever completed at least one deposit
