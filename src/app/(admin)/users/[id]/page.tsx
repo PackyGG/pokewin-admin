@@ -7,6 +7,7 @@ import { getUserTags } from "@/lib/queries/user-tags";
 import { getUserCreatorHistory } from "@/lib/queries/user-role-history";
 import { requirePageAccess, getUserPermissions } from "@/lib/dal";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
+import { ensureSupportBaseline } from "@/lib/support-baseline";
 import { UserTabs } from "./user-tabs";
 import { UserTagsPanel } from "./user-tags-panel";
 import { AutoRefresh } from "../../dashboard/auto-refresh";
@@ -23,6 +24,11 @@ export default async function UserDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  // Self-heal support's /users baseline before the gate runs — same
+  // protection as /users/page.tsx so a deep-link into /users/[id]
+  // also re-grants if the bulk role editor wiped it. See
+  // src/lib/support-baseline.ts.
+  await ensureSupportBaseline();
   const session = await requirePageAccess("/users");
   const { id } = await params;
 
