@@ -18,6 +18,11 @@ import {
   SectionHeading,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import {
+  SortByMultiplierButton,
+  SortByWonAmountButton,
+  ClearSortButton,
+} from "./sort-buttons";
 
 export const metadata = { title: "Upgrader Transactions" };
 
@@ -48,11 +53,14 @@ export default async function UpgraderTransactionsPage({
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
   const tab = params.tab || "all";
+  const sortBy = params.sortBy || "recent";
 
   // Suspense key — flips when any input changes so the table skeleton
   // re-shows on in-segment navigation instead of leaving stale rows on
-  // screen during a slow refetch.
-  const suspenseKey = `${tab}|${page}|${perPage}|${params.search ?? ""}`;
+  // screen during a slow refetch. Sort mode is part of the key so
+  // clicking "Top multiplier" / "Top win $" replays the skeleton while
+  // the re-ordered server query is in flight.
+  const suspenseKey = `${tab}|${page}|${perPage}|${params.search ?? ""}|${sortBy}`;
 
   return (
     <div className="space-y-6">
@@ -67,24 +75,40 @@ export default async function UpgraderTransactionsPage({
       <div className="space-y-4">
         <div className="-mx-1 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <div className="inline-flex gap-1 rounded-lg bg-muted p-1">
-            {OUTCOME_TABS.map((t) => (
-              <Link
-                key={t.value}
-                href={`/transactions/upgrader?tab=${t.value}`}
-                className={cn(
-                  "shrink-0 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                  tab === t.value
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {t.label}
-              </Link>
-            ))}
+            {OUTCOME_TABS.map((t) => {
+              // Carry the active sort through the outcome switch so
+              // "Top multiplier" / "Top win $" stays active when the
+              // admin pivots from All → Wins (the most common flow).
+              // Pagination resets to page 1 — the sorted result set
+              // shifts under the new filter and the previous offset
+              // would otherwise land mid-data.
+              const tabParams = new URLSearchParams();
+              tabParams.set("tab", t.value);
+              if (sortBy !== "recent") tabParams.set("sortBy", sortBy);
+              if (params.search) tabParams.set("search", params.search);
+              return (
+                <Link
+                  key={t.value}
+                  href={`/transactions/upgrader?${tabParams.toString()}`}
+                  className={cn(
+                    "shrink-0 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                    tab === t.value
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {t.label}
+                </Link>
+              );
+            })}
           </div>
         </div>
         <Suspense fallback={<Skeleton className="h-10 w-full" />}>
-          <DataTableToolbar searchPlaceholder="Search by user ID, username, or game ID..." />
+          <DataTableToolbar searchPlaceholder="Search by user ID, username, or game ID...">
+            <SortByMultiplierButton />
+            <SortByWonAmountButton />
+            <ClearSortButton />
+          </DataTableToolbar>
         </Suspense>
       </div>
 
@@ -104,6 +128,7 @@ export default async function UpgraderTransactionsPage({
             perPage={perPage}
             tab={tab}
             search={params.search}
+            sortBy={sortBy}
           />
         </Suspense>
       </div>
@@ -116,17 +141,20 @@ async function UpgraderTxTableSection({
   perPage,
   tab,
   search,
+  sortBy,
 }: {
   page: number;
   perPage: number;
   tab: string;
   search: string | undefined;
+  sortBy: string;
 }) {
   const result = await getUpgraderTransactions({
     page,
     perPage,
     search,
     outcome: tab,
+    sortBy,
   });
   return (
     <>
