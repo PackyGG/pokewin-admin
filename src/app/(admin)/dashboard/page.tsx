@@ -146,28 +146,45 @@ export default async function DashboardPage({
         <DashboardStatStrips period={period} />
       </Suspense>
 
-      {/* Upgrader Stats — its own section between the KPI strips and
-          the trend graphs. Streams behind its own Suspense (separate
-          query, not bolted onto getDashboardStats) so the headline
-          KPIs aren't blocked by the upgrader scan. */}
-      <Suspense
-        fallback={
-          <Skeleton className="h-[176px] w-full rounded-2xl" />
-        }
-      >
-        <DashboardUpgraderSection />
-      </Suspense>
+      {/* Upgrader Stats + Wager Attribution — paired 50/50 row that
+          sits between the KPI strips and the trend graphs. Each
+          streams behind its own Suspense:
+            • Upgrader Stats is a separate query (getUpgraderStats),
+              so its scan never blocks the headline KPIs.
+            • Wager Attribution shares the cached getDashboardStats
+              with the KPI strips + charts — the call dedupes
+              cross-segment, so it's a free render.
+          Stacks single-column on smaller screens so each card keeps
+          a usable width. */}
+      <div className="grid gap-3 sm:gap-4 lg:grid-cols-2">
+        <Suspense
+          fallback={
+            <Skeleton className="h-[176px] w-full rounded-2xl" />
+          }
+        >
+          <DashboardUpgraderSection />
+        </Suspense>
+        <Suspense
+          key={`wager-attr-${period}`}
+          fallback={
+            <Skeleton className="h-[300px] w-full rounded-xl" />
+          }
+        >
+          <DashboardWagerAttribution period={period} />
+        </Suspense>
+      </div>
 
       {/* Charts. Three-up at lg+ but stacks to a single column on
           phones so each chart keeps a readable height (Recharts crushes
           when forced into a tight grid cell). At md we go 2-up so the
-          row stays balanced before we have room for the third. */}
+          row stays balanced before we have room for the third. The
+          Wager Attribution chart moved up next to the Upgrader Stats
+          section, so Trends is now two 3-up rows. */}
       <div className="space-y-3">
         <SectionHeading icon={LineChart} title="Trends" />
         {/* Row 1: Wagers · Deposits · FTDs.
             Row 2: Daily P&L · Signups · Depositors.
-            Row 3: Wager Attribution (organic vs creator-coded, full width).
-            One boundary — the row-1/2 charts share the cached
+            Single Suspense — the row-1/2 charts share the cached
             getDashboardStats and the standalone getDailyPnl runs in
             parallel with it. */}
         <Suspense
@@ -176,7 +193,6 @@ export default async function DashboardPage({
             <>
               <ChartRowSkeleton count={3} height={300} />
               <ChartRowSkeleton count={3} height={300} />
-              <ChartRowSkeleton count={1} height={300} />
             </>
           }
         >
@@ -407,14 +423,14 @@ async function DashboardActiveRain() {
 }
 
 /**
- * Trend charts in three rows:
+ * Trend charts in two rows:
  *   Row 1 (3): Wagers · Deposits · FTDs              — cached getDashboardStats
  *   Row 2 (3): Daily P&L · Signups · Depositors      — P&L from getDailyPnl
- *   Row 3 (1): Wager Attribution (organic vs creator-coded, full width)
  * Both data sources are awaited in parallel (getDashboardStats is cached, so
  * it's shared with the KPI strips; getDailyPnl runs alongside it). The
- * Wager Attribution chart gets its own row at full width so 30 daily bars
- * stay legible and the split between the two bands reads at a glance.
+ * Wager Attribution chart used to live as a third full-width row here; it
+ * was promoted next to the Upgrader Stats section so it sits beside the
+ * other section-level analytic instead of trailing the daily charts.
  */
 async function DashboardCharts({ period }: { period: DashboardPeriod }) {
   const [stats, dailyPnl] = await Promise.all([
@@ -433,11 +449,24 @@ async function DashboardCharts({ period }: { period: DashboardPeriod }) {
         <SignupsChart data={stats.dailySignups} />
         <ActiveDepositorsChart data={stats.dailyActiveDepositors} />
       </div>
-      <div className="grid gap-3 sm:gap-4">
-        <WagerAttributionChart data={stats.dailyWagerAttribution} />
-      </div>
     </FadeIn>
   );
+}
+
+/**
+ * Wager Attribution chart, hoisted into its own server component so it
+ * can render alongside the Upgrader Stats panel in the 50/50 row above
+ * the Trends grid. Reads from the React-cached getDashboardStats — the
+ * call dedupes against the KPI strips + charts within the same render,
+ * so this segment adds no extra query.
+ */
+async function DashboardWagerAttribution({
+  period,
+}: {
+  period: DashboardPeriod;
+}) {
+  const stats = await getDashboardStats(period);
+  return <WagerAttributionChart data={stats.dailyWagerAttribution} />;
 }
 
 /**
