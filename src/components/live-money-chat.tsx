@@ -164,9 +164,9 @@ export function LiveMoneyChat() {
         aria-label="Open live money feed"
         title="Open live money feed"
         className={cn(
-          // Positioned just below the top admin header (h-14) with a
-          // small gap so it doesn't collide. `bottom-6` leaves room for
-          // the existing chat panel FAB.
+          // Top tab, anchored just under the admin header. The chat
+          // dock sits below in the bottom half, so this tab stays in
+          // the top slot when collapsed.
           "fixed right-0 top-20 z-30 flex flex-col items-center gap-2 rounded-l-lg border border-r-0 bg-card/95 px-2 py-3 shadow-md backdrop-blur",
           "hover:bg-card transition-colors",
         )}
@@ -189,12 +189,14 @@ export function LiveMoneyChat() {
   return (
     <aside
       aria-label="Live money feed"
-      style={{ width: PANEL_WIDTH_PX }}
+      style={{ width: PANEL_WIDTH_PX, bottom: "calc(50vh + 0.25rem)" }}
       className={cn(
-        // `bottom-6` leaves room for the existing ChatPanel FAB. `top-20`
-        // tucks the panel under the admin header. `z-30` sits above
-        // normal content but below modals (z-50) + the chat sheet.
-        "fixed right-0 top-20 bottom-6 z-30 flex flex-col overflow-hidden rounded-l-2xl border border-r-0 bg-card/95 shadow-xl backdrop-blur",
+        // Top HALF of the right edge — leaves the bottom half for the
+        // docked chat. `top-20` tucks under the admin header; the
+        // `bottom` inline-style splits the viewport at the midpoint
+        // with a small gap (0.25rem) between the two stacked panels.
+        // `z-30` sits above normal content but below modals (z-50).
+        "fixed right-0 top-20 z-30 flex flex-col overflow-hidden rounded-l-2xl border border-r-0 bg-card/95 shadow-xl backdrop-blur",
       )}
     >
       {/* Header — title + live pulse + minimize. */}

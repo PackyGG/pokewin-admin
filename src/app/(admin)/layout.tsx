@@ -3,7 +3,8 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { AdminHeader } from "@/components/admin-header";
 import { TopProgressBar } from "@/components/top-progress-bar";
-import { ChatPanel } from "@/components/chat-panel/chat-panel";
+import { DockedChat } from "@/components/docked-chat";
+import { LiveMoneyChat } from "@/components/live-money-chat";
 import { CommandPalette } from "@/components/command-palette";
 import { TimezoneProvider } from "@/components/timezone-provider";
 import { verifySession, getUserPermissions } from "@/lib/dal";
@@ -104,7 +105,14 @@ export default async function AdminLayout({
           </main>
         </div>
         <CommandPalette role={session.role} allowedPages={allowedPages} />
-        {canOpenChatPanel && <ChatPanel role={session.role} />}
+        {/* Right-edge docked widgets. LiveMoneyChat (top half) streams
+            deposits + withdrawals across every admin page; DockedChat
+            (bottom half) holds the platform Chat & Mutes feed. Both
+            are persistent, collapsible, and independently
+            state-tracked via localStorage. The chat dock is permission-
+            gated to the same boundary the old /chat page used. */}
+        <LiveMoneyChat />
+        {canOpenChatPanel && <DockedChat role={session.role} />}
       </SidebarProvider>
     </TimezoneProvider>
   );
