@@ -152,6 +152,11 @@ export function EmployeeBoard({
   }, [cards]);
 
   const [activeId, setActiveId] = React.useState<string | null>(null);
+  // The column the active card lived in BEFORE drag started. We need a
+  // separate ref because handleDragOver optimistically rewrites
+  // card.workspaceId, which would otherwise destroy the source-column
+  // info by the time handleDragEnd runs.
+  const dragSourceColumnRef = React.useRef<string | null>(null);
 
   // ── Connector lines (manager → workspace) ───────────────────────────
   // We measure the live DOM positions of each manager block and each
@@ -261,7 +266,18 @@ export function EmployeeBoard({
   // ── DnD handlers ────────────────────────────────────────────────────
 
   function handleDragStart(event: DragStartEvent) {
-    setActiveId(String(event.active.id));
+    const id = String(event.active.id);
+    setActiveId(id);
+    // Capture the source column from the AUTHORITATIVE props (not the
+    // optimistic localCards), so handleDragEnd can tell a real
+    // cross-column move from a same-column reorder even after dragOver
+    // has shuffled card.workspaceId for the optimistic visual.
+    const original = cards.find((c) => c.id === id);
+    dragSourceColumnRef.current = original
+      ? original.workspaceId && workspaces.some((w) => w.id === original.workspaceId)
+        ? original.workspaceId
+        : UNASSIGNED
+      : null;
   }
 
   // During drag-over, optimistically reflow the local state so the card
@@ -302,9 +318,17 @@ export function EmployeeBoard({
 
   async function handleDragEnd(event: DragEndEvent) {
     const activeIdLocal = activeId;
+    const sourceFromStart = dragSourceColumnRef.current;
     setActiveId(null);
+    dragSourceColumnRef.current = null;
     const { active, over } = event;
-    if (!over || !activeIdLocal) return;
+    if (!over || !activeIdLocal) {
+      // Drop outside any droppable. The optimistic dragOver mutation
+      // is still in localCards; sync back to the authoritative server
+      // state so the card snaps home.
+      router.refresh();
+      return;
+    }
 
     const card = cardById.get(String(active.id));
     if (!card) return;
@@ -315,11 +339,62 @@ export function EmployeeBoard({
       : columnKeyOf(overId);
     if (overColumnKey === null) return;
 
-    const sourceColumnKey =
-      card.workspaceId && byColumn.has(card.workspaceId)
-        ? card.workspaceId
-        : UNASSIGNED;
     const targetWorkspaceId = overColumnKey === UNASSIGNED ? null : overColumnKey;
+
+    // ── Synthetic card (no placement row yet) ─────────────────────
+    // Synthetic cards START in Unassigned (workspaceId === null), but
+    // handleDragOver optimistically rewrites card.workspaceId to the
+    // hovered column to update the visuals. That means we CANNOT trust
+    // card.workspaceId to figure out the real source — using it makes
+    // sourceColumnKey === overColumnKey and the same-column reorder
+    // branch swallows the drop without ever calling the server, so the
+    // optimistic state lies (employee LOOKS placed) until the next
+    // router.refresh clears it (e.g. when a new workspace is created),
+    // at which point the user sees "all my placements disappeared".
+    // Synthetic + drop on a real workspace → always create a placement.
+    if (card.synthetic) {
+      if (targetWorkspaceId === null) {
+        // Synthetic → Unassigned is a no-op. Re-sync so any optimistic
+        // dragOver mutation that moved the card into a workspace gets
+        // reverted to its true Unassigned home.
+        router.refresh();
+        return;
+      }
+      try {
+        const res = await addEmployeeToWorkspace(
+          card.employeeId,
+          targetWorkspaceId,
+        );
+        if (!res.success) {
+          toast.error(res.error);
+          router.refresh();
+          return;
+        }
+        const label =
+          workspaces.find((w) => w.id === targetWorkspaceId)?.name ??
+          "workspace";
+        toast.success(`Added ${card.discordName} to ${label}`);
+        router.refresh();
+      } catch (err) {
+        toast.error(
+          err instanceof Error ? err.message : "Failed to add employee",
+        );
+        router.refresh();
+      }
+      return;
+    }
+
+    // Real placements: trust the source column captured at dragStart,
+    // not the optimistic card.workspaceId. handleDragOver rewrites that
+    // for the in-flight visual, so a ws1 → ws2 drag would otherwise read
+    // sourceColumnKey = ws2 (the optimistic target), match overColumnKey,
+    // and incorrectly enter the same-column reorder branch — making
+    // every cross-column drag fall over the reorderColumn guard.
+    const sourceColumnKey =
+      sourceFromStart ??
+      (card.workspaceId && byColumn.has(card.workspaceId)
+        ? card.workspaceId
+        : UNASSIGNED);
 
     // ── Same-column reorder ───────────────────────────────────────
     if (sourceColumnKey === overColumnKey) {
@@ -371,34 +446,9 @@ export function EmployeeBoard({
       return;
     }
 
-    // ── Cross-column move ─────────────────────────────────────────
-    if (card.synthetic) {
-      // Synthetic (no placement row yet) → create one in the target.
-      if (targetWorkspaceId === null) return; // Unassigned → Unassigned is a no-op
-      try {
-        const res = await addEmployeeToWorkspace(
-          card.employeeId,
-          targetWorkspaceId,
-        );
-        if (!res.success) {
-          toast.error(res.error);
-          router.refresh();
-          return;
-        }
-        const label =
-          workspaces.find((w) => w.id === targetWorkspaceId)?.name ?? "workspace";
-        toast.success(`Added ${card.discordName} to ${label}`);
-        router.refresh();
-      } catch (err) {
-        toast.error(
-          err instanceof Error ? err.message : "Failed to add employee",
-        );
-        router.refresh();
-      }
-      return;
-    }
-
-    // Real placement → move it.
+    // ── Cross-column move (real placement) ────────────────────────
+    // Synthetic cards are already handled above. Anything reaching here
+    // is a real placement row being moved between columns.
     try {
       const res = await movePlacement(card.id, targetWorkspaceId);
       if (!res.success) {
@@ -493,7 +543,13 @@ export function EmployeeBoard({
         onDragStart={handleDragStart}
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
-        onDragCancel={() => setActiveId(null)}
+        onDragCancel={() => {
+          setActiveId(null);
+          dragSourceColumnRef.current = null;
+          // Drop outside any droppable: revert the optimistic dragOver
+          // mutation by snapping back to the authoritative server state.
+          router.refresh();
+        }}
       >
         <div className="overflow-x-auto pb-2">
           <div ref={wrapperRef} className="relative min-w-max">
