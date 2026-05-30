@@ -162,14 +162,13 @@ function UserMiniContent({ data }: { data: UserMiniSummary }) {
     data.inventoryValue +
     data.vouchersValue;
 
-  // Same house-POV P&L formula the /users/[id] panel uses.
-  const pnl =
-    balance.totalDeposited -
-    balance.totalWithdrawn -
-    balance.availableBalance -
-    balance.lockedBalance -
-    data.inventoryValue -
-    data.vouchersValue;
+  // Use the canonical lifetime P&L straight off the helper. The query
+  // routes through `calculateUserPnl` so deposits/withdrawals/balance/
+  // inventory/voucher inputs match /users/[id] exactly — recomputing
+  // from the wire data would re-introduce the under-reported-withdrawals
+  // bug (the canonical helper sums BOTH `balances.total_withdrawn` AND
+  // `card_withdrawal_requests`, which we don't ship separately).
+  const pnl = data.pnl;
   const pnlPositive = pnl >= 0;
 
   // Avg RTP — total_won / total_wagered.
