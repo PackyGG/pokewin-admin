@@ -14,6 +14,10 @@ import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { LiveMoneyMovementItem } from "@/lib/queries/dashboard-live";
 import { fetchRecentMoneyMovements } from "@/app/(admin)/dashboard/live-actions";
+import {
+  COLLAPSED_LIVE_HEIGHT_REM,
+  useRightRail,
+} from "@/components/right-rail-context";
 
 /**
  * Persistent right-side live-activity widget — a "chat-style" panel
@@ -44,7 +48,6 @@ import { fetchRecentMoneyMovements } from "@/app/(admin)/dashboard/live-actions"
 // Two source files reference these dimensions — keep them in sync.
 const PANEL_WIDTH_PX = 320;
 const COLLAPSED_WIDTH_PX = 56;
-const STORAGE_KEY = "live-money-chat:open";
 
 const MAX_ITEMS = 30;
 // 6s poll cadence — same as the (retired) bottom-row panel. The
@@ -53,9 +56,11 @@ const MAX_ITEMS = 30;
 const POLL_INTERVAL_MS = 6000;
 
 export function LiveMoneyChat() {
-  // Default to open. Cookies/localStorage override on mount so initial
-  // SSR doesn't flicker when the admin previously minimized it.
-  const [open, setOpen] = React.useState(true);
+  // Open/close state lives in the shared right-rail context so the
+  // chat dock below can react: collapsing the live feed pulls the
+  // chat up to fill the freed space; expanding it pushes chat back
+  // into the bottom half.
+  const { liveOpen: open, setLiveOpen: setOpen } = useRightRail();
   const [items, setItems] = React.useState<LiveMoneyMovementItem[]>([]);
   const [total24hDeposits, setTotal24hDeposits] = React.useState(0);
   const [total24hWithdrawals, setTotal24hWithdrawals] = React.useState(0);
@@ -64,19 +69,6 @@ export function LiveMoneyChat() {
   const cursorRef = React.useRef<string | null>(null);
   // Re-render every 30s so relative timestamps stay fresh.
   const [, setNow] = React.useState(0);
-
-  // Restore collapse state once on mount.
-  React.useEffect(() => {
-    if (typeof window === "undefined") return;
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (stored === "0") setOpen(false);
-  }, []);
-
-  // Persist collapse state whenever it changes.
-  React.useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(STORAGE_KEY, open ? "1" : "0");
-  }, [open]);
 
   React.useEffect(() => {
     const tick = setInterval(() => setNow((n) => n + 1), 30_000);
@@ -156,6 +148,10 @@ export function LiveMoneyChat() {
   }, []);
 
   // Collapsed: a thin vertical tab on the right edge. Clicking expands.
+  // The tab is pinned to a fixed height (COLLAPSED_LIVE_HEIGHT_REM) so
+  // the chat dock below can position itself predictably right under
+  // it when live is closed — without a fixed height the chat dock
+  // would have to measure the tab dynamically.
   if (!open) {
     return (
       <button
@@ -163,11 +159,12 @@ export function LiveMoneyChat() {
         onClick={() => setOpen(true)}
         aria-label="Open live money feed"
         title="Open live money feed"
+        style={{ height: `${COLLAPSED_LIVE_HEIGHT_REM}rem` }}
         className={cn(
           // Top tab, anchored just under the admin header. The chat
           // dock sits below in the bottom half, so this tab stays in
           // the top slot when collapsed.
-          "fixed right-0 top-20 z-30 flex flex-col items-center gap-2 rounded-l-lg border border-r-0 bg-card/95 px-2 py-3 shadow-md backdrop-blur",
+          "fixed right-0 top-20 z-30 flex flex-col items-center justify-center gap-2 rounded-l-lg border border-r-0 bg-card/95 px-2 shadow-md backdrop-blur",
           "hover:bg-card transition-colors",
         )}
       >

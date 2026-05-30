@@ -4,53 +4,39 @@ import * as React from "react";
 import { ChevronRight, MessagesSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChatPanelContent } from "@/components/chat-panel/chat-panel-content";
+import {
+  chatTopCss,
+  useRightRail,
+} from "@/components/right-rail-context";
 
 /**
  * Persistent docked Chat & Mutes widget on the right edge of the admin
- * shell, mirroring the `<LiveMoneyChat />` pattern. Takes the BOTTOM
- * half of the right rail — the LiveMoneyChat widget sits in the top
- * half. Both share the right edge from `top-20` (under the admin
- * header) to `bottom-6`, split at the viewport midpoint with a small
- * gap between them.
+ * shell, mirroring the `<LiveMoneyChat />` pattern. Reads `liveOpen`
+ * from the shared right-rail context to position itself:
+ *
+ *   • Live OPEN   → chat occupies the BOTTOM HALF of the right edge.
+ *   • Live CLOSED → chat slides UP to take the full right edge below
+ *                   live's collapsed tab.
  *
  * Replaces the previous Sheet-based ChatPanel that lived behind a
- * floating action button in the corner. Both widgets are now always
- * visible (with independent collapse/expand state), per the same UX
- * pattern the live-money feed uses — admins watch both feeds while
- * they work on whatever page they're on.
- *
- * Collapse state persists across reloads via localStorage and travels
- * across admin pages, so an admin who minimized chat on one page
- * returns to a minimized chat on another.
- *
- * The inner Chat / Mutes tabs come from the same `<ChatPanelContent />`
- * the old Sheet used — no logic changes there, just a different
- * container.
+ * floating action button. Both widgets are always visible (with
+ * independent collapse/expand state). State persists via localStorage
+ * through the shared context.
  */
 
 const PANEL_WIDTH_PX = 320;
-const STORAGE_KEY = "docked-chat:open";
 
 export function DockedChat({ role }: { role: string }) {
-  // Default open. localStorage overrides on mount so a previously
-  // minimized panel doesn't flash open during hydration.
-  const [open, setOpen] = React.useState(true);
+  const { liveOpen, chatOpen: open, setChatOpen: setOpen } = useRightRail();
 
-  React.useEffect(() => {
-    if (typeof window === "undefined") return;
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (stored === "0") setOpen(false);
-  }, []);
+  // Where the panel (or its collapsed tab) anchors on the y-axis —
+  // derived from liveOpen so the chat dock slides up when the user
+  // collapses the live feed above it.
+  const top = chatTopCss(liveOpen);
 
-  React.useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(STORAGE_KEY, open ? "1" : "0");
-  }, [open]);
-
-  // Collapsed: thin vertical tab anchored just below the (top-half)
-  // LiveMoneyChat collapsed-tab slot. The vertical "Chat" label
-  // mirrors the live-money tab's "Live" label so the two stack
-  // cleanly when both are minimized.
+  // Collapsed: thin vertical tab anchored just below wherever live
+  // ends. The vertical "Chat" label mirrors the live-money tab's
+  // "Live" label so the two stack cleanly when both are minimized.
   if (!open) {
     return (
       <button
@@ -58,7 +44,7 @@ export function DockedChat({ role }: { role: string }) {
         onClick={() => setOpen(true)}
         aria-label="Open chat & mutes panel"
         title="Open chat & mutes panel"
-        style={{ top: "calc(50vh + 0.25rem)" }}
+        style={{ top }}
         className={cn(
           "fixed right-0 z-30 flex flex-col items-center gap-2 rounded-l-lg border border-r-0 bg-card/95 px-2 py-3 shadow-md backdrop-blur",
           "hover:bg-card transition-colors",
@@ -78,13 +64,12 @@ export function DockedChat({ role }: { role: string }) {
   return (
     <aside
       aria-label="Chat & mutes panel"
-      style={{
-        width: PANEL_WIDTH_PX,
-        // Bottom HALF of the right edge. `top` is the viewport midpoint
-        // plus a small gap, mirroring the live-money widget's `bottom`.
-        top: "calc(50vh + 0.25rem)",
-      }}
+      style={{ width: PANEL_WIDTH_PX, top }}
       className={cn(
+        // Bottom half of the right edge when live is open. Slides up
+        // to take more space when live is collapsed (the `top` value
+        // does the work; `bottom-6` stays put). `z-30` sits above
+        // normal content but below modals (z-50).
         "fixed right-0 bottom-6 z-30 flex flex-col overflow-hidden rounded-l-2xl border border-r-0 bg-card/95 shadow-xl backdrop-blur",
       )}
     >

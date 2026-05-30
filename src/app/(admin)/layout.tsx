@@ -5,6 +5,7 @@ import { AdminHeader } from "@/components/admin-header";
 import { TopProgressBar } from "@/components/top-progress-bar";
 import { DockedChat } from "@/components/docked-chat";
 import { LiveMoneyChat } from "@/components/live-money-chat";
+import { RightRailProvider } from "@/components/right-rail-context";
 import { CommandPalette } from "@/components/command-palette";
 import { TimezoneProvider } from "@/components/timezone-provider";
 import { verifySession, getUserPermissions } from "@/lib/dal";
@@ -109,10 +110,15 @@ export default async function AdminLayout({
             deposits + withdrawals across every admin page; DockedChat
             (bottom half) holds the platform Chat & Mutes feed. Both
             are persistent, collapsible, and independently
-            state-tracked via localStorage. The chat dock is permission-
-            gated to the same boundary the old /chat page used. */}
-        <LiveMoneyChat />
-        {canOpenChatPanel && <DockedChat role={session.role} />}
+            state-tracked via the shared right-rail context — when the
+            admin collapses the live feed, the chat dock slides up to
+            fill the freed space, and vice versa. The chat dock is
+            permission-gated to the same boundary the old /chat page
+            used. */}
+        <RightRailProvider>
+          <LiveMoneyChat />
+          {canOpenChatPanel && <DockedChat role={session.role} />}
+        </RightRailProvider>
       </SidebarProvider>
     </TimezoneProvider>
   );
