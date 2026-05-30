@@ -544,40 +544,54 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     windowedPeriodDelta,
     lifetimeDepositMetrics,
   ] = await Promise.all([
+    // Per-sub-query timings — wraps each Promise.all entry with
+    // `withTiming("dashboard.<name>")` so /system/stats can pinpoint
+    // exactly which sub-query is dragging the dashboard latency. The
+    // top-level `dashboard.getDashboardStats` wraps the whole batch,
+    // so cross-checking individual entries against that total tells
+    // operators whether the slow component is one heavy query (single
+    // entry > 60-70% of the total) or many medium queries adding up.
+
     // All four user counts (total + today/week/month) PLUS the
     // rolling-24h signup count in ONE scan of the user table via
     // COUNT(*) FILTER. 5-min cached — user counts don't move by more
     // than a handful per minute, so the 5-min cap is invisible.
-    cachedUserCounts(
-      blacklistIdNotIn,
-      startOfDay.toISOString(),
-      startOfWeek.toISOString(),
-      startOfMonth.toISOString(),
+    withTiming("dashboard.userCounts", () =>
+      cachedUserCounts(
+        blacklistIdNotIn,
+        startOfDay.toISOString(),
+        startOfWeek.toISOString(),
+        startOfMonth.toISOString(),
+      ),
     ),
     // Single balances aggregate — `available_balance` is folded in with
     // the lifetime _sums so the dashboard pays one round-trip, not two.
     // The `Users Total Balance` tile + lifetime financial KPIs all draw
-    // from this row.
-    db.balances.aggregate({
-      where: { user: staffRelation },
-      _sum: {
-        total_deposited: true,
-        total_withdrawn: true,
-        total_wagered: true,
-        total_won: true,
-        available_balance: true,
-      },
-    }),
+    // from this row. NOT cached — runs every render.
+    withTiming("dashboard.balanceAggregates", () =>
+      db.balances.aggregate({
+        where: { user: staffRelation },
+        _sum: {
+          total_deposited: true,
+          total_withdrawn: true,
+          total_wagered: true,
+          total_won: true,
+          available_balance: true,
+        },
+      }),
+    ),
     // Daily wager + deposit + active-depositor series for the last 30
     // days in ONE ledger scan. 5-min cached — historic days don't
     // change and today's row moves slowly enough that operators
     // wouldn't notice a 5-min lag.
-    cachedDailyChart(blacklistIdNotIn),
+    withTiming("dashboard.dailyChart", () => cachedDailyChart(blacklistIdNotIn)),
     // Signups last 30 days. 5-min cached for the same reason.
-    cachedDailySignups(blacklistIdNotIn),
+    withTiming("dashboard.dailySignups", () => cachedDailySignups(blacklistIdNotIn)),
     // Daily wager attribution split — organic (no creator-code
     // referral) vs creator-attributed. 5-min cached.
-    cachedDailyWagerAttribution(blacklistIdNotIn),
+    withTiming("dashboard.dailyWagerAttribution", () =>
+      cachedDailyWagerAttribution(blacklistIdNotIn),
+    ),
     // Single batched query — computes revenue / withdrawal / wager /
     // ggr / deposit_count / balance_change / manual_wd for the SELECTED
     // period only. Previously this fanned out into 9 windows × many
@@ -585,44 +599,56 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     // computed, which is the headline perf win of the period selector.
     // Also produces `balance_change` and `manual_wd` so the windowed
     // P&L no longer needs a separate calculateWindowedPnl() call.
-    getPeriodAggregates(db, periodCutoff, blacklistIdNotIn, sessionWindowsCte),
+    // NOT cached — recomputes every render because the cutoff depends
+    // on the selected period.
+    withTiming("dashboard.periodAggregates", () =>
+      getPeriodAggregates(db, periodCutoff, blacklistIdNotIn, sessionWindowsCte),
+    ),
     // Distinct depositors = real users whose LIFETIME completed-deposit
     // total is > 0. Read from `balances` (one row per user — thousands)
-    // with the same staff+blacklist exclusion, instead of COUNT(DISTINCT
-    // user_id) over every completed deposit ledger row (millions). Safe
-    // equivalence: total_deposited is the authoritative lifetime deposit
-    // sum the dashboard already trusts (avgDeposit / totalDeposited).
-    db.balances.count({
-      where: { total_deposited: { gt: 0 }, user: staffRelation },
-    }),
-    getRealizedPnlSnapshot(),
+    // with the same staff+blacklist exclusion. NOT cached — runs every
+    // render.
+    withTiming("dashboard.uniqueDepositors", () =>
+      db.balances.count({
+        where: { total_deposited: { gt: 0 }, user: staffRelation },
+      }),
+    ),
+    // Lifetime realized P&L snapshot — single heaviest query in the
+    // codebase. Cached cross-request 5 minutes via unstable_cache, so
+    // most renders hit the cache and this timing is ~0. A cold cache
+    // miss reveals the full scan duration.
+    withTiming("dashboard.realizedPnlSnapshot", () => getRealizedPnlSnapshot()),
     // Rolling-24h pack opening count for the "24h Activity" tile.
     // Filter game_sessions by game_type='pack' to match the same
     // definition the existing pack profitability queries use.
-    db.game_sessions.count({
-      where: {
-        game_type: "pack",
-        created_at: { gte: rolling24h },
-        user: staffRelation,
-      },
-    }),
+    withTiming("dashboard.packsOpened24h", () =>
+      db.game_sessions.count({
+        where: {
+          game_type: "pack",
+          created_at: { gte: rolling24h },
+          user: staffRelation,
+        },
+      }),
+    ),
     // Rolling-24h battle count — counts battles created in the last 24h
     // regardless of status (started = counts as "happened today").
     // `user` on battles points to the battle creator; that's the row we
     // exclude staff/blacklist on (matching the staff-exclusion in every
     // other dashboard aggregate).
-    db.battles.count({
-      where: {
-        created_at: { gte: rolling24h },
-        user: staffRelation,
-      },
-    }),
+    withTiming("dashboard.battlesPlayed24h", () =>
+      db.battles.count({
+        where: {
+          created_at: { gte: rolling24h },
+          user: staffRelation,
+        },
+      }),
+    ),
     // FTDs combined — rolling-24h figure (count + total) + per-day
     // counts/totals for the last 30 days, sharing a single
     // first_deposits CTE. 5-min cached — first deposits don't change
     // that often, and FTD math involves a lifetime DISTINCT ON scan
     // which was one of the heavier queries on the hot path.
-    cachedFtdCombined(blacklistIdNotIn),
+    withTiming("dashboard.ftdCombined", () => cachedFtdCombined(blacklistIdNotIn)),
     // Windowed inventory + voucher deltas for the SELECTED period.
     // The other three components of the period P&L (deposits, card-
     // withdrawals, ledger balance change, manual withdrawals) already
@@ -630,35 +656,39 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     // the two pieces it doesn't carry, so we fetch them in one
     // composite query. Each subselect is a narrow indexed range scan;
     // PG materializes the common `real_users` CTE once.
-    db.$queryRaw<{
-      inv_obtained: string;
-      inv_disposed: string;
-      vch_issued: string;
-      vch_claimed: string;
-    }[]>`
-      WITH real_users AS (
-        SELECT id FROM "user"
-        WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
-      )
-      SELECT
-        COALESCE((SELECT SUM(value_at_obtained::numeric) FROM user_inventory
-          WHERE obtained_at >= ${periodCutoff}
-            AND user_id IN (SELECT id FROM real_users)), 0)::text AS inv_obtained,
-        COALESCE((SELECT SUM(value_at_obtained::numeric) FROM user_inventory
-          WHERE (sold_at >= ${periodCutoff} OR exchanged_at >= ${periodCutoff})
-            AND user_id IN (SELECT id FROM real_users)), 0)::text AS inv_disposed,
-        COALESCE((SELECT SUM(value::numeric) FROM vouchers
-          WHERE created_at >= ${periodCutoff}
-            AND user_id IN (SELECT id FROM real_users)), 0)::text AS vch_issued,
-        COALESCE((SELECT SUM(value::numeric) FROM vouchers
-          WHERE claimed_at >= ${periodCutoff}
-            AND user_id IN (SELECT id FROM real_users)), 0)::text AS vch_claimed
-    `,
+    withTiming("dashboard.windowedPeriodDelta", () =>
+      db.$queryRaw<{
+        inv_obtained: string;
+        inv_disposed: string;
+        vch_issued: string;
+        vch_claimed: string;
+      }[]>`
+        WITH real_users AS (
+          SELECT id FROM "user"
+          WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+        )
+        SELECT
+          COALESCE((SELECT SUM(value_at_obtained::numeric) FROM user_inventory
+            WHERE obtained_at >= ${periodCutoff}
+              AND user_id IN (SELECT id FROM real_users)), 0)::text AS inv_obtained,
+          COALESCE((SELECT SUM(value_at_obtained::numeric) FROM user_inventory
+            WHERE (sold_at >= ${periodCutoff} OR exchanged_at >= ${periodCutoff})
+              AND user_id IN (SELECT id FROM real_users)), 0)::text AS inv_disposed,
+          COALESCE((SELECT SUM(value::numeric) FROM vouchers
+            WHERE created_at >= ${periodCutoff}
+              AND user_id IN (SELECT id FROM real_users)), 0)::text AS vch_issued,
+          COALESCE((SELECT SUM(value::numeric) FROM vouchers
+            WHERE claimed_at >= ${periodCutoff}
+              AND user_id IN (SELECT id FROM real_users)), 0)::text AS vch_claimed
+      `,
+    ),
     // Lifetime + 24h + 7d deposit transaction counts in one indexed
     // scan. 5-min cached. The rolling-24h / 7d cutoffs are recomputed
     // inside the cached fn from Date.now() — within the 5-min TTL
     // there's no meaningful drift.
-    cachedLifetimeDepositMetrics(blacklistIdNotIn),
+    withTiming("dashboard.lifetimeDepositMetrics", () =>
+      cachedLifetimeDepositMetrics(blacklistIdNotIn),
+    ),
   ]);
 
   const totalWagered = toNumber(balanceAggregates._sum?.total_wagered);
