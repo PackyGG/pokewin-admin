@@ -24,9 +24,14 @@ export function SetFilter({ sets }: { sets: { id: string; name: string }[] }) {
   const [open, setOpen] = useState(false);
 
   const currentSetId = searchParams.get("setId") ?? "";
-  const currentLabel = currentSetId
-    ? sets.find((s) => s.id === currentSetId)?.name ?? "Unknown set"
-    : "All Sets";
+  // `unassigned` is the sentinel value the cards list query honors to
+  // narrow to rows with `set_id IS NULL` — the manual-grouping backlog.
+  const currentLabel =
+    currentSetId === "unassigned"
+      ? "Unassigned"
+      : currentSetId
+      ? sets.find((s) => s.id === currentSetId)?.name ?? "Unknown set"
+      : "All Sets";
 
   function select(setId: string) {
     const params = new URLSearchParams(searchParams.toString());
@@ -60,6 +65,13 @@ export function SetFilter({ sets }: { sets: { id: string; name: string }[] }) {
                 data-checked={!currentSetId}
               >
                 All Sets
+              </CommandItem>
+              <CommandItem
+                value="unassigned"
+                onSelect={() => select("unassigned")}
+                data-checked={currentSetId === "unassigned"}
+              >
+                Unassigned
               </CommandItem>
               {sets.map((s) => (
                 <CommandItem

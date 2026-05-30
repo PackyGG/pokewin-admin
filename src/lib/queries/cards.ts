@@ -50,7 +50,12 @@ export async function getCards(params: {
     where.rarity = rarity;
   }
 
-  if (setId) {
+  // `setId === "unassigned"` is a sentinel for cards with `set_id IS NULL`.
+  // Lets the operator narrow the catalog to the un-grouped backlog before
+  // bulk-moving them into a real set.
+  if (setId === "unassigned") {
+    where.set_id = null;
+  } else if (setId) {
     where.set_id = setId;
   }
 
@@ -155,6 +160,55 @@ export async function getSets() {
     select: { id: true, name: true },
   });
   return sets;
+}
+
+export type SetForMoveDialog = {
+  id: string;
+  name: string;
+  series: string;
+  language: string;
+  releaseDate: string | null;
+};
+
+/**
+ * Same set list but enriched with the metadata the bulk-move dialog needs
+ * to render rows (series chip, language, release date). Kept separate from
+ * `getSets()` so the existing thin call sites (filter dropdowns, card
+ * create-form) don't pay for the extra columns.
+ */
+export async function getSetsForMoveDialog(): Promise<SetForMoveDialog[]> {
+  const db = await getDb();
+  const sets = await db.sets.findMany({
+    orderBy: [{ series: "asc" }, { name: "asc" }],
+    select: {
+      id: true,
+      name: true,
+      series: true,
+      language: true,
+      release_date: true,
+    },
+  });
+  return sets.map((s) => ({
+    id: s.id,
+    name: s.name,
+    series: s.series,
+    language: s.language,
+    releaseDate: s.release_date?.toISOString() ?? null,
+  }));
+}
+
+/**
+ * Distinct series values across all sets — drives the "Series" dropdown
+ * inside the create-new-set sub-form on the bulk-move dialog. Sorted so
+ * the dropdown reads alphabetically.
+ */
+export async function getDistinctSeries(): Promise<string[]> {
+  const db = await getDb();
+  const result = await db.sets.groupBy({
+    by: ["series"],
+    orderBy: { series: "asc" },
+  });
+  return result.map((r) => r.series).filter((s) => s.trim().length > 0);
 }
 
 export async function getRarities() {

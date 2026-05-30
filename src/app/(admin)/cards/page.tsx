@@ -7,7 +7,14 @@ import {
   Coins,
   Crown,
 } from "lucide-react";
-import { getCards, getCardsStats, getRarities, getSets } from "@/lib/queries/cards";
+import {
+  getCards,
+  getCardsStats,
+  getRarities,
+  getSets,
+  getSetsForMoveDialog,
+  getDistinctSeries,
+} from "@/lib/queries/cards";
 import { requirePageAccess } from "@/lib/dal";
 import { CardsGrid } from "./cards-grid";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
@@ -38,6 +45,8 @@ async function CardsContent({
   maxPrice,
   sortBy,
   sortOrder,
+  setsForDialog,
+  seriesOptions,
 }: {
   page: number;
   perPage: number;
@@ -48,6 +57,8 @@ async function CardsContent({
   maxPrice?: string;
   sortBy?: string;
   sortOrder?: string;
+  setsForDialog: Awaited<ReturnType<typeof getSetsForMoveDialog>>;
+  seriesOptions: string[];
 }) {
   const result = await getCards({
     page,
@@ -78,7 +89,11 @@ async function CardsContent({
         </span>
       </div>
       <FadeIn>
-        <CardsGrid data={result.data} />
+        <CardsGrid
+          data={result.data}
+          sets={setsForDialog}
+          seriesOptions={seriesOptions}
+        />
       </FadeIn>
       <DataTablePagination
         page={result.page}
@@ -104,11 +119,18 @@ export default async function CardsPage({
   // Hero/KPI/toolbar dependencies — small, fast queries, awaited up-front
   // so the static frame can render. The expensive paginated `getCards`
   // call lives inside the Suspense boundary below.
-  const [rarities, sets, stats] = await Promise.all([
-    getRarities(),
-    getSets(),
-    getCardsStats(),
-  ]);
+  //
+  // `setsForDialog` and `seriesOptions` power the bulk-move dialog that
+  // the cards grid opens from its selection toolbar. They're cheap enough
+  // to fetch alongside the rest.
+  const [rarities, sets, setsForDialog, seriesOptions, stats] =
+    await Promise.all([
+      getRarities(),
+      getSets(),
+      getSetsForMoveDialog(),
+      getDistinctSeries(),
+      getCardsStats(),
+    ]);
 
   // Pull out a couple of rarity counts for dedicated KPI tiles. We care
   // about the two that signal "quality" — anything with "rare" in the
@@ -222,6 +244,8 @@ export default async function CardsPage({
             maxPrice={params.maxPrice}
             sortBy={params.sortBy}
             sortOrder={params.sortOrder}
+            setsForDialog={setsForDialog}
+            seriesOptions={seriesOptions}
           />
         </Suspense>
       </div>
