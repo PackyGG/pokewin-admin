@@ -5,7 +5,9 @@ import { ChevronRight, MessagesSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChatPanelContent } from "@/components/chat-panel/chat-panel-content";
 import {
+  chatTabAnchor,
   chatTopCss,
+  COLLAPSED_CHAT_HEIGHT_REM,
   useRightRail,
 } from "@/components/right-rail-context";
 
@@ -29,14 +31,13 @@ const PANEL_WIDTH_PX = 320;
 export function DockedChat({ role }: { role: string }) {
   const { liveOpen, chatOpen: open, setChatOpen: setOpen } = useRightRail();
 
-  // Where the panel (or its collapsed tab) anchors on the y-axis —
-  // derived from liveOpen so the chat dock slides up when the user
-  // collapses the live feed above it.
+  // Open panel: anchors with `top:` (derived from liveOpen — slides
+  // up to fill the rail when live is collapsed).
+  // Collapsed tab: anchors via `chatTabAnchor()` which switches to a
+  // bottom-anchor when live is open, so the live panel can expand
+  // DOWN into the space the chat panel used to occupy.
   const top = chatTopCss(liveOpen);
 
-  // Collapsed: thin vertical tab anchored just below wherever live
-  // ends. The vertical "Chat" label mirrors the live-money tab's
-  // "Live" label so the two stack cleanly when both are minimized.
   if (!open) {
     return (
       <button
@@ -44,9 +45,14 @@ export function DockedChat({ role }: { role: string }) {
         onClick={() => setOpen(true)}
         aria-label="Open chat & mutes panel"
         title="Open chat & mutes panel"
-        style={{ top }}
+        style={{
+          // Pin the tab's vertical height so the live panel can
+          // compute its `bottom` without measuring the tab.
+          height: `${COLLAPSED_CHAT_HEIGHT_REM}rem`,
+          ...chatTabAnchor(liveOpen),
+        }}
         className={cn(
-          "fixed right-0 z-30 flex flex-col items-center gap-2 rounded-l-lg border border-r-0 bg-card/95 px-2 py-3 shadow-md backdrop-blur",
+          "fixed right-0 z-30 flex flex-col items-center justify-center gap-2 rounded-l-lg border border-r-0 bg-card/95 px-2 shadow-md backdrop-blur",
           "hover:bg-card transition-colors",
         )}
       >
