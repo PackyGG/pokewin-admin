@@ -113,6 +113,14 @@ function getPeriodAggregates(
       // alongside the card-withdrawal value already captured in
       // `withdrawal`.
       manual_wd: string;
+      // Creator-funded slice of the period withdrawal volume — sum +
+      // count of card_withdrawal_requests where the requesting user
+      // holds role = 'creator' (their personal cash-out, not affiliate
+      // payouts). Drives the "Creator Withdrawals" KPI tile so admins
+      // can see how much of the period's withdrawal flow is creators
+      // pulling their own balance vs ordinary customer cash-outs.
+      creator_wd_amount: string;
+      creator_wd_count: string;
     }[]
   >`
     WITH real_users AS (
@@ -162,19 +170,33 @@ function getPeriodAggregates(
     ),
     withdrawals AS (
       SELECT
-        total_value_usd::numeric AS amount,
+        cwr.total_value_usd::numeric AS amount,
         -- Use shipped_at as the "money out" timestamp when completed_at is
         -- not yet set (status='shipped'). For status='completed' both
         -- timestamps are usually populated; completed_at wins.
-        COALESCE(completed_at, shipped_at) AS effective_at
-      FROM card_withdrawal_requests
-      WHERE status IN ('completed', 'shipped')
-        AND user_id IN (SELECT id FROM real_users)
+        COALESCE(cwr.completed_at, cwr.shipped_at) AS effective_at,
+        -- Role of the user who requested the withdrawal — drives the
+        -- creator_wd_* aggregates below. JOIN replaces the previous
+        -- "user_id IN (SELECT id FROM real_users)" predicate so the
+        -- role is carried through to the outer aggregates in a single
+        -- scan rather than needing a second sub-query.
+        ru.role AS user_role
+      FROM card_withdrawal_requests cwr
+      JOIN real_users ru ON ru.id = cwr.user_id
+      WHERE cwr.status IN ('completed', 'shipped')
     )
     SELECT
       COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS revenue,
 
       COALESCE((SELECT SUM(CASE WHEN effective_at >= ${cutoff} THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal,
+
+      -- Creator-funded slice of the period withdrawal volume — only
+      -- card_withdrawal_requests where the requesting user holds
+      -- role = 'creator' at query time. Both the sum and the count are
+      -- pulled from the same "withdrawals" CTE so the JOIN to "user" /
+      -- real_users runs once per period scan.
+      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${cutoff} AND user_role = 'creator' THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS creator_wd_amount,
+      (SELECT COUNT(*) FROM withdrawals WHERE effective_at >= ${cutoff} AND user_role = 'creator')::text AS creator_wd_count,
 
       COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS wager,
 
@@ -804,6 +826,8 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     deposit_count: "0",
     balance_change: "0",
     manual_wd: "0",
+    creator_wd_amount: "0",
+    creator_wd_count: "0",
   };
   const num = (s: string) => parseFloat(s) || 0;
   // Lifetime deposit transaction count comes from
@@ -906,6 +930,13 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     // shipped) so the StatCard matches the PnL formula. Already a
     // positive magnitude; Math.abs is a defensive no-op.
     withdrawals: Math.abs(num(pa.withdrawal)),
+    // Creator-funded slice of the same withdrawals figure — the count
+    // + dollar amount of card_withdrawal_requests where the requesting
+    // user's role is 'creator'. Subset of `withdrawals` above, so the
+    // "Creator Withdrawals" tile on the dashboard tracks (count, $) of
+    // creator personal cash-outs during the SELECTED period.
+    creatorWithdrawals: Math.abs(num(pa.creator_wd_amount)),
+    creatorWithdrawalsCount: num(pa.creator_wd_count),
     // Customer wager — wagers a creator made while live on a deal/
     // stream are EXCLUDED (house-funded "sponsored" play, not a real
     // customer bet). A creator's off-session personal play is kept.
