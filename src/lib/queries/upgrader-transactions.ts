@@ -54,13 +54,35 @@ export type UpgraderOutcomeFilter = "all" | "win" | "loss";
 
 const VALID_OUTCOMES = new Set<UpgraderOutcomeFilter>(["all", "win", "loss"]);
 
+/**
+ * Sort modes for the upgrader transactions list:
+ *
+ *   • "recent"     — default chronological feed (created_at DESC).
+ *   • "multiplier" — biggest realized multiplier on a win first
+ *                    (won_amount / bet_amount DESC). Losses (won_amount
+ *                    = 0) and rows with bet_amount = 0 sort to the
+ *                    bottom — NULLS LAST in the CASE expression below.
+ *   • "wonAmount"  — biggest absolute dollar payout to the user first
+ *                    (won_amount DESC). Losses tie at 0 and pile up at
+ *                    the bottom of the result set.
+ *
+ * Sorting runs in SQL so it covers ALL matching rows, not just the
+ * current page slice — the user sees the global top results when
+ * either button is active, with the existing LIMIT/OFFSET pagination
+ * walking the sorted dataset.
+ */
+export type UpgraderSortBy = "recent" | "multiplier" | "wonAmount";
+
+const VALID_SORTS = new Set<UpgraderSortBy>(["recent", "multiplier", "wonAmount"]);
+
 export async function getUpgraderTransactions(params: {
   page?: number;
   perPage?: number;
   search?: string;
   outcome?: string;
+  sortBy?: string;
 }): Promise<PaginatedResult<UpgraderTransactionRow>> {
-  const { page = 1, perPage = 20, search, outcome } = params;
+  const { page = 1, perPage = 20, search, outcome, sortBy } = params;
   const db = await getDb();
 
   const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
@@ -104,6 +126,37 @@ export async function getUpgraderTransactions(params: {
   if (outcomeKey === "win") outcomeFilter = "AND g.won_amount::numeric > 0";
   else if (outcomeKey === "loss") outcomeFilter = "AND g.won_amount::numeric = 0";
 
+  // Sort mode — whitelisted (never string-interpolate user input into
+  // SQL). The three modes drive distinct ORDER BY clauses below; the
+  // sort runs against the FULL filtered set inside the same SQL pass,
+  // so pagination walks the globally-sorted dataset rather than just
+  // re-ordering the visible page.
+  const sortKey =
+    sortBy && VALID_SORTS.has(sortBy as UpgraderSortBy)
+      ? (sortBy as UpgraderSortBy)
+      : "recent";
+  let orderBy: string;
+  if (sortKey === "multiplier") {
+    // Realized multiplier = won / bet, only meaningful on wins with a
+    // non-zero stake. CASE returns NULL for losses + zero-stake rows so
+    // NULLS LAST pushes them after every ranked winner. Tiebreaker on
+    // created_at keeps the order deterministic across same-multiplier
+    // rows (and stable across paginated requests).
+    orderBy = `ORDER BY
+        CASE
+          WHEN g.bet_amount::numeric > 0 AND g.won_amount::numeric > 0
+            THEN g.won_amount::numeric / g.bet_amount::numeric
+          ELSE NULL
+        END DESC NULLS LAST,
+        g.created_at DESC`;
+  } else if (sortKey === "wonAmount") {
+    // Absolute dollar payout to the user. Losses (won_amount = 0) all
+    // tie at the bottom; deterministic tiebreaker on created_at.
+    orderBy = `ORDER BY g.won_amount::numeric DESC, g.created_at DESC`;
+  } else {
+    orderBy = `ORDER BY g.created_at DESC`;
+  }
+
   // Always LEFT JOIN "user" for the data query (we need username +
   // image). For COUNT we only join when the search is by username.
   const baseWhere = `
@@ -131,7 +184,7 @@ export async function getUpgraderTransactions(params: {
     FROM upgrader_games g
     LEFT JOIN "user" u ON u.id = g.user_id
     ${baseWhere}
-    ORDER BY g.created_at DESC
+    ${orderBy}
     LIMIT ${safePerPage}
     OFFSET ${offset}
   `;
