@@ -299,3 +299,47 @@ export function WithdrawalsStatCard({
     </Card>
   );
 }
+
+/**
+ * Creator-only slice of the period withdrawal volume — how many of the
+ * `Withdrawals` card's transactions came from users with role =
+ * 'creator' (creator personal cash-outs).
+ *
+ * Hero number is the COUNT (the user explicitly asked for "how many"),
+ * sub-line carries the dollar amount + period label so the card stays
+ * proportionate to its siblings.
+ *
+ * Purple identity so it doesn't read like a competing total to the
+ * neighbouring Withdrawals card (pink) — purple matches the Depositors
+ * snapshot tile's "people behind the money" framing.
+ */
+export function CreatorWithdrawalsStatCard({
+  count,
+  amount,
+  periodLabel,
+}: {
+  count: number;
+  amount: number;
+  periodLabel: string;
+}) {
+  return (
+    <Card className="bg-purple-500/10">
+      <CardHeader className="flex flex-col gap-2 pb-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <CardTitle className="text-card-title text-muted-foreground">
+            Creator Withdrawals
+          </CardTitle>
+          <span className="text-tiny text-muted-foreground">{periodLabel}</span>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="text-stat-value truncate">
+          <AnimatedNumber value={count} format="number" />
+        </div>
+        <p className="text-stat-label mt-0.5">
+          <AnimatedNumber value={amount} format="currency" /> total
+        </p>
+      </CardContent>
+    </Card>
+  );
+}

@@ -29,6 +29,7 @@ import {
   WagerStatCard,
   DepositsStatCard,
   WithdrawalsStatCard,
+  CreatorWithdrawalsStatCard,
 } from "./revenue-stat-card";
 import { AutoRefresh } from "./auto-refresh";
 import {
@@ -132,14 +133,14 @@ export default async function DashboardPage({
       {/* Primary + secondary KPI strips stream together — they share the
           same getDashboardStats fetch, so splitting them into separate
           boundaries would just show two skeletons resolving at the same
-          instant. Fallback mirrors the 6-up primary + 7-up secondary
+          instant. Fallback mirrors the 8-up primary + 6-up secondary
           grids in DashboardStatStrips. */}
       <Suspense
         key={`stats-${period}`}
         fallback={
           <>
-            <KpiStripSkeleton count={7} />
-            <KpiStripSkeleton count={7} />
+            <KpiStripSkeleton count={8} />
+            <KpiStripSkeleton count={6} />
           </>
         }
       >
@@ -269,10 +270,10 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
           Mobile-first grid: ONE column at <sm so each card is full-
           width and the dollar value never truncates (these cards
           contain a 5-chip period selector + a hero currency value;
-          squeezing 2-up at 380px crushed both). 2-up at sm, 3 at lg,
-          7 across at xl (PnL, GGR, Total Wager, Raw Wager, Organic
-          Wager, Deposits, Withdrawals). */}
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-7">
+          squeezing 2-up at 380px crushed both). 2-up at sm, 4 at lg,
+          8 across at xl (PnL, GGR, Total Wager, Raw Wager, Organic
+          Wager, Deposits, Withdrawals, Creator Withdrawals). */}
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4 xl:grid-cols-8">
         <PnlStatCard
           pnl={stats.realizedPnl}
           pnlPeriod={stats.realizedPnlPeriod}
@@ -313,6 +314,15 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
         />
         <WithdrawalsStatCard
           withdrawals={stats.withdrawals}
+          periodLabel={stats.periodLabel}
+        />
+        {/* Creator-only slice of Withdrawals — how many of the period's
+            withdrawals came from users with role = 'creator'. Hero is
+            the COUNT (the operator's primary question); subtitle
+            carries the dollar total alongside the period label. */}
+        <CreatorWithdrawalsStatCard
+          count={stats.creatorWithdrawalsCount}
+          amount={stats.creatorWithdrawals}
           periodLabel={stats.periodLabel}
         />
       </div>
