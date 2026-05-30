@@ -45,7 +45,9 @@ import {
   RecentActivityLivePulse,
   RecentActivitySkeleton,
 } from "./recent-activity";
-import { LiveMoneyChat } from "@/components/live-money-chat";
+// LiveMoneyChat moved into the admin shell layout — the widget now
+// docks on every admin page, not just /dashboard. Nothing to import
+// here any more.
 import { UpgraderStatsSection } from "./upgrader-stats";
 import { ActiveRainChip } from "./active-rain-chip";
 import { PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
@@ -201,12 +203,6 @@ export default async function DashboardPage({
         </FadeIn>
       </div>
 
-      {/* Docked Live Money widget — persistent right-side panel that
-          streams every deposit + withdrawal request as it lands.
-          Floats above the page (position: fixed) so the admin can
-          watch the live feed while scrolling the rest of the
-          dashboard. Reusable on other pages — just import + render. */}
-      <LiveMoneyChat />
     </div>
   );
 }
