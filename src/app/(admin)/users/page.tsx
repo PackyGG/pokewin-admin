@@ -1,10 +1,14 @@
 import { Suspense } from "react";
-import { Users, Coins, Banknote, Ban } from "lucide-react";
+import Link from "next/link";
+import { Users, Coins, Banknote, Ban, Archive } from "lucide-react";
 import { getUsers } from "@/lib/queries/users";
 import { requirePageAccess } from "@/lib/dal";
+import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
+import { adminDb } from "@/lib/admin-db";
 import { UsersDataTable } from "./data-table";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   PageHero,
@@ -28,10 +32,27 @@ export default async function UsersPage({
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  await requirePageAccess("/users");
+  const session = await requirePageAccess("/users");
   const params = await searchParams;
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
+
+  // The "Deleted users" header button is gated by the same
+  // __can_delete_user capability as the delete action itself —
+  // admins always pass, non-admins only see the link when they're
+  // allowed to delete. Real admins always see it; non-admins need
+  // both __can_delete_user AND the /users/deleted page key.
+  let canSeeDeletedUsers = session.role === "admin";
+  if (!canSeeDeletedUsers) {
+    const perms = await adminDb.admin_users.findUnique({
+      where: { id: session.userId },
+      select: { allowed_pages: true },
+    });
+    const pages = perms?.allowed_pages ?? [];
+    canSeeDeletedUsers =
+      pages.includes("/users/deleted") &&
+      hasCapability(pages, "__can_delete_user");
+  }
 
   // `getDistinctUserCountries()` used to be eager-fetched here for the
   // Export dialog's country filter. It scanned every user row to
@@ -64,6 +85,18 @@ export default async function UsersPage({
           icon={Users}
           title="Users"
           subtitle="Browse, search, and filter every user on the platform."
+          action={
+            canSeeDeletedUsers ? (
+              <Button
+                variant="outline"
+                size="sm"
+                render={<Link href="/users/deleted" />}
+              >
+                <Archive className="mr-2 size-4" />
+                Deleted users
+              </Button>
+            ) : undefined
+          }
         />
       </PageHero>
 

@@ -666,6 +666,55 @@ model employee_manager_workspaces {
   @@index([workspace_id])
 }
 
+// 7-day soft-delete snapshot for main-DB users wiped via the admin
+// /users delete action. When an admin clicks Delete User on /users/[id]
+// (or bulk-deletes from /users), the deleteUser server action snapshots
+// the user row plus the heavier per-user satellite tables (balances,
+// inventory, vouchers, rakeback claims, recent ledger / game sessions)
+// into this table BEFORE running the destructive main-DB delete. The
+// snapshot lives here for 7 days — listed at /users/deleted — and can
+// be restored or purged manually. After expires_at the row is purged
+// fire-and-forget on the next /users/deleted read.
+//
+// Storage notes:
+//   • id IS the original main-DB user.id (text — better-auth nanoid).
+//     A user can only have one active snapshot at a time; re-deleting
+//     a user after restore would overwrite the prior row (upsert).
+//   • snapshot is the JSONB blob — see src/lib/deleted-users/snapshot.ts
+//     for the shape. Bounded to ~5 MB; over-large arrays are truncated
+//     with a _truncated marker logged inside the blob.
+//   • Cross-DB FKs aren't possible (main DB vs admin DB live on
+//     separate Postgres clusters) — deleted_by / restored_by are plain
+//     UUIDs that match admin_users.id. We don't relation-link them
+//     here either, to keep admin_users untouched.
+model admin_deleted_users {
+  // Original packy.gg user_id (text — better-auth nanoid).
+  id           String    @id @db.VarChar(36)
+  // Captured at delete time so the listing UI doesn't need to crack the
+  // JSONB blob to render usernames/emails.
+  username     String?   @db.VarChar(255)
+  email        String?   @db.VarChar(255)
+  deleted_at   DateTime  @default(now()) @db.Timestamp(6)
+  // admin_users.id of whoever ran the delete. Plain UUID column — no
+  // Prisma relation so adding this table doesn't touch admin_users.
+  deleted_by   String    @db.VarChar(36)
+  // deleted_at + 7 days. Set server-side at insert; listing reads
+  // expire-and-purge before rendering. Indexed for the purge scan.
+  expires_at   DateTime  @db.Timestamp(6)
+  // JSONB blob — { user, balances, user_inventory, vouchers,
+  // rakeback_claims, ledger_transactions, game_sessions, _truncated }
+  snapshot     Json      @db.JsonB
+  // Null until restoreDeletedUser runs. Once set, the snapshot is
+  // immutable and cannot be restored again — re-restoring would
+  // double-insert. Restored snapshots stay listed (with the restore
+  // status visible) until natural expiry.
+  restored_at  DateTime? @db.Timestamp(6)
+  restored_by  String?   @db.VarChar(36)
+
+  @@index([expires_at], map: "admin_deleted_users_expires_at_idx")
+  @@index([deleted_at(sort: Desc)], map: "admin_deleted_users_deleted_at_idx")
+}
+
 // Admin-side "sponsored %" annotation on a creator (affiliate)
 // leaderboard. Purely a cost-accounting input — it does NOT touch the
 // backend leaderboard in any way. The /creators "Leaderboard Cost" KPI

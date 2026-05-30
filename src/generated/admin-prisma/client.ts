@@ -207,6 +207,11 @@ export type employee_managers = Prisma.employee_managersModel
  */
 export type employee_manager_workspaces = Prisma.employee_manager_workspacesModel
 /**
+ * Model admin_deleted_users
+ * 
+ */
+export type admin_deleted_users = Prisma.admin_deleted_usersModel
+/**
  * Model admin_leaderboard_sponsorship
  * 
  */
