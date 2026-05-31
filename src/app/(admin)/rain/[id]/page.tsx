@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { getRainDetail } from "@/lib/queries/rain";
 import { requirePageAccess } from "@/lib/dal";
+import { isUuid } from "@/lib/utils/ids";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -51,6 +52,8 @@ export default async function RainDetailPage({
 }) {
   await requirePageAccess("/rain");
   const { id } = await params;
+  // Shape-check UUID before any DB call — see src/lib/utils/ids.ts.
+  if (!isUuid(id)) notFound();
   const sp = await searchParams;
   const entriesPage = Number(sp.page) || 1;
   const entriesPerPage = Number(sp.perPage) || 20;

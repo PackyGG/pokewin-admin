@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { getBattleDetail } from "@/lib/queries/battles";
 import { requirePageAccess } from "@/lib/dal";
+import { isUuid } from "@/lib/utils/ids";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { CardImage } from "@/components/card-image";
@@ -61,6 +62,8 @@ export default async function BattleDetailPage({
 }) {
   await requirePageAccess("/battles");
   const { id } = await params;
+  // Shape-check UUID before any DB call — see src/lib/utils/ids.ts.
+  if (!isUuid(id)) notFound();
   const data = await getBattleDetail(id);
 
   if (!data) notFound();

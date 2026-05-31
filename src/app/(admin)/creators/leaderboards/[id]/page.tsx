@@ -3,6 +3,7 @@ import Link from "next/link";
 import { AlertTriangle, ArrowLeft, Crown, Medal, Trophy } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
+import { isUuid } from "@/lib/utils/ids";
 import { getDb } from "@/lib/db";
 import {
     affiliateLeaderboardsApi,
@@ -51,6 +52,8 @@ export default async function AffiliateLeaderboardDetailPage({
 }) {
     await requirePageAccess("/creators/leaderboards");
     const { id } = await params;
+    // Shape-check UUID before any DB / backend call — see src/lib/utils/ids.ts.
+    if (!isUuid(id)) notFound();
 
     let lb;
     try {

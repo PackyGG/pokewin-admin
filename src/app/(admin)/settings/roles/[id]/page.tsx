@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { KeyRound, FileText, ShieldCheck, Users } from "lucide-react";
 import { requireAdmin } from "@/lib/dal";
+import { isUuid } from "@/lib/utils/ids";
 import { PageHero, PageHeroIdentity, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { getRole } from "../custom-roles-actions";
@@ -15,6 +16,8 @@ export default async function RoleDetailPage({
 }) {
   await requireAdmin();
   const { id } = await params;
+  // Shape-check UUID before any DB call — see src/lib/utils/ids.ts.
+  if (!isUuid(id)) notFound();
   const role = await getRole(id);
   if (!role) notFound();
 

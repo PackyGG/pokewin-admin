@@ -11,6 +11,7 @@ import {
 import { BackButton } from "@/components/back-button";
 import { getPackDetail, getPackStats, getPackGames } from "@/lib/queries/packs";
 import { getUserPermissions, requirePageAccess } from "@/lib/dal";
+import { isUuid } from "@/lib/utils/ids";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { ensurePackCreatorCapabilities } from "@/lib/pack-creator/ensure-capabilities";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +34,8 @@ export default async function PackDetailPage({
 }) {
   const session = await requirePageAccess("/packs");
   const { id } = await params;
+  // Shape-check UUID before any DB call — see src/lib/utils/ids.ts.
+  if (!isUuid(id)) notFound();
   const data = await getPackDetail(id);
   if (!data) notFound();
 

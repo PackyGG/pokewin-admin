@@ -21,6 +21,7 @@ import {
   refreshStaleSocials,
 } from "@/lib/queries/creators";
 import { requirePageAccess } from "@/lib/dal";
+import { isUuid } from "@/lib/utils/ids";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card } from "@/components/ui/card";
@@ -61,6 +62,8 @@ export default async function CreatorDetailPage({
 }) {
   await requirePageAccess("/creators");
   const { userId } = await params;
+  // Shape-check UUID before any DB call — see src/lib/utils/ids.ts.
+  if (!isUuid(userId)) notFound();
   const sp = parseCreatorDetailSearchParams(await searchParams);
 
   // Header data still comes from the legacy query for now — it carries

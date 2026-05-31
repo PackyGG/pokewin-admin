@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { getPromoCodeDetail } from "@/lib/queries/promo-codes";
 import { requirePageAccess } from "@/lib/dal";
+import { isUuid } from "@/lib/utils/ids";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -41,6 +42,8 @@ export default async function PromoCodeDetailPage({
 }) {
   await requirePageAccess("/promo-codes");
   const { id } = await params;
+  // Shape-check UUID before any DB call — see src/lib/utils/ids.ts.
+  if (!isUuid(id)) notFound();
   const data = await getPromoCodeDetail(id);
 
   if (!data) notFound();

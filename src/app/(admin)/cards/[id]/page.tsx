@@ -4,6 +4,7 @@ import { Layers, DollarSign, Heart, Package, Boxes } from "lucide-react";
 import { BackButton } from "@/components/back-button";
 import { getCardDetail, getSets } from "@/lib/queries/cards";
 import { requirePageAccess } from "@/lib/dal";
+import { isUuid } from "@/lib/utils/ids";
 import { Badge } from "@/components/ui/badge";
 import { CardImage } from "@/components/card-image";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
@@ -34,6 +35,8 @@ export default async function CardDetailPage({
 }) {
   await requirePageAccess("/cards");
   const { id } = await params;
+  // Shape-check UUID before any DB call — see src/lib/utils/ids.ts.
+  if (!isUuid(id)) notFound();
   const [data, sets] = await Promise.all([getCardDetail(id), getSets()]);
 
   if (!data) notFound();

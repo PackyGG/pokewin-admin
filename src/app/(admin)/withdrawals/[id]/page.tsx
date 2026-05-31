@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ArrowUpFromLine, Package, Ticket, Layers } from "lucide-react";
 import { getWithdrawalDetail } from "@/lib/queries/withdrawals";
 import { requirePageAccess } from "@/lib/dal";
+import { isUuid } from "@/lib/utils/ids";
 import { Badge } from "@/components/ui/badge";
 import { STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
@@ -39,6 +40,8 @@ export default async function WithdrawalDetailPage({
 }) {
   await requirePageAccess("/withdrawals");
   const { id } = await params;
+  // Shape-check UUID before any DB call — see src/lib/utils/ids.ts.
+  if (!isUuid(id)) notFound();
   const data = await getWithdrawalDetail(id);
 
   if (!data) notFound();

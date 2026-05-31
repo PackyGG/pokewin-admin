@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { getTransactionDetail } from "@/lib/queries/transactions";
 import { requirePageAccess } from "@/lib/dal";
+import { isUuid } from "@/lib/utils/ids";
 import { Badge } from "@/components/ui/badge";
 import { CardImage } from "@/components/card-image";
 import { STATUS_COLORS } from "@/lib/constants";
@@ -66,6 +67,8 @@ export default async function TransactionDetailPage({
   // an individual ledger row from any sub-page (packs, rewards, upgrader).
   await requirePageAccess("/transactions/deposits");
   const { id } = await params;
+  // Shape-check UUID before any DB call — see src/lib/utils/ids.ts.
+  if (!isUuid(id)) notFound();
   const data = await getTransactionDetail(id);
 
   if (!data) notFound();
