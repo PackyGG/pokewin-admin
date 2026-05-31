@@ -45,13 +45,7 @@ export function SetsContent({ data }: { data: SetListItem[] }) {
                         {formatNumber(set.cardCount)} cards
                       </span>
                     </div>
-                    <div className="mt-1 grid grid-cols-2 gap-x-3 text-[11px] text-muted-foreground">
-                      <div>
-                        <span className="text-[9px] uppercase tracking-wide">
-                          Series
-                        </span>
-                        <div className="truncate">{set.series}</div>
-                      </div>
+                    <div className="mt-1 grid grid-cols-1 gap-x-3 text-[11px] text-muted-foreground">
                       <div>
                         <span className="text-[9px] uppercase tracking-wide">
                           Language
@@ -60,9 +54,7 @@ export function SetsContent({ data }: { data: SetListItem[] }) {
                       </div>
                     </div>
                     <div className="mt-1 text-[10px] text-muted-foreground">
-                      {set.releaseDate
-                        ? `Released ${formatDate(set.releaseDate)}`
-                        : `Added ${formatDate(set.createdAt)}`}
+                      Added {formatDate(set.createdAt)}
                     </div>
                   </div>
                   <SetFormDialog
@@ -70,9 +62,7 @@ export function SetsContent({ data }: { data: SetListItem[] }) {
                     initialValues={{
                       id: set.id,
                       name: set.name,
-                      series: set.series,
                       language: set.language,
-                      releaseDate: set.releaseDate,
                     }}
                   />
                 </div>
@@ -88,10 +78,8 @@ export function SetsContent({ data }: { data: SetListItem[] }) {
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
-              <TableHead>Series</TableHead>
               <TableHead>Language</TableHead>
               <TableHead className="text-right">Cards</TableHead>
-              <TableHead>Release Date</TableHead>
               <TableHead>Added</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -100,13 +88,9 @@ export function SetsContent({ data }: { data: SetListItem[] }) {
             {data.map((set) => (
               <TableRow key={set.id}>
                 <TableCell className="font-medium">{set.name}</TableCell>
-                <TableCell>{set.series}</TableCell>
                 <TableCell className="uppercase">{set.language}</TableCell>
                 <TableCell className="text-right tabular-nums">
                   {formatNumber(set.cardCount)}
-                </TableCell>
-                <TableCell>
-                  {set.releaseDate ? formatDate(set.releaseDate) : "—"}
                 </TableCell>
                 <TableCell>{formatDate(set.createdAt)}</TableCell>
                 <TableCell className="text-right">
@@ -115,9 +99,7 @@ export function SetsContent({ data }: { data: SetListItem[] }) {
                     initialValues={{
                       id: set.id,
                       name: set.name,
-                      series: set.series,
                       language: set.language,
-                      releaseDate: set.releaseDate,
                     }}
                   />
                 </TableCell>
@@ -125,7 +107,7 @@ export function SetsContent({ data }: { data: SetListItem[] }) {
             ))}
             {data.length === 0 && (
               <TableRow className="hover:bg-transparent">
-                <TableCell colSpan={7} className="p-0">
+                <TableCell colSpan={5} className="p-0">
                   <EmptyState
                     icon={Library}
                     title="No sets found"

@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import {
   Plus,
   FileText,
-  CalendarDays,
   Loader2,
   Library,
   Pencil,
@@ -28,9 +27,7 @@ import { createSet, updateSet } from "./actions";
 type SetInitialValues = {
   id: string;
   name: string;
-  series: string;
   language: string;
-  releaseDate: string | null; // ISO string or null
 };
 
 type CreateProps = {
@@ -79,16 +76,6 @@ function Section({
   );
 }
 
-/** Trim a possibly-ISO release date down to the YYYY-MM-DD input shape. */
-function isoToDateInput(value: string | null): string {
-  if (!value) return "";
-  // Already short form? Pass through.
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toISOString().slice(0, 10);
-}
-
 export function SetFormDialog(props: SetFormDialogProps) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -98,20 +85,14 @@ export function SetFormDialog(props: SetFormDialogProps) {
   const initial = isEdit ? props.initialValues : null;
 
   const [name, setName] = useState(initial?.name ?? "");
-  const [series, setSeries] = useState(initial?.series ?? "");
   const [language, setLanguage] = useState(initial?.language ?? "en");
-  const [releaseDate, setReleaseDate] = useState(
-    isoToDateInput(initial?.releaseDate ?? null),
-  );
 
   // Reset form when the dialog re-opens so a freshly-rendered Edit dialog
   // doesn't show stale values from a previous open / close cycle.
   useEffect(() => {
     if (!open) return;
     setName(initial?.name ?? "");
-    setSeries(initial?.series ?? "");
     setLanguage(initial?.language ?? "en");
-    setReleaseDate(isoToDateInput(initial?.releaseDate ?? null));
   }, [open, initial]);
 
   function handleSubmit() {
@@ -120,17 +101,13 @@ export function SetFormDialog(props: SetFormDialogProps) {
         if (isEdit) {
           await updateSet(props.initialValues.id, {
             name,
-            series,
             language,
-            releaseDate: releaseDate || null,
           });
           toast.success("Set updated");
         } else {
           await createSet({
             name,
-            series,
             language,
-            releaseDate: releaseDate || null,
           });
           toast.success("Set created");
         }
@@ -195,20 +172,20 @@ export function SetFormDialog(props: SetFormDialogProps) {
                 </DialogTitle>
                 <p className="text-xs text-muted-foreground">
                   {isEdit
-                    ? "Update the name, series, language, or release date."
-                    : "Add a new set / series (e.g. One Piece) to the catalog."}
+                    ? "Update the name or language."
+                    : "Add a new set to the catalog."}
                 </p>
               </div>
             </div>
           </DialogHeader>
         </div>
 
-        {/* Body — two sections. */}
+        {/* Body — one section. */}
         <div className="space-y-6 px-5 py-5">
           <Section
             icon={FileText}
             title="Set details"
-            description="Name, series, and language metadata."
+            description="Name and language metadata."
           >
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
@@ -221,42 +198,12 @@ export function SetFormDialog(props: SetFormDialogProps) {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="set-form-series">Series</Label>
-                <Input
-                  id="set-form-series"
-                  value={series}
-                  onChange={(e) => setSeries(e.target.value)}
-                  placeholder="e.g. One Piece"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
                 <Label htmlFor="set-form-language">Language</Label>
                 <Input
                   id="set-form-language"
                   value={language}
                   onChange={(e) => setLanguage(e.target.value)}
                   placeholder="e.g. en"
-                />
-              </div>
-            </div>
-          </Section>
-
-          <Section
-            icon={CalendarDays}
-            title="Release"
-            description="Optional release date for the set."
-          >
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="set-form-release">Release date</Label>
-                <Input
-                  id="set-form-release"
-                  type="date"
-                  value={releaseDate}
-                  onChange={(e) => setReleaseDate(e.target.value)}
                 />
               </div>
             </div>
@@ -273,7 +220,7 @@ export function SetFormDialog(props: SetFormDialogProps) {
           </Button>
           <Button
             onClick={handleSubmit}
-            disabled={isPending || !name || !series || !language}
+            disabled={isPending || !name || !language}
           >
             {isPending ? (
               <>

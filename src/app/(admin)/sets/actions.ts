@@ -46,34 +46,27 @@ async function nextNegativeTcgplayerId(
   return baseline < 0 ? baseline - 1 : -1;
 }
 
-function parseReleaseDate(value: string | null): Date | null {
-  if (!value) return null;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) throw new Error("Invalid release date");
-  return parsed;
-}
-
 // ────────────────────────────────────────────────────────────────────
 //  createSet
 // ────────────────────────────────────────────────────────────────────
 
 export async function createSet(data: {
   name: string;
-  series: string;
   language: string;
-  releaseDate: string | null;
 }): Promise<string> {
   const db = await getDb();
   const session = await requireAdmin();
 
   if (!data.name.trim()) throw new Error("Name is required");
-  if (!data.series.trim()) throw new Error("Series is required");
   if (!data.language.trim()) throw new Error("Language is required");
 
   await requireCapability(session, "__can_create_set", "create sets");
 
-  const releaseDate = parseReleaseDate(data.releaseDate);
-
+  // `series` is NOT NULL with no default and `release_date` is nullable
+  // (see prisma/schema.prisma `model sets`). The UI no longer exposes
+  // either field, so create-time inserts default to an empty `series`
+  // and a null `release_date`. Existing rows keep their values; admins
+  // who need to backfill use the import scripts, not this dialog.
   // Retry on rare UNIQUE collision when two admins create simultaneously.
   let attempt = 0;
   while (attempt < 3) {
@@ -83,11 +76,11 @@ export async function createSet(data: {
         return tx.sets.create({
           data: {
             name: data.name.trim(),
-            series: data.series.trim(),
+            series: "",
             image_url: "",
             language: data.language.trim(),
             tcgplayer_id: nextId,
-            release_date: releaseDate,
+            release_date: null,
           },
         });
       });
@@ -98,7 +91,6 @@ export async function createSet(data: {
         metadata: {
           set_id: set.id,
           name: set.name,
-          series: set.series,
           tcgplayer_id: set.tcgplayer_id,
         },
       });
@@ -130,9 +122,7 @@ export async function updateSet(
   id: string,
   data: {
     name: string;
-    series: string;
     language: string;
-    releaseDate: string | null;
   },
 ): Promise<void> {
   const db = await getDb();
@@ -140,26 +130,25 @@ export async function updateSet(
 
   if (!id) throw new Error("Set id is required");
   if (!data.name.trim()) throw new Error("Name is required");
-  if (!data.series.trim()) throw new Error("Series is required");
   if (!data.language.trim()) throw new Error("Language is required");
 
   await requireCapability(session, "__can_update_set", "update sets");
 
-  const releaseDate = parseReleaseDate(data.releaseDate);
-
   const existing = await db.sets.findUnique({
     where: { id },
-    select: { id: true, name: true, series: true, language: true },
+    select: { id: true, name: true, language: true },
   });
   if (!existing) throw new Error("Set not found");
 
+  // `series` and `release_date` are intentionally NOT touched here —
+  // the UI no longer exposes them and historical values are managed
+  // by import scripts. Keeping them out of the update payload prevents
+  // admins from accidentally clearing them via this surface.
   await db.sets.update({
     where: { id },
     data: {
       name: data.name.trim(),
-      series: data.series.trim(),
       language: data.language.trim(),
-      release_date: releaseDate,
       updated_at: new Date(),
     },
   });
@@ -172,9 +161,7 @@ export async function updateSet(
       previous: existing,
       next: {
         name: data.name.trim(),
-        series: data.series.trim(),
         language: data.language.trim(),
-        release_date: releaseDate?.toISOString() ?? null,
       },
     },
   });
