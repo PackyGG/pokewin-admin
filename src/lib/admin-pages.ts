@@ -9,6 +9,11 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Navigation", label: "Dashboard", key: "/dashboard" },
   { group: "Navigation", label: "Analytics", key: "/analytics" },
   { group: "Navigation", label: "Raw P&L", key: "/analytics/pure-pnl" },
+  // Changelogs — curated admin-internal release notes. Page is read-
+  // only for anyone with /changelogs access; publish/edit/delete are
+  // additionally gated by __can_manage_changelog (defined in
+  // settings/roles/permissions-utils.ts).
+  { group: "Navigation", label: "Changelogs", key: "/changelogs" },
   // /map was folded into /analytics as a tab — its permission inherits
   // from /analytics. The standalone page no longer exists.
   { group: "Navigation", label: "Users", key: "/users" },

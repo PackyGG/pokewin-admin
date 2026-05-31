@@ -44,6 +44,7 @@ import {
   Network,
   ArrowUpCircle,
   Archive,
+  ScrollText,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -107,6 +108,7 @@ const ICONS: Record<string, LucideIcon> = {
   Network,
   ArrowUpCircle,
   Archive,
+  ScrollText,
 };
 
 type NavItem = {
@@ -142,6 +144,13 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Dashboard", href: "/dashboard", icon: "LayoutDashboard" },
       { label: "Analytics", href: "/analytics", icon: "BarChart3" },
+      // Changelogs — curated release notes. Read-only for anyone with
+      // /changelogs access, publish/edit/delete requires the
+      // __can_manage_changelog capability (admin-only by default).
+      // Sits at the top of Overview so admins notice new platform
+      // updates as soon as they land, before drilling into Users /
+      // Transactions further down.
+      { label: "Changelogs", href: "/changelogs", icon: "ScrollText", isNew: true },
       // /transactions overview was removed — admins go straight to a
       // specific sub-ledger via the "Transactions" group below.
       // /map was folded into /analytics as a tab; the standalone link is gone.
