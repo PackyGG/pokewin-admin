@@ -24,12 +24,12 @@ const PAGE_SIZE = 100;
 // against a runaway loop if `total` is ever reported wrong.
 const MAX_PAGES = 50;
 
-async function computeFillCreatorCount(): Promise<number> {
+async function computeFillCreatorIds(): Promise<string[]> {
   // First page tells us the total — then fan out the rest in parallel.
   const firstPage = await creatorsApi.list({ offset: 0, limit: PAGE_SIZE });
-  let count = 0;
+  const ids: string[] = [];
   for (const c of firstPage.data) {
-    if (c.total_deals_count > 0) count += 1;
+    if (c.total_deals_count > 0) ids.push(c.id);
   }
 
   const pagesNeeded = Math.min(
@@ -42,17 +42,40 @@ async function computeFillCreatorCount(): Promise<number> {
   }
   for (const page of await Promise.all(rest)) {
     for (const c of page.data) {
-      if (c.total_deals_count > 0) count += 1;
+      if (c.total_deals_count > 0) ids.push(c.id);
     }
   }
-  return count;
+  return ids;
 }
 
-const cachedFillCreatorCount = unstable_cache(
-  computeFillCreatorCount,
-  ["creators-fill-count"],
+// Source-of-truth: the id list. Count is derived from it so the
+// count tile and any tab-scoped aggregate (e.g. the global PnL tile)
+// share an identical set — if a creator is counted, they're also
+// included in the aggregate, no drift.
+const cachedFillCreatorIds = unstable_cache(
+  computeFillCreatorIds,
+  ["creators-fill-ids"],
   { revalidate: 300, tags: ["creators-fill-count"] },
 );
+
+/**
+ * Cached set of creator user-ids that have at least one fill (weekly)
+ * deal. Backs both the "Fill Creators" KPI count and the tab-scoped
+ * Global PnL aggregate on /creators. Best-effort — a backend failure
+ * returns null so callers fall back to "—".
+ */
+export async function getFillCreatorIds(): Promise<Set<string> | null> {
+  try {
+    const ids = await cachedFillCreatorIds();
+    return new Set(ids);
+  } catch (err) {
+    console.error(
+      "[fill-creator-count] id fetch failed (downstream renders '—'):",
+      err,
+    );
+    return null;
+  }
+}
 
 /**
  * Cached count of creators with at least one fill (weekly) deal. Backs
@@ -61,13 +84,6 @@ const cachedFillCreatorCount = unstable_cache(
  * crashing the page.
  */
 export async function getFillCreatorCount(): Promise<number | null> {
-  try {
-    return await cachedFillCreatorCount();
-  } catch (err) {
-    console.error(
-      "[fill-creator-count] failed (KPI tile renders '—'):",
-      err,
-    );
-    return null;
-  }
+  const ids = await getFillCreatorIds();
+  return ids === null ? null : ids.size;
 }

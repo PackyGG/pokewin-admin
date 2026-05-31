@@ -2,6 +2,9 @@ import "server-only";
 
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import type { CreatorsTab } from "../_lib/search-params";
+import { getFillCreatorIds } from "./fill-creator-count";
+import { getMultiplierCreatorIds } from "./multiplier-creator-count";
 
 /**
  * Combined lifetime House P&L across EVERY creator's affiliate-code
@@ -56,9 +59,37 @@ export type AllCreatorsLifetimePnl = {
   byCreator: CreatorLifetimePnlBreakdownRow[];
 };
 
-export async function getAllCreatorsLifetimePnl(): Promise<AllCreatorsLifetimePnl> {
+/**
+ * Resolve the creator id set for the active tab. When omitted, the
+ * aggregate spans every `role = 'creator'` row (legacy behaviour).
+ *
+ *   • fill       — creators with `total_deals_count > 0` (same backend
+ *                  walk that powers the Fill Creators KPI count).
+ *   • multiplier — creators in the multiplier-deal id set (same source
+ *                  that powers the Multiplier Creators KPI count + the
+ *                  multiplier tab's list filter).
+ *
+ * Returns null when the backend id-set lookup failed — callers fall
+ * back to rendering the tile in its empty state.
+ */
+async function resolveTabCreatorIds(
+  tab: CreatorsTab | undefined,
+): Promise<Set<string> | null | undefined> {
+  if (tab === "fill") return getFillCreatorIds();
+  if (tab === "multiplier") return getMultiplierCreatorIds();
+  return undefined;
+}
+
+export async function getAllCreatorsLifetimePnl(
+  tab?: CreatorsTab,
+): Promise<AllCreatorsLifetimePnl> {
   const db = await getDb();
   const excluded = await getExcludedUserIds();
+  // Resolve the tab-scoped creator id set BEFORE running the heavy
+  // ledger SQL — saves a round-trip when the id set already cached
+  // (5-min unstable_cache / in-memory). When the lookup fails (null),
+  // we still run the SQL (best-effort) and just don't post-filter.
+  const tabCreatorIds = await resolveTabCreatorIds(tab);
   // Blacklist guard applied as an extra AND on every WHERE that aliases
   // the referred user as `u`. Inlined per query because we can't share
   // a binding across CTE definitions in raw SQL cleanly.
@@ -199,6 +230,12 @@ export async function getAllCreatorsLifetimePnl(): Promise<AllCreatorsLifetimePn
   let totalWagered = 0;
   let totalCardWithdrawals = 0;
   for (const r of rows) {
+    // Tab filter — drop rows whose creator isn't in the active tab's
+    // id set. `undefined` (no tab passed) keeps every creator, so the
+    // un-scoped legacy callers behave exactly as before. `null` (id
+    // lookup failed) ALSO keeps every creator — the SQL aggregate is
+    // still useful even when we couldn't narrow it to the active tab.
+    if (tabCreatorIds && !tabCreatorIds.has(r.creator_user_id)) continue;
     const dep = Number(r.total_deposits);
     const wag = Number(r.total_wagered);
     const cwd = Number(r.total_card_withdrawals);

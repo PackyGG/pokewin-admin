@@ -236,13 +236,16 @@ async function CreatorsKpiStrip({
         icon={tabTile.icon}
         accent={tabTile.accent}
       />
-      {/* Global PnL — coverage-aware aggregate across all
-          creators. Streamed via its own Suspense to keep this strip
-          paintable as soon as the cheap stats land. Drill-in popover
-          lives in the tile's top-right action slot — opens on hover,
-          sorted ascending by pnl so the worst creator surfaces first. */}
-      <Suspense fallback={<GlobalPnlTileSkeleton />}>
-        <GlobalPnlTile />
+      {/* Global PnL — coverage-aware aggregate, tab-scoped to the
+          creators in the active program (Fill vs Multiplier). Streamed
+          via its own Suspense (keyed on `tab` so flipping tabs paints
+          the skeleton instead of freezing on the stale figure) to keep
+          this strip paintable as soon as the cheap stats land. Drill-in
+          popover lives in the tile's top-right action slot — opens on
+          hover, sorted ascending by pnl so the worst creator surfaces
+          first. */}
+      <Suspense key={`pnl-${tab}`} fallback={<GlobalPnlTileSkeleton tab={tab} />}>
+        <GlobalPnlTile tab={tab} />
       </Suspense>
       {/* Converted — combined cap-usage across every active/scheduled
           deal: how much stream earnings have been converted into payout
@@ -669,11 +672,26 @@ function networkErrorDetail(err: BackendNetworkError): string {
 // own server component + Suspense fallback so it doesn't block the
 // rest of the strip + the cards from painting immediately.
 //
+// Tab-scoped: the aggregate is filtered to creators in the active tab
+// (Fill / Multiplier) so the figure matches the swap-tile count on the
+// same row. The label flips with the tab — "Fill Creator PnL" vs
+// "Multiplier Creator PnL" — so the scope reads at a glance.
+//
 // Best-effort: a query failure renders the tile in its empty state
 // rather than crashing the page.
 
-async function GlobalPnlTile() {
-  const lifetimePnl = await getAllCreatorsLifetimePnl().catch((err) => {
+function pnlTileLabel(tab: CreatorsTab): string {
+  return tab === "multiplier" ? "Multiplier Creator PnL" : "Fill Creator PnL";
+}
+
+function pnlTileSub(tab: CreatorsTab): string {
+  return tab === "multiplier"
+    ? "Multiplier creators' affiliates combined, lifetime"
+    : "Fill creators' affiliates combined, lifetime";
+}
+
+async function GlobalPnlTile({ tab }: { tab: CreatorsTab }) {
+  const lifetimePnl = await getAllCreatorsLifetimePnl(tab).catch((err) => {
     console.error(
       "[creators] global lifetime PnL query failed (tile will render '—'):",
       err,
@@ -688,13 +706,13 @@ async function GlobalPnlTile() {
 
   return (
     <KpiTile
-      label="Global PnL"
+      label={pnlTileLabel(tab)}
       value={
         pnl == null
           ? "—"
           : `${pnl > 0 ? "+" : ""}${formatCurrency(pnl)}`
       }
-      sub="All creators' affiliates combined, lifetime"
+      sub={pnlTileSub(tab)}
       icon={LineChart}
       accent={accent}
       action={
@@ -706,13 +724,13 @@ async function GlobalPnlTile() {
   );
 }
 
-function GlobalPnlTileSkeleton() {
+function GlobalPnlTileSkeleton({ tab }: { tab: CreatorsTab }) {
   return (
     <div className="relative overflow-hidden rounded-xl border bg-blue-500/10 border-blue-500/20 px-3 py-2.5 sm:px-4 sm:py-3">
       <div className="flex items-center gap-1.5 sm:gap-2">
         <LineChart className="size-3.5 shrink-0 text-blue-500 sm:size-4" />
         <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[11px]">
-          Global PnL
+          {pnlTileLabel(tab)}
         </span>
       </div>
       <Skeleton className="mt-1 h-6 w-24 sm:h-7" />
