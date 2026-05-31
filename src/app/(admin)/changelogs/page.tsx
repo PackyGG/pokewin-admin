@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   CalendarDays,
+  FileText,
   GitCommit,
   Info,
   List,
@@ -42,6 +43,7 @@ import {
   EditChangelogEntryButton,
   NewChangelogEntryButton,
 } from "./changelog-form-dialog";
+import { ChangelogSummary } from "./changelog-summary";
 import { DeleteChangelogButton } from "./delete-changelog-button";
 import { SeedChangelogButton } from "./seed-changelog-button";
 
@@ -279,7 +281,8 @@ function ChangelogCard({
         className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"
       />
       <div className="relative p-4 sm:p-5 space-y-4">
-        {/* Top row: date + version + category badge + optional auto pill */}
+        {/* Top row: date + version + category badge + optional files-changed
+            chip + optional auto pill */}
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <span className="font-medium text-muted-foreground">
             {formatDate(entry.publishedAt)}
@@ -303,6 +306,17 @@ function ChangelogCard({
             <CategoryIcon className="size-3" />
             {CATEGORY_LABEL[entry.category]}
           </span>
+          {isAuto && typeof entry.filesChanged === "number" &&
+            entry.filesChanged > 0 && (
+              <span
+                className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/30 px-2 py-0.5 text-[11px] text-muted-foreground"
+                title={`${entry.filesChanged} file${entry.filesChanged === 1 ? "" : "s"} changed in this commit`}
+              >
+                <FileText className="size-3" />
+                {entry.filesChanged}{" "}
+                {entry.filesChanged === 1 ? "file" : "files"}
+              </span>
+            )}
           {isAuto && (
             <span
               className="ml-auto inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/30 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground"
@@ -313,16 +327,12 @@ function ChangelogCard({
           )}
         </div>
 
-        {/* Title + summary */}
+        {/* Title + summary. ChangelogSummary handles the long-text
+            collapse / "show more" disclosure client-side; short summaries
+            render inline without the toggle. */}
         <div className="space-y-1.5">
           <h3 className="text-lg font-semibold tracking-tight">{entry.title}</h3>
-          {/* whitespace-pre-line so admin-written paragraphs preserve their
-              own line breaks without being interpreted as markdown. */}
-          {entry.summary && (
-            <p className="whitespace-pre-line text-sm text-muted-foreground">
-              {entry.summary}
-            </p>
-          )}
+          {entry.summary && <ChangelogSummary text={entry.summary} />}
         </div>
 
         {/* Bullets */}

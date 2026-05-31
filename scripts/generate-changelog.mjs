@@ -72,50 +72,84 @@ function shouldKeep(subject) {
 }
 
 /**
- * Run `git log` and return a list of `{ sha, iso, subject }` objects,
- * newest first. The pipe character is a safe delimiter because git
- * subjects in this repo don't contain it; if that ever changes,
- * `%x1f` (ASCII unit separator) is the upgrade path.
+ * Run `git log` and return a list of `{ sha, iso, subject, body, filesChanged }`
+ * objects, newest first.
+ *
+ * Output format uses NUL (`\0`) as the BETWEEN-RECORD separator via `-z`,
+ * and `\x1f` (ASCII unit separator) as the WITHIN-RECORD field separator.
+ * This sidesteps the entire class of "commit subject contains the delimiter"
+ * bugs that piped/CSV formats run into — commit subjects and bodies never
+ * contain NUL or `\x1f`, but they routinely contain pipes, commas, and
+ * newlines.
+ *
+ * Per-record layout (with `--shortstat`):
+ *   <sha>\x1f<iso>\x1f<subject>\x1f<body>\x1f\n
+ *    N files changed, M insertions(+), K deletions(-)\n
+ *   \0
+ *
+ * The body field can contain newlines (commit message bodies routinely
+ * do). The shortstat line is emitted by git AFTER the format expansion
+ * and is the only line in the record that starts with a leading space
+ * and ends in "deletions(-)", "insertions(+)", or "file changed".
+ *
+ * We hand the format string off as a SINGLE argv slot via execFileSync
+ * (not execSync) so cmd.exe on Windows doesn't try to interpret the
+ * `\x1f` / `\0` bytes — execFileSync sidesteps the shell entirely.
  */
 function readCommits() {
-  // %h = abbreviated SHA, %aI = author ISO-8601 strict, %s = subject.
-  // --no-merges drops merge commits per the task spec.
-  //
-  // We hand the format string off as a SINGLE argv slot via execFileSync
-  // (not execSync) so the pipe characters in the format aren't interpreted
-  // by the host shell. cmd.exe on Windows parses unquoted `|` as a shell
-  // pipe and `git log` never sees the format flag — execFileSync sidesteps
-  // the shell entirely.
+  // %h = abbreviated SHA, %aI = author ISO-8601 strict, %s = subject,
+  // %b = body. --shortstat appends "N files changed, M insertions, ..."
+  // on its own line per commit. -z swaps the inter-commit newline for
+  // NUL so bodies + shortstats can both contain newlines without
+  // tripping the record split.
   const raw = execFileSync(
     "git",
     [
       "log",
+      "-z",
       "--no-merges",
+      "--shortstat",
       `-${MAX_COMMITS}`,
-      "--pretty=format:%h|%aI|%s",
+      "--pretty=format:%h\x1f%aI\x1f%s\x1f%b\x1f",
     ],
-    { cwd: REPO_ROOT, encoding: "utf8", maxBuffer: 4 * 1024 * 1024 },
+    { cwd: REPO_ROOT, encoding: "utf8", maxBuffer: 8 * 1024 * 1024 },
   );
 
   const entries = [];
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
+  for (const record of raw.split("\0")) {
+    if (!record) continue;
 
-    // Split on the FIRST two pipes only — the subject itself may
-    // contain a pipe (unlikely but possible) and we want it preserved.
-    const firstPipe = trimmed.indexOf("|");
-    const secondPipe = trimmed.indexOf("|", firstPipe + 1);
-    if (firstPipe === -1 || secondPipe === -1) continue;
+    // First four fields are SHA / ISO / subject / body. Anything after
+    // the 4th `\x1f` is the shortstat tail (which itself contains no
+    // `\x1f`, so a regular split with limit=5 captures everything).
+    const fields = record.split("\x1f");
+    if (fields.length < 4) continue;
 
-    const sha = trimmed.slice(0, firstPipe);
-    const iso = trimmed.slice(firstPipe + 1, secondPipe);
-    const subject = trimmed.slice(secondPipe + 1);
+    const sha = fields[0]?.trim();
+    const iso = fields[1]?.trim();
+    const subject = fields[2]?.trim();
+    // Body trimmed of leading/trailing whitespace; an empty body is a
+    // first-class signal (subject-only commit) that the renderer can
+    // distinguish from missing data.
+    const body = (fields[3] ?? "").trim();
+    // Tail = everything after the 4th `\x1f`. With `--shortstat` this is
+    // a newline + " N files changed, M insertions(+), K deletions(-)\n".
+    // Without `--shortstat` (or for commits that touched zero files,
+    // which `git log` skips by default) it'll be empty.
+    const tail = fields.slice(4).join("\x1f");
 
     if (!sha || !iso || !subject) continue;
     if (!shouldKeep(subject)) continue;
 
-    entries.push({ sha, iso, subject });
+    // Parse "N files changed" out of the shortstat tail. Regex is
+    // permissive — git localises "file" vs "files" but never "changed"
+    // in C locale builds, so anchoring on `\d+ files? changed` is safe.
+    // Returns null when no shortstat is present (e.g. the JSON-only
+    // initial commit that doesn't touch a tracked file).
+    const filesMatch = tail.match(/(\d+)\s+files?\s+changed/);
+    const filesChanged = filesMatch ? Number(filesMatch[1]) : null;
+
+    entries.push({ sha, iso, subject, body, filesChanged });
   }
 
   return entries;

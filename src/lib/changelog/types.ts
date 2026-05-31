@@ -53,6 +53,12 @@ export type ChangelogEntry = {
   };
   createdAt: string;
   updatedAt: string;
+  /**
+   * Number of files touched by this entry. Only populated for auto
+   * entries derived from a git commit (see `getAutoChangelogEntries`).
+   * `null` for admin-curated DB rows where the concept doesn't apply.
+   */
+  filesChanged?: number | null;
 };
 
 export type ChangelogStats = {
