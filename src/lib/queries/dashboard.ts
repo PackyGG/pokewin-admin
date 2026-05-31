@@ -1010,22 +1010,18 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     // periodAggregates + the windowedPeriodDelta query already produce).
     // Tracks the selected period via `periodCutoff` instead of being
     // 24h-only — flipping the global chip re-runs this.
+    //
+    // The windowedPeriodDelta query (inventoryChange / voucherChange
+    // above) feeds INTO this number — it is not separately surfaced on
+    // the payload anymore. A previous attempt (commit 8e1e835) exposed
+    // `inventoryDeltaPeriod` / `voucherDeltaPeriod` so the GgrStatCard
+    // could show a `P&L ≈ GGR − invΔ − vchΔ` reconciliation popover,
+    // but that bridge is not a true accounting identity (it omits card
+    // withdrawals and all non-GGR-typed credits like rain / rakeback /
+    // gifts / tips / race prizes / bonuses, each of which can be tens
+    // of thousands of dollars per window), so the popover was dropped
+    // in favour of just the headline numbers.
     realizedPnlPeriod,
-    // GGR → P&L reconciliation components for the SELECTED period.
-    // The dashboard's GgrStatCard surfaces these in a popover so the
-    // admin can see exactly where the gap between the headline GGR and
-    // the windowed P&L comes from. Both are HOUSE-POV signed deltas:
-    //   inventoryDeltaPeriod > 0 → users picked up more cards than they
-    //     disposed of in the window → drag on P&L (house owes inventory)
-    //   voucherDeltaPeriod   > 0 → unclaimed vouchers grew in the window
-    //     → drag on P&L (house owes voucher liability)
-    // Approximate bridge:
-    //   ≈ P&L = GGR − inventoryΔ − voucherΔ
-    // The full P&L formula (realizedPnlPeriod above) also nets deposits
-    // − withdrawals − ledger balance change, so a residual is expected;
-    // the popover labels the line "≈ P&L" rather than "= P&L".
-    inventoryDeltaPeriod: inventoryChangePeriod,
-    voucherDeltaPeriod: voucherChangePeriod,
     // Total deposit dollar amount for the SELECTED period.
     deposits: depositsPeriod,
     // Deposit transaction COUNT for the SELECTED period. Pairs 1:1
