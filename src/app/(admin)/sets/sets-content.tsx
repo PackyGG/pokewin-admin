@@ -12,19 +12,7 @@ import {
 import { EmptyState } from "@/components/empty-state";
 import { formatDate, formatNumber } from "@/lib/utils/format";
 import type { SetListItem } from "@/lib/queries/sets";
-
-function SetThumb({ set }: { set: SetListItem }) {
-  return set.imageUrl ? (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={set.imageUrl}
-      alt={set.name}
-      className="size-9 rounded-md object-contain bg-muted/40 shrink-0"
-    />
-  ) : (
-    <div className="size-9 rounded-md bg-muted shrink-0" />
-  );
-}
+import { SetFormDialog } from "./set-form-dialog";
 
 export function SetsContent({ data }: { data: SetListItem[] }) {
   return (
@@ -48,7 +36,6 @@ export function SetsContent({ data }: { data: SetListItem[] }) {
                 className="border-b border-border/60 last:border-b-0 px-3 py-3"
               >
                 <div className="flex items-start gap-3">
-                  <SetThumb set={set} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-sm font-medium truncate">
@@ -78,6 +65,16 @@ export function SetsContent({ data }: { data: SetListItem[] }) {
                         : `Added ${formatDate(set.createdAt)}`}
                     </div>
                   </div>
+                  <SetFormDialog
+                    mode="edit"
+                    initialValues={{
+                      id: set.id,
+                      name: set.name,
+                      series: set.series,
+                      language: set.language,
+                      releaseDate: set.releaseDate,
+                    }}
+                  />
                 </div>
               </div>
             ))}
@@ -94,30 +91,36 @@ export function SetsContent({ data }: { data: SetListItem[] }) {
               <TableHead>Series</TableHead>
               <TableHead>Language</TableHead>
               <TableHead className="text-right">Cards</TableHead>
-              <TableHead>TCGPlayer ID</TableHead>
               <TableHead>Release Date</TableHead>
               <TableHead>Added</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {data.map((set) => (
               <TableRow key={set.id}>
-                <TableCell className="font-medium">
-                  <div className="flex items-center gap-2">
-                    <SetThumb set={set} />
-                    {set.name}
-                  </div>
-                </TableCell>
+                <TableCell className="font-medium">{set.name}</TableCell>
                 <TableCell>{set.series}</TableCell>
                 <TableCell className="uppercase">{set.language}</TableCell>
                 <TableCell className="text-right tabular-nums">
                   {formatNumber(set.cardCount)}
                 </TableCell>
-                <TableCell className="tabular-nums">{set.tcgplayerId}</TableCell>
                 <TableCell>
                   {set.releaseDate ? formatDate(set.releaseDate) : "—"}
                 </TableCell>
                 <TableCell>{formatDate(set.createdAt)}</TableCell>
+                <TableCell className="text-right">
+                  <SetFormDialog
+                    mode="edit"
+                    initialValues={{
+                      id: set.id,
+                      name: set.name,
+                      series: set.series,
+                      language: set.language,
+                      releaseDate: set.releaseDate,
+                    }}
+                  />
+                </TableCell>
               </TableRow>
             ))}
             {data.length === 0 && (
