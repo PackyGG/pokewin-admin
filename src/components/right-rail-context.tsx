@@ -286,9 +286,16 @@ export function useRailWidget(key: RailKey): {
 // rail layout maths stay simple (variable tab heights would force every
 // panel's offset to be a calc tree). The previous live/chat-specific tab
 // heights are folded into one constant.
+//
+// 8rem (128px) is sized so each collapsed tab's vertical-rl label has
+// breathing room for the longest configured word ("Recent", 6 chars) plus
+// the icon + optional pulse dot above it. The 2-widget version used 7rem
+// for live and 6rem for chat; the unified value sits one notch above the
+// taller of the two so all three labels fit cleanly regardless of which
+// pair is open.
 export const RAIL_TOP_REM = 5; // matches `top-20` (under the admin header)
 export const RAIL_BOTTOM_REM = 1.5; // matches `bottom-6`
-export const COLLAPSED_TAB_HEIGHT_REM = 5; // fixed tab height for all 3 widgets
+export const COLLAPSED_TAB_HEIGHT_REM = 8; // fixed tab height for all 3 widgets
 export const PANEL_GAP_REM = 0.25; // breathing room between stacked panels
 
 // Back-compat aliases — existing call sites reference these names. They
