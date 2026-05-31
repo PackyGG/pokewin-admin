@@ -35,6 +35,7 @@ import {
   Activity,
   ArrowDownToLine,
   ArrowUpFromLine,
+  Banknote,
   Sparkles,
   Percent,
   Calendar,
@@ -433,8 +434,10 @@ export function UserViewModern({
                 stays compact. Wagering metrics (Wager Loss + total
                 Wagered/Won) live on the Account tab instead of cluttering
                 the hero. Phone: 2 cols (3 cols was too tight at 375px),
-                tablet: 3 cols, desktop: 6 cols. */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 shrink-0">
+                tablet: 4 cols, desktop: 7 cols. The Total Depo tile sits
+                directly next to P&L so the operator can read "$X
+                deposited → $Y P&L" left-to-right. */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 shrink-0">
               <KpiTile
                 label="Total Value"
                 value={formatCurrency(totalValue)}
@@ -446,6 +449,18 @@ export function UserViewModern({
                 value={`${pnl >= 0 ? "+" : ""}${formatCurrency(pnl)}`}
                 icon={pnl >= 0 ? TrendingUp : TrendingDown}
                 accent={pnl >= 0 ? "emerald" : "rose"}
+              />
+              {/* Total Depo — lifetime deposited dollars. Pairs
+                  with the P&L tile next to it (P&L denominator is
+                  effectively this number). Emerald because cash
+                  flowing in is a house gain in the moment, matching
+                  the Deposited convention used on the dashboard's
+                  KPI strip. */}
+              <KpiTile
+                label="Total Depo"
+                value={formatCurrency(deposits)}
+                icon={Banknote}
+                accent="emerald"
               />
               <KpiTile
                 label="Deposits"
