@@ -21,6 +21,7 @@ export function DataTableToolbar({
   searchPlaceholder = "Search...",
   filters,
   children,
+  leading,
 }: {
   searchPlaceholder?: string;
   filters?: {
@@ -34,6 +35,16 @@ export function DataTableToolbar({
     allLabel?: string;
   }[];
   children?: React.ReactNode;
+  /**
+   * Optional slot rendered BEFORE the search input. Used for filter
+   * primitives that pair with the search box rather than the trailing
+   * filter dropdowns — e.g. the Fill / Multiplier tab switch on
+   * /creators sits to the left of the search input as a peer.
+   *
+   * On phones the toolbar stacks vertically, so `leading` drops above
+   * the search input; at sm+ it sits inline to the left of the search.
+   */
+  leading?: React.ReactNode;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -89,6 +100,14 @@ export function DataTableToolbar({
     // Mobile-first: search takes the full row, filter pills wrap below.
     // At sm+ everything lines up in one row again.
     <div className="flex flex-col gap-2 pb-4 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
+      {leading && (
+        // Leading slot — sits inline to the left of the search at sm+,
+        // stacks above on phones. `shrink-0` keeps the pair (tab switch
+        // + search) from squeezing the trailing filter buttons.
+        <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
+          {leading}
+        </div>
+      )}
       <div className="relative w-full sm:flex-1 sm:min-w-[200px] sm:max-w-sm">
         {isPending ? (
           <Loader2 className="absolute left-2.5 top-2.5 size-4 text-muted-foreground animate-spin" />
