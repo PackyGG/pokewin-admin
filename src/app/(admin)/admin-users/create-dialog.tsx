@@ -25,20 +25,22 @@ export function CreateAdminDialog() {
     setLoading(true);
 
     const form = new FormData(e.currentTarget);
-    try {
-      await createAdminUser({
-        email: form.get("email") as string,
-        username: form.get("username") as string,
-        password: form.get("password") as string,
-        role: form.get("role") as string,
-      });
-      toast.success("Admin user created");
-      setOpen(false);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to create admin user");
-    } finally {
-      setLoading(false);
+    // ServerActionResult contract — no try/catch around the call. The
+    // action never throws across the RSC boundary; it returns
+    // `{ success, error?, data? }` and we branch on it.
+    const result = await createAdminUser({
+      email: form.get("email") as string,
+      username: form.get("username") as string,
+      password: form.get("password") as string,
+      role: form.get("role") as string,
+    });
+    setLoading(false);
+    if (!result.success) {
+      toast.error(result.error);
+      return;
     }
+    toast.success("Admin user created");
+    setOpen(false);
   }
 
   return (

@@ -85,15 +85,18 @@ export function WithdrawalRequestActions({ withdrawalId }: { withdrawalId: strin
               disabled={!totpCode.trim() || isPending}
               onClick={() => {
                 startTransition(async () => {
-                  try {
-                    await processWithdrawal(withdrawalId, totpCode.trim());
-                    setTotpCode("");
-                    setApproveOpen(false);
-                  } catch (e) {
-                    toast.error(
-                      e instanceof Error ? e.message : "Failed to process",
-                    );
+                  // ServerActionResult — branch on result.success.
+                  const result = await processWithdrawal(
+                    withdrawalId,
+                    totpCode.trim(),
+                  );
+                  if (!result.success) {
+                    toast.error(result.error);
+                    return;
                   }
+                  toast.success("Withdrawal processed");
+                  setTotpCode("");
+                  setApproveOpen(false);
                 });
               }}
             >
@@ -143,16 +146,20 @@ export function WithdrawalRequestActions({ withdrawalId }: { withdrawalId: strin
               disabled={!reason.trim() || !totpCode.trim() || isPending}
               onClick={() => {
                 startTransition(async () => {
-                  try {
-                    await cancelWithdrawal(withdrawalId, reason, totpCode.trim());
-                    setReason("");
-                    setTotpCode("");
-                    setDeclineOpen(false);
-                  } catch (e) {
-                    toast.error(
-                      e instanceof Error ? e.message : "Failed to decline",
-                    );
+                  // ServerActionResult — branch on result.success.
+                  const result = await cancelWithdrawal(
+                    withdrawalId,
+                    reason,
+                    totpCode.trim(),
+                  );
+                  if (!result.success) {
+                    toast.error(result.error);
+                    return;
                   }
+                  toast.success("Withdrawal declined");
+                  setReason("");
+                  setTotpCode("");
+                  setDeclineOpen(false);
                 });
               }}
             >
@@ -327,9 +334,21 @@ export function ActiveShipmentActions({
                 startTransition(async () => {
                   try {
                     if (reasonAction === "cancel") {
-                      await cancelWithdrawal(withdrawalId, reason, totpCode.trim());
+                      // cancelWithdrawal returns ServerActionResult —
+                      // failWithdrawal still throws (not migrated).
+                      const result = await cancelWithdrawal(
+                        withdrawalId,
+                        reason,
+                        totpCode.trim(),
+                      );
+                      if (!result.success) {
+                        toast.error(result.error);
+                        return;
+                      }
+                      toast.success("Withdrawal cancelled");
                     } else {
                       await failWithdrawal(withdrawalId, reason, totpCode.trim());
+                      toast.success("Withdrawal marked failed");
                     }
                     setReason("");
                     setTotpCode("");

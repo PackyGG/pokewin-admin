@@ -7,20 +7,59 @@ import { requireCapability } from "@/lib/require-capability";
 import { require2FA } from "@/lib/require-2fa";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { backendApiRequest } from "@/lib/backend-api";
+import { ok, fail, type ServerActionResult } from "@/lib/errors/server-action-result";
+import { logError } from "@/lib/errors/logger";
 
-export async function processWithdrawal(withdrawalId: string, totpCode: string) {
+/**
+ * Process a pending withdrawal (pending → processing). For crypto
+ * withdrawals this kicks the Fireblocks transfer; for physical ones
+ * it just flips status so the warehouse picks it up.
+ *
+ * Returns ServerActionResult — callers must check `result.success`.
+ * Capability + TOTP failures surface their error verbatim (verified
+ * business state); unexpected crashes (backend down, DB blip) return
+ * a generic message and log the cause to Vercel.
+ */
+export async function processWithdrawal(
+  withdrawalId: string,
+  totpCode: string,
+): Promise<ServerActionResult<{ withdrawalId: string }>> {
   const db = await getDb();
   const session = await requirePageAccess("/withdrawals");
-  await requireCapability(session, "__can_process_withdrawals", "process withdrawal requests");
+  try {
+    await requireCapability(
+      session,
+      "__can_process_withdrawals",
+      "process withdrawal requests",
+    );
+  } catch (err) {
+    return fail(
+      err instanceof Error ? err.message : "Permission denied",
+      "FORBIDDEN",
+    );
+  }
   // Initiates a real Fireblocks crypto transfer (or marks the physical
   // withdrawal as ready to ship). Money-moving action → TOTP gate.
-  await require2FA(session.userId, totpCode);
+  try {
+    await require2FA(session.userId, totpCode);
+  } catch (err) {
+    return fail(
+      err instanceof Error ? err.message : "2FA verification failed",
+      "TOTP_INVALID",
+    );
+  }
 
   const withdrawal = await db.card_withdrawal_requests.findUnique({
     where: { id: withdrawalId },
   });
-  if (!withdrawal || withdrawal.status !== "pending") {
-    throw new Error("Withdrawal not found or not in pending status");
+  if (!withdrawal) {
+    return fail("Withdrawal not found", "NOT_FOUND");
+  }
+  if (withdrawal.status !== "pending") {
+    return fail(
+      "This withdrawal is no longer pending — refresh and check its current status.",
+      "INVALID_STATE",
+    );
   }
 
   await db.card_withdrawal_requests.update({
@@ -45,7 +84,10 @@ export async function processWithdrawal(withdrawalId: string, totpCode: string) 
         body: { withdrawal_id: withdrawalId },
       });
     } catch (error) {
-      // Revert status back to pending since the transfer failed to initiate
+      // Revert status back to pending since the transfer failed to initiate.
+      // The error itself is logged server-side; the user gets a sanitized
+      // message instead of the raw backend payload (which can include URLs,
+      // tx ids, internal error codes).
       await db.card_withdrawal_requests.update({
         where: { id: withdrawalId },
         data: {
@@ -53,7 +95,15 @@ export async function processWithdrawal(withdrawalId: string, totpCode: string) 
           processing_at: null,
         },
       });
-      throw error;
+      logError(
+        "withdrawals.process",
+        `Fireblocks transfer init failed for ${withdrawalId}`,
+        error,
+      );
+      return fail(
+        "Couldn't initiate the Fireblocks transfer — withdrawal reverted to pending. Check the backend and retry.",
+        "BACKEND_FAILED",
+      );
     }
 
     // Store the Fireblocks transfer ID
@@ -78,6 +128,7 @@ export async function processWithdrawal(withdrawalId: string, totpCode: string) 
 
   revalidatePath("/withdrawals");
   revalidatePath(`/withdrawals/${withdrawalId}`);
+  return ok({ withdrawalId });
 }
 
 export async function shipWithdrawal(
@@ -152,29 +203,71 @@ export async function completeWithdrawal(withdrawalId: string) {
   revalidatePath(`/withdrawals/${withdrawalId}`);
 }
 
+/**
+ * Cancel a pending or processing withdrawal. Refunds the user (balance
+ * + inventory restore via the backend) so this is money-moving and
+ * TOTP-gated. Returns ServerActionResult — callers must check
+ * `result.success`.
+ */
 export async function cancelWithdrawal(
   withdrawalId: string,
   reason: string,
   totpCode: string,
-) {
+): Promise<ServerActionResult<{ withdrawalId: string }>> {
   const db = await getDb();
   const session = await requirePageAccess("/withdrawals");
-  await requireCapability(session, "__can_cancel_withdrawals", "cancel withdrawals");
+  try {
+    await requireCapability(
+      session,
+      "__can_cancel_withdrawals",
+      "cancel withdrawals",
+    );
+  } catch (err) {
+    return fail(
+      err instanceof Error ? err.message : "Permission denied",
+      "FORBIDDEN",
+    );
+  }
   // Cancelling refunds the user (balance + inventory restore via the
   // backend) — money-moving, so TOTP-gated.
-  await require2FA(session.userId, totpCode);
+  try {
+    await require2FA(session.userId, totpCode);
+  } catch (err) {
+    return fail(
+      err instanceof Error ? err.message : "2FA verification failed",
+      "TOTP_INVALID",
+    );
+  }
 
   const withdrawal = await db.card_withdrawal_requests.findUnique({
     where: { id: withdrawalId },
   });
-  if (!withdrawal || !["pending", "processing"].includes(withdrawal.status)) {
-    throw new Error("Withdrawal cannot be cancelled from current status");
+  if (!withdrawal) {
+    return fail("Withdrawal not found", "NOT_FOUND");
+  }
+  if (!["pending", "processing"].includes(withdrawal.status)) {
+    return fail(
+      "This withdrawal can no longer be cancelled — refresh and check its current status.",
+      "INVALID_STATE",
+    );
   }
 
-  await backendApiRequest("/admin/cancel", {
-    method: "POST",
-    body: { withdrawal_id: withdrawalId, reason },
-  });
+  try {
+    await backendApiRequest("/admin/cancel", {
+      method: "POST",
+      body: { withdrawal_id: withdrawalId, reason },
+    });
+  } catch (err) {
+    logError(
+      "withdrawals.cancel",
+      `backend refund call failed for ${withdrawalId}`,
+      err,
+    );
+    return fail(
+      "Couldn't refund the user via the backend — withdrawal NOT cancelled. Check the backend and retry.",
+      "BACKEND_FAILED",
+    );
+  }
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -185,6 +278,7 @@ export async function cancelWithdrawal(
 
   revalidatePath("/withdrawals");
   revalidatePath(`/withdrawals/${withdrawalId}`);
+  return ok({ withdrawalId });
 }
 
 export async function failWithdrawal(

@@ -733,14 +733,15 @@ function BanDialog({
             disabled={pending || !reason.trim()}
             onClick={() => {
               start(async () => {
-                try {
-                  await banUser(userId, reason.trim());
-                  toast.success("Banned");
-                  setReason("");
-                  router.refresh();
-                } catch (e) {
-                  toast.error(e instanceof Error ? e.message : "Failed");
+                // ServerActionResult — banUser returns { success, error? }.
+                const result = await banUser(userId, reason.trim());
+                if (!result.success) {
+                  toast.error(result.error);
+                  return;
                 }
+                toast.success("Banned");
+                setReason("");
+                router.refresh();
               });
             }}
           >

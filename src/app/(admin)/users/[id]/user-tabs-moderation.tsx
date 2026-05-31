@@ -259,15 +259,16 @@ function BanButton({ userId }: { userId: string }) {
       return;
     }
     startTransition(async () => {
-      try {
-        await banUser(userId, reason.trim());
-        toast.success("User banned");
-        setOpen(false);
-        setReason("");
-        router.refresh();
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Ban failed");
+      // ServerActionResult — branch on result.success instead of try/catch.
+      const result = await banUser(userId, reason.trim());
+      if (!result.success) {
+        toast.error(result.error);
+        return;
       }
+      toast.success("User banned");
+      setOpen(false);
+      setReason("");
+      router.refresh();
     });
   }
 
@@ -369,15 +370,16 @@ function LockButton({ userId }: { userId: string }) {
       return;
     }
     startTransition(async () => {
-      try {
-        await lockUser(userId, reason.trim());
-        toast.success("User locked");
-        setOpen(false);
-        setReason("");
-        router.refresh();
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Lock failed");
+      // ServerActionResult — branch on result.success instead of try/catch.
+      const result = await lockUser(userId, reason.trim());
+      if (!result.success) {
+        toast.error(result.error);
+        return;
       }
+      toast.success("User locked");
+      setOpen(false);
+      setReason("");
+      router.refresh();
     });
   }
 

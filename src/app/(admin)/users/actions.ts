@@ -14,6 +14,8 @@ import {
   snapshotToJsonValue,
 } from "@/lib/deleted-users/snapshot";
 import type { Prisma as AdminPrisma } from "@/generated/admin-prisma/client";
+import { ok, fail, type ServerActionResult } from "@/lib/errors/server-action-result";
+import { logError } from "@/lib/errors/logger";
 
 // 7-day soft-delete window for admin_deleted_users snapshots. Mirrored
 // in /users/deleted's purge-on-read scan and the restore action's
@@ -34,10 +36,29 @@ export async function fetchDistinctUserCountries() {
   return getDistinctUserCountries();
 }
 
-export async function banUser(userId: string, reason: string) {
+/**
+ * Ban a user account. Atomically: flip is_banned + capture reason +
+ * tombstone every active session so they're kicked out instantly.
+ * Returns ServerActionResult — callers check `result.success`.
+ */
+export async function banUser(
+  userId: string,
+  reason: string,
+): Promise<ServerActionResult<{ userId: string }>> {
   const db = await getDb();
   const session = await requirePageAccess("/users");
-  await requireCapability(session, "__can_ban_users", "ban users");
+  try {
+    await requireCapability(session, "__can_ban_users", "ban users");
+  } catch (err) {
+    return fail(
+      err instanceof Error ? err.message : "Permission denied",
+      "FORBIDDEN",
+    );
+  }
+
+  if (!reason || !reason.trim()) {
+    return fail("Ban reason is required.", "VALIDATION");
+  }
 
   // `user.banned_by` is a nullable FK to Main-DB `User.id`. Admin
   // identities live in the Admin DB so we resolve via email match;
@@ -45,18 +66,27 @@ export async function banUser(userId: string, reason: string) {
   // remains the source of truth for who actually triggered the ban.
   const issuerMainUserId = await resolveAdminMainUserId(session.userId);
 
-  await db.$transaction([
-    db.user.update({
-      where: { id: userId },
-      data: {
-        is_banned: true,
-        banned_reason: reason,
-        banned_at: new Date(),
-        banned_by: issuerMainUserId,
-      },
-    }),
-    db.session.deleteMany({ where: { userId } }),
-  ]);
+  try {
+    await db.$transaction([
+      db.user.update({
+        where: { id: userId },
+        data: {
+          is_banned: true,
+          banned_reason: reason,
+          banned_at: new Date(),
+          banned_by: issuerMainUserId,
+        },
+      }),
+      db.session.deleteMany({ where: { userId } }),
+    ]);
+  } catch (err) {
+    logError("users.ban", `ban transaction failed for ${userId}`, err);
+    // Prisma P2025 = record not found (user already deleted).
+    if (err instanceof Error && /No record was found/i.test(err.message)) {
+      return fail("User not found.", "NOT_FOUND");
+    }
+    return fail("Couldn't ban this user — please try again.");
+  }
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -68,6 +98,7 @@ export async function banUser(userId: string, reason: string) {
   revalidatePath("/users");
   revalidatePath(`/users/${userId}`);
   revalidatePath("/chat");
+  return ok({ userId });
 }
 
 export async function unbanUser(userId: string) {
@@ -97,27 +128,53 @@ export async function unbanUser(userId: string) {
   revalidatePath(`/users/${userId}`);
 }
 
-export async function lockUser(userId: string, reason: string) {
+/**
+ * Lock a user account (softer than ban — they can still log in but
+ * gambling / withdraw paths are gated). Returns ServerActionResult.
+ */
+export async function lockUser(
+  userId: string,
+  reason: string,
+): Promise<ServerActionResult<{ userId: string }>> {
   const db = await getDb();
   const session = await requirePageAccess("/users");
-  await requireCapability(session, "__can_lock_users", "lock user accounts");
+  try {
+    await requireCapability(session, "__can_lock_users", "lock user accounts");
+  } catch (err) {
+    return fail(
+      err instanceof Error ? err.message : "Permission denied",
+      "FORBIDDEN",
+    );
+  }
+
+  if (!reason || !reason.trim()) {
+    return fail("Lock reason is required.", "VALIDATION");
+  }
 
   // `user.locked_by` is a nullable FK to Main-DB `User.id`. Same
   // resolution as `banUser` — admin → main user via email; null when
   // no match. Audit event is the canonical trail.
   const issuerMainUserId = await resolveAdminMainUserId(session.userId);
 
-  await db.$transaction([
-    db.user.update({
-      where: { id: userId },
-      data: {
-        is_locked: true,
-        locked_reason: reason,
-        locked_at: new Date(),
-        locked_by: issuerMainUserId,
-      },
-    }),
-  ]);
+  try {
+    await db.$transaction([
+      db.user.update({
+        where: { id: userId },
+        data: {
+          is_locked: true,
+          locked_reason: reason,
+          locked_at: new Date(),
+          locked_by: issuerMainUserId,
+        },
+      }),
+    ]);
+  } catch (err) {
+    logError("users.lock", `lock transaction failed for ${userId}`, err);
+    if (err instanceof Error && /No record was found/i.test(err.message)) {
+      return fail("User not found.", "NOT_FOUND");
+    }
+    return fail("Couldn't lock this user — please try again.");
+  }
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -128,6 +185,7 @@ export async function lockUser(userId: string, reason: string) {
 
   revalidatePath("/users");
   revalidatePath(`/users/${userId}`);
+  return ok({ userId });
 }
 
 export async function unlockUser(userId: string) {

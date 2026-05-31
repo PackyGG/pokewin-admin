@@ -43,6 +43,8 @@ export function WithdrawalActionButtons({
   const [totpCode, setTotpCode] = useState("");
   const [processOpen, setProcessOpen] = useState(false);
 
+  // Legacy throw-style helper — used for actions that haven't migrated
+  // to the ServerActionResult contract yet (ship / complete / fail).
   function handleAction(action: () => Promise<void>, label: string) {
     startTransition(async () => {
       try {
@@ -52,6 +54,23 @@ export function WithdrawalActionButtons({
       } catch (e) {
         toast.error(e instanceof Error ? e.message : `Failed to ${label}`);
       }
+    });
+  }
+
+  // New-style helper — for actions that return ServerActionResult.
+  // The action never throws, so the toast branches on result.success.
+  function handleResultAction(
+    action: () => Promise<{ success: true } | { success: false; error: string }>,
+    label: string,
+  ) {
+    startTransition(async () => {
+      const result = await action();
+      if (!result.success) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success(`Withdrawal ${label}`);
+      router.refresh();
     });
   }
 
@@ -94,7 +113,7 @@ export function WithdrawalActionButtons({
               <Button
                 disabled={isPending || !totpCode.trim()}
                 onClick={() => {
-                  handleAction(
+                  handleResultAction(
                     () => processWithdrawal(withdrawalId, totpCode.trim()),
                     "processed",
                   );
@@ -209,7 +228,7 @@ export function WithdrawalActionButtons({
               <AlertDialogAction
                 disabled={isPending || !reason.trim() || !totpCode.trim()}
                 onClick={() => {
-                  handleAction(
+                  handleResultAction(
                     () =>
                       cancelWithdrawal(withdrawalId, reason, totpCode.trim()),
                     "cancelled",

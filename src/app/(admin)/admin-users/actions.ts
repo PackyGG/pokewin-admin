@@ -8,15 +8,34 @@ import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { admin_role } from "@/generated/admin-prisma/client";
 import { require2FA } from "@/lib/require-2fa";
+import { ok, fail, type ServerActionResult } from "@/lib/errors/server-action-result";
+import { logError } from "@/lib/errors/logger";
 
+/**
+ * Create a new admin user with role-inherited allowed_pages. Returns
+ * ServerActionResult — callers must check `result.success`. Permission
+ * + validation failures surface a specific message; unexpected DB
+ * crashes return a generic "couldn't create" message and log to Vercel.
+ */
 export async function createAdminUser(data: {
   email: string;
   username: string;
   password: string;
   role: string;
-}) {
+}): Promise<ServerActionResult<{ id: string }>> {
   const session = await requireAdmin();
-  await requireCapability(session, "__can_create_admin_user", "create admin users");
+  try {
+    await requireCapability(
+      session,
+      "__can_create_admin_user",
+      "create admin users",
+    );
+  } catch (err) {
+    return fail(
+      err instanceof Error ? err.message : "Permission denied",
+      "FORBIDDEN",
+    );
+  }
 
   const passwordHash = await bcrypt.hash(data.password, 12);
 
@@ -57,16 +76,36 @@ export async function createAdminUser(data: {
   // every column the generated client knows about. If a new column is
   // missing from prod (preferences / role_id / profile_*), the insert
   // crashes with P2022 even though the write itself would succeed.
-  await adminDb.admin_users.create({
-    data: {
-      email: data.email,
-      username: data.username,
-      password_hash: passwordHash,
-      role: data.role as admin_role,
-      allowed_pages: allowedPages,
-    },
-    select: { id: true },
-  });
+  let created: { id: string };
+  try {
+    created = await adminDb.admin_users.create({
+      data: {
+        email: data.email,
+        username: data.username,
+        password_hash: passwordHash,
+        role: data.role as admin_role,
+        allowed_pages: allowedPages,
+      },
+      select: { id: true },
+    });
+  } catch (err) {
+    // Most common path: P2002 unique-violation on email / username.
+    // Surface a friendly message; the raw Prisma error goes to logs.
+    logError(
+      "admin-users.create",
+      `failed to create admin user ${data.email}`,
+      err,
+    );
+    if (err instanceof Error && /unique constraint|already exists/i.test(err.message)) {
+      return fail(
+        "An admin with that email or username already exists.",
+        "DUPLICATE",
+      );
+    }
+    return fail(
+      "Couldn't create the admin user — check the inputs and try again.",
+    );
+  }
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -75,6 +114,7 @@ export async function createAdminUser(data: {
   });
 
   revalidatePath("/admin-users");
+  return ok({ id: created.id });
 }
 
 export async function toggleAdminActive(
