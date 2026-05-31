@@ -146,11 +146,11 @@ const NAV_GROUPS: NavGroup[] = [
       // specific sub-ledger via the "Transactions" group below.
       // /map was folded into /analytics as a tab; the standalone link is gone.
       { label: "Users", href: "/users", icon: "Users" },
-      // Deleted-user recovery bin. Visibility follows the same
-      // permission key as the page itself — non-admins only see it
-      // when /users/deleted is in their allowed_pages. Real admins
-      // always see it.
-      { label: "Deleted Users", href: "/users/deleted", icon: "Archive" },
+      // /users/deleted is no longer a sidebar entry — access is via
+      // the "Deleted users" header button on /users itself (gated by
+      // __can_delete_user + /users/deleted page key). Permission key
+      // stays in admin-pages.ts so admins can still grant or revoke
+      // access independently in the role editor.
       // Single entry for the unified "Transactions" page (deposits +
       // withdrawals tabs in one surface). The standalone Withdrawals
       // link was folded in — its old route now redirects here with
