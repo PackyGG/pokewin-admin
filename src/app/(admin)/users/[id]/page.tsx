@@ -28,6 +28,7 @@ import {
   StatPanelSkeleton,
   GridSkeleton,
 } from "@/components/loading-skeletons";
+import { safeQuery } from "@/lib/errors/safe-query";
 
 export const metadata = { title: "User Detail" };
 
@@ -84,29 +85,58 @@ export default async function UserDetailPage({
   // Resolve permissions in parallel: admins skip the permissions
   // fetch entirely (they get all capabilities by definition) so
   // only non-admins trigger the extra round-trip.
-  const [data, permissions, userTags, creatorHistory, riskBreakdown] =
+  // getUserDetail + permissions are the page's primary data — if they
+  // throw, the segment-level error.tsx takes over (the page can't render
+  // without them). The three peripheral queries (tags, history, risk
+  // score) are non-critical hero metadata — wrap them in safeQuery so a
+  // slow admin DB lookup or a heavy fraud-score SQL hiccup doesn't blank
+  // the entire user-detail view. Each falls back to a neutral empty
+  // shape that the downstream rendering already tolerates.
+  const [data, permissions, userTagsResult, creatorHistoryResult, riskResult] =
     await Promise.all([
       getUserDetail(id),
       session.role === "admin" ? Promise.resolve(null) : getUserPermissions(session.userId),
-      // VIP tags (admin-CRM metadata). Single round-trip to adminDb;
-      // joins to admin_users so the panel tooltip can show who set
-      // each tag. Always fetched — the panel renders read-only for
-      // viewers without __can_manage_user_tags.
-      getUserTags(id),
-      // Whether the user was ever promoted to creator (admin audit
-      // trail). Supplemented below by their owned affiliate codes
-      // (creator-only artifact) to also catch main-site-only creators.
-      getUserCreatorHistory(id),
-      // Fraud / trust assessment for the hero badges. Heavy
-      // aggregation but cached in-memory for 60s so moderators
-      // clicking around a user don't re-run it. Kept at page level
-      // because the hero shows Risk N + shared-IP count badges; the
-      // FULL shared-IPs / fingerprints lists are deferred to the
-      // Trust tab segment.
-      computeRiskScore(id),
+      // VIP tags (admin-CRM metadata). Empty array on failure → the
+      // UserTagsPanel renders the empty-state dashed row, no crash.
+      safeQuery(() => getUserTags(id), [], "users.detail.tags"),
+      // Creator history already self-degrades inside the query (its own
+      // try/catch returns the empty shape). safeQuery adds the central
+      // log line on top so the failure surfaces in Vercel logs with the
+      // standard `[error:users.detail.creatorHistory]` prefix.
+      safeQuery(
+        () => getUserCreatorHistory(id),
+        { everCreatorByAudit: false, creatorSince: null },
+        "users.detail.creatorHistory",
+      ),
+      // Fraud / trust assessment for the hero badges. Heaviest query on
+      // the page (cross-table aggregate). Failure → the hero falls back
+      // to the same neutral "low / 0 / no signals" shape the query
+      // itself emits for unknown users, so the risk badge renders
+      // unobtrusively instead of blanking the whole view.
+      safeQuery(
+        () => computeRiskScore(id),
+        {
+          score: 0,
+          tier: "low" as const,
+          signals: [],
+          topReasons: [],
+          suggestions: [],
+          timeline: [],
+          sharedIpCount: 0,
+          sharedFingerprintCount: 0,
+          sharedBannedCount: 0,
+          sharedLockedCount: 0,
+          computedAt: Date.now(),
+          computeDurationMs: 0,
+        },
+        "users.detail.riskScore",
+      ),
     ]);
 
   if (!data) notFound();
+  const userTags = userTagsResult.data;
+  const creatorHistory = creatorHistoryResult.data;
+  const riskBreakdown = riskResult.data;
 
   // "Ever a creator?" = currently creator, OR an audit role-change to
   // creator exists, OR they own affiliate codes (created only for

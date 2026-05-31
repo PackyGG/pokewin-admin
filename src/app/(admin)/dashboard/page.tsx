@@ -22,6 +22,8 @@ import { requirePageAccess } from "@/lib/dal";
 import { formatCurrency } from "@/lib/utils/format";
 import { LoadTimeIndicator } from "./load-time-indicator";
 import { StatCard } from "./stat-card";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 import {
   PnlStatCard,
   GgrStatCard,
@@ -427,9 +429,16 @@ async function DashboardActiveRain() {
  * other section-level analytic instead of trailing the daily charts.
  */
 async function DashboardCharts({ period }: { period: DashboardPeriod }) {
-  const [stats, dailyPnl] = await Promise.all([
+  // getDashboardStats backs the KPI strip + the wager/deposit/ftds/signup
+  // /depositor charts — if it throws, the page-level error.tsx already
+  // handles it (the KPI strip would also be down). getDailyPnl is its
+  // OWN standalone query and historically the most expensive part of the
+  // trend grid — wrap it in safeQuery so a slow / failing P&L scan only
+  // degrades the single P&L chart instead of blanking the whole trends
+  // section.
+  const [stats, pnlResult] = await Promise.all([
     getDashboardStats(period),
-    getDailyPnl(),
+    safeQuery(() => getDailyPnl(), [], "dashboard.dailyPnl"),
   ]);
   return (
     <FadeIn className="space-y-3 sm:space-y-4">
@@ -439,7 +448,15 @@ async function DashboardCharts({ period }: { period: DashboardPeriod }) {
         <FtdsChart data={stats.dailyFtds} />
       </div>
       <div className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <PnlChart data={dailyPnl} />
+        {pnlResult.error ? (
+          <TileErrorFallback
+            label="Daily P&L"
+            hint="The lifetime P&L scan timed out — other charts still rendered. Refresh to retry."
+            size="panel"
+          />
+        ) : (
+          <PnlChart data={pnlResult.data} />
+        )}
         <SignupsChart data={stats.dailySignups} />
         <ActiveDepositorsChart data={stats.dailyActiveDepositors} />
       </div>

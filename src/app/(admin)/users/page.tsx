@@ -3,6 +3,8 @@ import Link from "next/link";
 import { Users, Ban, Archive, UserPlus } from "lucide-react";
 import { getUsers, getUsersListStats } from "@/lib/queries/users";
 import { requirePageAccess } from "@/lib/dal";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { adminDb } from "@/lib/admin-db";
 import { ensureSupportBaseline } from "@/lib/support-baseline";
@@ -73,7 +75,14 @@ export default async function UsersPage({
   // stable across page navigation + search refinements. Caching is
   // handled inside getUsersListStats (60s unstable_cache) so spamming
   // the search box doesn't fan into the DB on every keystroke.
-  const [result, stats] = await Promise.all([
+  //
+  // The KPI strip query is wrapped in safeQuery so a slow / failed
+  // global aggregate doesn't block the table query — admins can still
+  // browse + search users when only the strip is degraded. The table
+  // query itself is the page's primary deliverable, so if it throws
+  // the segment-level error.tsx takes over (intentional — there's
+  // nothing usable to render without the list itself).
+  const [result, statsResult] = await Promise.all([
     getUsers({
       page,
       perPage,
@@ -83,8 +92,9 @@ export default async function UsersPage({
       sortBy: params.sortBy,
       sortOrder: params.sortOrder,
     }),
-    getUsersListStats(),
+    safeQuery(() => getUsersListStats(), null, "users.listStats"),
   ]);
+  const stats = statsResult.data;
 
   return (
     <div className="space-y-6">
@@ -115,27 +125,37 @@ export default async function UsersPage({
           (Net Holdings / Deposited) were removed — they shifted on every
           page click and were easy to misread as platform totals.
           Signups (24h) replaces them so the strip surfaces a real
-          velocity metric instead. */}
-      <div className="grid grid-cols-3 gap-3">
-        <KpiTile
-          label="Total Users"
-          value={formatNumber(stats.totalUsers)}
-          icon={Users}
-          accent="blue"
+          velocity metric instead.
+          When the stats query failed (safeQuery returned null), the
+          entire strip degrades to a single TileErrorFallback row instead
+          of crashing the page. The table below is unaffected. */}
+      {stats ? (
+        <div className="grid grid-cols-3 gap-3">
+          <KpiTile
+            label="Total Users"
+            value={formatNumber(stats.totalUsers)}
+            icon={Users}
+            accent="blue"
+          />
+          <KpiTile
+            label="Banned"
+            value={formatNumber(stats.totalBanned)}
+            icon={Ban}
+            accent="rose"
+          />
+          <KpiTile
+            label="Signups (24h)"
+            value={formatNumber(stats.signups24h)}
+            icon={UserPlus}
+            accent="emerald"
+          />
+        </div>
+      ) : (
+        <TileErrorFallback
+          label="User stats"
+          hint="The global counts query timed out. The user list below is unaffected — refresh to retry."
         />
-        <KpiTile
-          label="Banned"
-          value={formatNumber(stats.totalBanned)}
-          icon={Ban}
-          accent="rose"
-        />
-        <KpiTile
-          label="Signups (24h)"
-          value={formatNumber(stats.signups24h)}
-          icon={UserPlus}
-          accent="emerald"
-        />
-      </div>
+      )}
 
       <div className="space-y-3">
         <SectionHeading icon={Users} title="All Users" />
