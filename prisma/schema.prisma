@@ -276,6 +276,8 @@ model cards {
   price        Decimal      @db.Decimal(20, 2)
   price_raw    Decimal      @db.Decimal(20, 2)
   hp           Int?         @default(0)
+  cost         Int?
+  power        Int?
   rarity       String?
   artist       String?
   card_number  String?
