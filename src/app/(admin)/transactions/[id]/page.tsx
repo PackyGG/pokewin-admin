@@ -339,7 +339,12 @@ export default async function TransactionDetailPage({
                   <div className="flex items-center gap-2">
                     <Boxes className="size-4 text-blue-500" />
                     <h3 className="text-sm font-medium">
-                      {data.gameSession.gameType === "pack" ? "Pack Opening" : "Battle"} Details
+                      {data.gameSession.gameType === "pack"
+                        ? "Pack Opening"
+                        : data.gameSession.gameType === "upgrader"
+                          ? "Upgrader"
+                          : "Battle"}{" "}
+                      Details
                     </h3>
                   </div>
                   {data.gameSession.packs.length > 0 && (
