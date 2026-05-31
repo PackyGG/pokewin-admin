@@ -7,7 +7,6 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import type { WithdrawalListItem } from "@/lib/queries/withdrawals";
-import { WithdrawalRowActions } from "./row-actions";
 
 // Initials fallback for users without a profile picture — mirrors the
 // pattern used in src/app/(admin)/transactions/deposits/columns.tsx.
@@ -17,15 +16,17 @@ function initialsFor(username: string | null, userId: string): string {
 }
 
 /**
- * Unified column set for the single-page Withdrawals view. Replaces the
- * old tab-specific column arrays (requestColumns, shippingRequestColumns,
- * finishedColumns, activeShipmentColumns) — one table now shows every
- * withdrawal regardless of status, matching the Deposits page layout.
+ * Unified column set for the Withdrawals tab on /transactions/deposits.
  *
- * Per-row actions adapt to the withdrawal status and method via
- * WithdrawalRowActions. The Handled By / Tracking / Reason columns only
- * render when the row actually has that data, so they stay informational
- * without adding visual noise to pending rows.
+ * The Handled By / Tracking / Actions columns were dropped per admin
+ * request — they bloated the row without adding signal at the list
+ * level. Handled By + Tracking are still surfaced on the detail page;
+ * Actions are reachable by clicking through to the detail page.
+ *
+ * The Crypto column replaced them: shows the crypto asset code (e.g.
+ * BTC, ETH_TEST5) on crypto-method rows so the chain is visible at a
+ * glance without opening the detail page. Physical-method rows render
+ * "—" so the column stays clean.
  */
 export const columns: ColumnDef<WithdrawalListItem, unknown>[] = [
   {
@@ -68,6 +69,22 @@ export const columns: ColumnDef<WithdrawalListItem, unknown>[] = [
     cell: ({ row }) => <Badge variant="outline">{row.original.method}</Badge>,
   },
   {
+    // Crypto asset code surfaced inline so the chain is visible at the
+    // list level. Renders the raw asset token (BTC, ETH_TEST5, USDC,
+    // …) as a compact chip; physical-method rows have a null asset and
+    // render an em-dash so the column stays aligned.
+    id: "cryptoAsset",
+    header: "Crypto",
+    cell: ({ row }) =>
+      row.original.cryptoAsset ? (
+        <Badge variant="outline" className="font-mono text-[10px]">
+          {row.original.cryptoAsset}
+        </Badge>
+      ) : (
+        <span className="text-muted-foreground">—</span>
+      ),
+  },
+  {
     accessorKey: "status",
     header: "Status",
     cell: ({ row }) => (
@@ -97,44 +114,8 @@ export const columns: ColumnDef<WithdrawalListItem, unknown>[] = [
     ),
   },
   {
-    id: "handledBy",
-    header: "Handled By",
-    cell: ({ row }) => {
-      const by = row.original.processedBy || row.original.shippedBy;
-      return by ? (
-        <span className="text-xs">{by}</span>
-      ) : (
-        <span className="text-muted-foreground">—</span>
-      );
-    },
-  },
-  {
-    id: "tracking",
-    header: "Tracking",
-    cell: ({ row }) =>
-      row.original.trackingNumber ? (
-        <span className="font-mono text-xs">
-          {row.original.trackingNumber}
-          {row.original.carrier ? ` · ${row.original.carrier}` : ""}
-        </span>
-      ) : (
-        <span className="text-muted-foreground">—</span>
-      ),
-  },
-  {
     accessorKey: "requestedAt",
     header: "Requested",
     cell: ({ row }) => formatRelative(row.original.requestedAt),
-  },
-  {
-    id: "actions",
-    header: "Actions",
-    cell: ({ row }) => (
-      <WithdrawalRowActions
-        withdrawalId={row.original.id}
-        status={row.original.status}
-        method={row.original.method}
-      />
-    ),
   },
 ];
