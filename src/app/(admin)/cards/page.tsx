@@ -24,7 +24,12 @@ import { PaginationSkeleton } from "@/components/loading-skeletons";
 import { CreateCardButton } from "./create-card-button";
 import { PriceFilter } from "./price-filter";
 import { SetFilter } from "./set-filter";
-import { PageHero, PageHeroIdentity, KpiTile } from "@/components/modern-panels";
+import {
+  PageHero,
+  PageHeroIdentity,
+  KpiTile,
+  SectionHeading,
+} from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 
@@ -197,7 +202,8 @@ export default async function CardsPage({
       </div>
 
       {/* ── TOOLBAR + GRID ────────────────────────────────────────── */}
-      <div className="space-y-4">
+      <div className="space-y-3">
+        <SectionHeading icon={Layers} title="Catalog" />
         <Suspense fallback={<Skeleton className="h-10 w-full" />}>
           <DataTableToolbar
             searchPlaceholder="Search by name..."
