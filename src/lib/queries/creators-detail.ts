@@ -204,6 +204,9 @@ export async function getCreatorDetail(userId: string) {
         ftd_count: string;
         active_7d: string;
         active_24h: string;
+        pack_wager: string;
+        battle_wager: string;
+        upgrader_wager: string;
       }[]
     >(
       `SELECT
@@ -224,9 +227,21 @@ export async function getCreatorDetail(userId: string) {
          COUNT(DISTINCT acu.referred_user_id) FILTER (
            WHERE acu.usage_type IN ('deposit', 'wager')
              AND acu.created_at >= NOW() - INTERVAL '1 day'
-         )::text AS active_24h
+         )::text AS active_24h,
+         -- Per-game-type slice of the wager_volume above. Sourced via
+         -- a LEFT JOIN onto game_sessions on the wager rows
+         -- (game_session_id) so deposit rows (NULL game_session_id)
+         -- drop out naturally — they only contribute to wager_volume
+         -- via the same wager_amount_usd column being 0. The three
+         -- SUM-CASE values therefore add up to wager_volume exactly,
+         -- which lets the UI render them as a verifiable breakdown
+         -- under the Wager Volume number.
+         COALESCE(SUM(CASE WHEN gs.game_type = 'pack'     THEN acu.wager_amount_usd::numeric ELSE 0 END), 0)::text AS pack_wager,
+         COALESCE(SUM(CASE WHEN gs.game_type = 'battle'   THEN acu.wager_amount_usd::numeric ELSE 0 END), 0)::text AS battle_wager,
+         COALESCE(SUM(CASE WHEN gs.game_type = 'upgrader' THEN acu.wager_amount_usd::numeric ELSE 0 END), 0)::text AS upgrader_wager
        FROM affiliate_code_usages acu
        JOIN "user" u ON u.id = acu.referred_user_id
+       LEFT JOIN game_sessions gs ON gs.id = acu.game_session_id
        WHERE acu.affiliate_user_id = $1
          AND u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}`,
       userId,
@@ -459,6 +474,15 @@ export async function getCreatorDetail(userId: string) {
     // running total of every usage including staff/internal accounts,
     // which mis-states what real customer activity looks like.
     totalWagerVolumeUsd: toNumber(realAffiliateAgg[0]?.wager_volume ?? "0"),
+    // Per-game-type breakdown of `totalWagerVolumeUsd` — sums to it
+    // exactly. The FinancialsCard renders these as indented sub-rows
+    // beneath "Wager Volume" so the operator can see where the
+    // creator's referred users actually played.
+    wagerBreakdown: {
+      packs: toNumber(realAffiliateAgg[0]?.pack_wager ?? "0"),
+      battles: toNumber(realAffiliateAgg[0]?.battle_wager ?? "0"),
+      upgrader: toNumber(realAffiliateAgg[0]?.upgrader_wager ?? "0"),
+    },
     totalEarnedUsd: toNumber(realAffiliateAgg[0]?.commission ?? "0"),
     // FTDs (all-time, this creator's code) + active referrals in
     // multiple windows — fed into KPI tiles next to Signups. All

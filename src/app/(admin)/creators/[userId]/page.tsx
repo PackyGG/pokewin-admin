@@ -360,6 +360,12 @@ export default async function CreatorDetailPage({
           />
           <FinancialsCard
             wagerVolumeUsd={profile.totalWagerVolumeUsd}
+            // Per-game-type breakdown of the wager volume above —
+            // populated from affiliate_code_usages joined to
+            // game_sessions on this creator's referrals. Sums to
+            // wagerVolumeUsd exactly, so it reads as a verifiable
+            // "where did the wager come from" sub-strip.
+            wagerBreakdown={profile.wagerBreakdown}
             earnedUsd={profile.totalEarnedUsd}
             availableUsd={profile.availableUsd}
             paidOutUsd={profile.totalPaidOutUsd}
