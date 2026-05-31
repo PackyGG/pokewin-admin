@@ -68,17 +68,25 @@ function buildSetTabs(sets: { id: string; name: string }[]): CardSetTab[] {
 
 /**
  * Resolve the `?set=` URL param (slug like "pokemon"/"onepiece" OR a
- * raw UUID) to an actual setId from the tabs list. Returns `null` if
- * the param is missing OR doesn't match a known tab — the page treats
- * a stray/unknown value as "no tab active" rather than crashing.
+ * raw UUID) to an actual setId from the tabs list.
+ *
+ * Falls back to the Pokemon tab when the param is missing or doesn't
+ * match a known tab — there is no "All Sets" view anymore. If neither
+ * Pokemon nor any other tab exists (empty catalog) returns `null` so
+ * the page handles the no-sets case cleanly.
  */
 function resolveSetFromParam(
   raw: string | undefined,
   tabs: CardSetTab[],
 ): { setId: string; label: string } | null {
-  if (!raw) return null;
-  const tab = tabs.find((t) => t.slug === raw || t.id === raw);
-  return tab ? { setId: tab.id, label: tab.label } : null;
+  if (tabs.length === 0) return null;
+  if (raw) {
+    const tab = tabs.find((t) => t.slug === raw || t.id === raw);
+    if (tab) return { setId: tab.id, label: tab.label };
+  }
+  // Default to Pokemon when present; otherwise the first tab in the list.
+  const fallback = tabs.find((t) => t.slug === "pokemon") ?? tabs[0];
+  return { setId: fallback.id, label: fallback.label };
 }
 
 export const metadata = { title: "Cards" };

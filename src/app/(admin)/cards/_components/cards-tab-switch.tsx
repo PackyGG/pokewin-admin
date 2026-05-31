@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type CardSetTab = {
@@ -26,8 +25,9 @@ export type CardSetTab = {
  *
  * Tabs are built server-side from the existing sets in the catalog,
  * with Pokemon + OnePiece pinned to the front (when they exist) and
- * the rest sorted alphabetically. The "All" tab is implicit — it's
- * the absence of a `?set=` param, surfaced as the leading pill.
+ * the rest sorted alphabetically. There is no implicit "All" pill —
+ * the catalog is always scoped to one of the well-known sets; missing
+ * or unknown `?set=` params fall through to Pokemon server-side.
  *
  * Switching tabs drops `search` / `rarity` / `setId` / `minPrice` /
  * `maxPrice` / `page` deliberately — the two pools surface different
@@ -46,18 +46,16 @@ export function CardsTabSwitch({ tabs }: { tabs: CardSetTab[] }) {
       // past two sets — the pill row stays on one line, scrolls otherwise.
       className="inline-flex max-w-full overflow-x-auto rounded-lg border border-border/60 bg-muted/30 p-0.5"
     >
-      {/* Leading "All" pill — no `?set` param. */}
-      <TabPill
-        href="/cards"
-        active={!current}
-        label="All Sets"
-        icon={<Layers className="size-3.5" />}
-      />
       {tabs.map((tab) => {
         // Tab is active when the URL `?set=` value matches either the
         // set's slug OR its UUID. The slug form is the nicer URL we
         // prefer to emit; both resolve to the same set server-side.
-        const active = current === tab.slug || current === tab.id;
+        // When `?set=` is absent the server falls through to Pokemon —
+        // mirror that here so the Pokemon pill reads as active by default.
+        const active =
+          current === tab.slug ||
+          current === tab.id ||
+          (!current && tab.slug === "pokemon");
         return (
           <TabPill
             key={tab.id}
