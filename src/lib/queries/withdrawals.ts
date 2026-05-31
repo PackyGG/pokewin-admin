@@ -28,6 +28,12 @@ export type WithdrawalListItem = {
   carrier: string | null;
   failureReason: string | null;
   shippingAddressSnapshot: unknown;
+  /**
+   * Crypto asset code (e.g. "BTC", "ETH_TEST5") for crypto withdrawals,
+   * null for physical ones. Surfaced on the list view so admins can see
+   * which chain a withdrawal targets without opening the detail page.
+   */
+  cryptoAsset: string | null;
 };
 
 export async function getWithdrawals(params: {
@@ -118,6 +124,7 @@ export async function getWithdrawals(params: {
       carrier: w.carrier,
       failureReason: w.failure_reason,
       shippingAddressSnapshot: w.shipping_address_snapshot,
+      cryptoAsset: w.crypto_asset,
     })),
     total,
     page,

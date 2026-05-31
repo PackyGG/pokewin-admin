@@ -20,7 +20,6 @@ import { Badge } from "@/components/ui/badge";
 import { STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import type { WithdrawalListItem } from "@/lib/queries/withdrawals";
-import { WithdrawalRowActions } from "./row-actions";
 import { EmptyState } from "@/components/empty-state";
 import { ArrowUpFromLine } from "lucide-react";
 
@@ -68,6 +67,15 @@ function WithdrawalMobileCard({ wd }: { wd: WithdrawalListItem }) {
             <Badge variant="outline" className="h-3.5 px-1 text-[9px] capitalize">
               {wd.method}
             </Badge>
+            {/* Crypto asset chip alongside the method so the chain is
+                visible at a glance on phone — same pattern as the
+                desktop "Crypto" column. Physical-method rows have a
+                null asset and the chip is just omitted. */}
+            {wd.cryptoAsset && (
+              <Badge variant="outline" className="h-3.5 px-1 font-mono text-[9px]">
+                {wd.cryptoAsset}
+              </Badge>
+            )}
             <span>{wd.itemCount} item{wd.itemCount !== 1 ? "s" : ""}</span>
             <span>•</span>
             <span>{formatRelative(wd.requestedAt)}</span>
@@ -79,21 +87,8 @@ function WithdrawalMobileCard({ wd }: { wd: WithdrawalListItem }) {
           <div className="text-sm font-medium tabular-nums text-rose-600 dark:text-rose-400">
             {formatCurrency(wd.totalValueUsd)}
           </div>
-          {wd.trackingNumber && (
-            <div className="text-[10px] text-muted-foreground font-mono truncate max-w-[100px]">
-              {wd.trackingNumber}
-            </div>
-          )}
         </div>
       </button>
-      {/* Actions — only render if there's something actionable */}
-      <div className="flex justify-end px-3 pb-2">
-        <WithdrawalRowActions
-          withdrawalId={wd.id}
-          status={wd.status}
-          method={wd.method}
-        />
-      </div>
     </div>
   );
 }
