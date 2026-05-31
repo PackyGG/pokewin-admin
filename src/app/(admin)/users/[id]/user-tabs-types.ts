@@ -180,7 +180,14 @@ export type UserDetail = {
     received: { count: number; totalUsd: number; recent: TipEntry[] };
     sent: { count: number; totalUsd: number; recent: TipEntry[] };
     rainPrizes: { count: number; totalUsd: number; recent: TipEntry[] };
-    leaderboardWins: { count: number; totalUsd: number; recent: TipEntry[] };
+    // Leaderboard wins carry the source leaderboard (id + title +
+    // 1-based rank), so the UI can label which leaderboard each win
+    // came from and deep-link to /creators/leaderboards/[id].
+    leaderboardWins: {
+      count: number;
+      totalUsd: number;
+      recent: LeaderboardWinEntry[];
+    };
   };
   sessionRole: string;
   // True when the user isn't a creator now but was one before (audit
@@ -209,6 +216,21 @@ export type TipEntry = {
   counterpartyId: string | null;
   counterpartyName: string | null;
   createdAt: string;
+};
+
+/**
+ * Recent affiliate-leaderboard win — extends the TipEntry shape with
+ * the source leaderboard reference so the row can link out and
+ * surface "from <title>" below the amount. Any of leaderboardId /
+ * leaderboardTitle / position may be null if the prize ledger row's
+ * metadata didn't carry that piece (older rows / hard-deleted
+ * leaderboards) — the UI falls back to the generic "Leaderboard win"
+ * label in that case.
+ */
+export type LeaderboardWinEntry = TipEntry & {
+  leaderboardId: string | null;
+  leaderboardTitle: string | null;
+  position: number | null;
 };
 
 export type Transaction = {
