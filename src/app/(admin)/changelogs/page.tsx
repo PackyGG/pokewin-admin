@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   CalendarDays,
   GitCommit,
+  Info,
   List,
   Server,
   ScrollText,
@@ -200,6 +201,23 @@ export default async function ChangelogsPage() {
           }
           icon={Sparkles}
           accent="emerald"
+          // Auto-generated commit cards are baked into
+          // `src/lib/changelog/recent-pushes.json` at BUILD time by
+          // `scripts/generate-changelog.mjs` (wired as `prebuild`). A
+          // commit pushed after the last Vercel deploy won't appear
+          // here until the next deploy refreshes the JSON. The Info
+          // chip in the action slot makes that caveat discoverable —
+          // same native `title=` pattern as the "auto" pill on each
+          // commit card below.
+          action={
+            <span
+              className="inline-flex size-5 items-center justify-center rounded-md border border-border/60 bg-muted/30 text-muted-foreground"
+              title="Includes admin-published entries instantly, plus auto-generated commit entries captured at the last Vercel deploy. Commits pushed since then appear after the next build."
+              aria-label="Last published includes git commits captured at last deploy"
+            >
+              <Info className="size-3" />
+            </span>
+          }
         />
       </div>
 
