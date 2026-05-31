@@ -863,14 +863,6 @@ export async function getTransactionDetail(id: string) {
               })
           : Promise.resolve([] as { name: string; imageUrl: string | null; priceUsd: number; quantity: number }[]);
 
-      const cardsPromise =
-        cardIds.length > 0
-          ? db.cards.findMany({
-              where: { id: { in: cardIds } },
-              select: { id: true, name: true, image_url: true, rarity: true, price: true },
-            })
-          : Promise.resolve([] as Array<{ id: string; name: string; image_url: string | null; rarity: string | null; price: unknown }>);
-
       const relatedTxsPromise = db.ledger_transactions.findMany({
         where: { game_session_id: tx.game_session_id! },
         orderBy: { created_at: "asc" },
@@ -886,20 +878,131 @@ export async function getTransactionDetail(id: string) {
         select: { value: true },
       });
 
-      const [packsResolved, cards, relatedTxs, sessionVouchers] = await Promise.all([
+      // Upgrader-only data path. Pack and battle sessions get
+      // `provably_fair_results.user_inventory` populated by the
+      // backend, so the PF→inventory chain above already carries the
+      // won card + value. Upgrader sessions don't reliably emit that
+      // link — the service credits wins straight to the user's
+      // balance and writes the inventory row directly with
+      // source_type='upgrader', so reading off PF alone underreads
+      // wonValue to $0 and misses the card entirely (the symptom on
+      // the popup: "win" badge with `Won = —` and no card chip).
+      //
+      // We fix that here by:
+      //   1. Pulling the canonical `won_amount` straight off
+      //      `upgrader_games`.
+      //   2. Finding the won card via `user_inventory` with
+      //      source_type='upgrader' and source_id matching either
+      //      game_sessions.id or upgrader_games.id (backend convention
+      //      is uncertain, so we accept either defensively).
+      // Wrapped in a single conditional so non-upgrader sessions skip
+      // both queries entirely.
+      const isUpgrader =
+        session.game_type === "upgrader" && !!session.game_id;
+      const upgraderWonPromise = isUpgrader
+        ? db.$queryRaw<{ won_amount: string }[]>`
+            SELECT won_amount::text AS won_amount
+            FROM upgrader_games
+            WHERE id = ${session.game_id}::uuid
+          `
+        : Promise.resolve([] as { won_amount: string }[]);
+      const upgraderInventoryPromise = isUpgrader
+        ? db.user_inventory.findMany({
+            where: {
+              user_id: tx.user_id,
+              source_type: "upgrader",
+              // Backend convention isn't documented, so accept either
+              // the game_sessions.id (consistent with pack/battle) or
+              // the upgrader_games.id (game_sessions.game_id). The
+              // narrow `in` clause makes either lookup an index hit.
+              // tx.game_session_id == game_sessions.id (the row we just
+              // selected) so we read it off tx to avoid a redundant
+              // `select: { id: true }` on the session query.
+              source_id: { in: [tx.game_session_id!, session.game_id!] },
+            },
+            select: {
+              id: true,
+              card_id: true,
+              value_at_obtained: true,
+            },
+            orderBy: { obtained_at: "asc" },
+          })
+        : Promise.resolve(
+            [] as Array<{
+              id: string;
+              card_id: string;
+              value_at_obtained: Prisma.Decimal;
+            }>,
+          );
+
+      // Wave 2 — packs / related / vouchers / upgrader queries run in
+      // parallel. Cards moves into wave 3 below because we don't know
+      // the full set of card IDs (PF-linked + upgrader-inventory
+      // linked) until upgraderInventory resolves.
+      const [
+        packsResolved,
+        relatedTxs,
+        sessionVouchers,
+        upgraderWonRows,
+        upgraderInventoryItems,
+      ] = await Promise.all([
         packsPromise,
-        cardsPromise,
         relatedTxsPromise,
         vouchersPromise,
+        upgraderWonPromise,
+        upgraderInventoryPromise,
       ]);
       packs = packsResolved;
+
+      // Wave 3 — one cards fetch covering every id either source
+      // produced. De-duped so a card that happens to appear in both
+      // (defensive — shouldn't happen) only fires once.
+      const allCardIds = Array.from(
+        new Set([
+          ...cardIds,
+          ...upgraderInventoryItems.map((i) => i.card_id),
+        ]),
+      );
+      const cards =
+        allCardIds.length > 0
+          ? await db.cards.findMany({
+              where: { id: { in: allCardIds } },
+              select: { id: true, name: true, image_url: true, rarity: true, price: true },
+            })
+          : ([] as Array<{
+              id: string;
+              name: string;
+              image_url: string | null;
+              rarity: string | null;
+              price: unknown;
+            }>);
 
       const cardsMap = new Map(cards.map((c) => [c.id, c]));
 
       const betAmount = toNumber(session.bet_amount);
-      const cardsValue = session.provably_fair_results
-        .filter((pf) => pf.user_inventory?.card_id && cardsMap.has(pf.user_inventory.card_id))
-        .reduce((sum, pf) => sum + toNumber(pf.user_inventory!.value_at_obtained), 0);
+      // Canonical upgrader payout — overrides the PF-derived value.
+      // Null when no row matched (defensive); pack/battle path keeps
+      // the original cardsValue derivation.
+      const upgraderWonAmount =
+        upgraderWonRows[0]?.won_amount != null
+          ? toNumber(upgraderWonRows[0].won_amount)
+          : null;
+      // For upgrader, cardsValue IS the upgrader_games.won_amount —
+      // sum of items the user actually took home. For pack/battle,
+      // keep the PF-derived cardsValue.
+      const cardsValue =
+        upgraderWonAmount != null
+          ? upgraderWonAmount
+          : session.provably_fair_results
+              .filter(
+                (pf) =>
+                  pf.user_inventory?.card_id &&
+                  cardsMap.has(pf.user_inventory.card_id),
+              )
+              .reduce(
+                (sum, pf) => sum + toNumber(pf.user_inventory!.value_at_obtained),
+                0,
+              );
       const voucherValue = sessionVouchers.reduce(
         (sum, v) => sum + toNumber(v.value),
         0,
@@ -908,6 +1011,42 @@ export async function getTransactionDetail(id: string) {
       const itemsWon = cardsValue + voucherValue;
       const housePnl = betAmount - itemsWon;
       const houseEdge = betAmount > 0 ? (housePnl / betAmount) * 100 : null;
+
+      // cardsObtained = the cards the user took home.
+      //   • Pack / battle → derive from PF.user_inventory (the
+      //     existing reliable chain).
+      //   • Upgrader      → derive from the direct user_inventory
+      //     query above, since PF.user_inventory may be empty.
+      const cardsObtained =
+        upgraderInventoryItems.length > 0
+          ? upgraderInventoryItems
+              .filter((inv) => cardsMap.has(inv.card_id))
+              .map((inv) => {
+                const card = cardsMap.get(inv.card_id)!;
+                return {
+                  name: card.name,
+                  imageUrl: card.image_url,
+                  rarity: card.rarity,
+                  valueAtObtained: toNumber(inv.value_at_obtained),
+                  currentPriceUsd: toNumber(card.price),
+                };
+              })
+          : session.provably_fair_results
+              .filter(
+                (pf) =>
+                  pf.user_inventory?.card_id &&
+                  cardsMap.has(pf.user_inventory.card_id),
+              )
+              .map((pf) => {
+                const card = cardsMap.get(pf.user_inventory!.card_id)!;
+                return {
+                  name: card.name,
+                  imageUrl: card.image_url,
+                  rarity: card.rarity,
+                  valueAtObtained: toNumber(pf.user_inventory!.value_at_obtained),
+                  currentPriceUsd: toNumber(card.price),
+                };
+              });
 
       gameSession = {
         gameType: session.game_type,
@@ -918,18 +1057,7 @@ export async function getTransactionDetail(id: string) {
         itemsWon,
         housePnl,
         packs,
-        cardsObtained: session.provably_fair_results
-          .filter((pf) => pf.user_inventory?.card_id && cardsMap.has(pf.user_inventory.card_id))
-          .map((pf) => {
-            const card = cardsMap.get(pf.user_inventory!.card_id)!;
-            return {
-              name: card.name,
-              imageUrl: card.image_url,
-              rarity: card.rarity,
-              valueAtObtained: toNumber(pf.user_inventory!.value_at_obtained),
-              currentPriceUsd: toNumber(card.price),
-            };
-          }),
+        cardsObtained,
         relatedTransactions: relatedTxs.map((rt) => ({
           id: rt.id,
           type: rt.type,
@@ -942,10 +1070,29 @@ export async function getTransactionDetail(id: string) {
         // battles it's one row per draw inside the user's session.
         // Card data is joined where the PF row links to an inventory
         // item (the "ticket → card" pairing admins want on wins).
-        pfResults: session.provably_fair_results.map((pf) => {
-          const card = pf.user_inventory?.card_id
-            ? cardsMap.get(pf.user_inventory.card_id) ?? null
+        //
+        // For upgrader the PF→inventory FK isn't reliably written, so
+        // we fall back to pairing each PF roll with its same-index
+        // entry from the direct upgrader user_inventory query above
+        // (both are ordered by cursor / obtained_at ASC, so a roll's
+        // card lines up positionally). One spin → one item is the
+        // typical upgrader shape; the pairing degrades gracefully when
+        // arrays differ in length.
+        pfResults: session.provably_fair_results.map((pf, idx) => {
+          // 1. Preferred: the FK on the PF row.
+          let cardId: string | null = pf.user_inventory?.card_id ?? null;
+          let valueAtObtained: number | null = pf.user_inventory
+            ? toNumber(pf.user_inventory.value_at_obtained)
             : null;
+          // 2. Fallback for upgrader: same-index entry from the
+          //    direct user_inventory lookup.
+          if (!cardId && upgraderInventoryItems[idx]) {
+            cardId = upgraderInventoryItems[idx].card_id;
+            valueAtObtained = toNumber(
+              upgraderInventoryItems[idx].value_at_obtained,
+            );
+          }
+          const card = cardId ? cardsMap.get(cardId) ?? null : null;
           return {
             id: pf.id,
             clientSeed: pf.client_seed,
@@ -956,16 +1103,15 @@ export async function getTransactionDetail(id: string) {
             ticket: pf.ticket,
             resultHash: pf.result_hash,
             resultMetadata: pf.result_metadata,
-            card: card
-              ? {
-                  name: card.name,
-                  imageUrl: card.image_url,
-                  rarity: card.rarity,
-                  valueAtObtained: toNumber(
-                    pf.user_inventory!.value_at_obtained,
-                  ),
-                }
-              : null,
+            card:
+              card && valueAtObtained != null
+                ? {
+                    name: card.name,
+                    imageUrl: card.image_url,
+                    rarity: card.rarity,
+                    valueAtObtained,
+                  }
+                : null,
           };
         }),
       };
