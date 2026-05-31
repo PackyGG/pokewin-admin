@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
@@ -235,34 +236,49 @@ export type CardsStats = {
  * counts/aggregates in parallel and keeps the return shape tiny so the
  * Server Component can pass it to the Client grid without bloating the
  * RSC payload.
+ *
+ * Wrapped in `unstable_cache` (60s revalidate) so admins spamming the
+ * search box / pagination don't fan four aggregate queries into the DB on
+ * every keystroke. Mirrors getUsersListStats() on /users. The catalog
+ * mutates rarely (manual card creation / set edits); 60s of lag in the
+ * KPI strip is fine. Within a single request unstable_cache also
+ * deduplicates so a Suspense fan-out only runs the query once.
  */
+const cachedCardsStats = unstable_cache(
+  async (): Promise<CardsStats> => {
+    const db = await getDb();
+    const [total, totalSets, priceAgg, rarityGroups] = await Promise.all([
+      db.cards.count(),
+      db.sets.count(),
+      db.cards.aggregate({
+        _avg: { price: true },
+        _max: { price: true },
+      }),
+      db.cards.groupBy({
+        by: ["rarity"],
+        _count: { _all: true },
+      }),
+    ]);
+
+    const byRarity = rarityGroups
+      .map((g) => ({
+        rarity: g.rarity ?? "Unknown",
+        count: g._count._all,
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    return {
+      total,
+      totalSets,
+      avgPriceUsd: toNumber(priceAgg._avg.price),
+      maxPriceUsd: toNumber(priceAgg._max.price),
+      byRarity,
+    };
+  },
+  ["cards-list-stats-v1"],
+  { revalidate: 60, tags: ["cards-list-stats"] },
+);
+
 export async function getCardsStats(): Promise<CardsStats> {
-  const db = await getDb();
-  const [total, totalSets, priceAgg, rarityGroups] = await Promise.all([
-    db.cards.count(),
-    db.sets.count(),
-    db.cards.aggregate({
-      _avg: { price: true },
-      _max: { price: true },
-    }),
-    db.cards.groupBy({
-      by: ["rarity"],
-      _count: { _all: true },
-    }),
-  ]);
-
-  const byRarity = rarityGroups
-    .map((g) => ({
-      rarity: g.rarity ?? "Unknown",
-      count: g._count._all,
-    }))
-    .sort((a, b) => b.count - a.count);
-
-  return {
-    total,
-    totalSets,
-    avgPriceUsd: toNumber(priceAgg._avg.price),
-    maxPriceUsd: toNumber(priceAgg._max.price),
-    byRarity,
-  };
+  return cachedCardsStats();
 }
