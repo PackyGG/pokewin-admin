@@ -245,17 +245,25 @@ export type CardsStats = {
  * deduplicates so a Suspense fan-out only runs the query once.
  */
 const cachedCardsStats = unstable_cache(
-  async (): Promise<CardsStats> => {
+  async (setId?: string): Promise<CardsStats> => {
     const db = await getDb();
+    // When `setId` is provided, narrow every aggregate to that set so the
+    // KPI strip + total count reflect the active per-set tab on /cards.
+    // `totalSets` keeps the catalog-wide value either way — it's a meta
+    // figure ("how many sets exist") that doesn't change when the operator
+    // is browsing a single set.
+    const where = setId ? { set_id: setId } : undefined;
     const [total, totalSets, priceAgg, rarityGroups] = await Promise.all([
-      db.cards.count(),
+      db.cards.count({ where }),
       db.sets.count(),
       db.cards.aggregate({
+        where,
         _avg: { price: true },
         _max: { price: true },
       }),
       db.cards.groupBy({
         by: ["rarity"],
+        where,
         _count: { _all: true },
       }),
     ]);
@@ -275,10 +283,12 @@ const cachedCardsStats = unstable_cache(
       byRarity,
     };
   },
-  ["cards-list-stats-v1"],
+  // v2 cache key — added the optional setId argument so the per-tab
+  // narrowed aggregates don't share a cache slot with the catalog-wide one.
+  ["cards-list-stats-v2"],
   { revalidate: 60, tags: ["cards-list-stats"] },
 );
 
-export async function getCardsStats(): Promise<CardsStats> {
-  return cachedCardsStats();
+export async function getCardsStats(setId?: string): Promise<CardsStats> {
+  return cachedCardsStats(setId);
 }

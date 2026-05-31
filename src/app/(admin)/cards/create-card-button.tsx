@@ -192,7 +192,20 @@ function ImageDropzone({
 const RARITIES = ["Common", "Uncommon", "Rare", "Ultra Rare", "Secret"] as const;
 const CARD_TYPES = ["card", "promo", "special"] as const;
 
-export function CreateCardButton({ sets }: { sets: { id: string; name: string }[] }) {
+export function CreateCardButton({
+  sets,
+  defaultSetId = "",
+}: {
+  sets: { id: string; name: string }[];
+  /**
+   * Pre-selects the Set dropdown when the dialog opens. Driven by the
+   * active per-set tab on /cards — if the admin is browsing the OnePiece
+   * tab, the new card defaults to the OnePiece set so the dropdown isn't
+   * a fresh "Select set…" prompt every time. Empty string (the default)
+   * means no preselection.
+   */
+  defaultSetId?: string;
+}) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
@@ -205,7 +218,7 @@ export function CreateCardButton({ sets }: { sets: { id: string; name: string }[
   const [tcgplayerId, setTcgplayerId] = useState("");
   const [type, setType] = useState("card");
   const [cardNumber, setCardNumber] = useState("");
-  const [setId, setSetId] = useState("");
+  const [setId, setSetId] = useState(defaultSetId);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
 
@@ -218,7 +231,10 @@ export function CreateCardButton({ sets }: { sets: { id: string; name: string }[
     setTcgplayerId("");
     setType("card");
     setCardNumber("");
-    setSetId("");
+    // Reset to the active-tab default rather than blank — opening the
+    // dialog a second time on the same tab should keep that tab's set
+    // pre-selected, not blank it out.
+    setSetId(defaultSetId);
     setImageFile(null);
     setImagePreview(null);
   }

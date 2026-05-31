@@ -24,6 +24,7 @@ import { PaginationSkeleton } from "@/components/loading-skeletons";
 import { CreateCardButton } from "./create-card-button";
 import { PriceFilter } from "./price-filter";
 import { SetFilter } from "./set-filter";
+import { CardsTabSwitch, type CardSetTab } from "./_components/cards-tab-switch";
 import {
   PageHero,
   PageHeroIdentity,
@@ -32,6 +33,51 @@ import {
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
+
+/**
+ * Build the per-set tab list — Pokemon + OnePiece pinned to the front when
+ * they exist, every other set sorted alphabetically after them. Slug for
+ * the two well-known sets is the lowercase name ("pokemon" / "onepiece")
+ * so URL links read nicely; every other set falls back to its UUID.
+ *
+ * Matching the well-known sets by name is intentional: the seed (see
+ * `seedInitialSets` in /sets) upserts them by the exact strings "Pokemon"
+ * and "OnePiece", so a case-insensitive name match is the source of
+ * truth, not a separate enum on the row.
+ */
+function buildSetTabs(sets: { id: string; name: string }[]): CardSetTab[] {
+  const pokemon = sets.find((s) => s.name.toLowerCase() === "pokemon");
+  const onepiece = sets.find((s) => s.name.toLowerCase() === "onepiece");
+  const pinnedIds = new Set(
+    [pokemon?.id, onepiece?.id].filter((id): id is string => Boolean(id)),
+  );
+
+  const others = sets
+    .filter((s) => !pinnedIds.has(s.id))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const tabs: CardSetTab[] = [];
+  if (pokemon) tabs.push({ id: pokemon.id, label: pokemon.name, slug: "pokemon" });
+  if (onepiece)
+    tabs.push({ id: onepiece.id, label: onepiece.name, slug: "onepiece" });
+  for (const s of others) tabs.push({ id: s.id, label: s.name, slug: s.id });
+  return tabs;
+}
+
+/**
+ * Resolve the `?set=` URL param (slug like "pokemon"/"onepiece" OR a
+ * raw UUID) to an actual setId from the tabs list. Returns `null` if
+ * the param is missing OR doesn't match a known tab — the page treats
+ * a stray/unknown value as "no tab active" rather than crashing.
+ */
+function resolveSetFromParam(
+  raw: string | undefined,
+  tabs: CardSetTab[],
+): { setId: string; label: string } | null {
+  if (!raw) return null;
+  const tab = tabs.find((t) => t.slug === raw || t.id === raw);
+  return tab ? { setId: tab.id, label: tab.label } : null;
+}
 
 export const metadata = { title: "Cards" };
 
@@ -128,14 +174,30 @@ export default async function CardsPage({
   // `setsForDialog` and `seriesOptions` power the bulk-move dialog that
   // the cards grid opens from its selection toolbar. They're cheap enough
   // to fetch alongside the rest.
-  const [rarities, sets, setsForDialog, seriesOptions, stats] =
-    await Promise.all([
-      getRarities(),
-      getSets(),
-      getSetsForMoveDialog(),
-      getDistinctSeries(),
-      getCardsStats(),
-    ]);
+  //
+  // `sets` is fetched up-front so the tab switch + the (still-existing)
+  // SetFilter dropdown + the resolve-slug helper all share the same row
+  // set without re-querying.
+  const [rarities, sets, setsForDialog, seriesOptions] = await Promise.all([
+    getRarities(),
+    getSets(),
+    getSetsForMoveDialog(),
+    getDistinctSeries(),
+  ]);
+
+  // Build the per-set tab pills (Pokemon + OnePiece first, rest A→Z) and
+  // resolve `?set=<slug|uuid>` to the actual set we'll narrow on. When
+  // the param is absent or unknown, `activeSet` is null → "All Sets" tab
+  // active, every aggregate / list query runs unscoped.
+  const tabs = buildSetTabs(sets);
+  const activeSet = resolveSetFromParam(params.set, tabs);
+
+  // Stats are now tab-scoped — when a tab is active the KPI strip
+  // (total / rare / ultra / avg price) reflects ONLY that set, matching
+  // the count under the toolbar. The dedicated cache key on
+  // `getCardsStats` keeps the catalog-wide and per-set variants in
+  // separate cache slots.
+  const stats = await getCardsStats(activeSet?.setId);
 
   // Pull out a couple of rarity counts for dedicated KPI tiles. We care
   // about the two that signal "quality" — anything with "rare" in the
@@ -148,7 +210,13 @@ export default async function CardsPage({
     .filter((r) => /(ultra|secret|legendary)/i.test(r.rarity))
     .reduce((sum, r) => sum + r.count, 0);
 
-  const suspenseKey = `${page}|${perPage}|${params.search ?? ""}|${params.rarity ?? ""}|${params.setId ?? ""}|${params.minPrice ?? ""}|${params.maxPrice ?? ""}|${params.sortBy ?? ""}|${params.sortOrder ?? ""}`;
+  // When a tab is active, the tab's set wins over the toolbar's
+  // `?setId=` dropdown — the dropdown is hidden inside a tab view
+  // anyway (the tab already narrows). Outside a tab, `?setId=` still
+  // works for the "Unassigned" sentinel + ad-hoc filtering.
+  const effectiveSetId = activeSet?.setId ?? params.setId;
+
+  const suspenseKey = `${activeSet?.setId ?? ""}|${page}|${perPage}|${params.search ?? ""}|${params.rarity ?? ""}|${params.setId ?? ""}|${params.minPrice ?? ""}|${params.maxPrice ?? ""}|${params.sortBy ?? ""}|${params.sortOrder ?? ""}`;
 
   return (
     <div className="space-y-6">
@@ -158,14 +226,19 @@ export default async function CardsPage({
           icon={Layers}
           title="Cards"
           subtitle="Browse and manage card assets across all sets."
-          action={<CreateCardButton sets={sets} />}
+          action={
+            <CreateCardButton
+              sets={sets}
+              defaultSetId={activeSet?.setId ?? ""}
+            />
+          }
         />
       </PageHero>
 
       {/* ── KPI STRIP ─────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
         <KpiTile
-          label="Total Cards"
+          label={activeSet ? `Cards in ${activeSet.label}` : "Total Cards"}
           value={formatNumber(stats.total)}
           icon={Layers}
           accent="blue"
@@ -201,9 +274,19 @@ export default async function CardsPage({
         />
       </div>
 
+      {/* ── TAB SWITCH ────────────────────────────────────────────── */}
+      {tabs.length > 0 && (
+        <div className="flex">
+          <CardsTabSwitch tabs={tabs} />
+        </div>
+      )}
+
       {/* ── TOOLBAR + GRID ────────────────────────────────────────── */}
       <div className="space-y-3">
-        <SectionHeading icon={Layers} title="Catalog" />
+        <SectionHeading
+          icon={Layers}
+          title={activeSet ? activeSet.label : "Catalog"}
+        />
         <Suspense fallback={<Skeleton className="h-10 w-full" />}>
           <DataTableToolbar
             searchPlaceholder="Search by name..."
@@ -217,7 +300,12 @@ export default async function CardsPage({
               },
             ]}
           >
-            <SetFilter sets={sets} />
+            {/* Hide the manual set-dropdown when a tab is active — the
+                tab already narrows the catalog, the second narrowing
+                would just be redundant UI. Outside a tab, keep the
+                dropdown for the "Unassigned" sentinel and ad-hoc
+                set-by-id filtering. */}
+            {!activeSet && <SetFilter sets={sets} />}
             <PriceFilter />
           </DataTableToolbar>
         </Suspense>
@@ -245,7 +333,7 @@ export default async function CardsPage({
             perPage={perPage}
             search={params.search}
             rarity={params.rarity}
-            setId={params.setId}
+            setId={effectiveSetId}
             minPrice={params.minPrice}
             maxPrice={params.maxPrice}
             sortBy={params.sortBy}
