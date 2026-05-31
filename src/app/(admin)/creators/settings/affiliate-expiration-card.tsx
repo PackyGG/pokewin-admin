@@ -45,6 +45,17 @@ export function AffiliateExpirationCard({
     });
   }
 
+  // Display string for the current stored value. The card was missing
+  // a clear "this is what's set right now" read-out — the input
+  // mirrors the saved value but admins editing the field can't tell
+  // at a glance whether the live config is the same as what they
+  // typed. This pulls the saved number out of the input concern and
+  // displays it once at the top.
+  const currentDisplay =
+    initialDays !== null && initialDays > 0
+      ? `${initialDays} day${initialDays === 1 ? "" : "s"}`
+      : "Unlimited (lifetime)";
+
   return (
     <Card>
       <CardHeader>
@@ -53,6 +64,17 @@ export function AffiliateExpirationCard({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
+        {/* Currently-saved value pinned at the top so admins can see
+            the live config at a glance, separate from whatever they're
+            typing into the input below. */}
+        <div className="flex items-baseline gap-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2">
+          <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+            Currently
+          </span>
+          <span className="text-sm font-semibold tabular-nums">
+            {currentDisplay}
+          </span>
+        </div>
         <p className="text-sm text-muted-foreground">
           How many days after a user signs up via an affiliate code the
           affiliate keeps earning commission on that user&apos;s activity.
