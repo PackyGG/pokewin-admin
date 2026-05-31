@@ -55,6 +55,21 @@ const MAX_ITEMS = 30;
 // columns; no full-table scans.
 const POLL_INTERVAL_MS = 6000;
 
+// Connection status — drives the status pill in the panel header so
+// an admin can tell at a glance whether the feed is fresh, recovering
+// from a blip, or has given up entirely.
+type FeedStatus = "connecting" | "live" | "reconnecting" | "offline";
+
+// Exponential backoff schedule for consecutive poll failures. The
+// regular cadence is 6s; after the first failure we wait 6s (no
+// extra delay), after the 2nd 12s, 3rd 24s, 4th 30s (cap). After 5
+// consecutive failures we tag the feed as offline — the admin sees
+// it, and the next visibilitychange-resume / explicit retry resets
+// the counter. We never stop polling entirely; the cadence just
+// stretches so we don't hammer the server during an outage.
+const BACKOFF_DELAYS_MS = [0, 6_000, 18_000, 30_000, 30_000];
+const OFFLINE_AFTER_FAILURES = 5;
+
 export function LiveMoneyChat() {
   // Open/close state lives in the shared right-rail context so the
   // other docked widgets (recent activity, chat) can reflow when the
@@ -70,6 +85,11 @@ export function LiveMoneyChat() {
   const [total24hWithdrawals, setTotal24hWithdrawals] = React.useState(0);
   const [bootstrapped, setBootstrapped] = React.useState(false);
   const [newIds, setNewIds] = React.useState<Set<string>>(() => new Set());
+  // Connection status — drives the header status pill. Starts as
+  // "connecting" until the bootstrap fetch resolves; flips to
+  // "reconnecting" on a single failure and "offline" after
+  // OFFLINE_AFTER_FAILURES consecutive failures.
+  const [status, setStatus] = React.useState<FeedStatus>("connecting");
   const cursorRef = React.useRef<string | null>(null);
   // Last-seen watermark for the cheap server-side pre-check. Tracked
   // separately from `cursorRef` so it advances on every poll (even when
@@ -79,6 +99,8 @@ export function LiveMoneyChat() {
   // query; subsequent polls always pass the latest cursor as the
   // watermark and rely on the server's strict-gt check.
   const watermarkRef = React.useRef<string | null>(null);
+  // Consecutive-failure counter for exponential backoff.
+  const failuresRef = React.useRef<number>(0);
   // Re-render every 30s so relative timestamps stay fresh.
   const [, setNow] = React.useState(0);
 
@@ -104,8 +126,12 @@ export function LiveMoneyChat() {
         setItems(snap);
         cursorRef.current = snap.length > 0 ? snap[0].createdAt : null;
         watermarkRef.current = cursorRef.current;
+        failuresRef.current = 0;
+        setStatus("live");
       } catch {
-        // Silent — polling loop retries.
+        // Polling loop will retry — flip to reconnecting so the
+        // header status pill reflects the failed bootstrap.
+        if (alive) setStatus("reconnecting");
       } finally {
         if (alive) setBootstrapped(true);
       }
@@ -115,15 +141,28 @@ export function LiveMoneyChat() {
     };
   }, []);
 
-  // Polling loop — pauses while the tab is hidden.
+  // Polling loop — pauses while the tab is hidden, retries with
+  // exponential backoff on failure, surfaces status via the pill.
   React.useEffect(() => {
     let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const schedule = (delay: number) => {
+      if (!alive) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(poll, delay);
+    };
+
     const poll = async () => {
       if (!alive) return;
+      // Tab hidden — don't burn Vercel function calls in the background.
+      // visibilitychange handler below resumes polling when the tab
+      // becomes visible again.
       if (
         typeof document !== "undefined" &&
         document.visibilityState !== "visible"
       ) {
+        schedule(POLL_INTERVAL_MS);
         return;
       }
       try {
@@ -138,16 +177,15 @@ export function LiveMoneyChat() {
           watermarkRef.current,
         );
         if (!alive) return;
+        failuresRef.current = 0;
+        setStatus("live");
         setTotal24hDeposits(res.total24hDeposits);
         setTotal24hWithdrawals(res.total24hWithdrawals);
         // Idle short-circuit: server reported no advance since the
         // last watermark. The row state is already correct — skip the
         // setItems work entirely. Totals are still applied above
         // (cached, near-free) so the hero numbers don't go stale.
-        if (res.unchanged) {
-          return;
-        }
-        if (res.items.length > 0) {
+        if (!res.unchanged && res.items.length > 0) {
           cursorRef.current = res.items[0].createdAt;
           watermarkRef.current = cursorRef.current;
           setItems((prev) => {
@@ -171,13 +209,59 @@ export function LiveMoneyChat() {
           });
         }
       } catch {
-        // Silent.
+        // Bump the failure counter and either flip to reconnecting
+        // (transient) or offline (sustained). We never STOP polling
+        // — the cadence just stretches so we don't hammer the server
+        // during an outage. A visibilitychange-resume or a successful
+        // poll resets the counter.
+        failuresRef.current += 1;
+        if (alive) {
+          setStatus(
+            failuresRef.current >= OFFLINE_AFTER_FAILURES
+              ? "offline"
+              : "reconnecting",
+          );
+        }
+      }
+      // Re-schedule. Healthy ticks use the regular cadence; failed
+      // ticks step through the backoff table.
+      const failures = failuresRef.current;
+      const delay =
+        failures === 0
+          ? POLL_INTERVAL_MS
+          : BACKOFF_DELAYS_MS[
+              Math.min(failures, BACKOFF_DELAYS_MS.length - 1)
+            ];
+      schedule(delay + POLL_INTERVAL_MS);
+    };
+
+    // Kick off the first poll after the regular interval (the
+    // bootstrap effect already populated the panel).
+    schedule(POLL_INTERVAL_MS);
+
+    // Visibility binding — when the tab becomes visible after a hidden
+    // stretch, immediately poll once and reset the failure counter so
+    // the user gets a fresh feed on return.
+    const onVisibility = () => {
+      if (
+        typeof document !== "undefined" &&
+        document.visibilityState === "visible" &&
+        alive
+      ) {
+        failuresRef.current = 0;
+        schedule(0);
       }
     };
-    const id = setInterval(poll, POLL_INTERVAL_MS);
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibility);
+    }
+
     return () => {
       alive = false;
-      clearInterval(id);
+      if (timer) clearTimeout(timer);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
     };
   }, []);
 
@@ -251,7 +335,7 @@ export function LiveMoneyChat() {
           <h3 className="truncate text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Live Money
           </h3>
-          <LivePulse />
+          <StatusPill status={status} />
         </div>
         {/* Affordance cue — visually mimics the inner button but is
             non-interactive (the outer header button handles the click).
@@ -446,17 +530,81 @@ function ChatRow({
   );
 }
 
-function LivePulse() {
+/**
+ * Status pill — drives off the polling loop's connection state.
+ *   • "live"          → emerald with pulse (steady-state, fresh data).
+ *   • "connecting"    → muted with quiet pulse (initial bootstrap).
+ *   • "reconnecting"  → amber (transient blip, the next tick should recover).
+ *   • "offline"       → rose (sustained failure; still retrying with backoff).
+ *
+ * Title hover surfaces a longer description so admins know whether to
+ * panic, refresh, or wait it out.
+ */
+function StatusPill({ status }: { status: FeedStatus }) {
+  const map = {
+    connecting: {
+      label: "Connecting",
+      title: "Connecting to the live feed…",
+      border: "border-muted-foreground/30",
+      bg: "bg-muted/40",
+      text: "text-muted-foreground",
+      dot: "bg-muted-foreground",
+      pulse: true,
+    },
+    live: {
+      label: "Live",
+      title: "Live feed is current",
+      border: "border-emerald-500/30",
+      bg: "bg-emerald-500/10",
+      text: "text-emerald-600 dark:text-emerald-400",
+      dot: "bg-emerald-500",
+      pulse: true,
+    },
+    reconnecting: {
+      label: "Reconnecting",
+      title: "Last poll failed — retrying with backoff",
+      border: "border-amber-500/30",
+      bg: "bg-amber-500/10",
+      text: "text-amber-600 dark:text-amber-400",
+      dot: "bg-amber-500",
+      pulse: false,
+    },
+    offline: {
+      label: "Offline",
+      title:
+        "Several consecutive polls failed. Still retrying every 30s — check Vercel logs if this persists.",
+      border: "border-rose-500/30",
+      bg: "bg-rose-500/10",
+      text: "text-rose-600 dark:text-rose-400",
+      dot: "bg-rose-500",
+      pulse: false,
+    },
+  }[status];
   return (
     <span
-      className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400"
-      aria-label="Live"
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full border px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wider",
+        map.border,
+        map.bg,
+        map.text,
+      )}
+      aria-label={map.label}
+      title={map.title}
     >
       <span className="relative flex size-1">
-        <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-500 opacity-75 motion-reduce:hidden" />
-        <span className="relative inline-flex size-1 rounded-full bg-emerald-500" />
+        {map.pulse && (
+          <span
+            className={cn(
+              "absolute inline-flex size-full animate-ping rounded-full opacity-75 motion-reduce:hidden",
+              map.dot,
+            )}
+          />
+        )}
+        <span
+          className={cn("relative inline-flex size-1 rounded-full", map.dot)}
+        />
       </span>
-      Live
+      {map.label}
     </span>
   );
 }

@@ -65,6 +65,26 @@ const POLL_INTERVAL_MS = 3000;
 // cadence so the docked numbers stay in lockstep with the page version.
 const COUNTS_REFRESH_MS = 60_000;
 
+// Connection status — drives the header status pill. Mirrors the
+// LiveMoneyChat treatment so the three docked widgets all surface
+// the same kinds of state. "live" is the SSE happy path; "polling"
+// kicks in when SSE gave up and the polling fallback is active;
+// "reconnecting" / "offline" appear when consecutive polling failures
+// stretch the backoff.
+type FeedStatus =
+  | "connecting"
+  | "live"
+  | "polling"
+  | "reconnecting"
+  | "offline";
+
+// Exponential backoff schedule for the polling fallback. Each failure
+// extends the delay by an extra step; after OFFLINE_AFTER_FAILURES
+// consecutive failures the pill flips to "offline" so the admin sees
+// it. Polling never STOPS — the cadence just stretches.
+const BACKOFF_DELAYS_MS = [0, 3_000, 9_000, 21_000, 30_000];
+const OFFLINE_AFTER_FAILURES = 5;
+
 type CountStrip = {
   signups24h: number;
   packsOpened24h: number;
@@ -164,29 +184,52 @@ export function DockedRecentActivity() {
 
   // Bootstrap + refresh on a 60s tick (matches the dashboard's
   // AutoRefresh cadence; the underlying caches dedupe so this is cheap).
+  // Pauses while the tab is hidden (visibilitychange resumes).
   React.useEffect(() => {
     let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const tick = async () => {
       if (!alive) return;
       if (
         typeof document !== "undefined" &&
         document.visibilityState !== "visible"
       ) {
+        // Reschedule for later — don't poll while hidden.
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(tick, COUNTS_REFRESH_MS);
         return;
       }
       try {
         const res = await fetchRecentActivityCounts24h();
-        if (!alive) return;
-        setCounts(res);
+        if (alive) setCounts(res);
       } catch {
-        // Silent — next tick retries.
+        // Silent — the live event list above already surfaces the
+        // status pill; a single failing counts refresh is too minor
+        // to flip the pill on its own.
       }
+      if (timer) clearTimeout(timer);
+      if (alive) timer = setTimeout(tick, COUNTS_REFRESH_MS);
     };
     tick();
-    const id = setInterval(tick, COUNTS_REFRESH_MS);
+    const onVisibility = () => {
+      if (
+        typeof document !== "undefined" &&
+        document.visibilityState === "visible" &&
+        alive
+      ) {
+        // Immediate refresh on tab return.
+        tick();
+      }
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibility);
+    }
     return () => {
       alive = false;
-      clearInterval(id);
+      if (timer) clearTimeout(timer);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
     };
   }, []);
 
@@ -197,6 +240,12 @@ export function DockedRecentActivity() {
   const [useFallback, setUseFallback] = React.useState<boolean>(
     () => typeof window !== "undefined" && typeof EventSource === "undefined",
   );
+  // Connection status — surfaces SSE health vs polling fallback vs
+  // backoff state. The SSE path itself (via use-sse.ts) handles
+  // exponential backoff and visibility binding internally; this
+  // status state just reflects what's happening.
+  const [status, setStatus] = React.useState<FeedStatus>("connecting");
+  const pollFailuresRef = React.useRef<number>(0);
   // Re-render every 30s so relative timestamps stay fresh.
   const [, setNow] = React.useState(0);
   React.useEffect(() => {
@@ -235,10 +284,13 @@ export function DockedRecentActivity() {
   // SSE — default for modern browsers. Mirrors the dashboard
   // RecentActivity's stream handling exactly so the two share the
   // deduped connection (`useSseStream` reuses one EventSource per URL).
+  // Status is set inline: onInit marks the feed live; onGiveUp flips
+  // to the polling fallback (status will be set there).
   useSseStream<LiveActivityItem>(
     "/api/live/activity",
     {
       onInit: (rows) => {
+        setStatus("live");
         if (rows.length === 0) return;
         const newest = rows[0].createdAt;
         if (
@@ -253,38 +305,90 @@ export function DockedRecentActivity() {
         cursorRef.current = row.createdAt;
         merge([row]);
       },
+      onReconnect: () => setStatus("reconnecting"),
       onGiveUp: () => setUseFallback(true),
     },
     { enabled: !useFallback },
   );
 
   // Polling fallback — kicks in if SSE gave up. Bootstraps with a null
-  // cursor (newest snapshot), then strict-gt afterward.
+  // cursor (newest snapshot), then strict-gt afterward. Implements
+  // exponential backoff on consecutive failures so an outage doesn't
+  // pile up Vercel function calls, plus visibilitychange pause/resume
+  // so background tabs don't waste cycles.
   React.useEffect(() => {
     if (!useFallback) return;
+    setStatus("polling");
     let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const schedule = (delay: number) => {
+      if (!alive) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(poll, delay);
+    };
+
     const poll = async () => {
       if (!alive) return;
       if (
         typeof document !== "undefined" &&
         document.visibilityState !== "visible"
       ) {
+        schedule(POLL_INTERVAL_MS);
         return;
       }
       try {
         const fresh = await fetchDockedActivityLive(cursorRef.current);
-        if (!alive || fresh.length === 0) return;
-        cursorRef.current = fresh[0].createdAt;
-        merge(fresh);
+        if (!alive) return;
+        pollFailuresRef.current = 0;
+        setStatus("polling");
+        if (fresh.length > 0) {
+          cursorRef.current = fresh[0].createdAt;
+          merge(fresh);
+        }
       } catch {
-        // Silent — polling will recover next tick.
+        pollFailuresRef.current += 1;
+        if (alive) {
+          setStatus(
+            pollFailuresRef.current >= OFFLINE_AFTER_FAILURES
+              ? "offline"
+              : "reconnecting",
+          );
+        }
+      }
+      const failures = pollFailuresRef.current;
+      const delay =
+        failures === 0
+          ? POLL_INTERVAL_MS
+          : BACKOFF_DELAYS_MS[
+              Math.min(failures, BACKOFF_DELAYS_MS.length - 1)
+            ];
+      schedule(delay + POLL_INTERVAL_MS);
+    };
+
+    // First poll immediately (the SSE bootstrap may already have
+    // populated some items; the polling path catches up from there).
+    schedule(0);
+
+    const onVisibility = () => {
+      if (
+        typeof document !== "undefined" &&
+        document.visibilityState === "visible" &&
+        alive
+      ) {
+        pollFailuresRef.current = 0;
+        schedule(0);
       }
     };
-    poll();
-    const id = setInterval(poll, POLL_INTERVAL_MS);
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibility);
+    }
     return () => {
       alive = false;
-      clearInterval(id);
+      if (timer) clearTimeout(timer);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
     };
   }, [useFallback, merge]);
 
@@ -353,7 +457,7 @@ export function DockedRecentActivity() {
           <h3 className="truncate text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Activity
           </h3>
-          <LivePulse />
+          <StatusPill status={status} />
         </div>
         <span
           aria-hidden
@@ -506,17 +610,93 @@ function ActivityRow({
   );
 }
 
-function LivePulse() {
+/**
+ * Status pill — reflects the SSE / polling fallback / backoff state.
+ *   • "connecting"   — bootstrap before the first init frame arrives.
+ *   • "live"         — SSE has emitted at least one init (steady state).
+ *   • "polling"      — SSE gave up, polling fallback is active and healthy.
+ *   • "reconnecting" — SSE forced a reconnect, OR consecutive poll fails.
+ *   • "offline"      — sustained polling failure; still retrying every 30s.
+ *
+ * The default identity color of this widget is blue (matches the chrome),
+ * which we keep for both "live" and "polling" since the user-visible
+ * outcome is the same (data still flows). Amber + rose stand out so a
+ * blip is visible without overwhelming the chrome.
+ */
+function StatusPill({ status }: { status: FeedStatus }) {
+  const map = {
+    connecting: {
+      label: "Connecting",
+      title: "Connecting to the live activity feed…",
+      border: "border-muted-foreground/30",
+      bg: "bg-muted/40",
+      text: "text-muted-foreground",
+      dot: "bg-muted-foreground",
+      pulse: true,
+    },
+    live: {
+      label: "Live",
+      title: "Live feed is current (server push)",
+      border: "border-blue-500/30",
+      bg: "bg-blue-500/10",
+      text: "text-blue-600 dark:text-blue-400",
+      dot: "bg-blue-500",
+      pulse: true,
+    },
+    polling: {
+      label: "Live",
+      title: "Live feed is current (polling fallback)",
+      border: "border-blue-500/30",
+      bg: "bg-blue-500/10",
+      text: "text-blue-600 dark:text-blue-400",
+      dot: "bg-blue-500",
+      pulse: true,
+    },
+    reconnecting: {
+      label: "Reconnecting",
+      title: "Connection blip — retrying with backoff",
+      border: "border-amber-500/30",
+      bg: "bg-amber-500/10",
+      text: "text-amber-600 dark:text-amber-400",
+      dot: "bg-amber-500",
+      pulse: false,
+    },
+    offline: {
+      label: "Offline",
+      title:
+        "Several consecutive polls failed. Still retrying every 30s — check Vercel logs if this persists.",
+      border: "border-rose-500/30",
+      bg: "bg-rose-500/10",
+      text: "text-rose-600 dark:text-rose-400",
+      dot: "bg-rose-500",
+      pulse: false,
+    },
+  }[status];
   return (
     <span
-      className="inline-flex items-center gap-1 rounded-full border border-blue-500/30 bg-blue-500/10 px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400"
-      aria-label="Live"
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full border px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wider",
+        map.border,
+        map.bg,
+        map.text,
+      )}
+      aria-label={map.label}
+      title={map.title}
     >
       <span className="relative flex size-1">
-        <span className="absolute inline-flex size-full animate-ping rounded-full bg-blue-500 opacity-75 motion-reduce:hidden" />
-        <span className="relative inline-flex size-1 rounded-full bg-blue-500" />
+        {map.pulse && (
+          <span
+            className={cn(
+              "absolute inline-flex size-full animate-ping rounded-full opacity-75 motion-reduce:hidden",
+              map.dot,
+            )}
+          />
+        )}
+        <span
+          className={cn("relative inline-flex size-1 rounded-full", map.dot)}
+        />
       </span>
-      Live
+      {map.label}
     </span>
   );
 }
