@@ -1,20 +1,20 @@
-"use client";
-
-import { UserViewModern } from "./user-view-modern";
-import type {
-  UserDetail,
-  PaginatedTransactions,
-  PaginatedInventory,
-  PnlBreakdown,
-  AdminNote,
-} from "./user-tabs-types";
-import type { UserRewards } from "@/lib/queries/users";
-import type { RiskScoreBreakdown } from "@/lib/fraud/score-types";
-import type { SharedIdentityUser } from "@/lib/fraud/shared-identity-types";
-
-// ---------------------------------------------------------------------------
-// Re-exports — preserve the public surface so existing imports keep working.
-// ---------------------------------------------------------------------------
+/**
+ * Public surface for the user-detail tabs module. Originally this
+ * file housed a `UserTabs` wrapper that took every per-tab dataset
+ * up-front and switched between Modern / Classic views client-side.
+ *
+ * After the deferred-tabs refactor:
+ *   - page.tsx mounts each tab's data behind its own <Suspense> and
+ *     renders <UserViewModern> directly. The wrapper is therefore
+ *     no longer needed.
+ *   - The re-exports below preserve the type + section-component
+ *     surface that user-view-modern.tsx and user-view-modern-tabs.tsx
+ *     pull from, so internal callers stay on the same import path.
+ *
+ * Keep this file as the one-stop import — splitting the re-exports
+ * across the source modules would force each consumer to know which
+ * sub-file owns which symbol.
+ */
 export type {
   UserDetail,
   PaginatedTransactions,
@@ -41,48 +41,3 @@ export { CategoryTransactionsTable } from "./user-tabs-transactions";
 export { InventoryGrid, DisposedCardsTable } from "./user-tabs-inventory";
 export { CreatorSection } from "./user-tabs-creator";
 export { ModerationSection } from "./user-tabs-moderation";
-
-export function UserTabs({
-  data,
-  inventory,
-  disposedInventory,
-  pnlBreakdown,
-  notes,
-  gamingTx,
-  financialTx,
-  rewards,
-  riskBreakdown,
-  sharedIps,
-  sharedFingerprints,
-}: {
-  data: UserDetail;
-  inventory: PaginatedInventory;
-  disposedInventory: PaginatedInventory;
-  pnlBreakdown: PnlBreakdown;
-  notes: AdminNote[];
-  gamingTx: PaginatedTransactions;
-  financialTx: PaginatedTransactions;
-  rewards: UserRewards;
-  riskBreakdown: RiskScoreBreakdown;
-  sharedIps: SharedIdentityUser[];
-  sharedFingerprints: SharedIdentityUser[];
-}) {
-  // Classic view was removed — UserTabs now always renders the modern
-  // user detail page. The wrapper is kept for backwards-compatible call
-  // sites (page.tsx) and type stability.
-  return (
-    <UserViewModern
-      data={data}
-      gamingTx={gamingTx}
-      financialTx={financialTx}
-      rewards={rewards}
-      notes={notes}
-      pnlBreakdown={pnlBreakdown}
-      inventory={inventory}
-      disposedInventory={disposedInventory}
-      riskBreakdown={riskBreakdown}
-      sharedIps={sharedIps}
-      sharedFingerprints={sharedFingerprints}
-    />
-  );
-}
