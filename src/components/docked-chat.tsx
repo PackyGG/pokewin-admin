@@ -5,23 +5,20 @@ import { ChevronRight, MessagesSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChatPanelContent } from "@/components/chat-panel/chat-panel-content";
 import {
-  chatTabAnchor,
-  chatTopCss,
-  COLLAPSED_CHAT_HEIGHT_REM,
-  useRightRail,
+  railSlotStyle,
+  useRailWidget,
 } from "@/components/right-rail-context";
 
 /**
  * Persistent docked Chat & Mutes widget on the right edge of the admin
- * shell, mirroring the `<LiveMoneyChat />` pattern. Reads `liveOpen`
- * from the shared right-rail context to position itself:
- *
- *   • Live OPEN   → chat occupies the BOTTOM HALF of the right edge.
- *   • Live CLOSED → chat slides UP to take the full right edge below
- *                   live's collapsed tab.
+ * shell — bottom slot of the right rail. The other two widgets (Live
+ * money feed at the top, Recent activity in the middle) reflow when
+ * this one is collapsed; the at-most-2-open rule (enforced inside
+ * RightRailProvider) auto-collapses the oldest-opened panel when the
+ * user expands a third.
  *
  * Replaces the previous Sheet-based ChatPanel that lived behind a
- * floating action button. Both widgets are always visible (with
+ * floating action button. All three widgets are always visible (with
  * independent collapse/expand state). State persists via localStorage
  * through the shared context.
  */
@@ -29,14 +26,7 @@ import {
 const PANEL_WIDTH_PX = 320;
 
 export function DockedChat({ role }: { role: string }) {
-  const { liveOpen, chatOpen: open, setChatOpen: setOpen } = useRightRail();
-
-  // Open panel: anchors with `top:` (derived from liveOpen — slides
-  // up to fill the rail when live is collapsed).
-  // Collapsed tab: anchors via `chatTabAnchor()` which switches to a
-  // bottom-anchor when live is open, so the live panel can expand
-  // DOWN into the space the chat panel used to occupy.
-  const top = chatTopCss(liveOpen);
+  const { open, setOpen, allOpen, mounted } = useRailWidget("chat");
 
   if (!open) {
     return (
@@ -45,12 +35,7 @@ export function DockedChat({ role }: { role: string }) {
         onClick={() => setOpen(true)}
         aria-label="Open chat & mutes panel"
         title="Open chat & mutes panel"
-        style={{
-          // Pin the tab's vertical height so the live panel can
-          // compute its `bottom` without measuring the tab.
-          height: `${COLLAPSED_CHAT_HEIGHT_REM}rem`,
-          ...chatTabAnchor(liveOpen),
-        }}
+        style={railSlotStyle("chat", allOpen, mounted)}
         className={cn(
           "fixed right-0 z-30 flex flex-col items-center justify-center gap-2 rounded-l-lg border border-r-0 bg-card/95 px-2 shadow-md backdrop-blur",
           "hover:bg-card transition-colors",
@@ -70,13 +55,13 @@ export function DockedChat({ role }: { role: string }) {
   return (
     <aside
       aria-label="Chat & mutes panel"
-      style={{ width: PANEL_WIDTH_PX, top }}
+      style={{ width: PANEL_WIDTH_PX, ...railSlotStyle("chat", allOpen, mounted) }}
       className={cn(
-        // Bottom half of the right edge when live is open. Slides up
-        // to take more space when live is collapsed (the `top` value
-        // does the work; `bottom-6` stays put). `z-30` sits above
-        // normal content but below modals (z-50).
-        "fixed right-0 bottom-6 z-30 flex flex-col overflow-hidden rounded-l-2xl border border-r-0 bg-card/95 shadow-xl backdrop-blur",
+        // Bottom slot of the right rail. The `top` / `bottom` anchors
+        // come from `railSlotStyle` and depend on the open/collapsed
+        // state of the two widgets above (live + recent activity).
+        // `z-30` sits above normal content but below modals (z-50).
+        "fixed right-0 z-30 flex flex-col overflow-hidden rounded-l-2xl border border-r-0 bg-card/95 shadow-xl backdrop-blur",
       )}
     >
       {/* Header — title + minimize chevron. Whole strip is the click

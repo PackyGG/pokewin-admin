@@ -4,7 +4,6 @@ import {
   Percent,
   Coins,
   LayoutDashboard,
-  Activity,
   LineChart,
   BadgeDollarSign,
   HandCoins,
@@ -41,14 +40,10 @@ import {
   PnlChart,
   ActiveDepositorsChart,
 } from "./charts";
-import {
-  RecentActivity,
-  RecentActivityLivePulse,
-  RecentActivitySkeleton,
-} from "./recent-activity";
-// LiveMoneyChat moved into the admin shell layout — the widget now
-// docks on every admin page, not just /dashboard. Nothing to import
-// here any more.
+// RecentActivity moved into the admin shell layout (DockedRecentActivity).
+// The widget now docks on every admin page so the dashboard body no longer
+// renders the in-page Activity card.
+// LiveMoneyChat also lives in the admin shell layout (same dock pattern).
 import { UpgraderStatsSection } from "./upgrader-stats";
 import { ActiveRainChip } from "./active-rain-chip";
 import { PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
@@ -78,20 +73,15 @@ export default async function DashboardPage({
   const params = await searchParams;
   const period: DashboardPeriod = parseDashboardPeriod(params.period);
 
-  // The two live feeds (Recent Activity, Live Money Movements) bootstrap
-  // their own snapshot on the client — that keeps the 60s router.refresh()
-  // below scoped to the KPIs and stops it from re-running
-  // getLiveActivity/getLiveDepositsAndWithdrawals every minute for data
-  // the feeds already own via SSE / polling. LiveMoneyMovements needs no
-  // server stats so it renders directly in the shell; RecentActivity's
-  // 24h count strip does, so it streams behind Suspense (its live feed
-  // still connects on client mount regardless).
+  // The live feeds (Recent Activity, Live Money Movements) all live in
+  // the admin shell now as docked right-edge widgets and bootstrap their
+  // own snapshots on the client (SSE / polling), so the dashboard's 60s
+  // refresh stays scoped to KPI numbers only.
   return (
     <div className="space-y-6">
       {/* Dashboard polls at 60s for the KPI numbers only — KPIs settle
-          slowly and the live feeds (RecentActivity SSE, LiveMoneyMovements
-          polling) own their own data on the client, so this refresh no
-          longer re-queries the feeds. */}
+          slowly and the docked widgets own their own data on the client,
+          so this refresh no longer re-queries any of the live feeds. */}
       <AutoRefresh intervalMs={60_000} />
 
       <PageHero>
@@ -209,24 +199,10 @@ export default async function DashboardPage({
         </Suspense>
       </div>
 
-      {/* Recent Activity feed — the in-flow SSE feed of every platform
-          event (signups + deposits + wagers + payouts + withdrawals).
-          The deposits + withdrawals stream now lives in the docked
-          `<LiveMoneyChat />` widget on the right edge of the page, so
-          this section runs full-width and surfaces the broader event
-          stream. */}
-      <div className="space-y-3">
-        <SectionHeading
-          icon={Activity}
-          title="Recent Activity"
-          action={<RecentActivityLivePulse />}
-        />
-        <FadeIn>
-          <Suspense fallback={<RecentActivitySkeleton />}>
-            <DashboardActivityFeed period={period} />
-          </Suspense>
-        </FadeIn>
-      </div>
+      {/* Recent Activity moved into the admin shell as the middle
+          docked widget (<DockedRecentActivity />) so every admin page
+          gets the same live event feed on the right edge. The
+          dashboard body no longer renders the in-page card. */}
 
     </div>
   );
@@ -487,18 +463,7 @@ async function DashboardWagerAttribution({
   return <WagerAttributionChart data={stats.dailyWagerAttribution} />;
 }
 
-/**
- * Recent Activity card. Only its 24h count strip needs server stats; the
- * live event list self-bootstraps on the client (SSE / polling). Async so
- * the count strip streams behind Suspense without blocking first paint.
- */
-async function DashboardActivityFeed({ period }: { period: DashboardPeriod }) {
-  const stats = await getDashboardStats(period);
-  return (
-    <RecentActivity
-      signups24h={stats.activity.signups24h}
-      packsOpened24h={stats.activity.packsOpened24h}
-      battlesPlayed24h={stats.activity.battlesPlayed24h}
-    />
-  );
-}
+// `DashboardActivityFeed` was removed when the Recent Activity card moved
+// into the docked widget (<DockedRecentActivity />) in the admin shell.
+// The widget owns its own 24h count strip via `getActivityCounts24h`, so
+// the dashboard page no longer needs a server-side wrapper for it.
