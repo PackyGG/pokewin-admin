@@ -15,9 +15,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import type { LiveMoneyMovementItem } from "@/lib/queries/dashboard-live";
 import { fetchRecentMoneyMovements } from "@/app/(admin)/dashboard/live-actions";
 import {
-  COLLAPSED_LIVE_HEIGHT_REM,
-  liveBottomCss,
-  useRightRail,
+  railSlotStyle,
+  useRailWidget,
 } from "@/components/right-rail-context";
 
 /**
@@ -58,14 +57,10 @@ const POLL_INTERVAL_MS = 6000;
 
 export function LiveMoneyChat() {
   // Open/close state lives in the shared right-rail context so the
-  // chat dock below can react: collapsing the live feed pulls the
-  // chat up to fill the freed space; expanding it pushes chat back
-  // into the bottom half.
-  const {
-    liveOpen: open,
-    setLiveOpen: setOpen,
-    chatOpen,
-  } = useRightRail();
+  // other docked widgets (recent activity, chat) can reflow when the
+  // live feed is collapsed — their `top` / `bottom` anchors are
+  // derived from each widget's open state via `railSlotStyle`.
+  const { open, setOpen, allOpen, mounted } = useRailWidget("live");
   // Clicking a username in a row opens a compact preview dialog in
   // the middle of the screen — admins can peek balance + recent
   // activity without leaving the dashboard. `null` = closed.
@@ -157,10 +152,9 @@ export function LiveMoneyChat() {
   }, []);
 
   // Collapsed: a thin vertical tab on the right edge. Clicking expands.
-  // The tab is pinned to a fixed height (COLLAPSED_LIVE_HEIGHT_REM) so
-  // the chat dock below can position itself predictably right under
-  // it when live is closed — without a fixed height the chat dock
-  // would have to measure the tab dynamically.
+  // The tab's height + top offset are resolved by `railSlotStyle` so the
+  // three docked widgets (live / recent / chat) stack predictably no
+  // matter which combination of them is open or collapsed.
   if (!open) {
     return (
       <button
@@ -168,12 +162,13 @@ export function LiveMoneyChat() {
         onClick={() => setOpen(true)}
         aria-label="Open live money feed"
         title="Open live money feed"
-        style={{ height: `${COLLAPSED_LIVE_HEIGHT_REM}rem` }}
+        style={railSlotStyle("live", allOpen, mounted)}
         className={cn(
-          // Top tab, anchored just under the admin header. The chat
-          // dock sits below in the bottom half, so this tab stays in
-          // the top slot when collapsed.
-          "fixed right-0 top-20 z-30 flex flex-col items-center justify-center gap-2 rounded-l-lg border border-r-0 bg-card/95 px-2 shadow-md backdrop-blur",
+          // Live's collapsed tab — `railSlotStyle` provides the `top`
+          // anchor and the fixed `height`; this widget just renders the
+          // visual chrome. `z-30` sits above normal content but below
+          // modals (z-50).
+          "fixed right-0 z-30 flex flex-col items-center justify-center gap-2 rounded-l-lg border border-r-0 bg-card/95 px-2 shadow-md backdrop-blur",
           "hover:bg-card transition-colors",
         )}
       >
@@ -195,16 +190,17 @@ export function LiveMoneyChat() {
   return (
     <aside
       aria-label="Live money feed"
-      style={{ width: PANEL_WIDTH_PX, bottom: liveBottomCss(chatOpen) }}
+      style={{ width: PANEL_WIDTH_PX, ...railSlotStyle("live", allOpen, mounted) }}
       className={cn(
-        // Top portion of the right edge. The `bottom` value depends
-        // on the chat dock state: when chat is open, live ends at the
-        // viewport midpoint (50/50 split); when chat is collapsed,
-        // live expands DOWN to just above chat's collapsed tab so it
-        // takes most of the rail. `top-20` tucks under the admin
-        // header. `z-30` sits above normal content but below modals
-        // (z-50).
-        "fixed right-0 top-20 z-30 flex flex-col overflow-hidden rounded-l-2xl border border-r-0 bg-card/95 shadow-xl backdrop-blur",
+        // Live's open panel — `railSlotStyle` computes the `top` and
+        // `bottom` anchors from the open/collapsed state of the other
+        // two widgets. When recent + chat are both collapsed live
+        // takes the full rail; with one peer open it shares the rail
+        // 50/50; with two peers open the at-most-2 rule means live
+        // can't itself be open, so this branch never renders in that
+        // configuration. `z-30` sits above normal content but below
+        // modals (z-50).
+        "fixed right-0 z-30 flex flex-col overflow-hidden rounded-l-2xl border border-r-0 bg-card/95 shadow-xl backdrop-blur",
       )}
     >
       {/* Header — title + live pulse + minimize chevron. The whole

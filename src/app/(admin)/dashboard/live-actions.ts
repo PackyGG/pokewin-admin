@@ -2,10 +2,8 @@
 
 import { requirePageAccess } from "@/lib/dal";
 import {
-  getLiveActivity,
   getLiveDeposits,
   getLiveDepositsAndWithdrawals,
-  type LiveActivityItem,
   type LiveDepositsResult,
   type LiveMoneyMovementsResult,
 } from "@/lib/queries/dashboard-live";
@@ -28,21 +26,11 @@ export async function fetchRecentDepositsLive(
 }
 
 /**
- * Poll endpoint for the mixed live-activity feed on /dashboard.
- * Same cursor contract as the deposits feed.
- */
-export async function fetchRecentActivityLive(
-  sinceCreatedAt: string | null,
-): Promise<LiveActivityItem[]> {
-  await requirePageAccess("/dashboard");
-  return getLiveActivity({ sinceCreatedAt, limit: 30 });
-}
-
-/**
- * Poll endpoint for the combined deposits + withdrawals live feed on
- * /dashboard. Same cursor contract as the deposits feed — the cursor is
- * a single timestamp that filters BOTH sources via strict-gt so each row
- * is delivered exactly once.
+ * Poll endpoint for the combined deposits + withdrawals live feed.
+ * Used by the docked `<LiveMoneyChat />` widget in the admin shell.
+ * Same cursor contract as the deposits feed — the cursor is a single
+ * timestamp that filters BOTH sources via strict-gt so each row is
+ * delivered exactly once.
  */
 export async function fetchRecentMoneyMovements(
   sinceCreatedAt: string | null,

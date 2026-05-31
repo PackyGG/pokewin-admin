@@ -1,4 +1,4 @@
-import { requirePageAccess } from "@/lib/dal";
+import { verifySession } from "@/lib/dal";
 import {
   getLiveActivity,
   getLiveActivityWatermark,
@@ -40,17 +40,21 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 /**
- * Live activity feed over SSE. Replaces the 3s polling in
- * `src/app/(admin)/dashboard/recent-activity.tsx`. The query (see
- * `getLiveActivity`) is the same one the old poll endpoint used — we
- * simply drive it on the server side of a long-lived stream so the
- * client no longer has to round-trip every 3 seconds.
+ * Live activity feed over SSE. Subscribed by the docked Recent Activity
+ * widget (`src/components/docked-recent-activity.tsx`) on every admin
+ * page. The query (see `getLiveActivity`) is the same one the original
+ * dashboard poll endpoint used — driven on the server side of a long-
+ * lived stream so the client no longer round-trips every 3s.
  */
 export async function GET(request: Request): Promise<Response> {
-  // Gate identical to the existing server-action wrapper
-  // (`fetchRecentActivityLive`). Fails hard via redirect() if unauthed,
-  // which turns into a normal HTTP redirect for the EventSource client.
-  const session = await requirePageAccess("/dashboard");
+  // Auth gate: any logged-in admin user. The original gate was
+  // `requirePageAccess("/dashboard")` because this route only served the
+  // in-page RecentActivity feed on `/dashboard`. That feed has moved into
+  // a docked widget that lives on every admin page, so a support /
+  // marketing / creator user without dashboard access should still get
+  // the SSE stream. Fails hard via redirect() if unauthed, which turns
+  // into a normal HTTP redirect for the EventSource client.
+  const session = await verifySession();
   const userId = session.userId;
 
   // Cap per-user concurrent SSE streams. The 4th attempt is rejected

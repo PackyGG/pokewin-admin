@@ -4,6 +4,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { AdminHeader } from "@/components/admin-header";
 import { TopProgressBar } from "@/components/top-progress-bar";
 import { DockedChat } from "@/components/docked-chat";
+import { DockedRecentActivity } from "@/components/docked-recent-activity";
 import { LiveMoneyChat } from "@/components/live-money-chat";
 import { RightRailProvider } from "@/components/right-rail-context";
 import { CommandPalette } from "@/components/command-palette";
@@ -106,17 +107,22 @@ export default async function AdminLayout({
           </main>
         </div>
         <CommandPalette role={session.role} allowedPages={allowedPages} />
-        {/* Right-edge docked widgets. LiveMoneyChat (top half) streams
-            deposits + withdrawals across every admin page; DockedChat
-            (bottom half) holds the platform Chat & Mutes feed. Both
-            are persistent, collapsible, and independently
-            state-tracked via the shared right-rail context — when the
-            admin collapses the live feed, the chat dock slides up to
-            fill the freed space, and vice versa. The chat dock is
-            permission-gated to the same boundary the old /chat page
-            used. */}
-        <RightRailProvider>
+        {/* Right-edge docked widgets — three slots, top → bottom:
+              • LiveMoneyChat       (top)    deposits + withdrawals feed
+              • DockedRecentActivity (middle) signups + wagers + payouts feed
+              • DockedChat           (bottom) Chat & Mutes panel
+            All three are persistent, collapsible, and state-tracked via
+            the shared right-rail context. At most TWO may be expanded at
+            the same time — opening a third auto-collapses the oldest-
+            opened one (FIFO eviction inside RightRailProvider). The
+            chat dock is permission-gated to the same boundary the old
+            /chat page used; the live + recent docks are visible to
+            every admin user. `mounted={{ chat }}` tells the rail
+            geometry whether to reserve space for chat — without it the
+            non-admin shell would leave a 5rem empty band at the bottom. */}
+        <RightRailProvider mounted={{ chat: canOpenChatPanel }}>
           <LiveMoneyChat />
+          <DockedRecentActivity />
           {canOpenChatPanel && <DockedChat role={session.role} />}
         </RightRailProvider>
       </SidebarProvider>
