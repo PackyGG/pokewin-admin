@@ -98,18 +98,34 @@ function rarityClass(rarity: string | null): string {
 
 export function UpgraderOutputCardsGrid({
   data,
+  /**
+   * Total in the underlying pool — used to differentiate "pool is
+   * genuinely empty (call out the Add button)" from "pool has cards
+   * but filters returned nothing (suggest clearing filters)".
+   * Defaults to `data.length` so existing call sites stay correct.
+   */
+  poolTotal,
 }: {
   data: UpgraderOutputCard[];
+  poolTotal?: number;
 }) {
+  const effectivePoolTotal = poolTotal ?? data.length;
   if (data.length === 0) {
+    const poolIsEmpty = effectivePoolTotal === 0;
     return (
       <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed bg-card/30 px-6 py-16 text-center">
         <div className="flex size-12 items-center justify-center rounded-xl bg-muted/40">
           <Search className="size-5 text-muted-foreground" />
         </div>
-        <p className="text-sm font-medium">No cards in the upgrader pool yet</p>
+        <p className="text-sm font-medium">
+          {poolIsEmpty
+            ? "No cards in the upgrader pool yet"
+            : "No cards match your filters"}
+        </p>
         <p className="text-xs text-muted-foreground">
-          Click &quot;Add Cards&quot; above to populate the output pool.
+          {poolIsEmpty
+            ? 'Click "Add Cards" above to populate the output pool.'
+            : "Adjust the search, status, or tier filter to see more cards."}
         </p>
       </div>
     );

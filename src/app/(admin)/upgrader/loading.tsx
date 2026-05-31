@@ -2,6 +2,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   KpiStripSkeleton,
   PageHeroSkeleton,
+  PaginationSkeleton,
+  SectionHeadingSkeleton,
+  ToolbarSkeleton,
 } from "@/components/loading-skeletons";
 
 export default function UpgraderLoading() {
@@ -32,14 +35,21 @@ export default function UpgraderLoading() {
           ))}
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
-        {Array.from({ length: 24 }).map((_, i) => (
-          <Skeleton
-            key={i}
-            className="rounded-xl"
-            style={{ aspectRatio: "3 / 4.6" }}
-          />
-        ))}
+      {/* Output cards section: heading + toolbar + grid + pagination,
+          matching the live page shell so the swap-in doesn't pop. */}
+      <div className="space-y-3">
+        <SectionHeadingSkeleton />
+        <ToolbarSkeleton filters={2} />
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
+          {Array.from({ length: 24 }).map((_, i) => (
+            <Skeleton
+              key={i}
+              className="rounded-xl"
+              style={{ aspectRatio: "3 / 4.6" }}
+            />
+          ))}
+        </div>
+        <PaginationSkeleton />
       </div>
     </div>
   );

@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import {
   Coins,
   EyeOff,
@@ -17,6 +18,9 @@ import {
   SectionHeading,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { Skeleton } from "@/components/ui/skeleton";
+import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
+import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 
@@ -80,16 +84,48 @@ function tierRangeLabel(from: number, to: number | null): string {
   return `${formatCurrency(from)} – ${formatCurrency(to)}`;
 }
 
-export default async function UpgraderAdminPage() {
+/**
+ * Resolve the tier-color for a card the same way the picker does:
+ * manual override wins, otherwise the price-derived band. Used for
+ * both the global tier-distribution panel and the toolbar Tier filter
+ * so a card surfaced under "purple" in the breakdown is the same set
+ * the filter narrows the grid to.
+ */
+function resolveTier(card: {
+  color: string | null;
+  price: number;
+}): UpgraderOutputColor {
+  const manual = (UPGRADER_OUTPUT_COLORS as readonly string[]).includes(
+    card.color ?? "",
+  )
+    ? (card.color as UpgraderOutputColor)
+    : null;
+  return manual ?? colorForPrice(card.price);
+}
+
+export default async function UpgraderAdminPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
   await requirePageAccess("/upgrader");
+
+  const params = await searchParams;
+  const page = Number(params.page) || 1;
+  // Match the 8-col xl grid so a default page fills 5 rows neatly.
+  const perPage = Number(params.perPage) || 40;
+  const searchTerm = params.search?.trim().toLowerCase() ?? "";
+  const statusFilter = params.status ?? "all";
+  const tierFilter = params.tier ?? "all";
 
   const [outputs, filters] = await Promise.all([
     listUpgraderOutputs(),
     getUpgraderPickerFilters(),
   ]);
 
-  // Aggregate signals shown in the KPI strip + tier panel. Computed once
-  // here so the lower components stay pure presentation.
+  // KPI strip + tier panel read the FULL pool so they stay stable
+  // while admins refine the grid filters below — same principle as
+  // /users where the hero counts ignore the current page/search.
   const total = outputs.length;
   const enabled = outputs.filter((c) => c.enabled).length;
   const disabled = total - enabled;
@@ -98,20 +134,13 @@ export default async function UpgraderAdminPage() {
   const maxPrice = outputs.reduce((max, c) => Math.max(max, c.price), 0);
   const existingCardIds = outputs.map((c) => c.card_id);
 
-  // Tier distribution — count enabled cards per color tier (the same
-  // tiers used by `colorForPrice` + the player-side theme map). When a
-  // card has a manual color override we honour that; otherwise we
-  // derive the tier from its price so disabled / un-coloured cards
-  // still land in the right band. Drives the breakdown panel below.
+  // Tier distribution — count cards per color tier (manual override
+  // wins, otherwise priced-derived). Drives the breakdown panel and
+  // the toolbar Tier filter options so both stay in sync.
   const tierCounts = new Map<UpgraderOutputColor, number>();
   for (const c of UPGRADER_OUTPUT_COLORS) tierCounts.set(c, 0);
   for (const card of outputs) {
-    const manual = (UPGRADER_OUTPUT_COLORS as readonly string[]).includes(
-      card.color ?? "",
-    )
-      ? (card.color as UpgraderOutputColor)
-      : null;
-    const tier = manual ?? colorForPrice(card.price);
+    const tier = resolveTier(card);
     tierCounts.set(tier, (tierCounts.get(tier) ?? 0) + 1);
   }
   // Pre-compute the dominant tier so its row gets a subtle highlight —
@@ -125,6 +154,39 @@ export default async function UpgraderAdminPage() {
         return best;
       }, null)?.tier ?? null
     : null;
+
+  // ── Filter + paginate the pool for the grid ────────────────────────
+  // The backend's GET /admin/upgrader/outputs returns the whole pool in
+  // one shot — there's no server-side search/filter/pagination API to
+  // delegate to. We sort/search/slice in-process here so the grid still
+  // gets the same toolbar + paginator UX as the rest of the admin app.
+  // The pool is operator-managed (manual add only, bounded in practice)
+  // so an in-memory sort of the unfiltered list is fine; if it ever
+  // grows to push this past a few KB we'd push the filtering down to
+  // the backend instead of paging client-side.
+  const filtered = outputs.filter((c) => {
+    if (statusFilter === "enabled" && !c.enabled) return false;
+    if (statusFilter === "disabled" && c.enabled) return false;
+    if (
+      tierFilter !== "all" &&
+      (UPGRADER_OUTPUT_COLORS as readonly string[]).includes(tierFilter) &&
+      resolveTier(c) !== tierFilter
+    ) {
+      return false;
+    }
+    if (searchTerm && !c.name.toLowerCase().includes(searchTerm)) {
+      return false;
+    }
+    return true;
+  });
+  // Default order matches the existing list (newest first by created_at
+  // descending). The backend already returns rows in that order; the
+  // filtering above preserves it.
+  const filteredTotal = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(filteredTotal / perPage));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const pageStart = (safePage - 1) * perPage;
+  const pageSlice = filtered.slice(pageStart, pageStart + perPage);
 
   return (
     <div className="space-y-6">
@@ -288,9 +350,44 @@ export default async function UpgraderAdminPage() {
               : "Output Cards"
           }
         />
+        <Suspense fallback={<Skeleton className="h-10 w-full" />}>
+          {/* Status + tier filters mirror the toolbar pattern used on
+              /users / /cards / /packs. Tier options are the same
+              UPGRADER_OUTPUT_COLORS allowlist the grid renders — no
+              extra labels needed. Server applies the filters in-memory
+              against the pre-fetched pool (no backend API supports
+              per-row filtering yet). */}
+          <DataTableToolbar
+            searchPlaceholder="Search by card name..."
+            filters={[
+              {
+                name: "Status",
+                paramKey: "status",
+                options: [
+                  { label: "Enabled", value: "enabled" },
+                  { label: "Disabled", value: "disabled" },
+                ],
+              },
+              {
+                name: "Tier",
+                paramKey: "tier",
+                options: UPGRADER_OUTPUT_COLORS.map((c) => ({
+                  label: c.charAt(0).toUpperCase() + c.slice(1),
+                  value: c,
+                })),
+              },
+            ]}
+          />
+        </Suspense>
         <FadeIn>
-          <UpgraderOutputCardsGrid data={outputs} />
+          <UpgraderOutputCardsGrid data={pageSlice} poolTotal={total} />
         </FadeIn>
+        <DataTablePagination
+          page={safePage}
+          totalPages={totalPages}
+          total={filteredTotal}
+          perPage={perPage}
+        />
       </div>
     </div>
   );
