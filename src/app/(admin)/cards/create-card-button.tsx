@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState, useTransition } from "react";
+import { useCallback, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   Plus,
@@ -34,6 +34,11 @@ import {
 import { cn } from "@/lib/utils";
 import { createCard } from "./actions";
 import { uploadImageClient } from "@/lib/upload-image-client";
+import {
+  ONEPIECE_RARITY_OPTIONS,
+  ONEPIECE_CARD_TYPE_OPTIONS,
+  isOnePieceSetName,
+} from "./_constants/onepiece";
 
 // ────────────────────────────────────────────────────────────────────
 //  Section heading — small, inline, sits inside the dialog body.
@@ -189,8 +194,18 @@ function ImageDropzone({
   );
 }
 
-const RARITIES = ["Common", "Uncommon", "Rare", "Ultra Rare", "Secret"] as const;
-const CARD_TYPES = ["card", "promo", "special"] as const;
+// Pokemon rarities — unchanged from the pre-OnePiece-fork version of
+// this dialog. The OnePiece branch uses its own canonical short-code
+// list (C / UC / R / L / SR / SEC / SP / TR / P) from _constants.
+const POKEMON_RARITIES = [
+  "Common",
+  "Uncommon",
+  "Rare",
+  "Ultra Rare",
+  "Secret",
+] as const;
+
+const POKEMON_CARD_TYPES = ["card", "promo", "special"] as const;
 
 export function CreateCardButton({
   sets,
@@ -210,56 +225,126 @@ export function CreateCardButton({
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
+  // Shared fields
   const [name, setName] = useState("");
   const [price, setPrice] = useState("");
-  const [hp, setHp] = useState("0");
-  const [rarity, setRarity] = useState("Common");
   const [artist, setArtist] = useState("");
   const [tcgplayerId, setTcgplayerId] = useState("");
-  const [type, setType] = useState("card");
   const [cardNumber, setCardNumber] = useState("");
   const [setId, setSetId] = useState(defaultSetId);
+
+  // Pokemon-specific fields. Rarity defaults to "Common" for Pokemon
+  // and gets re-defaulted to "C" the moment the operator flips to an
+  // OnePiece set — the variant useMemo below picks the right initial
+  // value from POKEMON_RARITIES / ONEPIECE_RARITY_OPTIONS.
+  const [hp, setHp] = useState("0");
+  const [pokemonRarity, setPokemonRarity] = useState<string>("Common");
+  const [pokemonType, setPokemonType] = useState<string>("card");
+
+  // OnePiece-specific fields. Empty strings keep the inputs controlled
+  // without forcing a default value the operator didn't pick.
+  const [cost, setCost] = useState("");
+  const [power, setPower] = useState("");
+  const [opRarity, setOpRarity] = useState<string>("C");
+  const [opType, setOpType] = useState<string>("Character");
+  const [opImageUrl, setOpImageUrl] = useState("");
+
+  // Pokemon uses the ImageKit upload flow (file → CDN URL); OnePiece
+  // pastes a third-party URL directly. We track the file/preview state
+  // only for the Pokemon branch.
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+
+  // Resolve the currently-selected set's name → variant. When `setId`
+  // is empty the dialog falls back to the Pokemon block (it's the
+  // catalog default; OnePiece is the explicit opt-in).
+  const variant = useMemo<"pokemon" | "onepiece">(() => {
+    const selected = sets.find((s) => s.id === setId);
+    return isOnePieceSetName(selected?.name) ? "onepiece" : "pokemon";
+  }, [sets, setId]);
 
   function resetForm() {
     setName("");
     setPrice("");
-    setHp("0");
-    setRarity("Common");
     setArtist("");
     setTcgplayerId("");
-    setType("card");
     setCardNumber("");
     // Reset to the active-tab default rather than blank — opening the
     // dialog a second time on the same tab should keep that tab's set
     // pre-selected, not blank it out.
     setSetId(defaultSetId);
+
+    setHp("0");
+    setPokemonRarity("Common");
+    setPokemonType("card");
+
+    setCost("");
+    setPower("");
+    setOpRarity("C");
+    setOpType("Character");
+    setOpImageUrl("");
+
     setImageFile(null);
     setImagePreview(null);
   }
 
+  // Form validity — the submit button stays disabled until the active
+  // variant's required fields are filled. Pokemon needs an uploaded
+  // file; OnePiece needs a pasted URL.
+  const canSubmit = (() => {
+    if (!name.trim()) return false;
+    if (variant === "pokemon") return Boolean(imageFile);
+    return Boolean(opImageUrl.trim());
+  })();
+
   function handleSubmit() {
     startTransition(async () => {
       try {
-        if (!imageFile) {
-          toast.error("Image is required");
-          return;
-        }
+        let imageUrl: string;
+        let payloadRarity: string;
+        let payloadType: string;
+        let payloadHp: number;
+        let payloadCost: number | null;
+        let payloadPower: number | null;
 
-        const imageUrl = await uploadImageClient(imageFile, "/cards");
+        if (variant === "pokemon") {
+          if (!imageFile) {
+            toast.error("Image is required");
+            return;
+          }
+          imageUrl = await uploadImageClient(imageFile, "/cards");
+          payloadRarity = pokemonRarity;
+          payloadType = pokemonType;
+          payloadHp = parseInt(hp) || 0;
+          payloadCost = null;
+          payloadPower = null;
+        } else {
+          const trimmed = opImageUrl.trim();
+          if (!trimmed) {
+            toast.error("Image URL is required");
+            return;
+          }
+          imageUrl = trimmed;
+          payloadRarity = opRarity;
+          payloadType = opType;
+          payloadHp = 0;
+          payloadCost = cost.trim() === "" ? null : parseInt(cost);
+          payloadPower = power.trim() === "" ? null : parseInt(power);
+        }
 
         await createCard({
           name,
           imageUrl,
           price: parseFloat(price) || 0,
-          hp: parseInt(hp) || 0,
-          rarity,
+          hp: payloadHp,
+          rarity: payloadRarity,
           artist,
           tcgplayerId: tcgplayerId ? parseInt(tcgplayerId) : null,
-          type,
+          type: payloadType,
           cardNumber: cardNumber || null,
           setId: setId || null,
+          cost: payloadCost,
+          power: payloadPower,
         });
 
         toast.success("Card created");
@@ -311,19 +396,36 @@ export function CreateCardButton({
           <Section
             icon={ImageIcon}
             title="Image"
-            description="Artwork shown in the catalog and packs."
+            description={
+              variant === "onepiece"
+                ? "Paste the artwork URL from the source CDN."
+                : "Artwork shown in the catalog and packs."
+            }
           >
-            <ImageDropzone
-              preview={imagePreview}
-              onFile={(file) => {
-                setImageFile(file);
-                setImagePreview(URL.createObjectURL(file));
-              }}
-              onClear={() => {
-                setImageFile(null);
-                setImagePreview(null);
-              }}
-            />
+            {variant === "pokemon" ? (
+              <ImageDropzone
+                preview={imagePreview}
+                onFile={(file) => {
+                  setImageFile(file);
+                  setImagePreview(URL.createObjectURL(file));
+                }}
+                onClear={() => {
+                  setImageFile(null);
+                  setImagePreview(null);
+                }}
+              />
+            ) : (
+              <div className="space-y-1.5">
+                <Label htmlFor="create-card-op-image-url">Image URL</Label>
+                <Input
+                  id="create-card-op-image-url"
+                  type="url"
+                  value={opImageUrl}
+                  onChange={(e) => setOpImageUrl(e.target.value)}
+                  placeholder="https://…"
+                />
+              </div>
+            )}
           </Section>
 
           <Section
@@ -338,23 +440,47 @@ export function CreateCardButton({
                   id="create-card-name"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. Charizard"
+                  placeholder={
+                    variant === "onepiece" ? "e.g. Monkey D. Luffy" : "e.g. Charizard"
+                  }
                 />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="create-card-rarity">Rarity</Label>
-                <Select value={rarity} onValueChange={(v) => v && setRarity(v)}>
-                  <SelectTrigger id="create-card-rarity" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {RARITIES.map((r) => (
-                      <SelectItem key={r} value={r}>
-                        {r}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {variant === "pokemon" ? (
+                  <Select
+                    value={pokemonRarity}
+                    onValueChange={(v) => v && setPokemonRarity(v)}
+                  >
+                    <SelectTrigger id="create-card-rarity" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {POKEMON_RARITIES.map((r) => (
+                        <SelectItem key={r} value={r}>
+                          {r}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Select
+                    value={opRarity}
+                    onValueChange={(v) => v && setOpRarity(v)}
+                  >
+                    <SelectTrigger id="create-card-rarity" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ONEPIECE_RARITY_OPTIONS.map((r) => (
+                        <SelectItem key={r.value} value={r.value}>
+                          {r.label}{" "}
+                          <span className="text-muted-foreground">({r.value})</span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
               </div>
             </div>
 
@@ -381,47 +507,112 @@ export function CreateCardButton({
                   id="create-card-number"
                   value={cardNumber}
                   onChange={(e) => setCardNumber(e.target.value)}
-                  placeholder="e.g. 025/198"
+                  placeholder={
+                    variant === "onepiece" ? "e.g. OP01-001" : "e.g. 025/198"
+                  }
                 />
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="create-card-type">Type</Label>
-                <Select value={type} onValueChange={(v) => v && setType(v)}>
-                  <SelectTrigger id="create-card-type" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CARD_TYPES.map((t) => (
-                      <SelectItem key={t} value={t}>
-                        {t}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+            {variant === "pokemon" ? (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="create-card-type">Type</Label>
+                  <Select
+                    value={pokemonType}
+                    onValueChange={(v) => v && setPokemonType(v)}
+                  >
+                    <SelectTrigger id="create-card-type" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {POKEMON_CARD_TYPES.map((t) => (
+                        <SelectItem key={t} value={t}>
+                          {t}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="create-card-hp">HP</Label>
+                  <Input
+                    id="create-card-hp"
+                    type="number"
+                    value={hp}
+                    onChange={(e) => setHp(e.target.value)}
+                    min="0"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="create-card-artist">Artist</Label>
+                  <Input
+                    id="create-card-artist"
+                    value={artist}
+                    onChange={(e) => setArtist(e.target.value)}
+                    placeholder="Artist name"
+                  />
+                </div>
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="create-card-hp">HP</Label>
-                <Input
-                  id="create-card-hp"
-                  type="number"
-                  value={hp}
-                  onChange={(e) => setHp(e.target.value)}
-                  min="0"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="create-card-artist">Artist</Label>
-                <Input
-                  id="create-card-artist"
-                  value={artist}
-                  onChange={(e) => setArtist(e.target.value)}
-                  placeholder="Artist name"
-                />
-              </div>
-            </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="create-card-type">Card type</Label>
+                    <Select
+                      value={opType}
+                      onValueChange={(v) => v && setOpType(v)}
+                    >
+                      <SelectTrigger id="create-card-type" className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ONEPIECE_CARD_TYPE_OPTIONS.map((t) => (
+                          <SelectItem key={t.value} value={t.value}>
+                            {t.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="create-card-cost">Cost</Label>
+                    <Input
+                      id="create-card-cost"
+                      type="number"
+                      value={cost}
+                      onChange={(e) => setCost(e.target.value)}
+                      min="0"
+                      max="20"
+                      placeholder="Optional"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="create-card-power">Power</Label>
+                    <Input
+                      id="create-card-power"
+                      type="number"
+                      value={power}
+                      onChange={(e) => setPower(e.target.value)}
+                      min="0"
+                      max="20000"
+                      placeholder="Optional"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="create-card-artist">Artist</Label>
+                    <Input
+                      id="create-card-artist"
+                      value={artist}
+                      onChange={(e) => setArtist(e.target.value)}
+                      placeholder="Artist name (optional)"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
           </Section>
 
           <Section
@@ -464,10 +655,7 @@ export function CreateCardButton({
           >
             Cancel
           </Button>
-          <Button
-            onClick={handleSubmit}
-            disabled={isPending || !name || !imageFile}
-          >
+          <Button onClick={handleSubmit} disabled={isPending || !canSubmit}>
             {isPending ? (
               <>
                 <Loader2 className="size-4 animate-spin" />
