@@ -41,6 +41,9 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Rewards", label: "Rewards", key: "/rewards" },
   { group: "Rewards", label: "Analytics", key: "/rewards/analytics" },
   { group: "Rewards", label: "Rakeback", key: "/rewards/rakeback" },
+  // Promo Codes — moved here from the Marketing group so the role
+  // editor mirrors the sidebar grouping. Permission key is unchanged.
+  { group: "Rewards", label: "Promo Codes", key: "/promo-codes" },
   { group: "Rewards", label: "Raffles", key: "/rewards/raffles" },
   { group: "Rewards", label: "Rain", key: "/rain" },
   { group: "Rewards", label: "Leaderboards", key: "/rewards/leaderboards" },
@@ -56,7 +59,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Marketing", label: "Codes", key: "/creators/codes" },
   { group: "Marketing", label: "Analytics", key: "/creators/analytics" },
   { group: "Marketing", label: "Settings", key: "/creators/settings" },
-  { group: "Marketing", label: "Promo Codes", key: "/promo-codes" },
+  // Promo Codes was moved to the Rewards group (mirrors the sidebar).
   { group: "Marketing", label: "Gift Cards", key: "/gift-cards" },
   { group: "Marketing", label: "Vouchers", key: "/vouchers" },
   // Giveaway log — driven by `admin_giveaway_actions` rows that the

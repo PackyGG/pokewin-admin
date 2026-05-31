@@ -189,11 +189,11 @@ const NAV_GROUPS: NavGroup[] = [
       // (which is the raw code list).
       { label: "Ads", href: "/creators/ads", icon: "Megaphone" },
       { label: "Codes", href: "/creators/codes", icon: "Share2" },
-      { label: "Settings", href: "/creators/settings", icon: "Settings" },
       // Promo / acquisition surfaces (previously in their own
       // "Marketing" group). Kept after the creator-side so the visual
       // grouping inside the section still reads "people → tools".
-      { label: "Promo Codes", href: "/promo-codes", icon: "Tag" },
+      // Promo Codes was moved out of Marketing into Rewards (it sits
+      // alongside the other user-facing promo/reward levers there).
       { label: "Gift Cards", href: "/gift-cards", icon: "Gift" },
       { label: "Vouchers", href: "/vouchers", icon: "Ticket" },
       // Giveaway log — every balance-adjustment tagged as a giveaway
@@ -201,6 +201,10 @@ const NAV_GROUPS: NavGroup[] = [
       // marketing team has a single feed of "what we gave away and
       // why" without grepping the ledger.
       { label: "Giveaway", href: "/marketing/giveaway", icon: "Gift" },
+      // Settings sits last in the group — it's the configuration
+      // surface for the whole Marketing section, not a daily-use
+      // entry, so it lives at the bottom under the working surfaces.
+      { label: "Settings", href: "/creators/settings", icon: "Settings" },
     ],
   },
   {
@@ -246,6 +250,10 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Rewards", href: "/rewards", icon: "Award" },
       { label: "Analytics", href: "/rewards/analytics", icon: "BarChart3" },
       { label: "Rakeback", href: "/rewards/rakeback", icon: "Percent" },
+      // Promo Codes — moved here from the Marketing group; it's a
+      // user-facing promo lever, so it sits next to the other promo
+      // surfaces (Rakeback above, Raffles/Rain below).
+      { label: "Promo Codes", href: "/promo-codes", icon: "Tag" },
       { label: "Raffles", href: "/rewards/raffles", icon: "Ticket" },
       { label: "Rain", href: "/rain", icon: "CloudRain" },
       { label: "Leaderboards", href: "/rewards/leaderboards", icon: "Trophy" },
