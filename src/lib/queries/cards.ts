@@ -279,51 +279,59 @@ export type CardsStats = {
  * KPI strip is fine. Within a single request unstable_cache also
  * deduplicates so a Suspense fan-out only runs the query once.
  */
-const cachedCardsStats = unstable_cache(
-  async (setId?: string): Promise<CardsStats> => {
-    const db = await getDb();
-    // When `setId` is provided, narrow every aggregate to that set so the
-    // KPI strip + total count reflect the active per-set tab on /cards.
-    // `totalSets` keeps the catalog-wide value either way — it's a meta
-    // figure ("how many sets exist") that doesn't change when the operator
-    // is browsing a single set.
-    const where = setId ? { set_id: setId } : undefined;
-    const [total, totalSets, priceAgg, rarityGroups] = await Promise.all([
-      db.cards.count({ where }),
-      db.sets.count(),
-      db.cards.aggregate({
-        where,
-        _avg: { price: true },
-        _max: { price: true },
-      }),
-      db.cards.groupBy({
-        by: ["rarity"],
-        where,
-        _count: { _all: true },
-      }),
-    ]);
+async function fetchCardsStats(setId?: string): Promise<CardsStats> {
+  const db = await getDb();
+  // When `setId` is provided, narrow every aggregate to that set so the
+  // KPI strip + total count reflect the active per-set tab on /cards.
+  // `totalSets` keeps the catalog-wide value either way — it's a meta
+  // figure ("how many sets exist") that doesn't change when the operator
+  // is browsing a single set.
+  const where = setId ? { set_id: setId } : undefined;
+  const [total, totalSets, priceAgg, rarityGroups] = await Promise.all([
+    db.cards.count({ where }),
+    db.sets.count(),
+    db.cards.aggregate({
+      where,
+      _avg: { price: true },
+      _max: { price: true },
+    }),
+    db.cards.groupBy({
+      by: ["rarity"],
+      where,
+      _count: { _all: true },
+    }),
+  ]);
 
-    const byRarity = rarityGroups
-      .map((g) => ({
-        rarity: g.rarity ?? "Unknown",
-        count: g._count._all,
-      }))
-      .sort((a, b) => b.count - a.count);
+  const byRarity = rarityGroups
+    .map((g) => ({
+      rarity: g.rarity ?? "Unknown",
+      count: g._count._all,
+    }))
+    .sort((a, b) => b.count - a.count);
 
-    return {
-      total,
-      totalSets,
-      avgPriceUsd: toNumber(priceAgg._avg.price),
-      maxPriceUsd: toNumber(priceAgg._max.price),
-      byRarity,
-    };
-  },
-  // v2 cache key — added the optional setId argument so the per-tab
-  // narrowed aggregates don't share a cache slot with the catalog-wide one.
-  ["cards-list-stats-v2"],
-  { revalidate: 60, tags: ["cards-list-stats"] },
-);
+  return {
+    total,
+    totalSets,
+    avgPriceUsd: toNumber(priceAgg._avg.price),
+    maxPriceUsd: toNumber(priceAgg._max.price),
+    byRarity,
+  };
+}
 
 export async function getCardsStats(setId?: string): Promise<CardsStats> {
-  return cachedCardsStats(setId);
+  // v3 cache key — `unstable_cache`'s keyParts array is the ONLY segment
+  // key for cache slots; the function-arg list is NOT automatically mixed
+  // into the key. v2 used a static one-string keyParts (["cards-list-stats-v2"]),
+  // so calls with `setId=<pokemonUUID>` collided with the catalog-wide
+  // `setId=undefined` call — whichever landed in the cache first served
+  // every subsequent request. That produced the "Cards in Pokemon: 65"
+  // symptom where the 65-card seed count was served for the catalog-wide
+  // 50,588 query (or vice versa). Including `setId` in keyParts per call
+  // gives each set its own slot. `"all"` is the sentinel for the
+  // catalog-wide aggregate.
+  return unstable_cache(
+    () => fetchCardsStats(setId),
+    ["cards-list-stats-v3", setId ?? "all"],
+    { revalidate: 60, tags: ["cards-list-stats"] },
+  )();
 }
