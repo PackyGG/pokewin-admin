@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import {
   Table,
@@ -16,6 +17,7 @@ import { EmptyState } from "@/components/empty-state";
 import { ArrowUpCircle } from "lucide-react";
 import { formatCurrency, formatDateTime, formatRelative } from "@/lib/utils/format";
 import type { UpgraderTransactionRow } from "@/lib/queries/upgrader-transactions";
+import { UpgraderTxDialog } from "./upgrader-tx-dialog";
 
 /**
  * Compact multiplier formatter — matches the badge style used on the
@@ -47,7 +49,13 @@ const OUTCOME_COLORS = {
   loss: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
 } as const;
 
-function UpgraderMobileCard({ row }: { row: UpgraderTransactionRow }) {
+function UpgraderMobileCard({
+  row,
+  onOpenDialog,
+}: {
+  row: UpgraderTransactionRow;
+  onOpenDialog: (ledgerTxId: string) => void;
+}) {
   const houseGain = row.housePnl >= 0;
   return (
     <MobileCard
@@ -74,13 +82,14 @@ function UpgraderMobileCard({ row }: { row: UpgraderTransactionRow }) {
       }
       secondary={
         row.ledgerTxId ? (
-          <Link
-            href={`/transactions/${row.ledgerTxId}`}
+          <button
+            type="button"
+            onClick={() => onOpenDialog(row.ledgerTxId!)}
             className="font-mono text-[10px] text-blue-600 hover:underline dark:text-blue-400"
             title="Open transaction details (PF + card hit)"
           >
             {row.id.slice(0, 12)}…
-          </Link>
+          </button>
         ) : (
           <span className="font-mono text-[10px]">{row.id.slice(0, 12)}…</span>
         )
@@ -131,6 +140,12 @@ export function UpgraderTransactionsDataTable({
 }: {
   data: UpgraderTransactionRow[];
 }) {
+  // Single piece of state for the click-an-ID popup. Holds the
+  // ledger_transactions.id (NOT the upgrader_games.id) of the row
+  // whose details are open; null = closed. Lifted up here so both
+  // the mobile card list and the desktop table can dispatch into it.
+  const [openTxId, setOpenTxId] = useState<string | null>(null);
+
   return (
     <>
       {/* Mobile card list (<lg) */}
@@ -147,7 +162,11 @@ export function UpgraderTransactionsDataTable({
         ) : (
           <div className="overflow-hidden rounded-md border">
             {data.map((row) => (
-              <UpgraderMobileCard key={row.id} row={row} />
+              <UpgraderMobileCard
+                key={row.id}
+                row={row}
+                onOpenDialog={setOpenTxId}
+              />
             ))}
           </div>
         )}
@@ -189,22 +208,22 @@ export function UpgraderTransactionsDataTable({
                 return (
                   <TableRow key={row.id}>
                     <TableCell>
-                      {/* ID is the link out to the canonical
-                          /transactions/[id] detail page (full PF
-                          panel + the card the ticket landed on).
-                          ledgerTxId comes from
-                          game_sessions.bet_ledger_tx_id; the rare
-                          legacy row with no linked ledger TX falls
-                          back to a plain mono span so the column
-                          stays aligned. */}
+                      {/* Click an ID → open the UpgraderTxDialog
+                          popup (PF panel + card-hit chip), driven by
+                          the lifted `openTxId` state above. Rows
+                          without a linked ledger TX (rare defensive
+                          case) keep the plain mono span so the column
+                          stays aligned and there's no clickable target
+                          landing on /transactions/null. */}
                       {row.ledgerTxId ? (
-                        <Link
-                          href={`/transactions/${row.ledgerTxId}`}
+                        <button
+                          type="button"
+                          onClick={() => setOpenTxId(row.ledgerTxId!)}
                           className="font-mono text-xs text-blue-600 hover:underline dark:text-blue-400"
                           title="Open transaction details (PF + card hit)"
                         >
                           {row.id.slice(0, 8)}...
-                        </Link>
+                        </button>
                       ) : (
                         <span className="font-mono text-xs">
                           {row.id.slice(0, 8)}...
@@ -269,6 +288,15 @@ export function UpgraderTransactionsDataTable({
           </TableBody>
         </Table>
       </div>
+
+      {/* Single shared dialog. Rendered once for the whole table so
+          the mobile-card path and the desktop-row path open the same
+          popup. Closes via the X button on the dialog header or the
+          onOpenChange handler inside it. */}
+      <UpgraderTxDialog
+        ledgerTxId={openTxId}
+        onClose={() => setOpenTxId(null)}
+      />
     </>
   );
 }
