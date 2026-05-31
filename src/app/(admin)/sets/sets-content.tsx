@@ -45,14 +45,6 @@ export function SetsContent({ data }: { data: SetListItem[] }) {
                         {formatNumber(set.cardCount)} cards
                       </span>
                     </div>
-                    <div className="mt-1 grid grid-cols-1 gap-x-3 text-[11px] text-muted-foreground">
-                      <div>
-                        <span className="text-[9px] uppercase tracking-wide">
-                          Language
-                        </span>
-                        <div className="uppercase">{set.language}</div>
-                      </div>
-                    </div>
                     <div className="mt-1 text-[10px] text-muted-foreground">
                       Added {formatDate(set.createdAt)}
                     </div>
@@ -62,7 +54,6 @@ export function SetsContent({ data }: { data: SetListItem[] }) {
                     initialValues={{
                       id: set.id,
                       name: set.name,
-                      language: set.language,
                     }}
                   />
                 </div>
@@ -78,7 +69,6 @@ export function SetsContent({ data }: { data: SetListItem[] }) {
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
-              <TableHead>Language</TableHead>
               <TableHead className="text-right">Cards</TableHead>
               <TableHead>Added</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -88,7 +78,6 @@ export function SetsContent({ data }: { data: SetListItem[] }) {
             {data.map((set) => (
               <TableRow key={set.id}>
                 <TableCell className="font-medium">{set.name}</TableCell>
-                <TableCell className="uppercase">{set.language}</TableCell>
                 <TableCell className="text-right tabular-nums">
                   {formatNumber(set.cardCount)}
                 </TableCell>
@@ -99,7 +88,6 @@ export function SetsContent({ data }: { data: SetListItem[] }) {
                     initialValues={{
                       id: set.id,
                       name: set.name,
-                      language: set.language,
                     }}
                   />
                 </TableCell>
@@ -107,7 +95,7 @@ export function SetsContent({ data }: { data: SetListItem[] }) {
             ))}
             {data.length === 0 && (
               <TableRow className="hover:bg-transparent">
-                <TableCell colSpan={5} className="p-0">
+                <TableCell colSpan={4} className="p-0">
                   <EmptyState
                     icon={Library}
                     title="No sets found"

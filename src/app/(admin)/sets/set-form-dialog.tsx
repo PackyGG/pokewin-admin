@@ -27,7 +27,6 @@ import { createSet, updateSet } from "./actions";
 type SetInitialValues = {
   id: string;
   name: string;
-  language: string;
 };
 
 type CreateProps = {
@@ -85,14 +84,12 @@ export function SetFormDialog(props: SetFormDialogProps) {
   const initial = isEdit ? props.initialValues : null;
 
   const [name, setName] = useState(initial?.name ?? "");
-  const [language, setLanguage] = useState(initial?.language ?? "en");
 
   // Reset form when the dialog re-opens so a freshly-rendered Edit dialog
   // doesn't show stale values from a previous open / close cycle.
   useEffect(() => {
     if (!open) return;
     setName(initial?.name ?? "");
-    setLanguage(initial?.language ?? "en");
   }, [open, initial]);
 
   function handleSubmit() {
@@ -101,13 +98,11 @@ export function SetFormDialog(props: SetFormDialogProps) {
         if (isEdit) {
           await updateSet(props.initialValues.id, {
             name,
-            language,
           });
           toast.success("Set updated");
         } else {
           await createSet({
             name,
-            language,
           });
           toast.success("Set created");
         }
@@ -172,7 +167,7 @@ export function SetFormDialog(props: SetFormDialogProps) {
                 </DialogTitle>
                 <p className="text-xs text-muted-foreground">
                   {isEdit
-                    ? "Update the name or language."
+                    ? "Update the set name."
                     : "Add a new set to the catalog."}
                 </p>
               </div>
@@ -185,27 +180,16 @@ export function SetFormDialog(props: SetFormDialogProps) {
           <Section
             icon={FileText}
             title="Set details"
-            description="Name and language metadata."
+            description="Name of the set."
           >
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="set-form-name">Name</Label>
-                <Input
-                  id="set-form-name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. Romance Dawn"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="set-form-language">Language</Label>
-                <Input
-                  id="set-form-language"
-                  value={language}
-                  onChange={(e) => setLanguage(e.target.value)}
-                  placeholder="e.g. en"
-                />
-              </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="set-form-name">Name</Label>
+              <Input
+                id="set-form-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. Romance Dawn"
+              />
             </div>
           </Section>
         </div>
@@ -218,10 +202,7 @@ export function SetFormDialog(props: SetFormDialogProps) {
           >
             Cancel
           </Button>
-          <Button
-            onClick={handleSubmit}
-            disabled={isPending || !name || !language}
-          >
+          <Button onClick={handleSubmit} disabled={isPending || !name}>
             {isPending ? (
               <>
                 <Loader2 className="size-4 animate-spin" />
