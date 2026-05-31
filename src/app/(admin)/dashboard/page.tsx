@@ -264,7 +264,17 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
           pnlPeriod={stats.realizedPnlPeriod}
           periodLabel={stats.periodLabel}
         />
-        <GgrStatCard ggr={stats.ggr} periodLabel={stats.periodLabel} />
+        <GgrStatCard
+          ggr={stats.ggr}
+          periodLabel={stats.periodLabel}
+          // Reconciliation popover surfaces the GGR → P&L bridge for
+          // the SAME period — inventoryΔ and voucherΔ explain the gap
+          // between the headline GGR and the windowed P&L. See SQL
+          // comment + GgrStatCard docstring for the methodology.
+          pnlPeriod={stats.realizedPnlPeriod}
+          inventoryDelta={stats.inventoryDeltaPeriod}
+          voucherDelta={stats.voucherDeltaPeriod}
+        />
         {/* Wager — customer wager only (drops wagers a creator made
             while live on a deal/stream — house-funded sponsored
             balance, not a real customer bet). This IS the default

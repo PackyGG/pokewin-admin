@@ -2,10 +2,15 @@
 
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { TrendingUp, TrendingDown } from "lucide-react";
+import { Info, TrendingUp, TrendingDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
 /**
  * Period-aware stat cards used in the dashboard's primary KPI strip.
@@ -106,20 +111,135 @@ export function PnlStatCard({
 // emerald/rose for sign so direction is readable at a glance. Card
 // identity colour is cyan so it's visually distinct from the rest of
 // the row.
+//
+// A small "info" affordance next to the GGR title opens a popover with
+// the GGR → P&L bridge for the SAME period (inventoryΔ + voucherΔ
+// surfaced as drags). The two top-level dashboard figures (headline
+// GGR vs. the Daily P&L chart) diverge by design — GGR uses the
+// wager/payout formula, P&L uses balance-delta math — so this popover
+// makes the gap visible: when users open packs but hold the cards,
+// inventory grows and drags P&L without touching GGR.
+//
+// Labelled "≈ P&L" rather than "= P&L" because the bridge is an
+// approximation: the full P&L formula also nets deposits − withdrawals
+// − ledger balance change, and inventory is valued at obtained-price
+// (not current market price). Small residual is expected.
 export function GgrStatCard({
   ggr,
   periodLabel,
+  pnlPeriod,
+  inventoryDelta,
+  voucherDelta,
 }: {
   ggr: number;
   periodLabel: string;
+  // Period-scoped figures for the GGR → P&L reconciliation popover. All
+  // three optional so the card still renders if a caller omits them.
+  pnlPeriod?: number;
+  // House-POV signed deltas — positive value means user-held inventory
+  // / unclaimed vouchers GREW during the period (drag on P&L).
+  inventoryDelta?: number;
+  voucherDelta?: number;
 }) {
   const isProfit = ggr >= 0;
+  // Reconciliation is only meaningful when ALL three components are
+  // provided. The Daily P&L chart point + the inventory/voucher deltas
+  // all live on the same dashboard payload, so in practice the popover
+  // is always shown — but the optional props keep the card robust.
+  const showReconciliation =
+    typeof pnlPeriod === "number" &&
+    typeof inventoryDelta === "number" &&
+    typeof voucherDelta === "number";
+  // The bridge: GGR minus the two liability deltas should land near
+  // the windowed P&L. Residual = (bridge − actual P&L). Labelled in the
+  // popover so admins know the small gap is the formula difference,
+  // not a bug.
+  const bridge = showReconciliation
+    ? ggr - (inventoryDelta as number) - (voucherDelta as number)
+    : 0;
+  const residual = showReconciliation ? bridge - (pnlPeriod as number) : 0;
   return (
     <Card className="bg-cyan-500/10">
       <CardHeader className="flex flex-col gap-2 pb-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-baseline gap-x-2">
-          <CardTitle className="text-card-title text-muted-foreground">
+          <CardTitle className="text-card-title text-muted-foreground inline-flex items-center gap-1">
             GGR
+            {showReconciliation && (
+              // Inline info chip — opens a popover with the GGR → P&L
+              // bridge. Click trigger (not hover) so it works on mobile
+              // and keyboard. Uses the project's standard Popover so
+              // the look matches the rest of the admin.
+              <Popover>
+                <PopoverTrigger
+                  render={
+                    <button
+                      type="button"
+                      aria-label="Show GGR to P&L reconciliation"
+                      title="Show GGR to P&L reconciliation"
+                      className="rounded text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40"
+                    />
+                  }
+                >
+                  <Info className="size-3.5" />
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-[280px] space-y-2 p-3"
+                  align="start"
+                >
+                  <div>
+                    <p className="text-xs font-medium">
+                      GGR → P&L reconciliation
+                    </p>
+                    <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
+                      {periodLabel}. Inventory + voucher growth is a house
+                      liability — they drag P&L without touching GGR.
+                    </p>
+                  </div>
+                  <div className="space-y-1 text-xs tabular-nums">
+                    <ReconciliationRow
+                      label="GGR"
+                      value={ggr}
+                      tone={ggr >= 0 ? "profit" : "loss"}
+                      bold
+                    />
+                    <ReconciliationRow
+                      label="Inventory Δ"
+                      // Sign flip: positive inventoryΔ subtracts from
+                      // GGR on the bridge — show it as a negative line.
+                      value={-(inventoryDelta as number)}
+                      // Inventory growth shrinks house P&L → rose.
+                      // Inventory shrinkage (negative delta) helps the
+                      // house → emerald.
+                      tone={(inventoryDelta as number) >= 0 ? "loss" : "profit"}
+                    />
+                    <ReconciliationRow
+                      label="Voucher Δ"
+                      value={-(voucherDelta as number)}
+                      tone={(voucherDelta as number) >= 0 ? "loss" : "profit"}
+                    />
+                    <div className="my-1 h-px bg-border" />
+                    <ReconciliationRow
+                      label="≈ P&L"
+                      value={pnlPeriod as number}
+                      tone={(pnlPeriod as number) >= 0 ? "profit" : "loss"}
+                      bold
+                    />
+                  </div>
+                  {Math.abs(residual) > 1 && (
+                    // Only show the residual hint when it's meaningfully
+                    // non-zero (>$1). The bridge is an approximation
+                    // because the full P&L also nets deposits −
+                    // withdrawals − ledger balance change, and
+                    // inventory uses obtained-price valuation.
+                    <p className="text-[10px] leading-snug text-muted-foreground">
+                      Residual {formatCurrency(residual)} reflects deposits /
+                      withdrawals / balance-change terms in the full P&L
+                      formula plus inventory valuation drift.
+                    </p>
+                  )}
+                </PopoverContent>
+              </Popover>
+            )}
           </CardTitle>
           <span className="text-tiny text-muted-foreground">{periodLabel}</span>
         </div>
@@ -138,6 +258,48 @@ export function GgrStatCard({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * One row of the GGR → P&L bridge inside the reconciliation popover.
+ * Right-aligned numeric column with sign + house-POV color, label on
+ * the left. `tone` is the explicit color — sign alone is ambiguous
+ * because Δ-lines are shown sign-flipped from the source delta to
+ * read as drags / boosts on the bridge.
+ */
+function ReconciliationRow({
+  label,
+  value,
+  tone,
+  bold = false,
+}: {
+  label: string;
+  value: number;
+  tone: "profit" | "loss";
+  bold?: boolean;
+}) {
+  const sign = value > 0 ? "+" : value < 0 ? "−" : "";
+  return (
+    <div className="flex items-baseline justify-between gap-2">
+      <span
+        className={cn(
+          "text-muted-foreground",
+          bold && "font-medium text-foreground",
+        )}
+      >
+        {label}
+      </span>
+      <span
+        className={cn(
+          tone === "profit" ? "text-emerald-400" : "text-rose-400",
+          bold && "font-semibold",
+        )}
+      >
+        {sign}
+        {formatCurrency(Math.abs(value))}
+      </span>
+    </div>
   );
 }
 
