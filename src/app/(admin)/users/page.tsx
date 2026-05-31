@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { Users, Coins, Banknote, Ban, Archive } from "lucide-react";
-import { getUsers } from "@/lib/queries/users";
+import { Users, Ban, Archive, UserPlus } from "lucide-react";
+import { getUsers, getUsersListStats } from "@/lib/queries/users";
 import { requirePageAccess } from "@/lib/dal";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { adminDb } from "@/lib/admin-db";
@@ -18,7 +18,7 @@ import {
   KpiTile,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
-import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { formatNumber } from "@/lib/utils/format";
 import { ExportUsersButton } from "./export-dialog";
 import { SortByNetHoldingsButton } from "./sort-net-holdings-button";
 import {
@@ -66,24 +66,25 @@ export default async function UsersPage({
   // collect distinct country codes — wasted work on the 95 % of page
   // loads that never open the dialog. Moved to a server action that
   // the dialog itself calls on first open (see ExportUsersButton).
-  const result = await getUsers({
-    page,
-    perPage,
-    search: params.search,
-    role: params.role,
-    status: params.status,
-    sortBy: params.sortBy,
-    sortOrder: params.sortOrder,
-  });
-
-  // KPI strip — derived ONLY from the rows already fetched for this page.
-  // We deliberately do NOT issue extra aggregate queries here. The single
-  // platform-wide figure we can show truthfully is the filtered total
-  // (`result.total`); every money number is summed over the current page
-  // and labelled "(page)" so it can't be mistaken for a platform total.
-  const pageNetHoldings = result.data.reduce((sum, u) => sum + u.netHoldings, 0);
-  const pageDeposited = result.data.reduce((sum, u) => sum + u.totalDeposited, 0);
-  const pageBanned = result.data.filter((u) => u.status === "banned").length;
+  //
+  // KPI stats run in PARALLEL with the table query. The two are
+  // semantically independent: the table reads the filtered, paginated
+  // slice; the KPI strip reads global aggregates that must stay
+  // stable across page navigation + search refinements. Caching is
+  // handled inside getUsersListStats (60s unstable_cache) so spamming
+  // the search box doesn't fan into the DB on every keystroke.
+  const [result, stats] = await Promise.all([
+    getUsers({
+      page,
+      perPage,
+      search: params.search,
+      role: params.role,
+      status: params.status,
+      sortBy: params.sortBy,
+      sortOrder: params.sortOrder,
+    }),
+    getUsersListStats(),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -107,34 +108,32 @@ export default async function UsersPage({
         />
       </PageHero>
 
-      {/* Net Holdings + Deposited are summed over the current page only —
-          the "(page)" suffix makes the scope explicit. Net Holdings is
-          orange to match the liability-toned "Net" column in the table;
-          Deposited is emerald (House-POV: user capital in = house gain). */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      {/* KPI strip — GLOBAL aggregates (Total Users, Banned, Signups 24h)
+          that read off `stats`, NOT off the paginated `result.data` slice.
+          That's deliberate: admins need a stable read-out of the user
+          base while they paginate or refine the table. Per-page sums
+          (Net Holdings / Deposited) were removed — they shifted on every
+          page click and were easy to misread as platform totals.
+          Signups (24h) replaces them so the strip surfaces a real
+          velocity metric instead. */}
+      <div className="grid grid-cols-3 gap-3">
         <KpiTile
           label="Total Users"
-          value={formatNumber(result.total)}
+          value={formatNumber(stats.totalUsers)}
           icon={Users}
           accent="blue"
         />
         <KpiTile
-          label="Net Holdings (page)"
-          value={formatCurrency(pageNetHoldings)}
-          icon={Coins}
-          accent="orange"
-        />
-        <KpiTile
-          label="Deposited (page)"
-          value={formatCurrency(pageDeposited)}
-          icon={Banknote}
-          accent="emerald"
-        />
-        <KpiTile
-          label="Banned (page)"
-          value={formatNumber(pageBanned)}
+          label="Banned"
+          value={formatNumber(stats.totalBanned)}
           icon={Ban}
           accent="rose"
+        />
+        <KpiTile
+          label="Signups (24h)"
+          value={formatNumber(stats.signups24h)}
+          icon={UserPlus}
+          accent="emerald"
         />
       </div>
 
