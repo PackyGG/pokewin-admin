@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
@@ -136,6 +137,86 @@ export async function getPacks(params: {
     perPage,
     totalPages: Math.ceil(total / perPage),
   };
+}
+
+// ─── Global KPI stats for the /packs page hero strip ───────────────────
+//
+// Catalog-wide counts + lifetime totals shown in the hero KPI strip.
+// Reads off the maintained `packs.total_openings` / `total_revenue` /
+// `total_payout` columns (kept in sync by the backend pack-opening
+// pipeline) so this is one round-trip instead of the 4 .count() /
+// .aggregate() calls the page would otherwise fan out to.
+//
+// Cached cross-request (60s revalidate) so admins spamming the search
+// box don't fan into the DB on every keystroke. Within a single render
+// unstable_cache also deduplicates, mirroring users-list-stats.
+
+export type PacksListStats = {
+  /** All packs in the DB regardless of `active`. */
+  totalPacks: number;
+  /** Packs with `active = true`. */
+  activePacks: number;
+  /** Lifetime pack opens across the whole catalog. */
+  totalOpenings: number;
+  /** Lifetime revenue across the whole catalog (USD). */
+  totalRevenue: number;
+  /** Lifetime payout across the whole catalog (USD). */
+  totalPayout: number;
+  /**
+   * Catalog-level house edge as a percentage in House-POV. Positive →
+   * we're up overall; negative → we've paid out more than we took in,
+   * which renders rose in the KPI strip. Computed from totalRevenue and
+   * totalPayout rather than averaging the per-pack actual_house_edge
+   * column — the per-pack column weights every pack equally regardless
+   * of volume, so a single un-played pack with weird numbers could
+   * dominate the average.
+   */
+  houseEdgePct: number;
+};
+
+const cachedPacksListStats = unstable_cache(
+  async (): Promise<PacksListStats> => {
+    const db = await getDb();
+    // Single round-trip aggregate using CASE / FILTER for the count
+    // breakdowns. Postgres folds these into a single sequential scan with
+    // FILTER predicates — strictly cheaper than four Prisma calls.
+    const rows = await db.$queryRaw<
+      {
+        total: string;
+        active: string;
+        openings: string;
+        revenue: string;
+        payout: string;
+      }[]
+    >`
+      SELECT
+        COUNT(*)::text                                          AS total,
+        COUNT(*) FILTER (WHERE active = true)::text             AS active,
+        COALESCE(SUM(total_openings), 0)::text                  AS openings,
+        COALESCE(SUM(total_revenue), 0)::text                   AS revenue,
+        COALESCE(SUM(total_payout), 0)::text                    AS payout
+      FROM packs
+    `;
+    const r = rows[0];
+    const totalRevenue = Number(r?.revenue ?? 0);
+    const totalPayout = Number(r?.payout ?? 0);
+    const houseEdgePct =
+      totalRevenue > 0 ? ((totalRevenue - totalPayout) / totalRevenue) * 100 : 0;
+    return {
+      totalPacks: Number(r?.total ?? 0),
+      activePacks: Number(r?.active ?? 0),
+      totalOpenings: Number(r?.openings ?? 0),
+      totalRevenue,
+      totalPayout,
+      houseEdgePct,
+    };
+  },
+  ["packs-list-stats-v1"],
+  { revalidate: 60, tags: ["packs-list-stats"] },
+);
+
+export async function getPacksListStats(): Promise<PacksListStats> {
+  return cachedPacksListStats();
 }
 
 export async function getPackDetail(id: string) {
