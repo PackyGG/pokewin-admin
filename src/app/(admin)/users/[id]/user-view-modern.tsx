@@ -22,6 +22,7 @@
 import * as React from "react";
 import { useMemo, useState, useEffect } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   Wallet,
   TrendingUp,
@@ -49,38 +50,19 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import { ROLE_COLORS, USER_STATUS_COLORS } from "@/lib/constants";
-import {
-  type UserDetail,
-  type PaginatedTransactions,
-  type PnlBreakdown,
-  type AdminNote,
-} from "./user-tabs";
-import type { UserRewards } from "@/lib/queries/users";
+import { type UserDetail } from "./user-tabs";
 import { TILE_COLORS } from "./user-view-modern-panels";
-import {
-  OverviewTab,
-  FinancesTab,
-  RewardsTab,
-  GamingTab,
-  InventoryTab,
-  AffiliateTab,
-  AccountTab,
-} from "./user-view-modern-tabs";
 import {
   ChangeRoleDialog,
   EditIdentityButton,
   ResetRoleToUserButton,
 } from "./user-tabs-dialogs";
 import { UserAdminActions } from "./user-tabs-moderation";
-import type { PaginatedInventory } from "./user-tabs-types";
-import { TrustTab } from "./user-tabs-trust";
 import {
   type RiskScoreBreakdown,
   RISK_TIER_COLORS,
   tierLabel,
 } from "@/lib/fraud/score-types";
-import type { SharedIdentityUser } from "@/lib/fraud/shared-identity-types";
-import { FadeIn } from "@/components/fade-in";
 
 // ---------------------------------------------------------------------------
 // Re-exports — preserve the public surface so call sites that previously
@@ -106,7 +88,7 @@ export {
   ModernMetricTile,
 } from "./user-view-modern-panels";
 
-type TabKey =
+export type TabKey =
   | "overview"
   | "finances"
   | "rewards"
@@ -115,6 +97,25 @@ type TabKey =
   | "trust"
   | "affiliate"
   | "account";
+
+// Whitelist for ?tab= URL coercion. Anything off this list resolves
+// to the default ("overview") so admins can't bookmark/break the
+// page with arbitrary values.
+export const TAB_KEYS = new Set<TabKey>([
+  "overview",
+  "finances",
+  "rewards",
+  "gaming",
+  "inventory",
+  "trust",
+  "affiliate",
+  "account",
+]);
+
+export function coerceTab(raw: string | undefined): TabKey {
+  if (raw && TAB_KEYS.has(raw as TabKey)) return raw as TabKey;
+  return "overview";
+}
 
 type TabDef = {
   key: TabKey;
@@ -144,33 +145,25 @@ const TABS: TabDef[] = [
 
 export function UserViewModern({
   data,
-  gamingTx,
-  financialTx,
-  rewards,
-  notes,
-  pnlBreakdown,
-  inventory,
-  disposedInventory,
   riskBreakdown,
-  sharedIps,
-  sharedFingerprints,
+  activeTab,
+  children,
 }: {
   data: UserDetail;
-  gamingTx: PaginatedTransactions;
-  financialTx: PaginatedTransactions;
-  rewards: UserRewards;
-  notes: AdminNote[];
-  pnlBreakdown: PnlBreakdown;
-  inventory: PaginatedInventory;
-  disposedInventory: PaginatedInventory;
   riskBreakdown: RiskScoreBreakdown;
-  sharedIps: SharedIdentityUser[];
-  sharedFingerprints: SharedIdentityUser[];
+  // The active tab — sourced from the ?tab= URL param in page.tsx so
+  // tab switches drive Suspense streaming on the server segment. This
+  // replaces the prior client-side useState which couldn't stream
+  // per-tab data because all tabs' data was fetched up-front.
+  activeTab: TabKey;
+  // The streamed tab content — page.tsx wraps the matching tab's
+  // server component in <Suspense>. Rendering as a slot keeps the
+  // hero + tab bar paint-once while the body streams in.
+  children: React.ReactNode;
 }) {
   const { user, balances, counts, capabilities } = data;
   const isAdmin = data.sessionRole === "admin";
   const canChangeUserRoles = capabilities.canChangeUserRoles;
-  const [activeTab, setActiveTab] = useState<TabKey>("overview");
 
   const visibleTabs = useMemo(
     () => TABS.filter((t) => !t.show || t.show(data)),
@@ -376,9 +369,9 @@ export function UserViewModern({
                       {user.affiliateCode}
                     </Badge>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab("trust")}
+                  <Link
+                    href={`/users/${user.id}?tab=trust`}
+                    scroll={false}
                     className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-full"
                     aria-label={`Risk score ${riskBreakdown.score} of 100 — ${tierLabel(riskBreakdown.tier)}. Open Trust tab.`}
                   >
@@ -392,11 +385,11 @@ export function UserViewModern({
                       <ShieldAlert className="mr-0.5 size-2.5" />
                       Risk {riskBreakdown.score}
                     </Badge>
-                  </button>
+                  </Link>
                   {riskBreakdown.sharedIpCount >= 2 && (
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab("trust")}
+                    <Link
+                      href={`/users/${user.id}?tab=trust`}
+                      scroll={false}
                       className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-full"
                       aria-label={`Shared IP with ${riskBreakdown.sharedIpCount} other accounts. Open Trust tab.`}
                     >
@@ -412,7 +405,7 @@ export function UserViewModern({
                         <Link2 className="mr-0.5 size-2.5" />
                         {riskBreakdown.sharedIpCount} shared IP
                       </Badge>
-                    </button>
+                    </Link>
                   )}
                 </div>
                 <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-muted-foreground">
@@ -501,62 +494,16 @@ export function UserViewModern({
       <ScrollableTabBar
         visibleTabs={visibleTabs}
         activeTab={activeTab}
-        onChange={setActiveTab}
+        userId={user.id}
       />
 
       {/* ── TAB CONTENT ──────────────────────────────────────────────
-          Wrapped in FadeIn keyed on the active tab so switching panels
-          fades the new content in rather than snapping — matches the
-          analytics tabs behaviour and lines up with the top progress
-          bar timing (~200ms). */}
-      <FadeIn key={activeTab} speed="fast">
-        {activeTab === "overview" && (
-          <OverviewTab
-            data={data}
-            gamingTx={gamingTx}
-            financialTx={financialTx}
-            pnlBreakdown={pnlBreakdown}
-            isAdmin={isAdmin}
-          />
-        )}
-
-        {activeTab === "finances" && (
-          <FinancesTab
-            data={data}
-            financialTx={financialTx}
-            isAdmin={isAdmin}
-          />
-        )}
-
-        {activeTab === "rewards" && <RewardsTab rewards={rewards} />}
-
-        {activeTab === "gaming" && (
-          <GamingTab data={data} gamingTx={gamingTx} />
-        )}
-
-        {activeTab === "inventory" && (
-          <InventoryTab
-            data={data}
-            inventory={inventory}
-            disposedInventory={disposedInventory}
-          />
-        )}
-
-        {activeTab === "trust" && (
-          <TrustTab
-            userId={user.id}
-            breakdown={riskBreakdown}
-            sharedIps={sharedIps}
-            sharedFingerprints={sharedFingerprints}
-          />
-        )}
-
-        {activeTab === "affiliate" && <AffiliateTab data={data} />}
-
-        {activeTab === "account" && (
-          <AccountTab data={data} notes={notes} isAdmin={isAdmin} />
-        )}
-      </FadeIn>
+          Streamed from the server: page.tsx renders the matching
+          server-side tab segment behind a <Suspense> and hands the
+          rendered tree down as `children`. Crossfade is handled by
+          the per-tab segment via Suspense fallback, so the FadeIn
+          wrapper that used to live here is gone. */}
+      {children}
     </div>
   );
 }
@@ -568,17 +515,19 @@ export function UserViewModern({
 function ScrollableTabBar({
   visibleTabs,
   activeTab,
-  onChange,
+  userId,
 }: {
   visibleTabs: TabDef[];
   activeTab: TabKey;
-  onChange: (k: TabKey) => void;
+  userId: string;
 }) {
+  const pathname = usePathname();
   const scrollerRef = React.useRef<HTMLDivElement | null>(null);
-  const tabRefs = React.useRef<Map<TabKey, HTMLButtonElement>>(new Map());
+  const tabRefs = React.useRef<Map<TabKey, HTMLAnchorElement>>(new Map());
 
   // Scroll active pill into view on phone — keeps the user oriented when
-  // they tap a tab that was previously off-screen.
+  // they tap a tab that was previously off-screen. Pathname change is
+  // the same trigger as a tab switch under URL-driven navigation.
   useEffect(() => {
     const el = tabRefs.current.get(activeTab);
     if (!el) return;
@@ -588,6 +537,13 @@ function ScrollableTabBar({
       inline: "center",
     });
   }, [activeTab]);
+
+  // Match prior behaviour: pathname-aware so the Trust deep-link from
+  // /users/[id]/(some-other-route-in-the-future) still resolves to the
+  // expected user-detail tab base. Today /users/[id] is the only
+  // pathname that mounts this bar, so this just defends against any
+  // future segment expansion.
+  const basePath = pathname ?? `/users/${userId}`;
 
   return (
     <div className="sticky top-2 z-20 rounded-xl border bg-card/80 p-1 backdrop-blur-md">
@@ -609,14 +565,22 @@ function ScrollableTabBar({
           {visibleTabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.key;
+            const href =
+              tab.key === "overview"
+                ? basePath
+                : `${basePath}?tab=${tab.key}`;
             return (
-              <button
+              <Link
                 key={tab.key}
+                href={href}
+                // Don't scroll to top on tab switch — the hero is
+                // already in view and the sticky tab bar would jump
+                // otherwise.
+                scroll={false}
                 ref={(el) => {
                   if (el) tabRefs.current.set(tab.key, el);
                   else tabRefs.current.delete(tab.key);
                 }}
-                onClick={() => onChange(tab.key)}
                 className={cn(
                   "inline-flex shrink-0 items-center gap-1.5 sm:gap-2 rounded-lg px-3 sm:px-4 py-2 text-sm font-medium transition-all min-h-[44px]",
                   isActive
@@ -626,7 +590,7 @@ function ScrollableTabBar({
               >
                 <Icon className="size-4" />
                 {tab.label}
-              </button>
+              </Link>
             );
           })}
         </div>
