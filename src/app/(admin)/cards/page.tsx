@@ -32,6 +32,8 @@ import {
   SectionHeading,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
+import { safeQuery } from "@/lib/errors/safe-query";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 
 /**
@@ -85,6 +87,12 @@ export const metadata = { title: "Cards" };
  * Streaming server component for the cards grid + count summary +
  * pagination. The hero + KPI strip render immediately from `stats` /
  * `rarities` / `sets`; only the per-page slice waits on this query.
+ *
+ * `getCards()` is wrapped in safeQuery so a Prisma column drift
+ * (e.g. a newly-added schema field that hasn't reached the live DB)
+ * degrades to an inline error tile instead of crashing the whole
+ * `(admin)` route group via error.tsx. The hero/KPI strip above
+ * already rendered before this Suspense resolved.
  */
 async function CardsContent({
   page,
@@ -111,17 +119,32 @@ async function CardsContent({
   setsForDialog: Awaited<ReturnType<typeof getSetsForMoveDialog>>;
   seriesOptions: string[];
 }) {
-  const result = await getCards({
-    page,
-    perPage,
-    search,
-    rarity,
-    setId,
-    minPrice,
-    maxPrice,
-    sortBy,
-    sortOrder,
-  });
+  const { data: result, error } = await safeQuery(
+    () =>
+      getCards({
+        page,
+        perPage,
+        search,
+        rarity,
+        setId,
+        minPrice,
+        maxPrice,
+        sortBy,
+        sortOrder,
+      }),
+    null,
+    "cards.list",
+  );
+
+  if (error || !result) {
+    return (
+      <TileErrorFallback
+        label="Card catalog"
+        hint="The cards query failed — most likely a Prisma schema field that hasn't reached the live DB yet. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
 
   return (
     <>
@@ -178,12 +201,32 @@ export default async function CardsPage({
   // `sets` is fetched up-front so the tab switch + the (still-existing)
   // SetFilter dropdown + the resolve-slug helper all share the same row
   // set without re-querying.
-  const [rarities, sets, setsForDialog, seriesOptions] = await Promise.all([
-    getRarities(),
-    getSets(),
-    getSetsForMoveDialog(),
-    getDistinctSeries(),
-  ]);
+  //
+  // Each fetch is wrapped in safeQuery so a single failing query (most
+  // commonly a Prisma client/DB schema drift after a migration that
+  // hasn't reached the live DB yet) degrades that section's UI to a
+  // TileErrorFallback rather than crashing the whole page through the
+  // `(admin)` error boundary. The page itself keeps rendering with
+  // whatever subset of queries succeeded.
+  const [raritiesRes, setsRes, setsForDialogRes, seriesOptionsRes] =
+    await Promise.all([
+      safeQuery(() => getRarities(), [] as (string | null)[], "cards.rarities"),
+      safeQuery(
+        () => getSets(),
+        [] as Awaited<ReturnType<typeof getSets>>,
+        "cards.sets",
+      ),
+      safeQuery(
+        () => getSetsForMoveDialog(),
+        [] as Awaited<ReturnType<typeof getSetsForMoveDialog>>,
+        "cards.setsForDialog",
+      ),
+      safeQuery(() => getDistinctSeries(), [] as string[], "cards.series"),
+    ]);
+  const rarities = raritiesRes.data;
+  const sets = setsRes.data;
+  const setsForDialog = setsForDialogRes.data;
+  const seriesOptions = seriesOptionsRes.data;
 
   // Build the per-set tab pills (Pokemon + OnePiece first, rest A→Z) and
   // resolve `?set=<slug|uuid>` to the actual set we'll narrow on. When
@@ -197,18 +240,32 @@ export default async function CardsPage({
   // the count under the toolbar. The dedicated cache key on
   // `getCardsStats` keeps the catalog-wide and per-set variants in
   // separate cache slots.
-  const stats = await getCardsStats(activeSet?.setId);
+  //
+  // Wrapped in safeQuery so a failing aggregate doesn't take down the
+  // whole page — the KPI strip simply degrades to a single
+  // TileErrorFallback row while the catalog grid below keeps rendering.
+  const { data: stats } = await safeQuery(
+    () => getCardsStats(activeSet?.setId),
+    null,
+    "cards.stats",
+  );
 
   // Pull out a couple of rarity counts for dedicated KPI tiles. We care
   // about the two that signal "quality" — anything with "rare" in the
   // name (but not "ultra"/"secret") and the top-tier bucket rolled up.
-  // If the catalog doesn't have those rarities the tiles show 0.
-  const rareCount = stats.byRarity
-    .filter((r) => /rare/i.test(r.rarity) && !/ultra/i.test(r.rarity))
-    .reduce((sum, r) => sum + r.count, 0);
-  const ultraCount = stats.byRarity
-    .filter((r) => /(ultra|secret|legendary)/i.test(r.rarity))
-    .reduce((sum, r) => sum + r.count, 0);
+  // If the catalog doesn't have those rarities the tiles show 0. When
+  // `stats` is null (safeQuery returned the fallback) both counts are
+  // zeroed so the downstream tiles never read off undefined.
+  const rareCount = stats
+    ? stats.byRarity
+        .filter((r) => /rare/i.test(r.rarity) && !/ultra/i.test(r.rarity))
+        .reduce((sum, r) => sum + r.count, 0)
+    : 0;
+  const ultraCount = stats
+    ? stats.byRarity
+        .filter((r) => /(ultra|secret|legendary)/i.test(r.rarity))
+        .reduce((sum, r) => sum + r.count, 0)
+    : 0;
 
   // When a tab is active, the tab's set wins over the toolbar's
   // `?setId=` dropdown — the dropdown is hidden inside a tab view
@@ -235,44 +292,55 @@ export default async function CardsPage({
         />
       </PageHero>
 
-      {/* ── KPI STRIP ─────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
-        <KpiTile
-          label={activeSet ? `Cards in ${activeSet.label}` : "Total Cards"}
-          value={formatNumber(stats.total)}
-          icon={Layers}
-          accent="blue"
+      {/* ── KPI STRIP ───────────────────────────────────────────────
+           When the stats aggregate query failed (safeQuery returned
+           null), the entire strip collapses to a single
+           TileErrorFallback row instead of zero-ing out every tile.
+           The toolbar + grid below are unaffected. */}
+      {stats ? (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+          <KpiTile
+            label={activeSet ? `Cards in ${activeSet.label}` : "Total Cards"}
+            value={formatNumber(stats.total)}
+            icon={Layers}
+            accent="blue"
+          />
+          <KpiTile
+            label="Sets"
+            value={formatNumber(stats.totalSets)}
+            icon={Library}
+            accent="cyan"
+          />
+          <KpiTile
+            label="Rare"
+            value={formatNumber(rareCount)}
+            icon={Gem}
+            accent="purple"
+          />
+          <KpiTile
+            label="Ultra / Secret"
+            value={formatNumber(ultraCount)}
+            icon={Crown}
+            accent="amber"
+          />
+          <KpiTile
+            label="Avg. Price"
+            value={formatCurrency(stats.avgPriceUsd)}
+            sub={
+              stats.maxPriceUsd > 0
+                ? `max ${formatCurrency(stats.maxPriceUsd)}`
+                : undefined
+            }
+            icon={Coins}
+            accent="emerald"
+          />
+        </div>
+      ) : (
+        <TileErrorFallback
+          label="Catalog stats"
+          hint="The aggregate stats query failed. The cards grid below is unaffected — refresh to retry."
         />
-        <KpiTile
-          label="Sets"
-          value={formatNumber(stats.totalSets)}
-          icon={Library}
-          accent="cyan"
-        />
-        <KpiTile
-          label="Rare"
-          value={formatNumber(rareCount)}
-          icon={Gem}
-          accent="purple"
-        />
-        <KpiTile
-          label="Ultra / Secret"
-          value={formatNumber(ultraCount)}
-          icon={Crown}
-          accent="amber"
-        />
-        <KpiTile
-          label="Avg. Price"
-          value={formatCurrency(stats.avgPriceUsd)}
-          sub={
-            stats.maxPriceUsd > 0
-              ? `max ${formatCurrency(stats.maxPriceUsd)}`
-              : undefined
-          }
-          icon={Coins}
-          accent="emerald"
-        />
-      </div>
+      )}
 
       {/* ── TAB SWITCH ────────────────────────────────────────────── */}
       {tabs.length > 0 && (
