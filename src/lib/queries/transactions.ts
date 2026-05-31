@@ -746,6 +746,33 @@ export async function getTransactionDetail(id: string) {
       amount: number;
       description: string;
     }[];
+    /**
+     * Provably-fair roll record for each tick of this session — one
+     * row per pack-card / per upgrader spin / per battle PF result.
+     * Carries the ticket number the server rolled (the "ticket they
+     * hit"), the PF proof material (client seed, server seed +
+     * pre-image hash, nonce, cursor, result hash), the raw
+     * result_metadata blob the backend writes per game type, plus the
+     * linked card (so admins can see "ticket 4732 → won this card")
+     * when an inventory item is attached.
+     */
+    pfResults: {
+      id: string;
+      clientSeed: string;
+      serverSeedHash: string;
+      serverSeed: string | null;
+      nonce: number;
+      cursor: number;
+      ticket: number;
+      resultHash: string;
+      resultMetadata: unknown;
+      card: {
+        name: string;
+        imageUrl: string | null;
+        rarity: string | null;
+        valueAtObtained: number;
+      } | null;
+    }[];
   } | null = null;
 
   if (tx.game_session_id) {
@@ -760,7 +787,23 @@ export async function getTransactionDetail(id: string) {
         game_id: true,
         bet_amount: true,
         provably_fair_results: {
+          // Stable per-row ordering — `cursor` is the per-session
+          // index of each PF roll (0 = first card / first spin), so
+          // pack opens and upgrader sessions render in play order.
+          orderBy: { cursor: "asc" },
           select: {
+            // PF proof material — feeds the new "Provably Fair"
+            // section on the transaction detail page (mirrors the
+            // modal on /users/[id] gaming tab).
+            id: true,
+            client_seed: true,
+            server_seed_hash: true,
+            server_seed: true,
+            nonce: true,
+            cursor: true,
+            ticket: true,
+            result_hash: true,
+            result_metadata: true,
             user_inventory: {
               select: { card_id: true, value_at_obtained: true },
             },
@@ -893,6 +936,38 @@ export async function getTransactionDetail(id: string) {
           amount: toNumber(rt.balance_after) - toNumber(rt.balance_before),
           description: rt.description,
         })),
+        // Per-roll PF record. For pack opens this is one row per
+        // card; for upgrader it's the single spin (ticket =
+        // roll-result that decided whether the upgrade hit); for
+        // battles it's one row per draw inside the user's session.
+        // Card data is joined where the PF row links to an inventory
+        // item (the "ticket → card" pairing admins want on wins).
+        pfResults: session.provably_fair_results.map((pf) => {
+          const card = pf.user_inventory?.card_id
+            ? cardsMap.get(pf.user_inventory.card_id) ?? null
+            : null;
+          return {
+            id: pf.id,
+            clientSeed: pf.client_seed,
+            serverSeedHash: pf.server_seed_hash,
+            serverSeed: pf.server_seed,
+            nonce: pf.nonce,
+            cursor: pf.cursor,
+            ticket: pf.ticket,
+            resultHash: pf.result_hash,
+            resultMetadata: pf.result_metadata,
+            card: card
+              ? {
+                  name: card.name,
+                  imageUrl: card.image_url,
+                  rarity: card.rarity,
+                  valueAtObtained: toNumber(
+                    pf.user_inventory!.value_at_obtained,
+                  ),
+                }
+              : null,
+          };
+        }),
       };
     }
   }

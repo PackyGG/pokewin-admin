@@ -7,6 +7,7 @@ import {
   Bitcoin,
   Info,
   Boxes,
+  Ticket,
 } from "lucide-react";
 import { getTransactionDetail } from "@/lib/queries/transactions";
 import { requirePageAccess } from "@/lib/dal";
@@ -418,6 +419,154 @@ export default async function TransactionDetailPage({
                       </div>
                     </div>
                   )}
+                </div>
+              </div>
+            )}
+
+            {/* Provably Fair — one card per PF roll on this session.
+                For an upgrader spin this is the single "ticket they
+                hit" admins want to verify; for pack opens it's one
+                row per card pulled; for battles it's the per-result
+                draws inside this user's session. Each card pairs the
+                ticket number (the random draw) with the card it
+                landed on (when the PF row links to a kept inventory
+                item) so the outcome can be audited end-to-end without
+                opening the modal on /users/[id]. */}
+            {data.gameSession && data.gameSession.pfResults.length > 0 && (
+              <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/80 lg:col-span-2">
+                <div className="relative p-4 sm:p-5 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Ticket className="size-4 text-pink-500" />
+                    <h3 className="text-sm font-medium">
+                      Provably Fair · {data.gameSession.pfResults.length}{" "}
+                      {data.gameSession.pfResults.length === 1
+                        ? "roll"
+                        : "rolls"}
+                    </h3>
+                  </div>
+                  <div className="grid gap-3 sm:gap-4 md:grid-cols-2">
+                    {data.gameSession.pfResults.map((pf, i) => (
+                      <div
+                        key={pf.id}
+                        className="rounded-xl border bg-muted/30 p-3 sm:p-4 space-y-3"
+                      >
+                        <div className="flex items-start justify-between gap-3 flex-wrap">
+                          <div className="space-y-0.5">
+                            {data.gameSession!.pfResults.length > 1 && (
+                              <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                                Roll #{i + 1}
+                              </p>
+                            )}
+                            <div className="flex items-baseline gap-1.5">
+                              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                                Ticket
+                              </span>
+                              <span className="text-2xl font-bold tabular-nums text-pink-600 dark:text-pink-400">
+                                {pf.ticket.toLocaleString()}
+                              </span>
+                            </div>
+                          </div>
+                          {/* Card the ticket landed on. Only renders
+                              when the PF row is linked to a kept
+                              inventory item — i.e. the spin/draw was
+                              a win and the user kept the card. */}
+                          {pf.card && (
+                            <div className="flex items-center gap-2 rounded-lg border bg-card p-1.5 sm:p-2">
+                              <div className="aspect-[2/3] h-14 sm:h-16 overflow-hidden rounded bg-muted shrink-0">
+                                <CardImage
+                                  src={pf.card.imageUrl}
+                                  alt={pf.card.name}
+                                  className="size-full"
+                                />
+                              </div>
+                              <div className="min-w-0 space-y-0.5">
+                                <p
+                                  className="text-xs font-medium truncate max-w-[180px]"
+                                  title={pf.card.name}
+                                >
+                                  {pf.card.name}
+                                </p>
+                                {pf.card.rarity && (
+                                  <span
+                                    className={`inline-block rounded px-1 py-0.5 text-[10px] font-semibold leading-none ${
+                                      RARITY_COLORS[
+                                        pf.card.rarity.toLowerCase()
+                                      ] ?? "bg-black/80 text-white"
+                                    }`}
+                                  >
+                                    {pf.card.rarity}
+                                  </span>
+                                )}
+                                <p className="text-[11px] font-medium tabular-nums text-rose-600 dark:text-rose-400">
+                                  {formatCurrency(pf.card.valueAtObtained)}
+                                </p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-[11px]">
+                          <div className="min-w-0">
+                            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                              Client Seed
+                            </p>
+                            <p className="font-mono break-all">{pf.clientSeed}</p>
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                              Server Seed Hash
+                            </p>
+                            <p className="font-mono break-all">
+                              {pf.serverSeedHash}
+                            </p>
+                          </div>
+                          {pf.serverSeed && (
+                            <div className="col-span-2 min-w-0">
+                              <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                                Server Seed
+                              </p>
+                              <p className="font-mono break-all">
+                                {pf.serverSeed}
+                              </p>
+                            </div>
+                          )}
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                              Nonce
+                            </p>
+                            <p className="font-mono">{pf.nonce}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                              Cursor
+                            </p>
+                            <p className="font-mono">{pf.cursor}</p>
+                          </div>
+                          <div className="col-span-2 min-w-0">
+                            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                              Result Hash
+                            </p>
+                            <p className="font-mono break-all">{pf.resultHash}</p>
+                          </div>
+                          {/* result_metadata is per-game-type JSON
+                              (upgrader carries target multiplier /
+                              chance window, battles carry pool info,
+                              packs carry pool weights). Surface the raw
+                              blob for verification — admins can read
+                              it directly without opening DevTools. */}
+                          {pf.resultMetadata != null && (
+                            <div className="col-span-2 min-w-0">
+                              <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                                Result Metadata
+                              </p>
+                              <pre className="font-mono text-[10px] leading-snug overflow-auto rounded bg-muted/60 p-2 max-h-32">
+                                {JSON.stringify(pf.resultMetadata, null, 2)}
+                              </pre>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             )}
