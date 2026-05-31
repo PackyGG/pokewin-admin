@@ -3,6 +3,7 @@ import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { blacklistNotInClause } from "./_blacklist";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { getCreatorSessionWindowsCte } from "./creator-session-windows";
 
 /**
  * Canonical P&L formula — single source of truth.
@@ -175,6 +176,15 @@ export async function calculateWindowedPnl(opts: {
         ? `${col} = $2`
         : `${col} IN (SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist})`;
     const params: unknown[] = userId ? [since, userId] : [since];
+    // Session windows CTE — needed by the upgrader_won correction so
+    // creator on-stream upgrader wins (sponsored-balance play, not
+    // real customer money) drop out of the windowed P&L. Same filter
+    // the dashboard's wager_excl_session aggregate applies on the
+    // wager side; without it a single big creator stream win can
+    // surface as a phantom customer-side house loss in the Rolling
+    // P&L ladder. For a per-user call where userId is NOT a creator
+    // the EXISTS short-circuits to false so the filter is a no-op.
+    const sessionWindowsCte = await getCreatorSessionWindowsCte();
 
     type LedgerRow = { deposits: string; manual_wd: string; balance_change: string };
     type CardRow = { card_wd: string };
@@ -227,9 +237,31 @@ export async function calculateWindowedPnl(opts: {
            AND ${scope("v.user_id")}`,
         ...params,
       ),
+      // Upgrader payouts for the window. CRITICAL: creator on-stream
+      // wins are dropped via session_windows so a creator's sponsored-
+      // balance upgrader win doesn't surface as a phantom customer-
+      // side house loss in the windowed P&L (Rolling P&L ladder on
+      // /users/[id] / global windowed P&L on the dashboard). The role
+      // JOIN keeps the EXISTS subquery off the hot path for non-
+      // creator rows; for a per-user call where the user is NOT a
+      // creator the CASE branch is never taken. Aliased `usr` to
+      // avoid colliding with the `u` alias used inside the scope()
+      // subquery below.
       db.$queryRawUnsafe<UpgRow[]>(
-        `SELECT COALESCE(SUM(ug.won_amount::numeric), 0)::text AS upgrader_won
+        `WITH ${sessionWindowsCte}
+         SELECT COALESCE(SUM(CASE
+             WHEN usr.role = 'creator'
+                  AND EXISTS (
+                    SELECT 1 FROM session_windows sw
+                    WHERE sw.uid = ug.user_id
+                      AND ug.created_at >= sw.win_start
+                      AND ug.created_at <  sw.win_end
+                  )
+             THEN 0
+             ELSE ug.won_amount::numeric
+           END), 0)::text AS upgrader_won
          FROM upgrader_games ug
+         JOIN "user" usr ON usr.id = ug.user_id
          WHERE ug.created_at >= $1
            AND ${scope("ug.user_id")}`,
         ...params,
@@ -376,7 +408,21 @@ export type DailyPnlPoint = {
 export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
   return withTiming("pnl.daily", async () => {
     const db = await getDb();
-    const excluded = await getExcludedUserIds();
+    const [excluded, sessionWindowsCte] = await Promise.all([
+      getExcludedUserIds(),
+      // Creator deal/stream session windows — same CTE the dashboard's
+      // wager aggregate uses to drop creator on-stream play from the
+      // customer wager figure. Needed here for the upgrader_won term:
+      // without it, a creator's on-stream upgrader win surfaces as a
+      // phantom customer-side house loss on the daily P&L chart (because
+      // the wager-side P&L components already filter creator on-stream
+      // play out of the customer flow via the dashboard's wager_excl_
+      // session aggregate, but the upgrader_won correction here was
+      // subtracting the full upgrader payout — including the creator's
+      // sponsored-balance wins — so a single big creator win drove a
+      // ~$100k bar on the chart that doesn't reflect real customer P&L).
+      getCreatorSessionWindowsCte(),
+    ]);
     const blacklist = blacklistNotInClause("u.id", excluded);
     const usersScope = `(SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist})`;
 
@@ -451,10 +497,35 @@ export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
          ) x
          GROUP BY d`,
       ),
+      // Daily upgrader payouts — sourced from upgrader_games.won_amount.
+      // CRITICAL: creator on-stream upgrader wins are dropped via the
+      // session_windows CTE (same filter the dashboard's wager
+      // aggregate uses for wager_excl_session) so a creator's
+      // sponsored-balance upgrader win can't surface as a phantom
+      // customer-side house loss on the daily P&L chart. Before this
+      // filter, a single big creator on-stream upgrader win
+      // (sponsored balance, not real customer money) was being
+      // subtracted in full from the day's P&L — producing a ~$100k
+      // spurious loss bar on the chart on the affected day. The role
+      // JOIN keeps the EXISTS subquery off the hot path for
+      // non-creator rows. Aliased `usr` to avoid colliding with the
+      // `u` alias inside `usersScope`.
       db.$queryRawUnsafe<UpgRow[]>(
-        `SELECT DATE(ug.created_at) AS d,
-           COALESCE(SUM(ug.won_amount::numeric), 0)::float8 AS upgrader_won
+        `WITH ${sessionWindowsCte}
+         SELECT DATE(ug.created_at) AS d,
+           COALESCE(SUM(CASE
+             WHEN usr.role = 'creator'
+                  AND EXISTS (
+                    SELECT 1 FROM session_windows sw
+                    WHERE sw.uid = ug.user_id
+                      AND ug.created_at >= sw.win_start
+                      AND ug.created_at <  sw.win_end
+                  )
+             THEN 0
+             ELSE ug.won_amount::numeric
+           END), 0)::float8 AS upgrader_won
          FROM upgrader_games ug
+         JOIN "user" usr ON usr.id = ug.user_id
          WHERE ug.created_at >= NOW() - INTERVAL '30 days'
            AND ug.user_id IN ${usersScope}
          GROUP BY DATE(ug.created_at)`,
@@ -611,7 +682,13 @@ export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
     const d3 = new Date(now - 3 * 24 * 60 * 60 * 1000);
     const d7 = new Date(now - 7 * 24 * 60 * 60 * 1000);
 
-    const excluded = await getExcludedUserIds();
+    const [excluded, sessionWindowsCte] = await Promise.all([
+      getExcludedUserIds(),
+      // Session windows CTE — drives the creator on-stream exclusion in
+      // the upgrader_won subquery so creator sponsored-balance wins don't
+      // surface as phantom customer-side house losses in the breakdown.
+      getCreatorSessionWindowsCte(),
+    ]);
     const blacklist = blacklistNotInClause("u.id", excluded);
     // Real-user scope used identically in every query below.
     const scope = `user_id IN (SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist})`;
@@ -707,14 +784,34 @@ export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
       // inv / vch queries use so it slots straight into the formula
       // without shifting the population. Replaces the `upgrader_payout`
       // ledger lookup which always reads 0.
+      //
+      // CRITICAL: creator on-stream upgrader wins are dropped via
+      // session_windows so a creator's sponsored-balance upgrader win
+      // can't surface as a phantom customer-side house loss in the
+      // breakdown row's `total` (and bleed into the
+      // payouts.upgraderPayouts override below). The role JOIN keeps
+      // the EXISTS subquery off the hot path for non-creator rows.
+      // `usr` alias avoids colliding with the `u` alias inside the
+      // `scope` subquery.
       db.$queryRawUnsafe<UpgRow[]>(
-        `SELECT
-           COALESCE(SUM(CASE WHEN created_at >= $1 THEN won_amount::numeric ELSE 0 END), 0)::text AS ugw_h24,
-           COALESCE(SUM(CASE WHEN created_at >= $2 THEN won_amount::numeric ELSE 0 END), 0)::text AS ugw_d3,
-           COALESCE(SUM(CASE WHEN created_at >= $3 THEN won_amount::numeric ELSE 0 END), 0)::text AS ugw_d7
-         FROM upgrader_games
-         WHERE created_at >= $3
-           AND ${scope}`,
+        `WITH ${sessionWindowsCte}
+         SELECT
+           COALESCE(SUM(CASE WHEN ug.created_at >= $1 AND NOT (usr.role = 'creator' AND EXISTS (
+             SELECT 1 FROM session_windows sw WHERE sw.uid = ug.user_id
+               AND ug.created_at >= sw.win_start AND ug.created_at < sw.win_end
+           )) THEN ug.won_amount::numeric ELSE 0 END), 0)::text AS ugw_h24,
+           COALESCE(SUM(CASE WHEN ug.created_at >= $2 AND NOT (usr.role = 'creator' AND EXISTS (
+             SELECT 1 FROM session_windows sw WHERE sw.uid = ug.user_id
+               AND ug.created_at >= sw.win_start AND ug.created_at < sw.win_end
+           )) THEN ug.won_amount::numeric ELSE 0 END), 0)::text AS ugw_d3,
+           COALESCE(SUM(CASE WHEN ug.created_at >= $3 AND NOT (usr.role = 'creator' AND EXISTS (
+             SELECT 1 FROM session_windows sw WHERE sw.uid = ug.user_id
+               AND ug.created_at >= sw.win_start AND ug.created_at < sw.win_end
+           )) THEN ug.won_amount::numeric ELSE 0 END), 0)::text AS ugw_d7
+         FROM upgrader_games ug
+         JOIN "user" usr ON usr.id = ug.user_id
+         WHERE ug.created_at >= $3
+           AND ug.${scope}`,
         h24, d3, d7,
       ),
     ]);
