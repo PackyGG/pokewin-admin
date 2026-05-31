@@ -151,8 +151,13 @@ const NAV_GROUPS: NavGroup[] = [
       // when /users/deleted is in their allowed_pages. Real admins
       // always see it.
       { label: "Deleted Users", href: "/users/deleted", icon: "Archive" },
-      { label: "Deposits", href: "/transactions/deposits", icon: "ArrowDownToLine" },
-      { label: "Withdrawals", href: "/withdrawals", icon: "ArrowDownToLine" },
+      // Single entry for the unified "Transactions" page (deposits +
+      // withdrawals tabs in one surface). The standalone Withdrawals
+      // link was folded in — its old route now redirects here with
+      // `?tab=withdrawals` so existing bookmarks still resolve. The
+      // page hero says "Transactions"; the sidebar mirrors that label
+      // so the two surfaces agree.
+      { label: "Transactions", href: "/transactions/deposits", icon: "Receipt" },
     ],
   },
   {
