@@ -4,6 +4,47 @@ Dieses File definiert verbindliche Arbeitsregeln für jede Claude Code Session i
 
 ---
 
+## 🔥 ABSOLUTE PRIORITÄTSREGEL — Parallel-Modus ist Pflicht
+
+**Jede neue User-Aufgabe → sofort `Agent` Tool mit `run_in_background: true` starten und nur eine 1–2-zeilige Bestätigung antworten.** Keine inline-Bearbeitung. Keine Bündelung mehrerer User-Messages in eine lange Inline-Session. Keine Ausnahmen für "kurze" Fixes.
+
+Der User feuert mehrere Tasks nacheinander rein und erwartet, dass jeder sofort an einen eigenen Background-Agent geht, damit er **nicht warten muss**, bis der vorherige fertig ist. Wenn du inline arbeitest, blockst du den Channel und der User kann den nächsten Task erst nach deiner langen Antwort schicken — genau das soll dieser Modus verhindern.
+
+**Was zählt als "eine User-Aufgabe":** Alles, was der User in einer Message anfragt — auch wenn er mehrere Sub-Punkte aufzählt. Eine Message = ein Agent (mit allen Sub-Punkten im Prompt). Mehrere unabhängige Sub-Punkte in einer Message können in mehrere parallele Agents aufgeteilt werden, wenn sie unterschiedliche Files anfassen.
+
+**Erlaubte Ausnahmen (eng definiert, nicht großzügig interpretieren):**
+
+- Reine Fragen zur Codebasis ohne Edit ("wo ist X definiert?", "wie funktioniert Y?") — max. 1–3 Tool-Calls (Read/Grep/Glob), keine Edits.
+- Live-Troubleshooting im Dialog mit Log-Snippets vom User.
+- Ein **einziger** trivialer Fix (1 File, 1 Edit, < 60 Sekunden Gesamtarbeit inkl. tsc+lint).
+- Wenn der User explizit "inline machen" / "selbst machen" / "nicht delegieren" sagt.
+
+**Verboten:**
+
+- Mehrere zusammengehörige Pages/Files inline durcheditieren ("Audit-Sweep", "5 Surfaces fixen") — das ist immer mehrere parallele Agents wert, nie inline.
+- Lange Recherchen-Antworten zur User-Aufgabe schreiben, bevor du den Agent startest. **Erst delegieren, dann erklären** (in der 1–2-zeiligen Ack).
+- Auf das Ergebnis eines Agents warten, bevor du den nächsten startest. Wenn zwischenzeitlich eine neue User-Message kommt, sofort den nächsten Agent starten.
+
+**Ack-Protokoll (genau einhalten):**
+
+Nach dem `Agent`-Tool-Call antwortest du dem User mit max. 2 Zeilen:
+1. Was dispatched wurde (kurze Aufgaben-Bezeichnung).
+2. Welche Files / Routen der Agent anfasst + ob Hotspot-Kollision mit gerade laufenden Agents besteht (falls ja: PROPOSED-Patch reporten lassen, siehe Hotspot-Liste unten).
+
+Danach: **Stille bis zur nächsten User-Message oder Agent-Completion**. Keine zusätzlichen Erklärungen.
+
+**Selbst-Check vor jeder Antwort:**
+
+> "Tippe ich gerade eine Inline-Lösung für etwas, das der User mir gerade geschickt hat?"
+> Wenn ja → STOP, `Agent` dispatchen, 1–2-zeilige Ack, fertig.
+
+> "Habe ich gerade > 2 File-Edits hintereinander für eine einzige User-Message gemacht?"
+> Wenn ja → die Regel ist bereits gebrochen. Stop, was übrig ist an einen Agent geben, nicht weiter inline.
+
+Die volle Mechanik (Scope, Hotspots, Commit-Disziplin, Honest-Reporting) steht weiter unten unter § Agent-Parallelisierung. Diese Top-Regel überschreibt alles andere — wenn du dich fragst "soll ich inline oder Agent?" → immer Agent.
+
+---
+
 ## Teil 1 — Arbeitsregeln (verbindlich)
 
 Du arbeitest an einer bestehenden Codebasis.
@@ -147,11 +188,13 @@ Das bedeutet:
 
 ### Agent-Parallelisierung (Arbeitsweise)
 
+Die Top-Regel oben (§ 🔥 ABSOLUTE PRIORITÄTSREGEL) ist bindend. Dieser Abschnitt definiert die Mechanik dahinter.
+
 Der User arbeitet in einem "Task-Spam"-Modus: er wirft Aufgaben nacheinander rein und erwartet, dass du jede in einem eigenen Background-Agent startest, damit er nicht warten muss. Das ist die Standard-Arbeitsweise, nicht die Ausnahme.
 
 **Regeln für parallele Agents:**
 
-1. **Eine Aufgabe → ein Agent.** Neue Aufgabe des Users → `Agent` Tool mit `run_in_background: true` starten. Keine Ausnahmen, außer die Aufgabe ist trivial (< 30 Sekunden eigenständig erledigbar).
+1. **Eine Aufgabe → ein Agent.** Neue Aufgabe des Users → `Agent` Tool mit `run_in_background: true` starten. Die einzigen Ausnahmen stehen in der Top-Regel oben (reine Codebasis-Fragen, Live-Troubleshooting, **ein einziger** trivialer 1-File-Fix, oder explizite "inline machen"-Anweisung). Audit-Sweeps über mehrere Pages / Surfaces / Query-Files sind **nie** trivial — die zerlegt man in N parallele Agents, nicht in eine lange Inline-Session.
 
 2. **Explicit scope + avoid-list pro Agent.** Jeder Agent-Prompt enthält:
    - Klare Deliverables (Dateien, Routen, Features).
@@ -186,10 +229,11 @@ Der User arbeitet in einem "Task-Spam"-Modus: er wirft Aufgaben nacheinander rei
    - "DEFERRED" = nicht bearbeitet, Grund nennen.
    - **Keine Zeile im Summary darf eine Unwahrheit sein.** (Siehe Ehrlichkeits-Regel oben.)
 
-7. **Aufgaben, die du NICHT an Agents delegierst:**
-   - Trivial Fixes (< 1 Minute, 1 Datei).
-   - Schnelle Fragen an die Codebase (1–2 Greps reichen).
-   - Live-Troubleshooting mit dem User (Logs anschauen etc.).
+7. **Aufgaben, die du NICHT an Agents delegierst** (Liste ist abschließend, nicht großzügig erweitern):
+   - **Ein einziger** trivialer Fix: 1 File, 1 Edit, **inkl. tsc + lint + commit + push** in unter 60 Sekunden. Zwei "kleine" Fixes hintereinander für eine User-Message sind **kein** trivialer Fix — die gehen an einen Agent.
+   - Reine Codebasis-Fragen ohne Edit ("wo ist X definiert?") — max. 1–3 Tool-Calls.
+   - Live-Troubleshooting mit User (Logs anschauen, Symptom rekonstruieren).
+   - User sagt explizit "inline machen" / "selbst" / "nicht delegieren".
 
 8. **Wenn der User zu schnell Tasks reinwirft:**
    - Nicht zögern — sofort agent starten.
