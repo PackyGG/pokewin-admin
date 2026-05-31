@@ -1,6 +1,13 @@
 import { Suspense } from "react";
-import { Package } from "lucide-react";
-import { getPacks } from "@/lib/queries/packs";
+import {
+  Coins,
+  DollarSign,
+  Gauge,
+  Package,
+  Power,
+  Sparkles,
+} from "lucide-react";
+import { getPacks, getPacksListStats } from "@/lib/queries/packs";
 import { getUserPermissions, requirePageAccess } from "@/lib/dal";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { ensurePackCreatorCapabilities } from "@/lib/pack-creator/ensure-capabilities";
@@ -10,8 +17,14 @@ import { DataTablePagination } from "@/components/data-table/data-table-paginati
 import { Skeleton } from "@/components/ui/skeleton";
 import { PaginationSkeleton } from "@/components/loading-skeletons";
 import { CreatePackButton } from "./create-pack-button";
-import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
+import {
+  KpiTile,
+  PageHero,
+  PageHeroIdentity,
+  SectionHeading,
+} from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { formatCurrency, formatNumber } from "@/lib/utils/format";
 
 export const metadata = { title: "Packs" };
 
@@ -102,6 +115,16 @@ export default async function PacksPage({
     canDelete = hasCapability(perms, "__can_delete_pack");
   }
 
+  // Global KPI stats — cached aggregates that stay stable across page
+  // navigation + search refinements. Read off the maintained
+  // packs.total_* columns in a single round-trip; see getPacksListStats
+  // for the unstable_cache wrap mirroring /users.
+  const stats = await getPacksListStats();
+  // House-POV accent: positive edge means we're up overall → emerald;
+  // negative means we've paid out more than we took in → rose. Mirrors
+  // the per-tile financial-color rule in CLAUDE.md.
+  const houseEdgeAccent = stats.houseEdgePct >= 0 ? "emerald" : "rose";
+
   return (
     <div className="space-y-6">
       <PageHero>
@@ -113,7 +136,68 @@ export default async function PacksPage({
         />
       </PageHero>
 
-      <div className="space-y-4">
+      {/* KPI strip — catalog-wide totals that stay stable while admins
+          paginate or filter the grid below. Lifetime Revenue / Payout
+          come from the maintained packs.total_revenue / total_payout
+          columns; house edge is derived from the two (volume-weighted,
+          not the per-pack average). House-POV colors throughout. */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+        <KpiTile
+          label="Total Packs"
+          value={formatNumber(stats.totalPacks)}
+          sub={
+            stats.totalPacks > 0
+              ? `${stats.activePacks} active · ${
+                  stats.totalPacks - stats.activePacks
+                } off`
+              : undefined
+          }
+          icon={Package}
+          accent="blue"
+        />
+        <KpiTile
+          label="Active"
+          value={formatNumber(stats.activePacks)}
+          sub={
+            stats.totalPacks > 0
+              ? `${Math.round(
+                  (stats.activePacks / stats.totalPacks) * 100,
+                )}% of catalog`
+              : undefined
+          }
+          icon={Power}
+          accent="cyan"
+        />
+        <KpiTile
+          label="Lifetime Opens"
+          value={formatNumber(stats.totalOpenings)}
+          icon={Sparkles}
+          accent="purple"
+        />
+        <KpiTile
+          label="Lifetime Revenue"
+          value={formatCurrency(stats.totalRevenue)}
+          sub={`payout ${formatCurrency(stats.totalPayout)}`}
+          icon={DollarSign}
+          accent="emerald"
+        />
+        <KpiTile
+          label="House Edge"
+          value={`${stats.houseEdgePct.toFixed(1)}%`}
+          sub={
+            stats.totalRevenue > 0
+              ? `${formatCurrency(
+                  stats.totalRevenue - stats.totalPayout,
+                )} kept`
+              : "no opens yet"
+          }
+          icon={Gauge}
+          accent={houseEdgeAccent}
+        />
+      </div>
+
+      <div className="space-y-3">
+        <SectionHeading icon={Coins} title="Catalog" />
         <Suspense fallback={<Skeleton className="h-10 w-full" />}>
           <DataTableToolbar
             searchPlaceholder="Search by name or slug..."
