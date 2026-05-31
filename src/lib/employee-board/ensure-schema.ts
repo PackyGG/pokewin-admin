@@ -34,6 +34,23 @@ let ensured = false;
  *   - employee_manager_workspaces: many-to-many link manager ↔ workspace,
  *     one row per connector line. Both FKs CASCADE, so deleting either a
  *     manager or a workspace drops the corresponding lines.
+ *
+ * The Discord-server section adds another pair of tables (a third
+ * "kind" of column on the board, rendered below the regular workspace
+ * row):
+ *   - employee_discord_servers: same shape as employee_workspaces
+ *     (id / name / position / timestamps). A separate table — not a
+ *     `kind` column on employee_workspaces — so the existing typed
+ *     Prisma queries on employee_workspaces / employee_board_placements
+ *     stay untouched (Option B from the implementation note: cleanest
+ *     given the no-schema-edit constraint).
+ *   - employee_discord_server_placements: one row per (employee,
+ *     discord_server). Mirrors employee_board_placements but with a
+ *     discord_server_id FK ON DELETE CASCADE instead of workspace_id
+ *     SET NULL — cards on a deleted server vanish (they don't fall back
+ *     to Unassigned the way workspace deletions do, because Unassigned
+ *     is the workspace-column concept). `roles[]` carried per-placement,
+ *     same convention as workspace placements.
  */
 export async function ensureEmployeeBoardSchema(): Promise<void> {
   if (ensured) return;
@@ -114,6 +131,51 @@ export async function ensureEmployeeBoardSchema(): Promise<void> {
     await adminDb.$executeRawUnsafe(`
       CREATE INDEX IF NOT EXISTS "employee_manager_workspaces_workspace_id_idx"
         ON "employee_manager_workspaces" ("workspace_id")
+    `);
+    // ── Discord-server section ─────────────────────────────────────
+    // A discord server is a third "kind" of column on the board, kept
+    // in its own table rather than via a `kind` column on
+    // employee_workspaces so the existing typed Prisma queries on
+    // workspaces / placements continue to work unchanged.
+    await adminDb.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "employee_discord_servers" (
+        "id"         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        "name"       TEXT NOT NULL,
+        "position"   INTEGER NOT NULL DEFAULT 0,
+        "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT now(),
+        "updated_at" TIMESTAMPTZ(6) NOT NULL DEFAULT now()
+      )
+    `);
+    // Placement row per (employee, discord_server). Unlike the
+    // workspace placements table this one's discord_server_id is
+    // NOT NULL — there's no "legacy roles-only" concept here, the
+    // table is new. ON DELETE CASCADE on the discord_server_id FK so
+    // deleting a server cleanly removes its cards (vs SET NULL on
+    // workspace_id which keeps a card in Unassigned).
+    await adminDb.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "employee_discord_server_placements" (
+        "id"                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        "employee_id"       UUID NOT NULL
+                              REFERENCES "salary_employees"("id") ON DELETE CASCADE,
+        "discord_server_id" UUID NOT NULL
+                              REFERENCES "employee_discord_servers"("id") ON DELETE CASCADE,
+        "roles"             TEXT[] NOT NULL DEFAULT '{}',
+        "position"          INTEGER NOT NULL DEFAULT 0,
+        "created_at"        TIMESTAMPTZ(6) NOT NULL DEFAULT now(),
+        "updated_at"        TIMESTAMPTZ(6) NOT NULL DEFAULT now()
+      )
+    `);
+    await adminDb.$executeRawUnsafe(`
+      CREATE UNIQUE INDEX IF NOT EXISTS "employee_discord_server_placements_employee_id_server_id_key"
+        ON "employee_discord_server_placements" ("employee_id", "discord_server_id")
+    `);
+    await adminDb.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "employee_discord_server_placements_discord_server_id_idx"
+        ON "employee_discord_server_placements" ("discord_server_id")
+    `);
+    await adminDb.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "employee_discord_server_placements_employee_id_idx"
+        ON "employee_discord_server_placements" ("employee_id")
     `);
     ensured = true;
   } catch (err) {
