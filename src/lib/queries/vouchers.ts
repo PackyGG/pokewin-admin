@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
@@ -184,4 +185,54 @@ export async function getVoucherCreators() {
     select: { id: true, username: true },
   });
   return admins;
+}
+
+// ─── Global KPI stats for the /vouchers page hero strip ───────────────
+//
+// Whole-table counts + value totals split by claimed status. Both halves
+// of the split are always returned so the tab switch (Unclaimed /
+// Claimed) doesn't trigger a re-fetch — the stats card is a fixed
+// 4-tile read-out regardless of which tab is active.
+//
+// One COUNT(*) FILTER + SUM round-trip; cached cross-request (60s).
+
+export type VouchersListStats = {
+  unclaimedCount: number;
+  unclaimedTotalValue: number;
+  claimedCount: number;
+  claimedTotalValue: number;
+};
+
+const cachedVouchersListStats = unstable_cache(
+  async (): Promise<VouchersListStats> => {
+    const db = await getDb();
+    const rows = await db.$queryRaw<
+      {
+        unclaimed_count: string;
+        unclaimed_total: string;
+        claimed_count: string;
+        claimed_total: string;
+      }[]
+    >`
+      SELECT
+        COUNT(*) FILTER (WHERE claimed_at IS NULL)::text                                           AS unclaimed_count,
+        COALESCE(SUM(value::numeric) FILTER (WHERE claimed_at IS NULL), 0)::text                   AS unclaimed_total,
+        COUNT(*) FILTER (WHERE claimed_at IS NOT NULL)::text                                       AS claimed_count,
+        COALESCE(SUM(value::numeric) FILTER (WHERE claimed_at IS NOT NULL), 0)::text               AS claimed_total
+      FROM vouchers
+    `;
+    const r = rows[0];
+    return {
+      unclaimedCount: Number(r?.unclaimed_count ?? 0),
+      unclaimedTotalValue: Number(r?.unclaimed_total ?? 0),
+      claimedCount: Number(r?.claimed_count ?? 0),
+      claimedTotalValue: Number(r?.claimed_total ?? 0),
+    };
+  },
+  ["vouchers-list-stats-v1"],
+  { revalidate: 60, tags: ["vouchers-list-stats"] },
+);
+
+export async function getVouchersListStats(): Promise<VouchersListStats> {
+  return cachedVouchersListStats();
 }

@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { Bot, CheckCircle2, Swords, Coins } from "lucide-react";
-import { getBots } from "@/lib/queries/bots";
+import { getBots, getBotsListStats } from "@/lib/queries/bots";
 import { requirePageAccess } from "@/lib/dal";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
@@ -27,15 +27,16 @@ export default async function BotsPage({
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
 
-  const result = await getBots({
-    page,
-    perPage,
-    search: params.search,
-  });
-
-  const activeBots = result.data.filter((b) => b.isActive).length;
-  const pageWagered = result.data.reduce((s, b) => s + b.totalWageredUsd, 0);
-  const pageBattles = result.data.reduce((s, b) => s + b.battlesPlayed, 0);
+  // Table + global stats in parallel — stats stay stable across
+  // search / pagination so the strip doesn't shift on every keystroke.
+  const [result, stats] = await Promise.all([
+    getBots({
+      page,
+      perPage,
+      search: params.search,
+    }),
+    getBotsListStats(),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -50,25 +51,25 @@ export default async function BotsPage({
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <KpiTile
           label="Total Bots"
-          value={formatNumber(result.total)}
+          value={formatNumber(stats.totalBots)}
           icon={Bot}
           accent="blue"
         />
         <KpiTile
-          label="Active (page)"
-          value={formatNumber(activeBots)}
+          label="Active"
+          value={formatNumber(stats.activeBots)}
           icon={CheckCircle2}
           accent="emerald"
         />
         <KpiTile
-          label="Battles (page)"
-          value={formatNumber(pageBattles)}
+          label="Battles"
+          value={formatNumber(stats.totalBattles)}
           icon={Swords}
           accent="purple"
         />
         <KpiTile
-          label="Wagered (page)"
-          value={formatCurrency(pageWagered)}
+          label="Wagered"
+          value={formatCurrency(stats.totalWageredUsd)}
           icon={Coins}
           accent="amber"
         />

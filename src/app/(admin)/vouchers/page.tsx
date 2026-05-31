@@ -1,7 +1,11 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import { Ticket, Coins, CheckCircle2, Clock } from "lucide-react";
-import { getVouchers, getVoucherCreators } from "@/lib/queries/vouchers";
+import {
+  getVouchers,
+  getVoucherCreators,
+  getVouchersListStats,
+} from "@/lib/queries/vouchers";
 import { requirePageAccess } from "@/lib/dal";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
@@ -33,7 +37,10 @@ export default async function VouchersPage({
 
   const claimed = tab === "claimed";
 
-  const [result, creators] = await Promise.all([
+  // Stats are tab-independent: both halves (unclaimed + claimed) come
+  // back from one query so flipping the tab doesn't re-fetch them and
+  // the strip stays a fixed 4-tile read-out of the voucher pool.
+  const [result, creators, stats] = await Promise.all([
     getVouchers({
       page,
       perPage,
@@ -44,15 +51,13 @@ export default async function VouchersPage({
       createdBy: params.createdBy,
     }),
     getVoucherCreators(),
+    getVouchersListStats(),
   ]);
 
   const createdByOptions = [
     { label: "System", value: "system" },
     ...creators.map((c) => ({ label: c.username, value: c.id })),
   ];
-
-  const pageValue = result.data.reduce((sum, v) => sum + v.value, 0);
-  const ftdCount = result.data.filter((v) => v.isFtd).length;
 
   return (
     <div className="space-y-6">
@@ -64,36 +69,35 @@ export default async function VouchersPage({
         />
       </PageHero>
 
+      {/* Stats are global + tab-independent: both unclaimed and claimed
+          counts/totals always render. Vouchers are unspent credits the
+          house owes users, so the unclaimed value is the active
+          liability and reads rose per CLAUDE.md house-POV. */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <KpiTile
-          label={claimed ? "Claimed Total" : "Unclaimed Total"}
-          value={String(result.total)}
-          icon={Ticket}
-          accent="blue"
+          label="Unclaimed Total"
+          value={String(stats.unclaimedCount)}
+          icon={Clock}
+          accent="amber"
         />
-        {/* Vouchers are unspent credits the house owes users — page value
-            is a liability line, so it's colored rose (house loss) per
-            CLAUDE.md. */}
         <KpiTile
-          label="Page Value"
-          value={formatCurrency(pageValue)}
+          label="Unclaimed Value"
+          value={formatCurrency(stats.unclaimedTotalValue)}
           icon={Coins}
           accent="rose"
         />
         <KpiTile
-          label="On Page"
-          value={String(result.data.length)}
-          icon={claimed ? CheckCircle2 : Clock}
-          accent={claimed ? "purple" : "amber"}
+          label="Claimed Total"
+          value={String(stats.claimedCount)}
+          icon={CheckCircle2}
+          accent="purple"
         />
-        {claimed && (
-          <KpiTile
-            label="First-Time (page)"
-            value={String(ftdCount)}
-            icon={CheckCircle2}
-            accent="pink"
-          />
-        )}
+        <KpiTile
+          label="Claimed Value"
+          value={formatCurrency(stats.claimedTotalValue)}
+          icon={Ticket}
+          accent="blue"
+        />
       </div>
 
       <div className="space-y-3">

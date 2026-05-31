@@ -19,6 +19,7 @@ export {
   getCodeAnalytics,
   getCodeReferrals,
   getRecentWagersOnCode,
+  getCreatorsCodesListStats,
 } from "./creators-codes";
 export { getAffiliateLeaderboardRankings } from "./creators-leaderboards";
 export type { LeaderboardRanking } from "./creators-leaderboards";

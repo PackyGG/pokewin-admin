@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
@@ -161,4 +162,56 @@ export async function getPromoCodeDetail(id: string) {
       redeemedAt: r.redeemed_at.toISOString(),
     })),
   };
+}
+
+// ─── Global KPI stats for the /promo-codes page hero strip ────────────
+//
+// Counts that describe the WHOLE promo-codes pool independent of the
+// filtered list slice on screen. Active = no expiry OR expiry in the
+// future (mirrors `status === 'active'` in the list query). Total
+// redemptions is the sum of redemption_count across every code (NOT
+// the count of promo_code_redemptions rows — same number, faster
+// because no JOIN).
+//
+// One round-trip; cached cross-request (60s).
+
+export type PromoCodesListStats = {
+  totalCodes: number;
+  activeCount: number;
+  expiredCount: number;
+  totalRedemptions: number;
+};
+
+const cachedPromoCodesListStats = unstable_cache(
+  async (): Promise<PromoCodesListStats> => {
+    const db = await getDb();
+    const rows = await db.$queryRaw<
+      {
+        total: string;
+        active: string;
+        expired: string;
+        redemptions: string;
+      }[]
+    >`
+      SELECT
+        COUNT(*)::text                                                                              AS total,
+        COUNT(*) FILTER (WHERE expires_at IS NULL OR expires_at > NOW())::text                       AS active,
+        COUNT(*) FILTER (WHERE expires_at IS NOT NULL AND expires_at <= NOW())::text                 AS expired,
+        COALESCE(SUM(redemption_count), 0)::text                                                     AS redemptions
+      FROM promo_codes
+    `;
+    const r = rows[0];
+    return {
+      totalCodes: Number(r?.total ?? 0),
+      activeCount: Number(r?.active ?? 0),
+      expiredCount: Number(r?.expired ?? 0),
+      totalRedemptions: Number(r?.redemptions ?? 0),
+    };
+  },
+  ["promo-codes-list-stats-v1"],
+  { revalidate: 60, tags: ["promo-codes-list-stats"] },
+);
+
+export async function getPromoCodesListStats(): Promise<PromoCodesListStats> {
+  return cachedPromoCodesListStats();
 }

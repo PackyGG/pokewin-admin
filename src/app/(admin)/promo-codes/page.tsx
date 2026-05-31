@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { Ticket, CheckCircle2, Clock, Users } from "lucide-react";
-import { getPromoCodes } from "@/lib/queries/promo-codes";
+import { getPromoCodes, getPromoCodesListStats } from "@/lib/queries/promo-codes";
 import { requirePageAccess } from "@/lib/dal";
 import { PromoCodesDataTable } from "./data-table";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
@@ -27,22 +27,18 @@ export default async function PromoCodesPage({
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
 
-  const result = await getPromoCodes({
-    page,
-    perPage,
-    region: params.region,
-    status: params.status,
-  });
-
-  const now = Date.now();
-  const activeCount = result.data.filter(
-    (c) => !c.expiresAt || new Date(c.expiresAt).getTime() > now,
-  ).length;
-  const expiredCount = result.data.length - activeCount;
-  const totalRedemptions = result.data.reduce(
-    (sum, c) => sum + c.redemptionCount,
-    0,
-  );
+  // Stats stay stable across the region / status filter — admins get
+  // a fixed read-out of the promo-code pool while they refine the
+  // table on screen.
+  const [result, stats] = await Promise.all([
+    getPromoCodes({
+      page,
+      perPage,
+      region: params.region,
+      status: params.status,
+    }),
+    getPromoCodesListStats(),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -58,25 +54,25 @@ export default async function PromoCodesPage({
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <KpiTile
           label="Total Codes"
-          value={String(result.total)}
+          value={String(stats.totalCodes)}
           icon={Ticket}
           accent="blue"
         />
         <KpiTile
-          label="Active (page)"
-          value={String(activeCount)}
+          label="Active"
+          value={String(stats.activeCount)}
           icon={CheckCircle2}
           accent="emerald"
         />
         <KpiTile
-          label="Expired (page)"
-          value={String(expiredCount)}
+          label="Expired"
+          value={String(stats.expiredCount)}
           icon={Clock}
           accent="rose"
         />
         <KpiTile
-          label="Redemptions (page)"
-          value={String(totalRedemptions)}
+          label="Redemptions"
+          value={String(stats.totalRedemptions)}
           icon={Users}
           accent="purple"
         />

@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { Code, CheckCircle2, XCircle } from "lucide-react";
-import { getCodes } from "@/lib/queries/creators";
+import { getCodes, getCreatorsCodesListStats } from "@/lib/queries/creators";
 import { requirePageAccess } from "@/lib/dal";
 import { CodesDataTable } from "./data-table";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
@@ -27,16 +27,23 @@ export default async function CodesPage({
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
 
-  const result = await getCodes({
-    page,
-    perPage,
-    search: params.search,
-    sortBy: params.sortBy,
-    sortOrder: params.sortOrder,
-  });
-
-  const activeCount = result.data.filter((c) => c.isActive).length;
-  const inactiveCount = result.data.length - activeCount;
+  // Stats stay stable across search / sort. The previous per-page
+  // derivation was structurally wrong: every row's isActive is
+  // hard-coded `true` in getCodes, so "Active (page)" always equalled
+  // the page row count and "Inactive (page)" always read 0. The new
+  // stats query checks affiliate_codes.code against the owning user's
+  // currently-selected affiliate_code + affiliate_code_active flag,
+  // which is the real truth.
+  const [result, stats] = await Promise.all([
+    getCodes({
+      page,
+      perPage,
+      search: params.search,
+      sortBy: params.sortBy,
+      sortOrder: params.sortOrder,
+    }),
+    getCreatorsCodesListStats(),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -51,19 +58,19 @@ export default async function CodesPage({
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
         <KpiTile
           label="Total Codes"
-          value={formatNumber(result.total)}
+          value={formatNumber(stats.totalCodes)}
           icon={Code}
           accent="blue"
         />
         <KpiTile
-          label="Active (page)"
-          value={formatNumber(activeCount)}
+          label="Active"
+          value={formatNumber(stats.activeCount)}
           icon={CheckCircle2}
           accent="emerald"
         />
         <KpiTile
-          label="Inactive (page)"
-          value={formatNumber(inactiveCount)}
+          label="Inactive"
+          value={formatNumber(stats.inactiveCount)}
           icon={XCircle}
           accent="rose"
         />
