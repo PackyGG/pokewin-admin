@@ -3,6 +3,7 @@ import { affiliate_usage_type } from "@/generated/prisma/enums";
 import { toNumber } from "@/lib/utils/decimal";
 import { filterLedgerTxTypes } from "./_ledger-tx-types";
 import { calculateUserPnl } from "./pnl";
+import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
 
 const USER_WAGER_BREAKDOWN_TYPES = filterLedgerTxTypes([
   "pack_opening",
@@ -62,11 +63,19 @@ async function getUserTips(db: Db, userId: string) {
         _count: { _all: true },
         _sum: { amount: true },
       }),
+      // Same recent-N pull as rain, with metadata so we can extract
+      // the source leaderboard id + position. Backend writes both
+      // fields onto the prize ledger row when the rank settles.
       db.ledger_transactions.findMany({
         where: { user_id: userId, type: "affiliate_leaderboard_prize" },
         orderBy: { created_at: "desc" },
         take: TIP_RECENT_LIMIT,
-        select: { id: true, amount: true, created_at: true },
+        select: {
+          id: true,
+          amount: true,
+          created_at: true,
+          metadata: true,
+        },
       }),
     ]);
 
@@ -165,19 +174,115 @@ async function getUserTips(db: Db, userId: string) {
     },
     // Affiliate-leaderboard wins (affiliate_leaderboard_prize) — credits
     // paid out by creator-leaderboard rankings. Same shape as rain
-    // prizes: no counterparty.
+    // prizes (no counterparty), with two extra fields per row pulled
+    // off the prize ledger row's metadata so the UI can label which
+    // leaderboard the win came from and deep-link to it.
     leaderboardWins: {
       count: leaderboardAgg._count._all,
       totalUsd: toNumber(leaderboardAgg._sum.amount ?? 0),
-      recent: leaderboardRecent.map((r) => ({
-        id: r.id,
-        amountUsd: toNumber(r.amount),
-        counterpartyId: null,
-        counterpartyName: null,
-        createdAt: r.created_at.toISOString(),
-      })),
+      recent: await enrichLeaderboardWins(leaderboardRecent),
     },
   };
+}
+
+/**
+ * Resolve each `affiliate_leaderboard_prize` ledger row to the
+ * leaderboard it came from. The backend writes the prize event with
+ * `metadata.leaderboard_id` (UUID) and `metadata.position` (1-based
+ * rank). Titles aren't on the row — we fetch them in one bulk call to
+ * the backend admin API and join client-side, so each unique
+ * leaderboard is fetched at most once per page render.
+ *
+ * Graceful degradation: rows whose metadata is missing or malformed
+ * still render — the UI just shows "Leaderboard win" with no link or
+ * sub-line. Backend fetches that 404 (deleted leaderboards) also fall
+ * through to a metadata-only display so a hard-deleted source can't
+ * blank out the section.
+ */
+async function enrichLeaderboardWins(
+  rows: {
+    id: string;
+    amount: { toString(): string } | number | string;
+    created_at: Date;
+    metadata: unknown;
+  }[],
+): Promise<
+  {
+    id: string;
+    amountUsd: number;
+    counterpartyId: null;
+    counterpartyName: null;
+    createdAt: string;
+    leaderboardId: string | null;
+    leaderboardTitle: string | null;
+    position: number | null;
+  }[]
+> {
+  // First pass: pull (id, position, optional title) off each row's
+  // metadata. Treat the metadata as `unknown` and narrow defensively —
+  // older rows (or rows from a backend rev that didn't populate the
+  // fields) still have to render cleanly.
+  type Parsed = {
+    leaderboardId: string | null;
+    position: number | null;
+    title: string | null;
+  };
+  const parsed: Parsed[] = rows.map((r) => {
+    const m =
+      r.metadata && typeof r.metadata === "object" && !Array.isArray(r.metadata)
+        ? (r.metadata as Record<string, unknown>)
+        : null;
+    const leaderboardId =
+      m && typeof m.leaderboard_id === "string" ? m.leaderboard_id : null;
+    const position =
+      m && typeof m.position === "number" && Number.isFinite(m.position)
+        ? m.position
+        : null;
+    const title = m && typeof m.title === "string" ? m.title : null;
+    return { leaderboardId, position, title };
+  });
+
+  // Collect the unique leaderboard IDs that still need a title — skip
+  // any row that already carried `title` in its metadata so we don't
+  // pay a network hop for rows that don't need one.
+  const needTitle = new Set<string>();
+  for (const p of parsed) {
+    if (p.leaderboardId && !p.title) needTitle.add(p.leaderboardId);
+  }
+
+  // Resolve titles in parallel. Per-leaderboard `.catch` means a 404
+  // (hard-deleted leaderboard) only blanks that one row's title; the
+  // other entries still resolve. We never throw from this enricher —
+  // a failed backend round-trip must not 500 the user detail page.
+  const titleById = new Map<string, string>();
+  if (needTitle.size > 0) {
+    const results = await Promise.allSettled(
+      Array.from(needTitle).map((id) =>
+        affiliateLeaderboardsApi.get(id).then((r) => ({ id, title: r.title })),
+      ),
+    );
+    for (const r of results) {
+      if (r.status === "fulfilled") {
+        titleById.set(r.value.id, r.value.title);
+      }
+    }
+  }
+
+  return rows.map((r, i) => {
+    const p = parsed[i];
+    const resolvedTitle =
+      p.title ?? (p.leaderboardId ? titleById.get(p.leaderboardId) ?? null : null);
+    return {
+      id: r.id,
+      amountUsd: toNumber(r.amount),
+      counterpartyId: null,
+      counterpartyName: null,
+      createdAt: r.created_at.toISOString(),
+      leaderboardId: p.leaderboardId,
+      leaderboardTitle: resolvedTitle,
+      position: p.position,
+    };
+  });
 }
 
 export async function getUserDetail(id: string) {

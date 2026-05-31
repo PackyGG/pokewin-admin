@@ -75,7 +75,11 @@ import {
   FINANCIAL_TX_TYPES,
 } from "./user-tabs";
 import { UserBattleLimitsCard } from "./user-battle-limits-card";
-import type { PaginatedInventory, TipEntry } from "./user-tabs-types";
+import type {
+  PaginatedInventory,
+  TipEntry,
+  LeaderboardWinEntry,
+} from "./user-tabs-types";
 import type { UserRewards } from "@/lib/queries/users";
 import {
   SectionHeading,
@@ -173,12 +177,19 @@ function TipsSection({ tips }: { tips: UserDetail["tips"] }) {
   );
 }
 
+// `recent` is widened to the leaderboard variant since `LeaderboardWinEntry`
+// extends `TipEntry` — the panel renders the extra fields only when
+// kind === "leaderboard" (the only variant that carries them).
 function TipPanel({
   kind,
   data,
 }: {
   kind: "received" | "sent" | "rain" | "leaderboard";
-  data: { count: number; totalUsd: number; recent: TipEntry[] };
+  data: {
+    count: number;
+    totalUsd: number;
+    recent: TipEntry[] | LeaderboardWinEntry[];
+  };
 }) {
   // House-POV (CLAUDE.md): money the user GAINS (tips received, rain
   // prizes, leaderboard wins) → house loss → rose. Money the user
@@ -251,48 +262,100 @@ function TipPanel({
           <p className="text-xs text-muted-foreground">{emptyText}</p>
         ) : (
           <ul className="space-y-1.5">
-            {data.recent.map((t) => (
-              <li
-                key={t.id}
-                className="flex items-center justify-between gap-2 text-xs"
-              >
-                <span className="min-w-0 truncate text-muted-foreground">
-                  {kind === "rain" ? (
-                    <span className="text-foreground">Rain prize</span>
-                  ) : kind === "leaderboard" ? (
-                    <span className="text-foreground">Leaderboard win</span>
-                  ) : (
-                    <>
-                      {kind === "received" ? "from " : "to "}
-                      {t.counterpartyId ? (
-                        <Link
-                          href={`/users/${t.counterpartyId}`}
-                          className="font-medium text-foreground hover:text-primary hover:underline"
-                        >
-                          {t.counterpartyName ?? t.counterpartyId.slice(0, 8)}
-                        </Link>
-                      ) : (
-                        <span className="font-medium text-foreground">
-                          unknown
-                        </span>
-                      )}
-                    </>
-                  )}
-                  <span className="ml-1 text-muted-foreground/70">
-                    · {formatRelative(t.createdAt)}
-                  </span>
-                </span>
-                <span
-                  className={cn(
-                    "shrink-0 font-medium tabular-nums",
-                    amountColor,
-                  )}
+            {data.recent.map((t) => {
+              // Leaderboard rows carry source-leaderboard metadata
+              // (id / title / position). Narrow once per row so the
+              // rest of the JSX can read the extra fields without
+              // re-asserting the type on each access.
+              const lb =
+                kind === "leaderboard"
+                  ? (t as LeaderboardWinEntry)
+                  : null;
+              const leaderboardHref = lb?.leaderboardId
+                ? `/creators/leaderboards/${lb.leaderboardId}`
+                : null;
+              return (
+                <li
+                  key={t.id}
+                  className="flex items-start justify-between gap-2 text-xs"
                 >
-                  {sign}
-                  {formatCurrency(t.amountUsd)}
-                </span>
-              </li>
-            ))}
+                  <span className="min-w-0 flex-1 text-muted-foreground">
+                    {kind === "rain" ? (
+                      <span className="block truncate text-foreground">
+                        Rain prize
+                      </span>
+                    ) : kind === "leaderboard" ? (
+                      // Stack: top line = static "Leaderboard win"
+                      // label, second line = the source leaderboard
+                      // (title + #rank). The second line is the
+                      // clickable element so the meta-label up top
+                      // doesn't visually compete with the link below.
+                      <span className="block">
+                        <span className="block truncate text-foreground">
+                          Leaderboard win
+                          {lb?.position != null && (
+                            <span className="ml-1 text-muted-foreground/80">
+                              · #{lb.position}
+                            </span>
+                          )}
+                          <span className="ml-1 text-muted-foreground/70">
+                            · {formatRelative(t.createdAt)}
+                          </span>
+                        </span>
+                        {leaderboardHref ? (
+                          <Link
+                            href={leaderboardHref}
+                            className="mt-0.5 block truncate text-[11px] font-medium text-foreground hover:text-primary hover:underline"
+                            title={lb?.leaderboardTitle ?? undefined}
+                          >
+                            from{" "}
+                            {lb?.leaderboardTitle ??
+                              (lb?.leaderboardId
+                                ? `${lb.leaderboardId.slice(0, 8)}…`
+                                : "leaderboard")}
+                          </Link>
+                        ) : lb?.leaderboardTitle ? (
+                          // Title resolved but no link target — show
+                          // the title as plain text rather than
+                          // hiding it.
+                          <span className="mt-0.5 block truncate text-[11px] text-muted-foreground/80">
+                            from {lb.leaderboardTitle}
+                          </span>
+                        ) : null}
+                      </span>
+                    ) : (
+                      <span className="block truncate">
+                        {kind === "received" ? "from " : "to "}
+                        {t.counterpartyId ? (
+                          <Link
+                            href={`/users/${t.counterpartyId}`}
+                            className="font-medium text-foreground hover:text-primary hover:underline"
+                          >
+                            {t.counterpartyName ?? t.counterpartyId.slice(0, 8)}
+                          </Link>
+                        ) : (
+                          <span className="font-medium text-foreground">
+                            unknown
+                          </span>
+                        )}
+                        <span className="ml-1 text-muted-foreground/70">
+                          · {formatRelative(t.createdAt)}
+                        </span>
+                      </span>
+                    )}
+                  </span>
+                  <span
+                    className={cn(
+                      "shrink-0 font-medium tabular-nums",
+                      amountColor,
+                    )}
+                  >
+                    {sign}
+                    {formatCurrency(t.amountUsd)}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         )}
       </CardContent>
