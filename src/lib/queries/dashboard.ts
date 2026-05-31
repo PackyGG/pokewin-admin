@@ -14,7 +14,8 @@ import { getRealizedPnlSnapshot } from "./_realized-pnl";
 import { getCreatorSessionWindowsCte } from "./creator-session-windows";
 import {
   WAGER_TYPES_SQL,
-  PAYOUT_TYPES_SQL,
+  GGR_PAYOUT_TYPES_SQL,
+  BONUS_PAYOUT_TYPES_SQL,
 } from "./_wager-payout-types";
 import {
   DASHBOARD_PERIOD_LABELS,
@@ -74,13 +75,20 @@ function getPeriodAggregates(
   // the customer wager figure.
   sessionWindowsCte: string,
 ) {
-  // GGR wager/payout type sets — built ONCE from the canonical shared
-  // constants (src/lib/queries/_wager-payout-types.ts) and interpolated
-  // via Prisma.raw, instead of being re-typed inline (where the 19-item
-  // payout list inevitably drifts). The values are hardcoded ledger-
-  // type strings — no external input — so Prisma.raw is injection-safe.
+  // GGR wager / payout / bonus type sets — built ONCE from the canonical
+  // shared constants (src/lib/queries/_wager-payout-types.ts) and
+  // interpolated via Prisma.raw. The values are hardcoded ledger-type
+  // strings — no external input — so Prisma.raw is injection-safe.
+  //
+  // Two payout sides are interpolated because the dashboard reports
+  // both GGR (wagers − gaming payouts) and the bonus-cost drag that
+  // turns GGR into NGR (industry-standard: GGR − bonus / promo costs).
+  // Merging the two — the old behaviour — surfaced a "GGR" headline
+  // that dragged negative whenever bonus volume spiked even if pure
+  // gaming margin was positive.
   const ggrWagerIn = Prisma.raw(WAGER_TYPES_SQL);
-  const ggrPayoutIn = Prisma.raw(PAYOUT_TYPES_SQL);
+  const ggrPayoutIn = Prisma.raw(GGR_PAYOUT_TYPES_SQL);
+  const bonusPayoutIn = Prisma.raw(BONUS_PAYOUT_TYPES_SQL);
   return db.$queryRaw<
     {
       revenue: string;
@@ -99,6 +107,18 @@ function getPeriodAggregates(
       // NOT under_creator). Pure organic customer wager.
       wager_organic: string;
       ggr: string;
+      // Bonus / promo / rakeback / voucher costs in the window —
+      // payouts that fall outside pure gaming (rain wins, deposit
+      // bonuses, gift / promo redemptions, rakeback / affiliate
+      // claims, race / waitlist prizes, creator tips, voucher
+      // exchanges). NOT subtracted from GGR; surfaced separately so
+      // the dashboard can show NGR (GGR − bonus_cost) alongside.
+      bonus_cost: string;
+      // NGR — net gaming revenue, i.e. GGR after bonus / promo costs.
+      // Computed in SQL as `ggr − bonus_cost` so the two numbers stay
+      // mathematically consistent (callers can also derive it client-
+      // side from the two returned fields).
+      ngr: string;
       deposit_count: string;
       // Windowed balance-change components used by the period P&L
       // figure (was the 24h-only realizedPnl24h, now keyed on the
@@ -221,31 +241,50 @@ function getPeriodAggregates(
       -- the under_creator flag set on the real_users CTE above.
       COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND NOT under_creator AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS wager_organic,
 
-      -- GGR = wagers − payouts (industry-standard pure gaming margin).
-      -- The wager (ggrWagerIn) + payout (ggrPayoutIn) type sets are
-      -- interpolated from the canonical shared constants in
-      -- src/lib/queries/_wager-payout-types.ts (the same lists
-      -- creators-pnl.ts uses), so the dashboard's global GGR can never
-      -- drift from the per-creator GGR. Change the lists in that one
-      -- file, not here.
+      -- GGR = wagers − gaming-side payouts (industry-standard pure
+      -- gaming margin). The wager (ggrWagerIn) and gaming-payout
+      -- (ggrPayoutIn) type sets are interpolated from the canonical
+      -- shared constants in src/lib/queries/_wager-payout-types.ts —
+      -- GGR_PAYOUT_TYPES covers battle wins, upgrader cash-outs, and
+      -- card / inventory cashouts. Bonus / promo / rakeback / voucher
+      -- payouts are intentionally NOT in this aggregate; they drag
+      -- NGR (computed below), not GGR.
       --
       -- Upgrader plays ARE represented in the ledger on both sides:
       -- upgrader_bet rows debit the wager (in the WAGER set) and
-      -- upgrader_payout rows credit the win (in the PAYOUT set — added
-      -- when Upgrader shipped on packy.gg, see commit 696b716). So
-      -- this aggregate already captures upgrader on both legs; do NOT
-      -- subtract a parallel upgrader_games.won_amount figure on top
-      -- of it. A prior correction did exactly that based on a stale
-      -- assumption (documented in dashboard-upgrader.ts) that the
-      -- backend never wrote upgrader_payout rows; that assumption was
-      -- already false by the time the correction landed, producing a
-      -- -$150k+ phantom drag on the 24h GGR card (and a matching
-      -- over-statement of customer P&L on every period / daily /
-      -- breakdown surface that mirrored the formula).
+      -- upgrader_payout rows credit the win (in GGR_PAYOUT_TYPES,
+      -- added when Upgrader shipped on packy.gg per commit 696b716).
+      -- So this aggregate already captures upgrader on both legs; do
+      -- NOT subtract a parallel upgrader_games.won_amount figure on
+      -- top of it. A prior correction did exactly that based on a
+      -- stale assumption (documented in dashboard-upgrader.ts) that
+      -- the backend never wrote upgrader_payout rows; that assumption
+      -- was already false by the time the correction landed,
+      -- producing a -$150k+ phantom drag on the 24h GGR card.
       (
         COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${cutoff} THEN ABS(amount) ELSE 0 END), 0)
         - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${cutoff} THEN ABS(amount) ELSE 0 END), 0)
       )::text AS ggr,
+
+      -- Bonus / promo / rakeback / voucher costs in the window. Sum
+      -- of every payout type the house pays out as marketing /
+      -- retention / loyalty (NOT gameplay wins). Surfaced as its own
+      -- column so the dashboard can render it alongside the headline
+      -- numbers — letting admins see how much of the period margin is
+      -- being eaten by promo flow rather than chasing it as a
+      -- phantom GGR drag. BONUS_PAYOUT_TYPES is the canonical list;
+      -- see _wager-payout-types.ts for the full enumeration.
+      COALESCE(SUM(CASE WHEN type IN ${bonusPayoutIn} AND created_at >= ${cutoff} THEN ABS(amount) ELSE 0 END), 0)::text AS bonus_cost,
+
+      -- NGR = GGR − bonus / promo costs (industry-standard net
+      -- gaming revenue). Computed alongside GGR so the two numbers
+      -- stay mathematically consistent (the same wager / payout
+      -- scans feed both).
+      (
+        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${cutoff} THEN ABS(amount) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${cutoff} THEN ABS(amount) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN type IN ${bonusPayoutIn} AND created_at >= ${cutoff} THEN ABS(amount) ELSE 0 END), 0)
+      )::text AS ngr,
 
       -- Deposit COUNT — number of completed deposit transactions in
       -- the selected period. Pairs with revenue so the Deposits
@@ -893,6 +932,8 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     upgrader_wager_excl_session: "0",
     wager_organic: "0",
     ggr: "0",
+    bonus_cost: "0",
+    ngr: "0",
     deposit_count: "0",
     balance_change: "0",
     manual_wd: "0",
@@ -979,17 +1020,30 @@ async function dashboardStatsInner(period: DashboardPeriod) {
       week: Number(userCounts[0]?.week ?? 0),
       month: Number(userCounts[0]?.month ?? 0),
     },
-    // Gaming margin (wagers − payouts) for the SELECTED period. Pure
-    // GGR, no liability adjustment. Use realizedPnl for the balance-
-    // sheet-true number.
+    // Gaming margin (wagers − gaming-side payouts) for the SELECTED
+    // period. Pure GGR, no bonus / promo costs, no liability
+    // adjustment. Use realizedPnl for the balance-sheet-true number,
+    // `ngr` below for GGR after bonus costs.
     //
     // Upgrader is fully represented in `pa.ggr`: upgrader_bet on the
-    // wager side and upgrader_payout on the payout side (both already
-    // in the canonical WAGER / PAYOUT type sets). No additional
-    // correction needed; the previous `- upgraderWonPeriod` term was
-    // double-subtracting every upgrader payout (see SQL comment above
-    // the periodAggregates query).
+    // wager side and upgrader_payout in GGR_PAYOUT_TYPES. No
+    // additional correction needed; the previous `- upgraderWonPeriod`
+    // term was double-subtracting every upgrader payout (see SQL
+    // comment above the periodAggregates query).
     ggr: num(pa.ggr),
+    // Bonus / promo / rakeback / voucher costs in the SELECTED
+    // period. NOT subtracted from `ggr` above (industry-standard
+    // separation between gaming margin and promo cost). Folded into
+    // `ngr` below for the standard "net gaming revenue" headline.
+    // Surfacing this on its own lets admins see promo flow directly
+    // rather than chasing it as a phantom GGR drag.
+    bonusCost: num(pa.bonus_cost),
+    // NGR = GGR − bonus cost. Net Gaming Revenue (industry-standard
+    // definition). Computed in SQL so the two numbers stay
+    // mathematically consistent. Negative ngr with positive ggr means
+    // promo / bonus flow exceeds gaming margin for the window — the
+    // signal the previous "everything-in-GGR" formula masked.
+    ngr: num(pa.ngr),
     // Lifetime realized P&L from the house perspective — see getRealizedPnlSnapshot.
     // This is a single snapshot value, not a period series.
     realizedPnl: realizedPnlResult.pnl,
