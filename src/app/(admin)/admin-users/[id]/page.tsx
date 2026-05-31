@@ -8,7 +8,6 @@ import {
   XCircle,
 } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
-import { isUuid } from "@/lib/utils/ids";
 import {
   getAdminUserDetail,
   getAdminUserAuditStats,
@@ -34,8 +33,6 @@ export default async function AdminUserDetailPage({
 }) {
   const session = await requirePageAccess("/admin-users");
   const { id } = await params;
-  // Shape-check UUID before any DB call — see src/lib/utils/ids.ts.
-  if (!isUuid(id)) notFound();
   const sp = await searchParams;
 
   const auditPage = Math.max(1, Number(sp.auditPage) || 1);
