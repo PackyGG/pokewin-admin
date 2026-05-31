@@ -300,9 +300,22 @@ export const CAPABILITIES: CapabilityDef[] = [
     group: "Sets",
   },
   {
+    key: "__can_update_set",
+    label: "Update Set",
+    description: "Edit name, series, language, or release date of an existing set",
+    group: "Sets",
+  },
+  {
     key: "__can_upload_set_image",
     label: "Upload Set Image",
     description: "Upload or replace a set logo image",
+    group: "Sets",
+  },
+  {
+    key: "__can_seed_initial_sets",
+    label: "Seed Initial Sets",
+    description:
+      "One-time backfill: create the Pokemon and OnePiece sets and move every card without a set into Pokemon",
     group: "Sets",
   },
 

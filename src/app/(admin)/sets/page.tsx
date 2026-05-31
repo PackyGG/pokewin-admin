@@ -6,7 +6,8 @@ import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SetsContent } from "./sets-content";
-import { CreateSetButton } from "./create-set-button";
+import { SetFormDialog } from "./set-form-dialog";
+import { SeedInitialSetsButton } from "./seed-initial-sets-button";
 import {
   PageHero,
   PageHeroIdentity,
@@ -60,7 +61,7 @@ export default async function SetsPage({
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  await requirePageAccess("/sets");
+  const session = await requirePageAccess("/sets");
   const params = await searchParams;
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
@@ -69,6 +70,11 @@ export default async function SetsPage({
 
   const suspenseKey = `${page}|${perPage}|${params.search ?? ""}|${params.series ?? ""}|${params.sortBy ?? ""}|${params.sortOrder ?? ""}`;
 
+  // The bulk-backfill button is admin-only — the capability gate on the
+  // server action ultimately enforces this, but we also hide the affordance
+  // for non-admins so the UI matches the permission.
+  const isAdmin = session.role === "admin";
+
   return (
     <div className="space-y-6">
       <PageHero>
@@ -76,7 +82,12 @@ export default async function SetsPage({
           icon={Library}
           title="Sets"
           subtitle="Group cards into sets and series (Pokémon, One Piece, …)."
-          action={<CreateSetButton />}
+          action={
+            <div className="flex items-center gap-2">
+              {isAdmin && <SeedInitialSetsButton />}
+              <SetFormDialog mode="create" />
+            </div>
+          }
         />
       </PageHero>
 
