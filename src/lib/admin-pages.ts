@@ -50,18 +50,19 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Rewards", label: "Level Up", key: "/rewards/level-up" },
   { group: "Rewards", label: "Settings", key: "/rewards/settings" },
   // Marketing — campaign tools + acquisition surfaces. Mirrors the
-  // sidebar's Marketing group so an admin who can grant "Codes" in
+  // sidebar's Marketing group so an admin who can grant items in
   // the role editor sees them under the same banner the user clicks
   // through in the sidebar. Analytics stays grouped here as a
   // permission key (admins can still grant /creators/analytics) but
-  // its sidebar link was dropped per the nav split.
+  // its sidebar link was dropped per the nav split. Codes and
+  // Vouchers were removed from both nav and the role editor — the
+  // routes (/creators/codes, /vouchers) remain reachable by URL but
+  // are no longer surfaced or grantable as separate permissions.
   { group: "Marketing", label: "Ads", key: "/creators/ads" },
-  { group: "Marketing", label: "Codes", key: "/creators/codes" },
   { group: "Marketing", label: "Analytics", key: "/creators/analytics" },
   { group: "Marketing", label: "Settings", key: "/creators/settings" },
   // Promo Codes was moved to the Rewards group (mirrors the sidebar).
   { group: "Marketing", label: "Gift Cards", key: "/gift-cards" },
-  { group: "Marketing", label: "Vouchers", key: "/vouchers" },
   // Giveaway log — driven by `admin_giveaway_actions` rows that the
   // adjust-balance flow writes when the reason is tagged "Giveaway".
   // Same permission default as the rest of Marketing.

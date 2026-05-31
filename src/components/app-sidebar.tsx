@@ -184,18 +184,17 @@ const NAV_GROUPS: NavGroup[] = [
     // just not surfaced here).
     label: "Marketing",
     items: [
-      // Ads is the more frequently-used surface (third-party promo
-      // codes attached to specific campaigns) so it sits above Codes
-      // (which is the raw code list).
+      // Ads — third-party promo codes attached to specific campaigns.
+      // Creators/Codes was removed from this group; promotional-code
+      // workflows now live on /promo-codes (Rewards group).
       { label: "Ads", href: "/creators/ads", icon: "Megaphone" },
-      { label: "Codes", href: "/creators/codes", icon: "Share2" },
       // Promo / acquisition surfaces (previously in their own
-      // "Marketing" group). Kept after the creator-side so the visual
-      // grouping inside the section still reads "people → tools".
-      // Promo Codes was moved out of Marketing into Rewards (it sits
-      // alongside the other user-facing promo/reward levers there).
+      // "Marketing" group). Promo Codes was moved out of Marketing
+      // into Rewards (it sits alongside the other user-facing
+      // promo/reward levers there). Vouchers was also removed from
+      // this group — the route still exists at /vouchers but is no
+      // longer surfaced in nav.
       { label: "Gift Cards", href: "/gift-cards", icon: "Gift" },
-      { label: "Vouchers", href: "/vouchers", icon: "Ticket" },
       // Giveaway log — every balance-adjustment tagged as a giveaway
       // shows up here with the source tweet / Discord link, so the
       // marketing team has a single feed of "what we gave away and
