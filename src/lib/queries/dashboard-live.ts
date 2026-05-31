@@ -1,6 +1,9 @@
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { MS_PER_DAY } from "@/lib/utils/time";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { STAFF_ROLES } from "./_exclude-staff";
 import { excludeStaffAndBlacklisted } from "./_blacklist";
 
 /**
@@ -158,7 +161,142 @@ export type LiveMoneyMovementsResult = {
   items: LiveMoneyMovementItem[];
   total24hDeposits: number;
   total24hWithdrawals: number;
+  /**
+   * True when the docked widget polled with a watermark and nothing has
+   * advanced since — the server skipped the heavy 4-query batch + bonus
+   * pairing query and only ran the cheap watermark + cached totals. The
+   * client should leave `items` alone (the empty array carries no new
+   * rows) but is still free to refresh the 24h hero numbers.
+   */
+  unchanged?: boolean;
 };
+
+/**
+ * Cheap "has anything advanced?" pre-check for the docked LiveMoneyChat
+ * poll. Returns the newest deposit/withdrawal timestamp (ISO) strictly
+ * AFTER `sinceCreatedAt`, or `null` when nothing is newer.
+ *
+ * Mirrors `getLiveActivityWatermark` exactly: two indexed `findFirst`
+ * lookups with `take: 1` and a single-column select, filters identical
+ * to the heavy `getLiveDepositsAndWithdrawals` row queries so the
+ * watermark is broad-or-equal to the heavy query and can never report
+ * "no change" when a real row would actually be returned.
+ *
+ * The withdrawal heavy query has NO status filter on the row fetch
+ * (admins want to see every request as it lands, even pending or
+ * later-cancelled), so the watermark mirrors that — any status counts.
+ */
+export async function getMoneyMovementsWatermark(
+  sinceCreatedAt: string | null,
+): Promise<string | null> {
+  const db = await getDb();
+  const since = sinceCreatedAt ? new Date(sinceCreatedAt) : null;
+  const staffRelation = await excludeStaffAndBlacklisted();
+
+  const [depositTop, withdrawalTop] = await Promise.all([
+    db.ledger_transactions.findFirst({
+      where: {
+        type: "deposit",
+        status: "completed",
+        ...(since ? { created_at: { gt: since } } : {}),
+        user: staffRelation,
+      },
+      orderBy: { created_at: "desc" },
+      select: { created_at: true },
+    }),
+    db.card_withdrawal_requests.findFirst({
+      where: {
+        ...(since ? { requested_at: { gt: since } } : {}),
+        user_card_withdrawal_requests_user_idTouser: staffRelation,
+      },
+      orderBy: { requested_at: "desc" },
+      select: { requested_at: true },
+    }),
+  ]);
+
+  let max: Date | null = null;
+  for (const ts of [
+    depositTop?.created_at ?? null,
+    withdrawalTop?.requested_at ?? null,
+  ]) {
+    if (ts && (max === null || ts.getTime() > max.getTime())) max = ts;
+  }
+
+  return max ? max.toISOString() : null;
+}
+
+/**
+ * 24h deposits + withdrawals sums, cached for 60s.
+ *
+ * The docked LiveMoneyChat panel polls every 6s, so the hero numbers
+ * used to re-run two aggregates per tick × every open tab. Wrapping
+ * them in `unstable_cache` means each tick is a near-free cache hit
+ * for the ~minute the values are valid. The 60s TTL is well under the
+ * panel's poll cadence × the time it takes a single tab to notice a
+ * material drift in the hero values (60s lag on a 24h running total
+ * is invisible to the eye), and matches the precedent in
+ * `cached24hPackOpens` / `cached24hBattles` for the docked Recent
+ * Activity widget.
+ *
+ * Cache key includes the blacklist signature (same pattern as the
+ * existing dashboard caches) so adding/removing an excluded user
+ * invalidates the totals on the next tick.
+ */
+const cachedMoneyMovementTotals24h = unstable_cache(
+  async (blacklistIds: string[]) => {
+    const db = await getDb();
+    const dayAgo = new Date(Date.now() - MS_PER_DAY);
+    const staffRelation = {
+      role: { notIn: [...STAFF_ROLES] },
+      ...(blacklistIds.length > 0 ? { id: { notIn: blacklistIds } } : {}),
+    };
+
+    const [depositTotalAgg, withdrawalTotalAgg] = await Promise.all([
+      db.ledger_transactions.aggregate({
+        where: {
+          type: "deposit",
+          status: "completed",
+          created_at: { gte: dayAgo },
+          user: staffRelation,
+        },
+        _sum: { amount: true },
+      }),
+      db.card_withdrawal_requests.aggregate({
+        where: {
+          requested_at: { gte: dayAgo },
+          status: { notIn: ["cancelled", "failed"] },
+          user_card_withdrawal_requests_user_idTouser: staffRelation,
+        },
+        _sum: { total_value_usd: true },
+      }),
+    ]);
+
+    return {
+      total24hDeposits: toNumber(depositTotalAgg._sum?.amount),
+      total24hWithdrawals: toNumber(withdrawalTotalAgg._sum?.total_value_usd),
+    };
+  },
+  ["dashboard-live-money-totals-24h-v1"],
+  { revalidate: 60, tags: ["dashboard-activity"] },
+);
+
+/**
+ * Public accessor for the cached 24h deposit + withdrawal sums. Pulls
+ * the current blacklist (per-request cached) and threads it into the
+ * cache key so blacklist edits invalidate on the next tick.
+ */
+export async function getMoneyMovementTotals24h(): Promise<{
+  total24hDeposits: number;
+  total24hWithdrawals: number;
+}> {
+  const blacklist = await getExcludedUserIds();
+  // Sort for a stable cache key — `getExcludedUserIds()` already
+  // returns the same order from a single admin DB row order, but
+  // sorting defensively keeps the key insensitive to a future change
+  // in that ordering.
+  const sorted = [...blacklist].sort();
+  return cachedMoneyMovementTotals24h(sorted);
+}
 
 /**
  * Combined live feed of newest deposits AND newest withdrawal requests.
@@ -191,54 +329,41 @@ export async function getLiveDepositsAndWithdrawals(params: {
   const since = params.sinceCreatedAt ? new Date(params.sinceCreatedAt) : null;
   const staffRelation = await excludeStaffAndBlacklisted();
 
-  const dayAgo = new Date(Date.now() - MS_PER_DAY);
-
-  const [depositRows, withdrawalRows, depositTotalAgg, withdrawalTotalAgg] =
-    await Promise.all([
-      db.ledger_transactions.findMany({
-        where: {
-          type: "deposit",
-          status: "completed",
-          ...(since ? { created_at: { gt: since } } : {}),
-          user: staffRelation,
+  // Totals are cached (60s revalidate) so the 4-query parallel batch
+  // is now 2 row queries + a near-free cached lookup. The cache is
+  // shared across every open admin tab — the docked LiveMoneyChat
+  // panel polls every 6s and used to re-run both aggregates on each
+  // tick × every tab, which was the single biggest perf drag on the
+  // poll path.
+  const [depositRows, withdrawalRows, totals] = await Promise.all([
+    db.ledger_transactions.findMany({
+      where: {
+        type: "deposit",
+        status: "completed",
+        ...(since ? { created_at: { gt: since } } : {}),
+        user: staffRelation,
+      },
+      orderBy: { created_at: "desc" },
+      take: limit,
+      include: {
+        user: { select: { username: true, email: true, image: true } },
+      },
+    }),
+    db.card_withdrawal_requests.findMany({
+      where: {
+        ...(since ? { requested_at: { gt: since } } : {}),
+        user_card_withdrawal_requests_user_idTouser: staffRelation,
+      },
+      orderBy: { requested_at: "desc" },
+      take: limit,
+      include: {
+        user_card_withdrawal_requests_user_idTouser: {
+          select: { username: true, email: true, image: true },
         },
-        orderBy: { created_at: "desc" },
-        take: limit,
-        include: {
-          user: { select: { username: true, email: true, image: true } },
-        },
-      }),
-      db.card_withdrawal_requests.findMany({
-        where: {
-          ...(since ? { requested_at: { gt: since } } : {}),
-          user_card_withdrawal_requests_user_idTouser: staffRelation,
-        },
-        orderBy: { requested_at: "desc" },
-        take: limit,
-        include: {
-          user_card_withdrawal_requests_user_idTouser: {
-            select: { username: true, email: true, image: true },
-          },
-        },
-      }),
-      db.ledger_transactions.aggregate({
-        where: {
-          type: "deposit",
-          status: "completed",
-          created_at: { gte: dayAgo },
-          user: staffRelation,
-        },
-        _sum: { amount: true },
-      }),
-      db.card_withdrawal_requests.aggregate({
-        where: {
-          requested_at: { gte: dayAgo },
-          status: { notIn: ["cancelled", "failed"] },
-          user_card_withdrawal_requests_user_idTouser: staffRelation,
-        },
-        _sum: { total_value_usd: true },
-      }),
-    ]);
+      },
+    }),
+    getMoneyMovementTotals24h(),
+  ]);
 
   // Pair deposit_bonus rows to their parent deposit using the same rule as
   // getLiveDeposits / getDepositTransactions (bonus.balance_before ==
@@ -313,8 +438,8 @@ export async function getLiveDepositsAndWithdrawals(params: {
 
   return {
     items: merged,
-    total24hDeposits: toNumber(depositTotalAgg._sum?.amount),
-    total24hWithdrawals: toNumber(withdrawalTotalAgg._sum?.total_value_usd),
+    total24hDeposits: totals.total24hDeposits,
+    total24hWithdrawals: totals.total24hWithdrawals,
   };
 }
 

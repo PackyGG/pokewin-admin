@@ -71,6 +71,14 @@ export function LiveMoneyChat() {
   const [bootstrapped, setBootstrapped] = React.useState(false);
   const [newIds, setNewIds] = React.useState<Set<string>>(() => new Set());
   const cursorRef = React.useRef<string | null>(null);
+  // Last-seen watermark for the cheap server-side pre-check. Tracked
+  // separately from `cursorRef` so it advances on every poll (even when
+  // no new rows landed) — when the watermark stays put, the server
+  // skips the heavy 4-query row batch and only re-issues cached totals.
+  // Bootstrap leaves this null so the first poll still runs the heavy
+  // query; subsequent polls always pass the latest cursor as the
+  // watermark and rely on the server's strict-gt check.
+  const watermarkRef = React.useRef<string | null>(null);
   // Re-render every 30s so relative timestamps stay fresh.
   const [, setNow] = React.useState(0);
 
@@ -84,6 +92,10 @@ export function LiveMoneyChat() {
     let alive = true;
     (async () => {
       try {
+        // Bootstrap: no watermark → server runs the heavy query and
+        // returns the newest snapshot. Seed both the row cursor and
+        // the watermark from the same timestamp so the next poll can
+        // short-circuit on the watermark when nothing new has landed.
         const res = await fetchRecentMoneyMovements(null);
         if (!alive) return;
         setTotal24hDeposits(res.total24hDeposits);
@@ -91,6 +103,7 @@ export function LiveMoneyChat() {
         const snap = res.items.slice(0, MAX_ITEMS);
         setItems(snap);
         cursorRef.current = snap.length > 0 ? snap[0].createdAt : null;
+        watermarkRef.current = cursorRef.current;
       } catch {
         // Silent — polling loop retries.
       } finally {
@@ -114,12 +127,29 @@ export function LiveMoneyChat() {
         return;
       }
       try {
-        const res = await fetchRecentMoneyMovements(cursorRef.current);
+        // Pass the row cursor as both the rows filter AND the
+        // watermark. On an idle tick the server returns
+        // `unchanged: true` after two cheap indexed lookups + a
+        // 60s-cached totals read — no row fetch, no joins, no bonus
+        // pairing query. The hero totals still refresh on every tick
+        // (cache hit) so the UI numbers stay current.
+        const res = await fetchRecentMoneyMovements(
+          cursorRef.current,
+          watermarkRef.current,
+        );
         if (!alive) return;
         setTotal24hDeposits(res.total24hDeposits);
         setTotal24hWithdrawals(res.total24hWithdrawals);
+        // Idle short-circuit: server reported no advance since the
+        // last watermark. The row state is already correct — skip the
+        // setItems work entirely. Totals are still applied above
+        // (cached, near-free) so the hero numbers don't go stale.
+        if (res.unchanged) {
+          return;
+        }
         if (res.items.length > 0) {
           cursorRef.current = res.items[0].createdAt;
+          watermarkRef.current = cursorRef.current;
           setItems((prev) => {
             const existing = new Set(prev.map((i) => i.id));
             const fresh = res.items.filter((i) => !existing.has(i.id));
