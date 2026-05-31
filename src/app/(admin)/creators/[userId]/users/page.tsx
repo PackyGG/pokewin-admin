@@ -7,7 +7,6 @@ import {
   getCodeReferrals,
 } from "@/lib/queries/creators";
 import { requirePageAccess } from "@/lib/dal";
-import { isUuid } from "@/lib/utils/ids";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -41,8 +40,6 @@ export default async function CreatorUsersPage({
 }) {
   await requirePageAccess("/creators");
   const { userId } = await params;
-  // Shape-check UUID before any DB call — see src/lib/utils/ids.ts.
-  if (!isUuid(userId)) notFound();
 
   const profile = await getCreatorHeader(userId);
   if (!profile) notFound();

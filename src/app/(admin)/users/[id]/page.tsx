@@ -21,21 +21,11 @@ import {
   getSharedIpUsers,
   getSharedFingerprintUsers,
 } from "@/lib/fraud/shared-identity";
-import { UserViewModern, coerceTab } from "./user-view-modern";
+import { UserViewModern } from "./user-view-modern";
+import { coerceTab } from "./user-tabs-types";
 import { safeQuery } from "@/lib/errors/safe-query";
 
 export const metadata = { title: "User Detail" };
-
-// Platform user IDs are UUIDs (gen_random_uuid). A malformed path like
-// /users/<32-char-no-dashes-id> is almost always a stale bookmark or a
-// crawler probing the route — we don't want to fire ~14 parallel queries
-// (some of them raw SQL that DOES cast through ::uuid further down the
-// stack) just to crash the page error boundary with a Postgres cast
-// error. Shape-check first and 404 cleanly when the input can't possibly
-// be a real user id. Mirror this guard on any other route that takes a
-// user id from params.
-const UUID_REGEX =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // GAMING is pack / battle / upgrader play — entry, payout, refund.
 // Sale / exchange rows live in FINANCIAL_TYPES below so card sales
@@ -85,16 +75,6 @@ export default async function UserDetailPage({
   await ensureSupportBaseline();
   const session = await requirePageAccess("/users");
   const { id } = await params;
-  // Hard-guard against non-UUID ids BEFORE any DB call. Several
-  // sub-queries (fraud/score DETAIL_SQL parameters, deposit-address
-  // joins) end up being executed against UUID-typed Postgres columns;
-  // letting a bad id reach them produces an "invalid input syntax for
-  // type uuid" error that bubbles to the segment error boundary and
-  // shows the (wrong) list-page copy. notFound() short-circuits to the
-  // proper 404 view instead.
-  if (!UUID_REGEX.test(id)) {
-    notFound();
-  }
   const sp = await searchParams;
   // Active tab is URL-driven (?tab=<key>) so deep-links from elsewhere
   // (hero risk badges, future bookmarks) still resolve correctly.

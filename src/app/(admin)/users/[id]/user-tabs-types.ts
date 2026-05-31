@@ -539,3 +539,29 @@ export const EXCHANGE_TX_TYPES = [
   "battle_excess_to_voucher",
   "voucher_exchange",
 ] as const;
+
+export type TabKey =
+  | "overview"
+  | "finances"
+  | "rewards"
+  | "gaming"
+  | "inventory"
+  | "trust"
+  | "affiliate"
+  | "account";
+
+export const TAB_KEYS = new Set<TabKey>([
+  "overview",
+  "finances",
+  "rewards",
+  "gaming",
+  "inventory",
+  "trust",
+  "affiliate",
+  "account",
+]);
+
+export function coerceTab(raw: string | undefined): TabKey {
+  if (raw && TAB_KEYS.has(raw as TabKey)) return raw as TabKey;
+  return "overview";
+}
