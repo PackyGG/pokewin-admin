@@ -111,6 +111,7 @@ export async function getCreatorDetail(userId: string) {
   const now = new Date();
   const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
   // First wave — every query that only depends on userId. signupCounts +
@@ -167,6 +168,7 @@ export async function getCreatorDetail(userId: string) {
         total: string;
         last_24h: string;
         last_7d: string;
+        last_14d: string;
         last_30d: string;
       }[]
     >`
@@ -174,6 +176,7 @@ export async function getCreatorDetail(userId: string) {
         COUNT(*)::text                                                                AS total,
         COUNT(*) FILTER (WHERE created_at >= ${oneDayAgo})::text                      AS last_24h,
         COUNT(*) FILTER (WHERE created_at >= ${sevenDaysAgo})::text                   AS last_7d,
+        COUNT(*) FILTER (WHERE created_at >= ${fourteenDaysAgo})::text                AS last_14d,
         COUNT(*) FILTER (WHERE created_at >= ${thirtyDaysAgo})::text                  AS last_30d
       FROM "user"
       WHERE referred_by = ${userId}
@@ -280,6 +283,7 @@ export async function getCreatorDetail(userId: string) {
   const signupsTotal = Number(signupsRow?.total ?? 0);
   const signups24h = Number(signupsRow?.last_24h ?? 0);
   const signups7d = Number(signupsRow?.last_7d ?? 0);
+  const signups14d = Number(signupsRow?.last_14d ?? 0);
   const signups30d = Number(signupsRow?.last_30d ?? 0);
   // Primary = oldest row in affiliate_codes (the first code this creator
   // ever minted). `allCodes` is already ORDER BY created_at ASC above.
@@ -295,6 +299,7 @@ export async function getCreatorDetail(userId: string) {
 
   const now_clicks_24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const now_clicks_7d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const now_clicks_14d = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
   const now_clicks_30d = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
   // Hourly (24 buckets) and daily (7 buckets) time-series for the
@@ -319,6 +324,7 @@ export async function getCreatorDetail(userId: string) {
             total: string;
             last_24h: string;
             last_7d: string;
+            last_14d: string;
             last_30d: string;
           }[]
         >`
@@ -326,12 +332,13 @@ export async function getCreatorDetail(userId: string) {
             COUNT(*)::text                                                              AS total,
             COUNT(*) FILTER (WHERE created_at >= ${now_clicks_24h})::text               AS last_24h,
             COUNT(*) FILTER (WHERE created_at >= ${now_clicks_7d})::text                AS last_7d,
+            COUNT(*) FILTER (WHERE created_at >= ${now_clicks_14d})::text               AS last_14d,
             COUNT(*) FILTER (WHERE created_at >= ${now_clicks_30d})::text               AS last_30d
           FROM affiliate_clicks
           WHERE code = ANY(${clickCodes}::text[])
         `
       : Promise.resolve(
-          [] as { total: string; last_24h: string; last_7d: string; last_30d: string }[],
+          [] as { total: string; last_24h: string; last_7d: string; last_14d: string; last_30d: string }[],
         ),
     primaryCode
       ? db.affiliate_code_queue.count({ where: { code: primaryCode } })
@@ -441,11 +448,12 @@ export async function getCreatorDetail(userId: string) {
     ),
   ]);
 
-  // Unpack the consolidated click counts (4 buckets in 1 row).
+  // Unpack the consolidated click counts (5 buckets in 1 row).
   const clicksRow = clickCounts[0];
   const clickCount = Number(clicksRow?.total ?? 0);
   const clicks24h = Number(clicksRow?.last_24h ?? 0);
   const clicks7d = Number(clicksRow?.last_7d ?? 0);
+  const clicks14d = Number(clicksRow?.last_14d ?? 0);
   const clicks30d = Number(clicksRow?.last_30d ?? 0);
 
   const ftdByPeriod: Record<string, number> = {
@@ -499,6 +507,7 @@ export async function getCreatorDetail(userId: string) {
       total: clickCount,
       last24h: clicks24h,
       last7d: clicks7d,
+      last14d: clicks14d,
       last30d: clicks30d,
     },
     acquisition: {
@@ -522,6 +531,7 @@ export async function getCreatorDetail(userId: string) {
       total: signupsTotal,
       last24h: signups24h,
       last7d: signups7d,
+      last14d: signups14d,
       last30d: signups30d,
       pending: pendingSignups,
     },

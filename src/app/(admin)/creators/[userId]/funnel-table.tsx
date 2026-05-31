@@ -23,6 +23,7 @@ type ClicksShape = {
   total: number;
   last24h: number;
   last7d: number;
+  last14d: number;
   last30d: number;
 };
 
@@ -121,6 +122,13 @@ export function FunnelTable({ clicks, signups, ftdByPeriod }: Props) {
         clicks: clicks.last7d,
         signups: signups.last7d,
         ftds: ftdByPeriod["7d"] ?? 0,
+      },
+      {
+        key: "14d",
+        period: "14d",
+        clicks: clicks.last14d,
+        signups: signups.last14d,
+        ftds: ftdByPeriod["14d"] ?? 0,
       },
       {
         key: "30d",
