@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   CalendarDays,
+  GitCommit,
   List,
   Server,
   ScrollText,
@@ -24,9 +25,12 @@ import { requirePageAccess, getUserPermissions } from "@/lib/dal";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { formatDate, formatNumber, formatRelative } from "@/lib/utils/format";
 import { ensureChangelogSchema } from "@/lib/changelog/ensure-schema";
+import { safeQuery } from "@/lib/errors/safe-query";
 import {
+  getAutoChangelogEntries,
   getChangelogEntries,
   getChangelogStats,
+  isAutoChangelogEntry,
   type ChangelogCategory,
   type ChangelogChangeKind,
   type ChangelogEntry,
@@ -119,10 +123,38 @@ export default async function ChangelogsPage() {
     canManage = hasCapability(perms, "__can_manage_changelog");
   }
 
-  const [entries, stats] = await Promise.all([
-    getChangelogEntries({ limit: 100 }),
-    getChangelogStats(),
+  // Fetch admin-curated DB entries + auto-generated commit entries in
+  // parallel. Both are wrapped in safeQuery so a failure on one side
+  // (e.g. JSON file missing on a fresh clone, admin DB hiccup) doesn't
+  // blank the whole page — the working side still renders.
+  const [
+    { data: dbEntries },
+    { data: autoEntries },
+    { data: stats },
+  ] = await Promise.all([
+    safeQuery(
+      () => getChangelogEntries({ limit: 100 }),
+      [] as ChangelogEntry[],
+      "changelogs.db-entries",
+    ),
+    safeQuery(
+      () => getAutoChangelogEntries(),
+      [] as ChangelogEntry[],
+      "changelogs.auto-entries",
+    ),
+    safeQuery(
+      () => getChangelogStats(),
+      { totalEntries: 0, thisMonthEntries: 0, lastPublishedAt: null },
+      "changelogs.stats",
+    ),
   ]);
+
+  // Merge — DB entries first to match the (rare) ordering tie where an
+  // admin publishes a curated entry at the exact same instant as a
+  // commit. Sort descending by publishedAt, newest first.
+  const entries: ChangelogEntry[] = [...dbEntries, ...autoEntries].sort(
+    (a, b) => (a.publishedAt < b.publishedAt ? 1 : a.publishedAt > b.publishedAt ? -1 : 0),
+  );
 
   return (
     <div className="space-y-6">
@@ -214,7 +246,13 @@ function ChangelogCard({
   entry: ChangelogEntry;
   canManage: boolean;
 }) {
-  const CategoryIcon = CATEGORY_ICON[entry.category];
+  // Auto entries (one per git commit) use a git icon in place of the
+  // category icon, surface the short SHA as the version slot, and have
+  // their edit / delete buttons hidden because they're owned by git,
+  // not by the admin DB. The category badge palette still applies so
+  // feat / fix / etc. stay visually distinguishable.
+  const isAuto = isAutoChangelogEntry(entry);
+  const CategoryIcon = isAuto ? GitCommit : CATEGORY_ICON[entry.category];
   return (
     <div className="surface-sheen surface-raise relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/70">
       {/* Hairline top highlight to match the modern-panel family. */}
@@ -223,14 +261,18 @@ function ChangelogCard({
         className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"
       />
       <div className="relative p-4 sm:p-5 space-y-4">
-        {/* Top row: date + version + category badge */}
+        {/* Top row: date + version + category badge + optional auto pill */}
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <span className="font-medium text-muted-foreground">
             {formatDate(entry.publishedAt)}
           </span>
           {entry.version && (
             <span className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/30 px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
-              <Tag className="size-3" />
+              {isAuto ? (
+                <GitCommit className="size-3" />
+              ) : (
+                <Tag className="size-3" />
+              )}
               {entry.version}
             </span>
           )}
@@ -243,6 +285,14 @@ function ChangelogCard({
             <CategoryIcon className="size-3" />
             {CATEGORY_LABEL[entry.category]}
           </span>
+          {isAuto && (
+            <span
+              className="ml-auto inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/30 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground"
+              title="Auto-generated from a git commit. Not editable in the admin panel."
+            >
+              auto
+            </span>
+          )}
         </div>
 
         {/* Title + summary */}
@@ -250,9 +300,11 @@ function ChangelogCard({
           <h3 className="text-lg font-semibold tracking-tight">{entry.title}</h3>
           {/* whitespace-pre-line so admin-written paragraphs preserve their
               own line breaks without being interpreted as markdown. */}
-          <p className="whitespace-pre-line text-sm text-muted-foreground">
-            {entry.summary}
-          </p>
+          {entry.summary && (
+            <p className="whitespace-pre-line text-sm text-muted-foreground">
+              {entry.summary}
+            </p>
+          )}
         </div>
 
         {/* Bullets */}
@@ -278,14 +330,14 @@ function ChangelogCard({
           </ul>
         )}
 
-        {/* Footer: author + admin actions */}
+        {/* Footer: author + admin actions (only on DB-curated entries) */}
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/40 pt-3 text-xs text-muted-foreground">
           <span>
             {entry.author.username
               ? <>by <span className="font-medium text-foreground">{entry.author.username}</span></>
               : "by (unknown admin)"}
           </span>
-          {canManage && (
+          {canManage && !isAuto && (
             <div className="flex items-center gap-1">
               <EditChangelogEntryButton entry={entry} />
               <DeleteChangelogButton id={entry.id} title={entry.title} />
