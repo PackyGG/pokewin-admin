@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { toNumber } from "@/lib/utils/decimal";
@@ -126,4 +127,64 @@ export async function getGiftCards(params: {
     perPage,
     totalPages: Math.ceil((status === "cancelled" ? filtered.length : total) / perPage),
   };
+}
+
+// ─── Global KPI stats for the /gift-cards page hero strip ─────────────
+//
+// Whole-table counts + total value, derived from the same status
+// predicates the list query uses:
+//   • available  → redeemed_at IS NULL AND (expires_at IS NULL OR
+//                  expires_at >= NOW())
+//   • redeemed   → redeemed_at IS NOT NULL
+//   • Total value is summed across every row regardless of status.
+// "cancelled" status lives in the admin DB so it's intentionally not
+// counted here — it would need a cross-DB lookup, and admins rarely
+// audit cancelled-gift-card volume from the hero strip.
+//
+// One round-trip with COUNT(*) FILTER + SUM. Cached cross-request
+// (60s) so spamming the search box doesn't fan the same scan into
+// the DB on every keystroke.
+
+export type GiftCardsListStats = {
+  totalCards: number;
+  availableCount: number;
+  redeemedCount: number;
+  totalValueUsd: number;
+};
+
+const cachedGiftCardsListStats = unstable_cache(
+  async (): Promise<GiftCardsListStats> => {
+    const db = await getDb();
+    const rows = await db.$queryRaw<
+      {
+        total: string;
+        available: string;
+        redeemed: string;
+        total_value: string;
+      }[]
+    >`
+      SELECT
+        COUNT(*)::text                                                                            AS total,
+        COUNT(*) FILTER (
+          WHERE redeemed_at IS NULL
+            AND (expires_at IS NULL OR expires_at >= NOW())
+        )::text                                                                                   AS available,
+        COUNT(*) FILTER (WHERE redeemed_at IS NOT NULL)::text                                     AS redeemed,
+        COALESCE(SUM(value::numeric), 0)::text                                                    AS total_value
+      FROM gift_cards
+    `;
+    const r = rows[0];
+    return {
+      totalCards: Number(r?.total ?? 0),
+      availableCount: Number(r?.available ?? 0),
+      redeemedCount: Number(r?.redeemed ?? 0),
+      totalValueUsd: Number(r?.total_value ?? 0),
+    };
+  },
+  ["gift-cards-list-stats-v1"],
+  { revalidate: 60, tags: ["gift-cards-list-stats"] },
+);
+
+export async function getGiftCardsListStats(): Promise<GiftCardsListStats> {
+  return cachedGiftCardsListStats();
 }

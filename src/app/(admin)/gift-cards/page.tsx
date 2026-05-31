@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { Gift, CheckCircle2, XCircle, Coins } from "lucide-react";
-import { getGiftCards } from "@/lib/queries/gift-cards";
+import { getGiftCards, getGiftCardsListStats } from "@/lib/queries/gift-cards";
 import { requirePageAccess } from "@/lib/dal";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
@@ -28,17 +28,20 @@ export default async function GiftCardsPage({
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
 
-  const result = await getGiftCards({
-    page,
-    perPage,
-    status: params.status,
-    region: params.region,
-    search: params.search,
-  });
-
-  const availableCount = result.data.filter((c) => c.status === "available").length;
-  const redeemedCount = result.data.filter((c) => c.status === "redeemed").length;
-  const pageValue = result.data.reduce((sum, c) => sum + c.value, 0);
+  // Table + global stats in parallel; stats stay stable across the
+  // status / region / search filter so the strip is a fixed read-out
+  // of the gift-card pool rather than a window into the current
+  // 20-row slice.
+  const [result, stats] = await Promise.all([
+    getGiftCards({
+      page,
+      perPage,
+      status: params.status,
+      region: params.region,
+      search: params.search,
+    }),
+    getGiftCardsListStats(),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -54,25 +57,25 @@ export default async function GiftCardsPage({
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <KpiTile
           label="Total"
-          value={String(result.total)}
+          value={String(stats.totalCards)}
           icon={Gift}
           accent="blue"
         />
         <KpiTile
-          label="Available (page)"
-          value={String(availableCount)}
+          label="Available"
+          value={String(stats.availableCount)}
           icon={CheckCircle2}
           accent="emerald"
         />
         <KpiTile
-          label="Redeemed (page)"
-          value={String(redeemedCount)}
+          label="Redeemed"
+          value={String(stats.redeemedCount)}
           icon={XCircle}
           accent="purple"
         />
         <KpiTile
-          label="Page Value"
-          value={formatCurrency(pageValue)}
+          label="Total Value"
+          value={formatCurrency(stats.totalValueUsd)}
           icon={Coins}
           accent="amber"
         />

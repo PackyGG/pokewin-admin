@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
@@ -84,6 +85,60 @@ export async function getCodes(params: {
     perPage,
     totalPages: Math.ceil(total / perPage),
   };
+}
+
+// ─── Global KPI stats for the /creators/codes page hero strip ─────────
+//
+// Counts that describe the WHOLE affiliate-codes pool. "Active" is the
+// code that matches the owning user's currently-selected affiliate_code
+// AND the user has affiliate_code_active = true. Every other row in
+// affiliate_codes is historical / inactive.
+//
+// One round-trip; cached cross-request (60s). Compares with case-
+// insensitive equality because the affiliate_codes table contains
+// mixed-case rows for legacy migrated data (the createCode path
+// uppercases new rows, but the 0068 backfill kept original casing) —
+// matching the same comparison the list query's WHERE uses.
+
+export type CreatorsCodesListStats = {
+  totalCodes: number;
+  activeCount: number;
+  inactiveCount: number;
+};
+
+const cachedCreatorsCodesListStats = unstable_cache(
+  async (): Promise<CreatorsCodesListStats> => {
+    const db = await getDb();
+    const rows = await db.$queryRaw<
+      { total: string; active: string }[]
+    >`
+      SELECT
+        COUNT(*)::text AS total,
+        COUNT(*) FILTER (
+          WHERE EXISTS (
+            SELECT 1 FROM "user" u
+            WHERE u.id = ac.user_id
+              AND u.affiliate_code_active = true
+              AND LOWER(u.affiliate_code) = LOWER(ac.code)
+          )
+        )::text AS active
+      FROM affiliate_codes ac
+    `;
+    const r = rows[0];
+    const total = Number(r?.total ?? 0);
+    const active = Number(r?.active ?? 0);
+    return {
+      totalCodes: total,
+      activeCount: active,
+      inactiveCount: Math.max(0, total - active),
+    };
+  },
+  ["creators-codes-list-stats-v1"],
+  { revalidate: 60, tags: ["creators-codes-list-stats"] },
+);
+
+export async function getCreatorsCodesListStats(): Promise<CreatorsCodesListStats> {
+  return cachedCreatorsCodesListStats();
 }
 
 export async function getCodeAnalytics(code: string) {
