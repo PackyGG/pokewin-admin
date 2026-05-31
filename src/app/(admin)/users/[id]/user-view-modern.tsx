@@ -88,34 +88,7 @@ export {
   ModernMetricTile,
 } from "./user-view-modern-panels";
 
-export type TabKey =
-  | "overview"
-  | "finances"
-  | "rewards"
-  | "gaming"
-  | "inventory"
-  | "trust"
-  | "affiliate"
-  | "account";
-
-// Whitelist for ?tab= URL coercion. Anything off this list resolves
-// to the default ("overview") so admins can't bookmark/break the
-// page with arbitrary values.
-export const TAB_KEYS = new Set<TabKey>([
-  "overview",
-  "finances",
-  "rewards",
-  "gaming",
-  "inventory",
-  "trust",
-  "affiliate",
-  "account",
-]);
-
-export function coerceTab(raw: string | undefined): TabKey {
-  if (raw && TAB_KEYS.has(raw as TabKey)) return raw as TabKey;
-  return "overview";
-}
+import type { TabKey } from "./user-tabs-types";
 
 type TabDef = {
   key: TabKey;
