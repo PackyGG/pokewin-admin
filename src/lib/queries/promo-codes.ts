@@ -185,6 +185,13 @@ export type PromoCodesListStats = {
 const cachedPromoCodesListStats = unstable_cache(
   async (): Promise<PromoCodesListStats> => {
     const db = await getDb();
+    // Total redemptions live on a SEPARATE table — `promo_codes` has
+    // no `redemption_count` column (`getPromoCodes` computes per-row
+    // counts via `db.promo_code_redemptions.groupBy`). The earlier
+    // `SUM(redemption_count)` referenced a non-existent column and
+    // crashed every Marketing page that reads off this stats query.
+    // Use a sub-select against `promo_code_redemptions` instead — same
+    // single-round-trip cost, but actually executes.
     const rows = await db.$queryRaw<
       {
         total: string;
@@ -197,7 +204,7 @@ const cachedPromoCodesListStats = unstable_cache(
         COUNT(*)::text                                                                              AS total,
         COUNT(*) FILTER (WHERE expires_at IS NULL OR expires_at > NOW())::text                       AS active,
         COUNT(*) FILTER (WHERE expires_at IS NOT NULL AND expires_at <= NOW())::text                 AS expired,
-        COALESCE(SUM(redemption_count), 0)::text                                                     AS redemptions
+        COALESCE((SELECT COUNT(*) FROM promo_code_redemptions), 0)::text                              AS redemptions
       FROM promo_codes
     `;
     const r = rows[0];
@@ -208,7 +215,10 @@ const cachedPromoCodesListStats = unstable_cache(
       totalRedemptions: Number(r?.redemptions ?? 0),
     };
   },
-  ["promo-codes-list-stats-v1"],
+  // Bumped to v2 so the broken cached value (if any) is invalidated
+  // immediately — the v1 key would still serve the failed-render
+  // remnant for up to 60s otherwise.
+  ["promo-codes-list-stats-v2"],
   { revalidate: 60, tags: ["promo-codes-list-stats"] },
 );
 
