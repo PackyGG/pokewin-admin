@@ -121,15 +121,6 @@ function getPeriodAggregates(
       // pulling their own balance vs ordinary customer cash-outs.
       creator_wd_amount: string;
       creator_wd_count: string;
-      // Upgrader payouts for the SELECTED period — sourced from
-      // `upgrader_games.won_amount` instead of the ledger because the
-      // upgrader service bypasses ledger payouts. Drives both:
-      //   • GGR  → subtracted from the SQL `ggr` value so the surfaced
-      //            GGR reflects the real wager−payout margin.
-      //   • PnL  → subtracted from the period P&L formula so it
-      //            accounts for the user-balance credit the ledger
-      //            never wrote.
-      upgrader_won_period: string;
     }[]
   >`
     WITH real_users AS (
@@ -238,53 +229,23 @@ function getPeriodAggregates(
       -- drift from the per-creator GGR. Change the lists in that one
       -- file, not here.
       --
-      -- IMPORTANT: this SQL-side ggr is the LEDGER-only signal.
-      -- Upgrader payouts bypass the ledger entirely (the backend
-      -- upgrader service uses a balance-update path, never an
-      -- upgrader_payout row — see dashboard-upgrader.ts notes), so
-      -- this aggregate under-counts payouts by the full upgrader
-      -- payout volume. The upgrader_won_period aggregate below pulls
-      -- the missing payouts straight off upgrader_games, and the JS
-      -- layer subtracts it from ggr so the surfaced number reflects
-      -- wager − payout reality. Same correction is applied to the
-      -- period P&L formula downstream.
+      -- Upgrader plays ARE represented in the ledger on both sides:
+      -- upgrader_bet rows debit the wager (in the WAGER set) and
+      -- upgrader_payout rows credit the win (in the PAYOUT set — added
+      -- when Upgrader shipped on packy.gg, see commit 696b716). So
+      -- this aggregate already captures upgrader on both legs; do NOT
+      -- subtract a parallel upgrader_games.won_amount figure on top
+      -- of it. A prior correction did exactly that based on a stale
+      -- assumption (documented in dashboard-upgrader.ts) that the
+      -- backend never wrote upgrader_payout rows; that assumption was
+      -- already false by the time the correction landed, producing a
+      -- -$150k+ phantom drag on the 24h GGR card (and a matching
+      -- over-statement of customer P&L on every period / daily /
+      -- breakdown surface that mirrored the formula).
       (
         COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${cutoff} THEN ABS(amount) ELSE 0 END), 0)
         - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${cutoff} THEN ABS(amount) ELSE 0 END), 0)
       )::text AS ggr,
-
-      -- Upgrader payouts for the SELECTED period, sourced from the
-      -- canonical upgrader_games.won_amount column. Filtered to the
-      -- same real_users cohort (staff + blacklist excluded) the
-      -- other aggregates use so it slots into GGR / PnL without
-      -- shifting the population. Pulled as a subquery so the existing
-      -- outer aggregate stays a single pass over base.
-      --
-      -- CRITICAL: creator on-stream upgrader wins are dropped via the
-      -- session_windows CTE so creator sponsored-balance wins (house-
-      -- funded promo / stream play, not real customer money) cannot
-      -- surface as a phantom customer-side house loss in the period
-      -- P&L formula downstream. Per CLAUDE.md the period P&L is a
-      -- customer-realized figure — a single big creator on-stream
-      -- upgrader win was making it look like the house lost ~$100k on
-      -- a single day. The ledger-side ggr aggregate above is left
-      -- un-filtered (it is a pure ledger signal); subtracting this
-      -- filtered figure from it shifts the surfaced GGR slightly, but
-      -- only by the value of creator on-stream upgrader wins in the
-      -- period — an intentional small posture change in favor of
-      -- customer-P&L accuracy.
-      COALESCE((
-        SELECT SUM(ug.won_amount::numeric)
-        FROM upgrader_games ug
-        JOIN real_users ru ON ru.id = ug.user_id
-        WHERE ug.created_at >= ${cutoff}
-          AND NOT (ru.role = 'creator' AND EXISTS (
-            SELECT 1 FROM session_windows sw
-            WHERE sw.uid = ug.user_id
-              AND ug.created_at >= sw.win_start
-              AND ug.created_at <  sw.win_end
-          ))
-      ), 0)::text AS upgrader_won_period,
 
       -- Deposit COUNT — number of completed deposit transactions in
       -- the selected period. Pairs with revenue so the Deposits
@@ -937,7 +898,6 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     manual_wd: "0",
     creator_wd_amount: "0",
     creator_wd_count: "0",
-    upgrader_won_period: "0",
   };
   const num = (s: string) => parseFloat(s) || 0;
   // Lifetime deposit transaction count comes from
@@ -978,25 +938,20 @@ async function dashboardStatsInner(period: DashboardPeriod) {
   // aggregates instead of a separate calculateWindowedPnl() call. The
   // four components come from the one period query + the one composite
   // inventory/voucher query, both keyed off `periodCutoff`. Formula
-  // matches calculateWindowedPnl with one upgrader-specific correction:
+  // matches calculateWindowedPnl:
   //   pnl = deposits − (manualWd + cardWd) − balanceChange − Δinv − Δvch
-  //         − upgraderWonPeriod
   //
-  // The trailing upgraderWonPeriod term compensates for the upgrader
-  // service's ledger-bypass behaviour. Bet ledger rows DO get written,
-  // so balance_change captures the bet debit (-bet) on every play. But
-  // the win credit (+won) is applied straight to the user's balance
-  // without a corresponding ledger row, so balance_change is more
-  // negative than reality by exactly `won` per winning play. Reading
-  // pnl off the ledger alone therefore overstates house gain by the
-  // sum of upgrader payouts in the period. Subtracting upgraderWon
-  // (sourced canonically from upgrader_games.won_amount) restores the
-  // truthful number.
+  // Upgrader plays do not need a separate correction here: the bet
+  // debit AND the win credit both flow through ledger_transactions
+  // (upgrader_bet / upgrader_payout), so balance_change already
+  // captures the net per-play move. A prior trailing `upgraderWonPeriod`
+  // term was based on a stale assumption that the backend never wrote
+  // upgrader_payout rows; that double-subtracted every upgrader win and
+  // produced a -$150k+ phantom drag on the headline GGR / P&L cards.
   const depositsPeriod = num(pa.revenue);
   const cardWdPeriod = Math.abs(num(pa.withdrawal));
   const manualWdPeriod = num(pa.manual_wd);
   const balanceChangePeriod = num(pa.balance_change);
-  const upgraderWonPeriod = num(pa.upgrader_won_period);
   const wd = windowedPeriodDelta[0] ?? {
     inv_obtained: "0",
     inv_disposed: "0",
@@ -1010,8 +965,7 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     (manualWdPeriod + cardWdPeriod) -
     balanceChangePeriod -
     inventoryChangePeriod -
-    voucherChangePeriod -
-    upgraderWonPeriod;
+    voucherChangePeriod;
 
   return {
     // Selected period meta — drives the UI labels (so a card title can
@@ -1029,14 +983,13 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     // GGR, no liability adjustment. Use realizedPnl for the balance-
     // sheet-true number.
     //
-    // The SQL `pa.ggr` value is ledger-only and misses upgrader
-    // payouts (the upgrader service doesn't emit upgrader_payout
-    // ledger rows — see the SQL comment above the periodAggregates
-    // query). Subtracting `upgraderWonPeriod` (sourced canonically
-    // from upgrader_games.won_amount) restores the wager-minus-payout
-    // truth so the headline GGR card stops over-stating house gain by
-    // the entire upgrader payout volume.
-    ggr: num(pa.ggr) - upgraderWonPeriod,
+    // Upgrader is fully represented in `pa.ggr`: upgrader_bet on the
+    // wager side and upgrader_payout on the payout side (both already
+    // in the canonical WAGER / PAYOUT type sets). No additional
+    // correction needed; the previous `- upgraderWonPeriod` term was
+    // double-subtracting every upgrader payout (see SQL comment above
+    // the periodAggregates query).
+    ggr: num(pa.ggr),
     // Lifetime realized P&L from the house perspective — see getRealizedPnlSnapshot.
     // This is a single snapshot value, not a period series.
     realizedPnl: realizedPnlResult.pnl,

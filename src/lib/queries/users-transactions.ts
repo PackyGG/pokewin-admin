@@ -422,18 +422,17 @@ export async function getUserTransactions(
     }
   }
 
-  // Upgrader winnings — sourced DIRECTLY from `upgrader_games`, NOT the
-  // ledger. The backend never emits a matching `upgrader_payout` credit
-  // on a win (the upgrader service uses a balance-update path, see
-  // dashboard-upgrader.ts notes). The previous lookup-by-ledger-payout
-  // approach therefore pinned every upgrader row to a fake loss with
-  // $0 won — admins saw the bet debit but no win/loss/multiplier signal.
+  // Upgrader winnings — sourced DIRECTLY from `upgrader_games`, the
+  // canonical per-play record (also used by /transactions/upgrader and
+  // the dashboard Upgrader Stats section). It carries `won_amount`
+  // (0 on a loss, the gross payout on a win) keyed off the same
+  // game_sessions row the bet ledger entry points at, so we can join
+  // by game_session_id and get the outcome + multiplier per upgrader
+  // bet without round-tripping through the ledger payout row.
   //
-  // `upgrader_games` carries `won_amount` directly (0 on a loss, the
-  // gross payout on a win), and `game_sessions.game_id` is the
-  // upgrader_games row's UUID for game_type='upgrader' — verified
-  // against analytics-packs.ts's same convention for packs. One JOIN
-  // gives us the canonical outcome per bet row on the page.
+  // `game_sessions.game_id` is the upgrader_games row's UUID for
+  // game_type='upgrader' — verified against analytics-packs.ts's same
+  // convention for packs.
   const upgraderBetSessionIds = transactions
     .filter((t) => t.type === "upgrader_bet" && t.game_session_id)
     .map((t) => t.game_session_id as string);
@@ -542,11 +541,11 @@ export async function getUserTransactions(
         }
       }
 
-      // Upgrader outcome — match this upgrader_bet to its
-      // upgrader_payout by game_session_id. Payout row present = win
-      // (with the payout amount as the user's take); absent = loss
-      // (won = 0). upgraderWinningsByGsid was populated above from a
-      // dedicated upgrader_payout fetch.
+      // Upgrader outcome — look up the upgrader_games row for this
+      // upgrader_bet via its game_session_id. `won_amount > 0` = win
+      // (with that value as the user's take); `won_amount = 0` = loss.
+      // upgraderWinningsByGsid was populated above from the
+      // game_sessions → upgrader_games join.
       let upgraderResult: "win" | "lose" | null = null;
       let upgraderWinnings: number | null = null;
       // Configuration the user picked before the spin — parsed

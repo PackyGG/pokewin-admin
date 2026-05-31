@@ -14,14 +14,18 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
  * creator role itself, and the excluded-users blacklist are all
  * dropped, so the tile reads the raw customer signal only.
  *
- * SOURCE OF TRUTH — `upgrader_games`, NOT `ledger_transactions`.
- * The backend debits the wager as an `upgrader_bet` ledger row but
- * never emits a matching `upgrader_payout` credit (see
- * backend/src/services/upgrader.service.ts — payout_ledger_tx_id is
- * always null). Aggregating payouts off the ledger therefore reads
- * 0, which pins the section at a fake 100% house edge. Both the
- * wager and the won value already live on `upgrader_games`, so every
- * number here is computed straight off that table:
+ * SOURCE OF TRUTH — `upgrader_games`. The wager and the won value
+ * both live on this table (bet_amount + won_amount per play), which
+ * is the canonical record of every upgrader round and is also what
+ * /transactions/upgrader renders from. Reading directly from this
+ * table keeps the section's hit-rate / edge / avg-bet math self-
+ * consistent without a join through ledger_transactions.
+ *
+ * (Upgrader plays do also flow through the ledger today as
+ * upgrader_bet / upgrader_payout rows — used by the dashboard's
+ * headline GGR + P&L formulas in dashboard.ts and pnl.ts. Both
+ * sources agree on the volume; this section just uses the upgrader-
+ * native table for the win/loss outcome flags.)
  *
  *   wager   = SUM(bet_amount)            — what players risked
  *   payouts = SUM(won_amount)            — gross value returned (0 on a loss)

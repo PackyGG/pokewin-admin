@@ -1,7 +1,6 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
-import { getCreatorSessionWindowsCte } from "./creator-session-windows";
 import type { WindowedPnl } from "./pnl";
 
 /**
@@ -9,10 +8,10 @@ import type { WindowedPnl } from "./pnl";
  * table, all windows packed into one SELECT via `SUM(CASE WHEN >= $n
  * THEN <metric> ELSE 0 END)` per window per metric.
  *
- * Background: `calculateWindowedPnl` issues 5 raw queries per call
- * (ledger / card_withdrawal_requests / user_inventory / vouchers /
- * upgrader_games). Callers like `getUserPnlBreakdown` need a rolling
- * P&L ladder across 4 windows — 4 × 5 = 20 round-trips per page render.
+ * Background: `calculateWindowedPnl` issues 4 raw queries per call
+ * (ledger / card_withdrawal_requests / user_inventory / vouchers).
+ * Callers like `getUserPnlBreakdown` need a rolling P&L ladder across 4
+ * windows — 4 × 4 = 16 round-trips per page render without packing.
  *
  * Modeled on `getPnlBreakdownWindows` (`pnl.ts`) which packs three
  * windows into the global breakdown with the same CASE-WHEN-per-window
@@ -23,7 +22,6 @@ import type { WindowedPnl } from "./pnl";
  * for the same `since`, with the identical formula:
  *
  *   pnl = deposits − withdrawals − balanceΔ − inventoryΔ − voucherΔ
- *         − upgraderWon
  *
  * The outer WHERE per table filters to the DEEPEST window's cutoff
  * (smallest `since` = earliest cutoff), so each CASE branch can simply
@@ -52,12 +50,6 @@ export async function getUserWindowedPnlMulti(
       (acc, w) => (w.since < acc ? w.since : acc),
       windows[0].since,
     );
-
-    // Mirrors `calculateWindowedPnl`'s session_windows CTE — needed so
-    // creator on-stream upgrader wins (sponsored-balance play) drop
-    // out of the upgrader_won term. For a non-creator user the EXISTS
-    // short-circuits to false, so the CASE is a no-op.
-    const sessionWindowsCte = await getCreatorSessionWindowsCte();
 
     // Window param indexes:
     //   $1 = userId
@@ -123,30 +115,12 @@ export async function getUserWindowedPnlMulti(
       )
       .join(", ");
 
-    // Upgrader: same session_windows exclusion as
-    // `calculateWindowedPnl`'s upgrader query — creator on-stream wins
-    // (sponsored-balance play) drop out so they can't surface as a
-    // phantom customer-side house loss in the ladder. For a non-
-    // creator user the EXISTS branch is never taken.
-    const upgraderCase = windows
-      .map(
-        (_, i) =>
-          `COALESCE(SUM(CASE WHEN ug.created_at >= ${wParam(i)} AND NOT (usr.role = 'creator' AND EXISTS (
-             SELECT 1 FROM session_windows sw
-             WHERE sw.uid = ug.user_id
-               AND ug.created_at >= sw.win_start
-               AND ug.created_at <  sw.win_end
-           )) THEN ug.won_amount::numeric ELSE 0 END), 0)::text AS upgrader_won_${i}`,
-      )
-      .join(", ");
-
     type LedgerRow = Record<string, string>;
     type CardRow = Record<string, string>;
     type InvRow = Record<string, string>;
     type VchRow = Record<string, string>;
-    type UpgRow = Record<string, string>;
 
-    const [ledger, card, inv, vch, upg] = await Promise.all([
+    const [ledger, card, inv, vch] = await Promise.all([
       db.$queryRawUnsafe<LedgerRow[]>(
         `SELECT ${ledgerDepositCase}, ${ledgerManualWdCase}, ${ledgerBalanceChangeCase}
          FROM ledger_transactions lt
@@ -175,22 +149,12 @@ export async function getUserWindowedPnlMulti(
            AND v.user_id = $1`,
         ...params,
       ),
-      db.$queryRawUnsafe<UpgRow[]>(
-        `WITH ${sessionWindowsCte}
-         SELECT ${upgraderCase}
-         FROM upgrader_games ug
-         JOIN "user" usr ON usr.id = ug.user_id
-         WHERE ug.created_at >= $2
-           AND ug.user_id = $1`,
-        ...params,
-      ),
     ]);
 
     const lRow = ledger[0];
     const cRow = card[0];
     const iRow = inv[0];
     const vRow = vch[0];
-    const uRow = upg[0];
 
     for (let i = 0; i < windows.length; i++) {
       const w = windows[i];
@@ -202,18 +166,22 @@ export async function getUserWindowedPnlMulti(
       const disposed = toNumber(iRow?.[`disposed_${i}`]);
       const issued = toNumber(vRow?.[`issued_${i}`]);
       const claimed = toNumber(vRow?.[`claimed_${i}`]);
-      const upgraderWon = toNumber(uRow?.[`upgrader_won_${i}`]);
 
       const withdrawals = manualWd + cardWd;
       const inventoryChange = obtained - disposed;
       const voucherChange = issued - claimed;
+      // Upgrader is fully captured by balanceChange: both
+      // upgrader_bet (debit) and upgrader_payout (credit) flow through
+      // the ledger. A prior trailing upgraderWon term was based on a
+      // stale assumption that the backend skipped upgrader_payout
+      // rows; it double-subtracted every upgrader payout and inflated
+      // the surfaced house loss in the rolling P&L ladder.
       const pnl =
         deposits -
         withdrawals -
         balanceChange -
         inventoryChange -
-        voucherChange -
-        upgraderWon;
+        voucherChange;
 
       result[w.key] = {
         deposits,
