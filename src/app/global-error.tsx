@@ -18,6 +18,67 @@ import { useEffect } from "react";
  *
  * Note: this file ONLY runs in production builds. In dev, Next's red
  * error overlay takes precedence so the developer sees the full stack.
+ *
+ * ─── Error-boundary hierarchy in this app ───────────────────────────
+ *
+ * Errors propagate UP the route tree until they hit an `error.tsx` or
+ * `global-error.tsx` boundary. Three levels are in use here:
+ *
+ *   1. `app/global-error.tsx` (this file) — catches throws from the
+ *      ROOT layout itself. No HTML / chrome from the app shell is
+ *      available, so it owns its own <html>+<body>.
+ *
+ *   2. `app/(admin)/error.tsx` — umbrella for the entire admin
+ *      route group. Catches anything thrown inside the admin shell
+ *      (page render, server query, mutation that throws across the
+ *      RSC boundary). The shell layout — sidebar, header, docked
+ *      widgets — still renders ABOVE the fallback.
+ *
+ *   3. Per-segment `app/(admin)/<segment>/error.tsx` — tighter scope
+ *      with segment-specific copy. Existing today:
+ *      analytics, battles, creators, dashboard, employees, marketing,
+ *      packs, rewards, salaries, transactions, users (+ /users/[id]),
+ *      withdrawals. The umbrella in (2) is the fallback for any
+ *      segment that doesn't define its own.
+ *
+ *   4. (Optional) Suspense fallback inside a page — `<Suspense
+ *      fallback={...}>` shows a skeleton while a streamed RSC chunk
+ *      is in flight. Throws inside the suspending Server Component
+ *      propagate to the nearest error.tsx (NOT the Suspense fallback)
+ *      so the boundary semantics above still apply.
+ *
+ * ─── Hooks rules — non-negotiable in every Client Component ─────────
+ *
+ *   - `useState`, `useMemo`, `useEffect`, `useCallback`, `useRef`,
+ *     `useContext`, `useTransition`, `useId`, `useRouter`,
+ *     `usePathname`, `useSearchParams`, etc. must ALL be called in
+ *     the same ORDER on every render.
+ *   - NEVER call a hook inside an `if`, a loop, a ternary, after an
+ *     early `return`, or after a `throw`. Move the early return BELOW
+ *     all hook calls.
+ *   - When a hook is conditional in semantics ("only run when X is
+ *     truthy"), still CALL the hook unconditionally — gate the work
+ *     INSIDE the hook (e.g. `useEffect(() => { if (!X) return; ... })`).
+ *   - Custom hooks (anything starting with `use`) inherit these rules
+ *     — they can return early but they must not skip a downstream
+ *     hook between renders.
+ *   - Hook-rule violations crash with React error #310 ("Rendered
+ *     fewer/more hooks than expected"). In prod the digest is the
+ *     only client-visible signal — server logs (Vercel function logs)
+ *     have the full stack.
+ *
+ * ─── Server Actions across the RSC boundary ─────────────────────────
+ *
+ *   - Server Actions should return discriminated unions
+ *     (`{ success: true; data } | { success: false; error }`),
+ *     NOT throw, so client callers can render an inline error state
+ *     instead of triggering an error boundary.
+ *   - Throwing from a Server Action is reserved for unexpected /
+ *     unrecoverable failures — the error.tsx boundary catches them,
+ *     but the UX is worse than a typed-error return.
+ *   - `redirect()` and `notFound()` are NOT errors — they signal
+ *     navigation and short-circuit cleanly. Don't wrap them in
+ *     try/catch.
  */
 export default function GlobalError({
   error,
