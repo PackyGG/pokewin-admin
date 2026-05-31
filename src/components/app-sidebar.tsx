@@ -161,26 +161,18 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    // Renamed from "Creators" → "Marketing" + absorbed the standalone
-    // "Marketing" group (Promo Codes, Gift Cards, Vouchers) so there's
-    // a single home for every outreach / acquisition / promo surface.
-    // Order: creator-side first (analytics → people → campaign tools)
-    // then promo-side (codes / cards / vouchers / giveaways) so the
-    // group reads top-down as "who promotes us → what we promote with".
+    // Marketing — the campaign tools + acquisition surfaces. Creator-
+    // people management (Creators, Leaderboards, Socials Review) moved
+    // out into its own "Creator Marketing" group below; Analytics was
+    // dropped from the sidebar entirely (still reachable at
+    // /creators/analytics, just not surfaced here).
     label: "Marketing",
     items: [
-      // Analytics sits at the top — it's the "what's happening across
-      // creators right now" overview, so admins land on it first when
-      // expanding the group.
-      { label: "Analytics", href: "/creators/analytics", icon: "BarChart3" },
-      { label: "Creators", href: "/creators", icon: "Users" },
       // Ads is the more frequently-used surface (third-party promo
       // codes attached to specific campaigns) so it sits above Codes
       // (which is the raw code list).
       { label: "Ads", href: "/creators/ads", icon: "Megaphone" },
       { label: "Codes", href: "/creators/codes", icon: "Share2" },
-      { label: "Leaderboards", href: "/creators/leaderboards", icon: "Trophy" },
-      { label: "Socials Review", href: "/creators/socials", icon: "ShieldCheck" },
       { label: "Settings", href: "/creators/settings", icon: "Settings" },
       // Promo / acquisition surfaces (previously in their own
       // "Marketing" group). Kept after the creator-side so the visual
@@ -193,6 +185,19 @@ const NAV_GROUPS: NavGroup[] = [
       // marketing team has a single feed of "what we gave away and
       // why" without grepping the ledger.
       { label: "Giveaway", href: "/marketing/giveaway", icon: "Gift" },
+    ],
+  },
+  {
+    // Creator Marketing — the "who promotes us" half of the old
+    // Marketing group, split out so creator-people management sits
+    // separately from the campaign tooling. Order matches the
+    // funnel: creators (the list) → leaderboards (their public
+    // rankings) → socials review (their onboarding gate).
+    label: "Creator Marketing",
+    items: [
+      { label: "Creators", href: "/creators", icon: "Users" },
+      { label: "Leaderboards", href: "/creators/leaderboards", icon: "Trophy" },
+      { label: "Socials Review", href: "/creators/socials", icon: "ShieldCheck" },
     ],
   },
   {

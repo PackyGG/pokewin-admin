@@ -46,7 +46,16 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Rewards", label: "Leaderboards", key: "/rewards/leaderboards" },
   { group: "Rewards", label: "Level Up", key: "/rewards/level-up" },
   { group: "Rewards", label: "Settings", key: "/rewards/settings" },
-  // Marketing
+  // Marketing — campaign tools + acquisition surfaces. Mirrors the
+  // sidebar's Marketing group so an admin who can grant "Codes" in
+  // the role editor sees them under the same banner the user clicks
+  // through in the sidebar. Analytics stays grouped here as a
+  // permission key (admins can still grant /creators/analytics) but
+  // its sidebar link was dropped per the nav split.
+  { group: "Marketing", label: "Ads", key: "/creators/ads" },
+  { group: "Marketing", label: "Codes", key: "/creators/codes" },
+  { group: "Marketing", label: "Analytics", key: "/creators/analytics" },
+  { group: "Marketing", label: "Settings", key: "/creators/settings" },
   { group: "Marketing", label: "Promo Codes", key: "/promo-codes" },
   { group: "Marketing", label: "Gift Cards", key: "/gift-cards" },
   { group: "Marketing", label: "Vouchers", key: "/vouchers" },
@@ -54,18 +63,19 @@ export const ADMIN_PAGES: AdminPage[] = [
   // adjust-balance flow writes when the reason is tagged "Giveaway".
   // Same permission default as the rest of Marketing.
   { group: "Marketing", label: "Giveaway", key: "/marketing/giveaway" },
+  // Creator Marketing — the "who promotes us" half of the old
+  // Creators group. Mirrors the new sidebar group of the same name
+  // so the role editor lines up with what admins actually navigate
+  // to. Socials Review piggybacks on the `/creators` permission key
+  // (no separate entry) — granting Creators access lets the user
+  // see the socials review page too.
+  { group: "Creator Marketing", label: "Creators", key: "/creators" },
+  { group: "Creator Marketing", label: "Leaderboards", key: "/creators/leaderboards" },
   // Employees — internal staff workflow (board + shift planning)
   { group: "Employees", label: "Employee Board", key: "/employees" },
   { group: "Employees", label: "Shifts", key: "/shifts" },
   // Creator Portal
   { group: "Creator Portal", label: "My Profile", key: "/my-profile" },
-  // Creators
-  { group: "Creators", label: "Creators", key: "/creators" },
-  { group: "Creators", label: "Codes", key: "/creators/codes" },
-  { group: "Creators", label: "Ads", key: "/creators/ads" },
-  { group: "Creators", label: "Analytics", key: "/creators/analytics" },
-  { group: "Creators", label: "Settings", key: "/creators/settings" },
-  { group: "Creators", label: "Leaderboards", key: "/creators/leaderboards" },
   // Multiplier Review hidden from navigation — settlement is now automatic
   // at end-stream so the queue is always empty for new deals. Page still
   // exists at /creators/multiplier-review for clearing legacy stuck deals.
