@@ -7,6 +7,12 @@ import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { uploadImage } from "@/lib/imagekit";
+import {
+  ok,
+  fail,
+  type ServerActionResult,
+} from "@/lib/errors/server-action-result";
+import { logError } from "@/lib/errors/logger";
 
 export async function uploadSetImage(formData: FormData): Promise<string> {
   const session = await requireAdmin();
@@ -269,4 +275,85 @@ export async function seedInitialSets(): Promise<{
   revalidatePath("/sets");
   revalidatePath("/cards");
   return result;
+}
+
+// ────────────────────────────────────────────────────────────────────
+//  deleteSet
+//
+//  Deletes a set WITHOUT touching the cards' rows themselves. The
+//  cards.set_id FK is declared `onDelete: Cascade` in the schema, so
+//  a direct `sets.delete()` would wipe every card in the set — the
+//  opposite of what an admin wants when retiring a series. We nullify
+//  set_id first in the same transaction so the cards survive as
+//  orphan rows and can be bulk-reassigned via /cards.
+// ────────────────────────────────────────────────────────────────────
+
+export async function deleteSet(
+  id: string,
+): Promise<ServerActionResult<{ id: string; cardsOrphaned: number }>> {
+  const db = await getDb();
+  const session = await requireAdmin();
+
+  try {
+    await requireCapability(session, "__can_delete_set", "delete sets");
+  } catch (err) {
+    return fail(
+      err instanceof Error ? err.message : "Permission denied",
+      "FORBIDDEN",
+    );
+  }
+
+  if (!id) {
+    return fail("Set id is required.", "VALIDATION");
+  }
+
+  const existing = await db.sets.findUnique({
+    where: { id },
+    select: { id: true, name: true },
+  });
+  if (!existing) {
+    return fail("Set not found.", "NOT_FOUND");
+  }
+
+  let cardsOrphaned = 0;
+  try {
+    const result = await db.$transaction(async (tx) => {
+      // Orphan the cards FIRST so the cascade FK on cards.set_id has
+      // nothing left to chain through when we delete the set below.
+      // Bumping updated_at mirrors the convention used by
+      // seedInitialSets for bulk cards.updateMany.
+      const updated = await tx.cards.updateMany({
+        where: { set_id: id },
+        data: { set_id: null, updated_at: new Date() },
+      });
+      await tx.sets.delete({ where: { id } });
+      return { count: updated.count };
+    });
+    cardsOrphaned = result.count;
+  } catch (err) {
+    logError("sets.delete", `delete transaction failed for ${id}`, err);
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2025"
+    ) {
+      return fail("Set not found.", "NOT_FOUND");
+    }
+    return fail("Couldn't delete this set — please try again.");
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "set_deleted",
+    metadata: {
+      set_id: id,
+      name: existing.name,
+      cards_orphaned: cardsOrphaned,
+    },
+  });
+
+  revalidatePath("/sets");
+  // Orphan cards now show on /cards with no set assignment.
+  revalidatePath("/cards");
+
+  return ok({ id, cardsOrphaned });
 }
