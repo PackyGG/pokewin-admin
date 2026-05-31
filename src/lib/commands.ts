@@ -37,7 +37,6 @@ import {
   Plus,
   Search,
   Settings,
-  Share2,
   Shield,
   ShieldCheck,
   SquareKanban,
@@ -198,16 +197,8 @@ export const NAV_COMMANDS: NavCommand[] = [
     pageKey: "/creators",
     keywords: ["affiliate", "influencer"],
   },
-  {
-    kind: "nav",
-    id: "nav.creators.codes",
-    label: "Creator Codes",
-    description: "Affiliate code directory",
-    icon: Share2,
-    href: "/creators/codes",
-    pageKey: "/creators/codes",
-    keywords: ["affiliate", "referral"],
-  },
+  // /creators/codes was removed from CMD+K nav — the route still exists
+  // but is no longer surfaced (mirrors sidebar + role editor).
   {
     kind: "nav",
     id: "nav.creators.ads",
@@ -256,14 +247,8 @@ export const NAV_COMMANDS: NavCommand[] = [
     href: "/gift-cards",
     pageKey: "/gift-cards",
   },
-  {
-    kind: "nav",
-    id: "nav.vouchers",
-    label: "Vouchers",
-    icon: Ticket,
-    href: "/vouchers",
-    pageKey: "/vouchers",
-  },
+  // /vouchers was removed from CMD+K nav — the route still exists but is
+  // no longer surfaced (mirrors sidebar + role editor).
 
   // ── Content ───────────────────────────────────────────────────────────
   {
@@ -601,7 +586,6 @@ export const DOCS_NAV_GROUPS: Array<{ label: string; pageKeys: string[] }> = [
     label: "Creators",
     pageKeys: [
       "/creators",
-      "/creators/codes",
       "/creators/ads",
       "/creators/analytics",
       "/creators/settings",
@@ -609,7 +593,7 @@ export const DOCS_NAV_GROUPS: Array<{ label: string; pageKeys: string[] }> = [
   },
   {
     label: "Marketing",
-    pageKeys: ["/promo-codes", "/gift-cards", "/vouchers"],
+    pageKeys: ["/promo-codes", "/gift-cards"],
   },
   {
     label: "Employees",
