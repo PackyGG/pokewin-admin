@@ -15,6 +15,7 @@ import { getCreatorSessionWindowsCte } from "./creator-session-windows";
 import {
   WAGER_TYPES_SQL,
   GGR_PAYOUT_TYPES_SQL,
+  INVENTORY_CASHOUT_TYPES_SQL,
   BONUS_PAYOUT_TYPES_SQL,
 } from "./_wager-payout-types";
 import {
@@ -75,19 +76,24 @@ function getPeriodAggregates(
   // the customer wager figure.
   sessionWindowsCte: string,
 ) {
-  // GGR wager / payout / bonus type sets — built ONCE from the canonical
-  // shared constants (src/lib/queries/_wager-payout-types.ts) and
-  // interpolated via Prisma.raw. The values are hardcoded ledger-type
-  // strings — no external input — so Prisma.raw is injection-safe.
+  // GGR wager / payout / inventory-cashout / bonus type sets — built
+  // ONCE from the canonical shared constants
+  // (src/lib/queries/_wager-payout-types.ts) and interpolated via
+  // Prisma.raw. The values are hardcoded ledger-type strings — no
+  // external input — so Prisma.raw is injection-safe.
   //
-  // Two payout sides are interpolated because the dashboard reports
-  // both GGR (wagers − gaming payouts) and the bonus-cost drag that
-  // turns GGR into NGR (industry-standard: GGR − bonus / promo costs).
-  // Merging the two — the old behaviour — surfaced a "GGR" headline
-  // that dragged negative whenever bonus volume spiked even if pure
-  // gaming margin was positive.
+  // Three payout-side sets are interpolated because the dashboard
+  // partitions the payout side into PURE GAMING returns (GGR),
+  // INVENTORY CASHOUTS (time-shifted card / exchange settlements
+  // against earlier-day wagers), and BONUS / promo / rakeback /
+  // voucher costs. GGR subtracts only the first; NGR subtracts all
+  // three. Merging them — the pre-2026-06-01 behaviour — surfaced a
+  // "GGR" headline that dragged negative whenever cashout or bonus
+  // volume spiked even if pure same-round gaming margin was positive.
+  // See _wager-payout-types.ts for the full reasoning.
   const ggrWagerIn = Prisma.raw(WAGER_TYPES_SQL);
   const ggrPayoutIn = Prisma.raw(GGR_PAYOUT_TYPES_SQL);
+  const cashoutPayoutIn = Prisma.raw(INVENTORY_CASHOUT_TYPES_SQL);
   const bonusPayoutIn = Prisma.raw(BONUS_PAYOUT_TYPES_SQL);
   return db.$queryRaw<
     {
@@ -107,17 +113,27 @@ function getPeriodAggregates(
       // NOT under_creator). Pure organic customer wager.
       wager_organic: string;
       ggr: string;
+      // Inventory cashout volume in the window — credits from users
+      // disposing of previously-obtained cards (`card_sale`,
+      // `reward_card_sale`, `card_exchange`, `exchange_excess_credit`).
+      // NOT a same-round gameplay return: the card was obtained on an
+      // earlier wager-day. Surfaced separately so NGR can subtract it
+      // alongside bonus cost without polluting the GGR (pure gaming
+      // margin) headline.
+      inventory_cashout: string;
       // Bonus / promo / rakeback / voucher costs in the window —
       // payouts that fall outside pure gaming (rain wins, deposit
       // bonuses, gift / promo redemptions, rakeback / affiliate
       // claims, race / waitlist prizes, creator tips, voucher
       // exchanges). NOT subtracted from GGR; surfaced separately so
-      // the dashboard can show NGR (GGR − bonus_cost) alongside.
+      // the dashboard can show NGR (GGR − inventory_cashout −
+      // bonus_cost) alongside.
       bonus_cost: string;
-      // NGR — net gaming revenue, i.e. GGR after bonus / promo costs.
-      // Computed in SQL as `ggr − bonus_cost` so the two numbers stay
+      // NGR — net gaming revenue, i.e. GGR after inventory cashout AND
+      // bonus / promo costs. Computed in SQL as
+      // `ggr − inventory_cashout − bonus_cost` so the numbers stay
       // mathematically consistent (callers can also derive it client-
-      // side from the two returned fields).
+      // side from the returned fields).
       ngr: string;
       deposit_count: string;
       // Windowed balance-change components used by the period P&L
@@ -241,16 +257,39 @@ function getPeriodAggregates(
       -- the under_creator flag set on the real_users CTE above.
       COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND NOT under_creator AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS wager_organic,
 
-      -- GGR = wagers − gaming-side payouts (industry-standard pure
-      -- gaming margin). The wager (ggrWagerIn) and gaming-payout
-      -- (ggrPayoutIn) type sets are interpolated from the canonical
-      -- shared constants in src/lib/queries/_wager-payout-types.ts —
-      -- GGR_PAYOUT_TYPES covers battle wins, upgrader cash-outs, and
-      -- card / inventory cashouts. Bonus / promo / rakeback / voucher
-      -- payouts are intentionally NOT in this aggregate; they drag
-      -- NGR (computed below), not GGR.
+      -- GGR = wagers − PURE GAMING payouts (industry-standard gross
+      -- gaming revenue, narrow definition). The wager (ggrWagerIn)
+      -- and pure-gaming-payout (ggrPayoutIn) type sets are
+      -- interpolated from the canonical shared constants in
+      -- src/lib/queries/_wager-payout-types.ts — GGR_PAYOUT_TYPES now
+      -- covers ONLY battle wins (battle_refund) and upgrader
+      -- cash-outs (upgrader_payout). These are the payout types that
+      -- settle in the SAME round as their wager.
       --
-      -- Upgrader plays ARE represented in the ledger on both sides:
+      -- INVENTORY CASHOUTS (card_sale / reward_card_sale /
+      -- card_exchange / exchange_excess_credit) are intentionally NOT
+      -- in this aggregate — they're TIME-SHIFTED settlements (a card
+      -- obtained from a Day-1 pack open is being sold on Day 7), so
+      -- summing today's cashout volume against today's pack_opening
+      -- volume produced a "GGR drag" against wagers that the card
+      -- sales weren't actually settling. They feed NGR via the
+      -- inventory_cashout column below instead.
+      --
+      -- BONUS / PROMO / RAKEBACK / VOUCHER payouts also don't feed
+      -- GGR — they're marketing / retention spend, not gameplay
+      -- returns. They feed NGR via the bonus_cost column below.
+      --
+      -- Caveat: pack_opening wager volume currently has no
+      -- corresponding payout in this aggregate (we no longer count
+      -- card_sale, and we don't book the cards-won-from-packs
+      -- inventory value at obtain time). For pack-heavy windows GGR
+      -- will look INFLATED — same convention brick-and-mortar
+      -- casinos use (slot wager booked as revenue, chip / inventory
+      -- liability separate). PROPOSED long-term fix: synthetic
+      -- cards-won credit at pack-open time via a JOIN on
+      -- user_inventory.value_at_obtained (heavier query).
+      --
+      -- Upgrader plays ARE fully represented on both sides:
       -- upgrader_bet rows debit the wager (in the WAGER set) and
       -- upgrader_payout rows credit the win (in GGR_PAYOUT_TYPES,
       -- added when Upgrader shipped on packy.gg per commit 696b716).
@@ -266,6 +305,15 @@ function getPeriodAggregates(
         - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${cutoff} THEN ABS(amount) ELSE 0 END), 0)
       )::text AS ggr,
 
+      -- Inventory cashout volume in the window. Sum of every credit
+      -- from users disposing of previously-obtained inventory
+      -- (card_sale / reward_card_sale / card_exchange /
+      -- exchange_excess_credit). Time-shifted vs. the original wager
+      -- so NOT a GGR subtractor — surfaced separately so NGR can net
+      -- it without dragging GGR. INVENTORY_CASHOUT_TYPES is the
+      -- canonical list; see _wager-payout-types.ts.
+      COALESCE(SUM(CASE WHEN type IN ${cashoutPayoutIn} AND created_at >= ${cutoff} THEN ABS(amount) ELSE 0 END), 0)::text AS inventory_cashout,
+
       -- Bonus / promo / rakeback / voucher costs in the window. Sum
       -- of every payout type the house pays out as marketing /
       -- retention / loyalty (NOT gameplay wins). Surfaced as its own
@@ -276,13 +324,14 @@ function getPeriodAggregates(
       -- see _wager-payout-types.ts for the full enumeration.
       COALESCE(SUM(CASE WHEN type IN ${bonusPayoutIn} AND created_at >= ${cutoff} THEN ABS(amount) ELSE 0 END), 0)::text AS bonus_cost,
 
-      -- NGR = GGR − bonus / promo costs (industry-standard net
-      -- gaming revenue). Computed alongside GGR so the two numbers
-      -- stay mathematically consistent (the same wager / payout
-      -- scans feed both).
+      -- NGR = GGR − inventory cashout − bonus / promo costs
+      -- (industry-standard net gaming revenue). Computed alongside
+      -- GGR so the numbers stay mathematically consistent (the same
+      -- wager / payout scans feed all three).
       (
         COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${cutoff} THEN ABS(amount) ELSE 0 END), 0)
         - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${cutoff} THEN ABS(amount) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN type IN ${cashoutPayoutIn} AND created_at >= ${cutoff} THEN ABS(amount) ELSE 0 END), 0)
         - COALESCE(SUM(CASE WHEN type IN ${bonusPayoutIn} AND created_at >= ${cutoff} THEN ABS(amount) ELSE 0 END), 0)
       )::text AS ngr,
 
@@ -932,6 +981,7 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     upgrader_wager_excl_session: "0",
     wager_organic: "0",
     ggr: "0",
+    inventory_cashout: "0",
     bonus_cost: "0",
     ngr: "0",
     deposit_count: "0",
@@ -1020,10 +1070,14 @@ async function dashboardStatsInner(period: DashboardPeriod) {
       week: Number(userCounts[0]?.week ?? 0),
       month: Number(userCounts[0]?.month ?? 0),
     },
-    // Gaming margin (wagers − gaming-side payouts) for the SELECTED
-    // period. Pure GGR, no bonus / promo costs, no liability
-    // adjustment. Use realizedPnl for the balance-sheet-true number,
-    // `ngr` below for GGR after bonus costs.
+    // Gaming margin (wagers − pure same-round gaming payouts) for the
+    // SELECTED period. Industry-standard GGR (narrow definition):
+    // wagers minus battle_refund + upgrader_payout only. NO inventory
+    // cashout (card_sale / exchange / etc — time-shifted, lives in
+    // `inventoryCashout` below) and NO bonus / promo costs (lives in
+    // `bonusCost` below). Use `realizedPnl` for the balance-sheet-true
+    // headline, `ngr` for GGR after both inventory cashout AND promo
+    // cost.
     //
     // Upgrader is fully represented in `pa.ggr`: upgrader_bet on the
     // wager side and upgrader_payout in GGR_PAYOUT_TYPES. No
@@ -1031,6 +1085,15 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     // term was double-subtracting every upgrader payout (see SQL
     // comment above the periodAggregates query).
     ggr: num(pa.ggr),
+    // Inventory cashout volume in the SELECTED period — `card_sale`
+    // + `reward_card_sale` + `card_exchange` +
+    // `exchange_excess_credit`. Time-shifted vs. the original wager,
+    // so NOT subtracted from `ggr` above (would have produced the
+    // -$66k phantom GGR drag the dashboard showed before the
+    // 2026-06-01 fix). Folded into `ngr` below alongside `bonusCost`.
+    // Surfaced on its own so a future card / breakdown can show the
+    // inventory-liability impact directly.
+    inventoryCashout: num(pa.inventory_cashout),
     // Bonus / promo / rakeback / voucher costs in the SELECTED
     // period. NOT subtracted from `ggr` above (industry-standard
     // separation between gaming margin and promo cost). Folded into
@@ -1038,11 +1101,12 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     // Surfacing this on its own lets admins see promo flow directly
     // rather than chasing it as a phantom GGR drag.
     bonusCost: num(pa.bonus_cost),
-    // NGR = GGR − bonus cost. Net Gaming Revenue (industry-standard
-    // definition). Computed in SQL so the two numbers stay
-    // mathematically consistent. Negative ngr with positive ggr means
-    // promo / bonus flow exceeds gaming margin for the window — the
-    // signal the previous "everything-in-GGR" formula masked.
+    // NGR = GGR − inventory cashout − bonus cost. Net Gaming Revenue
+    // (industry-standard definition). Computed in SQL so the numbers
+    // stay mathematically consistent. Negative NGR with positive GGR
+    // means inventory disposal + promo / bonus flow exceeds gaming
+    // margin for the window — the signal the previous
+    // "everything-in-GGR" formula masked.
     ngr: num(pa.ngr),
     // Lifetime realized P&L from the house perspective — see getRealizedPnlSnapshot.
     // This is a single snapshot value, not a period series.
