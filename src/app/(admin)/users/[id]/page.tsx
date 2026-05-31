@@ -1,8 +1,14 @@
-import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { getUserDetail } from "@/lib/queries/users";
+import {
+  getUserDetail,
+  getUserTransactions,
+  getUserInventory,
+  getUserPnlBreakdown,
+  getUserRewards,
+} from "@/lib/queries/users";
+import { getNotesForUser } from "@/lib/queries/admin-notes";
 import { getUserTags } from "@/lib/queries/user-tags";
 import { getUserCreatorHistory } from "@/lib/queries/user-role-history";
 import { requirePageAccess, getUserPermissions } from "@/lib/dal";
@@ -11,23 +17,11 @@ import { ensureSupportBaseline } from "@/lib/support-baseline";
 import { UserTagsPanel } from "./user-tags-panel";
 import { AutoRefresh } from "../../dashboard/auto-refresh";
 import { computeRiskScore } from "@/lib/fraud/score";
+import {
+  getSharedIpUsers,
+  getSharedFingerprintUsers,
+} from "@/lib/fraud/shared-identity";
 import { UserViewModern, coerceTab } from "./user-view-modern";
-import {
-  OverviewTabContent,
-  GamingTabContent,
-  FinancesTabContent,
-  RewardsTabContent,
-  InventoryTabContent,
-  TrustTabContent,
-  AffiliateTabContent,
-  AccountTabContent,
-} from "./tab-content";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  TableSkeleton,
-  StatPanelSkeleton,
-  GridSkeleton,
-} from "@/components/loading-skeletons";
 import { safeQuery } from "@/lib/errors/safe-query";
 
 export const metadata = { title: "User Detail" };
@@ -42,6 +36,40 @@ export const metadata = { title: "User Detail" };
 // user id from params.
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// GAMING is pack / battle / upgrader play — entry, payout, refund.
+// Sale / exchange rows live in FINANCIAL_TYPES below so card sales
+// appear alongside deposits and withdrawals as cash-movement events;
+// the gaming tab stays focused on gameplay.
+const GAMING_TYPES = [
+  "pack_opening",
+  "battle_bet",
+  "battle_sponsorship",
+  "battle_refund",
+  "upgrader_bet",
+  "upgrader_payout",
+  "voucher_redeemed",
+];
+// FINANCIAL covers deposits, withdrawals, and direct cash payouts
+// (rakeback / affiliate / rain / race / gift / promo). Card sales +
+// card / voucher exchanges intentionally live in NEITHER tab — they
+// bloated the Deposits & Withdrawals view with rows admins did not
+// consider cash events. If a future surface needs them they'll get
+// their own section instead of being folded into Financial.
+const FINANCIAL_TYPES = [
+  "deposit",
+  "deposit_bonus",
+  "admin_balance_adjustment",
+  "card_withdrawal",
+  "withdrawal_shipping_fee",
+  "rakeback_claim",
+  "balance_reward_claim",
+  "affiliate_claim",
+  "promo_code_redeemed",
+  "gift_card_redeemed",
+  "rain_win",
+  "race_prize",
+];
 
 export default async function UserDetailPage({
   params,
@@ -68,75 +96,101 @@ export default async function UserDetailPage({
     notFound();
   }
   const sp = await searchParams;
-  // Active tab is URL-driven (?tab=<key>). Anything not on the
-  // whitelist resolves to "overview" so the page can't be broken by
-  // arbitrary param values. This replaces the prior client-side
-  // useState tab driver — necessary because per-tab data now streams
-  // via Suspense and the server needs to know which tab to render.
-  const activeTab = coerceTab(sp.tab);
+  // Active tab is URL-driven (?tab=<key>) so deep-links from elsewhere
+  // (hero risk badges, future bookmarks) still resolve correctly.
+  // The shell hydrates this into client state on mount so subsequent
+  // tab clicks are instant — see UserViewModern.
+  const initialTab = coerceTab(sp.tab);
 
-  // ── HEADER FETCH ───────────────────────────────────────────────
-  // Only the data needed for the hero (identity, balances, badges,
-  // risk score) + the action-button capability flags. Per-tab data
-  // (transactions, P&L, inventory, rewards, notes, shared identity)
-  // is fetched inside the per-tab Suspense segments below so the
-  // hero paints immediately while the active tab streams in.
+  // ── UPFRONT FETCH ──────────────────────────────────────────────
+  // All tab data is fetched in one Promise.all so tab switching is
+  // instant client-side — the alternative (per-tab Suspense fanout)
+  // makes every click a server round-trip and feels broken.
   //
-  // Resolve permissions in parallel: admins skip the permissions
-  // fetch entirely (they get all capabilities by definition) so
-  // only non-admins trigger the extra round-trip.
   // getUserDetail + permissions are the page's primary data — if they
   // throw, the segment-level error.tsx takes over (the page can't render
-  // without them). The three peripheral queries (tags, history, risk
-  // score) are non-critical hero metadata — wrap them in safeQuery so a
-  // slow admin DB lookup or a heavy fraud-score SQL hiccup doesn't blank
-  // the entire user-detail view. Each falls back to a neutral empty
-  // shape that the downstream rendering already tolerates.
-  const [data, permissions, userTagsResult, creatorHistoryResult, riskResult] =
-    await Promise.all([
-      getUserDetail(id),
-      session.role === "admin" ? Promise.resolve(null) : getUserPermissions(session.userId),
-      // VIP tags (admin-CRM metadata). Empty array on failure → the
-      // UserTagsPanel renders the empty-state dashed row, no crash.
-      safeQuery(() => getUserTags(id), [], "users.detail.tags"),
-      // Creator history already self-degrades inside the query (its own
-      // try/catch returns the empty shape). safeQuery adds the central
-      // log line on top so the failure surfaces in Vercel logs with the
-      // standard `[error:users.detail.creatorHistory]` prefix.
-      safeQuery(
-        () => getUserCreatorHistory(id),
-        { everCreatorByAudit: false, creatorSince: null },
-        "users.detail.creatorHistory",
-      ),
-      // Fraud / trust assessment for the hero badges. Heaviest query on
-      // the page (cross-table aggregate). Failure → the hero falls back
-      // to the same neutral "low / 0 / no signals" shape the query
-      // itself emits for unknown users, so the risk badge renders
-      // unobtrusively instead of blanking the whole view.
-      safeQuery(
-        () => computeRiskScore(id),
-        {
-          score: 0,
-          tier: "low" as const,
-          signals: [],
-          topReasons: [],
-          suggestions: [],
-          timeline: [],
-          sharedIpCount: 0,
-          sharedFingerprintCount: 0,
-          sharedBannedCount: 0,
-          sharedLockedCount: 0,
-          computedAt: Date.now(),
-          computeDurationMs: 0,
-        },
-        "users.detail.riskScore",
-      ),
-    ]);
+  // without them). The peripheral queries (tags, history, risk score)
+  // are non-critical hero metadata — wrap them in safeQuery so a slow
+  // admin DB lookup or a heavy fraud-score SQL hiccup doesn't blank the
+  // entire user-detail view. Each falls back to a neutral empty shape
+  // that the downstream rendering already tolerates.
+  const [
+    data,
+    inventory,
+    disposedInventory,
+    pnlBreakdown,
+    notes,
+    gamingTx,
+    financialTx,
+    rewards,
+    permissions,
+    userTagsResult,
+    creatorHistoryResult,
+    riskResult,
+    sharedIpsResult,
+    sharedFingerprintsResult,
+  ] = await Promise.all([
+    getUserDetail(id),
+    getUserInventory(id, 1, 24, { status: "owned" }),
+    getUserInventory(id, 1, 24, { status: "disposed" }),
+    getUserPnlBreakdown(id),
+    getNotesForUser(id),
+    getUserTransactions(id, 1, 10, { types: GAMING_TYPES }),
+    getUserTransactions(id, 1, 10, { types: FINANCIAL_TYPES }),
+    getUserRewards(id),
+    session.role === "admin" ? Promise.resolve(null) : getUserPermissions(session.userId),
+    // VIP tags (admin-CRM metadata). Empty array on failure → the
+    // UserTagsPanel renders the empty-state dashed row, no crash.
+    safeQuery(() => getUserTags(id), [], "users.detail.tags"),
+    // Creator history already self-degrades inside the query (its own
+    // try/catch returns the empty shape). safeQuery adds the central
+    // log line on top so the failure surfaces in Vercel logs with the
+    // standard `[error:users.detail.creatorHistory]` prefix.
+    safeQuery(
+      () => getUserCreatorHistory(id),
+      { everCreatorByAudit: false, creatorSince: null },
+      "users.detail.creatorHistory",
+    ),
+    // Fraud / trust assessment for the hero badges + Trust tab.
+    // Heaviest query on the page (cross-table aggregate). Failure →
+    // the hero falls back to the same neutral "low / 0 / no signals"
+    // shape the query itself emits for unknown users, so the risk
+    // badge renders unobtrusively instead of blanking the whole view.
+    safeQuery(
+      () => computeRiskScore(id),
+      {
+        score: 0,
+        tier: "low" as const,
+        signals: [],
+        topReasons: [],
+        suggestions: [],
+        timeline: [],
+        sharedIpCount: 0,
+        sharedFingerprintCount: 0,
+        sharedBannedCount: 0,
+        sharedLockedCount: 0,
+        computedAt: Date.now(),
+        computeDurationMs: 0,
+      },
+      "users.detail.riskScore",
+    ),
+    // Fingerprints table may be absent in fresh/dev environments —
+    // degrade gracefully to an empty list rather than crashing the
+    // user detail page.
+    safeQuery(() => getSharedIpUsers(id), [], "users.detail.sharedIps"),
+    safeQuery(
+      () => getSharedFingerprintUsers(id),
+      [],
+      "users.detail.sharedFingerprints",
+    ),
+  ]);
 
   if (!data) notFound();
   const userTags = userTagsResult.data;
   const creatorHistory = creatorHistoryResult.data;
   const riskBreakdown = riskResult.data;
+  const sharedIps = sharedIpsResult.data;
+  const sharedFingerprints = sharedFingerprintsResult.data;
 
   // "Ever a creator?" = currently creator, OR an audit role-change to
   // creator exists, OR they own affiliate codes (created only for
@@ -182,10 +236,6 @@ export default async function UserDetailPage({
     session.role === "admin" ||
     hasCapability(permissions ?? [], "__can_manage_user_tags");
 
-  // Hydrate UserDetail with session-derived fields so tab content
-  // components see the same shape they had pre-refactor. Avoids a
-  // second round-trip + keeps capability gating consistent across
-  // hero (page-level) and tab body (segment-level).
   const detailWithSession = {
     ...data,
     sessionRole: session.role,
@@ -194,19 +244,12 @@ export default async function UserDetailPage({
     creatorSince: creatorHistory.creatorSince,
   };
 
-  // Suspense key — re-throw the fallback when the tab changes so the
-  // skeleton matches the new tab's shape on switch. Otherwise React
-  // would reuse the prior tab's resolved children until the new tab's
-  // promise resolves, which looks like a frozen page.
-  const tabFallback = <TabFallback tab={activeTab} />;
-
   return (
     <div className="space-y-4">
       {/* Re-fetch server data every 60s so admins watching a user-detail
           tab don't see stale gaming transactions / balances. router.refresh
-          re-runs both the page-level fetches AND the active tab's
-          Suspense segment, so the visible tab's content stays fresh
-          without re-firing other tabs' queries. */}
+          re-runs the page-level fetches and re-renders the whole tree, so
+          the active tab's tables update in place without changing tab. */}
       <AutoRefresh intervalMs={60_000} />
       <div className="space-y-2">
         <div className="flex items-center gap-3 flex-wrap">
@@ -231,141 +274,18 @@ export default async function UserDetailPage({
       </div>
       <UserViewModern
         data={detailWithSession}
+        gamingTx={gamingTx}
+        financialTx={financialTx}
+        rewards={rewards}
+        notes={notes}
+        pnlBreakdown={pnlBreakdown}
+        inventory={inventory}
+        disposedInventory={disposedInventory}
         riskBreakdown={riskBreakdown}
-        activeTab={activeTab}
-      >
-        {/* Each tab segment fetches only its own data. The Suspense
-            key is the tab name so switching from Overview → Cards
-            re-throws the fallback (otherwise React would reuse the
-            prior tab's resolved JSX). */}
-        <Suspense key={activeTab} fallback={tabFallback}>
-          {activeTab === "overview" && (
-            <OverviewTabContent data={detailWithSession} />
-          )}
-          {activeTab === "gaming" && (
-            <GamingTabContent data={detailWithSession} />
-          )}
-          {activeTab === "finances" && (
-            <FinancesTabContent data={detailWithSession} />
-          )}
-          {activeTab === "rewards" && <RewardsTabContent userId={id} />}
-          {activeTab === "inventory" && (
-            <InventoryTabContent data={detailWithSession} />
-          )}
-          {activeTab === "trust" && <TrustTabContent userId={id} />}
-          {activeTab === "affiliate" && (
-            <AffiliateTabContent data={detailWithSession} />
-          )}
-          {activeTab === "account" && (
-            <AccountTabContent data={detailWithSession} />
-          )}
-        </Suspense>
-      </UserViewModern>
+        sharedIps={sharedIps}
+        sharedFingerprints={sharedFingerprints}
+        initialTab={initialTab}
+      />
     </div>
   );
-}
-
-// ───────────────────────────────────────────────────────────────────
-//  TAB FALLBACK — matches each tab's rough shape so the skeleton
-//  doesn't jump when the real content swaps in.
-// ───────────────────────────────────────────────────────────────────
-
-function TabFallback({ tab }: { tab: string }) {
-  // Each tab has a different shape; matching the silhouette keeps the
-  // layout from jumping when the streamed content resolves. The
-  // common pattern (panels + a table or grid) covers the heavy tabs;
-  // lighter tabs reuse a simpler skeleton.
-  switch (tab) {
-    case "overview":
-      return (
-        <div className="space-y-4 sm:space-y-6">
-          <div className="grid gap-3 sm:gap-4 grid-cols-1 md:grid-cols-3">
-            <StatPanelSkeleton rows={4} />
-            <StatPanelSkeleton rows={4} />
-            <StatPanelSkeleton rows={4} />
-          </div>
-          <Skeleton className="h-9 w-48" />
-          <TableSkeleton rows={6} columns={6} />
-          <Skeleton className="h-9 w-32" />
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <Skeleton className="h-32 rounded-2xl" />
-            <Skeleton className="h-32 rounded-2xl" />
-            <Skeleton className="h-32 rounded-2xl" />
-            <Skeleton className="h-32 rounded-2xl" />
-          </div>
-          <Skeleton className="h-9 w-40" />
-          <Skeleton className="h-64 rounded-2xl" />
-        </div>
-      );
-    case "gaming":
-    case "finances":
-      return (
-        <div className="space-y-6">
-          <Skeleton className="h-9 w-48" />
-          <TableSkeleton rows={10} columns={7} />
-        </div>
-      );
-    case "inventory":
-      return (
-        <div className="space-y-6">
-          <Skeleton className="h-9 w-48" />
-          <GridSkeleton count={18} cols={6} />
-          <Skeleton className="h-9 w-48" />
-          <TableSkeleton rows={6} columns={6} />
-        </div>
-      );
-    case "trust":
-      return (
-        <div className="space-y-6">
-          <Skeleton className="h-48 rounded-2xl" />
-          <Skeleton className="h-9 w-48" />
-          <Skeleton className="h-64 rounded-2xl" />
-          <Skeleton className="h-9 w-48" />
-          <TableSkeleton rows={5} columns={5} />
-          <Skeleton className="h-9 w-48" />
-          <TableSkeleton rows={5} columns={5} />
-        </div>
-      );
-    case "rewards":
-      return (
-        <div className="space-y-6">
-          <Skeleton className="h-9 w-48" />
-          <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
-            <Skeleton className="h-28 rounded-2xl" />
-            <Skeleton className="h-28 rounded-2xl" />
-            <Skeleton className="h-28 rounded-2xl" />
-            <Skeleton className="h-28 rounded-2xl" />
-          </div>
-          <Skeleton className="h-48 rounded-2xl" />
-        </div>
-      );
-    case "affiliate":
-      return (
-        <div className="space-y-6">
-          <Skeleton className="h-32 rounded-2xl" />
-          <Skeleton className="h-9 w-48" />
-          <Skeleton className="h-40 rounded-2xl" />
-          <Skeleton className="h-9 w-48" />
-          <Skeleton className="h-40 rounded-2xl" />
-        </div>
-      );
-    case "account":
-      return (
-        <div className="space-y-6">
-          <Skeleton className="h-9 w-48" />
-          <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
-            <Skeleton className="h-28 rounded-2xl" />
-            <Skeleton className="h-28 rounded-2xl" />
-            <Skeleton className="h-28 rounded-2xl" />
-            <Skeleton className="h-28 rounded-2xl" />
-          </div>
-          <Skeleton className="h-9 w-48" />
-          <Skeleton className="h-64 rounded-2xl" />
-          <Skeleton className="h-9 w-48" />
-          <Skeleton className="h-40 rounded-2xl" />
-        </div>
-      );
-    default:
-      return <Skeleton className="h-64 rounded-2xl" />;
-  }
 }
