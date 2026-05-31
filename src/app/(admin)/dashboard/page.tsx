@@ -294,6 +294,7 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
         />
         <WithdrawalsStatCard
           withdrawals={stats.withdrawals}
+          withdrawalCount={stats.withdrawalCountPeriod}
           periodLabel={stats.periodLabel}
         />
       </div>

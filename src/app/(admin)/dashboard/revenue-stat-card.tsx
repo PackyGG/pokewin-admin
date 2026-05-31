@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TrendingUp, TrendingDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AnimatedNumber } from "@/components/animated-number";
-import { formatCurrency } from "@/lib/utils/format";
+import { formatCurrency, formatNumber } from "@/lib/utils/format";
 
 /**
  * Period-aware stat cards used in the dashboard's primary KPI strip.
@@ -262,6 +262,15 @@ export function DepositsStatCard({
         <div className="flex flex-wrap items-baseline gap-x-2">
           <CardTitle className="text-card-title text-muted-foreground">
             Deposits
+            {typeof depositCount === "number" && (
+              // Inline transaction-count chip next to the title — keeps
+              // the count visible even when the user scrolls past the
+              // sub-line. Muted so it doesn't compete with the dollar
+              // hero value. formatNumber gives "1,234" for big windows.
+              <span className="ml-1 text-xs font-normal text-muted-foreground tabular-nums">
+                · {formatNumber(depositCount)}
+              </span>
+            )}
           </CardTitle>
           <span className="text-tiny text-muted-foreground">{periodLabel}</span>
         </div>
@@ -287,9 +296,14 @@ export function DepositsStatCard({
 // but the card color is purely an identity signal.
 export function WithdrawalsStatCard({
   withdrawals,
+  withdrawalCount,
   periodLabel,
 }: {
   withdrawals: number;
+  // Optional so callers that just want the dollar figure can skip the
+  // title chip. Sourced from the same `withdrawals` CTE as the dollar
+  // amount in `getDashboardStats`, so they always match.
+  withdrawalCount?: number;
   periodLabel: string;
 }) {
   return (
@@ -298,6 +312,14 @@ export function WithdrawalsStatCard({
         <div className="flex flex-wrap items-baseline gap-x-2">
           <CardTitle className="text-card-title text-muted-foreground">
             Withdrawals
+            {typeof withdrawalCount === "number" && (
+              // Inline transaction-count chip — matches the Deposits
+              // card so admins can compare flow counts at a glance
+              // without reading the dollar amounts.
+              <span className="ml-1 text-xs font-normal text-muted-foreground tabular-nums">
+                · {formatNumber(withdrawalCount)}
+              </span>
+            )}
           </CardTitle>
           <span className="text-tiny text-muted-foreground">{periodLabel}</span>
         </div>

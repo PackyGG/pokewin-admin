@@ -85,6 +85,12 @@ function getPeriodAggregates(
     {
       revenue: string;
       withdrawal: string;
+      // Period count of completed card_withdrawal_requests — pairs with
+      // `withdrawal` so the Withdrawals KPI card can show "$X across N
+      // withdrawals" in the title chip. Sourced from the same
+      // `withdrawals` CTE as `withdrawal` so the count and amount always
+      // match (status IN completed/shipped, effective_at within cutoff).
+      withdrawal_count: string;
       wager: string;
       // Customer wager — wager MINUS wagers a creator made while live
       // on a deal/stream (house-funded "sponsored" play).
@@ -189,6 +195,12 @@ function getPeriodAggregates(
       COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS revenue,
 
       COALESCE((SELECT SUM(CASE WHEN effective_at >= ${cutoff} THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal,
+
+      -- Period count of completed/shipped withdrawals — same
+      -- withdrawals CTE / effective_at cutoff as the withdrawal amount,
+      -- so the count + amount on the Withdrawals KPI card stay
+      -- consistent (no separate roundtrip / no source-of-truth split).
+      (SELECT COUNT(*) FROM withdrawals WHERE effective_at >= ${cutoff})::text AS withdrawal_count,
 
       -- Creator-funded slice of the period withdrawal volume — only
       -- card_withdrawal_requests where the requesting user holds
@@ -885,6 +897,7 @@ async function dashboardStatsInner(period: DashboardPeriod) {
   const pa = periodAggregates[0] ?? {
     revenue: "0",
     withdrawal: "0",
+    withdrawal_count: "0",
     wager: "0",
     wager_excl_session: "0",
     pack_wager_excl_session: "0",
@@ -1014,6 +1027,10 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     // shipped) so the StatCard matches the PnL formula. Already a
     // positive magnitude; Math.abs is a defensive no-op.
     withdrawals: Math.abs(num(pa.withdrawal)),
+    // Period count of completed/shipped card_withdrawal_requests —
+    // pairs with `withdrawals` so the Withdrawals KPI card title can
+    // show "Withdrawals · N" without a second roundtrip.
+    withdrawalCountPeriod: num(pa.withdrawal_count),
     // Creator-funded slice of the same withdrawals figure — the count
     // + dollar amount of card_withdrawal_requests where the requesting
     // user's role is 'creator'. Subset of `withdrawals` above, so the
