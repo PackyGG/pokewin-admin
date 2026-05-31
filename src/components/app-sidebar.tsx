@@ -161,11 +161,27 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    // Creator Marketing — the "who promotes us" half of the old
+    // Marketing group, split out so creator-people management sits
+    // separately from the campaign tooling. Sits ABOVE Marketing in
+    // the sidebar so admins land on the people-management surfaces
+    // first (typical workflow: vet a creator → grant tooling → track
+    // their campaigns). Order inside matches the funnel: creators
+    // (the list) → leaderboards (their public rankings) → socials
+    // review (their onboarding gate).
+    label: "Creator Marketing",
+    items: [
+      { label: "Creators", href: "/creators", icon: "Users" },
+      { label: "Leaderboards", href: "/creators/leaderboards", icon: "Trophy" },
+      { label: "Socials Review", href: "/creators/socials", icon: "ShieldCheck" },
+    ],
+  },
+  {
     // Marketing — the campaign tools + acquisition surfaces. Creator-
-    // people management (Creators, Leaderboards, Socials Review) moved
-    // out into its own "Creator Marketing" group below; Analytics was
-    // dropped from the sidebar entirely (still reachable at
-    // /creators/analytics, just not surfaced here).
+    // people management (Creators, Leaderboards, Socials Review) lives
+    // in the Creator Marketing group above; Analytics was dropped from
+    // the sidebar entirely (still reachable at /creators/analytics,
+    // just not surfaced here).
     label: "Marketing",
     items: [
       // Ads is the more frequently-used surface (third-party promo
@@ -185,19 +201,6 @@ const NAV_GROUPS: NavGroup[] = [
       // marketing team has a single feed of "what we gave away and
       // why" without grepping the ledger.
       { label: "Giveaway", href: "/marketing/giveaway", icon: "Gift" },
-    ],
-  },
-  {
-    // Creator Marketing — the "who promotes us" half of the old
-    // Marketing group, split out so creator-people management sits
-    // separately from the campaign tooling. Order matches the
-    // funnel: creators (the list) → leaderboards (their public
-    // rankings) → socials review (their onboarding gate).
-    label: "Creator Marketing",
-    items: [
-      { label: "Creators", href: "/creators", icon: "Users" },
-      { label: "Leaderboards", href: "/creators/leaderboards", icon: "Trophy" },
-      { label: "Socials Review", href: "/creators/socials", icon: "ShieldCheck" },
     ],
   },
   {
