@@ -8,6 +8,7 @@ import {
   BadgeDollarSign,
   HandCoins,
   Gauge,
+  Vault,
 } from "lucide-react";
 import {
   getDashboardStats,
@@ -46,6 +47,10 @@ import {
 // LiveMoneyChat also lives in the admin shell layout (same dock pattern).
 import { UpgraderStatsSection } from "./upgrader-stats";
 import { ActiveRainChip } from "./active-rain-chip";
+import {
+  FireblocksVaultTile,
+  FireblocksVaultTileSkeleton,
+} from "./_components/fireblocks-vault-tile";
 import { PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import {
@@ -136,6 +141,22 @@ export default async function DashboardPage({
       >
         <DashboardStatStrips period={period} />
       </Suspense>
+
+      {/* Treasury — workspace-wide Fireblocks vault USD value, refreshed
+          every 60s via the query module's unstable_cache. Streamed
+          behind its own Suspense so a slow Fireblocks/CoinGecko fetch
+          (cold revalidate ~200ms) never blocks the rest of the
+          dashboard. The tile renders three states (ok / unconfigured /
+          error) so a missing env var or upstream hiccup degrades
+          gracefully instead of crashing the page. */}
+      <div className="space-y-3">
+        <SectionHeading icon={Vault} title="Treasury" />
+        <div className="grid gap-3 sm:gap-4 lg:grid-cols-2 xl:grid-cols-3">
+          <Suspense fallback={<FireblocksVaultTileSkeleton />}>
+            <FireblocksVaultTile />
+          </Suspense>
+        </div>
+      </div>
 
       {/* Upgrader Stats + Wager Attribution — paired 50/50 row that
           sits between the KPI strips and the trend graphs. Each
