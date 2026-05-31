@@ -258,15 +258,32 @@ function getPeriodAggregates(
       -- same real_users cohort (staff + blacklist excluded) the
       -- other aggregates use so it slots into GGR / PnL without
       -- shifting the population. Pulled as a subquery so the existing
-      -- outer aggregate stays a single pass over base. NOT
-      -- in_session-filtered: the ledger-side GGR formula above also
-      -- doesn't filter creator on-stream play out of GGR, so we keep
-      -- the two sides symmetric.
+      -- outer aggregate stays a single pass over base.
+      --
+      -- CRITICAL: creator on-stream upgrader wins are dropped via the
+      -- session_windows CTE so creator sponsored-balance wins (house-
+      -- funded promo / stream play, not real customer money) cannot
+      -- surface as a phantom customer-side house loss in the period
+      -- P&L formula downstream. Per CLAUDE.md the period P&L is a
+      -- customer-realized figure — a single big creator on-stream
+      -- upgrader win was making it look like the house lost ~$100k on
+      -- a single day. The ledger-side ggr aggregate above is left
+      -- un-filtered (it is a pure ledger signal); subtracting this
+      -- filtered figure from it shifts the surfaced GGR slightly, but
+      -- only by the value of creator on-stream upgrader wins in the
+      -- period — an intentional small posture change in favor of
+      -- customer-P&L accuracy.
       COALESCE((
         SELECT SUM(ug.won_amount::numeric)
         FROM upgrader_games ug
-        WHERE ug.user_id IN (SELECT id FROM real_users)
-          AND ug.created_at >= ${cutoff}
+        JOIN real_users ru ON ru.id = ug.user_id
+        WHERE ug.created_at >= ${cutoff}
+          AND NOT (ru.role = 'creator' AND EXISTS (
+            SELECT 1 FROM session_windows sw
+            WHERE sw.uid = ug.user_id
+              AND ug.created_at >= sw.win_start
+              AND ug.created_at <  sw.win_end
+          ))
       ), 0)::text AS upgrader_won_period,
 
       -- Deposit COUNT — number of completed deposit transactions in
