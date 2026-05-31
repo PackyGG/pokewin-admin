@@ -1,6 +1,6 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
-import { calculateWindowedPnl } from "./pnl";
+import { getUserWindowedPnlMulti } from "./users-windowed-pnl";
 
 export type PnlBreakdown = {
   // Gambling revenue (platform perspective, positive = platform earned)
@@ -51,14 +51,7 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
   const since24h = new Date(nowMs - 24 * 60 * 60 * 1000);
   const since3d = new Date(nowMs - 3 * 24 * 60 * 60 * 1000);
   const since7d = new Date(nowMs - 7 * 24 * 60 * 60 * 1000);
-  const [
-    rows,
-    inventoryValue,
-    windowed12h,
-    windowed24h,
-    windowed3d,
-    windowed7d,
-  ] = await Promise.all([
+  const [rows, inventoryValue, windowed] = await Promise.all([
     db.$queryRaw<{ type: string; net: string }[]>`
       SELECT type,
              COALESCE(SUM(
@@ -86,14 +79,18 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
       where: { user_id: userId, sold_at: null, exchanged_at: null },
       _sum: { value_at_obtained: true },
     }),
-    // Rolling windowed house P&L for this user (past 12h / 24h / 3d
-    // / 7d). Four parallel calls — each is a focused per-user windowed
-    // delta scan over the same ledger; PG plans them independently
-    // but they share index access patterns.
-    calculateWindowedPnl({ userId, since: since12h }),
-    calculateWindowedPnl({ userId, since: since24h }),
-    calculateWindowedPnl({ userId, since: since3d }),
-    calculateWindowedPnl({ userId, since: since7d }),
+    // Rolling windowed house P&L for this user across all four windows
+    // (past 12h / 24h / 3d / 7d) in a single composite call — 5
+    // round-trips total (one per source table) instead of 4 × 5 = 20
+    // from a Promise.all of four `calculateWindowedPnl` calls. Same
+    // formula and same session_windows-aware upgrader correction per
+    // window — see `getUserWindowedPnlMulti`.
+    getUserWindowedPnlMulti(userId, [
+      { key: "h12", since: since12h },
+      { key: "h24", since: since24h },
+      { key: "d3", since: since3d },
+      { key: "d7", since: since7d },
+    ]),
   ]);
 
   const byType = new Map(rows.map((r) => [r.type, parseFloat(r.net) || 0]));
@@ -153,10 +150,10 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
     gamblingPnlRealized, unrealizedLiability, gamblingPnlTrue,
     bonusesCost, rakebackCost, affiliateCost, otherCosts, otherCostsDetail,
     netPnlRealized, netPnlTrue,
-    pnl12h: windowed12h.pnl,
-    pnl24h: windowed24h.pnl,
-    pnl3d: windowed3d.pnl,
-    pnl7d: windowed7d.pnl,
+    pnl12h: windowed.h12.pnl,
+    pnl24h: windowed.h24.pnl,
+    pnl3d: windowed.d3.pnl,
+    pnl7d: windowed.d7.pnl,
   };
 }
 
