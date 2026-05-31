@@ -6,6 +6,21 @@ import { adminDb } from "@/lib/admin-db";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { requirePageAccess } from "@/lib/dal";
 import { ensureEmployeeBoardSchema } from "@/lib/employee-board/ensure-schema";
+import {
+  deleteDiscordPlacement,
+  deleteDiscordServer,
+  findDiscordPlacementByEmployeeAndServer,
+  findDiscordPlacementById,
+  findDiscordServerById,
+  getLastDiscordServerPosition,
+  getLastPositionInDiscordServer,
+  insertDiscordPlacement,
+  insertDiscordServer,
+  listDiscordPlacementsByIds,
+  updateDiscordPlacementRoles,
+  updateDiscordPlacementServerAndPosition,
+  updateDiscordServerName,
+} from "@/lib/employee-board/discord-servers";
 
 const PAGE_KEY = "/employees";
 
@@ -82,6 +97,52 @@ const managerIdSchema = z.object({
 const managerWorkspaceSchema = z.object({
   managerId: z.string().uuid("Invalid manager id"),
   workspaceId: z.string().uuid("Invalid workspace id"),
+});
+
+// ── Discord-server schemas ──────────────────────────────────────────
+
+const discordServerNameSchema = z
+  .string()
+  .trim()
+  .min(1, "Name is required")
+  .max(60, "Name must be 60 characters or fewer");
+
+const createDiscordServerSchema = z.object({ name: discordServerNameSchema });
+
+const renameDiscordServerSchema = z.object({
+  id: z.string().uuid("Invalid discord server id"),
+  name: discordServerNameSchema,
+});
+
+const deleteDiscordServerSchema = z.object({
+  id: z.string().uuid("Invalid discord server id"),
+});
+
+const addToDiscordServerSchema = z.object({
+  employeeId: z.string().uuid("Invalid employee id"),
+  discordServerId: z.string().uuid("Invalid discord server id"),
+});
+
+const discordPlacementIdSchema = z.object({
+  placementId: z.string().uuid("Invalid placement id"),
+});
+
+const discordPlacementRoleSchema = z.object({
+  placementId: z.string().uuid("Invalid placement id"),
+  role: roleSchema,
+});
+
+const moveDiscordPlacementSchema = z.object({
+  placementId: z.string().uuid("Invalid placement id"),
+  discordServerId: z.string().uuid("Invalid discord server id"),
+});
+
+const reorderDiscordColumnSchema = z.object({
+  discordServerId: z.string().uuid("Invalid discord server id"),
+  placementIds: z
+    .array(z.string().uuid("Invalid placement id"))
+    .min(1, "Empty order list")
+    .max(500, "Too many placements"),
 });
 
 // ── Workspaces ──────────────────────────────────────────────────────
@@ -762,6 +823,608 @@ export async function unlinkManagerWorkspace(
     metadata: {
       managerId: parsed.data.managerId,
       workspaceId: parsed.data.workspaceId,
+    },
+  });
+
+  revalidatePath(PAGE_KEY);
+  return { success: true };
+}
+
+// ── Discord servers ─────────────────────────────────────────────────
+// A discord server is a third "kind" of board column, rendered in its
+// own section below the regular workspace row. Backed by separate
+// tables (employee_discord_servers + employee_discord_server_placements)
+// so the existing workspace flow doesn't change. All access goes
+// through the typed raw-SQL wrappers in
+// @/lib/employee-board/discord-servers (the new tables are NOT in the
+// Prisma admin schema — same admin-DB "no migration file" reason as
+// the workspace tables, but kept out of the Prisma model file too).
+//
+// Cross-type drag-and-drop (workspace card → discord column, and the
+// reverse) is implemented as a MOVE: the source row is deleted and a
+// new row is created in the target type's placement table, preserving
+// the per-placement `roles[]`. Multi-placement (the same employee in
+// multiple discord servers AND multiple workspaces) is achieved via
+// each column's "+ Add member" button, identical to the workspace
+// model.
+
+export async function createDiscordServer(
+  name: string,
+): Promise<{ success: true; id: string } | { success: false; error: string }> {
+  const session = await requirePageAccess(PAGE_KEY);
+  await ensure();
+  const parsed = createDiscordServerSchema.safeParse({ name });
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  const nextPosition = (await getLastDiscordServerPosition()) + 1;
+  const created = await insertDiscordServer(parsed.data.name, nextPosition);
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "employee_board_discord_server_created",
+    metadata: { discordServerId: created.id, name: parsed.data.name },
+  });
+
+  revalidatePath(PAGE_KEY);
+  return { success: true, id: created.id };
+}
+
+export async function renameDiscordServer(
+  id: string,
+  name: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requirePageAccess(PAGE_KEY);
+  await ensure();
+  const parsed = renameDiscordServerSchema.safeParse({ id, name });
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  const updated = await updateDiscordServerName(parsed.data.id, parsed.data.name);
+  if (!updated) return { success: false, error: "Discord server not found" };
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "employee_board_discord_server_renamed",
+    metadata: { discordServerId: parsed.data.id, name: parsed.data.name },
+  });
+
+  revalidatePath(PAGE_KEY);
+  return { success: true };
+}
+
+export async function deleteDiscordServerAction(
+  id: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requirePageAccess(PAGE_KEY);
+  await ensure();
+  const parsed = deleteDiscordServerSchema.safeParse({ id });
+  if (!parsed.success) {
+    return { success: false, error: "Invalid discord server id" };
+  }
+
+  // Placements CASCADE on delete (see ensure-schema.ts) — cards on
+  // this server disappear; the employees fall back to Unassigned if
+  // they had no other placements (workspace or discord).
+  const deleted = await deleteDiscordServer(parsed.data.id);
+  if (!deleted) return { success: false, error: "Discord server not found" };
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "employee_board_discord_server_deleted",
+    metadata: { discordServerId: parsed.data.id },
+  });
+
+  revalidatePath(PAGE_KEY);
+  return { success: true };
+}
+
+/**
+ * Add an employee to a discord server. Creates a NEW placement row —
+ * does NOT touch the employee's workspace placements or other discord
+ * placements. Idempotent: trying to add the same employee twice
+ * returns a friendly error instead of erroring on the unique index.
+ */
+export async function addEmployeeToDiscordServer(
+  employeeId: string,
+  discordServerId: string,
+): Promise<{ success: true; placementId: string } | { success: false; error: string }> {
+  const session = await requirePageAccess(PAGE_KEY);
+  await ensure();
+  const parsed = addToDiscordServerSchema.safeParse({
+    employeeId,
+    discordServerId,
+  });
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  const employee = await adminDb.salary_employees.findUnique({
+    where: { id: parsed.data.employeeId },
+    select: { id: true },
+  });
+  if (!employee) return { success: false, error: "Employee not found" };
+
+  const server = await findDiscordServerById(parsed.data.discordServerId);
+  if (!server) return { success: false, error: "Discord server not found" };
+
+  const existing = await findDiscordPlacementByEmployeeAndServer(
+    parsed.data.employeeId,
+    parsed.data.discordServerId,
+  );
+  if (existing) {
+    return { success: false, error: "Already in this server" };
+  }
+
+  const nextPosition =
+    (await getLastPositionInDiscordServer(parsed.data.discordServerId)) + 1;
+  const created = await insertDiscordPlacement({
+    employeeId: parsed.data.employeeId,
+    discordServerId: parsed.data.discordServerId,
+    position: nextPosition,
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "employee_board_discord_placement_added",
+    metadata: {
+      placementId: created.id,
+      employeeId: parsed.data.employeeId,
+      discordServerId: parsed.data.discordServerId,
+    },
+  });
+
+  revalidatePath(PAGE_KEY);
+  return { success: true, placementId: created.id };
+}
+
+/**
+ * Move ONE discord placement to a different discord server. Mirrors
+ * movePlacement for workspaces but stays within the discord-server
+ * "side track" — cross-type moves (discord ↔ workspace) and removal
+ * (drop on Unassigned) are separate actions.
+ */
+export async function moveDiscordPlacement(
+  placementId: string,
+  discordServerId: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requirePageAccess(PAGE_KEY);
+  await ensure();
+  const parsed = moveDiscordPlacementSchema.safeParse({
+    placementId,
+    discordServerId,
+  });
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  const placement = await findDiscordPlacementById(parsed.data.placementId);
+  if (!placement) return { success: false, error: "Placement not found" };
+
+  const server = await findDiscordServerById(parsed.data.discordServerId);
+  if (!server) return { success: false, error: "Discord server not found" };
+
+  if (placement.discord_server_id === parsed.data.discordServerId) {
+    return { success: true };
+  }
+
+  // Merge-on-conflict — same friendly behaviour as movePlacement.
+  const conflict = await findDiscordPlacementByEmployeeAndServer(
+    placement.employee_id,
+    parsed.data.discordServerId,
+  );
+  if (conflict) {
+    await deleteDiscordPlacement(placement.id);
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "employee_board_discord_placement_merged",
+      metadata: {
+        droppedPlacementId: placement.id,
+        keptPlacementId: conflict.id,
+        employeeId: placement.employee_id,
+        discordServerId: parsed.data.discordServerId,
+      },
+    });
+    revalidatePath(PAGE_KEY);
+    return { success: true };
+  }
+
+  const nextPosition =
+    (await getLastPositionInDiscordServer(parsed.data.discordServerId)) + 1;
+  await updateDiscordPlacementServerAndPosition(
+    parsed.data.placementId,
+    parsed.data.discordServerId,
+    nextPosition,
+  );
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "employee_board_discord_placement_moved",
+    metadata: {
+      placementId: parsed.data.placementId,
+      fromDiscordServerId: placement.discord_server_id,
+      toDiscordServerId: parsed.data.discordServerId,
+    },
+  });
+
+  revalidatePath(PAGE_KEY);
+  return { success: true };
+}
+
+/**
+ * Remove a discord placement. The employee disappears from that
+ * server but keeps every other placement (workspace and discord). If
+ * this was their last placement they return to Unassigned (the page
+ * computes the synthetic unplaced cards from `employees − placed`).
+ */
+export async function removeDiscordPlacement(
+  placementId: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requirePageAccess(PAGE_KEY);
+  await ensure();
+  const parsed = discordPlacementIdSchema.safeParse({ placementId });
+  if (!parsed.success) {
+    return { success: false, error: "Invalid placement id" };
+  }
+
+  const placement = await findDiscordPlacementById(parsed.data.placementId);
+  if (!placement) return { success: false, error: "Placement not found" };
+
+  await deleteDiscordPlacement(parsed.data.placementId);
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "employee_board_discord_placement_removed",
+    metadata: {
+      placementId: parsed.data.placementId,
+      employeeId: placement.employee_id,
+      discordServerId: placement.discord_server_id,
+    },
+  });
+
+  revalidatePath(PAGE_KEY);
+  return { success: true };
+}
+
+/**
+ * Bulk-update positions inside one discord-server column. Same shape
+ * as reorderColumn for workspaces but constrained to a single discord
+ * server (no "Unassigned for discord" — synthetic cards live in the
+ * workspace-level Unassigned only).
+ */
+export async function reorderDiscordColumn(
+  discordServerId: string,
+  placementIds: string[],
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requirePageAccess(PAGE_KEY);
+  await ensure();
+  const parsed = reorderDiscordColumnSchema.safeParse({
+    discordServerId,
+    placementIds,
+  });
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  const rows = await listDiscordPlacementsByIds(parsed.data.placementIds);
+  if (rows.length !== parsed.data.placementIds.length) {
+    return { success: false, error: "Some placements no longer exist" };
+  }
+  for (const r of rows) {
+    if (r.discord_server_id !== parsed.data.discordServerId) {
+      return {
+        success: false,
+        error: "Some placements are no longer in this column",
+      };
+    }
+  }
+
+  await adminDb.$transaction(
+    parsed.data.placementIds.map((id, idx) =>
+      adminDb.$executeRaw`
+        UPDATE "employee_discord_server_placements"
+           SET position = ${idx},
+               updated_at = now()
+         WHERE id = ${id}::uuid
+      `,
+    ),
+  );
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "employee_board_discord_column_reordered",
+    metadata: {
+      discordServerId: parsed.data.discordServerId,
+      placementIds: parsed.data.placementIds,
+    },
+  });
+
+  revalidatePath(PAGE_KEY);
+  return { success: true };
+}
+
+export async function addDiscordPlacementRole(
+  placementId: string,
+  role: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requirePageAccess(PAGE_KEY);
+  await ensure();
+  const parsed = discordPlacementRoleSchema.safeParse({ placementId, role });
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  const existing = await findDiscordPlacementById(parsed.data.placementId);
+  if (!existing) return { success: false, error: "Placement not found" };
+
+  if (
+    existing.roles.some(
+      (r) => r.toLowerCase() === parsed.data.role.toLowerCase(),
+    )
+  ) {
+    return { success: false, error: "That role is already added" };
+  }
+  if (existing.roles.length >= 20) {
+    return { success: false, error: "Too many roles on this placement" };
+  }
+
+  await updateDiscordPlacementRoles(parsed.data.placementId, [
+    ...existing.roles,
+    parsed.data.role,
+  ]);
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "employee_board_discord_role_added",
+    metadata: {
+      placementId: parsed.data.placementId,
+      employeeId: existing.employee_id,
+      discordServerId: existing.discord_server_id,
+      role: parsed.data.role,
+    },
+  });
+
+  revalidatePath(PAGE_KEY);
+  return { success: true };
+}
+
+export async function removeDiscordPlacementRole(
+  placementId: string,
+  role: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requirePageAccess(PAGE_KEY);
+  await ensure();
+  const parsed = discordPlacementRoleSchema.safeParse({ placementId, role });
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  const existing = await findDiscordPlacementById(parsed.data.placementId);
+  if (!existing) return { success: false, error: "Placement not found" };
+
+  const nextRoles = existing.roles.filter(
+    (r) => r.toLowerCase() !== parsed.data.role.toLowerCase(),
+  );
+  if (nextRoles.length === existing.roles.length) {
+    return { success: false, error: "Role not found" };
+  }
+
+  await updateDiscordPlacementRoles(parsed.data.placementId, nextRoles);
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "employee_board_discord_role_removed",
+    metadata: {
+      placementId: parsed.data.placementId,
+      employeeId: existing.employee_id,
+      discordServerId: existing.discord_server_id,
+      role: parsed.data.role,
+    },
+  });
+
+  revalidatePath(PAGE_KEY);
+  return { success: true };
+}
+
+// ── Cross-type moves (workspace ↔ discord) ─────────────────────────
+// The board allows dragging a card between the workspace row and the
+// discord-server row. Because placements live in two separate tables,
+// the move is implemented as DELETE-from-source + INSERT-into-target,
+// carrying the `roles[]` across so the user doesn't lose their tagging.
+
+/**
+ * Move a WORKSPACE placement into a discord server. Deletes the
+ * workspace placement and creates a new discord placement for the
+ * same employee, preserving the role list. If the employee already
+ * has a placement on that discord server we merge (just drop the
+ * workspace placement) the same way movePlacement does.
+ */
+export async function moveWorkspacePlacementToDiscord(
+  placementId: string,
+  discordServerId: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requirePageAccess(PAGE_KEY);
+  await ensure();
+  const parsed = z
+    .object({
+      placementId: z.string().uuid("Invalid placement id"),
+      discordServerId: z.string().uuid("Invalid discord server id"),
+    })
+    .safeParse({ placementId, discordServerId });
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  const placement = await adminDb.employee_board_placements.findUnique({
+    where: { id: parsed.data.placementId },
+    select: {
+      id: true,
+      employee_id: true,
+      workspace_id: true,
+      roles: true,
+    },
+  });
+  if (!placement) return { success: false, error: "Placement not found" };
+
+  const server = await findDiscordServerById(parsed.data.discordServerId);
+  if (!server) return { success: false, error: "Discord server not found" };
+
+  const conflict = await findDiscordPlacementByEmployeeAndServer(
+    placement.employee_id,
+    parsed.data.discordServerId,
+  );
+
+  // Single transaction so the source row never sticks around if the
+  // insert fails (and vice versa). The discord-side tables aren't
+  // Prisma models, so we mix typed Prisma + $executeRaw inside the
+  // same interactive transaction.
+  await adminDb.$transaction(async (tx) => {
+    await tx.employee_board_placements.delete({
+      where: { id: parsed.data.placementId },
+      select: { id: true },
+    });
+    if (conflict) return; // merge — discord placement already exists.
+    // Look up the next position inside the transaction so two
+    // concurrent moves can't pick the same trailing index.
+    const posRows = await tx.$queryRaw<{ max: number | null }[]>`
+      SELECT MAX(position)::int AS max
+        FROM "employee_discord_server_placements"
+       WHERE discord_server_id = ${parsed.data.discordServerId}::uuid
+    `;
+    const max = posRows[0]?.max;
+    const nextPosition =
+      max === null || max === undefined ? 0 : Number(max) + 1;
+    await tx.$executeRaw`
+      INSERT INTO "employee_discord_server_placements"
+          ("employee_id", "discord_server_id", "position", "roles")
+      VALUES (${placement.employee_id}::uuid,
+              ${parsed.data.discordServerId}::uuid,
+              ${nextPosition},
+              ${placement.roles}::text[])
+    `;
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "employee_board_placement_cross_moved",
+    metadata: {
+      fromKind: "workspace",
+      toKind: "discord_server",
+      sourcePlacementId: parsed.data.placementId,
+      fromWorkspaceId: placement.workspace_id,
+      toDiscordServerId: parsed.data.discordServerId,
+      employeeId: placement.employee_id,
+      mergedInto: conflict?.id ?? null,
+    },
+  });
+
+  revalidatePath(PAGE_KEY);
+  return { success: true };
+}
+
+/**
+ * Move a DISCORD placement into a workspace. Mirror of
+ * moveWorkspacePlacementToDiscord. Roles are carried over; if the
+ * employee already has a placement in the target workspace we merge.
+ */
+export async function moveDiscordPlacementToWorkspace(
+  placementId: string,
+  workspaceId: string,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const session = await requirePageAccess(PAGE_KEY);
+  await ensure();
+  const parsed = z
+    .object({
+      placementId: z.string().uuid("Invalid placement id"),
+      workspaceId: z.string().uuid("Invalid workspace id"),
+    })
+    .safeParse({ placementId, workspaceId });
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  const placement = await findDiscordPlacementById(parsed.data.placementId);
+  if (!placement) return { success: false, error: "Placement not found" };
+
+  const workspace = await adminDb.employee_workspaces.findUnique({
+    where: { id: parsed.data.workspaceId },
+    select: { id: true },
+  });
+  if (!workspace) return { success: false, error: "Workspace not found" };
+
+  const conflict = await adminDb.employee_board_placements.findUnique({
+    where: {
+      employee_id_workspace_id: {
+        employee_id: placement.employee_id,
+        workspace_id: parsed.data.workspaceId,
+      },
+    },
+    select: { id: true },
+  });
+
+  await adminDb.$transaction(async (tx) => {
+    await tx.$executeRaw`
+      DELETE FROM "employee_discord_server_placements"
+       WHERE id = ${parsed.data.placementId}::uuid
+    `;
+    if (conflict) return; // merge — workspace placement already exists.
+    const last = await tx.employee_board_placements.findFirst({
+      where: { workspace_id: parsed.data.workspaceId },
+      orderBy: { position: "desc" },
+      select: { position: true },
+    });
+    const nextPosition = (last?.position ?? -1) + 1;
+    await tx.employee_board_placements.create({
+      data: {
+        employee_id: placement.employee_id,
+        workspace_id: parsed.data.workspaceId,
+        position: nextPosition,
+        roles: placement.roles,
+      },
+      select: { id: true },
+    });
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "employee_board_placement_cross_moved",
+    metadata: {
+      fromKind: "discord_server",
+      toKind: "workspace",
+      sourcePlacementId: parsed.data.placementId,
+      fromDiscordServerId: placement.discord_server_id,
+      toWorkspaceId: parsed.data.workspaceId,
+      employeeId: placement.employee_id,
+      mergedInto: conflict?.id ?? null,
     },
   });
 

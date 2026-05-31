@@ -2,6 +2,10 @@ import { Network } from "lucide-react";
 import { adminDb } from "@/lib/admin-db";
 import { requirePageAccess } from "@/lib/dal";
 import { ensureEmployeeBoardSchema } from "@/lib/employee-board/ensure-schema";
+import {
+  listDiscordPlacements,
+  listDiscordServers,
+} from "@/lib/employee-board/discord-servers";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { EmployeeBoard } from "./employee-board";
@@ -15,7 +19,14 @@ export default async function EmployeesPage() {
   // clearer error if the DB is genuinely unreachable.
   await ensureEmployeeBoardSchema().catch(() => {});
 
-  const [employees, workspaces, placements, managers] = await Promise.all([
+  const [
+    employees,
+    workspaces,
+    placements,
+    managers,
+    discordServers,
+    discordPlacements,
+  ] = await Promise.all([
     // SECURITY: this board is broader-access than the founders-only
     // /salaries page. Select ONLY id / discord_name / active — never
     // eth_address, salary_usdt, max_per_payout or notes, so no pay or
@@ -55,6 +66,12 @@ export default async function EmployeesPage() {
         workspaces: { select: { workspace_id: true } },
       },
     }),
+    // Discord servers + their placements live in their own tables (not
+    // Prisma models — see ensure-schema.ts comment), so they're loaded
+    // via the typed raw-SQL wrappers. Same security rule — no
+    // pay/wallet data anywhere in the payload.
+    listDiscordServers(),
+    listDiscordPlacements(),
   ]);
 
   // Managers are rendered in their own row, so their placements are
@@ -86,10 +103,50 @@ export default async function EmployeesPage() {
     })
     .filter((c): c is NonNullable<typeof c> => c !== null);
 
-  // Real-customer employees that have ZERO placements show up in the
-  // Unassigned pool as a synthetic card (no placement id yet — adding
-  // them to a section will create one server-side). Skip managers.
-  const placedEmployeeIds = new Set(placements.map((p) => p.employee_id));
+  // Discord placement cards — same shape as workspace placement cards
+  // but tagged with `kind: "discord"` and a `discordServerId` instead
+  // of a `workspaceId`. Card identity prefix avoids any possible
+  // collision with workspace-placement UUIDs (both come from
+  // gen_random_uuid() so collisions are astronomically unlikely, but
+  // the prefix also lets the client immediately tell them apart for
+  // routing the correct server action on drag/drop and for the
+  // distinct visual marker in the discord section).
+  const discordPlacementCards = discordPlacements
+    .filter((p) => !managerEmployeeIds.has(p.employee_id))
+    .map((p) => {
+      const emp = employeeById.get(p.employee_id);
+      if (!emp) return null;
+      return {
+        id: `discord:${p.id}`,
+        placementId: p.id,
+        employeeId: p.employee_id,
+        discordName: emp.discord_name,
+        active: emp.active,
+        discordServerId: p.discord_server_id,
+        roles: p.roles,
+        position: p.position,
+      };
+    })
+    .filter((c): c is NonNullable<typeof c> => c !== null);
+
+  // Real-customer employees that have ZERO placements (workspace OR
+  // discord) show up in the Unassigned pool as a synthetic card. The
+  // user's spec is explicit: a person in N workspaces / M discord
+  // servers (N+M > 0) is NOT unassigned. Skip managers.
+  //
+  // Notes on the workspace branch:
+  //   - We include rows with NULL workspace_id in `placedEmployeeIds`
+  //     to preserve the existing legacy "roles-only Unassigned" card
+  //     behaviour (those rows are still rendered as cards in
+  //     Unassigned via `placementCards`). If we excluded them here a
+  //     legacy row would render once as a placement card AND once as
+  //     a synthetic card for the same employee.
+  //   - For discord we include all placements (the table has NOT NULL
+  //     discord_server_id, no legacy null concept).
+  const placedEmployeeIds = new Set<string>([
+    ...placements.map((p) => p.employee_id),
+    ...discordPlacements.map((p) => p.employee_id),
+  ]);
   const unplacedCards = employees
     .filter(
       (e) => !managerEmployeeIds.has(e.id) && !placedEmployeeIds.has(e.id),
@@ -156,6 +213,31 @@ export default async function EmployeesPage() {
     name: w.name,
   }));
 
+  const discordServerList = discordServers.map((s) => ({
+    id: s.id,
+    name: s.name,
+  }));
+
+  // Count of TRULY-unassigned non-manager employees: people with NO
+  // workspace placement (workspace_id NOT NULL) AND NO discord
+  // placement. Computed server-side and passed to the client so the
+  // badge math is unambiguous regardless of legacy roles-only
+  // placement rows (workspace_id IS NULL) which we still render as
+  // cards in the Unassigned column but which don't count toward "is
+  // this employee placed somewhere?". Mirrors the user-spec formula:
+  //   N = |salary_employees \ managers
+  //         − DISTINCT employee_id WHERE workspace_id IS NOT NULL
+  //         − DISTINCT employee_id IN discord placements|
+  const placedSomewhereIds = new Set<string>([
+    ...placements
+      .filter((p) => p.workspace_id !== null)
+      .map((p) => p.employee_id),
+    ...discordPlacements.map((p) => p.employee_id),
+  ]);
+  const unassignedEmployeeCount = employees.filter(
+    (e) => !managerEmployeeIds.has(e.id) && !placedSomewhereIds.has(e.id),
+  ).length;
+
   return (
     <div className="space-y-6">
       <PageHero>
@@ -165,7 +247,8 @@ export default async function EmployeesPage() {
           title="Employee Board"
           subtitle={
             <>
-              Organize the team into workspace groups and tag each person
+              Organize the team into workspace groups (and discord
+              servers, in their own section below) and tag each person
               with roles. Drag a card between columns to move; drop on
               another card to reorder. Use &ldquo;Add member&rdquo; on a
               section to place the same person in multiple sections.
@@ -181,6 +264,9 @@ export default async function EmployeesPage() {
           managers={managerCards}
           managerCandidates={managerCandidates}
           placeableEmployees={placeableEmployees}
+          discordServers={discordServerList}
+          discordCards={discordPlacementCards}
+          unassignedEmployeeCount={unassignedEmployeeCount}
         />
       </FadeIn>
     </div>
