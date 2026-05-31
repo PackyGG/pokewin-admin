@@ -13,8 +13,15 @@ import { EmptyState } from "@/components/empty-state";
 import { formatDate, formatNumber } from "@/lib/utils/format";
 import type { SetListItem } from "@/lib/queries/sets";
 import { SetFormDialog } from "./set-form-dialog";
+import { DeleteSetButton } from "./delete-set-button";
 
-export function SetsContent({ data }: { data: SetListItem[] }) {
+export function SetsContent({
+  data,
+  isAdmin,
+}: {
+  data: SetListItem[];
+  isAdmin: boolean;
+}) {
   return (
     <div className="space-y-4">
       {/* Mobile card list (<lg) */}
@@ -49,13 +56,22 @@ export function SetsContent({ data }: { data: SetListItem[] }) {
                       Added {formatDate(set.createdAt)}
                     </div>
                   </div>
-                  <SetFormDialog
-                    mode="edit"
-                    initialValues={{
-                      id: set.id,
-                      name: set.name,
-                    }}
-                  />
+                  <div className="flex items-center gap-1">
+                    <SetFormDialog
+                      mode="edit"
+                      initialValues={{
+                        id: set.id,
+                        name: set.name,
+                      }}
+                    />
+                    {isAdmin && (
+                      <DeleteSetButton
+                        id={set.id}
+                        name={set.name}
+                        cardCount={set.cardCount}
+                      />
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
@@ -83,13 +99,22 @@ export function SetsContent({ data }: { data: SetListItem[] }) {
                 </TableCell>
                 <TableCell>{formatDate(set.createdAt)}</TableCell>
                 <TableCell className="text-right">
-                  <SetFormDialog
-                    mode="edit"
-                    initialValues={{
-                      id: set.id,
-                      name: set.name,
-                    }}
-                  />
+                  <div className="flex items-center justify-end gap-1">
+                    <SetFormDialog
+                      mode="edit"
+                      initialValues={{
+                        id: set.id,
+                        name: set.name,
+                      }}
+                    />
+                    {isAdmin && (
+                      <DeleteSetButton
+                        id={set.id}
+                        name={set.name}
+                        cardCount={set.cardCount}
+                      />
+                    )}
+                  </div>
                 </TableCell>
               </TableRow>
             ))}

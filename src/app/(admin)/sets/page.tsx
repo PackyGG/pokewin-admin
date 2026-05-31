@@ -26,6 +26,7 @@ async function SetsListContent({
   series,
   sortBy,
   sortOrder,
+  isAdmin,
 }: {
   page: number;
   perPage: number;
@@ -33,6 +34,7 @@ async function SetsListContent({
   series?: string;
   sortBy?: string;
   sortOrder?: string;
+  isAdmin: boolean;
 }) {
   const result = await getSetsList({
     page,
@@ -45,7 +47,7 @@ async function SetsListContent({
 
   return (
     <>
-      <SetsContent data={result.data} />
+      <SetsContent data={result.data} isAdmin={isAdmin} />
       <DataTablePagination
         page={result.page}
         totalPages={result.totalPages}
@@ -141,6 +143,7 @@ export default async function SetsPage({
               series={params.series}
               sortBy={params.sortBy}
               sortOrder={params.sortOrder}
+              isAdmin={isAdmin}
             />
           </Suspense>
         </FadeIn>

@@ -318,6 +318,13 @@ export const CAPABILITIES: CapabilityDef[] = [
       "One-time backfill: create the Pokemon and OnePiece sets and move every card without a set into Pokemon",
     group: "Sets",
   },
+  {
+    key: "__can_delete_set",
+    label: "Delete Set",
+    description:
+      "Permanently delete a set. Cards in the set are NOT deleted — their set assignment is cleared and they remain in the catalog as orphan cards, available for bulk-assign on /cards.",
+    group: "Sets",
+  },
 
   // ── Battles ─────────────────────────────────────────────────────────
   {
