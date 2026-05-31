@@ -94,14 +94,33 @@ export default async function UserDetailPage({
   // admin DB lookup or a heavy fraud-score SQL hiccup doesn't blank the
   // entire user-detail view. Each falls back to a neutral empty shape
   // that the downstream rendering already tolerates.
+  //
+  // Empty paginated-transaction shape used as the safeQuery fallback for
+  // the gaming + financial tx fetches below. Same shape
+  // `getUserTransactions` already returns for users with zero matching
+  // ledger rows, so the downstream CategoryTransactionsTable +
+  // RecentActivityTimeline render a normal empty-state instead of
+  // crashing on undefined access. When an upstream DB hiccup (e.g. a
+  // transient join failure on the upgrader_games / battle_participants
+  // relations) would otherwise blank the whole user-detail page — the
+  // Gaming tab in particular was reportedly unclickable because a thrown
+  // promise here propagated up to the segment error boundary and
+  // replaced the tab bar with the error page.
+  const EMPTY_TX_PAGE = {
+    data: [],
+    total: 0,
+    page: 1,
+    perPage: 10,
+    totalPages: 0,
+  };
   const [
     data,
     inventory,
     disposedInventory,
     pnlBreakdown,
     notes,
-    gamingTx,
-    financialTx,
+    gamingTxResult,
+    financialTxResult,
     rewards,
     permissions,
     userTagsResult,
@@ -115,8 +134,25 @@ export default async function UserDetailPage({
     getUserInventory(id, 1, 24, { status: "disposed" }),
     getUserPnlBreakdown(id),
     getNotesForUser(id),
-    getUserTransactions(id, 1, 10, { types: GAMING_TYPES }),
-    getUserTransactions(id, 1, 10, { types: FINANCIAL_TYPES }),
+    // Gaming + Finances tab data — wrapped in safeQuery because the
+    // gaming query path joins through provably_fair_results,
+    // battle_participants, and a raw-SQL upgrader_games lookup. A
+    // transient failure in any of those (e.g. the upgrader sub-query
+    // throwing on a malformed game_session_id) used to crash the
+    // entire page via the segment error boundary, surfacing as "I
+    // can't click Gaming" because the redirect to error.tsx replaced
+    // the tab bar. Degrading to an empty tx page keeps the tabs
+    // clickable while logging the failure for engineering.
+    safeQuery(
+      () => getUserTransactions(id, 1, 10, { types: GAMING_TYPES }),
+      EMPTY_TX_PAGE,
+      "users.detail.gamingTx",
+    ),
+    safeQuery(
+      () => getUserTransactions(id, 1, 10, { types: FINANCIAL_TYPES }),
+      EMPTY_TX_PAGE,
+      "users.detail.financialTx",
+    ),
     getUserRewards(id),
     session.role === "admin" ? Promise.resolve(null) : getUserPermissions(session.userId),
     // VIP tags (admin-CRM metadata). Empty array on failure → the
@@ -171,6 +207,10 @@ export default async function UserDetailPage({
   const riskBreakdown = riskResult.data;
   const sharedIps = sharedIpsResult.data;
   const sharedFingerprints = sharedFingerprintsResult.data;
+  // Unwrap the gaming + financial tx safeQuery results back to the bare
+  // PaginatedTransactions shape UserViewModern + the tab tables expect.
+  const gamingTx = gamingTxResult.data;
+  const financialTx = financialTxResult.data;
 
   // "Ever a creator?" = currently creator, OR an audit role-change to
   // creator exists, OR they own affiliate codes (created only for
