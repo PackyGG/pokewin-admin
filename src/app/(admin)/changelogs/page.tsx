@@ -38,6 +38,7 @@ import {
   NewChangelogEntryButton,
 } from "./changelog-form-dialog";
 import { DeleteChangelogButton } from "./delete-changelog-button";
+import { SeedChangelogButton } from "./seed-changelog-button";
 
 export const metadata = { title: "Changelogs" };
 
@@ -131,7 +132,14 @@ export default async function ChangelogsPage() {
           accent="purple"
           title="Changelogs"
           subtitle="What's new in the admin panel and the platform."
-          action={canManage ? <NewChangelogEntryButton /> : null}
+          action={
+            canManage ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <SeedChangelogButton />
+                <NewChangelogEntryButton />
+              </div>
+            ) : null
+          }
         />
       </PageHero>
 

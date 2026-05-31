@@ -227,3 +227,155 @@ export async function deleteChangelogEntry(id: string): Promise<void> {
   revalidateTag("changelog");
   revalidatePath("/changelogs");
 }
+
+// ---------------------------------------------------------------------------
+// seedChangelogFromRecentWork
+//
+// Bulk-insert entries from a hardcoded list (see
+// `@/lib/changelog/recent-work`). Idempotent by `(published_at, title)` —
+// if a row with the same calendar day + identical title already exists,
+// it's skipped instead of inserting a duplicate. This lets the admin
+// press the button again after adding new entries to RECENT_WORK_ENTRIES
+// without producing duplicates of the ones that already landed.
+//
+// Equality on `published_at` is at calendar-day granularity (a UTC date
+// window) so a re-press tomorrow doesn't get tricked by a millisecond
+// drift in the source ISO string.
+// ---------------------------------------------------------------------------
+
+const seedEntrySchema = entryInputSchema;
+
+const seedInputSchema = z
+  .array(seedEntrySchema)
+  .min(1, "No entries to seed")
+  .max(200, "Too many entries — split into batches");
+
+export type SeedChangelogResult = {
+  seeded: number;
+  skipped: number;
+};
+
+export async function seedChangelogFromRecentWork(
+  entries: ChangelogEntryInput[],
+): Promise<SeedChangelogResult> {
+  const session = await requireAdmin();
+  await requireCapability(
+    session,
+    "__can_manage_changelog",
+    "bulk-seed changelog entries",
+  );
+
+  const parsed = seedInputSchema.safeParse(entries);
+  if (!parsed.success) throw new Error(firstError(parsed.error));
+  const data = parsed.data;
+
+  await ensureChangelogSchema();
+
+  // Pre-flight de-dupe: look up which (day, title) combos already exist
+  // and skip those. Querying once with all titles + the broadest date
+  // range is cheaper than N round-trips and avoids a TOCTOU race that a
+  // single-day window would still have inside the loop.
+  const allTitles = [...new Set(data.map((e) => e.title.trim()))];
+  const minPublished = new Date(
+    Math.min(...data.map((e) => e.publishedAt.getTime())),
+  );
+  // Expand the upper bound by one day so the broadest range covers
+  // any same-day match regardless of hh:mm:ss.
+  const maxPublishedRaw = new Date(
+    Math.max(...data.map((e) => e.publishedAt.getTime())),
+  );
+  const maxPublished = new Date(
+    Date.UTC(
+      maxPublishedRaw.getUTCFullYear(),
+      maxPublishedRaw.getUTCMonth(),
+      maxPublishedRaw.getUTCDate() + 1,
+      0,
+      0,
+      0,
+      0,
+    ),
+  );
+  const minPublishedFloor = new Date(
+    Date.UTC(
+      minPublished.getUTCFullYear(),
+      minPublished.getUTCMonth(),
+      minPublished.getUTCDate(),
+      0,
+      0,
+      0,
+      0,
+    ),
+  );
+
+  const existing = await adminDb.admin_changelog_entries.findMany({
+    where: {
+      title: { in: allTitles },
+      published_at: { gte: minPublishedFloor, lt: maxPublished },
+    },
+    select: { title: true, published_at: true },
+  });
+
+  // Build a key set "YYYY-MM-DD|title" for O(1) duplicate lookup. The
+  // calendar-day key sidesteps small TZ / millisecond drift between the
+  // seed source and the existing rows.
+  function dayKey(d: Date, title: string): string {
+    const yyyy = d.getUTCFullYear();
+    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(d.getUTCDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}|${title}`;
+  }
+
+  const existingKeys = new Set(
+    existing.map((r) => dayKey(r.published_at, r.title)),
+  );
+
+  const toInsert = data.filter(
+    (e) => !existingKeys.has(dayKey(e.publishedAt, e.title.trim())),
+  );
+
+  if (toInsert.length === 0) {
+    // Still audit the no-op so the trail captures "admin clicked
+    // re-seed and nothing was new" — useful for forensics.
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "changelog_bulk_seeded",
+      metadata: {
+        count: 0,
+        skipped: data.length,
+      },
+    });
+    return { seeded: 0, skipped: data.length };
+  }
+
+  // Single transaction so a partial failure can't leave the feed with
+  // half the release history.
+  await adminDb.$transaction(
+    toInsert.map((e) =>
+      adminDb.admin_changelog_entries.create({
+        data: {
+          published_at: e.publishedAt,
+          title: e.title.trim(),
+          summary: e.summary.trim(),
+          version: e.version ?? null,
+          category: e.category,
+          changes: e.changes,
+          author_admin_user_id: session.userId,
+        },
+        select: { id: true },
+      }),
+    ),
+  );
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "changelog_bulk_seeded",
+    metadata: {
+      count: toInsert.length,
+      skipped: data.length - toInsert.length,
+    },
+  });
+
+  revalidateTag("changelog");
+  revalidatePath("/changelogs");
+  return { seeded: toInsert.length, skipped: data.length - toInsert.length };
+}
