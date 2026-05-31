@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Suspense } from "react";
 import {
   AlertTriangle,
@@ -19,6 +20,7 @@ import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { KpiStripSkeleton } from "@/components/loading-skeletons";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { cn } from "@/lib/utils";
 import { BackendApiError, BackendNetworkError } from "@/lib/backend-api";
 import {
   PageHero,
@@ -33,6 +35,7 @@ import {
   type CreatorsTab,
 } from "./_lib/search-params";
 import { type CreatorsListPage } from "./_queries/list-creators";
+import { listCreatorsFiltered } from "./_queries/list-creators-filtered";
 import { getCreatorsListForTab } from "./_queries/list-creators-by-tab";
 import {
   getApprovedSocialsByUser,
@@ -94,30 +97,49 @@ export default async function CreatorsPage({
           Fill / Multiplier swaps the strip to a skeleton instead of
           freezing the page on stale numbers. The single tab-aware
           tile inside (Fill Creators / Multiplier Creators) flips
-          label, value, and icon from the active tab's cached count. */}
+          label, value, and icon from the active tab's cached count.
+          Active Deals + Live Now tiles are clickable filter toggles
+          — clicking one sets `?filter=<target>` and the page
+          re-renders the matching subset via `listCreatorsFiltered`. */}
       <Suspense
-        key={`kpi-${params.tab}`}
+        key={`kpi-${params.tab}-${params.filter ?? ""}`}
         fallback={<KpiStripSkeleton count={6} />}
       >
-        <CreatorsKpiStrip tab={params.tab} />
+        <CreatorsKpiStrip tab={params.tab} filter={params.filter} search={params.search} />
       </Suspense>
 
       <div className="space-y-3">
-        <SectionHeading icon={Users} title="Creators" />
+        {/* When a KPI-tile filter is active, the heading reflects the
+            filter so the page reads as "Live Creators" / "Creators
+            with Active Deals" and the Fill / Multiplier tab switch
+            hides (the filter overrides those views). */}
+        <SectionHeading
+          icon={Users}
+          title={
+            params.filter === "live"
+              ? "Live Creators"
+              : params.filter === "active-deals"
+                ? "Creators with Active Deals"
+                : "Creators"
+          }
+        />
         <FadeIn className="space-y-4">
           {/* Toolbar is OUTSIDE the Suspense boundary so the search +
-              tab switch stay responsive while the cards stream in. */}
+              tab switch stay responsive while the cards stream in.
+              Tab switch hides while a filter is active — the filter
+              overrides the Fill / Multiplier view. */}
           <DataTableToolbar
             searchPlaceholder="Search by username or email..."
-            leading={<CreatorsTabSwitch />}
+            leading={params.filter ? undefined : <CreatorsTabSwitch />}
           />
           {/* Card grid + pagination — Suspense boundary keyed on `tab`
-              + `search` + `page` + `sortBy` so any navigation that
-              swaps the underlying data set shows the skeleton instead
-              of leaving the stale grid blocking. `key=` forces React
-              to throw the fresh boundary on every navigation. */}
+              + `search` + `page` + `sortBy` + `filter` so any
+              navigation that swaps the underlying data set shows the
+              skeleton instead of leaving the stale grid blocking.
+              `key=` forces React to throw the fresh boundary on every
+              navigation. */}
           <Suspense
-            key={`grid-${params.tab}-${params.search ?? ""}-${params.page}-${params.sortBy}-${params.perPage}`}
+            key={`grid-${params.tab}-${params.search ?? ""}-${params.page}-${params.sortBy}-${params.perPage}-${params.filter ?? ""}`}
             fallback={<CreatorsGridSkeleton />}
           >
             <CreatorsGridSection params={params} />
@@ -134,8 +156,22 @@ export default async function CreatorsPage({
 // value, label, and icon flip from the cached per-tab count. Other
 // tiles (Global PnL, Converted, Leaderboard Cost, Active Deals, Live
 // Now) stay tab-independent. Total = 6 tiles.
+//
+// Active Deals + Live Now double as filter toggles — clicking one
+// sets `?filter=live` / `?filter=active-deals` and the grid below
+// re-renders the matching subset. Clicking the active tile clears
+// the filter. The active tile gets a colored ring matching its accent
+// so the filter state reads at a glance.
 
-async function CreatorsKpiStrip({ tab }: { tab: CreatorsTab }) {
+async function CreatorsKpiStrip({
+  tab,
+  filter,
+  search,
+}: {
+  tab: CreatorsTab;
+  filter: CreatorsSearchParams["filter"];
+  search: string | undefined;
+}) {
   // Per-tab count for the swap tile — only the active tab's count is
   // needed each render. Each helper is its own 5-min cached fan-out so
   // bouncing between tabs doesn't re-fetch the whole creator pool.
@@ -247,22 +283,60 @@ async function CreatorsKpiStrip({ tab }: { tab: CreatorsTab }) {
         icon={Trophy}
         accent="rose"
       />
-      <KpiTile
-        label="Active Deals"
-        value={stats ? formatNumber(stats.activeDealCount) : "—"}
-        sub="Active or scheduled this week"
-        icon={CalendarCheck}
-        accent="emerald"
-      />
-      <KpiTile
-        label="Live Now"
-        value={stats ? formatNumber(stats.liveCount) : "—"}
-        sub="Currently streaming with an active session"
-        icon={Radio}
-        // Rose to read "active broadcasting in progress" — matches the
-        // Live badge color elsewhere on the page.
-        accent="rose"
-      />
+      {/* Active Deals — click to filter the list to creators
+          whose current deal is `active`. */}
+      <Link
+        href={buildFilterHref("active-deals", filter, search)}
+        aria-label={
+          filter === "active-deals"
+            ? "Clear filter — show all creators"
+            : "Filter to creators with an active deal"
+        }
+        className={cn(
+          "block rounded-xl outline-none ring-offset-background transition focus-visible:ring-2 focus-visible:ring-emerald-500",
+          filter === "active-deals" && "ring-2 ring-emerald-500/60",
+        )}
+      >
+        <KpiTile
+          label="Active Deals"
+          value={stats ? formatNumber(stats.activeDealCount) : "—"}
+          sub={
+            filter === "active-deals"
+              ? "Filter active — click to clear"
+              : "Active or scheduled this week"
+          }
+          icon={CalendarCheck}
+          accent="emerald"
+        />
+      </Link>
+      {/* Live Now — click to filter the list to creators with a
+          non-null `active_session_id` (currently streaming). */}
+      <Link
+        href={buildFilterHref("live", filter, search)}
+        aria-label={
+          filter === "live"
+            ? "Clear filter — show all creators"
+            : "Filter to live creators"
+        }
+        className={cn(
+          "block rounded-xl outline-none ring-offset-background transition focus-visible:ring-2 focus-visible:ring-rose-500",
+          filter === "live" && "ring-2 ring-rose-500/60",
+        )}
+      >
+        <KpiTile
+          label="Live Now"
+          value={stats ? formatNumber(stats.liveCount) : "—"}
+          sub={
+            filter === "live"
+              ? "Filter active — click to clear"
+              : "Currently streaming with an active session"
+          }
+          icon={Radio}
+          // Rose to read "active broadcasting in progress" — matches the
+          // Live badge color elsewhere on the page.
+          accent="rose"
+        />
+      </Link>
     </div>
   );
 }
@@ -286,6 +360,14 @@ async function CreatorsGridSection({
   let codeAndWagerByUser: Map<string, CreatorCodeAndWager> = new Map();
   let loadError: { title: string; detail: string } | null = null;
   try {
+    // Wave 1 — socials are needed regardless of filter mode. The list
+    // fetch itself diverges:
+    //   1. KPI-tile filter is active (?filter=live / ?filter=active-
+    //      deals) → walk the whole creator pool and narrow in memory
+    //      via `listCreatorsFiltered`. Pagination collapses in this
+    //      mode (the filtered set fits on one screen).
+    //   2. No filter → tab-aware fetch (`getCreatorsListForTab`),
+    //      which respects the Fill / Multiplier tab + sortBy chip.
     const [socials, list] = await Promise.all([
       getApprovedSocialsByUser().catch((e) => {
         console.error(
@@ -294,7 +376,9 @@ async function CreatorsGridSection({
         );
         return new Map<string, CreatorSocialSummary[]>();
       }),
-      getCreatorsListForTab(params, params.tab),
+      params.filter
+        ? listCreatorsFiltered(params.filter, params.search)
+        : getCreatorsListForTab(params, params.tab),
     ]);
     socialsByUser = socials;
     result = list;
@@ -443,7 +527,11 @@ async function CreatorsGridSection({
             return bActive - aActive;
           })}
       />
-      {result && (
+      {/* Pagination is hidden while a tile filter is active because
+          `listCreatorsFiltered` collapses the result to a single page
+          — the filtered set is small enough to fit on one screen, and
+          showing fake "1 of 1" pagination would just be visual noise. */}
+      {result && !params.filter && (
         <DataTablePagination
           page={result.page}
           totalPages={result.totalPages}
@@ -486,6 +574,35 @@ function CreatorsGridSkeleton() {
 }
 
 // ─── Helpers — keep error-state copy near the page that uses it ───
+
+type CreatorFilter = "live" | "active-deals";
+
+/**
+ * Build the `href` for a KPI-tile filter toggle. Behaviour:
+ *   - tile NOT currently selected → set `?filter=<target>` (and keep
+ *     the current search query so the filter narrows whatever the
+ *     admin had already typed)
+ *   - tile IS currently selected → clear `filter` (still keeping
+ *     search). This makes every tile a one-click toggle.
+ *
+ * `page` / `perPage` are intentionally dropped on every toggle: the
+ * filtered view collapses pagination, and unfiltered → filtered →
+ * unfiltered should always return to page 1 instead of a stale page.
+ * `tab` / `sortBy` are also dropped on enter (the filter overrides
+ * those views) but preserved on exit so the admin lands back in their
+ * tab + sort.
+ */
+function buildFilterHref(
+  target: CreatorFilter,
+  current: CreatorFilter | undefined,
+  search: string | undefined,
+): string {
+  const params = new URLSearchParams();
+  if (search) params.set("search", search);
+  if (current !== target) params.set("filter", target);
+  const qs = params.toString();
+  return qs ? `/creators?${qs}` : "/creators";
+}
 
 /**
  * Map a fetch-failure cause code to a human-readable headline. Covers

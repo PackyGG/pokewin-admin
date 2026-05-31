@@ -29,6 +29,13 @@ const CreatorsSearchParamsSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   perPage: z.coerce.number().int().min(1).max(100).default(20),
   search: z.string().trim().max(200).optional(),
+  // `filter` powers the click-through from the Live Now / Active Deals
+  // tiles. Optional — when absent the page renders the normal
+  // paginated list. When set, the page switches to
+  // `listCreatorsFiltered` and shows the matching subset on a single
+  // page (pagination is hidden). `z.enum` rejects unknown values so a
+  // URL-fuzzer can't smuggle garbage into the page's render path.
+  filter: z.enum(["live", "active-deals"]).optional(),
   sortBy: CreatorsSortMode.default("recent"),
   tab: CreatorsTab.default("fill"),
 });
