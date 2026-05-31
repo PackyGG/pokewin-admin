@@ -735,3 +735,58 @@ model admin_leaderboard_sponsorship {
   created_at           DateTime @default(now()) @db.Timestamptz(6)
   updated_at           DateTime @default(now()) @db.Timestamptz(6)
 }
+
+// ─── Changelog entries (admin-panel release notes) ─────────────────
+// Curated release notes surfaced at /changelogs. Each row is one self-
+// contained "what changed in this release" card. Storage is admin-DB
+// only because this is operational/internal content — never shown to
+// end users on packy.gg, only to admins inside the panel. The page is
+// public-read to anyone with `/changelogs` access; write requires an
+// admin role + the `__can_manage_changelog` capability.
+//
+// Provisioned at runtime via the IF-NOT-EXISTS fallback in
+// src/lib/changelog/ensure-schema.ts — there is deliberately NO
+// migration file (same convention as employee_workspaces and the
+// salary tables, see ensure-schema.ts comment for context on the
+// drifted admin-DB migration history).
+//
+// Fields:
+//   • published_at — admin-set "release date" (NOT row-created-at).
+//     Lets the same release be backdated or scheduled by hand.
+//   • title — short label ("Sets overhaul", "Treasury tile"),
+//     rendered as the card headline.
+//   • summary — one-paragraph TL;DR. Plain text (markdown-safe but
+//     not rendered as markdown — no XSS surface).
+//   • version — optional human label ("v2025.11", "Sprint 23").
+//   • category — drives the badge color/icon on the card. One of
+//     'feature' | 'fix' | 'improvement' | 'breaking' | 'infra'.
+//     Enforced server-side via Zod; the column is plain TEXT so a
+//     future category doesn't require a DB migration.
+//   • changes — array of `{ kind, text }` rows ({ kind: 'feature' |
+//     'fix' | 'improvement' | 'breaking' | 'infra', text: string }).
+//     Rendered as a per-row bullet list inside the card with a small
+//     icon per kind.
+//   • author_admin_user_id — who published the entry. Plain UUID
+//     column (no Prisma relation to admin_users) to keep the
+//     admin_users model untouched, matching the convention used by
+//     employee_managers / salary_payments / admin_leaderboard_sponsorship.
+model admin_changelog_entries {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  published_at          DateTime @db.Timestamptz(6)
+  title                 String
+  summary               String
+  version               String?
+  // Bucketed category — drives badge color + icon on the card.
+  category              String
+  // jsonb array of { kind: 'feature'|'fix'|'improvement'|'breaking'|'infra',
+  // text: string }. Shape validated at the server-action boundary.
+  changes               Json     @db.JsonB
+  // Loose FK to admin_users.id — no Prisma relation here so adding
+  // this table doesn't perturb the admin_users model. Nullable so
+  // entries authored by a deleted admin still render.
+  author_admin_user_id  String?  @db.Uuid
+  created_at            DateTime @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime @updatedAt        @db.Timestamptz(6)
+
+  @@index([published_at(sort: Desc)], map: "admin_changelog_entries_published_at_idx")
+}
