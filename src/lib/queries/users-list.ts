@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
@@ -420,4 +421,62 @@ export async function getUsers(params: {
     perPage,
     totalPages: Math.ceil(total / perPage),
   };
+}
+
+// ─── Global KPI stats for the /users page hero strip ──────────────────
+//
+// Counts that describe the WHOLE user base, independent of the current
+// page / search / role / status filter. The headline tiles on /users
+// read off this so they stay stable as admins paginate or refine the
+// table — switching to a search term doesn't make "Banned" suddenly
+// read as the banned count of just the current page slice.
+//
+// Three COUNT(*) FILTER aggregates over the user table in a single
+// round-trip — Postgres folds them into a single sequential scan with
+// FILTER predicates, so it's strictly cheaper than three Prisma
+// .count() calls.
+//
+// Cached cross-request (60s revalidate) so spamming the search box
+// doesn't fan into the DB on every keystroke. unstable_cache also
+// deduplicates within a single render, so a Suspense fan-out that
+// happens to call this twice gets one query.
+
+export type UsersListStats = {
+  /** All users in the DB, regardless of role or status. */
+  totalUsers: number;
+  /** Users with `is_banned = true`. */
+  totalBanned: number;
+  /** Users created in the rolling last 24h. */
+  signups24h: number;
+};
+
+const cachedUsersListStats = unstable_cache(
+  async (): Promise<UsersListStats> => {
+    const db = await getDb();
+    const rows = await db.$queryRaw<
+      {
+        total: string;
+        banned: string;
+        signups_24h: string;
+      }[]
+    >`
+      SELECT
+        COUNT(*)::text                                                                   AS total,
+        COUNT(*) FILTER (WHERE is_banned = true)::text                                   AS banned,
+        COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::text          AS signups_24h
+      FROM "user"
+    `;
+    const r = rows[0];
+    return {
+      totalUsers: Number(r?.total ?? 0),
+      totalBanned: Number(r?.banned ?? 0),
+      signups24h: Number(r?.signups_24h ?? 0),
+    };
+  },
+  ["users-list-stats-v1"],
+  { revalidate: 60, tags: ["users-list-stats"] },
+);
+
+export async function getUsersListStats(): Promise<UsersListStats> {
+  return cachedUsersListStats();
 }
