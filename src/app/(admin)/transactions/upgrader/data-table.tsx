@@ -17,6 +17,10 @@ import { EmptyState } from "@/components/empty-state";
 import { ArrowUpCircle } from "lucide-react";
 import { formatCurrency, formatDateTime, formatRelative } from "@/lib/utils/format";
 import type { UpgraderTransactionRow } from "@/lib/queries/upgrader-transactions";
+import {
+  formatUpgraderMultiplier as formatTargetMultiplier,
+  formatUpgraderChance,
+} from "@/lib/utils/upgrader-metadata";
 import { UpgraderTxDialog } from "./upgrader-tx-dialog";
 
 /**
@@ -75,6 +79,17 @@ function UpgraderMobileCard({
           >
             {row.outcome}
           </Badge>
+          {/* Target multiplier badge — same source + styling as the
+              desktop table; surfaces "⇡ 5×" on every row including
+              losses so the phone view matches the desktop reading. */}
+          {row.targetMultiplier != null && (
+            <span
+              className="inline-flex items-center rounded border border-cyan-500/30 bg-cyan-500/15 px-1.5 py-0 text-[9px] font-medium text-cyan-600 dark:text-cyan-400"
+              title="Target multiplier the user picked before the spin"
+            >
+              ⇡ {formatTargetMultiplier(row.targetMultiplier)}
+            </span>
+          )}
           <span className="truncate text-xs text-muted-foreground">
             {row.username ?? row.userId.slice(0, 8)}
           </span>
@@ -238,13 +253,43 @@ export function UpgraderTransactionsDataTable({
                         {row.username ?? row.userId.slice(0, 8)}
                       </Link>
                     </TableCell>
+                    {/* Outcome cell — win/loss chip + the TARGET
+                        multiplier the user picked before the spin
+                        (e.g. "⇡ 5×"). Target lives in
+                        provably_fair_results.result_metadata; the
+                        query parses it via parseUpgraderMetadata.
+                        Same cyan styling as the /users/[id] Gaming
+                        rows + the upgrader detail popup so the three
+                        surfaces read the same way. Win-% sub-line
+                        underneath when the metadata pinned it (or it
+                        was derivable from the multiplier), so admins
+                        see "user aimed at 5× / 19.8% chance" without
+                        clicking through. Skip both quietly when the
+                        backend didn't store either field. */}
                     <TableCell>
-                      <Badge
-                        variant="outline"
-                        className={"capitalize " + OUTCOME_COLORS[row.outcome]}
-                      >
-                        {row.outcome}
-                      </Badge>
+                      <div className="flex flex-col items-start gap-0.5">
+                        <div className="flex items-center gap-1.5">
+                          <Badge
+                            variant="outline"
+                            className={"capitalize " + OUTCOME_COLORS[row.outcome]}
+                          >
+                            {row.outcome}
+                          </Badge>
+                          {row.targetMultiplier != null && (
+                            <span
+                              className="inline-flex items-center rounded border border-cyan-500/30 bg-cyan-500/15 px-1.5 py-0 text-[10px] font-medium text-cyan-600 dark:text-cyan-400"
+                              title="Target multiplier the user picked before the spin"
+                            >
+                              ⇡ {formatTargetMultiplier(row.targetMultiplier)}
+                            </span>
+                          )}
+                        </div>
+                        {row.targetChance != null && (
+                          <span className="text-[10px] leading-tight text-muted-foreground">
+                            Win % {formatUpgraderChance(row.targetChance)}
+                          </span>
+                        )}
+                      </div>
                     </TableCell>
                     {/* Bet = wagered, money flowed into house → emerald. */}
                     <TableCell className="text-emerald-600 dark:text-emerald-400 tabular-nums">

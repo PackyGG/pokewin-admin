@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import type { PaginatedResult } from "@/lib/types";
+import { parseUpgraderMetadata } from "@/lib/utils/upgrader-metadata";
 
 /**
  * Upgrader transactions query — paginated list of upgrader_games rows.
@@ -57,6 +58,28 @@ export type UpgraderTransactionRow = {
    * defensive, doesn't normally happen in prod.
    */
   ledgerTxId: string | null;
+  /**
+   * Target cashout multiplier the user picked BEFORE the spin
+   * (e.g. 5 for "5×"). Parsed defensively from
+   * `provably_fair_results.result_metadata` via
+   * `parseUpgraderMetadata` — the blob shape isn't pinned by the
+   * backend (see upgrader-metadata.ts notes), so this is null when
+   * the key isn't present. Visible on every row, including losses,
+   * so admins can read "user aimed at X×" without clicking through
+   * to the detail popup. Same parser as the per-user Gaming tab and
+   * the /transactions/upgrader detail dialog (commit 5f22020), so
+   * the three surfaces never disagree on what they show.
+   */
+  targetMultiplier: number | null;
+  /**
+   * Target win-chance % (0–100). Either stored directly in the
+   * metadata blob or derived from `targetMultiplier` (1 / multiplier
+   * × 100 when no house edge is present). Null when neither path
+   * resolves a value. Surfaced as a small "Win % 19.8%" sub-line on
+   * the row so the configuration the user picked reads together
+   * with the outcome — matches the convention on /users/[id] Gaming.
+   */
+  targetChance: number | null;
 };
 
 export type UpgraderOutcomeFilter = "all" | "win" | "loss";
@@ -181,6 +204,16 @@ export async function getUpgraderTransactions(params: {
     ${baseWhere}
   `;
 
+  // Per-page LATERAL pull of the PF row for the target-multiplier
+  // badge. Upgrader sessions are 1:1 with their `provably_fair_results`
+  // row (one spin = one ticket) so picking the lowest-cursor PF row is
+  // both safe and stable across paginated requests. Using LATERAL
+  // (instead of joining the full PF table) keeps the join cardinality
+  // at exactly one PF row per upgrader game and avoids fanning out the
+  // result set — the row count stays equal to the upgrader_games slice.
+  // result_metadata comes back as JSONB; parsing is done in JS via the
+  // shared `parseUpgraderMetadata` helper so we don't reimplement the
+  // candidate-key fallback in SQL.
   const dataSql = `
     SELECT
       g.id::text AS id,
@@ -196,11 +229,24 @@ export async function getUpgraderTransactions(params: {
       -- Lets the UI deep-link each row to the canonical
       -- /transactions/[id] detail page (which already surfaces the PF
       -- roll + the card the ticket landed on).
-      gs.bet_ledger_tx_id::text AS ledger_tx_id
+      gs.bet_ledger_tx_id::text AS ledger_tx_id,
+      -- Raw PF metadata blob — parsed in JS by parseUpgraderMetadata
+      -- to extract target_multiplier / target_chance / etc. The blob
+      -- shape isn't pinned by the backend, so we don't try to do this
+      -- in SQL. Returns NULL when no PF row exists yet (defensive —
+      -- shouldn't happen post-resolution).
+      pf.result_metadata AS result_metadata
     FROM upgrader_games g
     LEFT JOIN "user" u ON u.id = g.user_id
     LEFT JOIN game_sessions gs
       ON gs.game_type = 'upgrader' AND gs.game_id = g.id
+    LEFT JOIN LATERAL (
+      SELECT result_metadata
+      FROM provably_fair_results
+      WHERE game_session_id = gs.id
+      ORDER BY cursor ASC
+      LIMIT 1
+    ) pf ON true
     ${baseWhere}
     ${orderBy}
     LIMIT ${safePerPage}
@@ -216,6 +262,7 @@ export async function getUpgraderTransactions(params: {
     won_amount: string;
     created_at: Date;
     ledger_tx_id: string | null;
+    result_metadata: unknown;
   };
 
   const [countResult, rows] = await Promise.all([
@@ -229,6 +276,11 @@ export async function getUpgraderTransactions(params: {
     const betAmount = Number(r.bet_amount);
     const wonAmount = Number(r.won_amount);
     const isWin = wonAmount > 0;
+    // Parse the per-spin config (target multiplier + win-chance %)
+    // out of the PF metadata blob. parseUpgraderMetadata is safe to
+    // call on any value (returns the all-null shape on non-objects /
+    // missing rows), so we don't need to guard on r.result_metadata.
+    const cfg = parseUpgraderMetadata(r.result_metadata);
     return {
       id: r.id,
       userId: r.user_id,
@@ -241,6 +293,8 @@ export async function getUpgraderTransactions(params: {
       outcome: isWin ? "win" : "loss",
       createdAt: r.created_at.toISOString(),
       ledgerTxId: r.ledger_tx_id,
+      targetMultiplier: cfg.targetMultiplier,
+      targetChance: cfg.targetChance,
     };
   });
 

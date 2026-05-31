@@ -25,6 +25,7 @@ import {
   amountSignFor,
   ledgerDirection,
 } from "@/lib/utils/ledger-direction";
+import { formatUpgraderMultiplier } from "@/lib/utils/upgrader-metadata";
 import { MobileCard } from "@/components/data-table/mobile-card-list";
 import { EmptyState } from "@/components/empty-state";
 import { Receipt } from "lucide-react";
@@ -74,6 +75,18 @@ function TransactionMobileCard({ tx }: { tx: TransactionListItem }) {
           >
             {typeLabel}
           </Badge>
+          {/* Target multiplier badge for upgrader_bet rows — mirrors
+              the desktop columns Type cell so the phone view reads
+              "user aimed at 5×" without clicking through. Hidden
+              when the parser couldn't resolve a multiplier. */}
+          {tx.type === "upgrader_bet" && tx.upgraderTargetMultiplier != null && (
+            <span
+              className="inline-flex items-center rounded border border-cyan-500/30 bg-cyan-500/15 px-1.5 py-0 text-[9px] font-medium text-cyan-600 dark:text-cyan-400"
+              title="Target multiplier the user picked before the spin"
+            >
+              ⇡ {formatUpgraderMultiplier(tx.upgraderTargetMultiplier)}
+            </span>
+          )}
           <span className="truncate text-xs text-muted-foreground">
             {tx.username ?? tx.userId.slice(0, 8)}
           </span>

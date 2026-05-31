@@ -11,6 +11,7 @@ import {
   amountSignFor,
   ledgerDirection,
 } from "@/lib/utils/ledger-direction";
+import { formatUpgraderMultiplier } from "@/lib/utils/upgrader-metadata";
 import type { TransactionListItem } from "@/lib/queries/transactions";
 
 // Type badge palette — purely semantic (identifies the ledger type at a
@@ -54,21 +55,44 @@ export const columns: ColumnDef<TransactionListItem>[] = [
   {
     accessorKey: "type",
     header: "Type",
-    // Type column doubles as the borrow surface — pack_opening and
-    // battle_bet rows render the BorrowBadge underneath the type
-    // chip so the borrow signal sits next to the event identity.
-    cell: ({ row }) => (
-      <div className="flex flex-col items-start gap-0.5">
-        <Badge variant="outline" className={TYPE_COLORS[row.original.type] ?? "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"}>
-          {row.original.type.replace(/_/g, " ")}
-        </Badge>
-        <BorrowBadge
-          percent={row.original.borrowPercentage}
-          amountUsd={row.original.borrowedAmountUsd}
-          size="sm"
-        />
-      </div>
-    ),
+    // Type column doubles as the surface for two row-level signals:
+    //   • borrow %  — pack_opening / battle_bet rows render the
+    //                 BorrowBadge underneath the type chip.
+    //   • upgrader  — upgrader_bet rows render the TARGET multiplier
+    //     target     the user picked before the spin (e.g. "⇡ 5×")
+    //                 next to the type chip so the row reads
+    //                 "user aimed at 5×" without clicking through.
+    //                 Source: parseUpgraderMetadata on the first PF
+    //                 result's result_metadata — same parser as the
+    //                 /users/[id] Gaming tab + /transactions/upgrader
+    //                 detail popup (commit 5f22020) so the three
+    //                 surfaces stay aligned. Hidden when the backend
+    //                 didn't store a recognized key.
+    cell: ({ row }) => {
+      const targetMultiplier = row.original.upgraderTargetMultiplier;
+      return (
+        <div className="flex flex-col items-start gap-0.5">
+          <div className="flex items-center gap-1.5">
+            <Badge variant="outline" className={TYPE_COLORS[row.original.type] ?? "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"}>
+              {row.original.type.replace(/_/g, " ")}
+            </Badge>
+            {row.original.type === "upgrader_bet" && targetMultiplier != null && (
+              <span
+                className="inline-flex items-center rounded border border-cyan-500/30 bg-cyan-500/15 px-1.5 py-0 text-[10px] font-medium text-cyan-600 dark:text-cyan-400"
+                title="Target multiplier the user picked before the spin"
+              >
+                ⇡ {formatUpgraderMultiplier(targetMultiplier)}
+              </span>
+            )}
+          </div>
+          <BorrowBadge
+            percent={row.original.borrowPercentage}
+            amountUsd={row.original.borrowedAmountUsd}
+            size="sm"
+          />
+        </div>
+      );
+    },
   },
   {
     accessorKey: "amount",

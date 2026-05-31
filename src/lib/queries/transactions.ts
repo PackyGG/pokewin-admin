@@ -7,6 +7,7 @@ import {
   ledger_transaction_status,
 } from "@/generated/prisma/enums";
 import type { UserTagValue } from "@/lib/queries/user-tags";
+import { parseUpgraderMetadata } from "@/lib/utils/upgrader-metadata";
 
 // Allowlists derived from the generated Prisma enums — used to validate
 // user-supplied filter values before they reach the query (instead of an
@@ -101,6 +102,22 @@ export type TransactionListItem = {
    * "Highest Multiplier" sort filter on /transactions/packs.
    */
   multiplier: number | null;
+  /**
+   * Target cashout multiplier on an `upgrader_bet` row (e.g. 5 for
+   * "5×") — what the user was rolling for, picked BEFORE the spin.
+   * Parsed defensively from
+   * `provably_fair_results.result_metadata` via
+   * `parseUpgraderMetadata`. Null for every non-upgrader_bet row
+   * and for upgrader rows where the backend didn't store the key
+   * (the parser tries a handful of candidate field names — see
+   * `lib/utils/upgrader-metadata.ts`). Surfaced in the shared
+   * columns Type cell as a cyan "⇡ 5×" badge so admins reading the
+   * ledger don't have to click through to learn what the user was
+   * aiming at. Same parser + label as the /users/[id] Gaming tab
+   * and the /transactions/upgrader detail popup (commit 5f22020),
+   * so the surfaces never disagree.
+   */
+  upgraderTargetMultiplier: number | null;
 };
 
 /**
@@ -316,6 +333,10 @@ export async function getDepositTransactions(params: {
       // Multiplier is a game-session concept — doesn't apply to
       // deposit / withdrawal / shipping-fee rows.
       multiplier: null,
+      // Upgrader target multiplier — only meaningful on upgrader_bet
+      // rows, which this query never returns. Null keeps the type
+      // contract consistent across views.
+      upgraderTargetMultiplier: null,
     };
   });
 
@@ -607,6 +628,13 @@ export async function getTransactions(params: {
       let borrowPercentage: number | null = null;
       let borrowedAmountUsd: number | null = null;
       let multiplier: number | null = null;
+      // Target cashout multiplier on upgrader_bet rows — parsed
+      // defensively from the first PF result's result_metadata via
+      // the shared parser. Same source the per-user Gaming tab and
+      // the upgrader detail popup use, so the surfaces stay aligned.
+      // Null for every non-upgrader row and for any upgrader row
+      // whose backend didn't store one of the recognized keys.
+      let upgraderTargetMultiplier: number | null = null;
       if (gs) {
         const cost = toNumber(gs.bet_amount);
         // Card winnings from the session's PF results...
@@ -649,6 +677,17 @@ export async function getTransactions(params: {
         if (borrowPercentage != null && borrowPercentage > 0 && cost > 0) {
           borrowedAmountUsd = cost * (borrowPercentage / 100);
         }
+        // Upgrader target multiplier — reuse `firstPf` which was
+        // already pulled for the borrow lookup, so no extra walk
+        // of the PF results array. parseUpgraderMetadata is safe
+        // on any value (returns null fields for non-objects), and
+        // we only assign for upgrader_bet rows so other types
+        // don't accidentally pick up a multiplier from a
+        // non-upgrader PF blob.
+        if (t.type === "upgrader_bet" && firstPf) {
+          const cfg = parseUpgraderMetadata(firstPf.result_metadata);
+          upgraderTargetMultiplier = cfg.targetMultiplier;
+        }
       }
       const balanceBefore = toNumber(t.balance_before);
       const balanceAfter = toNumber(t.balance_after);
@@ -681,6 +720,7 @@ export async function getTransactions(params: {
         // Tags only fetched on the deposits-specific path.
         userTags: [],
         multiplier,
+        upgraderTargetMultiplier,
       };
     }),
     total,
