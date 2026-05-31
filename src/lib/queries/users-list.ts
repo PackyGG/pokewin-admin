@@ -156,7 +156,13 @@ export async function getUsers(params: {
     "totalDeposited",
     "totalWagered",
   ]);
-  const userSortFields = new Set(["created_at", "email", "username", "role", "country"]);
+  const userSortFields = new Set([
+    "created_at",
+    "email",
+    "username",
+    "role",
+    "country",
+  ]);
 
   // Narrow projection — only the columns the list view actually renders.
   // The `user` table has 50+ columns; pulling them all back per page row
@@ -190,11 +196,14 @@ export async function getUsers(params: {
   // These computed sorts need raw SQL because the displayed value combines
   // multiple tables (e.g. totalWithdrawn = balances.total_withdrawn +
   // card_withdrawal_requests; netHoldings = balances + user_inventory).
+  // depositCount lives on ledger_transactions (not on balances) so it
+  // also has to JOIN-and-COUNT before the ORDER BY can read it.
   const rawSqlSorts = new Set([
     "pnl",
     "totalWithdrawn",
     "inventoryValue",
     "netHoldings",
+    "depositCount",
   ]);
 
   if (rawSqlSorts.has(sortBy)) {
@@ -232,6 +241,22 @@ export async function getUsers(params: {
       whereSql.push("u.is_banned = false AND u.is_locked = false");
     const whereClause = whereSql.length ? `WHERE ${whereSql.join(" AND ")}` : "";
 
+    // depositCount sort is JOINed only when it's actually the active
+    // sort key — the COUNT(*) groupBy on ledger_transactions can be
+    // pricey on a large transactions table, so we skip the subquery for
+    // every other sort path.
+    const depositCountJoin =
+      sortBy === "depositCount"
+        ? `
+      LEFT JOIN (
+        SELECT user_id, COUNT(*)::bigint AS deposit_count
+        FROM ledger_transactions
+        WHERE type = 'deposit'::ledger_transaction_type
+          AND status = 'completed'::ledger_transaction_status
+        GROUP BY user_id
+      ) dc ON dc.user_id = u.id`
+        : "";
+
     const orderedRows = await db.$queryRawUnsafe<{ id: string }[]>(`
       SELECT u.id
       FROM "user" u
@@ -253,14 +278,16 @@ export async function getUsers(params: {
         FROM vouchers
         WHERE claimed_at IS NULL
         GROUP BY user_id
-      ) vc ON vc.user_id = u.id
+      ) vc ON vc.user_id = u.id${depositCountJoin}
       ${whereClause}
       ORDER BY (${
         sortBy === "totalWithdrawn"
           ? `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)`
           : sortBy === "inventoryValue"
             ? `COALESCE(inv.inv_value, 0)`
-            : sortBy === "netHoldings"
+            : sortBy === "depositCount"
+              ? `COALESCE(dc.deposit_count, 0)`
+              : sortBy === "netHoldings"
               ? // Net on-platform position from the house POV: cash
                 // (available + locked) + open inventory + unclaimed
                 // vouchers. Vouchers count as inventory exactly like
@@ -300,7 +327,13 @@ export async function getUsers(params: {
       .filter((u): u is (typeof unordered)[number] => Boolean(u));
     total = totalCount;
   } else {
-    let orderBy: Prisma.UserOrderByWithRelationInput;
+    // Build a compound orderBy so every Prisma-path sort gets a
+    // deterministic tie-breaker (id ASC). Without it, many users with
+    // identical $0 balance / NULL totals come back in arbitrary
+    // Postgres-internal order across page navigations, which is what
+    // makes "sort by Balance" look broken once the page scrolls past
+    // the handful of non-zero balances.
+    let orderBy: Prisma.UserOrderByWithRelationInput[];
     if (balanceSortFields.has(sortBy)) {
       const balanceField = (
         {
@@ -309,14 +342,32 @@ export async function getUsers(params: {
           totalWagered: "total_wagered",
         } as Record<string, string>
       )[sortBy];
-      orderBy = {
-        balances: {
-          [balanceField]: order,
-        } as Prisma.balancesOrderByWithRelationInput,
-      };
+      orderBy = [
+        {
+          balances: {
+            [balanceField]: order,
+          } as Prisma.balancesOrderByWithRelationInput,
+        },
+        { id: "asc" },
+      ];
+    } else if (sortBy === "status") {
+      // Computed status = "banned" | "locked" | "active".  Prisma
+      // can't ORDER BY a derived expression, so we sort by the two
+      // boolean columns the status string is derived from. For DESC
+      // order, banned (true) sorts before locked (true) sorts before
+      // active (both false) — which matches the alphabetical reading
+      // a user expects when they click "Status DESC".
+      orderBy = [
+        { is_banned: order },
+        { is_locked: order },
+        { id: "asc" },
+      ];
     } else {
       const field = userSortFields.has(sortBy) ? sortBy : "created_at";
-      orderBy = { [field]: order } as Prisma.UserOrderByWithRelationInput;
+      orderBy = [
+        { [field]: order } as Prisma.UserOrderByWithRelationInput,
+        { id: "asc" },
+      ];
     }
 
     const result = await Promise.all([

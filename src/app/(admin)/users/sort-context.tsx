@@ -17,6 +17,27 @@ const UsersSortContext = React.createContext<Ctx>({
   setSort: () => {},
 });
 
+// Status-as-string ordering for the in-page click feedback. Matches the
+// server's `is_banned DESC, is_locked DESC` collapse ("banned" > "locked"
+// > "active") when sorted descending; ascending flips it. The server is
+// the canonical sort — this just keeps the rows from re-shuffling
+// between the click and the new server payload.
+const STATUS_RANK: Record<string, number> = {
+  banned: 2,
+  locked: 1,
+  active: 0,
+};
+// Role lexical order matches the Postgres user_role enum sort order
+// closely enough that admins won't notice the brief between-click jump.
+// The server-side sort is the source of truth — these comparators only
+// drive the optimistic in-place re-sort on the currently visible rows.
+const ROLE_RANK: Record<string, number> = {
+  admin: 3,
+  support: 2,
+  creator: 1,
+  user: 0,
+};
+
 const COMPARATORS: Record<string, (a: UserRow, b: UserRow) => number> = {
   username: (a, b) =>
     (a.username ?? a.email ?? "").localeCompare(b.username ?? b.email ?? ""),
@@ -31,6 +52,11 @@ const COMPARATORS: Record<string, (a: UserRow, b: UserRow) => number> = {
   // expression in SQL so client + server agree on ordering.
   netHoldings: (a, b) => a.netHoldings - b.netHoldings,
   pnl: (a, b) => a.pnl - b.pnl,
+  depositCount: (a, b) => a.depositCount - b.depositCount,
+  role: (a, b) =>
+    (ROLE_RANK[a.role] ?? -1) - (ROLE_RANK[b.role] ?? -1),
+  status: (a, b) =>
+    (STATUS_RANK[a.status] ?? -1) - (STATUS_RANK[b.status] ?? -1),
   // Risk is client-sortable only — the server query ignores the sortBy
   // value for riskScore and returns the pre-paginated list of users
   // with their scores attached. For normal page sizes (≤100) this is

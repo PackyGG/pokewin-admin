@@ -186,7 +186,7 @@ export const columns: ColumnDef<UserRow>[] = [
   },
   {
     accessorKey: "role",
-    header: "Role",
+    header: () => <UsersSortHeader title="Role" sortKey="role" />,
     cell: ({ row }) => (
       <Badge variant="outline" className={ROLE_COLORS[row.original.role]}>
         {row.original.role}
@@ -195,7 +195,7 @@ export const columns: ColumnDef<UserRow>[] = [
   },
   {
     accessorKey: "status",
-    header: "Status",
+    header: () => <UsersSortHeader title="Status" sortKey="status" />,
     cell: ({ row }) => (
       <Badge
         variant="outline"
@@ -265,7 +265,9 @@ export const columns: ColumnDef<UserRow>[] = [
   },
   {
     accessorKey: "depositCount",
-    header: "# Deposits",
+    header: () => (
+      <UsersSortHeader title="# Deposits" sortKey="depositCount" />
+    ),
     cell: ({ row }) => (
       <span className="tabular-nums text-muted-foreground">
         {row.original.depositCount}
