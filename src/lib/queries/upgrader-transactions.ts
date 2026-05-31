@@ -48,6 +48,15 @@ export type UpgraderTransactionRow = {
    */
   outcome: "win" | "loss";
   createdAt: string;
+  /**
+   * `ledger_transactions.id` for the upgrader_bet row that paid this
+   * game's stake. Sourced via `game_sessions.bet_ledger_tx_id` so the
+   * row can deep-link to the canonical /transactions/[id] page (which
+   * surfaces the PF roll + the card the ticket landed on). `null` for
+   * any game whose game_sessions row hasn't been wired up yet —
+   * defensive, doesn't normally happen in prod.
+   */
+  ledgerTxId: string | null;
 };
 
 export type UpgraderOutcomeFilter = "all" | "win" | "loss";
@@ -180,9 +189,18 @@ export async function getUpgraderTransactions(params: {
       u.image,
       g.bet_amount::text AS bet_amount,
       g.won_amount::text AS won_amount,
-      g.created_at
+      g.created_at,
+      -- Bet-side ledger transaction id for this game. Walked through
+      -- game_sessions, where game_id = upgrader_games.id and
+      -- bet_ledger_tx_id is the upgrader_bet row that paid the stake.
+      -- Lets the UI deep-link each row to the canonical
+      -- /transactions/[id] detail page (which already surfaces the PF
+      -- roll + the card the ticket landed on).
+      gs.bet_ledger_tx_id::text AS ledger_tx_id
     FROM upgrader_games g
     LEFT JOIN "user" u ON u.id = g.user_id
+    LEFT JOIN game_sessions gs
+      ON gs.game_type = 'upgrader' AND gs.game_id = g.id
     ${baseWhere}
     ${orderBy}
     LIMIT ${safePerPage}
@@ -197,6 +215,7 @@ export async function getUpgraderTransactions(params: {
     bet_amount: string;
     won_amount: string;
     created_at: Date;
+    ledger_tx_id: string | null;
   };
 
   const [countResult, rows] = await Promise.all([
@@ -221,6 +240,7 @@ export async function getUpgraderTransactions(params: {
       multiplier: isWin && betAmount > 0 ? wonAmount / betAmount : null,
       outcome: isWin ? "win" : "loss",
       createdAt: r.created_at.toISOString(),
+      ledgerTxId: r.ledger_tx_id,
     };
   });
 

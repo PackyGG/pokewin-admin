@@ -73,7 +73,17 @@ function UpgraderMobileCard({ row }: { row: UpgraderTransactionRow }) {
         </span>
       }
       secondary={
-        <span className="font-mono text-[10px]">{row.id.slice(0, 12)}…</span>
+        row.ledgerTxId ? (
+          <Link
+            href={`/transactions/${row.ledgerTxId}`}
+            className="font-mono text-[10px] text-blue-600 hover:underline dark:text-blue-400"
+            title="Open transaction details (PF + card hit)"
+          >
+            {row.id.slice(0, 12)}…
+          </Link>
+        ) : (
+          <span className="font-mono text-[10px]">{row.id.slice(0, 12)}…</span>
+        )
       }
       trailing={
         <div className="flex flex-col items-end">
@@ -179,9 +189,27 @@ export function UpgraderTransactionsDataTable({
                 return (
                   <TableRow key={row.id}>
                     <TableCell>
-                      <span className="font-mono text-xs">
-                        {row.id.slice(0, 8)}...
-                      </span>
+                      {/* ID is the link out to the canonical
+                          /transactions/[id] detail page (full PF
+                          panel + the card the ticket landed on).
+                          ledgerTxId comes from
+                          game_sessions.bet_ledger_tx_id; the rare
+                          legacy row with no linked ledger TX falls
+                          back to a plain mono span so the column
+                          stays aligned. */}
+                      {row.ledgerTxId ? (
+                        <Link
+                          href={`/transactions/${row.ledgerTxId}`}
+                          className="font-mono text-xs text-blue-600 hover:underline dark:text-blue-400"
+                          title="Open transaction details (PF + card hit)"
+                        >
+                          {row.id.slice(0, 8)}...
+                        </Link>
+                      ) : (
+                        <span className="font-mono text-xs">
+                          {row.id.slice(0, 8)}...
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell>
                       <Link
