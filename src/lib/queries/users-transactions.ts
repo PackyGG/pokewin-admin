@@ -421,52 +421,40 @@ export async function getUserTransactions(
     }
   }
 
-  // Upgrader winnings — match each upgrader_bet row on this page to the
-  // upgrader_payout row that shares its game_session_id. The backend
-  // emits a payout row only on a winning upgrade, so the presence of a
-  // matching upgrader_payout = win, absence = loss. Payout value uses
-  // whichever field the backend populates (amount or balance delta).
+  // Upgrader winnings — sourced DIRECTLY from `upgrader_games`, NOT the
+  // ledger. The backend never emits a matching `upgrader_payout` credit
+  // on a win (the upgrader service uses a balance-update path, see
+  // dashboard-upgrader.ts notes). The previous lookup-by-ledger-payout
+  // approach therefore pinned every upgrader row to a fake loss with
+  // $0 won — admins saw the bet debit but no win/loss/multiplier signal.
+  //
+  // `upgrader_games` carries `won_amount` directly (0 on a loss, the
+  // gross payout on a win), and `game_sessions.game_id` is the
+  // upgrader_games row's UUID for game_type='upgrader' — verified
+  // against analytics-packs.ts's same convention for packs. One JOIN
+  // gives us the canonical outcome per bet row on the page.
   const upgraderBetSessionIds = transactions
     .filter((t) => t.type === "upgrader_bet" && t.game_session_id)
     .map((t) => t.game_session_id as string);
   const upgraderWinningsByGsid = new Map<string, number>();
   if (upgraderBetSessionIds.length > 0) {
     try {
-      const payouts = await db.ledger_transactions.findMany({
-        where: {
-          user_id: userId,
-          type: "upgrader_payout",
-          status: "completed",
-          game_session_id: { in: upgraderBetSessionIds },
-        },
-        select: {
-          game_session_id: true,
-          amount: true,
-          balance_before: true,
-          balance_after: true,
-        },
-      });
-      for (const p of payouts) {
-        if (!p.game_session_id) continue;
-        // Take the larger of |amount| and (balance_after - balance_before)
-        // so we pick up whichever field the backend wrote the won value
-        // into. Same fallback strategy the dashboard Upgrader Stats
-        // section uses (dashboard-upgrader.ts).
-        const amt = Math.abs(toNumber(p.amount));
-        const delta =
-          toNumber(p.balance_after) - toNumber(p.balance_before);
-        const won = Math.max(amt, delta, 0);
-        // Aggregate in case a single upgrader_bet ever maps to multiple
-        // payout rows (defensive — backend emits one, but the sum is
-        // safer than overwriting).
-        upgraderWinningsByGsid.set(
-          p.game_session_id,
-          (upgraderWinningsByGsid.get(p.game_session_id) ?? 0) + won,
-        );
+      const rows = await db.$queryRawUnsafe<
+        { gsid: string; won_amount: string }[]
+      >(
+        `SELECT gs.id::text AS gsid, ug.won_amount::text AS won_amount
+         FROM game_sessions gs
+         JOIN upgrader_games ug ON ug.id = gs.game_id
+         WHERE gs.id = ANY($1::uuid[])
+           AND gs.game_type = 'upgrader'`,
+        upgraderBetSessionIds,
+      );
+      for (const r of rows) {
+        upgraderWinningsByGsid.set(r.gsid, toNumber(r.won_amount));
       }
     } catch (e) {
       console.error(
-        "[getUserTransactions] upgrader payout lookup failed (non-fatal):",
+        "[getUserTransactions] upgrader winnings (upgrader_games) lookup failed (non-fatal):",
         e,
       );
     }
