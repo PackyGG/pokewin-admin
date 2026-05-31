@@ -319,6 +319,13 @@ export const CAPABILITIES: CapabilityDef[] = [
     group: "Sets",
   },
   {
+    key: "__can_force_absorb_cards",
+    label: "Force-Absorb Cards into Pokemon",
+    description:
+      "Move EVERY card NOT in the OnePiece set into the Pokemon set (catches legacy import sets the initial seed missed) and optionally delete empty legacy sets. Destructive — admin-only by default.",
+    group: "Sets",
+  },
+  {
     key: "__can_delete_set",
     label: "Delete Set",
     description:

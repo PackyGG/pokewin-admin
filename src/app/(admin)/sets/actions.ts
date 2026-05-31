@@ -278,6 +278,127 @@ export async function seedInitialSets(): Promise<{
 }
 
 // ────────────────────────────────────────────────────────────────────
+//  forceAbsorbIntoPokemon
+//
+//  Bulk-reassignment for the "we have ~50k cards from legacy TCGPlayer
+//  imports that the initial seed missed" case. The initial seed
+//  (`seedInitialSets` above) only moved cards with `set_id IS NULL` —
+//  cards already assigned to one of the legacy TCGPlayer-import sets
+//  were left in place. This action sweeps EVERYTHING that isn't
+//  OnePiece into Pokemon.
+//
+//  Idempotent:
+//    - Cards already in Pokemon stay there (no-op).
+//    - Cards in OnePiece are excluded (never touched).
+//    - Cards with NULL set_id move to Pokemon.
+//    - Cards in any other set move to Pokemon.
+//  Empty legacy sets (any set NOT named Pokemon / OnePiece with zero
+//  cards remaining) are deleted in a separate cleanup pass after the
+//  move — running this on a clean catalog deletes nothing.
+//
+//  Requires Pokemon AND OnePiece to already exist (run `seedInitialSets`
+//  first). The action throws if either is missing rather than guessing.
+// ────────────────────────────────────────────────────────────────────
+
+export async function forceAbsorbIntoPokemon(): Promise<{
+  pokemonSetId: string;
+  onepieceSetId: string;
+  cardsMoved: number;
+  legacySetsDeleted: number;
+}> {
+  const db = await getDb();
+  const session = await requireAdmin();
+  await requireCapability(
+    session,
+    "__can_force_absorb_cards",
+    "force-absorb cards into Pokemon",
+  );
+
+  const POKEMON_NAME = "Pokemon";
+  const ONEPIECE_NAME = "OnePiece";
+
+  // 1. Resolve Pokemon + OnePiece set IDs. Both must already exist —
+  //    this action is the second step of the catalog bootstrap, the
+  //    first being `seedInitialSets` which creates both sets.
+  const pokemon = await db.sets.findFirst({
+    where: { name: POKEMON_NAME },
+    select: { id: true },
+  });
+  if (!pokemon) {
+    throw new Error("Pokemon set not found — run \"Seed initial sets\" first.");
+  }
+  const onepiece = await db.sets.findFirst({
+    where: { name: ONEPIECE_NAME },
+    select: { id: true },
+  });
+  if (!onepiece) {
+    throw new Error("OnePiece set not found — run \"Seed initial sets\" first.");
+  }
+
+  // 2. The bulk move. Single updateMany inside a transaction so a
+  //    partial update is impossible if Postgres flinches. Sweeps:
+  //      - cards already in legacy import sets
+  //      - cards with NULL set_id (Prisma's `NOT` clause matches NULLs)
+  //      - cards already in Pokemon (no-op, idempotent)
+  //    The ONLY rows skipped are those whose set_id is the OnePiece UUID.
+  const moveResult = await db.$transaction(async (tx) => {
+    return tx.cards.updateMany({
+      where: { NOT: { set_id: onepiece.id } },
+      data: { set_id: pokemon.id, updated_at: new Date() },
+    });
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "cards_force_absorbed_into_pokemon",
+    metadata: {
+      pokemon_set_id: pokemon.id,
+      onepiece_set_id: onepiece.id,
+      cards_moved: moveResult.count,
+    },
+  });
+
+  // 3. Cleanup pass — delete any set that isn't Pokemon or OnePiece AND
+  //    has zero remaining cards. After step 2, every legacy import set
+  //    is empty by definition; the relation filter `cards: { none: {} }`
+  //    is a defensive net in case a stray card lingered (e.g. a row
+  //    inserted between steps 2 and 3 against a legacy set_id).
+  //
+  //    Logged as a separate audit event so the move and the cleanup are
+  //    auditable independently, even though they almost always run as
+  //    a pair from the UI button.
+  const legacyEmptyWhere = {
+    AND: [
+      { name: { notIn: [POKEMON_NAME, ONEPIECE_NAME] } },
+      { cards: { none: {} } },
+    ],
+  };
+  const legacyEmptyCount = await db.sets.count({ where: legacyEmptyWhere });
+  let legacySetsDeleted = 0;
+  if (legacyEmptyCount > 0) {
+    const deleteResult = await db.sets.deleteMany({ where: legacyEmptyWhere });
+    legacySetsDeleted = deleteResult.count;
+
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "empty_legacy_sets_deleted",
+      metadata: {
+        legacy_sets_deleted: legacySetsDeleted,
+      },
+    });
+  }
+
+  revalidatePath("/sets");
+  revalidatePath("/cards");
+  return {
+    pokemonSetId: pokemon.id,
+    onepieceSetId: onepiece.id,
+    cardsMoved: moveResult.count,
+    legacySetsDeleted,
+  };
+}
+
+// ────────────────────────────────────────────────────────────────────
 //  deleteSet
 //
 //  Deletes a set WITHOUT touching the cards' rows themselves. The

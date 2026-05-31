@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { SetsContent } from "./sets-content";
 import { SetFormDialog } from "./set-form-dialog";
 import { SeedInitialSetsButton } from "./seed-initial-sets-button";
+import { ForceAbsorbIntoPokemonButton } from "./force-absorb-into-pokemon-button";
 import {
   PageHero,
   PageHeroIdentity,
@@ -87,6 +88,7 @@ export default async function SetsPage({
           action={
             <div className="flex items-center gap-2">
               {isAdmin && <SeedInitialSetsButton />}
+              {isAdmin && <ForceAbsorbIntoPokemonButton />}
               <SetFormDialog mode="create" />
             </div>
           }
