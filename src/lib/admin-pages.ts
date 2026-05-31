@@ -16,7 +16,13 @@ export const ADMIN_PAGES: AdminPage[] = [
   // by the same __can_delete_user capability since restoring is the
   // inverse of deleting.
   { group: "Navigation", label: "Deleted Users", key: "/users/deleted" },
-  { group: "Navigation", label: "Withdrawals", key: "/withdrawals" },
+  // Standalone /withdrawals route is now a redirect to
+  // /transactions/deposits?tab=withdrawals (the unified Transactions
+  // page with deposits + withdrawals tabs). The permission key is
+  // retained so support users who only had explicit withdrawals
+  // access still pass requirePageAccess on the legacy route; the
+  // combined page itself gates on `/transactions/deposits`.
+  { group: "Navigation", label: "Withdrawals (legacy)", key: "/withdrawals" },
   // Transactions
   // Standalone /transactions overview removed — admins land on a
   // specific sub-ledger instead. Each sub-page carries its own
@@ -24,7 +30,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Transactions", label: "Packs", key: "/transactions/packs" },
   { group: "Transactions", label: "Battles", key: "/battles" },
   { group: "Transactions", label: "Rewards", key: "/transactions/rewards" },
-  { group: "Transactions", label: "Deposits & Withdrawals", key: "/transactions/deposits" },
+  { group: "Transactions", label: "Transactions", key: "/transactions/deposits" },
   { group: "Transactions", label: "Upgrader", key: "/transactions/upgrader" },
   // Content
   { group: "Content", label: "Packs", key: "/packs" },
