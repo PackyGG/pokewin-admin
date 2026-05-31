@@ -53,6 +53,21 @@ import type {
   UserDetail,
 } from "./user-tabs-types";
 
+/**
+ * Compact multiplier formatter used on the upgrader_bet "Won Value"
+ * cell. Mirrors the badge style on /transactions/upgrader's data
+ * table (formatMultiplier there) so the same realized multiplier
+ * reads identically across both surfaces:
+ *   • < 10×   → one decimal (e.g. 2.5×, 8.3×)
+ *   • < 1000× → integer    (e.g. 12×, 100×)
+ *   • ≥ 1000× → k-suffixed (e.g. 1.2k×)
+ */
+function formatUpgraderMultiplier(m: number): string {
+  if (m < 10) return `${m.toFixed(1)}×`;
+  if (m < 1000) return `${Math.round(m)}×`;
+  return `${(m / 1000).toFixed(1)}k×`;
+}
+
 // The transaction detail modal is heavy (Dialog primitives + provably-fair
 // game-session viewer + a large metadata-label map) and only mounts when an
 // admin clicks a row, so it's lazy-loaded to keep it out of the table's
@@ -468,17 +483,29 @@ export const CategoryTransactionsTable = React.memo(
                           </>
                         );
                       }
-                      // Upgrader: win/loss decided by whether the
-                      // matching upgrader_payout row exists. On a win,
-                      // Won Value = the payout amount (backend-side
-                      // fallback already picked between amount and
-                      // balance delta). House Profit = bet − won.
+                      // Upgrader: win/loss + winnings sourced from
+                      // upgrader_games (the canonical record — see
+                      // users-transactions.ts notes). Win = won_amount
+                      // > 0, loss = won_amount = 0. House Profit = bet
+                      // − won. Wins also surface the realized
+                      // multiplier (won / bet) as an inline badge so
+                      // admins can spot fat-multiplier hits (5×, 100×,
+                      // 1k×) at a glance.
                       if (t.type === "upgrader_bet") {
                         if (t.upgraderResult === "lose") {
+                          // LOSS: bet kept by the house. Won = $0,
+                          // House Profit = +bet (emerald). Add a "Lost"
+                          // status chip so the outcome is explicit
+                          // alongside the column values.
                           return (
                             <>
-                              <TableCell className="tabular-nums text-muted-foreground">
-                                {formatCurrency(0)}
+                              <TableCell className="tabular-nums">
+                                <span className="text-muted-foreground">
+                                  {formatCurrency(0)}
+                                </span>
+                                <span className="ml-1.5 inline-flex items-center rounded border border-emerald-500/30 bg-emerald-500/15 px-1.5 py-0 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                                  Lost
+                                </span>
                               </TableCell>
                               <TableCell className="tabular-nums">
                                 <span className="text-emerald-600 dark:text-emerald-400">
@@ -490,10 +517,27 @@ export const CategoryTransactionsTable = React.memo(
                         }
                         if (t.upgraderResult === "win" && t.upgraderWinnings != null) {
                           const profit = t.amount - t.upgraderWinnings;
+                          // Realized multiplier — how many times the
+                          // bet the user actually took out. Skip the
+                          // chip on a zero-stake row (defensive — bet
+                          // amount should always be > 0 for upgrader
+                          // games, but guard the division regardless).
+                          const multiplier =
+                            t.amount > 0 ? t.upgraderWinnings / t.amount : null;
                           return (
                             <>
-                              <TableCell className="tabular-nums text-rose-600 dark:text-rose-400">
-                                {formatCurrency(t.upgraderWinnings)}
+                              <TableCell className="tabular-nums">
+                                <span className="text-rose-600 dark:text-rose-400">
+                                  {formatCurrency(t.upgraderWinnings)}
+                                </span>
+                                {multiplier != null && (
+                                  <span
+                                    className="ml-1.5 inline-flex items-center rounded border border-rose-500/30 bg-rose-500/15 px-1.5 py-0 text-[10px] font-medium text-rose-600 dark:text-rose-400"
+                                    title="Realized multiplier (won ÷ bet)"
+                                  >
+                                    {formatUpgraderMultiplier(multiplier)}
+                                  </span>
+                                )}
                               </TableCell>
                               <TableCell className="tabular-nums">
                                 <span
