@@ -249,9 +249,10 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
           width and the dollar value never truncates (these cards
           contain a 5-chip period selector + a hero currency value;
           squeezing 2-up at 380px crushed both). 2-up at sm, 4 at lg,
-          8 across at xl (PnL, GGR, Total Wager, Raw Wager, Organic
-          Wager, Deposits, Withdrawals, Creator Withdrawals). */}
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4 xl:grid-cols-8">
+          7 across at xl (PnL, GGR, Total Wager, Raw Wager, Organic
+          Wager, Deposits, Withdrawals). Creator Withdrawals moved
+          to the secondary row, next to Deposits / Hour. */}
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4 xl:grid-cols-7">
         <PnlStatCard
           pnl={stats.realizedPnl}
           pnlPeriod={stats.realizedPnlPeriod}
@@ -294,15 +295,6 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
           withdrawals={stats.withdrawals}
           periodLabel={stats.periodLabel}
         />
-        {/* Creator-only slice of Withdrawals — how many of the period's
-            withdrawals came from users with role = 'creator'. Hero is
-            the COUNT (the operator's primary question); subtitle
-            carries the dollar total alongside the period label. */}
-        <CreatorWithdrawalsStatCard
-          count={stats.creatorWithdrawalsCount}
-          amount={stats.creatorWithdrawals}
-          periodLabel={stats.periodLabel}
-        />
       </div>
 
       {/* Secondary stats — all-time / snapshot. Users Total Balance
@@ -313,7 +305,7 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
           was one of the heaviest on the dashboard. The realized P&L
           snapshot still factors all three into the lifetime PnL tile,
           so the information isn't gone — just folded into PnL. */}
-      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-6">
+      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-7">
         <StatCard
           title="Total Users"
           animatedValue={stats.users.total}
@@ -378,6 +370,16 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
           subtitle={`last 24h avg · 7d ${depositsPerHour7d.toFixed(1)}/hr`}
           icon={Gauge}
           color="emerald"
+        />
+        {/* Creator Withdrawals — count of period withdrawals from users
+            with role = 'creator', dollar total in subtitle. Moved here
+            from the primary row so the top strip stays at 7 wider
+            period-aware cards. Lives in this secondary row as the
+            "creator slice" companion to Deposits / Hour. */}
+        <CreatorWithdrawalsStatCard
+          count={stats.creatorWithdrawalsCount}
+          amount={stats.creatorWithdrawals}
+          periodLabel={stats.periodLabel}
         />
         <StatCard
           title="Avg RTP"
