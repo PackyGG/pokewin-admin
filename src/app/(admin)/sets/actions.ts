@@ -50,23 +50,20 @@ async function nextNegativeTcgplayerId(
 //  createSet
 // ────────────────────────────────────────────────────────────────────
 
-export async function createSet(data: {
-  name: string;
-  language: string;
-}): Promise<string> {
+export async function createSet(data: { name: string }): Promise<string> {
   const db = await getDb();
   const session = await requireAdmin();
 
   if (!data.name.trim()) throw new Error("Name is required");
-  if (!data.language.trim()) throw new Error("Language is required");
 
   await requireCapability(session, "__can_create_set", "create sets");
 
-  // `series` is NOT NULL with no default and `release_date` is nullable
-  // (see prisma/schema.prisma `model sets`). The UI no longer exposes
-  // either field, so create-time inserts default to an empty `series`
-  // and a null `release_date`. Existing rows keep their values; admins
-  // who need to backfill use the import scripts, not this dialog.
+  // `series` and `language` are NOT NULL with no default and `release_date`
+  // is nullable (see prisma/schema.prisma `model sets`). The dialog is now
+  // name-only, so create-time inserts default to an empty `series`, the
+  // project-standard language `"en"` (same value used by `seedInitialSets`
+  // below), and a null `release_date`. Existing rows keep their values;
+  // admins who need to backfill use the import scripts, not this dialog.
   // Retry on rare UNIQUE collision when two admins create simultaneously.
   let attempt = 0;
   while (attempt < 3) {
@@ -78,7 +75,7 @@ export async function createSet(data: {
             name: data.name.trim(),
             series: "",
             image_url: "",
-            language: data.language.trim(),
+            language: "en",
             tcgplayer_id: nextId,
             release_date: null,
           },
@@ -122,7 +119,6 @@ export async function updateSet(
   id: string,
   data: {
     name: string;
-    language: string;
   },
 ): Promise<void> {
   const db = await getDb();
@@ -130,25 +126,23 @@ export async function updateSet(
 
   if (!id) throw new Error("Set id is required");
   if (!data.name.trim()) throw new Error("Name is required");
-  if (!data.language.trim()) throw new Error("Language is required");
 
   await requireCapability(session, "__can_update_set", "update sets");
 
   const existing = await db.sets.findUnique({
     where: { id },
-    select: { id: true, name: true, language: true },
+    select: { id: true, name: true },
   });
   if (!existing) throw new Error("Set not found");
 
-  // `series` and `release_date` are intentionally NOT touched here —
-  // the UI no longer exposes them and historical values are managed
+  // `series`, `language` and `release_date` are intentionally NOT touched
+  // here — the UI no longer exposes them and historical values are managed
   // by import scripts. Keeping them out of the update payload prevents
   // admins from accidentally clearing them via this surface.
   await db.sets.update({
     where: { id },
     data: {
       name: data.name.trim(),
-      language: data.language.trim(),
       updated_at: new Date(),
     },
   });
@@ -161,7 +155,6 @@ export async function updateSet(
       previous: existing,
       next: {
         name: data.name.trim(),
-        language: data.language.trim(),
       },
     },
   });
