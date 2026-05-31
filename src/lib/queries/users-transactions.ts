@@ -2,6 +2,7 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { Prisma } from "@/generated/prisma/client";
 import { filterLedgerTxTypes, LEDGER_TX_TYPES } from "./_ledger-tx-types";
+import { parseUpgraderMetadata } from "@/lib/utils/upgrader-metadata";
 import type { ledger_transaction_type } from "@/generated/prisma/enums";
 
 export async function getUserTransactions(
@@ -548,6 +549,14 @@ export async function getUserTransactions(
       // dedicated upgrader_payout fetch.
       let upgraderResult: "win" | "lose" | null = null;
       let upgraderWinnings: number | null = null;
+      // Configuration the user picked before the spin — parsed
+      // defensively from the first PF row's result_metadata blob. The
+      // blob shape isn't pinned by the backend (see
+      // upgrader-metadata.ts notes), so missing keys come back as null
+      // and the UI renders "—". Already-loaded PF rows are reused
+      // (no extra query).
+      let upgraderTargetMultiplier: number | null = null;
+      let upgraderTargetChance: number | null = null;
       if (t.type === "upgrader_bet") {
         const won = t.game_session_id
           ? upgraderWinningsByGsid.get(t.game_session_id)
@@ -558,6 +567,12 @@ export async function getUserTransactions(
         } else {
           upgraderResult = "lose";
           upgraderWinnings = 0;
+        }
+        const firstPf = gs?.provably_fair_results[0];
+        if (firstPf) {
+          const cfg = parseUpgraderMetadata(firstPf.result_metadata);
+          upgraderTargetMultiplier = cfg.targetMultiplier;
+          upgraderTargetChance = cfg.targetChance;
         }
       }
 
@@ -643,6 +658,8 @@ export async function getUserTransactions(
         battleWinnings,
         upgraderResult,
         upgraderWinnings,
+        upgraderTargetMultiplier,
+        upgraderTargetChance,
       };
     }),
     total,

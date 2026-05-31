@@ -321,6 +321,21 @@ export type Transaction = {
    * matching upgrader_payout row so we catch both shipping shapes.
    */
   upgraderWinnings: number | null;
+  /**
+   * Upgrader play CONFIGURATION — the target multiplier the user
+   * picked before the spin (e.g. 5 → "5×"). Sourced defensively from
+   * the first PF row's `result_metadata` blob (see
+   * `lib/utils/upgrader-metadata.ts`). Null on non-upgrader rows or
+   * when the backend didn't store it on the blob.
+   */
+  upgraderTargetMultiplier: number | null;
+  /**
+   * Target win-chance % the user was running at (0-100). Either
+   * stored directly on `result_metadata` or DERIVED from
+   * `upgraderTargetMultiplier` when only the multiplier is present.
+   * Null on non-upgrader rows or when neither path resolves.
+   */
+  upgraderTargetChance: number | null;
 };
 
 export type PaginatedTransactions = {

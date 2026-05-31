@@ -2,15 +2,28 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ExternalLink, Loader2, Ticket } from "lucide-react";
+import {
+  ChevronRight,
+  ExternalLink,
+  Loader2,
+  Sliders,
+  Ticket,
+  Trophy,
+} from "lucide-react";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
 import { CardImage } from "@/components/card-image";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
+import {
+  parseUpgraderMetadata,
+  formatUpgraderChance,
+  formatUpgraderMultiplier as formatTargetMultiplier,
+} from "@/lib/utils/upgrader-metadata";
 import { getUpgraderTxDialogDetails } from "./actions";
 import type { getTransactionDetail } from "@/lib/queries/transactions";
 
@@ -92,11 +105,27 @@ export function UpgraderTxDialog({
   const pfRolls = session?.pfResults ?? [];
   const won = session ? session.itemsWon : 0;
   const bet = session ? session.betAmount : 0;
-  const housePnl = session ? session.housePnl : 0;
   const multiplier = bet > 0 && won > 0 ? won / bet : null;
   // The "card the ticket landed on" — upgrader sessions have exactly
   // one PF roll per spin so we surface the first card chip up top.
   const headlineCard = pfRolls.find((p) => p.card)?.card ?? null;
+  // Upgrader is single-spin per game, so the configuration the user
+  // picked (target multiplier / chance / roll) lives on the first PF
+  // row's result_metadata blob. Parsed defensively — see
+  // upgrader-metadata.ts for the candidate-key list. Any missing field
+  // renders as "—"; the raw JSON disclosure at the bottom still shows
+  // everything for audit.
+  const upgraderConfig = pfRolls.length > 0
+    ? parseUpgraderMetadata(pfRolls[0].resultMetadata)
+    : null;
+  // Net P&L for the house on this row. Same number as session.housePnl
+  // but recomputed locally so the "Outcome" tile reads as a
+  // self-contained derivation. Positive = house kept money (emerald);
+  // negative = user pulled above stake (rose).
+  const netForHouse = bet - won;
+  // Outcome — user won = rose (house lost), user lost = emerald (house
+  // gained). Matches the OUTCOME_COLORS map in the data-table.
+  const outcome: "win" | "loss" = won > 0 ? "win" : "loss";
 
   return (
     <Dialog
@@ -128,28 +157,44 @@ export function UpgraderTxDialog({
 
         {!loading && !notFound && detail && (
           <div className="space-y-4">
-            {/* Headline — ticket + card-chip + the three money tiles */}
+            {/* OUTCOME — win/lost badge + bet + won + net-for-house.
+                House-POV colors: badge ROSE for a user win (the house
+                paid out), EMERALD for a user loss (the house kept the
+                wager). Net-for-house mirrors the same rule. */}
             <div className="rounded-2xl border bg-gradient-to-br from-card via-card to-card/70 p-4">
               <div className="flex items-start justify-between gap-3 flex-wrap">
-                <div className="space-y-0.5">
+                <div className="space-y-1.5">
                   <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                    Ticket
+                    Outcome
                   </p>
-                  {pfRolls[0] ? (
-                    <p className="text-3xl font-bold tabular-nums text-pink-600 dark:text-pink-400">
-                      {pfRolls[0].ticket.toLocaleString()}
-                    </p>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">—</p>
-                  )}
-                  {multiplier != null && (
-                    <span
-                      className="mt-1 inline-flex items-center rounded border border-rose-500/30 bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-medium text-rose-600 dark:text-rose-400"
-                      title="Realized multiplier (won ÷ bet)"
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge
+                      variant="outline"
+                      className={
+                        "capitalize text-sm px-2 py-0.5 " +
+                        (outcome === "win"
+                          ? "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30"
+                          : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30")
+                      }
                     >
-                      {formatUpgraderMultiplier(multiplier)}
-                    </span>
-                  )}
+                      {outcome === "win" ? (
+                        <>
+                          <Trophy className="size-3.5 mr-1" />
+                          Won
+                        </>
+                      ) : (
+                        "Lost"
+                      )}
+                    </Badge>
+                    {multiplier != null && (
+                      <span
+                        className="inline-flex items-center rounded border border-rose-500/30 bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-medium text-rose-600 dark:text-rose-400"
+                        title="Realized multiplier (won ÷ bet)"
+                      >
+                        {formatTargetMultiplier(multiplier)}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {headlineCard && (
@@ -186,6 +231,11 @@ export function UpgraderTxDialog({
                 )}
               </div>
 
+              {/* Money tiles — Bet (house gain → emerald), Won (house
+                  loss → rose), Net for house (signed, color follows
+                  sign on house-POV). Same data the data-table row
+                  carries; keeping it inside the popup means an admin
+                  never has to re-read the row to verify the numbers. */}
               <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
                 <div className="rounded-lg border bg-card/60 p-2">
                   <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -209,95 +259,218 @@ export function UpgraderTxDialog({
                     </p>
                   )}
                 </div>
-                <div className="rounded-lg border bg-card/60 p-2">
+                <div
+                  className="rounded-lg border bg-card/60 p-2"
+                  title="Net for the house = bet − won. Positive = we kept money, negative = user pulled above stake."
+                >
                   <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                    House P&L
+                    Net for house
                   </p>
                   <p
                     className={`font-semibold tabular-nums ${
-                      housePnl >= 0
+                      netForHouse >= 0
                         ? "text-emerald-600 dark:text-emerald-400"
                         : "text-rose-600 dark:text-rose-400"
                     }`}
                   >
-                    {housePnl >= 0 ? "+" : "-"}
-                    {formatCurrency(Math.abs(housePnl))}
+                    {netForHouse >= 0 ? "+" : "-"}
+                    {formatCurrency(Math.abs(netForHouse))}
                   </p>
                 </div>
               </div>
             </div>
 
+            {/* CONFIGURATION — the slider settings the user was
+                running at. Parsed defensively out of the first PF
+                row's result_metadata (see upgrader-metadata.ts).
+                Anything the blob didn't carry renders as "—" so the
+                operator can tell what the backend ACTUALLY stored
+                versus what's missing; the raw blob disclosure at the
+                bottom still surfaces every other key for audit. */}
+            {upgraderConfig && (
+              <div className="rounded-xl border bg-muted/30 p-3 space-y-2.5">
+                <div className="flex items-center gap-2">
+                  <Sliders className="size-3.5 text-cyan-500" />
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Configuration
+                  </p>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <ConfigTile
+                    label="Target multiplier"
+                    value={
+                      upgraderConfig.targetMultiplier != null
+                        ? formatTargetMultiplier(
+                            upgraderConfig.targetMultiplier,
+                          )
+                        : "—"
+                    }
+                    tooltip="The cashout multiplier the user picked before the spin."
+                  />
+                  <ConfigTile
+                    label="Target chance"
+                    value={
+                      upgraderConfig.targetChance != null
+                        ? `${upgraderConfig.targetChanceDerived ? "≈ " : ""}${formatUpgraderChance(
+                            upgraderConfig.targetChance,
+                          )}`
+                        : "—"
+                    }
+                    tooltip={
+                      upgraderConfig.targetChanceDerived
+                        ? "Derived from target multiplier — backend didn't store chance directly. Assumes 0 house edge so this is an upper bound."
+                        : "Win-chance % stored on the spin's metadata."
+                    }
+                  />
+                  <ConfigTile
+                    label="House edge"
+                    value={
+                      upgraderConfig.houseEdge != null
+                        ? `${(upgraderConfig.houseEdge * 100).toFixed(2).replace(/\.?0+$/, "")}%`
+                        : "—"
+                    }
+                    tooltip="Edge taken on the configured multiplier. Empty when the backend didn't store it."
+                  />
+                </div>
+              </div>
+            )}
+
             {/* Provably Fair detail — same data the full page shows,
                 compact here. Multi-roll sessions aren't expected for
                 upgrader (one spin per game), but the map handles it
-                in case the backend ever emits more than one. */}
+                in case the backend ever emits more than one. Each
+                roll surfaces the random ROLL VALUE up top (parsed
+                from result_metadata) so the audit chain reads
+                "configured X% chance → server rolled Y → outcome".
+                Raw metadata is collapsed into a <details> at the
+                bottom of each roll so the proof material stays
+                scannable while the full blob is still one click away
+                for verification. */}
             {pfRolls.length > 0 && (
               <div className="rounded-xl border bg-muted/30 p-3 space-y-3">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                   Provably Fair
                 </p>
-                {pfRolls.map((pf, i) => (
-                  <div key={pf.id} className="space-y-2 text-[11px]">
-                    {pfRolls.length > 1 && (
-                      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                        Roll #{i + 1}
-                      </p>
-                    )}
-                    <div className="grid grid-cols-2 gap-x-3 gap-y-2">
-                      <div className="min-w-0">
+                {pfRolls.map((pf, i) => {
+                  const rollMeta = parseUpgraderMetadata(pf.resultMetadata);
+                  return (
+                    <div key={pf.id} className="space-y-2 text-[11px]">
+                      {pfRolls.length > 1 && (
                         <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                          Client Seed
+                          Roll #{i + 1}
                         </p>
-                        <p className="font-mono break-all">{pf.clientSeed}</p>
+                      )}
+                      {/* Ticket (server-rolled number that decided the
+                          spin) + roll value (the parsed random value
+                          from metadata, if present). Tickets are
+                          always present; the rolled value is only
+                          present when the backend stored it on the
+                          blob. */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="rounded-lg border bg-card/60 p-2">
+                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                            Ticket
+                          </p>
+                          <p className="text-lg font-bold tabular-nums text-pink-600 dark:text-pink-400">
+                            {pf.ticket.toLocaleString()}
+                          </p>
+                        </div>
+                        <div className="rounded-lg border bg-card/60 p-2">
+                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                            Roll
+                          </p>
+                          {rollMeta.roll != null ? (
+                            <p className="text-lg font-bold tabular-nums text-cyan-600 dark:text-cyan-400">
+                              {rollMeta.roll}
+                            </p>
+                          ) : (
+                            <p className="text-lg font-bold tabular-nums text-muted-foreground">
+                              —
+                            </p>
+                          )}
+                        </div>
                       </div>
-                      <div className="min-w-0">
-                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                          Server Seed Hash
-                        </p>
-                        <p className="font-mono break-all">
-                          {pf.serverSeedHash}
-                        </p>
-                      </div>
-                      {pf.serverSeed && (
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                        <div className="min-w-0">
+                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                            Client Seed
+                          </p>
+                          <p className="font-mono break-all">{pf.clientSeed}</p>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                            Server Seed Hash
+                          </p>
+                          <p className="font-mono break-all">
+                            {pf.serverSeedHash}
+                          </p>
+                        </div>
+                        {pf.serverSeed && (
+                          <div className="col-span-2 min-w-0">
+                            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                              Server Seed
+                            </p>
+                            <p className="font-mono break-all">
+                              {pf.serverSeed}
+                            </p>
+                          </div>
+                        )}
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                            Nonce
+                          </p>
+                          <p className="font-mono">{pf.nonce}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                            Cursor
+                          </p>
+                          <p className="font-mono">{pf.cursor}</p>
+                        </div>
                         <div className="col-span-2 min-w-0">
                           <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                            Server Seed
+                            Result Hash
                           </p>
-                          <p className="font-mono break-all">{pf.serverSeed}</p>
+                          <p className="font-mono break-all">{pf.resultHash}</p>
                         </div>
-                      )}
-                      <div>
-                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                          Nonce
-                        </p>
-                        <p className="font-mono">{pf.nonce}</p>
                       </div>
-                      <div>
-                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                          Cursor
-                        </p>
-                        <p className="font-mono">{pf.cursor}</p>
-                      </div>
-                      <div className="col-span-2 min-w-0">
-                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                          Result Hash
-                        </p>
-                        <p className="font-mono break-all">{pf.resultHash}</p>
-                      </div>
-                      {pf.resultMetadata != null && (
-                        <div className="col-span-2 min-w-0">
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                            Result Metadata
-                          </p>
-                          <pre className="font-mono text-[10px] leading-snug overflow-auto rounded bg-muted/60 p-2 max-h-32">
-                            {JSON.stringify(pf.resultMetadata, null, 2)}
-                          </pre>
-                        </div>
-                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
+            )}
+
+            {/* Raw metadata — collapsed by default, always last. Holds
+                anything the structured parser above missed (or simply
+                doesn't know about yet). Use a native <details> so it
+                stays accessible without pulling in a Disclosure
+                primitive just for this. */}
+            {pfRolls.some((pf) => pf.resultMetadata != null) && (
+              <details className="group rounded-xl border bg-muted/30 p-3 [&_summary]:cursor-pointer">
+                <summary className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground list-none [&::-webkit-details-marker]:hidden">
+                  <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" />
+                  Raw metadata
+                  <span className="text-[10px] font-normal normal-case tracking-normal text-muted-foreground/70">
+                    (everything the parser couldn&apos;t structure)
+                  </span>
+                </summary>
+                <div className="mt-2 space-y-2">
+                  {pfRolls.map((pf, i) =>
+                    pf.resultMetadata != null ? (
+                      <div key={pf.id} className="space-y-1">
+                        {pfRolls.length > 1 && (
+                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                            Roll #{i + 1}
+                          </p>
+                        )}
+                        <pre className="font-mono text-[10px] leading-snug overflow-auto rounded bg-muted/60 p-2 max-h-48">
+                          {JSON.stringify(pf.resultMetadata, null, 2)}
+                        </pre>
+                      </div>
+                    ) : null,
+                  )}
+                </div>
+              </details>
             )}
 
             {/* Footer chrome — user + date and a deep-link to the
@@ -333,12 +506,28 @@ export function UpgraderTxDialog({
 }
 
 /**
- * Same multiplier formatter as the data-table / /users/[id] gaming
- * tab — kept inline so the dialog can lazy-load without dragging
- * in either parent.
+ * Compact label/value pill for the Configuration section. Mirrors the
+ * tile style already used by the Bet / Won / Net for house row above
+ * so the two sections read as a coherent set.
  */
-function formatUpgraderMultiplier(m: number): string {
-  if (m < 10) return `${m.toFixed(1)}×`;
-  if (m < 1000) return `${Math.round(m)}×`;
-  return `${(m / 1000).toFixed(1)}k×`;
+function ConfigTile({
+  label,
+  value,
+  tooltip,
+}: {
+  label: string;
+  value: string;
+  tooltip?: string;
+}) {
+  return (
+    <div
+      className="rounded-lg border bg-card/60 p-2"
+      title={tooltip}
+    >
+      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        {label}
+      </p>
+      <p className="font-semibold tabular-nums">{value}</p>
+    </div>
+  );
 }

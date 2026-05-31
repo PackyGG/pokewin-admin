@@ -38,6 +38,7 @@ import {
   formatCurrency,
   formatRelative,
 } from "@/lib/utils/format";
+import { formatUpgraderChance } from "@/lib/utils/upgrader-metadata";
 import {
   amountColorFor,
   amountSignFor,
@@ -492,11 +493,39 @@ export const CategoryTransactionsTable = React.memo(
                       // admins can spot fat-multiplier hits (5×, 100×,
                       // 1k×) at a glance.
                       if (t.type === "upgrader_bet") {
+                        // Configuration the user picked before the spin
+                        // (target multiplier + win-chance %). Both come
+                        // from `provably_fair_results.result_metadata`
+                        // via `parseUpgraderMetadata` — see the query
+                        // file for details. Either can be null when
+                        // the backend didn't store it; the chip / sub-
+                        // line just skips in that case.
+                        const targetMultiplier = t.upgraderTargetMultiplier;
+                        const targetChance = t.upgraderTargetChance;
+                        const targetBadge =
+                          targetMultiplier != null ? (
+                            <span
+                              className="ml-1.5 inline-flex items-center rounded border border-cyan-500/30 bg-cyan-500/15 px-1.5 py-0 text-[10px] font-medium text-cyan-600 dark:text-cyan-400"
+                              title="Target multiplier the user picked before the spin"
+                            >
+                              ⇡ {formatUpgraderMultiplier(targetMultiplier)}
+                            </span>
+                          ) : null;
+                        const chanceSubline =
+                          targetChance != null ? (
+                            <div className="text-[10px] text-muted-foreground leading-tight mt-0.5">
+                              Win % {formatUpgraderChance(targetChance)}
+                            </div>
+                          ) : null;
+
                         if (t.upgraderResult === "lose") {
                           // LOSS: bet kept by the house. Won = $0,
-                          // House Profit = +bet (emerald). Add a "Lost"
-                          // status chip so the outcome is explicit
-                          // alongside the column values.
+                          // House Profit = +bet (emerald). "Lost" status
+                          // chip + target multiplier badge so the row
+                          // reads as "user aimed at X×, lost". Target
+                          // chance % sits on a sub-line beneath the
+                          // House Profit so it's tied to the
+                          // configuration not the outcome.
                           return (
                             <>
                               <TableCell className="tabular-nums">
@@ -506,11 +535,13 @@ export const CategoryTransactionsTable = React.memo(
                                 <span className="ml-1.5 inline-flex items-center rounded border border-emerald-500/30 bg-emerald-500/15 px-1.5 py-0 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
                                   Lost
                                 </span>
+                                {targetBadge}
                               </TableCell>
                               <TableCell className="tabular-nums">
                                 <span className="text-emerald-600 dark:text-emerald-400">
                                   +{formatCurrency(t.amount)}
                                 </span>
+                                {chanceSubline}
                               </TableCell>
                             </>
                           );
@@ -538,6 +569,7 @@ export const CategoryTransactionsTable = React.memo(
                                     {formatUpgraderMultiplier(multiplier)}
                                   </span>
                                 )}
+                                {targetBadge}
                               </TableCell>
                               <TableCell className="tabular-nums">
                                 <span
@@ -552,6 +584,7 @@ export const CategoryTransactionsTable = React.memo(
                                   {profit > 0 ? "+" : ""}
                                   {formatCurrency(profit)}
                                 </span>
+                                {chanceSubline}
                               </TableCell>
                             </>
                           );
