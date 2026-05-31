@@ -72,13 +72,28 @@ export async function getCards(params: {
   const order = sortOrder === "asc" ? "asc" : "desc";
   (orderBy as Record<string, string>)[field] = order;
 
+  // Explicit `select` listing only the columns the grid actually renders.
+  // Switching off `findMany`'s default "all columns" behaviour means a
+  // newly-added schema field that hasn't reached the live DB (e.g. the
+  // OnePiece `cost` / `power` columns added in commit a865aa8) cannot
+  // crash this query on production. Pulling fewer columns also shrinks
+  // the Server → Client payload for the 40-card-per-page grid.
   const [cards, total] = await Promise.all([
     db.cards.findMany({
       where,
       orderBy,
       skip: (page - 1) * perPage,
       take: perPage,
-      include: {
+      select: {
+        id: true,
+        name: true,
+        image_url: true,
+        price: true,
+        hp: true,
+        rarity: true,
+        artist: true,
+        type: true,
+        card_number: true,
         sets: { select: { name: true } },
       },
     }),
@@ -107,13 +122,33 @@ export async function getCards(params: {
 
 export async function getCardDetail(id: string) {
   const db = await getDb();
-  // pack_cards relation: we only need the related `packs` row per join, not
-  // the join-row's own columns (weight, color, animation, etc). Switching
-  // include->select drops them from the wire.
+  // Explicit `select` on the card columns so a newly-added Prisma schema
+  // field that hasn't reached the live DB (e.g. the OnePiece-only
+  // `cost` / `power` columns added in commit a865aa8) cannot crash this
+  // query in production. The detail page renders only the fields named
+  // here — `cost` / `power` are write-only fields used by the create
+  // dialog, not the detail surface.
+  //
+  // pack_cards relation: we only need the related `packs` row per join,
+  // not the join-row's own columns (weight, color, animation, etc.).
+  // Switching include → select drops them from the wire.
   const [card, inventoryCountRows] = await Promise.all([
     db.cards.findUnique({
       where: { id },
-      include: {
+      select: {
+        id: true,
+        name: true,
+        image_url: true,
+        price: true,
+        hp: true,
+        rarity: true,
+        artist: true,
+        tcgplayer_id: true,
+        type: true,
+        card_number: true,
+        set_id: true,
+        created_at: true,
+        updated_at: true,
         sets: { select: { id: true, name: true } },
         pack_cards: {
           select: {
