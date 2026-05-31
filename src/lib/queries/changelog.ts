@@ -3,59 +3,29 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 
 import { adminDb } from "@/lib/admin-db";
+import {
+  CHANGELOG_CATEGORIES,
+  CHANGELOG_CHANGE_KINDS,
+  type ChangelogCategory,
+  type ChangelogChange,
+  type ChangelogChangeKind,
+  type ChangelogEntry,
+  type ChangelogStats,
+} from "@/lib/changelog/types";
 
-// ---------------------------------------------------------------------------
-// Public types
-//
-// Categories + change kinds are exposed as exported string-union types so the
-// page component (RSC) and the dialog (client) share one vocabulary without
-// importing each other. The Zod schemas in the action file mirror these
-// unions exactly.
-// ---------------------------------------------------------------------------
-
-export const CHANGELOG_CATEGORIES = [
-  "feature",
-  "fix",
-  "improvement",
-  "breaking",
-  "infra",
-] as const;
-export type ChangelogCategory = (typeof CHANGELOG_CATEGORIES)[number];
-
-export const CHANGELOG_CHANGE_KINDS = [
-  "feature",
-  "fix",
-  "improvement",
-  "breaking",
-  "infra",
-] as const;
-export type ChangelogChangeKind = (typeof CHANGELOG_CHANGE_KINDS)[number];
-
-export type ChangelogChange = {
-  kind: ChangelogChangeKind;
-  text: string;
-};
-
-export type ChangelogEntry = {
-  id: string;
-  publishedAt: string;
-  title: string;
-  summary: string;
-  version: string | null;
-  category: ChangelogCategory;
-  changes: ChangelogChange[];
-  author: {
-    adminUserId: string | null;
-    username: string | null;
-  };
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type ChangelogStats = {
-  totalEntries: number;
-  thisMonthEntries: number;
-  lastPublishedAt: string | null;
+// Re-export the shared vocabulary so existing server-side call sites
+// that import from `@/lib/queries/changelog` keep working. Client
+// components MUST import from `@/lib/changelog/types` directly to avoid
+// pulling `next/cache` / `node:module` into the client bundle (this
+// file is `import "server-only"` for that reason).
+export {
+  CHANGELOG_CATEGORIES,
+  CHANGELOG_CHANGE_KINDS,
+  type ChangelogCategory,
+  type ChangelogChange,
+  type ChangelogChangeKind,
+  type ChangelogEntry,
+  type ChangelogStats,
 };
 
 // ---------------------------------------------------------------------------

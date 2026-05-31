@@ -24,7 +24,7 @@ import {
   type ChangelogChange,
   type ChangelogChangeKind,
   type ChangelogEntry,
-} from "@/lib/queries/changelog";
+} from "@/lib/changelog/types";
 
 import { createChangelogEntry, updateChangelogEntry } from "./actions";
 
