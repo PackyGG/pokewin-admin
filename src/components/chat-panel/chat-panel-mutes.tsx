@@ -250,14 +250,33 @@ function MuteByIdDialog({ onDone }: { onDone: () => void }) {
       toast.error("Please enter a user ID");
       return;
     }
+    // `<input type="datetime-local">` returns "YYYY-MM-DDTHH:mm" with
+    // no seconds and no timezone. The server action's
+    // `z.string().datetime()` schema needs strict ISO-8601 (with Z or
+    // +HH:MM offset), so a non-empty expires would otherwise be
+    // rejected at the schema layer and the mute would silently fail.
+    // Run it through `new Date(...).toISOString()` to normalize.
+    let expiresAt: string | null = null;
+    if (expires) {
+      const d = new Date(expires);
+      if (Number.isNaN(d.getTime())) {
+        toast.error("Invalid expires date");
+        return;
+      }
+      expiresAt = d.toISOString();
+    }
     start(async () => {
       try {
         await muteUser({
           userId: userId.trim(),
           reason,
-          expiresAt: expires || null,
+          expiresAt,
         });
-        toast.success("User muted");
+        toast.success(
+          expiresAt
+            ? `Muted until ${new Date(expiresAt).toLocaleString()}`
+            : "User muted (permanent)",
+        );
         setOpen(false);
         setUserId("");
         setReason("");

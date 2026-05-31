@@ -559,13 +559,31 @@ function MuteDialog({
   username: string | null;
   isPending: boolean;
 }) {
+  // Controlled open state so we can close the dialog on success.
+  // Without this the dialog stays open after a successful Mute and the
+  // operator can't tell whether the action ran — the previous
+  // uncontrolled implementation left them clicking Mute again, then
+  // hitting a "you cannot mute the same user twice" path on the
+  // server.
+  const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [expires, setExpires] = useState("");
   const [pending, start] = useTransition();
   const router = useRouter();
 
+  function resetForm() {
+    setReason("");
+    setExpires("");
+  }
+
   return (
-    <Dialog>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (!o) resetForm();
+      }}
+    >
       <DialogTrigger
         render={
           <Button
@@ -598,6 +616,10 @@ function MuteDialog({
               value={expires}
               onChange={(e) => setExpires(e.target.value)}
             />
+            <p className="text-[10px] text-muted-foreground">
+              Leave empty for a permanent mute. Time is interpreted as
+              your local timezone.
+            </p>
           </div>
         </div>
         <DialogFooter>
@@ -607,12 +629,36 @@ function MuteDialog({
             onClick={() => {
               start(async () => {
                 try {
+                  // `<input type="datetime-local">` returns a string
+                  // like "2024-12-15T16:00" (no seconds, no timezone).
+                  // The server action validates `expiresAt` with
+                  // `z.string().datetime()`, which in Zod 4 requires
+                  // strict ISO-8601 with a Z or +HH:MM offset — so
+                  // any non-empty expires WAS being rejected at the
+                  // schema layer and the mute never reached the DB.
+                  // Convert through `new Date(...).toISOString()` so
+                  // it lands in the canonical UTC form Zod accepts.
+                  let expiresAt: string | null = null;
+                  if (expires) {
+                    const d = new Date(expires);
+                    if (Number.isNaN(d.getTime())) {
+                      toast.error("Invalid expires date");
+                      return;
+                    }
+                    expiresAt = d.toISOString();
+                  }
                   await muteUser({
                     userId,
                     reason: reason.trim(),
-                    expiresAt: expires || null,
+                    expiresAt,
                   });
-                  toast.success("Muted");
+                  toast.success(
+                    expiresAt
+                      ? `Muted until ${new Date(expiresAt).toLocaleString()}`
+                      : "Muted (permanent)",
+                  );
+                  setOpen(false);
+                  resetForm();
                   router.refresh();
                 } catch (e) {
                   toast.error(e instanceof Error ? e.message : "Failed");
