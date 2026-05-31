@@ -125,14 +125,14 @@ export default async function DashboardPage({
       {/* Primary + secondary KPI strips stream together — they share the
           same getDashboardStats fetch, so splitting them into separate
           boundaries would just show two skeletons resolving at the same
-          instant. Fallback mirrors the 8-up primary + 6-up secondary
+          instant. Fallback mirrors the 6-up primary + 7-up secondary
           grids in DashboardStatStrips. */}
       <Suspense
         key={`stats-${period}`}
         fallback={
           <>
-            <KpiStripSkeleton count={8} />
             <KpiStripSkeleton count={6} />
+            <KpiStripSkeleton count={7} />
           </>
         }
       >
@@ -249,37 +249,38 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
           width and the dollar value never truncates (these cards
           contain a 5-chip period selector + a hero currency value;
           squeezing 2-up at 380px crushed both). 2-up at sm, 4 at lg,
-          7 across at xl (PnL, GGR, Total Wager, Raw Wager, Organic
-          Wager, Deposits, Withdrawals). Creator Withdrawals moved
-          to the secondary row, next to Deposits / Hour. */}
-      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4 xl:grid-cols-7">
+          6 across at xl (PnL, GGR, Wager, Organic Wager, Deposits,
+          Withdrawals). Creator Withdrawals lives on the secondary
+          row, next to Deposits / Hour. The previous "Raw Wager"
+          tile (creator-on-stream sponsored wager INCLUDED) was
+          dropped — it only made sense alongside the customer-only
+          "Total Wager" to show the gap, and admins didn't act on it.
+          The surviving Wager tile is the customer-only figure
+          (creator sessions excluded), which is the default reading
+          of "wager" everywhere else on the site. */}
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4 xl:grid-cols-6">
         <PnlStatCard
           pnl={stats.realizedPnl}
           pnlPeriod={stats.realizedPnlPeriod}
           periodLabel={stats.periodLabel}
         />
         <GgrStatCard ggr={stats.ggr} periodLabel={stats.periodLabel} />
-        {/* Two wager cards: "Total Wager" drops wagers a creator made
-            while live on a deal/stream (house-funded sponsored balance,
-            not a real customer bet); "Raw Wager" includes them. The gap
-            between the two is the creator on-stream sponsored wager. */}
+        {/* Wager — customer wager only (drops wagers a creator made
+            while live on a deal/stream — house-funded sponsored
+            balance, not a real customer bet). This IS the default
+            "wager" reading on the rest of the site, so it doesn't
+            need a disambiguating caption. */}
         <WagerStatCard
           wager={stats.wagers}
           periodLabel={stats.periodLabel}
-          caption="excl. creator sessions"
+          title="Wager"
           breakdown={stats.wagersBreakdown}
-        />
-        <WagerStatCard
-          wager={stats.wagersRaw}
-          periodLabel={stats.periodLabel}
-          title="Raw Wager"
-          caption="incl. creator sessions"
         />
         {/* Organic Wager — only counts users who did NOT join under an
             official creator code. Drops creator-on-stream play AND
             creator-attributed customer wager, so the gap between
-            "Total Wager" (excl. creator sessions) and this card is the
-            wager that's downstream of creator marketing. */}
+            "Wager" and this card is the wager that's downstream of
+            creator marketing. */}
         <WagerStatCard
           wager={stats.wagersOrganic}
           periodLabel={stats.periodLabel}

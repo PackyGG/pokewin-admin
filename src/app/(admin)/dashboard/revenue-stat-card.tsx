@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TrendingUp, TrendingDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AnimatedNumber } from "@/components/animated-number";
+import { formatCurrency } from "@/lib/utils/format";
 
 /**
  * Period-aware stat cards used in the dashboard's primary KPI strip.
@@ -232,8 +233,12 @@ function WagerSourceChip({
 // Deposits = fresh cash flowing into the house. House gain → emerald.
 // Shows two stacked signals tied to the global period:
 //   1) total deposit amount in USD (the primary hero number)
-//   2) deposit count (smaller, muted) — answers "how many deposits"
-//      without needing a separate card.
+//   2) deposit count + avg deposit size for the SELECTED period —
+//      `Y deposits · ~$Z avg`. Avg is derived inline from
+//      `deposits / depositCount` (defends against divide-by-zero with
+//      "—") so admins can read at a glance whether the window's volume
+//      came from many small deposits or fewer large ones, scoped to
+//      whichever chip is selected.
 export function DepositsStatCard({
   deposits,
   depositCount,
@@ -245,6 +250,12 @@ export function DepositsStatCard({
   depositCount?: number;
   periodLabel: string;
 }) {
+  // Period-aware average deposit size. Falls back to "—" on a zero-
+  // count window so we never render "$NaN" or "$0 avg" misleadingly.
+  const avgDeposit =
+    typeof depositCount === "number" && depositCount > 0
+      ? formatCurrency(deposits / depositCount)
+      : "—";
   return (
     <Card className="bg-emerald-500/10">
       <CardHeader className="flex flex-col gap-2 pb-2 sm:flex-row sm:items-center sm:justify-between">
@@ -262,7 +273,7 @@ export function DepositsStatCard({
         {typeof depositCount === "number" && (
           <p className="text-stat-label mt-0.5">
             <AnimatedNumber value={depositCount} format="number" />{" "}
-            {depositCount === 1 ? "deposit" : "deposits"}
+            {depositCount === 1 ? "deposit" : "deposits"} · ~{avgDeposit} avg
           </p>
         )}
       </CardContent>
