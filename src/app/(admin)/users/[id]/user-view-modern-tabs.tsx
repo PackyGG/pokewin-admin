@@ -931,10 +931,12 @@ function OwnedCodeRow({
 export function AccountTab({
   data,
   notes,
+  pnlBreakdown,
   isAdmin,
 }: {
   data: UserDetail;
   notes: AdminNote[];
+  pnlBreakdown: PnlBreakdown;
   isAdmin: boolean;
 }) {
   const { user, balances, shippingAddress, vault, depositAddresses, featureLocks, battleLimits, mutes, capabilities } = data;
@@ -943,6 +945,18 @@ export function AccountTab({
     <div className="space-y-6">
       <SectionHeading icon={Dices} title="Wagering Stats" />
       <WageringStatsCard balances={balances} />
+      {/* Windowed P&L strip — five rolling windows (12h / 24h / 3d /
+          7d / 14d) sitting directly under the wagering stats so
+          admins reading the Account tab can see how this user has
+          been performing for the house across short-to-mid-term
+          horizons without leaving the tab. Same windowed formula
+          as the Rolling P&L block on the Overview tab — both pull
+          from the same getUserPnlBreakdown call so the numbers stay
+          consistent across tabs. House POV per CLAUDE.md: positive
+          P&L (user lost net) → emerald, negative (user gained net)
+          → rose. */}
+      <SectionHeading icon={TrendingUp} title="Windowed P&L" />
+      <WindowedPnlStrip pnlBreakdown={pnlBreakdown} />
       <SectionHeading icon={ShieldCheck} title="Account Details" />
       <Card>
         <CardContent className="pt-6">
@@ -1041,6 +1055,75 @@ function WageringStatsCard({
         accent="purple"
         icon={Percent}
       />
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  WINDOWED P&L STRIP — used by AccountTab below the wagering stats
+// ───────────────────────────────────────────────────────────────────
+
+/**
+ * Five rolling P&L tiles (12h / 24h / 3d / 7d / 14d) shown as a
+ * horizontal strip on the Account tab. Each tile shows the windowed
+ * realized P&L for that user, computed by `getUserPnlBreakdown` via
+ * the same `getUserWindowedPnlMulti` helper that powers the Rolling
+ * P&L block on the Overview tab — the numbers are guaranteed to match
+ * between tabs because both consume the same `pnlBreakdown` prop.
+ *
+ * House-POV color rule per CLAUDE.md:
+ *   pnl > 0  → user lost net → house gain → emerald
+ *   pnl < 0  → user gained net → house loss → rose
+ *   pnl == 0 → neutral grey
+ *
+ * Tile sizing mirrors `ModernMetricTile` so the strip visually
+ * matches the wagering-stats row directly above it. Grid wraps from
+ * 2 columns on phones → 5 on lg so each window stays scannable
+ * without horizontal scrolling on any breakpoint.
+ */
+function WindowedPnlStrip({
+  pnlBreakdown,
+}: {
+  pnlBreakdown: PnlBreakdown;
+}) {
+  const windows: { label: string; pnl: number }[] = [
+    { label: "Past 12h", pnl: pnlBreakdown.pnl12h },
+    { label: "Past 24h", pnl: pnlBreakdown.pnl24h },
+    { label: "Past 3d", pnl: pnlBreakdown.pnl3d },
+    { label: "Past 7d", pnl: pnlBreakdown.pnl7d },
+    { label: "Past 14d", pnl: pnlBreakdown.pnl14d },
+  ];
+  return (
+    <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
+      {windows.map((w) => {
+        // Treat exact zero as neutral so a quiet user reads grey
+        // instead of arbitrary emerald — same convention as the
+        // dashboard's P&L tiles.
+        const isZero = w.pnl === 0;
+        const isHouseGain = w.pnl > 0;
+        const accent: "emerald" | "rose" | "blue" = isZero
+          ? "blue"
+          : isHouseGain
+            ? "emerald"
+            : "rose";
+        const Icon = isZero
+          ? TrendingUp
+          : isHouseGain
+            ? TrendingUp
+            : TrendingDown;
+        const display = isZero
+          ? formatCurrency(0)
+          : `${isHouseGain ? "+" : ""}${formatCurrency(w.pnl)}`;
+        return (
+          <ModernMetricTile
+            key={w.label}
+            label={w.label}
+            value={display}
+            accent={accent}
+            icon={Icon}
+          />
+        );
+      })}
     </div>
   );
 }

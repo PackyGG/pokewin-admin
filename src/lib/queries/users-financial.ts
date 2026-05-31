@@ -31,14 +31,17 @@ export type PnlBreakdown = {
   // Net
   netPnlRealized: number;
   netPnlTrue: number;
-  // Rolling windowed house P&L (past 12h / 24h / 3d / 7d, now − N) —
+  // Rolling windowed house P&L (past 12h / 24h / 3d / 7d / 14d, now − N) —
   // windowed delta form. Positive = house gain (emerald), per
-  // CLAUDE.md. Four windows so the row reads as a short-to-long ladder
-  // of how this user has been performing for the house.
+  // CLAUDE.md. Five windows so the row reads as a short-to-long ladder
+  // of how this user has been performing for the house. 14d added on
+  // top of the original four so the Account tab's windowed P&L strip
+  // can show a slightly longer baseline than 7d for medium-term trends.
   pnl12h: number;
   pnl24h: number;
   pnl3d: number;
   pnl7d: number;
+  pnl14d: number;
 };
 
 export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown> {
@@ -51,6 +54,7 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
   const since24h = new Date(nowMs - 24 * 60 * 60 * 1000);
   const since3d = new Date(nowMs - 3 * 24 * 60 * 60 * 1000);
   const since7d = new Date(nowMs - 7 * 24 * 60 * 60 * 1000);
+  const since14d = new Date(nowMs - 14 * 24 * 60 * 60 * 1000);
   const [rows, inventoryValue, windowed] = await Promise.all([
     db.$queryRaw<{ type: string; net: string }[]>`
       SELECT type,
@@ -79,17 +83,20 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
       where: { user_id: userId, sold_at: null, exchanged_at: null },
       _sum: { value_at_obtained: true },
     }),
-    // Rolling windowed house P&L for this user across all four windows
-    // (past 12h / 24h / 3d / 7d) in a single composite call — 5
-    // round-trips total (one per source table) instead of 4 × 5 = 20
-    // from a Promise.all of four `calculateWindowedPnl` calls. Same
+    // Rolling windowed house P&L for this user across all five windows
+    // (past 12h / 24h / 3d / 7d / 14d) in a single composite call — 4
+    // round-trips total (one per source table) instead of 5 × 4 = 20
+    // from a Promise.all of five `calculateWindowedPnl` calls. Same
     // formula and same session_windows-aware upgrader correction per
-    // window — see `getUserWindowedPnlMulti`.
+    // window — see `getUserWindowedPnlMulti`. The helper packs all
+    // windows into one SELECT per table via CASE-WHEN-per-window so
+    // adding the 14d rung does not increase the round-trip count.
     getUserWindowedPnlMulti(userId, [
       { key: "h12", since: since12h },
       { key: "h24", since: since24h },
       { key: "d3", since: since3d },
       { key: "d7", since: since7d },
+      { key: "d14", since: since14d },
     ]),
   ]);
 
@@ -154,6 +161,7 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
     pnl24h: windowed.h24.pnl,
     pnl3d: windowed.d3.pnl,
     pnl7d: windowed.d7.pnl,
+    pnl14d: windowed.d14.pnl,
   };
 }
 

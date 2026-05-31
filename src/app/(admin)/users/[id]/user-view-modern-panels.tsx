@@ -340,10 +340,12 @@ export function ModernPnlPanel({
         />
       </div>
       {/* Rolling windowed P&L — house P&L over the past 12h / 24h / 3d
-          / 7d (now − N, NOT calendar buckets), as a windowed delta.
-          House POV: gain = emerald, loss = rose. Four rungs so the row
-          reads from acute (12h) to baseline (7d) and admins can spot
-          short-term spikes vs longer trends. */}
+          / 7d / 14d (now − N, NOT calendar buckets), as a windowed
+          delta. House POV: gain = emerald, loss = rose. Five rungs so
+          the row reads from acute (12h) to baseline (14d) and admins
+          can spot short-term spikes vs longer trends. The Account tab
+          surfaces the same five windows as a horizontal tile strip
+          alongside the wagering stats. */}
       <div className="mt-3 space-y-0.5 border-t pt-3">
         <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
           Rolling P&amp;L
@@ -405,6 +407,21 @@ export function ModernPnlPanel({
             >
               {pnlBreakdown.pnl7d >= 0 ? "+" : ""}
               {formatCurrency(pnlBreakdown.pnl7d)}
+            </span>
+          }
+        />
+        <PanelRow
+          label="Past 14d"
+          value={
+            <span
+              className={cn(
+                pnlBreakdown.pnl14d >= 0
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-rose-600 dark:text-rose-400",
+              )}
+            >
+              {pnlBreakdown.pnl14d >= 0 ? "+" : ""}
+              {formatCurrency(pnlBreakdown.pnl14d)}
             </span>
           }
         />

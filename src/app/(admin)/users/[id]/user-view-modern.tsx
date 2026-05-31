@@ -553,7 +553,12 @@ export function UserViewModern({
         {activeTab === "affiliate" && <AffiliateTab data={data} />}
 
         {activeTab === "account" && (
-          <AccountTab data={data} notes={notes} isAdmin={isAdmin} />
+          <AccountTab
+            data={data}
+            notes={notes}
+            pnlBreakdown={pnlBreakdown}
+            isAdmin={isAdmin}
+          />
         )}
       </FadeIn>
     </div>

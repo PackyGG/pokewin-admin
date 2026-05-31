@@ -179,11 +179,19 @@ export function AffiliateTabContent({ data }: { data: UserDetail }) {
 // ───────────────────────────────────────────────────────────────────
 
 export async function AccountTabContent({ data }: { data: UserDetail }) {
-  const notes = await getNotesForUser(data.user.id);
+  // Account tab now renders a Windowed P&L strip directly under the
+  // wagering stats, so we need the same pnlBreakdown the Overview tab
+  // consumes. Fetched in parallel with the notes so the tab paints in
+  // a single round-trip.
+  const [notes, pnlBreakdown] = await Promise.all([
+    getNotesForUser(data.user.id),
+    getUserPnlBreakdown(data.user.id),
+  ]);
   return (
     <AccountTab
       data={data}
       notes={notes}
+      pnlBreakdown={pnlBreakdown}
       isAdmin={data.sessionRole === "admin"}
     />
   );
