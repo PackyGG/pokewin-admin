@@ -73,6 +73,33 @@ export async function getUsers(params: {
   // accident) doesn't turn a valid handle into a miss.
   const searchTerm = search?.trim();
 
+  // ── Search fast paths ──────────────────────────────────────────────
+  // The legacy code path ORed 4× ILIKE '%term%' across username /
+  // display_username / name / email. ILIKE with a leading % can't use
+  // the B-tree indexes Postgres has on `user.email` / `user.username`
+  // (user_email_unique / user_username_unique) / `user.id` (PK), so
+  // every keystroke triggered a full sequential scan of the `user`
+  // table. On a multi-million row prod table that's seconds per
+  // request — the slow search admins were hitting.
+  //
+  // Recognising the input shape lets us route to an equality lookup
+  // (O(log n) on the unique index) for the inputs that don't need
+  // substring matching: UUIDs (= primary key), email-format strings
+  // (= unique email index), and Discord snowflakes (= account join).
+  // Pure-handle queries still fall back to the ILIKE OR so substring
+  // matches keep working — they're slow only when the operator
+  // genuinely types a partial handle / display name / OAuth name.
+  // A pg_trgm GIN index on lower(username) / lower(name) is the
+  // canonical way to speed that fallback up; coordinate before
+  // adding it to prod since this is the main DB.
+  const UUID_RE =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const isUuid = UUID_RE.test(searchTerm ?? "");
+  // Cheap email shape check — anything with an @ that isn't trivially
+  // malformed. We don't require a full RFC-compliant match; the unique
+  // email index settles the result either way.
+  const isEmailLike =
+    !!searchTerm && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(searchTerm);
   // Discord snowflake IDs are 17-20 digit numeric strings. We match the
   // linked Discord account (account.providerId = 'discord', account.accountId
   // = snowflake) only when the search looks like one — otherwise a generic
@@ -80,25 +107,35 @@ export async function getUsers(params: {
   const isDiscordId = /^\d{17,20}$/.test(searchTerm ?? "");
 
   if (searchTerm) {
-    // All text matches are case-insensitive (ILIKE under the hood). We
-    // search the handle, the display name + OAuth name (so a user can be
-    // found by what Discord/Google shows, not just the lowercase
-    // handle), and the email; id is an exact match.
-    const or: Prisma.UserWhereInput[] = [
-      { username: { contains: searchTerm, mode: "insensitive" } },
-      { display_username: { contains: searchTerm, mode: "insensitive" } },
-      { name: { contains: searchTerm, mode: "insensitive" } },
-      { email: { contains: searchTerm, mode: "insensitive" } },
-      { id: searchTerm },
-    ];
-    if (isDiscordId) {
-      or.push({
-        account: {
-          some: { providerId: "discord", accountId: searchTerm },
-        },
-      });
+    if (isUuid) {
+      // Primary-key lookup — single index hit.
+      where.id = searchTerm;
+    } else if (isEmailLike) {
+      // user.email has a unique index — equality lookup is O(log n).
+      // mode insensitive normalises case for the rare user whose
+      // email was stored mixed-case before the lowercasing pass.
+      where.email = { equals: searchTerm, mode: "insensitive" };
+    } else if (isDiscordId) {
+      // account.accountId is indexed; the EXISTS subquery is a single
+      // index seek per matching row.
+      where.account = {
+        some: { providerId: "discord", accountId: searchTerm },
+      };
+    } else {
+      // Substring fallback — the slow path. Search the handle, the
+      // display name + OAuth name (so a user can be found by what
+      // Discord/Google shows, not just the lowercase handle), and the
+      // email; id is included for short partial UUID pastes that
+      // didn't pass UUID_RE. Only runs when the input shape didn't
+      // match any fast path above.
+      where.OR = [
+        { username: { contains: searchTerm, mode: "insensitive" } },
+        { display_username: { contains: searchTerm, mode: "insensitive" } },
+        { name: { contains: searchTerm, mode: "insensitive" } },
+        { email: { contains: searchTerm, mode: "insensitive" } },
+        { id: searchTerm },
+      ];
     }
-    where.OR = or;
   }
 
   if (role && role !== "all" && USER_ROLES.has(role)) {
@@ -163,13 +200,25 @@ export async function getUsers(params: {
     const orderSql = order === "asc" ? "ASC" : "DESC";
     const whereSql: string[] = [];
     if (searchTerm) {
+      // Same fast-path routing as the Prisma path above — uuid /
+      // email-shape / discord-snowflake hit indexes directly; only
+      // free-form text falls back to the multi-column ILIKE OR. The
+      // safe-quoted literal is reused everywhere a substring isn't
+      // wrapped in % wildcards so apostrophes can't break out.
       const safe = searchTerm.replace(/'/g, "''");
-      const discordClause = isDiscordId
-        ? ` OR EXISTS (SELECT 1 FROM account a WHERE a."userId" = u.id AND a."providerId" = 'discord' AND a."accountId" = '${safe}')`
-        : "";
-      whereSql.push(
-        `(u.username ILIKE '%${safe}%' OR u.display_username ILIKE '%${safe}%' OR u.name ILIKE '%${safe}%' OR u.email ILIKE '%${safe}%' OR u.id = '${safe}'${discordClause})`,
-      );
+      if (isUuid) {
+        whereSql.push(`u.id = '${safe}'`);
+      } else if (isEmailLike) {
+        whereSql.push(`LOWER(u.email) = LOWER('${safe}')`);
+      } else if (isDiscordId) {
+        whereSql.push(
+          `EXISTS (SELECT 1 FROM account a WHERE a."userId" = u.id AND a."providerId" = 'discord' AND a."accountId" = '${safe}')`,
+        );
+      } else {
+        whereSql.push(
+          `(u.username ILIKE '%${safe}%' OR u.display_username ILIKE '%${safe}%' OR u.name ILIKE '%${safe}%' OR u.email ILIKE '%${safe}%' OR u.id = '${safe}')`,
+        );
+      }
     }
     if (role && role !== "all" && USER_ROLES.has(role)) {
       // role is validated against the user_role enum above, so it's a
