@@ -167,9 +167,17 @@ export async function getChangelogEntry(
 
 /**
  * KPI tile data — total entries, count published this calendar month,
- * and the most recent published_at. Wrapped in `unstable_cache` (60s,
- * tag `changelog`) so the page hero strip doesn't re-query on every
- * render; revalidated explicitly by the create/update/delete actions.
+ * and the most recent published_at. Counts BOTH the admin-curated DB
+ * rows AND the auto-generated commit entries (from
+ * `getAutoChangelogEntries()`) so the tiles match what the page renders
+ * below. Without this merge the user sees "Total entries 0" even when
+ * 80 commit cards are listed underneath.
+ *
+ * Wrapped in `unstable_cache` (60s, tag `changelog`) so the page hero
+ * strip doesn't re-query on every render; revalidated explicitly by
+ * the create/update/delete actions. The auto-entry side is a near-zero
+ * cost JSON read (Next.js inlines the import at bundle time), so
+ * including it inside the cached function is fine.
  */
 async function getChangelogStatsUncached(): Promise<ChangelogStats> {
   // Start of the current calendar month in UTC. Matches the convention
@@ -178,8 +186,9 @@ async function getChangelogStatsUncached(): Promise<ChangelogStats> {
   const monthStart = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0),
   );
+  const monthStartMs = monthStart.getTime();
 
-  const [totalEntries, thisMonthEntries, latest] = await Promise.all([
+  const [dbTotal, dbThisMonth, dbLatest, autoEntries] = await Promise.all([
     adminDb.admin_changelog_entries.count(),
     adminDb.admin_changelog_entries.count({
       where: { published_at: { gte: monthStart } },
@@ -188,12 +197,30 @@ async function getChangelogStatsUncached(): Promise<ChangelogStats> {
       orderBy: { published_at: "desc" },
       select: { published_at: true },
     }),
+    getAutoChangelogEntries(),
   ]);
 
+  // Auto entries are returned already-iso, but published_at order isn't
+  // guaranteed by `getAutoChangelogEntries()` — the JSON file is git-log
+  // order (newest first) which IS desc, but we treat that as
+  // unspecified here and pick the max explicitly so this stays robust
+  // if the script ordering ever changes.
+  let autoLatestMs = -Infinity;
+  let autoThisMonth = 0;
+  for (const e of autoEntries) {
+    const t = Date.parse(e.publishedAt);
+    if (Number.isNaN(t)) continue;
+    if (t > autoLatestMs) autoLatestMs = t;
+    if (t >= monthStartMs) autoThisMonth += 1;
+  }
+
+  const dbLatestMs = dbLatest?.published_at.getTime() ?? -Infinity;
+  const lastMs = Math.max(dbLatestMs, autoLatestMs);
+
   return {
-    totalEntries,
-    thisMonthEntries,
-    lastPublishedAt: latest?.published_at.toISOString() ?? null,
+    totalEntries: dbTotal + autoEntries.length,
+    thisMonthEntries: dbThisMonth + autoThisMonth,
+    lastPublishedAt: lastMs > -Infinity ? new Date(lastMs).toISOString() : null,
   };
 }
 

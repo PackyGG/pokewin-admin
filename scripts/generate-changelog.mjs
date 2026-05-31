@@ -13,8 +13,14 @@
  * without an explicit regen step.
  *
  * Usage:
- *   node scripts/generate-changelog.mjs           # write the file
+ *   node scripts/generate-changelog.mjs           # write the file (refuses to shrink)
  *   node scripts/generate-changelog.mjs --dry     # print to stdout
+ *   node scripts/generate-changelog.mjs --force   # overwrite even if shorter
+ *
+ * The no-shrink guard exists because Vercel performs a shallow clone
+ * (depth 1) for builds and `git log` only sees the tip commit. Without
+ * the guard, every prod deploy would overwrite the committed JSON with
+ * a near-empty list and /changelogs would render "No entries yet".
  *
  * NO external dependencies (uses node:child_process + node:fs only) so
  * it runs in Vercel's build sandbox without an extra install step.
@@ -115,19 +121,77 @@ function readCommits() {
   return entries;
 }
 
+/**
+ * Read the currently-committed JSON so we can compare against the
+ * freshly-derived list and refuse to overwrite with a smaller / empty
+ * set. Returns `null` if the file doesn't exist yet (first run) or is
+ * unparseable (corrupt). Returns `[]` when the file exists but has no
+ * entries — distinct from "file missing" so the caller can still treat
+ * it as a meaningful zero.
+ */
+function readExistingEntries() {
+  try {
+    if (!fs.existsSync(OUTPUT_PATH)) return null;
+    const raw = fs.readFileSync(OUTPUT_PATH, "utf8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed?.entries) ? parsed.entries : [];
+  } catch (err) {
+    console.warn(
+      "[generate-changelog] could not read existing JSON, treating as missing:",
+      err?.message ?? err,
+    );
+    return null;
+  }
+}
+
 function main() {
   let entries;
+  let gitFailed = false;
   try {
     entries = readCommits();
   } catch (err) {
-    // If we're not in a git repo (e.g. tarball deploy), emit an empty
-    // list rather than failing the build. The page will still render —
-    // it just won't have auto entries until the next git-backed build.
+    // If we're not in a git repo (e.g. tarball deploy), keep going —
+    // the no-shrink guard below will fall back to the existing JSON.
     console.warn(
-      "[generate-changelog] git log failed, writing empty list:",
+      "[generate-changelog] git log failed:",
       err?.message ?? err,
     );
     entries = [];
+    gitFailed = true;
+  }
+
+  // ---- No-shrink guard --------------------------------------------------
+  //
+  // The script runs as `prebuild` on Vercel. Vercel performs a shallow
+  // clone (default depth 1), so `git log` returns FEWER commits than
+  // the full history that was used to generate the JSON locally. Without
+  // this guard, Vercel would overwrite the committed 80-entry JSON with
+  // a near-empty list and the /changelogs page would show "No entries
+  // yet" in production.
+  //
+  // The committed JSON is the source of truth for prod. The rule:
+  //   - If git log fails, or returns a SHORTER list than what's already
+  //     committed, leave the existing JSON untouched.
+  //   - Otherwise (longer or equal list — meaning we have at least as
+  //     much history as before), write the fresh list.
+  //
+  // To force-overwrite locally pass `--force`. `--dry` still prints
+  // regardless so authors can inspect what the fresh list would be.
+  const existing = readExistingEntries();
+  const existingCount = existing?.length ?? 0;
+  const FORCE = process.argv.includes("--force");
+
+  if (!DRY && !FORCE && entries.length < existingCount) {
+    console.warn(
+      `[generate-changelog] fresh list (${entries.length}) is shorter than committed JSON (${existingCount}) — keeping existing file. ` +
+      (gitFailed
+        ? "Reason: git log failed (likely shallow clone)."
+        : "Reason: shallow clone or filtered subjects yielded fewer commits."),
+    );
+    console.log(
+      `[generate-changelog] kept ${existingCount} commit(s) → ${path.relative(REPO_ROOT, OUTPUT_PATH)}`,
+    );
+    return;
   }
 
   const payload = {
