@@ -43,7 +43,7 @@ export function DockedChat({ role }: { role: string }) {
       >
         <MessagesSquare className="size-4 text-blue-500" />
         <span
-          className="font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
+          className="font-mono text-[10px] font-semibold uppercase leading-none tracking-wider text-muted-foreground"
           style={{ writingMode: "vertical-rl" }}
         >
           Chat

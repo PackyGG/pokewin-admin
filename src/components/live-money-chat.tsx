@@ -178,7 +178,7 @@ export function LiveMoneyChat() {
           <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
         </span>
         <span
-          className="font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
+          className="font-mono text-[10px] font-semibold uppercase leading-none tracking-wider text-muted-foreground"
           style={{ writingMode: "vertical-rl" }}
         >
           Live

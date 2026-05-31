@@ -290,7 +290,10 @@ export function DockedRecentActivity() {
 
   // ── Collapsed tab ────────────────────────────────────────────────────
   // The slot's `top` + `height` come from `railSlotStyle`; this widget
-  // just renders the visual chrome.
+  // just renders the visual chrome. Label is "Recent" (not "Activity")
+  // so it parallels the other two tabs' short single-word labels ("Live",
+  // "Chat") and the rotated text fits inside the fixed tab height
+  // without overflow.
   if (!open) {
     return (
       <button
@@ -310,10 +313,10 @@ export function DockedRecentActivity() {
           <span className="relative inline-flex size-1.5 rounded-full bg-blue-500" />
         </span>
         <span
-          className="font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
+          className="font-mono text-[10px] font-semibold uppercase leading-none tracking-wider text-muted-foreground"
           style={{ writingMode: "vertical-rl" }}
         >
-          Activity
+          Recent
         </span>
       </button>
     );
