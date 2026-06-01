@@ -16,6 +16,8 @@ import { FadeIn } from "@/components/fade-in";
 import { formatNumber, formatCurrency, formatDate } from "@/lib/utils/format";
 import { getLeaderboardSnipers } from "@/lib/queries/insights-streamers/leaderboard-sniping";
 import { periodLabel, type StreamerPeriod } from "./types";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Leaderboard Sniping tab — race winners whose code history shows a
@@ -38,7 +40,20 @@ export async function LeaderboardSnipingTab({
 }: {
   period: StreamerPeriod;
 }) {
-  const rows = await getLeaderboardSnipers(period);
+  const { data: rows, error } = await safeQuery(
+    () => getLeaderboardSnipers(period),
+    [] as Awaited<ReturnType<typeof getLeaderboardSnipers>>,
+    "insights-streamers.leaderboardSnipers",
+  );
+  if (error) {
+    return (
+      <TileErrorFallback
+        label="Streamers — Leaderboard Sniping"
+        hint="The leaderboard sniping query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
 
   const switchedAway = rows.filter((r) => r.switchedAway).length;
   const totalPrize = rows.reduce((acc, r) => acc + r.prizeUsd, 0);

@@ -17,6 +17,8 @@ import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { getStreamerInsightRows } from "@/lib/queries/insights-streamers/overview";
 import { periodLabel, type StreamerPeriod } from "./types";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Affiliate ROI tab — house return on the money paid (or owed) to each
@@ -34,7 +36,20 @@ import { periodLabel, type StreamerPeriod } from "./types";
  * who's losing us money relative to what they cost.
  */
 export async function RoiTab({ period }: { period: StreamerPeriod }) {
-  const all = await getStreamerInsightRows(period);
+  const { data: all, error } = await safeQuery(
+    () => getStreamerInsightRows(period),
+    [] as Awaited<ReturnType<typeof getStreamerInsightRows>>,
+    "insights-streamers.roi",
+  );
+  if (error) {
+    return (
+      <TileErrorFallback
+        label="Streamers — Affiliate ROI"
+        hint="The streamer insights query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
 
   // Only consider creators with accrued commission in the window — ROI
   // is undefined when commission is 0, and listing them as ∞ ROI would

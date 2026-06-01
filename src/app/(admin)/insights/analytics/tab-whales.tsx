@@ -19,6 +19,8 @@ import {
 } from "@/lib/queries/insights-analytics/whales";
 import { EmptyState } from "@/components/empty-state";
 import type { InsightsPeriod } from "./types";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Whales tab — multi-lens top-25 user lists. Each lens is its own
@@ -37,7 +39,20 @@ export async function WhalesInsightsTab({
 }) {
   void _period;
   const lens = parseWhalesLens(subTab);
-  const rows = await getInsightsWhales(lens);
+  const { data: rows, error } = await safeQuery(
+    () => getInsightsWhales(lens),
+    [] as Awaited<ReturnType<typeof getInsightsWhales>>,
+    "insights-analytics.whales",
+  );
+  if (error) {
+    return (
+      <TileErrorFallback
+        label="Analytics — Whales"
+        hint="The whales query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
   const meta = LENS_META[lens];
 
   return (

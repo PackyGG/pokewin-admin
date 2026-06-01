@@ -21,6 +21,8 @@ import {
 import { EmptyState } from "@/components/empty-state";
 import { MultiRetentionChart } from "./multi-retention-chart";
 import type { InsightsPeriod } from "./types";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Retention tab — Day 1/7/30/90 retention with optional breakdown by
@@ -39,7 +41,20 @@ export async function RetentionInsightsTab({
 }) {
   void _period;
   const bk = parseRetentionBreakdown(breakdownBy);
-  const data = await getInsightsRetention(bk);
+  const { data, error } = await safeQuery(
+    () => getInsightsRetention(bk),
+    null,
+    "insights-analytics.retention",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Analytics — Retention"
+        hint="The retention query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
 
   // Aggregate KPI strip uses the "all" series if no breakdown, otherwise
   // the weighted-average of the breakdown series.

@@ -16,6 +16,8 @@ import {
 } from "@/lib/queries/insights-rewards/forecasting";
 import { type InsightsRewardsPeriod } from "@/lib/queries/insights-rewards/_period";
 import { ForecastLineChart } from "./forecast-line-chart";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Forecast tab — 60d historical line per category + 30d projection.
@@ -39,7 +41,20 @@ export async function ForecastTab({
   period: InsightsRewardsPeriod;
 }) {
   void period;
-  const data = await getRewardsForecasting();
+  const { data, error } = await safeQuery(
+    () => getRewardsForecasting(),
+    null,
+    "insights-rewards.forecast",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Rewards — Forecast"
+        hint="The forecasting query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
   const projectedTotal = data.rows.reduce((a, r) => a + r.projected30d, 0);
   const trailingTotal = data.rows.reduce(
     (a, r) => a + r.trailingSevenAvg,

@@ -25,6 +25,8 @@ import {
 import { DeltaChip } from "./delta-chip";
 import { KpiSparkline } from "./kpi-sparkline";
 import { OverviewChart } from "./overview-chart";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Overview tab — top-line KPIs (deposits, withdrawals, wager, GGR, NGR,
@@ -36,7 +38,20 @@ import { OverviewChart } from "./overview-chart";
  * meaningful prior window).
  */
 export async function OverviewInsightsTab({ period }: { period: InsightsPeriod }) {
-  const data = await getInsightsOverview(period);
+  const { data, error } = await safeQuery(
+    () => getInsightsOverview(period),
+    null,
+    "insights-analytics.overview",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Analytics — Overview"
+        hint="The overview query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
   const { current, previous, daily } = data;
 
   // Helper to slice the daily series into a sparkline array for one metric.

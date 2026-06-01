@@ -17,6 +17,8 @@ import {
   type CohortRow,
 } from "@/lib/queries/insights-rewards/cohort-matrix";
 import { type InsightsRewardsPeriod } from "@/lib/queries/insights-rewards/_period";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Cohort tab — signup cohort × reward usage × LTV.
@@ -44,7 +46,20 @@ export async function CohortTab({
 }: {
   period: InsightsRewardsPeriod;
 }) {
-  const data = await getRewardsCohortMatrix(period);
+  const { data, error } = await safeQuery(
+    () => getRewardsCohortMatrix(period),
+    null,
+    "insights-rewards.cohort",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Rewards — Cohort"
+        hint="The cohort-matrix query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
   const agg = data.aggregate;
 
   if (agg.cohortSize === 0) {

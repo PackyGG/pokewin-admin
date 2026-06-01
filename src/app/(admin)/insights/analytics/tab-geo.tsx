@@ -22,6 +22,8 @@ import {
   INSIGHTS_PERIOD_LABELS,
   type InsightsPeriod,
 } from "./types";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Geo tab — country / continent / US-state breakdown.
@@ -38,7 +40,20 @@ export async function GeoInsightsTab({
   groupBy: string | undefined;
 }) {
   const gb = parseGeoGroupBy(groupBy);
-  const data = await getInsightsGeo(period, gb);
+  const { data, error } = await safeQuery(
+    () => getInsightsGeo(period, gb),
+    null,
+    "insights-analytics.geo",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Analytics — Geo"
+        hint="The geo query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
 
   return (
     <FadeIn>

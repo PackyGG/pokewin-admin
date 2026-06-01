@@ -16,6 +16,8 @@ import { FadeIn } from "@/components/fade-in";
 import { formatNumber, formatCurrency } from "@/lib/utils/format";
 import { getCodeSwitchers } from "@/lib/queries/insights-streamers/code-switching";
 import { periodLabel, type StreamerPeriod } from "./types";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Code Switching tab — users who have used 2+ DISTINCT codes lifetime.
@@ -32,7 +34,20 @@ import { periodLabel, type StreamerPeriod } from "./types";
  * race-claim — this tab is the per-user view.
  */
 export async function CodeSwitchingTab({ period }: { period: StreamerPeriod }) {
-  const rows = await getCodeSwitchers(period);
+  const { data: rows, error } = await safeQuery(
+    () => getCodeSwitchers(period),
+    [] as Awaited<ReturnType<typeof getCodeSwitchers>>,
+    "insights-streamers.codeSwitching",
+  );
+  if (error) {
+    return (
+      <TileErrorFallback
+        label="Streamers — Code Switching"
+        hint="The code-switching query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
 
   const withRace = rows.filter((r) => r.raceClaimCount > 0).length;
   const totalCodes = rows.reduce((acc, r) => acc + r.codeCount, 0);

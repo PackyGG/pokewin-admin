@@ -24,6 +24,8 @@ import {
 } from "@/lib/queries/insights-analytics/ltv";
 import { EmptyState } from "@/components/empty-state";
 import type { InsightsPeriod } from "./types";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * LTV tab — lifetime value per user, segmented by percentile (top 1%,
@@ -42,7 +44,20 @@ export async function LtvInsightsTab({
 }) {
   void _period;
   const seg = parseLtvSegment(segmentBy);
-  const data = await getInsightsLtv(seg);
+  const { data, error } = await safeQuery(
+    () => getInsightsLtv(seg),
+    null,
+    "insights-analytics.ltv",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Analytics — LTV"
+        hint="The LTV query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
 
   return (
     <FadeIn>

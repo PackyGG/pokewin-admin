@@ -13,6 +13,8 @@ import {
 } from "@/lib/queries/insights-analytics/cohorts";
 import { EmptyState } from "@/components/empty-state";
 import type { InsightsPeriod } from "./types";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Cohorts tab — signup cohorts (week / month) with 4 lenses:
@@ -34,7 +36,20 @@ export async function CohortsInsightsTab({
 }) {
   void _period;
   const gran = parseCohortsGranularity(granularity);
-  const data = await getInsightsCohorts(gran);
+  const { data, error } = await safeQuery(
+    () => getInsightsCohorts(gran),
+    null,
+    "insights-analytics.cohorts",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Analytics — Cohorts"
+        hint="The cohorts query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
 
   return (
     <FadeIn>

@@ -7,6 +7,8 @@ import type { GamesPeriod } from "@/lib/queries/insights-games/_shared";
 import { labelForPeriod } from "@/lib/queries/insights-games/_shared";
 import { UpgraderHistogram } from "./upgrader-histogram";
 import { UpgraderBucketPopover } from "./upgrader-bucket-popover";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Upgrader tab — totals + per-target-multiplier bucket breakdown.
@@ -20,7 +22,20 @@ import { UpgraderBucketPopover } from "./upgrader-bucket-popover";
  * is small but high-margin).
  */
 export async function UpgraderTab({ period }: { period: GamesPeriod }) {
-  const data = await getUpgraderProfitability(period);
+  const { data, error } = await safeQuery(
+    () => getUpgraderProfitability(period),
+    null,
+    "insights-games.upgrader",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Games — Upgrader"
+        hint="The upgrader profitability query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
   const t = data.totals;
   const pnlAccent = t.pnl >= 0 ? "emerald" : "rose";
 

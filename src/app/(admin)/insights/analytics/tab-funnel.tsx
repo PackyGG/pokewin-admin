@@ -12,6 +12,8 @@ import {
 } from "@/lib/queries/insights-analytics/funnel";
 import { EmptyState } from "@/components/empty-state";
 import { INSIGHTS_PERIOD_LABELS, type InsightsPeriod } from "./types";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Funnel tab — clicks → signups → first deposit → first wager → repeat
@@ -26,7 +28,20 @@ export async function FunnelInsightsTab({
   breakdownBy: string | undefined;
 }) {
   const bk = parseFunnelBreakdown(breakdownBy);
-  const data = await getInsightsFunnel(period, bk);
+  const { data, error } = await safeQuery(
+    () => getInsightsFunnel(period, bk),
+    null,
+    "insights-analytics.funnel",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Analytics — Funnel"
+        hint="The funnel query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
 
   return (
     <FadeIn>

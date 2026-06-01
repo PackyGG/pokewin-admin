@@ -8,6 +8,8 @@ import { getPacksProfitability } from "@/lib/queries/insights-games/packs";
 import type { GamesPeriod } from "@/lib/queries/insights-games/_shared";
 import { labelForPeriod } from "@/lib/queries/insights-games/_shared";
 import { PackDrilldownPopover } from "./pack-drilldown-popover";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Packs tab — per-pack profitability table for the selected period.
@@ -21,7 +23,20 @@ import { PackDrilldownPopover } from "./pack-drilldown-popover";
  * most actual revenue land at the top.
  */
 export async function PacksTab({ period }: { period: GamesPeriod }) {
-  const data = await getPacksProfitability(period);
+  const { data, error } = await safeQuery(
+    () => getPacksProfitability(period),
+    null,
+    "insights-games.packs",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Games — Packs"
+        hint="The packs profitability query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
   return (
     <FadeIn>
       <div className="space-y-4">

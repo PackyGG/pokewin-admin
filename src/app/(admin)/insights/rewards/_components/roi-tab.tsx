@@ -20,6 +20,8 @@ import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * ROI tab — per-category cost vs subsequent gameplay GGR.
@@ -46,7 +48,20 @@ export async function RoiTab({
 }: {
   period: InsightsRewardsPeriod;
 }) {
-  const data = await getRewardsROI(period, 14);
+  const { data, error } = await safeQuery(
+    () => getRewardsROI(period, 14),
+    null,
+    "insights-rewards.roi",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Rewards — ROI"
+        hint="The ROI query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
   const label = insightsRewardsPeriodLabel(period);
   const blendedRoiLabel =
     data.blendedRoi === null ? "—" : `${data.blendedRoi.toFixed(2)}×`;

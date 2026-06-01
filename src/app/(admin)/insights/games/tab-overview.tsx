@@ -22,6 +22,8 @@ import { getGamesOverview } from "@/lib/queries/insights-games/overview";
 import type { GamesPeriod } from "@/lib/queries/insights-games/_shared";
 import { labelForPeriod } from "@/lib/queries/insights-games/_shared";
 import { OverviewChart } from "./overview-chart";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Overview tab — headline KPIs + time series + per-product P&L
@@ -37,7 +39,25 @@ import { OverviewChart } from "./overview-chart";
  *   6. Plays                                  — amber
  */
 export async function OverviewTab({ period }: { period: GamesPeriod }) {
-  const data = await getGamesOverview(period);
+  // safeQuery so a single failing aggregate (most likely a schema /
+  // raw-SQL drift after a recent migration) degrades the tab to an
+  // inline error tile rather than crashing the whole /insights/games
+  // route through the (admin) error boundary. Matches the pattern
+  // already in use on /cards (commit 133856e).
+  const { data, error } = await safeQuery(
+    () => getGamesOverview(period),
+    null,
+    "insights-games.overview",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Games — Overview"
+        hint="The overview query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
   const k = data.kpis;
   const pnlAccent = k.housePnl >= 0 ? "emerald" : "rose";
 

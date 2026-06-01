@@ -10,6 +10,8 @@ import {
   INSIGHTS_PERIOD_LABELS,
   type InsightsPeriod,
 } from "./types";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Heatmap tab — 7×24 activity heatmap with 6 selectable metrics. The
@@ -23,7 +25,20 @@ export async function HeatmapInsightsTab({
   period: InsightsPeriod;
   metric: string | undefined;
 }) {
-  const data = await getInsightsHeatmap(period);
+  const { data, error } = await safeQuery(
+    () => getInsightsHeatmap(period),
+    null,
+    "insights-analytics.heatmap",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Analytics — Heatmap"
+        hint="The heatmap query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
   const initialMetric = parseHeatmapMetric(metric);
 
   return (

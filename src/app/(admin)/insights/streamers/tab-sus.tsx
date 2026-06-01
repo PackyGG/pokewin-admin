@@ -17,6 +17,8 @@ import { formatNumber, formatCurrency } from "@/lib/utils/format";
 import { getCreatorRiskRows } from "@/lib/queries/insights-streamers/abuse";
 import { RiskBadge } from "./risk-badge";
 import { periodLabel, type StreamerPeriod } from "./types";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Sus / Abuse tab — every creator scored by 7 signals from
@@ -87,7 +89,24 @@ const SIGNAL_EXPLANATIONS: Record<string, string> = {
     "Score: 10% of cohort affected → 30 pts, ≥20% → 60 pts. Min cohort 5.",
 };
 export async function SusTab({ period }: { period: StreamerPeriod }) {
-  const rows = await getCreatorRiskRows(period);
+  // SusTab fans out across 4 signal queries (abuse base + self-play +
+  // cohort-rtp anomaly + cycle). Any one of them failing would crash
+  // the whole tab — safeQuery degrades to an inline error tile so the
+  // rest of /insights/streamers stays reachable.
+  const { data: rows, error } = await safeQuery(
+    () => getCreatorRiskRows(period),
+    [] as Awaited<ReturnType<typeof getCreatorRiskRows>>,
+    "insights-streamers.abuse",
+  );
+  if (error) {
+    return (
+      <TileErrorFallback
+        label="Streamers — Sus / Abuse"
+        hint="The risk-scoring query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
 
   const high = rows.filter((r) => r.totalRiskScore >= 75).length;
   const medium = rows.filter(

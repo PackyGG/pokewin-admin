@@ -29,6 +29,8 @@ import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Overview tab on /insights/rewards. Top-line cross-reward view:
@@ -49,10 +51,29 @@ export async function OverviewTab({
 }: {
   period: InsightsRewardsPeriod;
 }) {
-  const [summary, spend] = await Promise.all([
-    getRewardsCrossCategorySummary(period),
-    getRewardsCategorySpendBreakdown(period),
+  const [summaryRes, spendRes] = await Promise.all([
+    safeQuery(
+      () => getRewardsCrossCategorySummary(period),
+      null,
+      "insights-rewards.summary",
+    ),
+    safeQuery(
+      () => getRewardsCategorySpendBreakdown(period),
+      null,
+      "insights-rewards.spend",
+    ),
   ]);
+  if (summaryRes.error || !summaryRes.data || spendRes.error || !spendRes.data) {
+    return (
+      <TileErrorFallback
+        label="Rewards — Overview"
+        hint="The cross-category summary query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
+  const summary = summaryRes.data;
+  const spend = spendRes.data;
   const label = insightsRewardsPeriodLabel(period);
 
   // Translate the category daily series into the chart-compatible

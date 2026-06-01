@@ -18,6 +18,8 @@ import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Geo / Source tab — distribution of reward spend by country and
@@ -34,7 +36,20 @@ export async function GeoTab({
 }: {
   period: InsightsRewardsPeriod;
 }) {
-  const data = await getRewardsGeoSourceBreakdown(period);
+  const { data, error } = await safeQuery(
+    () => getRewardsGeoSourceBreakdown(period),
+    null,
+    "insights-rewards.geo",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Rewards — Geo / Source"
+        hint="The geo-source query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
   const label = insightsRewardsPeriodLabel(period);
   const totalCountryUsers = data.countries.reduce(
     (a, r) => a + r.userCount,

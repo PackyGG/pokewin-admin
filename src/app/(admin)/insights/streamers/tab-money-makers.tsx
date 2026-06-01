@@ -16,6 +16,8 @@ import { FadeIn } from "@/components/fade-in";
 import { formatCompactUsd, formatCurrency, formatNumber } from "@/lib/utils/format";
 import { getStreamerInsightRows } from "@/lib/queries/insights-streamers/overview";
 import { periodLabel, type StreamerPeriod } from "./types";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Money Makers — top 25 creators by NET house P&L contribution in the
@@ -28,7 +30,20 @@ import { periodLabel, type StreamerPeriod } from "./types";
  * cohort size).
  */
 export async function MoneyMakersTab({ period }: { period: StreamerPeriod }) {
-  const all = await getStreamerInsightRows(period);
+  const { data: all, error } = await safeQuery(
+    () => getStreamerInsightRows(period),
+    [] as Awaited<ReturnType<typeof getStreamerInsightRows>>,
+    "insights-streamers.moneyMakers",
+  );
+  if (error) {
+    return (
+      <TileErrorFallback
+        label="Streamers — Money Makers"
+        hint="The streamer insights query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
   const eligible = all.filter((r) => r.cohortDepositsUsd > 0);
   const top = eligible.slice(0, 25);
 

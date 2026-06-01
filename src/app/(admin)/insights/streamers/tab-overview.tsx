@@ -24,6 +24,8 @@ import { formatCompactUsd, formatCurrency, formatNumber } from "@/lib/utils/form
 import { cn } from "@/lib/utils";
 import { getStreamerInsightRows } from "@/lib/queries/insights-streamers/overview";
 import { periodLabel, type StreamerPeriod } from "./types";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Overview tab — every creator ranked by NET REVENUE TO HOUSE.
@@ -39,7 +41,20 @@ import { periodLabel, type StreamerPeriod } from "./types";
  * can see the streamer programme's net contribution at a glance.
  */
 export async function OverviewTab({ period }: { period: StreamerPeriod }) {
-  const rows = await getStreamerInsightRows(period);
+  const { data: rows, error } = await safeQuery(
+    () => getStreamerInsightRows(period),
+    [] as Awaited<ReturnType<typeof getStreamerInsightRows>>,
+    "insights-streamers.overview",
+  );
+  if (error) {
+    return (
+      <TileErrorFallback
+        label="Streamers — Overview"
+        hint="The streamer insights query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
 
   // Aggregates for the headline KPI strip — sums across the whole
   // creator population in this window. Same math as the per-row figure.

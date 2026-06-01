@@ -23,6 +23,8 @@ import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Stacking tab — multi-category claimants + their LTV proxy.
@@ -46,7 +48,20 @@ export async function StackingTab({
 }: {
   period: InsightsRewardsPeriod;
 }) {
-  const data = await getRewardsStackingAnalysis(period);
+  const { data, error } = await safeQuery(
+    () => getRewardsStackingAnalysis(period),
+    null,
+    "insights-rewards.stacking",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Rewards — Stacking"
+        hint="The stacking-analysis query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
   const label = insightsRewardsPeriodLabel(period);
 
   if (data.totalClaimants === 0) {

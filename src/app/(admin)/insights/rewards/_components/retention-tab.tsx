@@ -20,6 +20,8 @@ import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Retention tab — claimants vs non-claimants 7d / 30d retention.
@@ -45,7 +47,20 @@ export async function RetentionTab({
 }: {
   period: InsightsRewardsPeriod;
 }) {
-  const data = await getRewardsRetentionLift(period);
+  const { data, error } = await safeQuery(
+    () => getRewardsRetentionLift(period),
+    null,
+    "insights-rewards.retention",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Rewards — Retention"
+        hint="The retention-lift query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
   const label = insightsRewardsPeriodLabel(period);
 
   if (data.baseline.cohortSize === 0) {

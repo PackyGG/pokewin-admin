@@ -12,6 +12,8 @@ import type {
 } from "@/lib/queries/insights-games/top-users";
 import { labelForPeriod } from "@/lib/queries/insights-games/_shared";
 import { UsersFilters } from "./users-filters";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Per-user leaderboards: top wagerers, winners (user POV), losers
@@ -30,7 +32,20 @@ export async function UsersTab({
   period: GamesPeriod;
   filters: GamesTopUsersFilters;
 }) {
-  const data = await getGamesTopUsers(period, filters);
+  const { data, error } = await safeQuery(
+    () => getGamesTopUsers(period, filters),
+    null,
+    "insights-games.topUsers",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Games — Top Users"
+        hint="The top users query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
   return (
     <FadeIn>
       <div className="space-y-6">

@@ -23,6 +23,8 @@ import {
   INSIGHTS_PERIOD_LABELS,
   type InsightsPeriod,
 } from "./types";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Sources tab — signup source breakdown. Two views:
@@ -69,7 +71,20 @@ export async function SourcesInsightsTab({
 }
 
 async function BucketsView({ period }: { period: InsightsPeriod }) {
-  const rows = await getSourcesBuckets(period);
+  const { data: rows, error } = await safeQuery(
+    () => getSourcesBuckets(period),
+    [] as Awaited<ReturnType<typeof getSourcesBuckets>>,
+    "insights-analytics.sourcesBuckets",
+  );
+  if (error) {
+    return (
+      <TileErrorFallback
+        label="Analytics — Sources (Buckets)"
+        hint="The sources query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
   if (rows.length === 0) {
     return (
       <EmptyState
@@ -155,7 +170,20 @@ async function BucketsView({ period }: { period: InsightsPeriod }) {
 }
 
 async function CodesView({ period }: { period: InsightsPeriod }) {
-  const rows = await getSourcesCodes(period);
+  const { data: rows, error } = await safeQuery(
+    () => getSourcesCodes(period),
+    [] as Awaited<ReturnType<typeof getSourcesCodes>>,
+    "insights-analytics.sourcesCodes",
+  );
+  if (error) {
+    return (
+      <TileErrorFallback
+        label="Analytics — Sources (Codes)"
+        hint="The sources query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
   if (rows.length === 0) {
     return (
       <EmptyState

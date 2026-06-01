@@ -26,6 +26,8 @@ import {
 } from "./types";
 import { MoneyFlowChart, GapChart } from "./money-flow-chart";
 import { MoneyFlowRow } from "./money-flow-row";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Money Flow tab — decompose the GGR → P&L gap line-by-line.
@@ -58,7 +60,20 @@ export async function MoneyFlowInsightsTab({
   period: InsightsPeriod;
 }) {
   const periodLabel = INSIGHTS_PERIOD_LABELS[period];
-  const data = await getMoneyFlowDecomposition(period, periodLabel);
+  const { data, error } = await safeQuery(
+    () => getMoneyFlowDecomposition(period, periodLabel),
+    null,
+    "insights-analytics.moneyFlow",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Analytics — Money Flow"
+        hint="The money-flow decomposition query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
 
   // Residual exceeds 5% of GGR (or > $5k absolute) → flag as worth a
   // closer look. The threshold is deliberately loose — admins should

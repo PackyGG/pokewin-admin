@@ -21,6 +21,8 @@ import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Top spenders tab — top 25 reward recipients across categories for
@@ -39,7 +41,20 @@ export async function TopSpendersTab({
 }: {
   period: InsightsRewardsPeriod;
 }) {
-  const rows = await getRewardsTopRecipients(period);
+  const { data: rows, error } = await safeQuery(
+    () => getRewardsTopRecipients(period),
+    [] as Awaited<ReturnType<typeof getRewardsTopRecipients>>,
+    "insights-rewards.topSpenders",
+  );
+  if (error) {
+    return (
+      <TileErrorFallback
+        label="Rewards — Top Spenders"
+        hint="The top-recipients query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
   const label = insightsRewardsPeriodLabel(period);
 
   if (rows.length === 0) {

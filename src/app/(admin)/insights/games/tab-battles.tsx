@@ -9,6 +9,8 @@ import { getBattlesProfitability } from "@/lib/queries/insights-games/battles";
 import type { GamesPeriod } from "@/lib/queries/insights-games/_shared";
 import { labelForPeriod } from "@/lib/queries/insights-games/_shared";
 import { BattleDrilldownPopover } from "./battle-drilldown-popover";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Battles tab — total + per-mode breakdown + top hits table.
@@ -21,7 +23,20 @@ import { BattleDrilldownPopover } from "./battle-drilldown-popover";
  * events first.
  */
 export async function BattlesTab({ period }: { period: GamesPeriod }) {
-  const data = await getBattlesProfitability(period);
+  const { data, error } = await safeQuery(
+    () => getBattlesProfitability(period),
+    null,
+    "insights-games.battles",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Games — Battles"
+        hint="The battles profitability query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
   const t = data.totals;
   const pnlAccent = t.pnl >= 0 ? "emerald" : "rose";
   return (

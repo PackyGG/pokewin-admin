@@ -7,6 +7,8 @@ import { formatCompactUsd, formatDateTime, formatNumber } from "@/lib/utils/form
 import { getBorrowAnalytics } from "@/lib/queries/insights-games/borrow";
 import type { GamesPeriod } from "@/lib/queries/insights-games/_shared";
 import { labelForPeriod } from "@/lib/queries/insights-games/_shared";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
  * Borrow tab — quantifies the borrow play that the other tabs DROP.
@@ -24,7 +26,20 @@ import { labelForPeriod } from "@/lib/queries/insights-games/_shared";
  * profiling and recouping incentive spend.
  */
 export async function BorrowTab({ period }: { period: GamesPeriod }) {
-  const data = await getBorrowAnalytics(period);
+  const { data, error } = await safeQuery(
+    () => getBorrowAnalytics(period),
+    null,
+    "insights-games.borrow",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Games — Borrow"
+        hint="The borrow analytics query failed. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
   const t = data.totals;
   return (
     <FadeIn>
