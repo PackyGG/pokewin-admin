@@ -9,6 +9,8 @@ import {
   parseInsightsRewardsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
+import { ExportButton } from "@/components/export-button";
+import { exportAffiliateData } from "./_export";
 import { AffiliatePeriodFilter } from "./_components/period-filter";
 import { AffiliateInsightsTabSwitch } from "./_components/tab-switch";
 import {
@@ -104,7 +106,13 @@ export default async function AffiliateInsightsPage({
             title="Affiliate Insights"
             subtitle="Per-affiliate ROI, downstream wager attribution, referral funnel, inactive affiliates."
           />
-          <AffiliatePeriodFilter />
+          <div className="flex flex-wrap items-center gap-2">
+            <AffiliatePeriodFilter />
+            <ExportButton
+              action={exportAffiliateData.bind(null, period)}
+              filename={`insights-affiliate-${period}.csv`}
+            />
+          </div>
         </div>
       </PageHero>
 

@@ -3,6 +3,7 @@ import { Sigma } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
+import { ExportButton } from "@/components/export-button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   getPackEdgeRows,
@@ -10,6 +11,7 @@ import {
   getUpgraderPoolStats,
 } from "@/lib/queries/insights-edge-calc";
 
+import { exportEdgeCalcData } from "./_export";
 import { EdgeCalcTabNav } from "./tab-nav";
 import { parseEdgeCalcTab } from "./types";
 import { PacksTab } from "./packs-tab";
@@ -72,6 +74,12 @@ export default async function EdgeCalcPage({
           accent="purple"
           title="Edge Calc"
           subtitle="Theoretical EV, RTP, and house-edge math for packs, upgrader, and reward stacks."
+          action={
+            <ExportButton
+              action={exportEdgeCalcData}
+              filename="insights-edge-calc.csv"
+            />
+          }
         />
       </PageHero>
 

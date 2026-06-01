@@ -9,6 +9,8 @@ import {
   parseInsightsRewardsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
+import { ExportButton } from "@/components/export-button";
+import { exportSignupData } from "./_export";
 import { SignupInsightsPeriodFilter } from "./_components/period-filter";
 import { SignupInsightsTabSwitch } from "./_components/tab-switch";
 import {
@@ -127,7 +129,13 @@ export default async function SignupInsightsPage({
             title="Signup Reward Insights"
             subtitle="Signup → bonus claim → deposit → retention. Cohort conversion funnel, geo, source attribution."
           />
-          <SignupInsightsPeriodFilter />
+          <div className="flex flex-wrap items-center gap-2">
+            <SignupInsightsPeriodFilter />
+            <ExportButton
+              action={exportSignupData.bind(null, period)}
+              filename={`insights-signup-${period}.csv`}
+            />
+          </div>
         </div>
       </PageHero>
 

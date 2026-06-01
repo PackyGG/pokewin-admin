@@ -6,6 +6,8 @@ import {
   parseInsightsRewardsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
+import { ExportButton } from "@/components/export-button";
+import { exportBalanceAdjustmentsData } from "./_export";
 import { BalanceAdjustmentPeriodFilter } from "./_components/period-filter";
 import { BalanceAdjustmentTabSwitch } from "./_components/tab-switch";
 import { BalanceAdjustmentTabSkeleton } from "./_components/tab-skeleton";
@@ -81,7 +83,13 @@ export default async function BalanceAdjustmentsInsightsPage({
             title="Balance Adjustments"
             subtitle="Admin manual credits & debits — who, how much, why, to whom."
           />
-          <BalanceAdjustmentPeriodFilter />
+          <div className="flex flex-wrap items-center gap-2">
+            <BalanceAdjustmentPeriodFilter />
+            <ExportButton
+              action={exportBalanceAdjustmentsData.bind(null, period)}
+              filename={`insights-balance-adjustments-${period}.csv`}
+            />
+          </div>
         </div>
       </PageHero>
 

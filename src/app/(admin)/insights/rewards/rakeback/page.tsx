@@ -14,6 +14,8 @@ import {
   parseRakebackTopClaimerScope,
   type RakebackTopClaimerScope,
 } from "@/lib/queries/insights-rewards/rakeback/top-claimers";
+import { ExportButton } from "@/components/export-button";
+import { exportRakebackData } from "./_export";
 import { RakebackPeriodFilter } from "./_components/period-filter";
 import { RakebackTabSwitch } from "./_components/tab-switch";
 import { RakebackTabSkeleton } from "./_components/tab-skeleton";
@@ -107,7 +109,13 @@ export default async function InsightsRakebackPage({
             title="Rakeback Insights"
             subtitle="Cohort claim cadence, % of wager returned, lapsed claimants, ROI on the rakeback program."
           />
-          <RakebackPeriodFilter />
+          <div className="flex flex-wrap items-center gap-2">
+            <RakebackPeriodFilter />
+            <ExportButton
+              action={exportRakebackData.bind(null, period, lookback, scope)}
+              filename={`insights-rakeback-${period}.csv`}
+            />
+          </div>
         </div>
       </PageHero>
 

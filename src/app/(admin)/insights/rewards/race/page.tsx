@@ -9,6 +9,8 @@ import {
   parseInsightsRewardsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
+import { ExportButton } from "@/components/export-button";
+import { exportRaceData } from "./_export";
 import { RaceInsightsPeriodFilter } from "./_components/period-filter";
 import { RaceInsightsTabSwitch } from "./_components/tab-switch";
 import {
@@ -103,7 +105,13 @@ export default async function RaceInsightsPage({
             title="Race Insights"
             subtitle="Prize distribution, winner cohorts, budget usage, top contenders"
           />
-          <RaceInsightsPeriodFilter />
+          <div className="flex flex-wrap items-center gap-2">
+            <RaceInsightsPeriodFilter />
+            <ExportButton
+              action={exportRaceData.bind(null, period)}
+              filename={`insights-race-${period}.csv`}
+            />
+          </div>
         </div>
       </PageHero>
 
