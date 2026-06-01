@@ -10,7 +10,10 @@ import { getSignupFunnel } from "@/lib/queries/insights-rewards/signup/funnel";
 import { getSignupTimeToClaim } from "@/lib/queries/insights-rewards/signup/time-to-claim";
 import { getSignupRetention } from "@/lib/queries/insights-rewards/signup/retention";
 import { getSignupFirstDeposit } from "@/lib/queries/insights-rewards/signup/first-deposit";
-import { getSignupSourceBreakdown } from "@/lib/queries/insights-rewards/signup/source";
+import {
+  getSignupSourceBreakdown,
+  type SignupSourceRow,
+} from "@/lib/queries/insights-rewards/signup/source";
 import { getSignupCountryBreakdown } from "@/lib/queries/insights-rewards/signup/country";
 import { getSignupHourOfDay } from "@/lib/queries/insights-rewards/signup/hour-of-day";
 import { getSignupCohortMatrix } from "@/lib/queries/insights-rewards/signup/cohort-matrix";
@@ -19,6 +22,9 @@ import { getSignupTopRecipients } from "@/lib/queries/insights-rewards/signup/to
 import { getSignupGeoTimeSeries } from "@/lib/queries/insights-rewards/signup/geo-timeseries";
 import { getSignupDaily } from "@/lib/queries/insights-rewards/signup/daily";
 import type { RetentionCurveValue } from "@/lib/queries/insights-rewards/signup/retention";
+import { settle, unwrap, buildSection } from "../../_export-section";
+
+const AREA = "insights.export.signup";
 
 /**
  * Export gatherer for /insights/rewards/signup.
@@ -39,21 +45,23 @@ import type { RetentionCurveValue } from "@/lib/queries/insights-rewards/signup/
 export async function gatherSignupExportSections(
   period: InsightsRewardsPeriod,
 ): Promise<ExportSection[]> {
+  // Settle (not await-throw) so one failed query degrades only its own
+  // section(s) instead of crashing the gatherer → BOM-only download.
   const [
-    overview,
-    funnel,
-    ttc,
-    retention,
-    firstDeposit,
-    source,
-    country,
-    hod,
-    cohortMatrix,
-    dropOff,
-    topRecipients,
-    geoTs,
-    daily,
-  ] = await Promise.all([
+    overviewR,
+    funnelR,
+    ttcR,
+    retentionR,
+    firstDepositR,
+    sourceR,
+    countryR,
+    hodR,
+    cohortMatrixR,
+    dropOffR,
+    topRecipientsR,
+    geoTsR,
+    dailyR,
+  ] = await settle([
     getSignupOverview(period),
     getSignupFunnel(period),
     getSignupTimeToClaim(period),
@@ -68,76 +76,22 @@ export async function gatherSignupExportSections(
     getSignupGeoTimeSeries(period),
     getSignupDaily(period),
   ]);
+  const overview = () => unwrap(overviewR);
+  const funnel = () => unwrap(funnelR);
+  const ttc = () => unwrap(ttcR);
+  const retention = () => unwrap(retentionR);
+  const firstDeposit = () => unwrap(firstDepositR);
+  const source = () => unwrap(sourceR);
+  const country = () => unwrap(countryR);
+  const hod = () => unwrap(hodR);
+  const cohortMatrix = () => unwrap(cohortMatrixR);
+  const dropOff = () => unwrap(dropOffR);
+  const topRecipients = () => unwrap(topRecipientsR);
+  const geoTs = () => unwrap(geoTsR);
+  const daily = () => unwrap(dailyR);
 
   const label = insightsRewardsPeriodLabel(period);
-  const prior = overview.priorWindow;
-  const sections: ExportSection[] = [];
 
-  // ── Overview KPIs ───────────────────────────────────────────────
-  sections.push({
-    name: `Signup Reward Overview KPIs (${label})`,
-    columns: ["Metric", "Value"],
-    rows: [
-      ["Period", label],
-      ["Signups", overview.signups],
-      ["Claimants", overview.claimants],
-      ["Conversion %", overview.conversionPct],
-      ["Total cost (USD)", overview.totalCost],
-      ["Avg per claim (USD)", overview.avgPerClaim],
-      ["Avg per signup (USD)", overview.avgPerSignup],
-      ["First depositors", overview.firstDepositors],
-      ["First-deposit conversion %", overview.firstDepositConversionPct],
-      ["Median hours to claim", overview.medianHoursToClaim],
-      ["Signup delta vs prior", prior?.signupDelta ?? null],
-      ["Claimant delta vs prior", prior?.claimantDelta ?? null],
-      ["Cost delta vs prior", prior?.costDelta ?? null],
-    ],
-  });
-
-  // ── Daily series ────────────────────────────────────────────────
-  sections.push({
-    name: "Signup Daily Series",
-    columns: ["Date", "Signups", "Claims", "Cost (USD)"],
-    rows: daily.map((d) => [d.date, d.signups, d.claims, d.cost]),
-  });
-
-  // ── Funnel ──────────────────────────────────────────────────────
-  sections.push({
-    name: "Signup Funnel",
-    columns: ["Stage", "Count"],
-    rows: [
-      ["Signups", funnel.signups],
-      ["Claimed", funnel.claimed],
-      ["First deposit", funnel.firstDeposit],
-      ["First wager", funnel.firstWager],
-      ["Repeat deposit", funnel.repeatDeposit],
-    ],
-  });
-
-  // ── Time-to-claim ───────────────────────────────────────────────
-  sections.push({
-    name: "Signup Time-to-Claim — Summary",
-    columns: ["Metric", "Value"],
-    rows: [
-      ["Claimants", ttc.claimants],
-      ["Never claimed", ttc.neverClaimed],
-      ["Median (hours)", ttc.medianHours],
-      ["P25 (hours)", ttc.p25Hours],
-      ["P75 (hours)", ttc.p75Hours],
-      ["P95 (hours)", ttc.p95Hours],
-      ["Share within 1h", ttc.shareWithin1h],
-      ["Share within 1d", ttc.shareWithin1d],
-      ["Share within 7d", ttc.shareWithin7d],
-      ["Share within 30d", ttc.shareWithin30d],
-    ],
-  });
-  sections.push({
-    name: "Signup Time-to-Claim — Distribution",
-    columns: ["Bucket", "Count", "Edge (hours)"],
-    rows: ttc.buckets.map((b) => [b.label, b.count, b.edgeHours]),
-  });
-
-  // ── Retention curves (claimer vs non-claimer) ───────────────────
   const retentionRow = (window: string, v: RetentionCurveValue) => [
     window,
     v.claimerCount,
@@ -148,48 +102,6 @@ export async function gatherSignupExportSections(
     v.nonClaimerShare,
     v.liftPct,
   ];
-  sections.push({
-    name: "Signup Retention (claimer vs non-claimer)",
-    columns: [
-      "Window",
-      "Claimer count",
-      "Claimer retained",
-      "Claimer share",
-      "Non-claimer count",
-      "Non-claimer retained",
-      "Non-claimer share",
-      "Lift %",
-    ],
-    rows: [
-      retentionRow("24h", retention.retention24h),
-      retentionRow("7d", retention.retention7d),
-      retentionRow("30d", retention.retention30d),
-    ],
-  });
-
-  // ── First deposit cohort ────────────────────────────────────────
-  sections.push({
-    name: "Signup First Deposit — Cohort Comparison",
-    columns: ["Metric", "Claimers", "Non-claimers"],
-    rows: [
-      ["Users", firstDeposit.claimers.users, firstDeposit.nonClaimers.users],
-      ["Avg (USD)", firstDeposit.claimers.avg, firstDeposit.nonClaimers.avg],
-      ["Median (USD)", firstDeposit.claimers.median, firstDeposit.nonClaimers.median],
-      ["Total (USD)", firstDeposit.claimers.total, firstDeposit.nonClaimers.total],
-    ],
-  });
-  sections.push({
-    name: "Signup First Deposit — Buckets",
-    columns: ["Bucket", "Edge (USD)", "Claimer count", "Non-claimer count"],
-    rows: firstDeposit.buckets.map((b) => [
-      b.label,
-      b.edgeUsd,
-      b.claimerCount,
-      b.nonClaimerCount,
-    ]),
-  });
-
-  // ── Source breakdown ────────────────────────────────────────────
   const sourceColumns = [
     "Key",
     "Label",
@@ -200,170 +112,265 @@ export async function gatherSignupExportSections(
     "Avg per claim (USD)",
     "Retention 7d share",
   ];
-  sections.push({
-    name: "Signup Source — Providers",
-    columns: sourceColumns,
-    rows: source.providers.map((r) => [
-      r.key,
-      r.label,
-      r.signups,
-      r.claimants,
-      r.claimRate,
-      r.totalCost,
-      r.avgPerClaim,
-      r.retention7dShare,
-    ]),
-  });
-  sections.push({
-    name: "Signup Source — Affiliates",
-    columns: sourceColumns,
-    rows: source.affiliates.map((r) => [
-      r.key,
-      r.label,
-      r.signups,
-      r.claimants,
-      r.claimRate,
-      r.totalCost,
-      r.avgPerClaim,
-      r.retention7dShare,
-    ]),
-  });
+  const sourceRow = (r: SignupSourceRow) => [
+    r.key,
+    r.label,
+    r.signups,
+    r.claimants,
+    r.claimRate,
+    r.totalCost,
+    r.avgPerClaim,
+    r.retention7dShare,
+  ];
 
-  // ── Country breakdown ───────────────────────────────────────────
-  sections.push({
-    name: "Signup by Country",
-    columns: [
-      "Country",
-      "Signups",
-      "Claimants",
-      "Claim rate",
-      "Claim volume (USD)",
-      "Avg per claim (USD)",
-    ],
-    rows: country.countries.map((r) => [
-      r.code,
-      r.signups,
-      r.claimants,
-      r.claimRate,
-      r.claimVolume,
-      r.avgPerClaim,
-    ]),
-  });
-  sections.push({
-    name: "Signup by Continent",
-    columns: ["Continent", "Signups", "Claimants", "Claim rate"],
-    rows: country.continents.map((r) => [
-      r.code,
-      r.signups,
-      r.claimants,
-      r.claimRate,
-    ]),
-  });
+  return [
+    // ── Overview KPIs ─────────────────────────────────────────────
+    buildSection(AREA, `Signup Reward Overview KPIs (${label})`, ["Metric", "Value"], () => {
+      const o = overview();
+      const prior = o.priorWindow;
+      return [
+        ["Period", label],
+        ["Signups", o.signups],
+        ["Claimants", o.claimants],
+        ["Conversion %", o.conversionPct],
+        ["Total cost (USD)", o.totalCost],
+        ["Avg per claim (USD)", o.avgPerClaim],
+        ["Avg per signup (USD)", o.avgPerSignup],
+        ["First depositors", o.firstDepositors],
+        ["First-deposit conversion %", o.firstDepositConversionPct],
+        ["Median hours to claim", o.medianHoursToClaim],
+        ["Signup delta vs prior", prior?.signupDelta ?? null],
+        ["Claimant delta vs prior", prior?.claimantDelta ?? null],
+        ["Cost delta vs prior", prior?.costDelta ?? null],
+      ];
+    }),
 
-  // ── Hour-of-day / day-of-week / heatmap ─────────────────────────
-  sections.push({
-    name: "Signup Hour-of-Day",
-    columns: ["Hour", "Count", "Volume (USD)"],
-    rows: hod.hourly.map((b) => [b.label, b.count, b.volume]),
-  });
-  sections.push({
-    name: "Signup Day-of-Week",
-    columns: ["Day index", "Day", "Count", "Volume (USD)"],
-    rows: hod.dayOfWeek.map((b) => [b.index, b.label, b.count, b.volume]),
-  });
-  sections.push({
-    name: "Signup Heatmap (day x hour)",
-    columns: ["Day of week (0=Sun)", "Hour", "Count", "Volume (USD)"],
-    rows: hod.heatmap.map((c) => [c.dow, c.hour, c.count, c.volume]),
-  });
+    // ── Daily series ──────────────────────────────────────────────
+    buildSection(AREA, "Signup Daily Series", ["Date", "Signups", "Claims", "Cost (USD)"], () =>
+      daily().map((d) => [d.date, d.signups, d.claims, d.cost]),
+    ),
 
-  // ── Cohort matrix ───────────────────────────────────────────────
-  sections.push({
-    name: "Signup Weekly Cohort Matrix",
-    columns: [
-      "Week",
-      "Signups",
-      "Claimers",
-      "Claim rate",
-      "Retained 30d",
-      "Retained 30d share",
-      "Claimer retained 30d",
-      "Claimer retained 30d share",
-      "Non-claimer retained 30d",
-      "Non-claimer retained 30d share",
-      "Retention window complete",
-    ],
-    rows: cohortMatrix.map((r) => [
-      r.week,
-      r.signups,
-      r.claimers,
-      r.claimRate,
-      r.retained30d,
-      r.retained30dShare,
-      r.claimerRetained30d,
-      r.claimerRetained30dShare,
-      r.nonClaimerRetained30d,
-      r.nonClaimerRetained30dShare,
-      r.retentionWindowComplete ? "yes" : "no",
-    ]),
-  });
+    // ── Funnel ────────────────────────────────────────────────────
+    buildSection(AREA, "Signup Funnel", ["Stage", "Count"], () => {
+      const f = funnel();
+      return [
+        ["Signups", f.signups],
+        ["Claimed", f.claimed],
+        ["First deposit", f.firstDeposit],
+        ["First wager", f.firstWager],
+        ["Repeat deposit", f.repeatDeposit],
+      ];
+    }),
 
-  // ── Drop-off causes ─────────────────────────────────────────────
-  sections.push({
-    name: "Signup Drop-off Causes",
-    columns: ["Metric", "Value"],
-    rows: [
-      ["Cohort size", dropOff.cohortSize],
-      ["Claimers", dropOff.claimers],
-      ["Dormant", dropOff.dormant],
-      ["Deposited, no claim", dropOff.depositedNoClaim],
-      ["Wagered, no claim", dropOff.wageredNoClaim],
-      ["Banned or locked", dropOff.bannedOrLocked],
-      ["Other", dropOff.other],
-    ],
-  });
+    // ── Time-to-claim ─────────────────────────────────────────────
+    buildSection(AREA, "Signup Time-to-Claim — Summary", ["Metric", "Value"], () => {
+      const t = ttc();
+      return [
+        ["Claimants", t.claimants],
+        ["Never claimed", t.neverClaimed],
+        ["Median (hours)", t.medianHours],
+        ["P25 (hours)", t.p25Hours],
+        ["P75 (hours)", t.p75Hours],
+        ["P95 (hours)", t.p95Hours],
+        ["Share within 1h", t.shareWithin1h],
+        ["Share within 1d", t.shareWithin1d],
+        ["Share within 7d", t.shareWithin7d],
+        ["Share within 30d", t.shareWithin30d],
+      ];
+    }),
+    buildSection(
+      AREA,
+      "Signup Time-to-Claim — Distribution",
+      ["Bucket", "Count", "Edge (hours)"],
+      () => ttc().buckets.map((b) => [b.label, b.count, b.edgeHours]),
+    ),
 
-  // ── Top recipients ──────────────────────────────────────────────
-  sections.push({
-    name: "Signup Top Recipients",
-    columns: [
-      "User ID",
-      "Username",
-      "Country",
-      "Signed up at (UTC)",
-      "Claim count",
-      "Claim volume (USD)",
-      "Largest claim (USD)",
-      "First claim at (UTC)",
-      "Last claim at (UTC)",
-      "Deposit total (USD)",
-    ],
-    rows: topRecipients.map((r) => [
-      r.userId,
-      r.username,
-      r.countryCode,
-      r.signedUpAt,
-      r.claimCount,
-      r.claimVolume,
-      r.largestClaim,
-      r.firstClaimAt,
-      r.lastClaimAt,
-      r.depositTotal,
-    ]),
-  });
+    // ── Retention curves (claimer vs non-claimer) ─────────────────
+    buildSection(
+      AREA,
+      "Signup Retention (claimer vs non-claimer)",
+      [
+        "Window",
+        "Claimer count",
+        "Claimer retained",
+        "Claimer share",
+        "Non-claimer count",
+        "Non-claimer retained",
+        "Non-claimer share",
+        "Lift %",
+      ],
+      () => {
+        const r = retention();
+        return [
+          retentionRow("24h", r.retention24h),
+          retentionRow("7d", r.retention7d),
+          retentionRow("30d", r.retention30d),
+        ];
+      },
+    ),
 
-  // ── Geo time-series (long format) ───────────────────────────────
-  const geoRows: (string | number)[][] = [];
-  for (const c of geoTs) {
-    for (const d of c.daily) {
-      geoRows.push([c.code, d.date, d.signups, d.claimers]);
-    }
-  }
-  sections.push({
-    name: "Signup Geo Time Series (top countries)",
-    columns: ["Country", "Date", "Signups", "Claimers"],
-    rows: geoRows,
-  });
+    // ── First deposit cohort ──────────────────────────────────────
+    buildSection(
+      AREA,
+      "Signup First Deposit — Cohort Comparison",
+      ["Metric", "Claimers", "Non-claimers"],
+      () => {
+        const fd = firstDeposit();
+        return [
+          ["Users", fd.claimers.users, fd.nonClaimers.users],
+          ["Avg (USD)", fd.claimers.avg, fd.nonClaimers.avg],
+          ["Median (USD)", fd.claimers.median, fd.nonClaimers.median],
+          ["Total (USD)", fd.claimers.total, fd.nonClaimers.total],
+        ];
+      },
+    ),
+    buildSection(
+      AREA,
+      "Signup First Deposit — Buckets",
+      ["Bucket", "Edge (USD)", "Claimer count", "Non-claimer count"],
+      () =>
+        firstDeposit().buckets.map((b) => [b.label, b.edgeUsd, b.claimerCount, b.nonClaimerCount]),
+    ),
 
-  return sections;
+    // ── Source breakdown ──────────────────────────────────────────
+    buildSection(AREA, "Signup Source — Providers", sourceColumns, () =>
+      source().providers.map(sourceRow),
+    ),
+    buildSection(AREA, "Signup Source — Affiliates", sourceColumns, () =>
+      source().affiliates.map(sourceRow),
+    ),
+
+    // ── Country breakdown ─────────────────────────────────────────
+    buildSection(
+      AREA,
+      "Signup by Country",
+      ["Country", "Signups", "Claimants", "Claim rate", "Claim volume (USD)", "Avg per claim (USD)"],
+      () =>
+        country().countries.map((r) => [
+          r.code,
+          r.signups,
+          r.claimants,
+          r.claimRate,
+          r.claimVolume,
+          r.avgPerClaim,
+        ]),
+    ),
+    buildSection(
+      AREA,
+      "Signup by Continent",
+      ["Continent", "Signups", "Claimants", "Claim rate"],
+      () => country().continents.map((r) => [r.code, r.signups, r.claimants, r.claimRate]),
+    ),
+
+    // ── Hour-of-day / day-of-week / heatmap ───────────────────────
+    buildSection(AREA, "Signup Hour-of-Day", ["Hour", "Count", "Volume (USD)"], () =>
+      hod().hourly.map((b) => [b.label, b.count, b.volume]),
+    ),
+    buildSection(
+      AREA,
+      "Signup Day-of-Week",
+      ["Day index", "Day", "Count", "Volume (USD)"],
+      () => hod().dayOfWeek.map((b) => [b.index, b.label, b.count, b.volume]),
+    ),
+    buildSection(
+      AREA,
+      "Signup Heatmap (day x hour)",
+      ["Day of week (0=Sun)", "Hour", "Count", "Volume (USD)"],
+      () => hod().heatmap.map((c) => [c.dow, c.hour, c.count, c.volume]),
+    ),
+
+    // ── Cohort matrix ─────────────────────────────────────────────
+    buildSection(
+      AREA,
+      "Signup Weekly Cohort Matrix",
+      [
+        "Week",
+        "Signups",
+        "Claimers",
+        "Claim rate",
+        "Retained 30d",
+        "Retained 30d share",
+        "Claimer retained 30d",
+        "Claimer retained 30d share",
+        "Non-claimer retained 30d",
+        "Non-claimer retained 30d share",
+        "Retention window complete",
+      ],
+      () =>
+        cohortMatrix().map((r) => [
+          r.week,
+          r.signups,
+          r.claimers,
+          r.claimRate,
+          r.retained30d,
+          r.retained30dShare,
+          r.claimerRetained30d,
+          r.claimerRetained30dShare,
+          r.nonClaimerRetained30d,
+          r.nonClaimerRetained30dShare,
+          r.retentionWindowComplete ? "yes" : "no",
+        ]),
+    ),
+
+    // ── Drop-off causes ───────────────────────────────────────────
+    buildSection(AREA, "Signup Drop-off Causes", ["Metric", "Value"], () => {
+      const d = dropOff();
+      return [
+        ["Cohort size", d.cohortSize],
+        ["Claimers", d.claimers],
+        ["Dormant", d.dormant],
+        ["Deposited, no claim", d.depositedNoClaim],
+        ["Wagered, no claim", d.wageredNoClaim],
+        ["Banned or locked", d.bannedOrLocked],
+        ["Other", d.other],
+      ];
+    }),
+
+    // ── Top recipients ────────────────────────────────────────────
+    buildSection(
+      AREA,
+      "Signup Top Recipients",
+      [
+        "User ID",
+        "Username",
+        "Country",
+        "Signed up at (UTC)",
+        "Claim count",
+        "Claim volume (USD)",
+        "Largest claim (USD)",
+        "First claim at (UTC)",
+        "Last claim at (UTC)",
+        "Deposit total (USD)",
+      ],
+      () =>
+        topRecipients().map((r) => [
+          r.userId,
+          r.username,
+          r.countryCode,
+          r.signedUpAt,
+          r.claimCount,
+          r.claimVolume,
+          r.largestClaim,
+          r.firstClaimAt,
+          r.lastClaimAt,
+          r.depositTotal,
+        ]),
+    ),
+
+    // ── Geo time-series (long format) ─────────────────────────────
+    buildSection(
+      AREA,
+      "Signup Geo Time Series (top countries)",
+      ["Country", "Date", "Signups", "Claimers"],
+      () => {
+        const rows: (string | number)[][] = [];
+        for (const c of geoTs()) {
+          for (const d of c.daily) {
+            rows.push([c.code, d.date, d.signups, d.claimers]);
+          }
+        }
+        return rows;
+      },
+    ),
+  ];
 }

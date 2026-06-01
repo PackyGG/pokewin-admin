@@ -13,6 +13,9 @@ import { getRaceInsightsRepeatWinners } from "@/lib/queries/insights-rewards/rac
 import { getRaceInsightsROI } from "@/lib/queries/insights-rewards/race/roi";
 import { getRaceInsightsCohort } from "@/lib/queries/insights-rewards/race/cohort";
 import { getRaceInsightsTopWinners } from "@/lib/queries/insights-rewards/race/top-winners";
+import { settle, unwrap, buildSection } from "../../_export-section";
+
+const AREA = "insights.export.race";
 
 /**
  * Export gatherer for /insights/rewards/race.
@@ -32,167 +35,38 @@ import { getRaceInsightsTopWinners } from "@/lib/queries/insights-rewards/race/t
 export async function gatherRaceExportSections(
   period: InsightsRewardsPeriod,
 ): Promise<ExportSection[]> {
-  const [overview, breakdown, perType, positions, repeat, roi, cohort, top] =
-    await Promise.all([
-      getRaceInsightsOverview(period),
-      getRaceInsightsBreakdown(period),
-      getRaceInsightsPerType(period),
-      getRaceInsightsPositions(period),
-      getRaceInsightsRepeatWinners(period),
-      getRaceInsightsROI(period),
-      getRaceInsightsCohort(period),
-      getRaceInsightsTopWinners(period),
-    ]);
+  // Settle (not await-throw) so one failed query degrades only its own
+  // section(s) instead of crashing the gatherer → BOM-only download.
+  const [
+    overviewR,
+    breakdownR,
+    perTypeR,
+    positionsR,
+    repeatR,
+    roiR,
+    cohortR,
+    topR,
+  ] = await settle([
+    getRaceInsightsOverview(period),
+    getRaceInsightsBreakdown(period),
+    getRaceInsightsPerType(period),
+    getRaceInsightsPositions(period),
+    getRaceInsightsRepeatWinners(period),
+    getRaceInsightsROI(period),
+    getRaceInsightsCohort(period),
+    getRaceInsightsTopWinners(period),
+  ]);
+  const overview = () => unwrap(overviewR);
+  const breakdown = () => unwrap(breakdownR);
+  const perType = () => unwrap(perTypeR);
+  const positions = () => unwrap(positionsR);
+  const repeat = () => unwrap(repeatR);
+  const roi = () => unwrap(roiR);
+  const cohort = () => unwrap(cohortR);
+  const top = () => unwrap(topR);
 
   const label = insightsRewardsPeriodLabel(period);
-  const sections: ExportSection[] = [];
-
-  // ── Overview KPIs ───────────────────────────────────────────────
-  sections.push({
-    name: `Race Overview KPIs (${label})`,
-    columns: ["Metric", "Value"],
-    rows: [
-      ["Period", label],
-      ["Total prize paid (USD)", overview.totalPrizePaid],
-      ["Distinct races", overview.distinctRaces],
-      ["Distinct winners", overview.distinctWinners],
-      ["Winner count", overview.winnerCount],
-      ["Avg prize per race (USD)", overview.avgPrizePerRace],
-      ["Avg prize per winner (USD)", overview.avgPrizePerWinner],
-    ],
-  });
-  sections.push({
-    name: "Race Daily Prizes",
-    columns: ["Date", "Total (USD)", "Count"],
-    rows: overview.dailyPrizes.map((d) => [d.date, d.total, d.count]),
-  });
-
-  // ── Per-race breakdown ──────────────────────────────────────────
-  sections.push({
-    name: "Race Breakdown",
-    columns: [
-      "Race type",
-      "Period start",
-      "Prize pool (USD)",
-      "Winners",
-      "Top position",
-      "Top prize (USD)",
-      "Top user ID",
-      "Top username",
-      "Position spread",
-      "Configured budget (USD)",
-      "Tier utilisation",
-    ],
-    rows: breakdown.map((r) => [
-      r.raceType,
-      r.periodStart,
-      r.prizePool,
-      r.winnerCount,
-      r.topPosition,
-      r.topPrize,
-      r.topUserId,
-      r.topUsername,
-      r.positionSpread,
-      r.configuredBudget,
-      r.tierUtilisation,
-    ]),
-  });
-
-  // ── Per-type rollup ─────────────────────────────────────────────
-  sections.push({
-    name: "Race by Type",
-    columns: [
-      "Race type",
-      "Distinct races",
-      "Prize pool total (USD)",
-      "Winners",
-      "Distinct winners",
-      "Avg prize per race (USD)",
-      "Configured budget (USD)",
-      "Tier budget for window (USD)",
-      "Tier utilisation",
-      "Avg entrants per race",
-      "Conversion rate",
-    ],
-    rows: perType.map((r) => [
-      r.raceType,
-      r.distinctRaces,
-      r.prizePoolTotal,
-      r.winnerCount,
-      r.distinctWinners,
-      r.avgPrizePerRace,
-      r.configuredBudget,
-      r.tierBudgetForWindow,
-      r.tierUtilisation,
-      r.avgEntrantsPerRace,
-      r.conversionRate,
-    ]),
-  });
-
-  // ── Position-payout distribution ────────────────────────────────
-  sections.push({
-    name: "Race Position Distribution",
-    columns: ["Position", "Count", "Volume (USD)", "Avg prize (USD)"],
-    rows: positions.map((b) => [b.label, b.count, b.volume, b.avgPrize]),
-  });
-
-  // ── Repeat winners ──────────────────────────────────────────────
-  sections.push({
-    name: "Race Repeat Winners",
-    columns: ["User ID", "Username", "Race count", "Total prize (USD)", "Avg prize (USD)"],
-    rows: repeat.topRepeatWinners.map((r) => [
-      r.userId,
-      r.username,
-      r.raceCount,
-      r.totalPrize,
-      r.avgPrize,
-    ]),
-  });
-  sections.push({
-    name: "Race Repeat Frequency Buckets",
-    columns: ["Bucket", "User count", "Total prize (USD)"],
-    rows: repeat.frequencyBuckets.map((b) => [
-      b.label,
-      b.userCount,
-      b.totalPrize,
-    ]),
-  });
-
-  // ── ROI ─────────────────────────────────────────────────────────
-  sections.push({
-    name: "Race ROI",
-    columns: ["Metric", "Value"],
-    rows: [
-      ["Cost (USD)", roi.cost],
-      ["Claimant count", roi.claimantCount],
-      ["Subsequent wager (USD)", roi.subsequentWager],
-      ["Subsequent payout (USD)", roi.subsequentPayout],
-      ["Subsequent GGR (USD)", roi.subsequentGgr],
-      ["ROI (GGR / cost)", roi.roi],
-      ["Avg GGR per winner (USD)", roi.avgGgrPerWinner],
-      ["Lookback (days)", roi.lookbackDays],
-    ],
-  });
-
-  // ── Cohorts: countries / sources / signup cohorts ───────────────
   const cohortColumns = ["Key", "Label", "Winners", "Total prize (USD)", "Share %"];
-  sections.push({
-    name: "Race Winners by Country",
-    columns: cohortColumns,
-    rows: cohort.countries.map((r) => [r.key, r.label, r.winnerCount, r.totalPrize, r.share]),
-  });
-  sections.push({
-    name: "Race Winners by Source",
-    columns: cohortColumns,
-    rows: cohort.sources.map((r) => [r.key, r.label, r.winnerCount, r.totalPrize, r.share]),
-  });
-  sections.push({
-    name: "Race Winners by Signup Cohort",
-    columns: cohortColumns,
-    rows: cohort.signupCohorts.map((r) => [r.key, r.label, r.winnerCount, r.totalPrize, r.share]),
-  });
-
-  // ── Top winners (period + lifetime) ─────────────────────────────
   const topWinnerColumns = [
     "User ID",
     "Username",
@@ -201,30 +75,166 @@ export async function gatherRaceExportSections(
     "Avg prize (USD)",
     "Lifetime total (USD)",
   ];
-  sections.push({
-    name: "Race Top Winners (period)",
-    columns: topWinnerColumns,
-    rows: top.period.map((r) => [
-      r.userId,
-      r.username,
-      r.raceCount,
-      r.totalPrize,
-      r.avgPrize,
-      r.lifetimeTotal,
-    ]),
-  });
-  sections.push({
-    name: "Race Top Winners (lifetime)",
-    columns: topWinnerColumns,
-    rows: top.lifetime.map((r) => [
-      r.userId,
-      r.username,
-      r.raceCount,
-      r.totalPrize,
-      r.avgPrize,
-      r.lifetimeTotal,
-    ]),
-  });
 
-  return sections;
+  return [
+    // ── Overview KPIs ─────────────────────────────────────────────
+    buildSection(AREA, `Race Overview KPIs (${label})`, ["Metric", "Value"], () => {
+      const o = overview();
+      return [
+        ["Period", label],
+        ["Total prize paid (USD)", o.totalPrizePaid],
+        ["Distinct races", o.distinctRaces],
+        ["Distinct winners", o.distinctWinners],
+        ["Winner count", o.winnerCount],
+        ["Avg prize per race (USD)", o.avgPrizePerRace],
+        ["Avg prize per winner (USD)", o.avgPrizePerWinner],
+      ];
+    }),
+    buildSection(AREA, "Race Daily Prizes", ["Date", "Total (USD)", "Count"], () =>
+      overview().dailyPrizes.map((d) => [d.date, d.total, d.count]),
+    ),
+
+    // ── Per-race breakdown ────────────────────────────────────────
+    buildSection(
+      AREA,
+      "Race Breakdown",
+      [
+        "Race type",
+        "Period start",
+        "Prize pool (USD)",
+        "Winners",
+        "Top position",
+        "Top prize (USD)",
+        "Top user ID",
+        "Top username",
+        "Position spread",
+        "Configured budget (USD)",
+        "Tier utilisation",
+      ],
+      () =>
+        breakdown().map((r) => [
+          r.raceType,
+          r.periodStart,
+          r.prizePool,
+          r.winnerCount,
+          r.topPosition,
+          r.topPrize,
+          r.topUserId,
+          r.topUsername,
+          r.positionSpread,
+          r.configuredBudget,
+          r.tierUtilisation,
+        ]),
+    ),
+
+    // ── Per-type rollup ───────────────────────────────────────────
+    buildSection(
+      AREA,
+      "Race by Type",
+      [
+        "Race type",
+        "Distinct races",
+        "Prize pool total (USD)",
+        "Winners",
+        "Distinct winners",
+        "Avg prize per race (USD)",
+        "Configured budget (USD)",
+        "Tier budget for window (USD)",
+        "Tier utilisation",
+        "Avg entrants per race",
+        "Conversion rate",
+      ],
+      () =>
+        perType().map((r) => [
+          r.raceType,
+          r.distinctRaces,
+          r.prizePoolTotal,
+          r.winnerCount,
+          r.distinctWinners,
+          r.avgPrizePerRace,
+          r.configuredBudget,
+          r.tierBudgetForWindow,
+          r.tierUtilisation,
+          r.avgEntrantsPerRace,
+          r.conversionRate,
+        ]),
+    ),
+
+    // ── Position-payout distribution ──────────────────────────────
+    buildSection(
+      AREA,
+      "Race Position Distribution",
+      ["Position", "Count", "Volume (USD)", "Avg prize (USD)"],
+      () => positions().map((b) => [b.label, b.count, b.volume, b.avgPrize]),
+    ),
+
+    // ── Repeat winners ────────────────────────────────────────────
+    buildSection(
+      AREA,
+      "Race Repeat Winners",
+      ["User ID", "Username", "Race count", "Total prize (USD)", "Avg prize (USD)"],
+      () =>
+        repeat().topRepeatWinners.map((r) => [
+          r.userId,
+          r.username,
+          r.raceCount,
+          r.totalPrize,
+          r.avgPrize,
+        ]),
+    ),
+    buildSection(
+      AREA,
+      "Race Repeat Frequency Buckets",
+      ["Bucket", "User count", "Total prize (USD)"],
+      () => repeat().frequencyBuckets.map((b) => [b.label, b.userCount, b.totalPrize]),
+    ),
+
+    // ── ROI ───────────────────────────────────────────────────────
+    buildSection(AREA, "Race ROI", ["Metric", "Value"], () => {
+      const r = roi();
+      return [
+        ["Cost (USD)", r.cost],
+        ["Claimant count", r.claimantCount],
+        ["Subsequent wager (USD)", r.subsequentWager],
+        ["Subsequent payout (USD)", r.subsequentPayout],
+        ["Subsequent GGR (USD)", r.subsequentGgr],
+        ["ROI (GGR / cost)", r.roi],
+        ["Avg GGR per winner (USD)", r.avgGgrPerWinner],
+        ["Lookback (days)", r.lookbackDays],
+      ];
+    }),
+
+    // ── Cohorts: countries / sources / signup cohorts ─────────────
+    buildSection(AREA, "Race Winners by Country", cohortColumns, () =>
+      cohort().countries.map((r) => [r.key, r.label, r.winnerCount, r.totalPrize, r.share]),
+    ),
+    buildSection(AREA, "Race Winners by Source", cohortColumns, () =>
+      cohort().sources.map((r) => [r.key, r.label, r.winnerCount, r.totalPrize, r.share]),
+    ),
+    buildSection(AREA, "Race Winners by Signup Cohort", cohortColumns, () =>
+      cohort().signupCohorts.map((r) => [r.key, r.label, r.winnerCount, r.totalPrize, r.share]),
+    ),
+
+    // ── Top winners (period + lifetime) ───────────────────────────
+    buildSection(AREA, "Race Top Winners (period)", topWinnerColumns, () =>
+      top().period.map((r) => [
+        r.userId,
+        r.username,
+        r.raceCount,
+        r.totalPrize,
+        r.avgPrize,
+        r.lifetimeTotal,
+      ]),
+    ),
+    buildSection(AREA, "Race Top Winners (lifetime)", topWinnerColumns, () =>
+      top().lifetime.map((r) => [
+        r.userId,
+        r.username,
+        r.raceCount,
+        r.totalPrize,
+        r.avgPrize,
+        r.lifetimeTotal,
+      ]),
+    ),
+  ];
 }

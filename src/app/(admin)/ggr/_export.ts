@@ -8,6 +8,13 @@ import {
   type DashboardPeriod,
 } from "@/lib/queries/dashboard";
 import { describeLedgerType } from "@/lib/queries/_wager-payout-descriptions";
+import {
+  settle,
+  unwrap,
+  buildSection,
+} from "../insights/_export-section";
+
+const AREA = "insights.export.ggr";
 
 /** Windows the /ggr page exposes — same coercion as the page. */
 export type GgrWindow = Extract<DashboardPeriod, "24h" | "3d" | "7d">;
@@ -45,72 +52,74 @@ export function parseGgrExportWindow(value: string | undefined): GgrWindow {
 export async function gatherGgrExportSections(
   ggrWindow: GgrWindow,
 ): Promise<ExportSection[]> {
-  const [breakdown, contributors] = await Promise.all([
+  // Settle (not await-throw) so one failed query degrades only its own
+  // section(s) instead of crashing the gatherer → BOM-only download.
+  const [breakdownR, contributorsR] = await settle([
     getGgrBreakdown(ggrWindow),
     getGgrTopContributors(ggrWindow, 50),
   ]);
+  const breakdown = () => unwrap(breakdownR);
+  const contributors = () => unwrap(contributorsR);
 
   const periodLabel = DASHBOARD_PERIOD_LABELS[ggrWindow];
-  const sections: ExportSection[] = [];
 
-  // ── GGR rollup ──────────────────────────────────────────────────
-  sections.push({
-    name: `GGR Summary (${periodLabel})`,
-    columns: ["Metric", "Value"],
-    rows: [
-      ["Window", periodLabel],
-      ["Total wagers (USD)", breakdown.wagersTotal],
-      ["Total payouts (USD)", breakdown.payoutsTotal],
-      ["GGR / wagers − payouts (USD)", breakdown.ggr],
-    ],
-  });
+  return [
+    // ── GGR rollup ────────────────────────────────────────────────
+    buildSection(AREA, `GGR Summary (${periodLabel})`, ["Metric", "Value"], () => {
+      const b = breakdown();
+      return [
+        ["Window", periodLabel],
+        ["Total wagers (USD)", b.wagersTotal],
+        ["Total payouts (USD)", b.payoutsTotal],
+        ["GGR / wagers − payouts (USD)", b.ggr],
+      ];
+    }),
 
-  // ── Wager-side breakdown by ledger type ─────────────────────────
-  sections.push({
-    name: "Wagers by Ledger Type",
-    columns: ["Type", "Label", "Total (USD)", "Share of wagers %"],
-    rows: breakdown.wagers.map((r) => [
-      r.type,
-      describeLedgerType(r.type).label,
-      r.total,
-      breakdown.wagersTotal > 0
-        ? (r.total / breakdown.wagersTotal) * 100
-        : 0,
-    ]),
-  });
+    // ── Wager-side breakdown by ledger type ───────────────────────
+    buildSection(
+      AREA,
+      "Wagers by Ledger Type",
+      ["Type", "Label", "Total (USD)", "Share of wagers %"],
+      () => {
+        const b = breakdown();
+        return b.wagers.map((r) => [
+          r.type,
+          describeLedgerType(r.type).label,
+          r.total,
+          b.wagersTotal > 0 ? (r.total / b.wagersTotal) * 100 : 0,
+        ]);
+      },
+    ),
 
-  // ── Payout-side breakdown by ledger type ────────────────────────
-  sections.push({
-    name: "Payouts by Ledger Type",
-    columns: ["Type", "Label", "Total (USD)", "Share of payouts %"],
-    rows: breakdown.payouts.map((r) => [
-      r.type,
-      describeLedgerType(r.type).label,
-      r.total,
-      breakdown.payoutsTotal > 0
-        ? (r.total / breakdown.payoutsTotal) * 100
-        : 0,
-    ]),
-  });
+    // ── Payout-side breakdown by ledger type ──────────────────────
+    buildSection(
+      AREA,
+      "Payouts by Ledger Type",
+      ["Type", "Label", "Total (USD)", "Share of payouts %"],
+      () => {
+        const b = breakdown();
+        return b.payouts.map((r) => [
+          r.type,
+          describeLedgerType(r.type).label,
+          r.total,
+          b.payoutsTotal > 0 ? (r.total / b.payoutsTotal) * 100 : 0,
+        ]);
+      },
+    ),
 
-  // ── Top contributors (house-POV net) ────────────────────────────
-  sections.push({
-    name: "Top Contributors (top 50, house-POV net)",
-    columns: [
-      "User ID",
-      "Username",
-      "Wagers (USD)",
-      "Payouts (USD)",
-      "Net house-POV (USD)",
-    ],
-    rows: contributors.map((r) => [
-      r.userId,
-      r.username,
-      r.wagerTotal,
-      r.payoutTotal,
-      r.net,
-    ]),
-  });
-
-  return sections;
+    // ── Top contributors (house-POV net) ──────────────────────────
+    buildSection(
+      AREA,
+      "Top Contributors (top 50, house-POV net)",
+      ["User ID", "Username", "Wagers (USD)", "Payouts (USD)", "Net house-POV (USD)"],
+      () =>
+        contributors().map((r) => [
+          r.userId,
+          r.username,
+          r.wagerTotal,
+          r.payoutTotal,
+          r.net,
+        ]),
+    ),
+  ];
 }
