@@ -536,10 +536,11 @@ function narrowFiles(raw: unknown): ChangelogFile[] {
  * is source-agnostic and the rendering logic stays in one place.
  *
  * The per-change `changes[]` list — the "explanation for each change" —
- * is derived HERE via `deriveChanges(body, files)`: body bullets /
- * paragraphs first, file-area grouping as the guaranteed fallback. So
- * every auto card carries at least one explanatory bullet regardless of
- * how terse the commit body was.
+ * is derived HERE via `deriveChanges(body, files, summary)`: real body
+ * bullets when the commit is itemized, file-area grouping otherwise
+ * (a prose-only body stays the card's description, not a bullet). So
+ * every auto card carries at least one scannable explanatory bullet
+ * without duplicating the description text.
  */
 function mapRawCommitsToEntries(
   raw: Array<{
@@ -589,8 +590,16 @@ function mapRawCommitsToEntries(
     const summary = normalizeCommitBody(item.body);
 
     const files = Array.isArray(item.files) ? item.files : [];
-    // The per-change explanation — body-derived, file-area fallback.
-    const changes = deriveChanges(item.body, files);
+    // The per-change explanation — real body bullets when itemized,
+    // file-area fallback otherwise. `summary` is passed so a derived
+    // bullet can't duplicate the description shown above it on the card.
+    // `fromBody` tells the renderer whether the commit was itemized (drop
+    // the redundant summary block) or prose (keep it as a description).
+    const { changes, fromBody: changesFromBody } = deriveChanges(
+      item.body,
+      files,
+      summary,
+    );
 
     entries.push({
       id: `${AUTO_ID_PREFIX}${item.sha}`,
@@ -617,6 +626,7 @@ function mapRawCommitsToEntries(
       files,
       additions: typeof item.additions === "number" ? item.additions : null,
       deletions: typeof item.deletions === "number" ? item.deletions : null,
+      changesFromBody,
     });
   }
   return entries;
@@ -750,28 +760,57 @@ function inferChangeKind(text: string): ChangelogChangeKind {
 
 const BULLET_RE = /^\s*(?:[-*•‣◦]|\d+[.)]|[a-z][.)])\s+/i;
 
+// A derived change bullet longer than this reads as a paragraph, not a
+// scannable line. We trim it down to its first sentence/clause so the
+// card stays a tidy bullet list rather than a wall of prose.
+const MAX_CHANGE_LEN = 140;
+
 /**
- * Derive a structured `ChangelogChange[]` from a commit body — the core
- * "explanation for each change" the user asked for.
+ * Trim a change bullet to a scannable length. If the collapsed text is
+ * within MAX_CHANGE_LEN it's returned as-is. Otherwise we cut at the
+ * first sentence end (". " / "! " / "? ") that lands inside the budget;
+ * failing that, at the last word boundary before the cap, with an
+ * ellipsis so the truncation is visible. Keeps each bullet to one tidy
+ * line instead of letting a hard-wrapped sentence sprawl.
+ */
+function trimChangeText(text: string): string {
+  const collapsed = text.replace(/\s+/g, " ").trim();
+  if (collapsed.length <= MAX_CHANGE_LEN) return collapsed;
+
+  // Prefer a sentence boundary inside the budget.
+  const sentenceEnd = collapsed.slice(0, MAX_CHANGE_LEN).search(/[.!?](?:\s|$)/);
+  if (sentenceEnd > 30) {
+    return collapsed.slice(0, sentenceEnd + 1);
+  }
+
+  // Else cut at the last word boundary before the cap.
+  const slice = collapsed.slice(0, MAX_CHANGE_LEN);
+  const lastSpace = slice.lastIndexOf(" ");
+  const base = lastSpace > 30 ? slice.slice(0, lastSpace) : slice;
+  return base.replace(/[.,;:]?\s*$/, "") + "…";
+}
+
+/**
+ * Parse a commit body into per-change bullets — but ONLY when the body
+ * is genuinely itemized. A single prose paragraph is NOT a change list:
+ * emitting it as one giant "change" just duplicates the summary shown
+ * above it (the exact bug this fixes). So:
  *
- * Two body shapes are handled:
+ *   - Body HAS real bullet markers (`-` / `*` / `•` / `N.` / `N)` /
+ *     `a.`) → split on them. Continuation lines (indented / non-marker)
+ *     fold into the current bullet so a hard-wrapped bullet stays one
+ *     change. Intro lines before the first bullet are context (already
+ *     in the summary) and dropped. Each bullet is trimmed to one
+ *     scannable line via `trimChangeText`.
  *
- *   A. BULLETED / NUMBERED. Lines starting with `-` / `*` / `•` / `N.` /
- *      `N)` / `a.` begin a new change. Continuation lines (indented or
- *      non-marker) fold into the current bullet so a multi-line bullet
- *      stays one change. This is the dominant shape in this repo's
- *      commit history (e.g. the "1) … 2) … 3) …" sort-headers commit).
- *
- *   B. PARAGRAPHS. When the body has NO bullet markers, each blank-line-
- *      separated paragraph becomes one change. A terse one-paragraph
- *      body yields exactly one change; the file-area fallback in
- *      `deriveChanges` only kicks in when even this yields nothing.
+ *   - Body has NO bullet markers (one or more prose paragraphs) → return
+ *     `[]`. The prose renders ONCE as the card's short description; the
+ *     scannable "what changed" list comes from the file-area fallback in
+ *     `deriveChanges` instead, so nothing is duplicated.
  *
  * Trailers (Co-Authored-By etc.) are stripped first via `stripTrailers`.
  * Each change's `kind` is inferred from its text via `inferChangeKind`.
- * The list is capped at MAX_CHANGES_PER_COMMIT (the renderer surfaces
- * the overflow count). Whitespace inside a folded bullet is collapsed to
- * single spaces so a hard-wrapped sentence reads as one line in the UI.
+ * Capped at MAX_CHANGES_PER_COMMIT (the renderer surfaces the overflow).
  */
 function parseChangesFromBody(rawBody: string): ChangelogChange[] {
   const body = stripTrailers(rawBody);
@@ -780,45 +819,42 @@ function parseChangesFromBody(rawBody: string): ChangelogChange[] {
   const lines = body.split("\n");
   const hasBullets = lines.some((l) => BULLET_RE.test(l));
 
-  const rawChanges: string[] = [];
+  // No real bullets → not an itemized change list. Let the file-area
+  // fallback own the "what changed" bullets; the prose stays a one-off
+  // description on the card. This is the fix for the single-paragraph
+  // body that used to become one giant duplicated bullet.
+  if (!hasBullets) return [];
 
-  if (hasBullets) {
-    // Group A — fold continuation lines into the current bullet.
-    let current: string | null = null;
-    for (const line of lines) {
-      if (BULLET_RE.test(line)) {
-        if (current !== null) rawChanges.push(current);
-        current = line.replace(BULLET_RE, "").trim();
-      } else if (current !== null) {
-        const trimmed = line.trim();
-        // Blank line inside a bullet block ends the current bullet (so a
-        // bullet followed by a free paragraph doesn't absorb it).
-        if (trimmed === "") {
-          rawChanges.push(current);
-          current = null;
-        } else {
-          current = `${current} ${trimmed}`;
-        }
+  const rawChanges: string[] = [];
+  let current: string | null = null;
+  for (const line of lines) {
+    if (BULLET_RE.test(line)) {
+      if (current !== null) rawChanges.push(current);
+      current = line.replace(BULLET_RE, "").trim();
+    } else if (current !== null) {
+      const trimmed = line.trim();
+      // Blank line inside a bullet block ends the current bullet (so a
+      // bullet followed by a free paragraph doesn't absorb it).
+      if (trimmed === "") {
+        rawChanges.push(current);
+        current = null;
+      } else {
+        current = `${current} ${trimmed}`;
       }
-      // Non-bullet, non-continuation lines BEFORE the first bullet (an
-      // intro sentence like "Three related fixes for …:") are dropped
-      // from the change list — they're context, already shown in the
-      // summary. The bullets themselves are the per-change explanation.
     }
-    if (current !== null) rawChanges.push(current);
-  } else {
-    // Group B — each paragraph is one change.
-    for (const para of body.split(/\n\n+/)) {
-      const collapsed = para.replace(/\s+/g, " ").trim();
-      if (collapsed.length > 0) rawChanges.push(collapsed);
-    }
+    // Non-bullet, non-continuation lines BEFORE the first bullet (an
+    // intro sentence like "Three related fixes for …:") are dropped
+    // from the change list — they're context, already shown in the
+    // summary. The bullets themselves are the per-change explanation.
   }
+  if (current !== null) rawChanges.push(current);
 
   const out: ChangelogChange[] = [];
   for (const text of rawChanges) {
     const collapsed = text.replace(/\s+/g, " ").trim();
     if (collapsed.length === 0) continue;
-    out.push({ kind: inferChangeKind(collapsed), text: collapsed });
+    const trimmed = trimChangeText(collapsed);
+    out.push({ kind: inferChangeKind(trimmed), text: trimmed });
     if (out.length >= MAX_CHANGES_PER_COMMIT) break;
   }
   return out;
@@ -906,19 +942,47 @@ function deriveChangesFromFiles(files: ChangelogFile[]): ChangelogChange[] {
   return out;
 }
 
+/** Normalise text for the change-vs-summary de-dupe comparison: lower-
+ *  case, collapse whitespace, drop trailing punctuation. So a bullet that
+ *  only differs from the summary by a final period or casing still counts
+ *  as a duplicate and gets dropped. */
+function normalizeForDedupe(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[.!?;:]+$/, "")
+    .trim();
+}
+
 /**
- * Orchestrator: derive the per-change list for one commit. Body bullets
- * / paragraphs take priority (source A); the file-area grouping (source
- * B) is the fallback that guarantees every commit — even a terse
- * subject-only one — gets at least one explanatory line.
+ * Orchestrator: derive the per-change list for one commit.
+ *
+ *   1. Real body bullets (source A) take priority — an itemized commit
+ *      body IS the change list.
+ *   2. Otherwise the file-area grouping (source B) gives a scannable
+ *      "what changed" list without re-printing the prose body (which the
+ *      card already shows as its description). Guarantees every commit —
+ *      even a terse subject-only one — gets at least one explanatory line.
+ *
+ * De-dupe guard: any derived bullet whose normalised text equals the
+ * (normalised) summary is dropped, so a card never shows the same
+ * sentence as both its description and a lone bullet.
  */
 function deriveChanges(
   body: string,
   files: ChangelogFile[],
-): ChangelogChange[] {
-  const fromBody = parseChangesFromBody(body);
-  if (fromBody.length > 0) return fromBody;
-  return deriveChangesFromFiles(files);
+  summary: string,
+): { changes: ChangelogChange[]; fromBody: boolean } {
+  const bodyBullets = parseChangesFromBody(body);
+  const fromBody = bodyBullets.length > 0;
+  const base = fromBody ? bodyBullets : deriveChangesFromFiles(files);
+
+  const summaryKey = normalizeForDedupe(summary);
+  const changes =
+    summaryKey.length === 0
+      ? base
+      : base.filter((c) => normalizeForDedupe(c.text) !== summaryKey);
+  return { changes, fromBody };
 }
 
 /**

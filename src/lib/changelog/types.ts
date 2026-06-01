@@ -107,6 +107,18 @@ export type ChangelogEntry = {
   additions?: number | null;
   /** Lines deleted across the commit. `null` when unavailable. */
   deletions?: number | null;
+  /**
+   * Auto entries only: `true` when `changes[]` was derived from REAL
+   * bullet markers in the commit body (an itemized commit), `false` when
+   * it came from the file-area fallback (a prose-only or terse body).
+   *
+   * The card uses this to avoid duplication: when the body was itemized
+   * the bullets ARE the content, so the prose summary block is dropped;
+   * when it was prose the summary renders once as a short description
+   * above the (file-area) bullets. `undefined` for admin-curated DB rows
+   * — those always show both the curator's summary and their bullets.
+   */
+  changesFromBody?: boolean;
 };
 
 export type ChangelogStats = {
