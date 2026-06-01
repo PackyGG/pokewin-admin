@@ -15,6 +15,7 @@ import {
   type ChangelogChange,
   type ChangelogChangeKind,
   type ChangelogEntry,
+  type ChangelogFile,
   type ChangelogStats,
 } from "@/lib/changelog/types";
 
@@ -30,6 +31,7 @@ export {
   type ChangelogChange,
   type ChangelogChangeKind,
   type ChangelogEntry,
+  type ChangelogFile,
   type ChangelogStats,
 };
 
@@ -451,12 +453,21 @@ function loadJsonEntries(): ChangelogEntry[] {
       sha: string;
       iso: string;
       subject: string;
-      // body + filesChanged are optional on disk so an older committed
-      // JSON file (from before scripts/generate-changelog.mjs started
-      // capturing them) still parses cleanly. The renderer treats them
-      // both as graceful-degrade fields.
+      // Everything past sha/iso/subject is optional on disk so an older
+      // committed JSON file (from before scripts/generate-changelog.mjs
+      // started capturing it) still parses cleanly. The renderer treats
+      // each as a graceful-degrade field.
       body?: string;
       filesChanged?: number | null;
+      additions?: number | null;
+      deletions?: number | null;
+      scope?: string | null;
+      files?: Array<{
+        path?: unknown;
+        status?: unknown;
+        additions?: unknown;
+        deletions?: unknown;
+      }>;
     }>;
   };
   const raw = Array.isArray(data.entries) ? data.entries : [];
@@ -466,20 +477,69 @@ function loadJsonEntries(): ChangelogEntry[] {
       iso: r.iso,
       subject: r.subject,
       body: r.body ?? "",
-      filesChanged:
-        typeof r.filesChanged === "number" && Number.isFinite(r.filesChanged)
-          ? r.filesChanged
+      filesChanged: finiteOrNull(r.filesChanged),
+      additions: finiteOrNull(r.additions),
+      deletions: finiteOrNull(r.deletions),
+      scope:
+        typeof r.scope === "string" && r.scope.trim().length > 0
+          ? r.scope.trim()
           : null,
+      files: narrowFiles(r.files),
     })),
   );
+}
+
+/** Coerce an unknown to a finite number or null. */
+function finiteOrNull(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+/**
+ * Narrow the raw JSON `files[]` blob to typed `ChangelogFile[]`. Drops
+ * entries with a missing / non-string path; coerces missing status to
+ * "M" (a reasonable default — most touched files are modifications) and
+ * non-numeric per-file counts to null. Bounded by MAX_FILES_PER_COMMIT
+ * (the generator already caps, this is belt-and-suspenders against a
+ * hand-edited JSON).
+ */
+function narrowFiles(raw: unknown): ChangelogFile[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ChangelogFile[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const obj = item as {
+      path?: unknown;
+      status?: unknown;
+      additions?: unknown;
+      deletions?: unknown;
+    };
+    if (typeof obj.path !== "string" || obj.path.length === 0) continue;
+    out.push({
+      path: obj.path,
+      status:
+        typeof obj.status === "string" && obj.status.length > 0
+          ? obj.status
+          : "M",
+      additions: finiteOrNull(obj.additions),
+      deletions: finiteOrNull(obj.deletions),
+    });
+    if (out.length >= 20) break;
+  }
+  return out;
 }
 
 /**
  * Internal: shape-normalise raw commit records (from EITHER GitHub or
  * the on-disk JSON) into the display-ready `ChangelogEntry` form. Both
- * sources emit the same intermediate shape (sha / iso / subject / body
- * / filesChanged) so this mapper is source-agnostic and the rendering
- * logic stays in one place.
+ * sources emit the same intermediate shape (sha / iso / subject / body /
+ * filesChanged / additions / deletions / scope / files) so this mapper
+ * is source-agnostic and the rendering logic stays in one place.
+ *
+ * The per-change `changes[]` list — the "explanation for each change" —
+ * is derived HERE via `deriveChanges(body, files)`: body bullets /
+ * paragraphs first, file-area grouping as the guaranteed fallback. So
+ * every auto card carries at least one explanatory bullet regardless of
+ * how terse the commit body was.
  */
 function mapRawCommitsToEntries(
   raw: Array<{
@@ -488,6 +548,10 @@ function mapRawCommitsToEntries(
     subject: string;
     body: string;
     filesChanged: number | null;
+    additions?: number | null;
+    deletions?: number | null;
+    scope?: string | null;
+    files?: ChangelogFile[];
   }>,
 ): ChangelogEntry[] {
   const entries: ChangelogEntry[] = [];
@@ -503,18 +567,30 @@ function mapRawCommitsToEntries(
     if (Number.isNaN(ms)) continue;
     const publishedAt = new Date(ms).toISOString();
 
-    const { title, scope, category } = cleanSubject(item.subject);
+    const { title, scope: subjectScope, category } = cleanSubject(item.subject);
 
     // Scope (when present) shows up as a small monospace prefix on the
     // title — keeps "feat(sets): drop language input" recoverable
     // without bringing the full conventional-commit string into the UI.
-    const displayTitle = scope ? `${scope}: ${title}` : title;
+    const displayTitle = subjectScope ? `${subjectScope}: ${title}` : title;
+
+    // Prefer the scope captured upstream (generator / GitHub parse);
+    // fall back to the one re-derived by cleanSubject so an older JSON
+    // without the field still gets an area badge.
+    const scope =
+      typeof item.scope === "string" && item.scope.trim().length > 0
+        ? item.scope.trim()
+        : subjectScope;
 
     // Commit body becomes the entry summary — but strip the trailing
     // Co-Authored-By footer (and similar trailer lines) so the card
     // doesn't lead with admin metadata, and cap at 3 paragraphs so a
     // verbose commit doesn't make one card swallow the feed.
     const summary = normalizeCommitBody(item.body);
+
+    const files = Array.isArray(item.files) ? item.files : [];
+    // The per-change explanation — body-derived, file-area fallback.
+    const changes = deriveChanges(item.body, files);
 
     entries.push({
       id: `${AUTO_ID_PREFIX}${item.sha}`,
@@ -523,7 +599,7 @@ function mapRawCommitsToEntries(
       summary,
       version: item.sha,
       category,
-      changes: [],
+      changes,
       author: {
         adminUserId: null,
         // Branch label rather than the git user identity — see the
@@ -537,6 +613,10 @@ function mapRawCommitsToEntries(
       createdAt: publishedAt,
       updatedAt: publishedAt,
       filesChanged: item.filesChanged,
+      scope,
+      files,
+      additions: typeof item.additions === "number" ? item.additions : null,
+      deletions: typeof item.deletions === "number" ? item.deletions : null,
     });
   }
   return entries;
@@ -579,14 +659,39 @@ function cachedGithubFetch(branch: string) {
  * Returns an empty string when the cleaned body is whitespace-only.
  */
 function normalizeCommitBody(raw: string): string {
+  const cleaned = stripTrailers(raw);
+  if (cleaned.length === 0) return "";
+
+  const paragraphs = cleaned.split(/\n\n+/);
+  // Cap at 3 paragraphs. A trailing "…" makes the truncation visible
+  // so a curator can decide whether to crack open the full git log.
+  if (paragraphs.length <= 3) return cleaned;
+  return paragraphs.slice(0, 3).join("\n\n") + "\n\n…";
+}
+
+/**
+ * RFC-style trailer matcher (Co-Authored-By:, Signed-off-by:,
+ * Reviewed-by:, Fixes:, Closes:, etc.) — a single capitalised token
+ * followed by `:` and a non-space. Used to strip the trailer block off
+ * the tail of a commit body before display / change-parsing.
+ */
+const TRAILER_RE = /^([A-Za-z][A-Za-z0-9-]*)\s*:\s*\S/;
+
+/**
+ * Strip the contiguous RFC-trailer block (Co-Authored-By, etc.) from the
+ * TAIL of a commit body and collapse runs of 3+ blank lines into a
+ * single paragraph break. Shared by `normalizeCommitBody` (summary) and
+ * `parseChangesFromBody` (per-change bullets) so both views agree on
+ * what counts as "the body". Returns "" for a whitespace-only result.
+ */
+function stripTrailers(raw: string): string {
   if (typeof raw !== "string") return "";
   // Split on any-line-ending so we tolerate CRLF if git ever writes it.
   const lines = raw.replace(/\r\n?/g, "\n").split("\n");
 
-  // Strip RFC-trailer-style key:value lines from the tail (Co-Authored-By,
-  // Signed-off-by, Reviewed-by, Fixes:, Closes:, etc.). Trailers are
-  // tail-anchored and contiguous, so we walk the end of the list.
-  const TRAILER_RE = /^([A-Za-z][A-Za-z0-9-]*)\s*:\s*\S/;
+  // Trailers are tail-anchored and contiguous, so we walk the end of the
+  // list, dropping trailing blank lines and trailer-shaped lines until we
+  // hit real body content.
   while (lines.length > 0) {
     const last = lines[lines.length - 1].trim();
     if (last === "") {
@@ -600,16 +705,220 @@ function normalizeCommitBody(raw: string): string {
     break;
   }
 
-  // Re-join, then collapse any run of 3+ blank lines into a single
-  // paragraph break, and split into paragraphs on \n\n.
-  const cleaned = lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
-  if (cleaned.length === 0) return "";
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
 
-  const paragraphs = cleaned.split(/\n\n+/);
-  // Cap at 3 paragraphs. A trailing "…" makes the truncation visible
-  // so a curator can decide whether to crack open the full git log.
-  if (paragraphs.length <= 3) return cleaned;
-  return paragraphs.slice(0, 3).join("\n\n") + "\n\n…";
+// ---------------------------------------------------------------------------
+// Per-change derivation — the structured "explanation for each change"
+// ---------------------------------------------------------------------------
+
+// Hard cap on derived bullets per commit so a 12-item numbered body
+// can't make one card swallow the feed. The renderer shows "+N more
+// changes" beyond this. Mirrors the 3-paragraph cap on the summary.
+const MAX_CHANGES_PER_COMMIT = 8;
+
+// Keyword → change-kind inference table. Ordered by specificity:
+// the FIRST matching group wins, so "remove" (breaking) is checked
+// before the generic improvement default. Anchored on word-ish
+// boundaries via the per-keyword regexes built below.
+const KIND_KEYWORDS: Array<{ kind: ChangelogChangeKind; words: string[] }> = [
+  { kind: "fix", words: ["fix", "fixes", "fixed", "bug", "bugfix", "correct", "repair", "resolve", "patch"] },
+  { kind: "breaking", words: ["remove", "removes", "removed", "drop", "drops", "dropped", "delete", "deletes", "deleted", "breaking", "deprecate"] },
+  { kind: "feature", words: ["add", "adds", "added", "new", "introduce", "introduces", "create", "creates", "implement", "implements", "support", "surface", "surfaces"] },
+  { kind: "improvement", words: ["perf", "faster", "optimize", "optimise", "optimized", "speed", "improve", "improves", "improved", "tweak", "refine"] },
+  { kind: "infra", words: ["refactor", "refactors", "refactored", "chore", "docs", "rename", "renames", "renamed", "move", "moves", "moved", "extract", "extracts", "bump", "wire", "wires", "wired"] },
+];
+
+/**
+ * Infer a `ChangelogChangeKind` from a change line's text by keyword.
+ * Defaults to "improvement" — a neutral positive that still renders a
+ * colored bullet (matches the task spec's default). Case-insensitive,
+ * matches on whole words so "address" doesn't trip the "add" keyword.
+ */
+function inferChangeKind(text: string): ChangelogChangeKind {
+  const lower = ` ${text.toLowerCase()} `;
+  for (const { kind, words } of KIND_KEYWORDS) {
+    for (const w of words) {
+      // \b word boundaries so "add" matches "add"/"adds" (handled via the
+      // explicit plural list) but not the middle of "address" / "padding".
+      const re = new RegExp(`\\b${w}\\b`);
+      if (re.test(lower)) return kind;
+    }
+  }
+  return "improvement";
+}
+
+const BULLET_RE = /^\s*(?:[-*•‣◦]|\d+[.)]|[a-z][.)])\s+/i;
+
+/**
+ * Derive a structured `ChangelogChange[]` from a commit body — the core
+ * "explanation for each change" the user asked for.
+ *
+ * Two body shapes are handled:
+ *
+ *   A. BULLETED / NUMBERED. Lines starting with `-` / `*` / `•` / `N.` /
+ *      `N)` / `a.` begin a new change. Continuation lines (indented or
+ *      non-marker) fold into the current bullet so a multi-line bullet
+ *      stays one change. This is the dominant shape in this repo's
+ *      commit history (e.g. the "1) … 2) … 3) …" sort-headers commit).
+ *
+ *   B. PARAGRAPHS. When the body has NO bullet markers, each blank-line-
+ *      separated paragraph becomes one change. A terse one-paragraph
+ *      body yields exactly one change; the file-area fallback in
+ *      `deriveChanges` only kicks in when even this yields nothing.
+ *
+ * Trailers (Co-Authored-By etc.) are stripped first via `stripTrailers`.
+ * Each change's `kind` is inferred from its text via `inferChangeKind`.
+ * The list is capped at MAX_CHANGES_PER_COMMIT (the renderer surfaces
+ * the overflow count). Whitespace inside a folded bullet is collapsed to
+ * single spaces so a hard-wrapped sentence reads as one line in the UI.
+ */
+function parseChangesFromBody(rawBody: string): ChangelogChange[] {
+  const body = stripTrailers(rawBody);
+  if (body.length === 0) return [];
+
+  const lines = body.split("\n");
+  const hasBullets = lines.some((l) => BULLET_RE.test(l));
+
+  const rawChanges: string[] = [];
+
+  if (hasBullets) {
+    // Group A — fold continuation lines into the current bullet.
+    let current: string | null = null;
+    for (const line of lines) {
+      if (BULLET_RE.test(line)) {
+        if (current !== null) rawChanges.push(current);
+        current = line.replace(BULLET_RE, "").trim();
+      } else if (current !== null) {
+        const trimmed = line.trim();
+        // Blank line inside a bullet block ends the current bullet (so a
+        // bullet followed by a free paragraph doesn't absorb it).
+        if (trimmed === "") {
+          rawChanges.push(current);
+          current = null;
+        } else {
+          current = `${current} ${trimmed}`;
+        }
+      }
+      // Non-bullet, non-continuation lines BEFORE the first bullet (an
+      // intro sentence like "Three related fixes for …:") are dropped
+      // from the change list — they're context, already shown in the
+      // summary. The bullets themselves are the per-change explanation.
+    }
+    if (current !== null) rawChanges.push(current);
+  } else {
+    // Group B — each paragraph is one change.
+    for (const para of body.split(/\n\n+/)) {
+      const collapsed = para.replace(/\s+/g, " ").trim();
+      if (collapsed.length > 0) rawChanges.push(collapsed);
+    }
+  }
+
+  const out: ChangelogChange[] = [];
+  for (const text of rawChanges) {
+    const collapsed = text.replace(/\s+/g, " ").trim();
+    if (collapsed.length === 0) continue;
+    out.push({ kind: inferChangeKind(collapsed), text: collapsed });
+    if (out.length >= MAX_CHANGES_PER_COMMIT) break;
+  }
+  return out;
+}
+
+// Top-level file-area → human label map for the fallback path. Keys are
+// matched as path PREFIXES, longest-first, so the most specific area
+// wins ("src/lib/queries/" before "src/lib/"). Mirrors the feature-area
+// vocabulary used across the admin panel's nav.
+const AREA_LABELS: Array<{ prefix: string; label: string }> = [
+  { prefix: "src/app/(admin)/", label: "Admin pages" },
+  { prefix: "src/app/(auth)/", label: "Auth pages" },
+  { prefix: "src/components/data-table/", label: "Data tables" },
+  { prefix: "src/components/ui/", label: "UI primitives" },
+  { prefix: "src/components/", label: "Components" },
+  { prefix: "src/lib/queries/", label: "Queries" },
+  { prefix: "src/lib/changelog/", label: "Changelog" },
+  { prefix: "src/lib/utils/", label: "Utilities" },
+  { prefix: "src/lib/", label: "Library" },
+  { prefix: "src/hooks/", label: "Hooks" },
+  { prefix: "prisma/admin/", label: "Admin database" },
+  { prefix: "prisma/", label: "Database" },
+  { prefix: "scripts/", label: "Scripts" },
+  { prefix: "public/", label: "Public assets" },
+  { prefix: ".github/", label: "CI" },
+  { prefix: "src/", label: "App" },
+];
+
+/**
+ * Turn a path into its human area label. For an `src/app/(admin)/foo/...`
+ * path we go one segment DEEPER than the generic "Admin pages" so the
+ * fallback reads "Insights / Games" rather than a flat "Admin pages" for
+ * everything under the admin tree — that's the level the user actually
+ * recognises. Other trees fall back to the flat AREA_LABELS entry.
+ */
+function areaLabelForPath(path: string): string {
+  const adminMatch = path.match(/^src\/app\/\(admin\)\/([^/]+)(?:\/([^/]+))?/);
+  if (adminMatch) {
+    const top = adminMatch[1];
+    const sub = adminMatch[2];
+    // Title-case the route segment(s): "insights" → "Insights",
+    // "rewards" → "Rewards". Dashes become spaces ("gift-cards" → "Gift cards").
+    const titleize = (s: string) =>
+      s
+        .replace(/-/g, " ")
+        .replace(/^\w/, (c) => c.toUpperCase());
+    // Skip dynamic segments ("[id]") for the sub-area — they're not a
+    // recognisable feature name.
+    if (sub && !sub.startsWith("[") && !sub.startsWith("_")) {
+      return `${titleize(top)} / ${titleize(sub)}`;
+    }
+    return titleize(top);
+  }
+  for (const { prefix, label } of AREA_LABELS) {
+    if (path.startsWith(prefix)) return label;
+  }
+  // Root-level file (e.g. "package.json", "next.config.ts") → "Project".
+  return path.includes("/") ? "Other" : "Project";
+}
+
+/**
+ * Fallback change derivation: when the commit body yields no structured
+ * bullets/paragraphs (terse one-liner, or empty), group the touched
+ * files by area and emit one change per area so EVERY commit still
+ * carries a meaningful explanation. Areas are ordered by descending
+ * touched-file count (the area with the most churn leads). Capped at
+ * MAX_CHANGES_PER_COMMIT areas. Kind is fixed to "infra" — a file-area
+ * summary is descriptive, not a claim about feature/fix intent.
+ */
+function deriveChangesFromFiles(files: ChangelogFile[]): ChangelogChange[] {
+  if (!Array.isArray(files) || files.length === 0) return [];
+  const counts = new Map<string, number>();
+  for (const f of files) {
+    if (!f || typeof f.path !== "string" || f.path.length === 0) continue;
+    const label = areaLabelForPath(f.path);
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  const ordered = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  const out: ChangelogChange[] = [];
+  for (const [label, n] of ordered) {
+    const text = n === 1 ? `Updated ${label}` : `Updated ${label} (${n} files)`;
+    out.push({ kind: "infra", text });
+    if (out.length >= MAX_CHANGES_PER_COMMIT) break;
+  }
+  return out;
+}
+
+/**
+ * Orchestrator: derive the per-change list for one commit. Body bullets
+ * / paragraphs take priority (source A); the file-area grouping (source
+ * B) is the fallback that guarantees every commit — even a terse
+ * subject-only one — gets at least one explanatory line.
+ */
+function deriveChanges(
+  body: string,
+  files: ChangelogFile[],
+): ChangelogChange[] {
+  const fromBody = parseChangesFromBody(body);
+  if (fromBody.length > 0) return fromBody;
+  return deriveChangesFromFiles(files);
 }
 
 /**
