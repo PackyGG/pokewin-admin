@@ -2,9 +2,11 @@ import { Tv } from "lucide-react";
 import { Suspense } from "react";
 import { requirePageAccess } from "@/lib/dal";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
+import { ExportButton } from "@/components/export-button";
 import { PeriodFilter } from "./period-filter";
 import { StreamersTabNav } from "./tab-nav";
 import { parsePeriod, parseTab } from "./types";
+import { exportStreamersData } from "./_export";
 import { OverviewTab } from "./tab-overview";
 import { MoneyMakersTab } from "./tab-money-makers";
 import { SusTab } from "./tab-sus";
@@ -51,7 +53,13 @@ export default async function StreamerInsightsPage({
             subtitle="Per-creator deep insights, abuse detection, sus behaviour signals, money-makers"
             accent="purple"
           />
-          <PeriodFilter />
+          <div className="flex flex-wrap items-center gap-2">
+            <PeriodFilter />
+            <ExportButton
+              action={exportStreamersData.bind(null, period)}
+              filename={`insights-streamers-${period}.csv`}
+            />
+          </div>
         </div>
       </PageHero>
 

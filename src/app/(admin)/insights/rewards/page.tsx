@@ -5,10 +5,12 @@ import {
   PageHero,
   PageHeroIdentity,
 } from "@/components/modern-panels";
+import { ExportButton } from "@/components/export-button";
 import {
   parseInsightsRewardsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
+import { exportRewardsOverviewData } from "./_export";
 import { InsightsRewardsPeriodFilter } from "./_components/period-filter";
 import { InsightsRewardsTabSwitch } from "./_components/tab-switch";
 import {
@@ -104,7 +106,13 @@ export default async function InsightsRewardsPage({
             title="Rewards Insights"
             subtitle="Cross-reward analysis, ROI, retention impact, cohort lift, marketing cost vs revenue."
           />
-          <InsightsRewardsPeriodFilter />
+          <div className="flex flex-wrap items-center gap-2">
+            <InsightsRewardsPeriodFilter />
+            <ExportButton
+              action={exportRewardsOverviewData.bind(null, period)}
+              filename={`insights-rewards-overview-${period}.csv`}
+            />
+          </div>
         </div>
       </PageHero>
 

@@ -2,7 +2,9 @@ import { Suspense } from "react";
 import { Telescope } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
+import { ExportButton } from "@/components/export-button";
 import { parseInsightsPeriod, parseInsightsTab } from "./types";
+import { exportAnalyticsData } from "./_export";
 import { PeriodSelector } from "./period-selector";
 import { InsightsTabNav } from "./tab-nav";
 import { InsightsTabSkeleton } from "./tab-skeleton";
@@ -67,7 +69,20 @@ export default async function InsightsAnalyticsPage({
             subtitle="Deep cohort, retention, funnel, and LTV analysis across the whole platform"
             accent="cyan"
           />
-          <PeriodSelector />
+          <div className="flex flex-wrap items-center gap-2">
+            <PeriodSelector />
+            <ExportButton
+              action={exportAnalyticsData.bind(null, period, {
+                cohortsBy,
+                retentionBy,
+                ltvBy,
+                funnelBy,
+                whalesBy,
+                geoBy,
+              })}
+              filename={`insights-analytics-${period}.csv`}
+            />
+          </div>
         </div>
       </PageHero>
 

@@ -5,10 +5,12 @@ import {
   PageHero,
   PageHeroIdentity,
 } from "@/components/modern-panels";
+import { ExportButton } from "@/components/export-button";
 import {
   parseInsightsRewardsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
+import { exportDepositBonusData } from "./_export";
 import { DepositBonusPeriodFilter } from "./_components/period-filter";
 import { DepositBonusTabSwitch } from "./_components/tab-switch";
 import { DepositBonusTabSkeleton } from "./_components/tab-skeleton";
@@ -93,7 +95,13 @@ export default async function DepositBonusInsightsPage({
             title="Deposit Bonus Insights"
             subtitle="Cap hit rate, claim cohorts, ROI, retention — everything we know about deposit bonuses."
           />
-          <DepositBonusPeriodFilter />
+          <div className="flex flex-wrap items-center gap-2">
+            <DepositBonusPeriodFilter />
+            <ExportButton
+              action={exportDepositBonusData.bind(null, period)}
+              filename={`insights-deposit-bonus-${period}.csv`}
+            />
+          </div>
         </div>
       </PageHero>
 

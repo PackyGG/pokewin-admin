@@ -2,8 +2,10 @@ import { Joystick } from "lucide-react";
 import { Suspense } from "react";
 import { requirePageAccess } from "@/lib/dal";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
+import { ExportButton } from "@/components/export-button";
 import { GamesTabNav } from "./tab-nav";
 import { GamesPeriodFilter } from "./period-filter";
+import { exportGamesData } from "./_export";
 import { parseGamesTab } from "./types";
 import { parseGamesPeriod } from "@/lib/queries/insights-games/_shared";
 import { OverviewTab } from "./tab-overview";
@@ -62,7 +64,13 @@ export default async function GamesInsightsPage({
             subtitle="Per-game P&L · borrow-corrected wagers · creator-stream play excluded"
             accent="cyan"
           />
-          <GamesPeriodFilter />
+          <div className="flex flex-wrap items-center gap-2">
+            <GamesPeriodFilter />
+            <ExportButton
+              action={exportGamesData.bind(null, period, usersFilters)}
+              filename={`insights-games-${period}.csv`}
+            />
+          </div>
         </div>
       </PageHero>
 

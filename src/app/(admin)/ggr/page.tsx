@@ -34,8 +34,10 @@ import {
   type GgrTopContributorRow,
 } from "@/lib/queries/dashboard";
 import { describeLedgerType } from "@/lib/queries/_wager-payout-descriptions";
+import { ExportButton } from "@/components/export-button";
 
 import { GgrWindowSwitch } from "./ggr-window-switch";
+import { exportGgrData } from "./_export";
 
 export const metadata = { title: "GGR Breakdown" };
 
@@ -92,7 +94,15 @@ export default async function GgrPage({
           accent="cyan"
           title="GGR Breakdown"
           subtitle="Every wager and payout component driving Gross Gaming Revenue. Excludes creator on-stream sessions on both sides (same filter as Daily P&L)."
-          action={<GgrWindowSwitch />}
+          action={
+            <>
+              <GgrWindowSwitch />
+              <ExportButton
+                action={exportGgrData.bind(null, ggrWindow)}
+                filename={`ggr-${ggrWindow}.csv`}
+              />
+            </>
+          }
         />
       </PageHero>
 
