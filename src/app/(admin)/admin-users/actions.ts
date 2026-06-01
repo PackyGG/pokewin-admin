@@ -10,6 +10,7 @@ import { admin_role } from "@/generated/admin-prisma/client";
 import { require2FA } from "@/lib/require-2fa";
 import { ok, fail, type ServerActionResult } from "@/lib/errors/server-action-result";
 import { logError } from "@/lib/errors/logger";
+import { PACK_CREATOR_DEFAULT_PAGES } from "@/lib/pack-creator/ensure-capabilities";
 
 /**
  * Create a new admin user with role-inherited allowed_pages. Returns
@@ -53,22 +54,13 @@ export async function createAdminUser(data: {
     if (existingUser) {
       allowedPages = existingUser.allowed_pages;
     } else if (data.role === "pack_creator") {
-      // Out-of-the-box pack-creator can hit /packs, create new packs
-      // (cover image upload included), AND edit packs that are still
-      // in their inactive "demo" state — so they can iterate on a
-      // pack after pressing Save without losing access to it.
-      // Live (active=true) packs are off-limits to pack_creator —
-      // that gate is enforced inside the updatePack action so even a
-      // toggled-on capability flag won't let them touch a live pack.
-      // They never get __can_toggle_pack_active, so they can't make
-      // a pack live themselves. Admin can adjust this role's
-      // permissions in /settings/roles → Pack Creator afterward.
-      allowedPages = [
-        "/packs",
-        "__can_create_pack",
-        "__can_update_pack",
-        "__can_upload_pack_image",
-      ];
+      // Out-of-the-box pack-creator can fully manage packs, cards, sets
+      // and the upgrader output pool: the four content pages plus every
+      // content capability. The exact key list is the shared
+      // PACK_CREATOR_DEFAULT_PAGES (same set the runtime self-heal
+      // back-fills onto existing rows). Admin can still adjust this
+      // role's permissions in /settings/roles → Pack Creator afterward.
+      allowedPages = [...PACK_CREATOR_DEFAULT_PAGES];
     }
   }
 

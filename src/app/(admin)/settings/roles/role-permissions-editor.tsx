@@ -49,8 +49,8 @@ const ROLE_SCOPES: Record<
   { capabilityGroups: string[]; pageKeys: string[] } | null
 > = {
   pack_creator: {
-    capabilityGroups: ["Packs", "Cards", "Sets"],
-    pageKeys: ["/packs", "/cards", "/sets"],
+    capabilityGroups: ["Packs", "Cards", "Sets", "Upgrader"],
+    pageKeys: ["/packs", "/cards", "/sets", "/upgrader"],
   },
   // Other roles: no scoping (full catalog).
   support: null,
