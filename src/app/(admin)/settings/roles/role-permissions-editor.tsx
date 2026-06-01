@@ -24,7 +24,7 @@ const ROLE_DESCRIPTIONS: Record<string, string> = {
   marketing: "Marketing team — typically needs Promo Codes, Gift Cards, Creators",
   creator: "Content creators — typically only needs My Profile",
   pack_creator:
-    "Pack creator employee — only Packs page + Create Pack capability. Demo (inactive) packs are always editable; grant 'Edit Live Packs' if you want them to be able to change card pool / price / house edge on packs that are already live in production.",
+    "Pack creator employee — Packs, Cards, and Sets. Demo (inactive) packs are always editable; grant 'Edit Live Packs' if you want them to be able to change card pool / price / house edge on packs that are already live in production. Card + set tools (create/edit/bulk-assign) let them build the catalog the packs draw from; the destructive set ops (Seed Initial Sets, Force-Absorb Cards, Delete Set) are individual toggles — leave them off unless this person is trusted to run catalog-wide bulk moves.",
 };
 
 /**
@@ -49,8 +49,8 @@ const ROLE_SCOPES: Record<
   { capabilityGroups: string[]; pageKeys: string[] } | null
 > = {
   pack_creator: {
-    capabilityGroups: ["Packs"],
-    pageKeys: ["/packs"],
+    capabilityGroups: ["Packs", "Cards", "Sets"],
+    pageKeys: ["/packs", "/cards", "/sets"],
   },
   // Other roles: no scoping (full catalog).
   support: null,

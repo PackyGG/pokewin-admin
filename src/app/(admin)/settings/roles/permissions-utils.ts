@@ -333,6 +333,28 @@ export const CAPABILITIES: CapabilityDef[] = [
     group: "Sets",
   },
 
+  // ── Upgrader (output-card pool on /upgrader) ────────────────────────
+  {
+    key: "__can_add_upgrader_output",
+    label: "Add Upgrader Outputs",
+    description:
+      "Add cards to the upgrader output pool (the prize cards a player's upgrade can land on)",
+    group: "Upgrader",
+  },
+  {
+    key: "__can_toggle_upgrader_output",
+    label: "Edit Upgrader Outputs",
+    description:
+      "Enable / disable an upgrader output card or change its display color",
+    group: "Upgrader",
+  },
+  {
+    key: "__can_remove_upgrader_output",
+    label: "Remove Upgrader Outputs",
+    description: "Remove a card from the upgrader output pool",
+    group: "Upgrader",
+  },
+
   // ── Battles ─────────────────────────────────────────────────────────
   {
     key: "__can_cancel_battle",
