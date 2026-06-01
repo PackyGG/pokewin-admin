@@ -68,6 +68,16 @@ export type UpgraderProfitabilityData = {
     avgBet: number;
   };
   buckets: UpgraderBucketRow[];
+  /**
+   * Cohort labels for the histogram + drilldown wiring. Stable keys
+   * shared with the drilldown action's `parseBucket` so a chart click
+   * resolves to the right bucket query.
+   */
+  cohorts: {
+    label: string;
+    /** Range description ("Low rollers", "Mid rollers", etc.) */
+    cohort: "Low rollers" | "Mid rollers" | "Risk takers" | "Whales" | "Other";
+  }[];
 };
 
 export async function getUpgraderProfitability(
@@ -212,6 +222,22 @@ export async function getUpgraderProfitability(
 
     const totalPnl = totalWager - totalPayout;
     const losses = Math.max(0, totalBets - totalWins);
+    // Cohort labels — group buckets into the operator-facing names
+    // (low rollers / mid / risk takers / whales). The bucket label
+    // stays the canonical key (drilldown action expects it), the
+    // cohort name is just the display group.
+    const cohortFor = (label: string): UpgraderProfitabilityData["cohorts"][number]["cohort"] => {
+      if (label === "<2×" || label === "2–5×") return "Low rollers";
+      if (label === "5–10×") return "Mid rollers";
+      if (label === "10–25×" || label === "25–100×") return "Risk takers";
+      if (label === "100×+") return "Whales";
+      return "Other";
+    };
+    const cohorts = bucketRows.map((b) => ({
+      label: b.label,
+      cohort: cohortFor(b.label),
+    }));
+
     return {
       period,
       totals: {
@@ -227,6 +253,7 @@ export async function getUpgraderProfitability(
         avgBet: totalBets > 0 ? totalWager / totalBets : 0,
       },
       buckets: bucketRows,
+      cohorts,
     };
   });
 }
