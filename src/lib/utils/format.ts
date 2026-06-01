@@ -1,4 +1,4 @@
-import { format, formatDistanceToNow } from "date-fns";
+import { format, formatDistanceToNow, formatDistanceToNowStrict } from "date-fns";
 
 export function formatCurrency(amount: number): string {
   // Guard against NaN / Infinity sneaking through from a divide-by-zero
@@ -106,6 +106,23 @@ export function formatRelative(
 ): string {
   void _timezone;
   return formatDistanceToNow(resolveDate(date), { addSuffix: true });
+}
+
+/**
+ * Strict variant of `formatRelative` — drops the fuzzy "about" prefix
+ * and rounds to the nearest single unit ("13 hours ago" instead of
+ * "about 13 hours ago"). Use where precision matters and the imprecise
+ * wording reads like a bug (e.g. changelog timestamps a few hours old).
+ *
+ * `timezone` is accepted for API parity with the other helpers; relative
+ * deltas are zone-independent so the argument is ignored.
+ */
+export function formatRelativeStrict(
+  date: Date | string | number,
+  _timezone?: string | null,
+): string {
+  void _timezone;
+  return formatDistanceToNowStrict(resolveDate(date), { addSuffix: true });
 }
 
 export function formatNumber(num: number): string {

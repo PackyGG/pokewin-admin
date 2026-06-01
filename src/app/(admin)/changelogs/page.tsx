@@ -1,6 +1,5 @@
 import {
   AlertTriangle,
-  CalendarDays,
   FileText,
   GitCommit,
   Info,
@@ -25,7 +24,11 @@ import { FadeIn } from "@/components/fade-in";
 import { EmptyState } from "@/components/empty-state";
 import { requirePageAccess, getUserPermissions } from "@/lib/dal";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
-import { formatDate, formatNumber, formatRelative } from "@/lib/utils/format";
+import {
+  formatDateTime,
+  formatNumber,
+  formatRelativeStrict,
+} from "@/lib/utils/format";
 import { ensureChangelogSchema } from "@/lib/changelog/ensure-schema";
 import { safeQuery } from "@/lib/errors/safe-query";
 import {
@@ -178,7 +181,7 @@ export default async function ChangelogsPage() {
         />
       </PageHero>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <KpiTile
           label="Total entries"
           value={formatNumber(stats.totalEntries)}
@@ -186,19 +189,19 @@ export default async function ChangelogsPage() {
           accent="purple"
         />
         <KpiTile
-          label="This month"
-          value={formatNumber(stats.thisMonthEntries)}
-          icon={CalendarDays}
-          accent="blue"
-        />
-        <KpiTile
           label="Last published"
+          // Lead with the precise absolute timestamp ("Jun 1, 2026 01:46")
+          // — the old relative-only display ("about 13 hours ago") read
+          // like a broken value because it never resolved into anything
+          // an admin could correlate with a commit log. Fine-grained
+          // relative moves to the sub line, using the strict variant so
+          // there's no fuzzy "about" prefix.
           value={
-            stats.lastPublishedAt ? formatRelative(stats.lastPublishedAt) : "—"
+            stats.lastPublishedAt ? formatDateTime(stats.lastPublishedAt) : "—"
           }
           sub={
             stats.lastPublishedAt
-              ? formatDate(stats.lastPublishedAt)
+              ? formatRelativeStrict(stats.lastPublishedAt)
               : "No entries yet"
           }
           icon={Sparkles}
@@ -284,8 +287,19 @@ function ChangelogCard({
         {/* Top row: date + version + category badge + optional files-changed
             chip + optional auto pill */}
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className="font-medium text-muted-foreground">
-            {formatDate(entry.publishedAt)}
+          {/* Minute-precision absolute timestamp + a strict relative pill
+              ("13 hours ago", no fuzzy "about" prefix). The old
+              day-precision `formatDate` here lost too much fidelity for
+              freshly-shipped commits — two cards from the same morning
+              looked identical even when they were hours apart. */}
+          <span
+            className="font-medium text-muted-foreground"
+            title={formatRelativeStrict(entry.publishedAt)}
+          >
+            {formatDateTime(entry.publishedAt)}
+          </span>
+          <span className="rounded-md border border-border/60 bg-muted/30 px-2 py-0.5 text-[11px] text-muted-foreground">
+            {formatRelativeStrict(entry.publishedAt)}
           </span>
           {entry.version && (
             <span className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/30 px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
