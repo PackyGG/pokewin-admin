@@ -228,7 +228,9 @@ export async function getAffiliateExtras(
 // ── Sign Up extras ────────────────────────────────────────────────────
 
 export type SignupExtras = {
-  /** Distinct first-time balance_reward_claim users in the window (cohort). */
+  /** Total users who signed up in the window (the cohort denominator). */
+  cohortSignups: number;
+  /** Distinct first-time balance_reward_claim users in the window (cohort numerator). */
   newClaimants: number;
   /** Median time-to-claim from signup for the cohort in hours, 0 when empty. */
   medianHoursToClaim: number;
@@ -326,6 +328,7 @@ async function computeSignupExtras(
     cohortSignups > 0 ? (cohortSignups - claimantCount) / cohortSignups : 0;
 
   return {
+    cohortSignups,
     newClaimants: claimantCount,
     medianHoursToClaim,
     shareClaimWithin24h,

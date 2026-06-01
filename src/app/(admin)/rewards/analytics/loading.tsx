@@ -9,14 +9,18 @@ import {
 } from "@/components/loading-skeletons";
 
 /**
- * Matches /rewards/analytics: hero (with period filter action), 6-KPI
- * strip, the daily-cost chart, the breakdown + summary row, and the
- * top-recipients table.
+ * Route-level loading state shown on first navigation into
+ * /rewards/analytics before any tab content streams in. Tabs have
+ * their own sized skeletons via Suspense; this only covers the
+ * cold-start. Defaults to the Overview shape since that's the
+ * default tab when no `?category=` is set.
  */
 export default function RewardsAnalyticsLoading() {
   return (
     <div className="space-y-6">
       <PageHeroSkeleton action />
+      {/* Tab bar — small pill row. */}
+      <Skeleton className="h-9 w-[480px] max-w-full rounded-lg" />
       <KpiStripSkeleton count={6} />
       <div className="space-y-3">
         <SectionHeadingSkeleton titleWidth={220} />
