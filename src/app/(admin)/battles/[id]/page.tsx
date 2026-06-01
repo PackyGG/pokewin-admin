@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { CardImage } from "@/components/card-image";
 import { CancelBattleButton } from "./cancel-button";
+import { BattlePasswordReveal } from "./password-reveal";
 import {
   PageHero,
   PageHeroIdentity,
@@ -60,7 +61,7 @@ export default async function BattleDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requirePageAccess("/battles");
+  const session = await requirePageAccess("/battles");
   const { id } = await params;
   // Shape-check UUID before any DB call — see src/lib/utils/ids.ts.
   if (!isUuid(id)) notFound();
@@ -168,6 +169,11 @@ export default async function BattleDetailPage({
                 <InfoRow label="Teams">{data.teams} x {data.playersPerTeam}</InfoRow>
                 <InfoRow label="Bet">{formatCurrency(data.betAmount)}</InfoRow>
                 <InfoRow label="Region"><Badge variant="outline">{data.regionCode}</Badge></InfoRow>
+                {data.hasPassword && session.role === "admin" && (
+                  <InfoRow label="Password">
+                    <BattlePasswordReveal battleId={data.id} />
+                  </InfoRow>
+                )}
                 {data.winnerTeam && <InfoRow label="Winner Team">Team {data.winnerTeam}</InfoRow>}
                 {data.sponsorshipPercentage > 0 && (
                   <InfoRow label="Sponsorship">{data.sponsorshipPercentage}%</InfoRow>

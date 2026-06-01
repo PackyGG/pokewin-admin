@@ -2,9 +2,47 @@
 
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
-import { requirePageAccess } from "@/lib/dal";
+import { requirePageAccess, requireRole } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { isUuid } from "@/lib/utils/ids";
+
+/**
+ * Reveals the plaintext password an owner set on a private battle so an
+ * admin can hand it back to a user who forgot it.
+ *
+ * Locked to role `admin` (not support/marketing/creator) because the value
+ * is plaintext and the audit-log review surface is admin-only anyway. Every
+ * successful reveal writes a `battle_password_viewed` admin_audit_events
+ * row scoped to the battle owner's user_id so misuse is traceable.
+ *
+ * Returns the password string; throws if the battle doesn't exist or has
+ * no password set (defensive — the UI only renders the reveal button when
+ * getBattleDetail returns hasPassword=true, but the action re-validates).
+ */
+export async function revealBattlePassword(battleId: string): Promise<string> {
+  if (!isUuid(battleId)) throw new Error("Invalid battle id");
+
+  const session = await requireRole(["admin"]);
+  const db = await getDb();
+
+  const battle = await db.battles.findUnique({
+    where: { id: battleId },
+    select: { id: true, user_id: true, password: true },
+  });
+
+  if (!battle) throw new Error("Battle not found");
+  if (!battle.password) throw new Error("This battle has no password set");
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "battle_password_viewed",
+    targetUserId: battle.user_id,
+    metadata: { battle_id: battle.id },
+  });
+
+  return battle.password;
+}
 
 export async function cancelBattle(battleId: string) {
   const db = await getDb();

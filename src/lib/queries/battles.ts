@@ -619,6 +619,11 @@ export async function getBattleDetail(id: string) {
     regionCode: battle.region_code,
     sponsorshipPercentage: battle.sponsorship_percentage,
     borrowPercentage: battle.borrow_percentage,
+    // Boolean only — the actual password is never included in this
+    // projection so it can't leak into the initial RSC payload of every
+    // battle-detail page load. Admins fetch the plaintext on demand via
+    // the revealBattlePassword server action, which audit-logs the view.
+    hasPassword: battle.password !== null && battle.password.length > 0,
     createdAt: battle.created_at.toISOString(),
     packs: packs.map((p) => ({ id: p.id, name: p.name, imageUrl: p.image_url, priceUsd: toNumber(p.price) })),
     teamsData,
