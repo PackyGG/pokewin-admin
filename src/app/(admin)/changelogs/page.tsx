@@ -205,6 +205,40 @@ function shortFilePath(path: string): string {
   return parts.slice(-2).join("/");
 }
 
+/**
+ * A file path that contributes "noise" churn — generated artifacts whose
+ * +/- line counts say nothing about the actual feature work. A commit
+ * that regenerates `recent-pushes.json` shows "+3,301 −501" purely from
+ * the JSON blob; surfacing that headline number is misleading. We detect
+ * these so the card can suppress the churn rollup when generated files
+ * dominate the diff, and show just the file count instead.
+ */
+function isNoiseChurnPath(path: string): boolean {
+  return (
+    path.startsWith("src/generated/") ||
+    path.endsWith(".json") ||
+    path.endsWith("-lock.json") ||
+    path.endsWith(".lock") ||
+    path.endsWith("lock.yaml") ||
+    path.endsWith(".snap")
+  );
+}
+
+/**
+ * Decide whether to hide the commit-level +/- churn rollup. Returns true
+ * when EVERY touched file we know about is a noise path (generated /
+ * JSON / lockfile) — in that case the +/- number is dominated by machine
+ * output and would visually compete with the title for no informational
+ * gain. With a mix of source + generated files we keep the rollup (the
+ * source churn is still meaningful). Empty file list → keep (nothing to
+ * judge; the live GitHub path has no per-file data but still has a real
+ * source-churn rollup).
+ */
+function churnIsNoise(files: ChangelogFile[]): boolean {
+  if (!Array.isArray(files) || files.length === 0) return false;
+  return files.every((f) => isNoiseChurnPath(f.path));
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -530,13 +564,24 @@ function ChangelogCard({
   entry: ChangelogEntry;
   canManage: boolean;
 }) {
-  // Auto entries (one per git commit) use a git icon in place of the
-  // category icon, surface the short SHA as the version slot, and have
-  // their edit / delete buttons hidden because they're owned by git,
-  // not by the admin DB. The category badge palette still applies so
-  // feat / fix / etc. stay visually distinguishable.
+  // Auto entries (one per git commit) surface the short SHA in the meta
+  // row and hide their edit / delete buttons because they're owned by
+  // git, not by the admin DB. The category badge palette still applies
+  // so feat / fix / etc. stay visually distinguishable.
   const isAuto = isAutoChangelogEntry(entry);
-  const CategoryIcon = isAuto ? GitCommit : CATEGORY_ICON[entry.category];
+  const CategoryIcon = CATEGORY_ICON[entry.category];
+  const files = entry.files ?? [];
+
+  // Whether to render the prose summary as a description block.
+  //   - DB-curated entries: always (it's the curator's own summary,
+  //     distinct from their bullets).
+  //   - Auto + itemized body (changesFromBody): the bullets ARE the
+  //     content — drop the redundant prose block entirely.
+  //   - Auto + prose body (or no derived bullets): show the prose ONCE
+  //     as the description; the bullets (file-area fallback) sit below.
+  const showSummary =
+    !!entry.summary && (!isAuto || entry.changesFromBody !== true);
+
   return (
     <div className="surface-sheen surface-raise relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/70">
       {/* Hairline top highlight to match the modern-panel family. */}
@@ -544,26 +589,57 @@ function ChangelogCard({
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"
       />
-      <div className="relative p-4 sm:p-5 space-y-4">
-        {/* Top row: date + version + category badge + optional files-changed
-            chip + optional auto pill */}
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          {/* Minute-precision absolute timestamp + a strict relative pill
-              ("13 hours ago", no fuzzy "about" prefix). The old
-              day-precision `formatDate` here lost too much fidelity for
-              freshly-shipped commits — two cards from the same morning
-              looked identical even when they were hours apart. */}
-          <span
-            className="font-medium text-muted-foreground"
-            title={formatRelativeStrict(entry.publishedAt)}
-          >
+      <div className="relative space-y-3 p-4 sm:p-5">
+        {/* Headline: the cleaned commit subject is the prominent title.
+            On auto cards a subtle "auto" marker is pushed to the right so
+            the title owns the row. */}
+        <div className="flex items-start justify-between gap-3">
+          <h3 className="text-base font-semibold leading-snug tracking-tight sm:text-lg">
+            {entry.title}
+          </h3>
+          {isAuto && (
+            <span
+              className="mt-0.5 shrink-0 rounded-md border border-border/60 bg-muted/30 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/80"
+              title="Auto-generated from a git commit. Not editable in the admin panel."
+            >
+              auto
+            </span>
+          )}
+        </div>
+
+        {/* Meta row — ONE tight, muted line: date · relative · category ·
+            scope · short SHA · file count. Minute-precision absolute time
+            with a strict relative ("13 hours ago", no fuzzy "about"). */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+          <span className="font-medium text-foreground/70">
             {formatDateTime(entry.publishedAt)}
           </span>
-          <span className="rounded-md border border-border/60 bg-muted/30 px-2 py-0.5 text-[11px] text-muted-foreground">
-            {formatRelativeStrict(entry.publishedAt)}
+          <MetaDot />
+          <span>{formatRelativeStrict(entry.publishedAt)}</span>
+          <MetaDot />
+          <span
+            className={cn(
+              "inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-medium uppercase tracking-wider",
+              CATEGORY_BADGE_CLASS[entry.category],
+            )}
+          >
+            <CategoryIcon className="size-3" />
+            {CATEGORY_LABEL[entry.category]}
           </span>
+          {isAuto && entry.scope && (
+            <span
+              className="inline-flex items-center gap-1 rounded-md border border-purple-500/30 bg-purple-500/10 px-1.5 py-0.5 font-mono font-medium text-purple-600 dark:text-purple-400"
+              title={`Area: ${entry.scope} (parsed from the commit scope)`}
+            >
+              <FolderTree className="size-3" />
+              {entry.scope}
+            </span>
+          )}
           {entry.version && (
-            <span className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/30 px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
+            <span
+              className="inline-flex items-center gap-1 font-mono text-muted-foreground/80"
+              title={isAuto ? "Commit SHA" : "Version"}
+            >
               {isAuto ? (
                 <GitCommit className="size-3" />
               ) : (
@@ -572,111 +648,79 @@ function ChangelogCard({
               {entry.version}
             </span>
           )}
-          <span
-            className={cn(
-              "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider",
-              CATEGORY_BADGE_CLASS[entry.category],
-            )}
-          >
-            <CategoryIcon className="size-3" />
-            {CATEGORY_LABEL[entry.category]}
-          </span>
-          {/* Area / scope badge — the conventional-commit (scope), e.g.
-              "insights/games", parsed upstream. Sits next to the category
-              badge so the admin can scan which surface a commit touched at
-              a glance. Only present on auto entries that carried a scope. */}
-          {isAuto && entry.scope && (
-            <span
-              className="inline-flex items-center gap-1 rounded-md border border-purple-500/30 bg-purple-500/15 px-2 py-0.5 font-mono text-[11px] font-medium text-purple-600 dark:text-purple-400"
-              title={`Area: ${entry.scope} (parsed from the commit scope)`}
-            >
-              <FolderTree className="size-3" />
-              {entry.scope}
-            </span>
-          )}
-          {isAuto && typeof entry.filesChanged === "number" &&
+          {isAuto &&
+            typeof entry.filesChanged === "number" &&
             entry.filesChanged > 0 && (
-              <span
-                className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/30 px-2 py-0.5 text-[11px] text-muted-foreground"
-                title={`${entry.filesChanged} file${entry.filesChanged === 1 ? "" : "s"} changed in this commit`}
-              >
-                <FileText className="size-3" />
-                {entry.filesChanged}{" "}
-                {entry.filesChanged === 1 ? "file" : "files"}
-              </span>
+              <>
+                <MetaDot />
+                <span className="inline-flex items-center gap-1">
+                  <FileText className="size-3" />
+                  {entry.filesChanged}{" "}
+                  {entry.filesChanged === 1 ? "file" : "files"}
+                </span>
+              </>
             )}
-          {isAuto && (
-            <span
-              className="ml-auto inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/30 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground"
-              title="Auto-generated from a git commit. Not editable in the admin panel."
-            >
-              auto
-            </span>
-          )}
         </div>
 
-        {/* Title + summary. ChangelogSummary handles the long-text
-            collapse / "show more" disclosure client-side; short summaries
-            render inline without the toggle. */}
-        <div className="space-y-1.5">
-          <h3 className="text-lg font-semibold tracking-tight">{entry.title}</h3>
-          {entry.summary && <ChangelogSummary text={entry.summary} />}
-        </div>
-
-        {/* Changes — the per-change explanation. Admin-curated entries
-            carry these from the DB; auto (git) entries now derive them
-            from the commit body (bullets / paragraphs) with a file-area
-            fallback, so each commit explains itself change-by-change. The
-            "Changes" label only shows on auto cards to distinguish the
-            derived list from a curator's hand-written bullets. */}
-        {entry.changes.length > 0 && (
-          <div className="space-y-1.5">
-            {isAuto && (
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Changes
-              </p>
-            )}
-            <ul className="space-y-1.5">
-              {entry.changes.map((change, idx) => {
-                const Icon = CHANGE_KIND_ICON[change.kind];
-                return (
-                  <li
-                    key={idx}
-                    className="flex items-start gap-2 text-sm"
-                  >
-                    <Icon
-                      className={cn(
-                        "mt-0.5 size-4 shrink-0",
-                        CHANGE_KIND_COLOR[change.kind],
-                      )}
-                    />
-                    <span className="min-w-0 flex-1">{change.text}</span>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
+        {/* Description — the prose summary, rendered ONCE. Hidden when an
+            itemized commit's bullets already carry the content (see
+            `showSummary`). ChangelogSummary truncates long text with a
+            "Show more" toggle. */}
+        {showSummary && entry.summary && (
+          <ChangelogSummary text={entry.summary} />
         )}
 
-        {/* Files disclosure — collapsible list of touched file paths,
-            grouped by area, with per-file +adds / −dels when the source
-            carried them (build-time JSON path; the live GitHub list path
-            omits per-file data). Only on auto cards that captured files. */}
-        {isAuto && entry.files && entry.files.length > 0 && (
+        {/* Changes — the scannable "what changed" list. Admin-curated
+            entries carry these from the DB; auto (git) entries derive
+            them from real body bullets, or from the touched file areas
+            when the body is prose. This is the main body of the card. */}
+        {entry.changes.length > 0 && (
+          <ul className="space-y-1">
+            {entry.changes.map((change, idx) => {
+              const Icon = CHANGE_KIND_ICON[change.kind];
+              return (
+                <li key={idx} className="flex items-start gap-2 text-sm">
+                  <Icon
+                    className={cn(
+                      "mt-0.5 size-3.5 shrink-0",
+                      CHANGE_KIND_COLOR[change.kind],
+                    )}
+                  />
+                  <span className="min-w-0 flex-1 leading-snug">
+                    {change.text}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        {/* Files disclosure — subtle, collapsed by default. Churn (+/-)
+            is suppressed when generated/JSON files dominate the diff so a
+            "+3,301 −501" blob doesn't visually compete with the title. */}
+        {isAuto && files.length > 0 && (
           <ChangelogFilesDisclosure
-            files={entry.files}
-            totalFiles={entry.filesChanged ?? entry.files.length}
+            files={files}
+            totalFiles={entry.filesChanged ?? files.length}
             additions={entry.additions ?? null}
             deletions={entry.deletions ?? null}
+            suppressChurn={churnIsNoise(files)}
           />
         )}
 
         {/* Footer: author + admin actions (only on DB-curated entries) */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/40 pt-3 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/40 pt-2.5 text-xs text-muted-foreground">
           <span>
-            {entry.author.username
-              ? <>by <span className="font-medium text-foreground">{entry.author.username}</span></>
-              : "by (unknown admin)"}
+            {entry.author.username ? (
+              <>
+                by{" "}
+                <span className="font-medium text-foreground">
+                  {entry.author.username}
+                </span>
+              </>
+            ) : (
+              "by (unknown admin)"
+            )}
           </span>
           {canManage && !isAuto && (
             <div className="flex items-center gap-1">
@@ -687,6 +731,15 @@ function ChangelogCard({
         </div>
       </div>
     </div>
+  );
+}
+
+/** A tiny muted separator dot for the single-line meta row. */
+function MetaDot() {
+  return (
+    <span aria-hidden className="text-muted-foreground/40">
+      ·
+    </span>
   );
 }
 
@@ -710,31 +763,40 @@ function ChangelogCard({
  * matching the diagnostics panel disclosure above. The +/- coloring is
  * git-semantic (added=emerald, deleted=rose), NOT the house-POV financial
  * palette — changelog file churn isn't a money signal.
+ *
+ * When `suppressChurn` is set (the diff is dominated by generated / JSON
+ * files, see `churnIsNoise`) the summary shows ONLY the file count —
+ * a "+3,301 −501" blob from a regenerated JSON file is noise that would
+ * visually compete with the title for no informational gain.
  */
 function ChangelogFilesDisclosure({
   files,
   totalFiles,
   additions,
   deletions,
+  suppressChurn = false,
 }: {
   files: ChangelogFile[];
   totalFiles: number;
   additions: number | null;
   deletions: number | null;
+  suppressChurn?: boolean;
 }) {
   const groups = groupFilesByArea(files);
   const hiddenCount = Math.max(0, totalFiles - files.length);
   const hasDiffStat =
-    typeof additions === "number" && typeof deletions === "number";
+    !suppressChurn &&
+    typeof additions === "number" &&
+    typeof deletions === "number";
 
   return (
-    <details className="group rounded-xl border border-border/60 bg-muted/10 px-3 py-2">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-xs font-medium text-muted-foreground [&::-webkit-details-marker]:hidden">
+    <details className="group rounded-lg border border-border/40 bg-muted/5 px-3 py-1.5">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-[11px] font-medium text-muted-foreground [&::-webkit-details-marker]:hidden">
         <span className="inline-flex items-center gap-2">
           <FileText className="size-3.5" />
           {totalFiles} {totalFiles === 1 ? "file" : "files"} changed
           {hasDiffStat && (additions > 0 || deletions > 0) && (
-            <span className="inline-flex items-center gap-1.5 font-mono text-[11px]">
+            <span className="inline-flex items-center gap-1.5 font-mono text-[10px] opacity-80">
               <span className="text-emerald-600 dark:text-emerald-400">
                 +{formatNumber(additions)}
               </span>
