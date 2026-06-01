@@ -45,6 +45,9 @@ import {
   ArrowUpCircle,
   Archive,
   ScrollText,
+  LineChart,
+  Joystick,
+  Tv,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -109,6 +112,9 @@ const ICONS: Record<string, LucideIcon> = {
   ArrowUpCircle,
   Archive,
   ScrollText,
+  LineChart,
+  Joystick,
+  Tv,
 };
 
 type NavItem = {
@@ -175,6 +181,22 @@ const NAV_GROUPS: NavGroup[] = [
       // page hero says "Transactions"; the sidebar mirrors that label
       // so the two surfaces agree.
       { label: "Transactions", href: "/transactions/deposits", icon: "Receipt" },
+    ],
+  },
+  {
+    // Insights — cross-cutting analytical surfaces split out from the
+    // individual feature groups. Sits directly below Overview so admins
+    // reach the analytical rollups before drilling into the operational
+    // surfaces (Marketing, Content, Transactions, Rewards). The four
+    // entries here are intentionally separate from the per-feature
+    // Analytics tabs (e.g. /rewards/analytics) — those stay in their
+    // own groups.
+    label: "Insights",
+    items: [
+      { label: "Analytics", href: "/insights/analytics", icon: "LineChart", isNew: true },
+      { label: "Games", href: "/insights/games", icon: "Joystick", isNew: true },
+      { label: "Rewards", href: "/insights/rewards", icon: "Gift", isNew: true },
+      { label: "Streamers", href: "/insights/streamers", icon: "Tv", isNew: true },
     ],
   },
   {

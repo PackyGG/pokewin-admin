@@ -33,6 +33,14 @@ export const ADMIN_PAGES: AdminPage[] = [
   // access still pass requirePageAccess on the legacy route; the
   // combined page itself gates on `/transactions/deposits`.
   { group: "Navigation", label: "Withdrawals (legacy)", key: "/withdrawals" },
+  // Insights — cross-cutting analytical surfaces. Mirrors the sidebar
+  // group sitting directly below Overview. Separate from the per-feature
+  // analytics keys (e.g. /rewards/analytics) so role grants can be
+  // managed independently.
+  { group: "Insights", label: "Analytics", key: "/insights/analytics" },
+  { group: "Insights", label: "Games", key: "/insights/games" },
+  { group: "Insights", label: "Rewards", key: "/insights/rewards" },
+  { group: "Insights", label: "Streamers", key: "/insights/streamers" },
   // Transactions
   // Standalone /transactions overview removed — admins land on a
   // specific sub-ledger instead. Each sub-page carries its own
