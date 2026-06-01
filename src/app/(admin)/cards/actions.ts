@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { Prisma } from "@/generated/prisma/client";
 import { getDb } from "@/lib/db";
 import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
@@ -12,7 +13,7 @@ import {
   fail,
   type ServerActionResult,
 } from "@/lib/errors/server-action-result";
-import { logError } from "@/lib/errors/logger";
+import { logError, logWarn } from "@/lib/errors/logger";
 import {
   ONEPIECE_RARITY_VALUES,
   isOnePieceSetName,
@@ -48,6 +49,31 @@ const createCardSchema = z.object({
   cost: z.number().int().min(0).max(20).nullable().optional(),
   power: z.number().int().min(0).max(20000).nullable().optional(),
 });
+
+/**
+ * True when the DB rejected the write because a `cost`/`power` column
+ * doesn't exist on this database. These are OnePiece-only game-design
+ * columns added by a later migration; on a DB where that migration
+ * hasn't run yet, any INSERT/UPDATE that names them fails with Postgres
+ * "column does not exist" → Prisma surfaces it as P2022.
+ *
+ * We match the engine code first (stable across messages) and fall back
+ * to the message text so we still recognise it if a future engine
+ * version reports it differently. The message check is scoped to
+ * cost/power so we never silently swallow an unrelated missing column.
+ */
+function isMissingCostPowerColumnError(e: unknown): boolean {
+  if (
+    e instanceof Prisma.PrismaClientKnownRequestError &&
+    e.code === "P2022"
+  ) {
+    return true;
+  }
+  if (e instanceof Error) {
+    return /column\b[^]*\b(cost|power)\b[^]*does not exist/i.test(e.message);
+  }
+  return false;
+}
 
 export async function uploadCardImage(formData: FormData): Promise<string> {
   const session = await requireAdmin();
@@ -127,26 +153,55 @@ export async function createCard(data: {
     input.power = null;
   }
 
+  // Build the row WITHOUT cost/power first. Omitting them entirely (vs.
+  // passing `null`) keeps those columns out of Prisma's generated INSERT
+  // column list — so the write succeeds even on a DB where the
+  // cost/power migration hasn't run. `select: { id: true }` is the other
+  // half of that: it restricts the RETURNING clause to `id` only,
+  // otherwise Prisma's default RETURNING lists every model column
+  // (including cost/power) and would fail before we ever read the row.
+  const baseData = {
+    name: input.name,
+    image_url: input.imageUrl,
+    price: input.price,
+    price_raw: input.price,
+    hp: input.hp,
+    rarity: input.rarity,
+    artist: input.artist?.trim() ? input.artist.trim() : null,
+    tcgplayer_id: input.tcgplayerId,
+    type: input.type,
+    card_number: input.cardNumber?.trim() || null,
+    set_id: input.setId,
+  };
+  // Only OnePiece cards with real values include cost/power. (Pokemon
+  // had them forced to null above, so this spread is empty for them.)
+  const withStats = {
+    ...baseData,
+    ...(input.cost != null ? { cost: input.cost } : {}),
+    ...(input.power != null ? { power: input.power } : {}),
+  };
+
   let card: { id: string };
   try {
-    card = await db.cards.create({
-      data: {
-        name: input.name,
-        image_url: input.imageUrl,
-        price: input.price,
-        price_raw: input.price,
-        hp: input.hp,
-        rarity: input.rarity,
-        artist: input.artist?.trim() ? input.artist.trim() : null,
-        tcgplayer_id: input.tcgplayerId,
-        type: input.type,
-        card_number: input.cardNumber?.trim() || null,
-        set_id: input.setId,
-        cost: input.cost ?? null,
-        power: input.power ?? null,
-      },
-      select: { id: true },
-    });
+    try {
+      card = await db.cards.create({ data: withStats, select: { id: true } });
+    } catch (err) {
+      // OnePiece path: we tried to write cost/power but this DB doesn't
+      // have the columns yet. Retry without them so the card is still
+      // created; the cost/power values are dropped (they'll persist once
+      // the migration runs). Warn so the missing migration is visible in
+      // the Vercel logs.
+      if (isMissingCostPowerColumnError(err)) {
+        logWarn(
+          "cards.createCard",
+          "cost/power columns missing on this DB — inserting without them; run the cards cost/power migration to persist these fields",
+          err,
+        );
+        card = await db.cards.create({ data: baseData, select: { id: true } });
+      } else {
+        throw err;
+      }
+    }
   } catch (err) {
     // Real Prisma error → server log (Vercel function logs) so the
     // on-call sees the column / constraint that actually failed. The
@@ -205,6 +260,12 @@ export async function updateCard(
     );
   }
 
+  // The update payload never names cost/power (those are set only at
+  // create time for OnePiece). The resilience that matters here is
+  // `select: { id: true }`: without it, Prisma's UPDATE adds a RETURNING
+  // listing every model column — including cost/power — and the write
+  // fails with P2022 on a DB that hasn't run the cost/power migration.
+  // Restricting RETURNING to `id` keeps update working regardless.
   try {
     await db.cards.update({
       where: { id },
@@ -222,8 +283,22 @@ export async function updateCard(
         set_id: data.setId || null,
         updated_at: new Date(),
       },
+      select: { id: true },
     });
   } catch (err) {
+    // Defence in depth: if a future change adds cost/power to the update
+    // payload, the missing-column case is still recognised and surfaced
+    // as a clear warning rather than an opaque failure. The row write
+    // itself can't be retried-without-stats here because there's nothing
+    // to drop today, so we just log and fall through to the real-error
+    // handling below.
+    if (isMissingCostPowerColumnError(err)) {
+      logWarn(
+        "cards.updateCard",
+        `cost/power columns missing on this DB for ${id} — run the cards cost/power migration`,
+        err,
+      );
+    }
     // Surface the real DB failure server-side (Vercel logs) and to the
     // client toast — same reasoning as createCard. Prisma P2025 =
     // record not found.
