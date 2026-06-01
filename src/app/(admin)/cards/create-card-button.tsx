@@ -325,7 +325,7 @@ export function CreateCardButton({
           payloadPower = power.trim() === "" ? null : parseInt(power);
         }
 
-        await createCard({
+        const result = await createCard({
           name,
           imageUrl,
           price: parseFloat(price) || 0,
@@ -340,13 +340,24 @@ export function CreateCardButton({
           power: payloadPower,
         });
 
+        // Expected failures now come back as a structured result (not a
+        // thrown, prod-redacted 500) so the toast shows the REAL cause —
+        // "Set not found", "Invalid OnePiece rarity", or the actual
+        // Prisma error from the DB.
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
+
         toast.success("Card created");
         setOpen(false);
         resetForm();
         router.refresh();
       } catch (e) {
-        // Let Next's redirect()/notFound() control-flow errors (e.g. expired
-        // session → /login) navigate cleanly instead of toasting NEXT_REDIRECT.
+        // The only throws left are Next's redirect()/notFound() control-flow
+        // signals (e.g. expired session → /login from requireAdmin) and the
+        // ImageKit upload above. Let redirects navigate cleanly instead of
+        // toasting NEXT_REDIRECT; everything else toasts.
         toastActionError(e, "Failed to create card");
       }
     });

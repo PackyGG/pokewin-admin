@@ -246,7 +246,7 @@ export function EditCardButton({
           imageUrl = await uploadImageClient(imageFile, "/cards");
         }
 
-        await updateCard(card.id, {
+        const result = await updateCard(card.id, {
           name,
           imageUrl,
           price: parseFloat(price) || 0,
@@ -259,12 +259,20 @@ export function EditCardButton({
           setId: setId || null,
         });
 
+        // Expected failures come back structured (not a prod-redacted 500)
+        // so the toast shows the real cause.
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
+
         toast.success("Card updated");
         setOpen(false);
         router.refresh();
       } catch (e) {
-        // Let Next's redirect()/notFound() control-flow errors (e.g. expired
-        // session → /login) navigate cleanly instead of toasting NEXT_REDIRECT.
+        // Remaining throws are Next's redirect()/notFound() control-flow
+        // signals and the ImageKit upload above. Let redirects navigate
+        // cleanly instead of toasting NEXT_REDIRECT.
         toastActionError(e, "Failed to update card");
       }
     });

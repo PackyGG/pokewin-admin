@@ -8,6 +8,12 @@ import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { uploadImage } from "@/lib/imagekit";
 import {
+  ok,
+  fail,
+  type ServerActionResult,
+} from "@/lib/errors/server-action-result";
+import { logError } from "@/lib/errors/logger";
+import {
   ONEPIECE_RARITY_VALUES,
   isOnePieceSetName,
 } from "./_constants/onepiece";
@@ -70,17 +76,27 @@ export async function createCard(data: {
   setId: string | null;
   cost?: number | null;
   power?: number | null;
-}): Promise<string> {
+}): Promise<ServerActionResult<{ id: string }>> {
   const db = await getDb();
   const session = await requireAdmin();
 
   const parsed = createCardSchema.safeParse(data);
   if (!parsed.success) {
-    throw new Error(parsed.error.issues[0]?.message ?? "Invalid input");
+    return fail(
+      parsed.error.issues[0]?.message ?? "Invalid input",
+      "VALIDATION",
+    );
   }
   const input = parsed.data;
 
-  await requireCapability(session, "__can_create_card", "create cards");
+  try {
+    await requireCapability(session, "__can_create_card", "create cards");
+  } catch (err) {
+    return fail(
+      err instanceof Error ? err.message : "Permission denied",
+      "FORBIDDEN",
+    );
+  }
 
   // Variant-specific rarity validation. The set name is the single
   // source of truth for "what kind of card is this" — same rule the
@@ -93,17 +109,17 @@ export async function createCard(data: {
       where: { id: input.setId },
       select: { id: true, name: true },
     });
-    if (!set) throw new Error("Set not found");
+    if (!set) return fail("Set not found", "NOT_FOUND");
     isOnePiece = isOnePieceSetName(set.name);
   }
 
   if (isOnePiece) {
     if (!ONEPIECE_RARITY_VALUES.includes(input.rarity as never)) {
-      throw new Error("Invalid OnePiece rarity");
+      return fail("Invalid OnePiece rarity", "VALIDATION");
     }
   } else {
     if (!POKEMON_RARITY_VALUES.includes(input.rarity as never)) {
-      throw new Error("Invalid Pokemon rarity");
+      return fail("Invalid Pokemon rarity", "VALIDATION");
     }
     // Cost / power are OnePiece-only — silently drop if a non-OP
     // caller sends them.
@@ -111,23 +127,37 @@ export async function createCard(data: {
     input.power = null;
   }
 
-  const card = await db.cards.create({
-    data: {
-      name: input.name,
-      image_url: input.imageUrl,
-      price: input.price,
-      price_raw: input.price,
-      hp: input.hp,
-      rarity: input.rarity,
-      artist: input.artist?.trim() ? input.artist.trim() : null,
-      tcgplayer_id: input.tcgplayerId,
-      type: input.type,
-      card_number: input.cardNumber?.trim() || null,
-      set_id: input.setId,
-      cost: input.cost ?? null,
-      power: input.power ?? null,
-    },
-  });
+  let card: { id: string };
+  try {
+    card = await db.cards.create({
+      data: {
+        name: input.name,
+        image_url: input.imageUrl,
+        price: input.price,
+        price_raw: input.price,
+        hp: input.hp,
+        rarity: input.rarity,
+        artist: input.artist?.trim() ? input.artist.trim() : null,
+        tcgplayer_id: input.tcgplayerId,
+        type: input.type,
+        card_number: input.cardNumber?.trim() || null,
+        set_id: input.setId,
+        cost: input.cost ?? null,
+        power: input.power ?? null,
+      },
+      select: { id: true },
+    });
+  } catch (err) {
+    // Real Prisma error → server log (Vercel function logs) so the
+    // on-call sees the column / constraint that actually failed. The
+    // client gets the message too (no secrets in a Prisma schema/
+    // constraint message) so the toast finally shows the real cause
+    // instead of an opaque 500 digest.
+    logError("cards.createCard", "db.cards.create failed", err);
+    const msg =
+      err instanceof Error ? err.message : "Database error creating card";
+    return fail(msg);
+  }
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -140,7 +170,7 @@ export async function createCard(data: {
   });
 
   revalidatePath("/cards");
-  return card.id;
+  return ok({ id: card.id });
 }
 
 export async function updateCard(
@@ -157,33 +187,54 @@ export async function updateCard(
     cardNumber: string | null;
     setId: string | null;
   },
-): Promise<void> {
+): Promise<ServerActionResult<{ id: string }>> {
   const db = await getDb();
   const session = await requireAdmin();
 
-  if (!data.name.trim()) throw new Error("Name is required");
-  if (!data.imageUrl) throw new Error("Image is required");
-  if (data.price < 0) throw new Error("Price must be 0 or greater");
+  if (!data.name.trim()) return fail("Name is required", "VALIDATION");
+  if (!data.imageUrl) return fail("Image is required", "VALIDATION");
+  if (data.price < 0)
+    return fail("Price must be 0 or greater", "VALIDATION");
 
-  await requireCapability(session, "__can_update_card", "update cards");
+  try {
+    await requireCapability(session, "__can_update_card", "update cards");
+  } catch (err) {
+    return fail(
+      err instanceof Error ? err.message : "Permission denied",
+      "FORBIDDEN",
+    );
+  }
 
-  await db.cards.update({
-    where: { id },
-    data: {
-      name: data.name.trim(),
-      image_url: data.imageUrl,
-      price: data.price,
-      price_raw: data.price,
-      hp: data.hp,
-      rarity: data.rarity,
-      artist: data.artist?.trim() ?? null,
-      tcgplayer_id: data.tcgplayerId,
-      type: data.type,
-      card_number: data.cardNumber?.trim() || null,
-      set_id: data.setId || null,
-      updated_at: new Date(),
-    },
-  });
+  try {
+    await db.cards.update({
+      where: { id },
+      data: {
+        name: data.name.trim(),
+        image_url: data.imageUrl,
+        price: data.price,
+        price_raw: data.price,
+        hp: data.hp,
+        rarity: data.rarity,
+        artist: data.artist?.trim() ?? null,
+        tcgplayer_id: data.tcgplayerId,
+        type: data.type,
+        card_number: data.cardNumber?.trim() || null,
+        set_id: data.setId || null,
+        updated_at: new Date(),
+      },
+    });
+  } catch (err) {
+    // Surface the real DB failure server-side (Vercel logs) and to the
+    // client toast — same reasoning as createCard. Prisma P2025 =
+    // record not found.
+    logError("cards.updateCard", `db.cards.update failed for ${id}`, err);
+    if (err instanceof Error && /No record was found/i.test(err.message)) {
+      return fail("Card not found", "NOT_FOUND");
+    }
+    const msg =
+      err instanceof Error ? err.message : "Database error updating card";
+    return fail(msg);
+  }
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -193,6 +244,7 @@ export async function updateCard(
 
   revalidatePath("/cards");
   revalidatePath(`/cards/${id}`);
+  return ok({ id });
 }
 
 export async function deleteCard(cardId: string): Promise<void> {
