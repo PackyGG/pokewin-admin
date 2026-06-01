@@ -1,6 +1,5 @@
-"use server";
+import "server-only";
 
-import { requirePageAccess } from "@/lib/dal";
 import type { ExportSection } from "@/lib/utils/export-csv";
 import {
   labelForPeriod,
@@ -18,7 +17,7 @@ import {
 } from "@/lib/queries/insights-games/top-users";
 
 /**
- * Server export action for /insights/games.
+ * Export gatherer for /insights/games.
  *
  * Bundles every tab's data for the active period into one CSV:
  * the Overview KPI rollup + time-series, per-pack profitability,
@@ -27,18 +26,18 @@ import {
  *
  * Every figure is borrow-corrected + creator-on-stream-excluded
  * because it reuses the exact same cached query helpers the page
- * renders — so the export reconciles with the UI. Read-only. Gated by
- * the same page-access check as the page.
+ * renders — so the export reconciles with the UI. Read-only. Server-only;
+ * auth is enforced by the route handler that calls this
+ * (`/insights/export`), which gates on the same page-access key as the
+ * page.
  *
  * The top-users tab honours its current filter set (game / minWager /
  * country) so the export matches what the admin is looking at.
  */
-export async function exportGamesData(
+export async function gatherGamesExportSections(
   period: GamesPeriod,
   usersFilters: GamesTopUsersFilters,
 ): Promise<ExportSection[]> {
-  await requirePageAccess("/insights/games");
-
   const [overview, packs, battles, upgrader, borrow, topUsers] =
     await Promise.all([
       getGamesOverview(period),

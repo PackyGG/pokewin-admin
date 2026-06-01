@@ -1,6 +1,5 @@
-"use server";
+import "server-only";
 
-import { requirePageAccess } from "@/lib/dal";
 import type { ExportSection } from "@/lib/utils/export-csv";
 import {
   insightsRewardsPeriodLabel,
@@ -20,7 +19,7 @@ import { getBalanceAdjustmentAuditTrail } from "@/lib/queries/insights-balance-a
 const AUDIT_EXPORT_LIMIT = 1000;
 
 /**
- * Server export action for /insights/balance-adjustments.
+ * Export gatherer for /insights/balance-adjustments.
  *
  * Bundles every tab's data for the active period into one CSV: overview
  * KPIs + daily credit/debit series, direction & reason breakdown + size
@@ -31,14 +30,13 @@ const AUDIT_EXPORT_LIMIT = 1000;
  * Reuses the exact same cached query helpers the page renders. House-POV
  * (CLAUDE.md): a credit to a user is house cost; CSV carries signed raw
  * machine values. Admin attribution comes from the admin-DB audit trail
- * (never SQL-joined to the main DB). Read-only. Gated by the same
- * page-access check as the page.
+ * (never SQL-joined to the main DB). Read-only. Server-only; auth is
+ * enforced by the route handler that calls this (`/insights/export`),
+ * which gates on the same page-access key as the page.
  */
-export async function exportBalanceAdjustmentsData(
+export async function gatherBalanceAdjustmentsExportSections(
   period: InsightsRewardsPeriod,
 ): Promise<ExportSection[]> {
-  await requirePageAccess("/insights/balance-adjustments");
-
   const [overview, direction, byAdmin, byUser, audit] = await Promise.all([
     getBalanceAdjustmentOverview(period),
     getBalanceAdjustmentDirectionReason(period),

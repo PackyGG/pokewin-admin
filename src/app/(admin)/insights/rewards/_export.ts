@@ -1,6 +1,5 @@
-"use server";
+import "server-only";
 
-import { requirePageAccess } from "@/lib/dal";
 import type { ExportSection } from "@/lib/utils/export-csv";
 import {
   insightsRewardsPeriodLabel,
@@ -11,7 +10,7 @@ import { getRewardsCategorySpendBreakdown } from "@/lib/queries/insights-rewards
 import { getCreatorWithdrawalsSummary } from "@/lib/queries/insights-rewards/creator-withdrawals";
 
 /**
- * Server export action for /insights/rewards (the Overview tab — the
+ * Export gatherer for /insights/rewards (the Overview tab — the
  * page's cross-category landing surface).
  *
  * Bundles the cross-category KPI summary, the per-category spend
@@ -20,13 +19,13 @@ import { getCreatorWithdrawalsSummary } from "@/lib/queries/insights-rewards/cre
  * period into one CSV.
  *
  * Reuses the same cached query helpers the overview tab renders.
- * Read-only. Gated by the same page-access check as the page.
+ * Read-only. Server-only; auth is enforced by the route handler that
+ * calls this (`/insights/export`), which gates on the same page-access
+ * key as the page.
  */
-export async function exportRewardsOverviewData(
+export async function gatherRewardsOverviewExportSections(
   period: InsightsRewardsPeriod,
 ): Promise<ExportSection[]> {
-  await requirePageAccess("/insights/rewards");
-
   const [summary, spend, creatorWd] = await Promise.all([
     getRewardsCrossCategorySummary(period),
     getRewardsCategorySpendBreakdown(period),

@@ -1,6 +1,5 @@
-"use server";
+import "server-only";
 
-import { requirePageAccess } from "@/lib/dal";
 import type { ExportSection } from "@/lib/utils/export-csv";
 import {
   INSIGHTS_PERIOD_LABELS,
@@ -54,7 +53,7 @@ export type AnalyticsExportParams = {
 };
 
 /**
- * Server export action for /insights/analytics.
+ * Export gatherer for /insights/analytics.
  *
  * Gathers EVERY tab's primary dataset for the active period (and the
  * tab's current sub-lens, where one applies) into a single CSV:
@@ -68,14 +67,14 @@ export type AnalyticsExportParams = {
  * export reconciles with the UI. Cohorts / retention / LTV / whales /
  * geo are global (period-independent inside their helpers); they are
  * still included so the export is a complete snapshot of the page.
- * Read-only. Gated by the same page-access check as the page.
+ * Read-only. Server-only; auth is enforced by the route handler that
+ * calls this (`/insights/export`), which gates on the same page-access
+ * key as the page.
  */
-export async function exportAnalyticsData(
+export async function gatherAnalyticsExportSections(
   period: InsightsPeriod,
   params: AnalyticsExportParams,
 ): Promise<ExportSection[]> {
-  await requirePageAccess("/insights/analytics");
-
   const periodLabel = INSIGHTS_PERIOD_LABELS[period];
   const cohortsGranularity = parseCohortsGranularity(params.cohortsBy);
   const retentionBy = parseRetentionBreakdown(params.retentionBy);

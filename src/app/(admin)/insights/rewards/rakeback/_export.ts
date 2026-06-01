@@ -1,6 +1,5 @@
-"use server";
+import "server-only";
 
-import { requirePageAccess } from "@/lib/dal";
 import type { ExportSection } from "@/lib/utils/export-csv";
 import {
   insightsRewardsPeriodLabel,
@@ -23,7 +22,7 @@ import { getRakebackGeoSource } from "@/lib/queries/insights-rewards/rakeback/ge
 import { getRakebackExtras } from "@/lib/queries/rewards-category-extras";
 
 /**
- * Server export action for /insights/rewards/rakeback.
+ * Export gatherer for /insights/rewards/rakeback.
  *
  * Bundles every tab's data for the active period (and the current ROI
  * lookback + top-claimer scope) into one CSV: overview KPIs, % of wager
@@ -33,15 +32,15 @@ import { getRakebackExtras } from "@/lib/queries/rewards-category-extras";
  *
  * Reuses the exact same cached query helpers the page renders. Rakeback
  * is house cost → rose in the UI; CSV carries raw machine values.
- * Read-only. Gated by the same page-access check as the page.
+ * Read-only. Server-only; auth is enforced by the route handler that
+ * calls this (`/insights/export`), which gates on the same page-access
+ * key as the page.
  */
-export async function exportRakebackData(
+export async function gatherRakebackExportSections(
   period: InsightsRewardsPeriod,
   lookback: RakebackRoiLookback,
   scope: RakebackTopClaimerScope,
 ): Promise<ExportSection[]> {
-  await requirePageAccess("/insights/rewards/rakeback");
-
   const categoryPeriod = insightsPeriodToCategoryPeriod(period);
   const [
     overview,

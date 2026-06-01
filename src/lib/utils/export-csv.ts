@@ -1,10 +1,11 @@
 /**
- * Client-safe CSV serialization helpers.
+ * CSV serialization helpers.
  *
- * Pure string building + Blob — NO server imports, NO third-party deps.
- * Used by the shared <ExportButton> (a client component) to turn the
- * `ExportSection[]` returned by a page's server export action into a
- * downloadable .csv file.
+ * Pure string building — NO `document`/`Blob`/`URL`, NO server imports,
+ * NO third-party deps. Works identically on the server and the client.
+ * `sectionsToCsv` is used by the streaming export route handler
+ * (`/insights/export`) to turn the `ExportSection[]` a page's gatherer
+ * returns into the CSV body it streams back as a file download.
  *
  * Multi-section model: a single export bundles a page's KPI strip plus
  * every table / breakdown / time-series into one file. Each section is
@@ -79,31 +80,4 @@ export function sectionsToCsv(sections: ExportSection[]): string {
   // Blank line between blocks (CRLF + CRLF) so Excel treats them as
   // separate tables.
   return blocks.join("\r\n\r\n");
-}
-
-/**
- * Trigger a browser download of `csv` under `filename`. Client-only —
- * touches `document` / `Blob` / `URL`, so this must never run on the
- * server. Prepends a UTF-8 BOM so Excel opens non-ASCII (usernames,
- * country names) without mangling the encoding.
- */
-export function downloadCsv(filename: string, csv: string): void {
-  const blob = new Blob(["﻿" + csv], {
-    type: "text/csv;charset=utf-8;",
-  });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
-  // Revoke on the next tick so the click has a chance to start the
-  // download before the object URL is torn down.
-  setTimeout(() => URL.revokeObjectURL(url), 0);
-}
-
-/** Total data-row count across every section (for the success toast). */
-export function totalRowCount(sections: ExportSection[]): number {
-  return sections.reduce((sum, s) => sum + s.rows.length, 0);
 }

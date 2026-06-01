@@ -1,6 +1,5 @@
-"use server";
+import "server-only";
 
-import { requirePageAccess } from "@/lib/dal";
 import type { ExportSection } from "@/lib/utils/export-csv";
 import {
   insightsRewardsPeriodLabel,
@@ -22,7 +21,7 @@ import { getDepositBonusTopSpenders } from "@/lib/queries/insights-rewards/depos
 import { getDepositBonusSuspicious } from "@/lib/queries/insights-rewards/deposit-bonus/suspicious";
 
 /**
- * Server export action for /insights/rewards/deposit-bonus.
+ * Export gatherer for /insights/rewards/deposit-bonus.
  *
  * Gathers EVERY data block across all five tabs (Overview / Cap /
  * Cohorts / ROI / Risk) for the active period into a single
@@ -33,18 +32,18 @@ import { getDepositBonusSuspicious } from "@/lib/queries/insights-rewards/deposi
  * recipients, and the three risk surveillance lists.
  *
  * Reuses the exact same cached query helpers the page renders, so the
- * export reconciles with the UI by construction. Read-only. Gated by
- * the same page-access check as the page.
+ * export reconciles with the UI by construction. Read-only. Server-only
+ * (uses server-only query helpers); auth is enforced by the route
+ * handler that calls this (`/insights/export`), which gates on the same
+ * page-access key as the page.
  *
  * The "top N" lists are bounded inside their query helpers (top 10 / 25)
  * — same data the tab shows. Section names note the bound where it
  * applies.
  */
-export async function exportDepositBonusData(
+export async function gatherDepositBonusExportSections(
   period: InsightsRewardsPeriod,
 ): Promise<ExportSection[]> {
-  await requirePageAccess("/insights/rewards/deposit-bonus");
-
   const [
     overview,
     cap,

@@ -1,6 +1,5 @@
-"use server";
+import "server-only";
 
-import { requirePageAccess } from "@/lib/dal";
 import type { ExportSection } from "@/lib/utils/export-csv";
 import {
   insightsRewardsPeriodLabel,
@@ -20,7 +19,7 @@ import { getAffiliateGeoBreakdown } from "@/lib/queries/insights-rewards/affilia
 import { getInactiveAffiliates } from "@/lib/queries/insights-rewards/affiliate/inactive";
 
 /**
- * Server export action for /insights/rewards/affiliate.
+ * Export gatherer for /insights/rewards/affiliate.
  *
  * Bundles every tab's data for the active period into one CSV: overview
  * KPIs + daily commission/wager series, top affiliates by commission +
@@ -30,14 +29,13 @@ import { getInactiveAffiliates } from "@/lib/queries/insights-rewards/affiliate/
  *
  * Reuses the exact same cached query helpers the page renders.
  * Commission is house cost; ROI proxy positive = house profit (emerald
- * in UI). CSV carries raw machine values. Read-only. Gated by the same
- * page-access check as the page.
+ * in UI). CSV carries raw machine values. Read-only. Server-only; auth
+ * is enforced by the route handler that calls this (`/insights/export`),
+ * which gates on the same page-access key as the page.
  */
-export async function exportAffiliateData(
+export async function gatherAffiliateExportSections(
   period: InsightsRewardsPeriod,
 ): Promise<ExportSection[]> {
-  await requirePageAccess("/insights/rewards/affiliate");
-
   const [
     overview,
     topCommission,

@@ -1,6 +1,5 @@
-"use server";
+import "server-only";
 
-import { requirePageAccess } from "@/lib/dal";
 import type { ExportSection } from "@/lib/utils/export-csv";
 import {
   insightsRewardsPeriodLabel,
@@ -16,7 +15,7 @@ import { getRaceInsightsCohort } from "@/lib/queries/insights-rewards/race/cohor
 import { getRaceInsightsTopWinners } from "@/lib/queries/insights-rewards/race/top-winners";
 
 /**
- * Server export action for /insights/rewards/race.
+ * Export gatherer for /insights/rewards/race.
  *
  * Bundles every tab's data for the active period into one CSV: the
  * overview KPIs + daily prize series, per-race breakdown, per-type
@@ -26,13 +25,13 @@ import { getRaceInsightsTopWinners } from "@/lib/queries/insights-rewards/race/t
  *
  * Reuses the exact same cached query helpers the page renders. Race
  * prizes are house cost → rose in the UI; CSV carries raw machine
- * values. Read-only. Gated by the same page-access check as the page.
+ * values. Read-only. Server-only; auth is enforced by the route handler
+ * that calls this (`/insights/export`), which gates on the same
+ * page-access key as the page.
  */
-export async function exportRaceData(
+export async function gatherRaceExportSections(
   period: InsightsRewardsPeriod,
 ): Promise<ExportSection[]> {
-  await requirePageAccess("/insights/rewards/race");
-
   const [overview, breakdown, perType, positions, repeat, roi, cohort, top] =
     await Promise.all([
       getRaceInsightsOverview(period),

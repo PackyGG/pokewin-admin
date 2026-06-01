@@ -1,6 +1,5 @@
-"use server";
+import "server-only";
 
-import { requirePageAccess } from "@/lib/dal";
 import type { ExportSection } from "@/lib/utils/export-csv";
 import {
   getGgrBreakdown,
@@ -11,10 +10,25 @@ import {
 import { describeLedgerType } from "@/lib/queries/_wager-payout-descriptions";
 
 /** Windows the /ggr page exposes — same coercion as the page. */
-type GgrWindow = Extract<DashboardPeriod, "24h" | "3d" | "7d">;
+export type GgrWindow = Extract<DashboardPeriod, "24h" | "3d" | "7d">;
+
+/** Supported `?window=` values for /ggr — mirrors the page's set. */
+export const GGR_EXPORT_WINDOWS = ["24h", "3d", "7d"] as const;
 
 /**
- * Server export action for /ggr.
+ * Coerce a raw `window` param to a valid {@link GgrWindow}. Mirrors the
+ * page's `parseGgrWindow` so the export and the page agree on the window
+ * for any URL. Unknown values fall back to the page default (`24h`).
+ */
+export function parseGgrExportWindow(value: string | undefined): GgrWindow {
+  if (!value) return "24h";
+  return (GGR_EXPORT_WINDOWS as readonly string[]).includes(value)
+    ? (value as GgrWindow)
+    : "24h";
+}
+
+/**
+ * Export gatherer for /ggr.
  *
  * Bundles the GGR rollup (wagers / payouts / GGR), the per-ledger-type
  * wager + payout breakdown (with the canonical type description), and
@@ -24,13 +38,13 @@ type GgrWindow = Extract<DashboardPeriod, "24h" | "3d" | "7d">;
  * helpers the page renders so the export reconciles with the headline
  * numbers. The contributor list is bounded at 50 (the query's internal
  * cap; the UI shows 10) — the export pulls the full 50. Read-only.
- * Gated by the same page-access check as the page.
+ * Server-only; auth is enforced by the route handler that calls this
+ * (`/insights/export`), which gates on the same page-access key as the
+ * page.
  */
-export async function exportGgrData(
+export async function gatherGgrExportSections(
   ggrWindow: GgrWindow,
 ): Promise<ExportSection[]> {
-  await requirePageAccess("/ggr");
-
   const [breakdown, contributors] = await Promise.all([
     getGgrBreakdown(ggrWindow),
     getGgrTopContributors(ggrWindow, 50),

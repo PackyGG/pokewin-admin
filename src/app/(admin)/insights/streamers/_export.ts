@@ -1,6 +1,5 @@
-"use server";
+import "server-only";
 
-import { requirePageAccess } from "@/lib/dal";
 import type { ExportSection } from "@/lib/utils/export-csv";
 import { periodLabel, type StreamerPeriod } from "./types";
 import { getStreamerInsightRows } from "@/lib/queries/insights-streamers/overview";
@@ -9,7 +8,7 @@ import { getCodeSwitchers } from "@/lib/queries/insights-streamers/code-switchin
 import { getLeaderboardSnipers } from "@/lib/queries/insights-streamers/leaderboard-sniping";
 
 /**
- * Server export action for /insights/streamers.
+ * Export gatherer for /insights/streamers.
  *
  * Bundles every tab's data for the active period into one CSV:
  * the per-creator insight rows (Overview / Money Makers / ROI all share
@@ -19,14 +18,14 @@ import { getLeaderboardSnipers } from "@/lib/queries/insights-streamers/leaderbo
  *
  * Reuses the exact same cached query helpers the page renders, so the
  * export reconciles with the UI by construction. House-POV numerics
- * throughout (positive housePnl = house kept money). Read-only. Gated
- * by the same page-access check as the page.
+ * throughout (positive housePnl = house kept money). Read-only.
+ * Server-only; auth is enforced by the route handler that calls this
+ * (`/insights/export`), which gates on the same page-access key as the
+ * page.
  */
-export async function exportStreamersData(
+export async function gatherStreamersExportSections(
   period: StreamerPeriod,
 ): Promise<ExportSection[]> {
-  await requirePageAccess("/insights/streamers");
-
   const [creators, risk, switchers, snipers] = await Promise.all([
     getStreamerInsightRows(period),
     getCreatorRiskRows(period),

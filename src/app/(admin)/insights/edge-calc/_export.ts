@@ -1,6 +1,5 @@
-"use server";
+import "server-only";
 
-import { requirePageAccess } from "@/lib/dal";
 import type { ExportSection } from "@/lib/utils/export-csv";
 import {
   getPackEdgeRows,
@@ -9,7 +8,7 @@ import {
 } from "@/lib/queries/insights-edge-calc";
 
 /**
- * Server export action for /insights/edge-calc.
+ * Export gatherer for /insights/edge-calc.
  *
  * Edge-calc is a theoretical EV / RTP / house-edge surface with no
  * period dimension. The export bundles the three server-backed
@@ -24,12 +23,11 @@ import {
  * scenario from the exported inputs.
  *
  * Reuses the exact same cached query helpers the page renders.
- * Read-only against the Main DB. Gated by the same page-access check as
- * the page.
+ * Read-only against the Main DB. Server-only; auth is enforced by the
+ * route handler that calls this (`/insights/export`), which gates on the
+ * same page-access key as the page.
  */
-export async function exportEdgeCalcData(): Promise<ExportSection[]> {
-  await requirePageAccess("/insights/edge-calc");
-
+export async function gatherEdgeCalcExportSections(): Promise<ExportSection[]> {
   const [packs, upgrader, pool] = await Promise.all([
     getPackEdgeRows(),
     getUpgraderEdgeByTarget(),
