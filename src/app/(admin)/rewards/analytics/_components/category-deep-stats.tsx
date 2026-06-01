@@ -356,13 +356,18 @@ export function CategoryDeepStatsPanel({
   }
   // Adapt grid columns to the tile count so 5–7 tiles all sit on one
   // row on lg+ without forcing a fixed 7-col grid (which would leave
-  // gaps for tabs with fewer extras).
+  // gaps for tabs with fewer extras). Tabs with more than 7 tiles
+  // (deposit-bonus + rakeback after expansion) cap at 4 cols on lg
+  // and grow to 5/6 on xl/2xl so the tile values stay readable
+  // instead of squashing into illegible columns.
   const lgColsClass =
-    tiles.length >= 7
-      ? "lg:grid-cols-7"
-      : tiles.length === 6
-        ? "lg:grid-cols-6"
-        : "lg:grid-cols-5";
+    tiles.length >= 8
+      ? "lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6"
+      : tiles.length === 7
+        ? "lg:grid-cols-7"
+        : tiles.length === 6
+          ? "lg:grid-cols-6"
+          : "lg:grid-cols-5";
   return (
     <div className="space-y-3">
       <SectionHeading icon={HeaderIcon} title={headerTitle} />

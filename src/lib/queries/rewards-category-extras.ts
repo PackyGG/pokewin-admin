@@ -350,3 +350,326 @@ export async function getSignupExtras(
   const blacklist = await getExcludedUserIds();
   return cachedSignupExtras(period, [...blacklist].sort());
 }
+
+// ── Rakeback extras ──────────────────────────────────────────────────
+
+/**
+ * Rakeback extras for the deep-stats tab.
+ *
+ * Source of truth here is `rakeback_claims` (NOT `ledger_transactions`)
+ * because the dedicated table carries `wagered_amount_usd` AND
+ * `rakeback_amount_usd` per claim — the SAME numbers the ledger payout
+ * uses but with the originating wager pre-attached. That means the
+ * "% of wager" cohort lens is a direct ratio, no expensive sweep over
+ * the wager-ledger needed.
+ *
+ * Per the user spec the rakeback tab gets:
+ *   - avgRakebackPctOfWager   — SUM(rakeback) / SUM(wager) across the
+ *                               period (volume-weighted; one number).
+ *   - medianRakebackPctOfWager — per-claim ratio's median (gives a feel
+ *                                for the "typical" claim instead of the
+ *                                blended total which gets dragged by
+ *                                whales).
+ *   - rateBuckets             — distribution of per-claim ratios in
+ *                               buckets matching the daily/weekly/
+ *                               monthly rakeback-tier defaults.
+ *   - rakebackTypeSpread      — per `rakeback_type` (daily / weekly /
+ *                               monthly): count, volume, share.
+ *   - claimsPerUser           — distinct claimants (== uniqueRecipients
+ *                               in the baseline) + avg claims per user
+ *                               + median per-user-claim count.
+ *   - lapsedClaimants         — users who claimed in the prior window
+ *                               of equal length but NOT in the current
+ *                               window. Returned as a count only (top-N
+ *                               leaderboard would need user metadata
+ *                               we don't pre-cache here).
+ *   - medianHoursBetweenClaims — across users with ≥2 claims in the
+ *                                window, median gap in hours.
+ *
+ * PROPOSED (skipped this pass):
+ *   - Streak distribution. Daily/weekly streak detection needs a
+ *     date-bucketed sweep per user with consecutive-run accounting —
+ *     possible in SQL but would dominate the tab's query cost. Better
+ *     as a popover or its own page.
+ *   - metadata.rake_rate spread. rakeback_claims has no metadata
+ *     column for the rate — only the resolved USD amounts. Rate per
+ *     tier is in `rakeback_config` but isn't joined to individual
+ *     claims, so a per-tier rate spread would be config-only, not a
+ *     historical observation. PROPOSED.
+ */
+export type RakebackExtras = {
+  /** SUM(rakeback) / SUM(wager) across the window, 0–1. */
+  avgRakebackPctOfWager: number;
+  /** Median of per-claim (rakeback / wager), 0–1. */
+  medianRakebackPctOfWager: number;
+  /** Distribution buckets of per-claim ratio (0–1) → count + volume. */
+  rateBuckets: Array<{ label: string; count: number; volume: number }>;
+  /** Per-rakeback-type slice (daily / weekly / monthly). */
+  rakebackTypeSpread: Array<{
+    type: "daily" | "weekly" | "monthly";
+    count: number;
+    volume: number;
+    share: number;
+  }>;
+  /** Distinct claimants in the window. */
+  distinctClaimants: number;
+  /** Avg claims per claimant = count / distinctClaimants. */
+  avgClaimsPerUser: number;
+  /** Median claims per user (integer-valued). */
+  medianClaimsPerUser: number;
+  /**
+   * Median gap in hours between consecutive claims, per user. Across
+   * users with ≥2 claims in the window. 0 when no qualifying user.
+   */
+  medianHoursBetweenClaims: number;
+  /**
+   * Users who claimed in the prior-equal window but NOT in the
+   * current window. `null` when the period is "all" (no prior window
+   * defined for all-time).
+   */
+  lapsedClaimants: number | null;
+};
+
+async function computeRakebackExtras(
+  period: RewardsPeriod,
+  blacklistIds: string[],
+): Promise<RakebackExtras> {
+  const db = await getDb();
+  const days = daysForPeriod(period);
+  const dateFilter =
+    days !== null
+      ? `AND rc.claimed_at >= NOW() - INTERVAL '${days} days'`
+      : "";
+  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
+
+  // Rollup: total wager + total rakeback + count + distinct claimants.
+  // `rakeback_claims` has both wager and rakeback per row, so this is
+  // a single aggregate, no ledger sweep.
+  const rollupRows = await db.$queryRawUnsafe<
+    {
+      total_wager: string | null;
+      total_rakeback: string | null;
+      cnt: string;
+      distinct_users: string;
+    }[]
+  >(`
+    SELECT
+      COALESCE(SUM(rc.wagered_amount_usd::numeric), 0)::text AS total_wager,
+      COALESCE(SUM(rc.rakeback_amount_usd::numeric), 0)::text AS total_rakeback,
+      COUNT(*)::text AS cnt,
+      COUNT(DISTINCT rc.user_id)::text AS distinct_users
+    FROM rakeback_claims rc
+    JOIN "user" u ON u.id = rc.user_id
+    WHERE rc.claimed_at IS NOT NULL
+      AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+      ${dateFilter}
+  `);
+  const rollup = rollupRows[0];
+  const totalWager = toNumber(rollup?.total_wager);
+  const totalRakeback = toNumber(rollup?.total_rakeback);
+  const count = Number(rollup?.cnt ?? 0);
+  const distinctClaimants = Number(rollup?.distinct_users ?? 0);
+  const avgRakebackPctOfWager = totalWager > 0 ? totalRakeback / totalWager : 0;
+  const avgClaimsPerUser = distinctClaimants > 0 ? count / distinctClaimants : 0;
+
+  // Per-claim ratio distribution + median. Rakeback rate ceiling in
+  // `rakeback_config` defaults are sub-5%, but we widen the buckets
+  // here so legitimate top-tier configurations don't crash off the
+  // last bin.
+  const ratioRows = await db.$queryRawUnsafe<
+    { ratio: string; rakeback: string }[]
+  >(`
+    SELECT
+      (rc.rakeback_amount_usd::numeric / NULLIF(rc.wagered_amount_usd::numeric, 0))::text AS ratio,
+      rc.rakeback_amount_usd::text AS rakeback
+    FROM rakeback_claims rc
+    JOIN "user" u ON u.id = rc.user_id
+    WHERE rc.claimed_at IS NOT NULL
+      AND rc.wagered_amount_usd::numeric > 0
+      AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+      ${dateFilter}
+  `);
+  const ratios = ratioRows.map((r) => Number(r.ratio)).filter(Number.isFinite);
+  ratios.sort((a, b) => a - b);
+  const medianRakebackPctOfWager =
+    ratios.length === 0
+      ? 0
+      : ratios.length % 2 === 1
+        ? ratios[(ratios.length - 1) / 2]
+        : (ratios[ratios.length / 2 - 1] + ratios[ratios.length / 2]) / 2;
+
+  // 0–0.5% / 0.5–1% / 1–2% / 2–5% / 5%+ — buckets sized so most rows
+  // land in the lower three under typical configurations, while the
+  // 5%+ catch-all flags promo-coupled outliers.
+  const BUCKET_LABELS = ["0–0.5%", "0.5–1%", "1–2%", "2–5%", "5%+"];
+  const buckets: RakebackExtras["rateBuckets"] = BUCKET_LABELS.map((label) => ({
+    label,
+    count: 0,
+    volume: 0,
+  }));
+  for (let i = 0; i < ratioRows.length; i++) {
+    const rTimes100 = Number(ratioRows[i].ratio) * 100;
+    const rakeUsd = toNumber(ratioRows[i].rakeback);
+    let idx: number;
+    if (!Number.isFinite(rTimes100)) continue;
+    if (rTimes100 < 0.5) idx = 0;
+    else if (rTimes100 < 1) idx = 1;
+    else if (rTimes100 < 2) idx = 2;
+    else if (rTimes100 < 5) idx = 3;
+    else idx = 4;
+    buckets[idx].count += 1;
+    buckets[idx].volume += rakeUsd;
+  }
+
+  // Rakeback type spread (daily / weekly / monthly).
+  const typeRows = await db.$queryRawUnsafe<
+    { rakeback_type: string; cnt: string; volume: string }[]
+  >(`
+    SELECT
+      rc.rakeback_type::text AS rakeback_type,
+      COUNT(*)::text AS cnt,
+      COALESCE(SUM(rc.rakeback_amount_usd::numeric), 0)::text AS volume
+    FROM rakeback_claims rc
+    JOIN "user" u ON u.id = rc.user_id
+    WHERE rc.claimed_at IS NOT NULL
+      AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+      ${dateFilter}
+    GROUP BY rc.rakeback_type
+  `);
+  const TYPES: Array<"daily" | "weekly" | "monthly"> = [
+    "daily",
+    "weekly",
+    "monthly",
+  ];
+  const typeByName = new Map<string, { count: number; volume: number }>();
+  for (const r of typeRows) {
+    typeByName.set(r.rakeback_type, {
+      count: Number(r.cnt),
+      volume: toNumber(r.volume),
+    });
+  }
+  const rakebackTypeSpread = TYPES.map((t) => {
+    const row = typeByName.get(t) ?? { count: 0, volume: 0 };
+    return {
+      type: t,
+      count: row.count,
+      volume: row.volume,
+      share: totalRakeback > 0 ? (row.volume / totalRakeback) * 100 : 0,
+    };
+  });
+
+  // Per-user claim count distribution → median.
+  const perUserRows = await db.$queryRawUnsafe<{ cnt: string }[]>(`
+    SELECT COUNT(*)::text AS cnt
+    FROM rakeback_claims rc
+    JOIN "user" u ON u.id = rc.user_id
+    WHERE rc.claimed_at IS NOT NULL
+      AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+      ${dateFilter}
+    GROUP BY rc.user_id
+  `);
+  const perUserCounts = perUserRows
+    .map((r) => Number(r.cnt))
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  const medianClaimsPerUser =
+    perUserCounts.length === 0
+      ? 0
+      : perUserCounts.length % 2 === 1
+        ? perUserCounts[(perUserCounts.length - 1) / 2]
+        : (perUserCounts[perUserCounts.length / 2 - 1] +
+            perUserCounts[perUserCounts.length / 2]) /
+          2;
+
+  // Median gap (hours) between consecutive claims per user — pulled
+  // server-side via LAG so the round-trip is one query. Median taken
+  // in JS over the user-mean gaps to avoid a per-user median CTE.
+  const gapRows = await db.$queryRawUnsafe<
+    { user_id: string; mean_gap_h: string }[]
+  >(`
+    WITH ordered AS (
+      SELECT
+        rc.user_id,
+        rc.claimed_at,
+        LAG(rc.claimed_at) OVER (PARTITION BY rc.user_id ORDER BY rc.claimed_at) AS prev_claim
+      FROM rakeback_claims rc
+      JOIN "user" u ON u.id = rc.user_id
+      WHERE rc.claimed_at IS NOT NULL
+        AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        ${dateFilter}
+    )
+    SELECT
+      user_id,
+      AVG(EXTRACT(EPOCH FROM (claimed_at - prev_claim)) / 3600)::text AS mean_gap_h
+    FROM ordered
+    WHERE prev_claim IS NOT NULL
+    GROUP BY user_id
+  `);
+  const userGapsH = gapRows
+    .map((r) => Number(r.mean_gap_h))
+    .filter((h) => Number.isFinite(h) && h >= 0)
+    .sort((a, b) => a - b);
+  const medianHoursBetweenClaims =
+    userGapsH.length === 0
+      ? 0
+      : userGapsH.length % 2 === 1
+        ? userGapsH[(userGapsH.length - 1) / 2]
+        : (userGapsH[userGapsH.length / 2 - 1] +
+            userGapsH[userGapsH.length / 2]) /
+          2;
+
+  // Lapsed claimants — users who claimed in the prior-equal window
+  // but not the current one. Only meaningful when `period !== all`.
+  let lapsedClaimants: number | null = null;
+  if (days !== null) {
+    const lapsedRows = await db.$queryRawUnsafe<{ cnt: string }[]>(`
+      WITH current_users AS (
+        SELECT DISTINCT rc.user_id
+        FROM rakeback_claims rc
+        JOIN "user" u ON u.id = rc.user_id
+        WHERE rc.claimed_at IS NOT NULL
+          AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+          AND rc.claimed_at >= NOW() - INTERVAL '${days} days'
+      ),
+      prior_users AS (
+        SELECT DISTINCT rc.user_id
+        FROM rakeback_claims rc
+        JOIN "user" u ON u.id = rc.user_id
+        WHERE rc.claimed_at IS NOT NULL
+          AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+          AND rc.claimed_at >= NOW() - INTERVAL '${days * 2} days'
+          AND rc.claimed_at < NOW() - INTERVAL '${days} days'
+      )
+      SELECT COUNT(*)::text AS cnt
+      FROM prior_users p
+      WHERE NOT EXISTS (SELECT 1 FROM current_users c WHERE c.user_id = p.user_id)
+    `);
+    lapsedClaimants = Number(lapsedRows[0]?.cnt ?? 0);
+  }
+
+  return {
+    avgRakebackPctOfWager,
+    medianRakebackPctOfWager,
+    rateBuckets: buckets,
+    rakebackTypeSpread,
+    distinctClaimants,
+    avgClaimsPerUser,
+    medianClaimsPerUser,
+    medianHoursBetweenClaims,
+    lapsedClaimants,
+  };
+}
+
+const cachedRakebackExtras = unstable_cache(
+  async (period: RewardsPeriod, blacklistIds: string[]) =>
+    computeRakebackExtras(period, blacklistIds),
+  ["rewards-rakeback-extras-v1"],
+  { revalidate: 60, tags: ["rewards-analytics"] },
+);
+
+export async function getRakebackExtras(
+  period: RewardsPeriod,
+): Promise<RakebackExtras> {
+  const blacklist = await getExcludedUserIds();
+  return cachedRakebackExtras(period, [...blacklist].sort());
+}
