@@ -10,6 +10,7 @@ import {
   getResolvedBlacklist,
   staffAndBlacklistSubquery,
   windowDateFilter,
+  windowDateFilterCapped,
   windowStartExpr,
 } from "./_shared";
 
@@ -74,7 +75,9 @@ async function computeTimeToClaim(
   blacklistIds: string[],
 ): Promise<DepositBonusTimeToClaim> {
   const db = await getDb();
-  const dateFilter = windowDateFilter(period, "d");
+  // Lifetime is capped to the pairing lookback (365d) so the deposit-side
+  // LATERAL pairing doesn't scan the entire deposit history.
+  const dateFilter = windowDateFilterCapped(period, "d");
   const userScope = staffAndBlacklistSubquery(blacklistIds);
 
   // Same canonical pairing (balance_before == balance_after, 30s) so

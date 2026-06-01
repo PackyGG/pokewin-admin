@@ -9,7 +9,7 @@ import {
   DEPOSIT_BONUS_CACHE_TAGS,
   getResolvedBlacklist,
   staffAndBlacklistSubquery,
-  windowDateFilter,
+  windowDateFilterCapped,
 } from "./_shared";
 
 /**
@@ -55,8 +55,11 @@ async function computeDailyBreakdown(
   const db = await getDb();
   const days = daysForInsightsPeriod(period);
   const userScope = staffAndBlacklistSubquery(blacklistIds);
-  const dateFilter = windowDateFilter(period, "lt");
-  const dateFilterD = windowDateFilter(period, "d");
+  // Lifetime is capped to the pairing lookback (365d) so the per-day
+  // `with_bonus` EXISTS pairing doesn't scan the full deposit history.
+  // The table itself is additionally row-capped below.
+  const dateFilter = windowDateFilterCapped(period, "lt");
+  const dateFilterD = windowDateFilterCapped(period, "d");
   const limitClause = days === null ? `LIMIT ${LIFETIME_DAY_LIMIT}` : "";
 
   // Three small per-day rollups joined on date — deposits / bonuses /

@@ -57,6 +57,35 @@ export function windowDateFilter(
 }
 
 /**
+ * Lifetime lookback cap (days) for the heavy deposit↔bonus balance-pairing
+ * queries. On the `all` window the plain {@link windowDateFilter} returns
+ * no bound, which makes the correlated LATERAL pairing scan the entire
+ * `ledger_transactions` deposit history — the single most expensive plan
+ * on this surface. Bounding the deposit side to the last year keeps the
+ * pairing tractable while still covering effectively all currently-relevant
+ * bonus activity. Mirrors the 365-day guard already used on the wager side
+ * in `suspicious.ts`.
+ */
+export const LIFETIME_PAIRING_LOOKBACK_DAYS = 365;
+
+/**
+ * Like {@link windowDateFilter}, but on the lifetime (`all`) window the
+ * filter is bounded to {@link LIFETIME_PAIRING_LOOKBACK_DAYS} instead of
+ * being unbounded. Use this for the deposit-side scan of any helper that
+ * runs the heavy balance-pairing LATERAL join (cohort / cap / time-to-claim
+ * / daily attach-rate) so a lifetime view doesn't trigger a full-history
+ * table scan. Finite windows behave identically to `windowDateFilter`.
+ */
+export function windowDateFilterCapped(
+  period: InsightsRewardsPeriod,
+  alias = "lt",
+): string {
+  const days = daysForInsightsPeriod(period);
+  const bound = days ?? LIFETIME_PAIRING_LOOKBACK_DAYS;
+  return `AND ${alias}.created_at >= NOW() - INTERVAL '${bound} days'`;
+}
+
+/**
  * Resolved exclusion list — staff (admin / support) + dynamic blacklist
  * (`excluded_users` table). Returns the sorted id list so callers
  * participate in the cache key.
