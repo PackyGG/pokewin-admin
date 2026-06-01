@@ -33,6 +33,7 @@ import {
 import { cn } from "@/lib/utils";
 import { updateCard } from "../actions";
 import { uploadImageClient } from "@/lib/upload-image-client";
+import { toastActionError } from "@/lib/utils/action-error";
 
 type CardData = {
   id: string;
@@ -262,7 +263,9 @@ export function EditCardButton({
         setOpen(false);
         router.refresh();
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Failed to update card");
+        // Let Next's redirect()/notFound() control-flow errors (e.g. expired
+        // session → /login) navigate cleanly instead of toasting NEXT_REDIRECT.
+        toastActionError(e, "Failed to update card");
       }
     });
   }
