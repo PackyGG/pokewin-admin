@@ -196,6 +196,146 @@ async function buildRaceSummary(
   };
 }
 
+export type LifetimePrizesByRaceType = {
+  raceType: string;
+  total: number;
+  claims: number;
+};
+
+export type LifetimePrizesTopWinner = {
+  userId: string;
+  username: string | null;
+  total: number;
+  claims: number;
+};
+
+export type LifetimePrizesBreakdown = {
+  /** Per-race-type rows. Same total as the headline KPI by construction. */
+  byRaceType: LifetimePrizesByRaceType[];
+  /** Total lifetime prize money across every race type. */
+  total: number;
+  /** Total lifetime claim count across every race type. */
+  claims: number;
+};
+
+/**
+ * Per-race-type breakdown of the lifetime prizes-paid KPI on
+ * /rewards/analytics. Drives the breakdown popover anchored on that
+ * tile — admins can see which race type (daily / weekly / monthly)
+ * drove the total without leaving the page.
+ *
+ * Single `race_claims` GROUP BY race_type aggregate. Sorted DESC by
+ * total so the loudest race type surfaces at the top. Includes every
+ * race_type, including monthly even though it isn't a section on
+ * /rewards/analytics — the headline KPI sums every type, so the
+ * breakdown does too (by construction the rows total to the
+ * headline).
+ *
+ * Race-claim totals deliberately INCLUDE staff / blacklisted users
+ * for the same reason the underlying `getRewardsLeaderboards` does:
+ * race-position queries stay raw so leaderboard positions don't
+ * shift when an exclusion lands.
+ */
+export async function getLifetimePrizesBreakdown(): Promise<LifetimePrizesBreakdown> {
+  const db = await getDb();
+  const rows = await db.race_claims.groupBy({
+    by: ["race_type"],
+    _sum: { prize_amount_usd: true },
+    _count: { _all: true },
+  });
+  const byRaceType: LifetimePrizesByRaceType[] = rows
+    .map((r) => ({
+      raceType: r.race_type,
+      total: toNumber(r._sum.prize_amount_usd ?? 0),
+      claims: r._count._all,
+    }))
+    .sort((a, b) => b.total - a.total);
+  const total = byRaceType.reduce((a, r) => a + r.total, 0);
+  const claims = byRaceType.reduce((a, r) => a + r.claims, 0);
+  return { byRaceType, total, claims };
+}
+
+/**
+ * Top lifetime prize winners across every race type. Drives the
+ * lazy expander inside the "Lifetime prizes paid" popover so admins
+ * can see WHO has cumulatively walked away with the most prize money
+ * (single-query view that spans every race type).
+ *
+ * Lazy on click (heavier GROUP BY user_id over race_claims). Joins
+ * to `user` for the username so the popover row can link straight
+ * to /users/<id>.
+ */
+export async function getLifetimePrizesTopWinners(
+  limit = 10,
+): Promise<LifetimePrizesTopWinner[]> {
+  const safeLimit = Math.max(1, Math.min(limit, 50));
+  const db = await getDb();
+  const rows = await db.$queryRaw<
+    {
+      user_id: string;
+      username: string | null;
+      total: string;
+      claims: string;
+    }[]
+  >`
+    SELECT
+      rc.user_id,
+      u.username,
+      SUM(rc.prize_amount_usd::numeric)::text AS total,
+      COUNT(*)::text AS claims
+    FROM race_claims rc
+    JOIN "user" u ON u.id = rc.user_id
+    GROUP BY rc.user_id, u.username
+    ORDER BY SUM(rc.prize_amount_usd::numeric) DESC
+    LIMIT ${safeLimit}
+  `;
+  return rows.map((r) => ({
+    userId: r.user_id,
+    username: r.username,
+    total: toNumber(r.total),
+    claims: Number(r.claims),
+  }));
+}
+
+export type PrizeBudgetTierRow = {
+  raceType: string;
+  position: number;
+  prizeAmountUsd: number;
+};
+
+export type PrizeBudgetBreakdown = {
+  rows: PrizeBudgetTierRow[];
+  total: number;
+};
+
+/**
+ * Per-tier prize budget breakdown — every tier row from
+ * `race_prize_tiers` for the requested race types, sorted by race
+ * type then position. Drives the breakdown popover on the "Per-race
+ * prize budget" KPI tile so admins can see exactly which positions
+ * carry which prize amounts without opening /rewards/leaderboards.
+ *
+ * `raceTypes` parameter is a strict allow-list of `race_type` enum
+ * values — caller passes the same set the headline KPI sums so the
+ * rows reconcile by construction.
+ */
+export async function getPrizeBudgetBreakdown(
+  raceTypes: string[],
+): Promise<PrizeBudgetBreakdown> {
+  const db = await getDb();
+  const tiers = await db.race_prize_tiers.findMany({
+    where: { race_type: { in: raceTypes as RaceLeaderboardKind[] } },
+    orderBy: [{ race_type: "asc" }, { position: "asc" }],
+  });
+  const rows: PrizeBudgetTierRow[] = tiers.map((t) => ({
+    raceType: t.race_type,
+    position: t.position,
+    prizeAmountUsd: toNumber(t.prize_amount_usd),
+  }));
+  const total = rows.reduce((a, r) => a + r.prizeAmountUsd, 0);
+  return { rows, total };
+}
+
 export async function getRewardsLeaderboards(): Promise<RewardsLeaderboardsData> {
   const db = await getDb();
 

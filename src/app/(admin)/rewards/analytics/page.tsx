@@ -22,7 +22,6 @@ import {
   SectionHeading,
   KpiTile,
   StatPanel,
-  PanelRow,
 } from "@/components/modern-panels";
 import { AnimatedNumber } from "@/components/animated-number";
 import { FadeIn } from "@/components/fade-in";
@@ -40,16 +39,25 @@ import { cn } from "@/lib/utils";
 import { formatCurrency, formatDate, formatNumber } from "@/lib/utils/format";
 import {
   getRewardsAnalytics,
+  getRewardCategoryBreakdown,
   type RewardsPeriod,
   type RewardCategoryKey,
+  type RewardCategoryBreakdown,
   type RewardRecipientRow,
 } from "@/lib/queries/rewards-analytics";
 import {
   getRewardsLeaderboards,
+  getLifetimePrizesBreakdown,
+  getPrizeBudgetBreakdown,
   type RaceLeaderboardSummary,
 } from "@/lib/queries/rewards-analytics-leaderboards";
 import { RewardsPeriodFilter } from "./period-filter";
 import { RewardsCostChart } from "./rewards-chart";
+import { RewardTileDrilldown } from "./reward-tile-popover";
+import {
+  LifetimePrizesPopover,
+  PrizeBudgetPopover,
+} from "./leaderboard-tile-popover";
 
 export const metadata = { title: "Rewards Analytics" };
 
@@ -99,18 +107,58 @@ export default async function RewardsAnalyticsPage({
   await requirePageAccess("/rewards/analytics");
   const params = await searchParams;
   const period = parsePeriod(params.period);
-  // Reward-cost analytics and the platform-leaderboard summary are
-  // independent of each other (different tables, no shared filters)
-  // so they're fetched in parallel.
-  const [data, leaderboards] = await Promise.all([
+  // Reward-cost analytics, the platform-leaderboard summary, and the
+  // per-category drilldown breakdowns (one query per category — bounded
+  // by ledger types per category, 1–3) are independent of each other so
+  // they're fetched together in parallel. The breakdowns hydrate the
+  // popover anchored on each KPI tile so the per-type rows render
+  // immediately when the admin clicks the info icon — no extra
+  // round-trip on open.
+  const [
+    data,
+    leaderboards,
+    bonusesBreakdown,
+    rakebackBreakdown,
+    affiliateBreakdown,
+    rainRaceBreakdown,
+    signupPackBreakdown,
+    creatorTipBreakdown,
+    waitlistBreakdown,
+    lifetimePrizesBreakdown,
+    prizeBudgetBreakdown,
+  ] = await Promise.all([
     getRewardsAnalytics(period),
     getRewardsLeaderboards(),
+    getRewardCategoryBreakdown(period, "bonuses"),
+    getRewardCategoryBreakdown(period, "rakeback"),
+    getRewardCategoryBreakdown(period, "affiliate"),
+    getRewardCategoryBreakdown(period, "rainRace"),
+    getRewardCategoryBreakdown(period, "signupPack"),
+    getRewardCategoryBreakdown(period, "creatorTip"),
+    getRewardCategoryBreakdown(period, "waitlist"),
+    getLifetimePrizesBreakdown(),
+    // The headline tile sums daily + weekly. Monthly would inflate
+    // the breakdown without changing the headline, so it's
+    // deliberately excluded from this call too.
+    getPrizeBudgetBreakdown(["daily", "weekly"]),
   ]);
 
   // KPI strip: total cost + the five biggest reward buckets. Categories
   // are pre-sorted by total; we look each one up by key so the strip
   // order is stable (not data-dependent) and always House-POV rose.
   const byKey = new Map(data.categories.map((c) => [c.key, c]));
+  // Per-category breakdowns keyed by category so each drilldown
+  // surface (KPI tile + bottom-of-page breakdown panel) can look up
+  // the rows it needs by key.
+  const breakdownByCategory: Record<RewardCategoryKey, RewardCategoryBreakdown> = {
+    bonuses: bonusesBreakdown,
+    rakeback: rakebackBreakdown,
+    affiliate: affiliateBreakdown,
+    rainRace: rainRaceBreakdown,
+    signupPack: signupPackBreakdown,
+    creatorTip: creatorTipBreakdown,
+    waitlist: waitlistBreakdown,
+  };
   const kpiCategories: { key: RewardCategoryKey; label: string; icon: React.ElementType }[] = [
     { key: "bonuses", label: "Bonuses & Promos", icon: Gift },
     { key: "rakeback", label: "Rakeback", icon: Percent },
@@ -118,6 +166,20 @@ export default async function RewardsAnalyticsPage({
     { key: "rainRace", label: "Rain / Race", icon: CloudRain },
     { key: "signupPack", label: "Signup Rewards", icon: Sparkles },
   ];
+  // For the "Total Rewards" drilldown popover we build a per-category
+  // breakdown row list (one row per category, not one per ledger type)
+  // so the popover answers "which BUCKET drives the total" — different
+  // shape from the per-tile popovers (which answer "which LEDGER TYPE
+  // drives this bucket"). Reuses the RewardBreakdownRow type so it can
+  // share the popover renderer.
+  const totalBreakdownRows = data.categories
+    .filter((c) => c.total > 0)
+    .map((c) => ({
+      type: c.key,
+      label: c.label,
+      total: c.total,
+      count: c.count,
+    }));
 
   return (
     <div className="space-y-6">
@@ -133,7 +195,14 @@ export default async function RewardsAnalyticsPage({
         </div>
       </PageHero>
 
-      {/* KPI strip — all rose (house cost), AnimatedNumber + tabular-nums. */}
+      {/* KPI strip — all rose (house cost), AnimatedNumber + tabular-nums.
+          Each tile has an info-icon `action` that opens the drilldown
+          popover (per-category breakdown + lazy top recipients). The
+          Total Rewards popover shows ONE row per CATEGORY, the
+          per-category popovers show one row per LEDGER TYPE — different
+          shapes, same renderer. Bonuses & Promos additionally gets the
+          "top 10 promo codes" expander so admins can see which CODES
+          drove the $X without leaving the page. */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <KpiTile
           label={`Total Rewards (${periodLabel(period)})`}
@@ -141,11 +210,25 @@ export default async function RewardsAnalyticsPage({
           sub={`${formatNumber(data.totalCount)} payouts`}
           icon={TrendingDown}
           accent="rose"
+          action={
+            data.totalCost > 0 ? (
+              <RewardTileDrilldown
+                category="all"
+                label={`All rewards (${periodLabel(period)})`}
+                breakdownRows={totalBreakdownRows}
+                total={data.totalCost}
+                count={data.totalCount}
+                periodParam={period}
+                periodLabel={periodLabel(period)}
+              />
+            ) : undefined
+          }
         />
         {kpiCategories.map(({ key, label, icon }) => {
           const cat = byKey.get(key);
           const total = cat?.total ?? 0;
           const share = cat?.share ?? 0;
+          const breakdown = breakdownByCategory[key];
           return (
             <KpiTile
               key={key}
@@ -154,6 +237,19 @@ export default async function RewardsAnalyticsPage({
               sub={`${share.toFixed(1)}% of cost`}
               icon={icon}
               accent="rose"
+              action={
+                breakdown.total > 0 ? (
+                  <RewardTileDrilldown
+                    category={key}
+                    label={label}
+                    breakdownRows={breakdown.rows}
+                    total={breakdown.total}
+                    count={breakdown.count}
+                    periodParam={period}
+                    periodLabel={periodLabel(period)}
+                  />
+                ) : undefined
+              }
             />
           );
         })}
@@ -178,7 +274,10 @@ export default async function RewardsAnalyticsPage({
         </div>
       </FadeIn>
 
-      {/* Breakdown by type + summary side by side on wide screens. */}
+      {/* Breakdown by type + summary side by side on wide screens.
+          Both panels mirror the KPI strip's drilldown — each category
+          row carries the same info-icon popover so admins can drill
+          into per-type rows + recipient lists from this view too. */}
       <FadeIn>
         <div className="grid gap-4 xl:grid-cols-2">
           <div>
@@ -187,6 +286,9 @@ export default async function RewardsAnalyticsPage({
               <RewardBreakdownPanel
                 categories={data.categories}
                 totalCost={data.totalCost}
+                breakdownByCategory={breakdownByCategory}
+                periodParam={period}
+                periodLabel={periodLabel(period)}
               />
             </div>
           </div>
@@ -207,17 +309,41 @@ export default async function RewardsAnalyticsPage({
                   {periodLabel(period)}
                 </p>
                 <div className="mt-3 space-y-0.5 border-t pt-3">
-                  {data.categories.map((c) => (
-                    <PanelRow
-                      key={c.key}
-                      label={`${c.label} · ${formatNumber(c.count)}`}
-                      value={
-                        <span className="text-rose-600 dark:text-rose-400">
+                  {data.categories.map((c) => {
+                    const cb = breakdownByCategory[c.key];
+                    // Inline equivalent of <PanelRow> so the label slot
+                    // can host the drilldown trigger (PanelRow types
+                    // label as `string`). Same gap-3 + min-w-0
+                    // structure so the row reads identically to the
+                    // PanelRow rendering elsewhere on the page.
+                    return (
+                      <div
+                        key={c.key}
+                        className="flex items-center justify-between gap-3 py-1 text-sm"
+                      >
+                        <span className="flex min-w-0 items-center gap-1.5 truncate text-muted-foreground">
+                          <span className="truncate">{c.label}</span>
+                          <span className="shrink-0 text-muted-foreground/60 tabular-nums">
+                            · {formatNumber(c.count)}
+                          </span>
+                          {cb.total > 0 && (
+                            <RewardTileDrilldown
+                              category={c.key}
+                              label={c.label}
+                              breakdownRows={cb.rows}
+                              total={cb.total}
+                              count={cb.count}
+                              periodParam={period}
+                              periodLabel={periodLabel(period)}
+                            />
+                          )}
+                        </span>
+                        <span className="shrink-0 font-medium tabular-nums text-rose-600 dark:text-rose-400">
                           {formatCurrency(c.total)}
                         </span>
-                      }
-                    />
-                  ))}
+                      </div>
+                    );
+                  })}
                 </div>
               </StatPanel>
             </div>
@@ -253,6 +379,15 @@ export default async function RewardsAnalyticsPage({
               sub={`${formatNumber(leaderboards.lifetimeClaimsCount)} prize claims`}
               icon={Crown}
               accent="rose"
+              action={
+                lifetimePrizesBreakdown.total > 0 ? (
+                  <LifetimePrizesPopover
+                    byRaceType={lifetimePrizesBreakdown.byRaceType}
+                    total={lifetimePrizesBreakdown.total}
+                    claims={lifetimePrizesBreakdown.claims}
+                  />
+                ) : undefined
+              }
             />
             <KpiTile
               label="Per-race prize budget"
@@ -262,6 +397,14 @@ export default async function RewardsAnalyticsPage({
               sub={`${leaderboards.daily.prizePositions + leaderboards.weekly.prizePositions} tiered positions (daily + weekly)`}
               icon={Trophy}
               accent="rose"
+              action={
+                prizeBudgetBreakdown.total > 0 ? (
+                  <PrizeBudgetPopover
+                    rows={prizeBudgetBreakdown.rows}
+                    total={prizeBudgetBreakdown.total}
+                  />
+                ) : undefined
+              }
             />
           </div>
           <div className="grid gap-4 xl:grid-cols-2">
@@ -441,10 +584,19 @@ function LeaderboardTopWinners({
  * Breakdown panel — one row per reward type with amount + share bar.
  * Every amount is rose (house cost). Sorted by total descending
  * (already done in the query). Bars use rose to stay in House-POV.
+ *
+ * Each row carries the drilldown trigger so admins can open the
+ * per-ledger-type + top-recipients popover directly from the breakdown
+ * panel without scrolling back up to the KPI strip. Hidden on
+ * zero-total rows so quiet windows don't render an info-trigger with
+ * nothing behind it.
  */
 function RewardBreakdownPanel({
   categories,
   totalCost,
+  breakdownByCategory,
+  periodParam,
+  periodLabel,
 }: {
   categories: {
     key: RewardCategoryKey;
@@ -454,6 +606,9 @@ function RewardBreakdownPanel({
     share: number;
   }[];
   totalCost: number;
+  breakdownByCategory: Record<RewardCategoryKey, RewardCategoryBreakdown>;
+  periodParam: RewardsPeriod;
+  periodLabel: string;
 }) {
   const hasData = totalCost > 0;
   if (!hasData) {
@@ -472,6 +627,7 @@ function RewardBreakdownPanel({
     <div className="space-y-2 rounded-2xl border bg-card p-4 sm:p-5">
       {categories.map((c) => {
         const Icon = CATEGORY_ICONS[c.key] ?? Gift;
+        const cb = breakdownByCategory[c.key];
         return (
           <div key={c.key} className="rounded-lg border bg-muted/20 p-3">
             <div className="flex items-center justify-between gap-3">
@@ -481,6 +637,17 @@ function RewardBreakdownPanel({
                 <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
                   {formatNumber(c.count)}
                 </span>
+                {cb.total > 0 && (
+                  <RewardTileDrilldown
+                    category={c.key}
+                    label={c.label}
+                    breakdownRows={cb.rows}
+                    total={cb.total}
+                    count={cb.count}
+                    periodParam={periodParam}
+                    periodLabel={periodLabel}
+                  />
+                )}
               </div>
               <span className="shrink-0 text-sm font-medium tabular-nums text-rose-600 dark:text-rose-400">
                 {formatCurrency(c.total)}
