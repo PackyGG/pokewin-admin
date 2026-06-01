@@ -446,11 +446,17 @@ async function computeDepositBonusCohortExtras(
   };
 }
 
+// 5-minute revalidate (vs 60s on the cheap baseline). The cohort SQL
+// pairs every window deposit to its bonus via an unindexed equality
+// (balance_before == balance_after) — even after tightening the join
+// window to 30s this stays the heaviest query on the tab. 30d cohort
+// numbers don't move minute-to-minute; a 5-min cache trades a small
+// staleness for a much better hit rate on the slow path.
 const cachedDepositBonusCohortExtras = unstable_cache(
   async (period: RewardsPeriod, capValue: number, blacklistIds: string[]) =>
     computeDepositBonusCohortExtras(period, capValue, blacklistIds),
-  ["rewards-deposit-bonus-cohort-extras-v1"],
-  { revalidate: 60, tags: ["rewards-analytics"] },
+  ["rewards-deposit-bonus-cohort-extras-v2"],
+  { revalidate: 300, tags: ["rewards-analytics"] },
 );
 
 export async function getDepositBonusCohortExtras(
