@@ -152,14 +152,8 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Dashboard", href: "/dashboard", icon: "LayoutDashboard" },
       { label: "Analytics", href: "/analytics", icon: "BarChart3" },
-      // GGR — long-form deep-dive of the headline GGR number. The
-      // /dashboard GgrStatCard's popover shows the same per-type
-      // breakdown in a compact form; this page is the full version
-      // with one card per ledger type + canonical descriptions + the
-      // top-10 contributors for the active window. Lives in Overview
-      // so admins reach it from the same place they reach the
-      // dashboard.
-      { label: "GGR", href: "/ggr", icon: "TrendingUp", isNew: true },
+      // GGR moved to the Insights group below — analytical rollups
+      // live with the rest of the cross-cutting deep-dives.
       // Changelogs — curated release notes. Read-only for anyone with
       // /changelogs access, publish/edit/delete requires the
       // __can_manage_changelog capability (admin-only by default).
@@ -196,6 +190,13 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Insights",
     items: [
       { label: "Analytics", href: "/insights/analytics", icon: "LineChart", isNew: true },
+      // GGR — long-form deep-dive of the headline GGR number with one
+      // card per ledger type + canonical descriptions + top-10
+      // contributors for the active window. Sits in Insights because
+      // it's the same class of cross-cutting analytical surface as the
+      // other entries here. The /dashboard GgrStatCard's popover is
+      // the compact companion.
+      { label: "GGR", href: "/ggr", icon: "TrendingUp", isNew: true },
       { label: "Games", href: "/insights/games", icon: "Joystick", isNew: true },
       { label: "Rewards", href: "/insights/rewards", icon: "Gift", isNew: true },
       { label: "Streamers", href: "/insights/streamers", icon: "Tv", isNew: true },

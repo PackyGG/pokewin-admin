@@ -9,11 +9,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Navigation", label: "Dashboard", key: "/dashboard" },
   { group: "Navigation", label: "Analytics", key: "/analytics" },
   { group: "Navigation", label: "Raw P&L", key: "/analytics/pure-pnl" },
-  // GGR — long-form GGR breakdown page (24h/3d/7d windows, per-type
-  // cards, top-10 contributors). Same group as Dashboard/Analytics in
-  // the role editor so the admin-pages list mirrors the sidebar's
-  // Overview group.
-  { group: "Navigation", label: "GGR", key: "/ggr" },
+  // GGR moved to the Insights group below.
   // Changelogs — curated admin-internal release notes. Page is read-
   // only for anyone with /changelogs access; publish/edit/delete are
   // additionally gated by __can_manage_changelog (defined in
@@ -38,6 +34,10 @@ export const ADMIN_PAGES: AdminPage[] = [
   // analytics keys (e.g. /rewards/analytics) so role grants can be
   // managed independently.
   { group: "Insights", label: "Analytics", key: "/insights/analytics" },
+  // GGR — long-form GGR breakdown page (24h/3d/7d windows, per-type
+  // cards, top-10 contributors). Sits in Insights alongside the other
+  // cross-cutting analytical surfaces.
+  { group: "Insights", label: "GGR", key: "/ggr" },
   { group: "Insights", label: "Games", key: "/insights/games" },
   { group: "Insights", label: "Rewards", key: "/insights/rewards" },
   { group: "Insights", label: "Streamers", key: "/insights/streamers" },
