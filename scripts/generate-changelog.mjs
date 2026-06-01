@@ -4,8 +4,28 @@
  *
  * Reads the last N non-merge commits from the current branch and writes
  * them to `src/lib/changelog/recent-pushes.json`. The /changelogs admin
- * page reads that file at request time and renders one display entry
- * per commit alongside any admin-curated DB entries.
+ * page reads that file as a FALLBACK source — see the source-priority
+ * note below.
+ *
+ * ── Source priority (as of the GitHub-API patch) ──────────────────────
+ * `src/lib/queries/changelog.ts::getAutoChangelogEntries()` now tries
+ * two sources, in this order:
+ *
+ *   1. The GitHub REST API at REQUEST time (via
+ *      `src/lib/changelog/github.ts`). Wrapped in `unstable_cache` 60s
+ *      so the page reflects commits pushed AFTER the last Vercel
+ *      deploy — including commits on a feature branch that prod isn't
+ *      deployed from. Requires `GITHUB_TOKEN` in the Vercel project env.
+ *
+ *   2. The build-time JSON written by THIS script. Used when the
+ *      GitHub path returns nothing (token missing, API outage, rate
+ *      limit, network egress blocked).
+ *
+ * So this script is no longer the primary source of truth — it's a
+ * fallback. Keep it working anyway: a missing token shouldn't blank
+ * the page, and a fresh local clone should still render commit cards
+ * via `npm run dev` without setting up the env var.
+ * ──────────────────────────────────────────────────────────────────────
  *
  * Wired into `package.json` as `prebuild`, so every Vercel deploy
  * (which runs `npm run build`) refreshes the JSON automatically. The
@@ -20,7 +40,8 @@
  * The no-shrink guard exists because Vercel performs a shallow clone
  * (depth 1) for builds and `git log` only sees the tip commit. Without
  * the guard, every prod deploy would overwrite the committed JSON with
- * a near-empty list and /changelogs would render "No entries yet".
+ * a near-empty list and /changelogs would render "No entries yet"
+ * whenever the GitHub fallback also fails.
  *
  * NO external dependencies (uses node:child_process + node:fs only) so
  * it runs in Vercel's build sandbox without an extra install step.
