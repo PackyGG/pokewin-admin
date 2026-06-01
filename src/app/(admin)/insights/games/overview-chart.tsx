@@ -9,9 +9,67 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { formatCompactUsd, formatDateTime } from "@/lib/utils/format";
+import { formatCompactUsd, formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { format } from "date-fns";
 import type { GamesOverviewTimePoint } from "@/lib/queries/insights-games/overview";
+
+/**
+ * Custom tooltip — hover any point on the chart to see the day's
+ * P&L prominently with house-POV color. Wager + Payout shown below
+ * for context.
+ *
+ * House-POV rule: positive PnL = house gained = emerald, negative =
+ * house lost = rose. Matches the area-fill convention used by the
+ * rest of the chart.
+ */
+function ChartTooltip({
+  active,
+  payload,
+  label,
+  bucketByHour,
+}: {
+  active?: boolean;
+  payload?: Array<{ payload: GamesOverviewTimePoint }>;
+  label?: string;
+  bucketByHour: boolean;
+}) {
+  if (!active || !payload || payload.length === 0) return null;
+  const point = payload[0].payload;
+  const pnlPositive = point.pnl >= 0;
+  return (
+    <div className="rounded-lg border border-border bg-popover px-3 py-2 text-xs shadow-lg">
+      <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        {bucketByHour
+          ? formatDateTime(new Date(label ?? point.bucket))
+          : format(new Date(label ?? point.bucket), "EEE, MMM d, yyyy")}
+      </div>
+      <div className="mt-1.5 flex items-baseline gap-2">
+        <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+          {pnlPositive ? "House profit" : "House loss"}
+        </span>
+        <span
+          className={
+            "text-lg font-bold tabular-nums " +
+            (pnlPositive ? "text-emerald-500" : "text-rose-500")
+          }
+        >
+          {pnlPositive ? "+" : ""}
+          {formatCurrency(point.pnl)}
+        </span>
+      </div>
+      <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
+        <span className="text-muted-foreground">Wager</span>
+        <span className="text-right tabular-nums text-emerald-500">
+          {formatCurrency(point.wager)}
+        </span>
+        <span className="text-muted-foreground">Payout</span>
+        <span className="text-right tabular-nums text-rose-500">
+          {formatCurrency(point.payout)}
+        </span>
+      </div>
+    </div>
+  );
+}
 
 /**
  * Time-series area chart for the Overview tab. Three series stacked
@@ -74,23 +132,17 @@ export function OverviewChart({
             width={56}
           />
           <Tooltip
-            contentStyle={{
-              backgroundColor: "hsl(var(--popover))",
-              border: "1px solid hsl(var(--border))",
-              borderRadius: 8,
-              fontSize: 12,
-            }}
-            labelFormatter={(v) =>
-              formatDateTime(new Date(v as string))
-            }
-            formatter={(value, name) => [
-              formatCompactUsd(Number(value)),
-              name === "wager"
-                ? "Wager"
-                : name === "payout"
-                  ? "Payout"
-                  : "PnL",
-            ]}
+            cursor={{ stroke: "currentColor", strokeOpacity: 0.2, strokeDasharray: "3 3" }}
+            content={(props) => (
+              <ChartTooltip
+                {...(props as {
+                  active?: boolean;
+                  payload?: Array<{ payload: GamesOverviewTimePoint }>;
+                  label?: string;
+                })}
+                bucketByHour={bucketByHour}
+              />
+            )}
           />
           <Area
             type="monotone"
