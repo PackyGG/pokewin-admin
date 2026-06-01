@@ -7,6 +7,10 @@ import { cn } from "@/lib/utils";
  *   - 50–74 → amber   (probably worth an admin look)
  *   - 75+   → rose    (likely abuse — investigate)
  *
+ * The numeric score is the MAX of the seven signal scores produced by
+ * `getCreatorRiskRows` (not the sum) — one critical signal surfaces a
+ * creator regardless of the other six. See abuse.ts for the rationale.
+ *
  * Note: rose for high-risk uses the "user winning / costing us" House-POV
  * mapping — a high risk score = a creator costing us money via abuse.
  */
@@ -26,7 +30,7 @@ export function RiskBadge({ score }: { score: number }) {
         "inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
         colorClass,
       )}
-      title={`Risk score: ${score}/100`}
+      title={`Risk score: ${score}/100 (max across signals)`}
     >
       {score}
     </span>

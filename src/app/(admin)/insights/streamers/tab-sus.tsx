@@ -19,22 +19,73 @@ import { RiskBadge } from "./risk-badge";
 import { periodLabel, type StreamerPeriod } from "./types";
 
 /**
- * Sus / Abuse tab — every creator scored by signals from
+ * Sus / Abuse tab — every creator scored by 7 signals from
  * `getCreatorRiskRows`.
  *
  * Signals implemented (see queries/insights-streamers/abuse.ts):
- *   1. Low-quality cohort       — % never reaching $50 wager
- *   2. Cohort code-switching    — % of cohort with ≥2 codes
- *   3. Burst signups            — max 1h signups vs baseline
- *   4. Heavy borrow battles     — % of cohort wager that's borrow
+ *   1. Low-quality cohort        — % never reaching $50 wager
+ *   2. Cohort code-switching     — % of cohort with ≥2 codes
+ *   3. Burst signups             — max 1h signups vs baseline
+ *   4. Heavy borrow battles      — % of cohort wager that's borrow
+ *   5. Self-play on stream       — creator's own wager during their stream
+ *   6. Pack RTP / Upgrader z     — cohort game-outcome z-score vs baseline
+ *   7. Cycle pattern             — % of cohort with ≥2 deposit→withdraw→
+ *                                  redeposit-with-different-code cycles
  *
- * Each signal carries 0..N points; the page renders the capped sum.
+ * Combined risk = MAX(signal scores), not sum — so a creator with one
+ * critical signal isn't diluted by zeros on the other axes.
+ *
  * Amber 50+, rose 75+ per CLAUDE.md guidance.
  *
  * Note on House-POV for the strip: high risk = users winning at our
  * expense (sniping leaderboards, withdrawing cards funded by their
  * borrow share). So a high risk-creators count is "user-winning" → rose.
  */
+
+/**
+ * Explainer text shown in the tooltip of each signal chip — describes
+ * WHAT the signal measures and HOW the score is computed, so admins
+ * see the methodology without having to read the SQL.
+ *
+ * Keys are the canonical `SignalScore.label` strings produced by
+ * `abuse.ts`. Stays in this file (not the query layer) because it's
+ * UI copy, not analytics math.
+ */
+const SIGNAL_EXPLANATIONS: Record<string, string> = {
+  "Low-quality cohort":
+    "Share of the creator's referred users whose LIFETIME wager is under $50. " +
+    "Score ramps 0→35 as the share rises from 50% to 100%. " +
+    "Min cohort size of 5 to avoid noise.",
+  "Cohort code-switching":
+    "Share of the creator's cohort that has used ≥2 distinct affiliate codes. " +
+    "Score ramps 0→25 as the share rises from 20% to 40%. " +
+    "Indicator of sniping / multi-creator hopping.",
+  "Burst signups":
+    "Largest single-hour spike of cohort signups vs the hourly mean across the period. " +
+    "Score scales with the spike/mean ratio (cap 20). " +
+    "Triggers only when the spike is ≥8 signups and ≥5× the mean.",
+  "Heavy borrow battles":
+    "Share of the cohort's BATTLE wager that was funded by borrow (sponsorship). " +
+    "Score ramps 0→20 as the share rises from 30% to 60%. " +
+    "High share = cohort is wager-farming without committing their balance.",
+  "Self-play on stream":
+    "Creator's OWN wager (from their balance) during their own live stream windows, " +
+    "as a share of total stream-time wager (their wager + cohort wager). " +
+    "Score: 30%→25 pts (amber), 50%→40 pts, 80%→60 pts (rose). " +
+    "Min $200 self-wager to gate noise.",
+  "Pack RTP anomaly":
+    "Cohort's pack RTP (card value / pack wager, non-borrow) vs the population baseline. " +
+    "Z-score computed against the spread of per-creator-cohort RTPs. " +
+    "|z|≥1.5 → 30 pts, |z|≥2.5 → 60 pts. Min 10 cohort pack opens.",
+  "Upgrader hit-rate anomaly":
+    "Cohort's upgrader hit rate (wins / bets) vs the population baseline. " +
+    "Z-score computed against the spread of per-creator-cohort hit rates. " +
+    "|z|≥1.5 → 30 pts, |z|≥2.5 → 60 pts. Min 10 cohort upgrader bets.",
+  "Cycle pattern":
+    "Cohort users who deposit → wager → withdraw → re-deposit with a DIFFERENT " +
+    "affiliate code, repeated ≥2 times in the period. " +
+    "Score: 10% of cohort affected → 30 pts, ≥20% → 60 pts. Min cohort 5.",
+};
 export async function SusTab({ period }: { period: StreamerPeriod }) {
   const rows = await getCreatorRiskRows(period);
 
@@ -146,18 +197,31 @@ export async function SusTab({ period }: { period: StreamerPeriod }) {
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1.5">
-                        {r.signals.map((sig) => (
-                          <span
-                            key={sig.label}
-                            className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
-                            title={sig.detail ?? sig.label}
-                          >
-                            {sig.label}
-                            <span className="tabular-nums opacity-70">
-                              +{sig.score}
+                        {r.signals.map((sig) => {
+                          // Two-line tooltip: this creator's specific
+                          // detail (top), then the methodology so the
+                          // admin knows what to act on. Falls back to
+                          // just the detail/label when no explainer is
+                          // wired for this signal (defensive — covers
+                          // future-added signals that haven't been
+                          // mapped here yet).
+                          const explain = SIGNAL_EXPLANATIONS[sig.label];
+                          const tooltip = explain
+                            ? `${sig.detail ?? sig.label}\n\n${explain}`
+                            : (sig.detail ?? sig.label);
+                          return (
+                            <span
+                              key={sig.label}
+                              className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+                              title={tooltip}
+                            >
+                              {sig.label}
+                              <span className="tabular-nums opacity-70">
+                                +{sig.score}
+                              </span>
                             </span>
-                          </span>
-                        ))}
+                          );
+                        })}
                       </div>
                     </TableCell>
                     <TableCell>

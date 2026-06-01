@@ -6,49 +6,63 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "../_blacklist";
 import { periodSqlInterval, type StreamerPeriod } from "@/app/(admin)/insights/streamers/types";
 import type { CreatorRiskRow, SignalScore } from "./types";
+import { getCreatorSelfPlayMap } from "./creator-self-play";
+import { getCohortGameAnomalyMap } from "./cohort-rtp-anomaly";
+import { getCycleSignalMap } from "./withdraw-redeposit-cycle";
+import { formatCurrency } from "@/lib/utils/format";
 
 /**
  * Per-creator abuse / sus-behaviour scoring.
  *
  * Scoring philosophy:
- *   Each signal contributes 0..100 points. The page renders the
- *   capped sum. Per CLAUDE.md: 50+ amber, 75+ rose. Each signal also
- *   has a short label + optional detail for the drawer.
+ *   Each signal carries 0..N points. The combined risk score is the
+ *   MAX across signals (not the sum) so a creator with one critical
+ *   signal still surfaces — a creator who is clearly cycling
+ *   leaderboards but has a small cohort shouldn't get diluted by six
+ *   zero signals.
  *
- * Signals implemented inline (FIXED):
+ * Per CLAUDE.md: 50+ amber, 75+ rose. Each signal also carries a
+ * short label + optional detail for the drawer.
+ *
+ * All seven signals (FIXED):
  *   1. Inactive cohort     — % of referred users below the wager
- *                            threshold ($50 lifetime). >70% → 35 pts.
+ *                            threshold ($50 lifetime). Cohort-quality
+ *                            proxy.
+ *                            Source: this file (inline).
+ *
  *   2. Code-switch share   — % of cohort that used ≥2 distinct codes.
- *                            >40% → 25 pts (gradient up from 20%).
- *   3. Burst signups       — max signups in any 1-hour window. >5×
- *                            mean / >10 raw → 20 pts.
- *   4. Borrow-mode share   — % of cohort wager that was battle borrow
- *                            (sponsorship-funded, indicates wager farming
- *                            patterns). > 30% → 20 pts.
+ *                            Sniping indicator.
+ *                            Source: this file (inline).
  *
- * PROPOSED (need data we haven't observed in the codebase):
- *   - "Creator self-play during own stream": requires the creator
- *     session window CTE (creator-session-windows.ts) joined with
- *     ledger transactions where user_id = creator. We have the CTE
- *     helper already — adding this signal as a follow-up keeps the
- *     first ship lean and avoids the fan-out cost on every page render
- *     until we know it's the signal admins watch most.
- *   - "Suspicious pack RTP / upgrader hit rate": requires per-pack
- *     payout data, which is currently aggregated in
- *     dashboard-upgrader.ts at a global level. A per-cohort z-score
- *     would need a join against game_session results that we don't yet
- *     surface in queries/.
- *   - "Withdraw-and-redeposit cycle": pattern detection requires a
- *     streaming window over ledger_transactions per user. Costly. Drop
- *     in once we have a precomputed creator_risk_scores table (see
- *     "Future hardening" below).
+ *   3. Burst signups       — max signups in any 1-hour window vs the
+ *                            mean. Botting indicator.
+ *                            Source: this file (inline).
  *
- * Future hardening:
- *   Today the query is computed live with a 10-minute cache. If the
- *   cohort distribution scales, swap it to a cron-populated admin DB
- *   table `creator_risk_scores` (cron pushes scores every 10 min, page
- *   reads cached rows). The signal contract above is data-only so the
- *   migration path is read-only.
+ *   4. Borrow-mode share   — % of cohort wager that was battle borrow.
+ *                            Wager-farming indicator.
+ *                            Source: this file (inline).
+ *
+ *   5. Creator self-play   — creator's share of total wager flowing
+ *      during stream         during their own live windows. The
+ *                            centerpiece "wager abuse" signal.
+ *                            Source: ./creator-self-play.ts
+ *
+ *   6. Cohort RTP / hit-   — z-score of cohort pack RTP and upgrader
+ *      rate anomaly          hit rate vs the population baseline.
+ *                            Surfaces "this creator's cohort hits
+ *                            weirdly". Source: ./cohort-rtp-anomaly.ts
+ *
+ *   7. Cycle detection     — % of cohort with ≥2 deposit→wager→
+ *                            withdraw→redeposit-with-different-code
+ *                            cycles. The leaderboard-farm signal.
+ *                            Source: ./withdraw-redeposit-cycle.ts
+ *
+ * Hardening / scaling:
+ *   Signals 5/6/7 are computed live with caches (10 min for 5/6,
+ *   30 min for 7). Past a few thousand active cohort users, signal 7
+ *   should be migrated to a daily cron writing into an admin DB table
+ *   `creator_cohort_cycle_scores`. The cron output shape would match
+ *   `CycleSignalRow` so the page swap is read-only.
  *
  * Read-only against Main DB.
  */
@@ -68,6 +82,15 @@ async function fetchInner(period: StreamerPeriod): Promise<CreatorRiskRow[]> {
   const blacklistRu = blacklistNotInClause("ru.id", excluded);
   const interval = periodSqlInterval(period);
   const acuPeriodPredicate = interval ? `AND acu.created_at >= NOW() - ${interval}` : "";
+
+  // Pull the three new signal maps in parallel with the inline SQL.
+  // Each returns Map<creatorId, row>. Empty rows = no signal — they
+  // don't push a SignalScore entry.
+  const [selfPlayMap, anomalyMap, cycleMap] = await Promise.all([
+    getCreatorSelfPlayMap(period),
+    getCohortGameAnomalyMap(period),
+    getCycleSignalMap(period),
+  ]);
 
   type Row = {
     user_id: string;
@@ -279,9 +302,65 @@ async function fetchInner(period: StreamerPeriod): Promise<CreatorRiskRow[]> {
       }
     }
 
-    const totalRiskScore = Math.min(
-      100,
-      signals.reduce((acc, s) => acc + s.score, 0),
+    // ── 5. Creator self-play during own stream ──────────────────
+    const sp = selfPlayMap.get(r.user_id);
+    if (sp && sp.score > 0 && sp.selfShare !== null) {
+      signals.push({
+        score: sp.score,
+        label: "Self-play on stream",
+        detail:
+          `${Math.round(sp.selfShare * 100)}% of stream wager from creator` +
+          ` (${formatCurrency(sp.selfWagerUsd)})`,
+      });
+    }
+
+    // ── 6. Cohort game-outcome anomaly (RTP / hit-rate z) ───────
+    const an = anomalyMap.get(r.user_id);
+    if (an && an.score > 0) {
+      // Pick the larger |z| of the two for the headline; the other
+      // is included in the detail so the admin sees both.
+      const packZAbs = an.packZ !== null ? Math.abs(an.packZ) : 0;
+      const upZAbs = an.upgraderZ !== null ? Math.abs(an.upgraderZ) : 0;
+      const isPack = packZAbs >= upZAbs;
+      const headlineLabel = isPack ? "Pack RTP anomaly" : "Upgrader hit-rate anomaly";
+      const z = isPack ? an.packZ : an.upgraderZ;
+      const cohortPct =
+        isPack && an.cohortPackRtp !== null
+          ? `${(an.cohortPackRtp * 100).toFixed(1)}%`
+          : !isPack && an.cohortUpHitRate !== null
+            ? `${(an.cohortUpHitRate * 100).toFixed(1)}%`
+            : "";
+      const basePct = isPack
+        ? `${(an.baselinePackRtp * 100).toFixed(1)}%`
+        : `${(an.baselineUpHitRate * 100).toFixed(1)}%`;
+      signals.push({
+        score: an.score,
+        label: headlineLabel,
+        detail:
+          `cohort ${cohortPct} vs baseline ${basePct}` +
+          (z !== null ? ` (z=${z.toFixed(2)})` : ""),
+      });
+    }
+
+    // ── 7. Withdraw-redeposit cycle (leaderboard farm) ──────────
+    const cy = cycleMap.get(r.user_id);
+    if (cy && cy.score > 0 && cy.cycleShare !== null) {
+      signals.push({
+        score: cy.score,
+        label: "Cycle pattern",
+        detail:
+          `${cy.flaggedUsers}/${cy.cohortSize} cohort users` +
+          ` (${Math.round(cy.cycleShare * 100)}%)` +
+          ` with ≥2 deposit→withdraw→re-deposit cycles`,
+      });
+    }
+
+    // Combined risk = MAX of component scores, not sum. One critical
+    // signal should surface a creator, not get diluted by zero
+    // signals on the other axes.
+    const totalRiskScore = signals.reduce(
+      (acc, s) => (s.score > acc ? s.score : acc),
+      0,
     );
 
     return {
@@ -309,7 +388,9 @@ async function fetchInner(period: StreamerPeriod): Promise<CreatorRiskRow[]> {
 
 const cached = unstable_cache(
   fetchInner,
-  ["insights-streamers-abuse-v1"],
+  // v2: signals 5/6/7 added + scoring switched from sum→max so
+  // a creator with one critical signal still surfaces.
+  ["insights-streamers-abuse-v2"],
   { revalidate: TTL_SECONDS, tags: ["insights-streamers"] },
 );
 
