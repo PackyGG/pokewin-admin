@@ -33,7 +33,6 @@ import {
   parseCreatorsSearchParams,
   type CreatorsSearchParams,
   type CreatorsTab,
-  type CreatorsView,
 } from "./_lib/search-params";
 import { type CreatorsListPage } from "./_queries/list-creators";
 import { listCreatorsFiltered } from "./_queries/list-creators-filtered";
@@ -62,14 +61,12 @@ import {
   getLeaderboard2wkCostByUser,
   type Lb2wkInfo,
 } from "./_queries/leaderboard-cost";
-import {
-  CreatorCardGrid,
-  CreatorListView,
-  type CreatorWithSocials,
-} from "./_components/creator-card-grid";
+import { type CreatorWithSocials } from "./_components/creator-card-grid";
 import { AddCreatorDialog } from "./_components/add-creator-dialog";
 import { CreatorsTabSwitch } from "./_components/creators-tab-switch";
 import { CreatorsViewToggle } from "./_components/creators-view-toggle";
+import { CreatorsViewProvider } from "./_components/creators-view-context";
+import { CreatorsViewRender } from "./_components/creators-view-render";
 import { GlobalPnlByCreatorPopover } from "./_components/global-pnl-by-creator-popover";
 import { getAllCreatorsLifetimePnl } from "./_queries/all-creators-lifetime-pnl";
 
@@ -126,33 +123,43 @@ export default async function CreatorsPage({
                 : "Creators"
           }
         />
-        <FadeIn className="space-y-4">
-          {/* Toolbar is OUTSIDE the Suspense boundary so the search +
-              tab switch + view toggle stay responsive while the rows
-              stream in. Tab switch (leading) hides while a filter is
-              active — the filter overrides the Fill / Multiplier view.
-              The Grid / List view toggle (trailing `children`) is a
-              pure presentation switch over the same data, so it shows
-              in every mode and preserves all other params. */}
-          <DataTableToolbar
-            searchPlaceholder="Search by username or email..."
-            leading={params.filter ? undefined : <CreatorsTabSwitch />}
-          >
-            <CreatorsViewToggle />
-          </DataTableToolbar>
-          {/* Card grid / list + pagination — Suspense boundary keyed on
-              `tab` + `search` + `page` + `sortBy` + `filter` + `view`
-              so any navigation that swaps the underlying data set OR
-              the render mode shows the skeleton instead of leaving the
-              stale grid blocking. `key=` forces React to throw the
-              fresh boundary on every navigation. */}
-          <Suspense
-            key={`grid-${params.tab}-${params.search ?? ""}-${params.page}-${params.sortBy}-${params.perPage}-${params.filter ?? ""}-${params.view}`}
-            fallback={<CreatorsGridSkeleton view={params.view} />}
-          >
-            <CreatorsGridSection params={params} />
-          </Suspense>
-        </FadeIn>
+        {/* The Grid / List view is pure client state (CreatorsViewProvider)
+            — NOT a URL param — so flipping it re-renders the SAME fetched
+            data in place with no navigation, no refetch, and no skeleton.
+            The provider wraps BOTH the toggle (in the toolbar) and the
+            renderer (inside the Suspense boundary) so they share one
+            state; the toggle keeps rendering during data refetches. */}
+        <CreatorsViewProvider>
+          <FadeIn className="space-y-4">
+            {/* Toolbar is OUTSIDE the Suspense boundary so the search +
+                tab switch + view toggle stay responsive while the rows
+                stream in. Tab switch (leading) hides while a filter is
+                active — the filter overrides the Fill / Multiplier view.
+                The Grid / List view toggle (trailing `children`) flips
+                the render mode via client state — no refetch. */}
+            <DataTableToolbar
+              searchPlaceholder="Search by username or email..."
+              leading={params.filter ? undefined : <CreatorsTabSwitch />}
+            >
+              <CreatorsViewToggle />
+            </DataTableToolbar>
+            {/* Card grid / list + pagination — Suspense boundary keyed on
+                `tab` + `search` + `page` + `sortBy` + `filter` so any
+                navigation that swaps the underlying data set shows the
+                skeleton instead of leaving the stale grid blocking.
+                `view` is intentionally NOT in the key (and not read
+                server-side) — switching it is a client re-render of the
+                same data, so it must not throw a fresh boundary / refetch.
+                `key=` forces React to throw the fresh boundary on every
+                data-changing navigation. */}
+            <Suspense
+              key={`grid-${params.tab}-${params.search ?? ""}-${params.page}-${params.sortBy}-${params.perPage}-${params.filter ?? ""}`}
+              fallback={<CreatorsGridSkeleton />}
+            >
+              <CreatorsGridSection params={params} />
+            </Suspense>
+          </FadeIn>
+        </CreatorsViewProvider>
       </div>
     </div>
   );
@@ -478,11 +485,11 @@ async function CreatorsGridSection({
   }
 
   // Enriched + ordered creator rows — identical data for both render
-  // modes; only the presentation (cards vs compact rows) differs by
-  // `view`. Active/scheduled-deal creators pinned to the top in the
-  // default "recent" sort (skipped for explicit PnL sorts so the
-  // ranking isn't scrambled).
-  const view = params.view;
+  // modes; only the presentation (cards vs compact rows) differs, and
+  // that choice is pure client state (CreatorsViewRender), so this
+  // server component fetches once regardless of view. Active/scheduled-
+  // deal creators pinned to the top in the default "recent" sort
+  // (skipped for explicit PnL sorts so the ranking isn't scrambled).
   const creators = (result?.data ?? [])
     .map<CreatorWithSocials>((c) => {
       const cw = codeAndWagerByUser.get(c.id);
@@ -538,11 +545,9 @@ async function CreatorsGridSection({
           </div>
         </div>
       )}
-      {view === "list" ? (
-        <CreatorListView creators={creators} />
-      ) : (
-        <CreatorCardGrid creators={creators} />
-      )}
+      {/* Grid / List render mode is client state — same `creators` data
+          either way, switched in place with no refetch. */}
+      <CreatorsViewRender creators={creators} />
       {/* Pagination is hidden while a tile filter is active because
           `listCreatorsFiltered` collapses the result to a single page
           — the filtered set is small enough to fit on one screen, and
@@ -562,35 +567,21 @@ async function CreatorsGridSection({
 // ─── Skeletons ────────────────────────────────────────────────────
 
 /**
- * List/grid skeleton + pagination — mirrors the active render mode so
- * switching the view (or tab / search / sort / page) shows a matching
- * skeleton instead of freezing on the stale content. Grid → 6 card
- * blocks (1 / 2 / 3 cols). List → a bordered container of 8 thin rows.
+ * Grid skeleton + pagination — shown only while the server re-fetches a
+ * new data set (tab / search / sort / page change), not on a view
+ * toggle (that's a client re-render of the same data). Always renders
+ * the card-grid variant: the server has no `view` knowledge anymore and
+ * first paint defaults to grid, so the grid skeleton matches the initial
+ * render. 6 card blocks (1 / 2 / 3 cols).
  */
-function CreatorsGridSkeleton({
-  view = "grid",
-}: {
-  view?: CreatorsView;
-}) {
+function CreatorsGridSkeleton() {
   return (
     <>
-      {view === "list" ? (
-        <div className="overflow-hidden rounded-xl border border-border/60 bg-card divide-y divide-border/60">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} className="flex items-center gap-3 px-4 py-3">
-              <Skeleton className="size-8 shrink-0 rounded-full" />
-              <Skeleton className="h-4 w-40" />
-              <Skeleton className="ml-auto h-4 w-24" />
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="grid gap-3 grid-cols-1 sm:gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-64 rounded-2xl" />
-          ))}
-        </div>
-      )}
+      <div className="grid gap-3 grid-cols-1 sm:gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <Skeleton key={i} className="h-64 rounded-2xl" />
+        ))}
+      </div>
       <div className="flex items-center justify-between flex-wrap gap-2">
         <Skeleton className="h-4 w-48" />
         <div className="flex items-center gap-2">
