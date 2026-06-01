@@ -104,8 +104,6 @@ async function computeCohortMatrix(
       cohort_size: string;
       claimers: string;
       reward_total: string;
-      wager_total: string;
-      payout_total: string;
       claimer_ggr: string;
       non_claimer_ggr: string;
       claimer_user_count: string;
@@ -166,8 +164,6 @@ async function computeCohortMatrix(
       COALESCE(SUM(reward_total), 0)::text AS reward_total,
       COALESCE(SUM(ggr) FILTER (WHERE is_claimer), 0)::text AS claimer_ggr,
       COALESCE(SUM(ggr) FILTER (WHERE NOT is_claimer), 0)::text AS non_claimer_ggr,
-      COALESCE(SUM(GREATEST(ggr, 0)), 0)::text AS wager_total,
-      COALESCE(SUM(GREATEST(-ggr, 0)), 0)::text AS payout_total,
       COUNT(*) FILTER (WHERE is_claimer)::text AS claimer_user_count,
       COUNT(*) FILTER (WHERE NOT is_claimer)::text AS non_claimer_user_count
     FROM per_user
