@@ -51,6 +51,35 @@ export type BorrowTopUserRow = {
   avgBorrowPct: number;
 };
 
+export type BorrowTopUserDeepRow = BorrowTopUserRow & {
+  totalWagerOnPage: number;
+  borrowShareOfWagerPct: number;
+};
+
+export type BiggestBorrowPlayRow = {
+  ledgerTxId: string;
+  userId: string;
+  username: string | null;
+  image: string | null;
+  type: "pack_opening" | "battle_bet" | "battle_sponsorship";
+  cashPaid: number;
+  borrowedAmount: number;
+  stickerExposure: number;
+  borrowPct: number;
+  createdAt: string;
+};
+
+export type BorrowCohortRow = {
+  label: "Borrowers" | "Non-borrowers";
+  users: number;
+  totalWager: number;
+  totalPayout: number;
+  avgWagerPerUser: number;
+  avgPayoutPerUser: number;
+  avgPnlPerUser: number;
+  rtpPct: number;
+};
+
 export type BorrowAnalyticsData = {
   period: GamesPeriod;
   totals: {
@@ -62,7 +91,9 @@ export type BorrowAnalyticsData = {
     totalPlaysIncludingNonBorrow: number;
     borrowShareOfPlaysPct: number;
   };
-  topUsers: BorrowTopUserRow[];
+  topUsers: BorrowTopUserDeepRow[];
+  biggestPlay: BiggestBorrowPlayRow | null;
+  cohorts: BorrowCohortRow[];
 };
 
 export async function getBorrowAnalytics(
@@ -77,6 +108,13 @@ export async function getBorrowAnalytics(
       hours !== null
         ? `AND lt.created_at >= NOW() - INTERVAL '${hours} hours'`
         : "";
+
+    // Inline cutoff fragments for the cohort sub-CTEs below — kept as
+    // typed helpers so the SQL string stays readable.
+    const uiCutoffSql = (h: number | null) =>
+      h !== null ? `AND ui.obtained_at >= NOW() - INTERVAL '${h} hours'` : "";
+    const ugCutoffSql = (h: number | null) =>
+      h !== null ? `AND ug.created_at >= NOW() - INTERVAL '${h} hours'` : "";
 
     type TotalRow = {
       borrow_plays: string;
@@ -93,6 +131,23 @@ export async function getBorrowAnalytics(
       cash_paid_sum: string;
       borrow_plays: string;
       avg_borrow_pct: string;
+      total_wager_paid: string;
+    };
+    type BiggestPlayRow = {
+      ledger_tx_id: string;
+      user_id: string;
+      username: string | null;
+      image: string | null;
+      type: string;
+      cash_paid: string;
+      borrow_pct: string;
+      created_at: Date;
+    };
+    type CohortRow = {
+      is_borrower: string;
+      users: string;
+      total_wager: string;
+      total_payout: string;
     };
 
     // The per-row borrow % is read like the rest of the site:
@@ -111,7 +166,7 @@ export async function getBorrowAnalytics(
     //
     // (We never trust pct=100 — that would mean fully sponsored,
     // not borrow; the LEAST(...) clamp keeps the math finite.)
-    const [totalRows, topUserRows] = await Promise.all([
+    const [totalRows, topUserRows, biggestPlayRows, cohortRows] = await Promise.all([
       db.$queryRawUnsafe<TotalRow[]>(
         `WITH ${sessionWindowsCte},
               base AS (
@@ -229,7 +284,8 @@ export async function getBorrowAnalytics(
                   ) AS borrowed_sum,
                   SUM(CASE WHEN borrow_pct > 0 THEN cash_paid ELSE 0 END) AS cash_paid_sum,
                   COUNT(*) FILTER (WHERE borrow_pct > 0) AS borrow_plays,
-                  AVG(borrow_pct) FILTER (WHERE borrow_pct > 0) AS avg_borrow_pct
+                  AVG(borrow_pct) FILTER (WHERE borrow_pct > 0) AS avg_borrow_pct,
+                  SUM(cash_paid) AS total_wager_paid
            FROM base
            GROUP BY user_id
            HAVING SUM(CASE WHEN borrow_pct > 0 THEN 1 ELSE 0 END) > 0
@@ -241,11 +297,196 @@ export async function getBorrowAnalytics(
            pu.borrowed_sum::text AS borrowed_sum,
            pu.cash_paid_sum::text AS cash_paid_sum,
            pu.borrow_plays::text AS borrow_plays,
-           COALESCE(pu.avg_borrow_pct, 0)::text AS avg_borrow_pct
+           COALESCE(pu.avg_borrow_pct, 0)::text AS avg_borrow_pct,
+           pu.total_wager_paid::text AS total_wager_paid
          FROM per_user pu
          JOIN "user" u ON u.id = pu.user_id
          ORDER BY pu.borrowed_sum DESC NULLS LAST
          LIMIT 25`,
+      ),
+      // Biggest single borrow play in the period — by absolute
+      // borrow amount (cash_paid × borrow_pct / (100 − borrow_pct)),
+      // so a 90%-borrow $100 cash-paid open ($900 fronted) ranks above
+      // a 50%-borrow $200 cash-paid open ($200 fronted).
+      db.$queryRawUnsafe<BiggestPlayRow[]>(
+        `WITH ${sessionWindowsCte},
+              base AS (
+           SELECT
+             lt.id::text AS ledger_tx_id,
+             lt.user_id,
+             lt.type::text AS type,
+             ABS(lt.amount::numeric) AS cash_paid,
+             lt.created_at,
+             CASE
+               WHEN lt.type = 'pack_opening'
+                 THEN COALESCE(
+                   (
+                     SELECT NULLIF(pf.result_metadata->>'borrow_percentage', '')::numeric
+                     FROM provably_fair_results pf
+                     WHERE pf.game_session_id = lt.game_session_id
+                     LIMIT 1
+                   ),
+                   0
+                 )
+               WHEN lt.type IN ('battle_bet','battle_sponsorship')
+                 THEN COALESCE(
+                   (
+                     SELECT COALESCE(b.borrow_percentage, 0)::numeric
+                     FROM battle_participants bp
+                     JOIN battles b ON b.id = bp.battle_id
+                     WHERE bp.game_session_id = lt.game_session_id
+                     LIMIT 1
+                   ),
+                   0
+                 )
+               ELSE 0
+             END AS borrow_pct
+           FROM ledger_transactions lt
+           WHERE lt.status = 'completed'
+             AND lt.type IN ('pack_opening','battle_bet','battle_sponsorship')
+             AND lt.user_id IN ${scope}
+             AND NOT EXISTS (
+               SELECT 1 FROM session_windows sw
+               WHERE sw.uid = lt.user_id
+                 AND lt.created_at >= sw.win_start
+                 AND lt.created_at <  sw.win_end
+             )
+             ${ltCutoff}
+         )
+         SELECT
+           b.ledger_tx_id,
+           b.user_id::text AS user_id,
+           u.username AS username,
+           u.image AS image,
+           b.type,
+           b.cash_paid::text AS cash_paid,
+           b.borrow_pct::text AS borrow_pct,
+           b.created_at
+         FROM base b
+         JOIN "user" u ON u.id = b.user_id
+         WHERE b.borrow_pct > 0 AND b.borrow_pct < 100
+         ORDER BY (b.cash_paid * (b.borrow_pct / (100 - b.borrow_pct))) DESC
+         LIMIT 1`,
+      ),
+      // Borrow vs non-borrow user cohort — for each user, classify them
+      // as borrower (≥1 borrow play in period) or non-borrower (0
+      // borrow plays). Sum wager + payout across all their games (not
+      // just the borrowed legs — the cohort comparison is total user
+      // economics). Includes upgrader on both sides since
+      // borrowers/non-borrowers can also play upgrader.
+      db.$queryRawUnsafe<CohortRow[]>(
+        `WITH ${sessionWindowsCte},
+              non_borrow_pack_sessions AS (
+           SELECT game_session_id FROM ledger_transactions
+           WHERE type = 'pack_opening' AND status = 'completed'
+             AND game_session_id IS NOT NULL
+             AND (description IS NULL OR description NOT ILIKE '%borrow%')
+         ),
+         non_borrow_battle_sessions AS (
+           SELECT bp.game_session_id FROM battle_participants bp
+           JOIN battles b ON b.id = bp.battle_id
+           WHERE COALESCE(b.borrow_percentage, 0) = 0
+         ),
+         borrowers AS (
+           SELECT DISTINCT lt.user_id
+           FROM ledger_transactions lt
+           WHERE lt.status = 'completed'
+             AND lt.user_id IN ${scope}
+             AND NOT EXISTS (
+               SELECT 1 FROM session_windows sw
+               WHERE sw.uid = lt.user_id
+                 AND lt.created_at >= sw.win_start
+                 AND lt.created_at <  sw.win_end
+             )
+             ${ltCutoff}
+             AND (
+               (lt.type = 'pack_opening' AND lt.description ILIKE '%borrow%')
+               OR (lt.type IN ('battle_bet','battle_sponsorship')
+                   AND lt.game_session_id IN (
+                     SELECT bp.game_session_id FROM battle_participants bp
+                     JOIN battles b ON b.id = bp.battle_id
+                     WHERE COALESCE(b.borrow_percentage, 0) > 0
+                   ))
+             )
+         ),
+         per_user_wager AS (
+           SELECT lt.user_id,
+                  COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS wager
+           FROM ledger_transactions lt
+           WHERE lt.status = 'completed'
+             AND lt.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
+             AND lt.user_id IN ${scope}
+             AND (
+               (lt.type = 'pack_opening' AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%'))
+               OR (lt.type IN ('battle_bet','battle_sponsorship') AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
+               OR (lt.type = 'upgrader_bet')
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM session_windows sw
+               WHERE sw.uid = lt.user_id
+                 AND lt.created_at >= sw.win_start
+                 AND lt.created_at <  sw.win_end
+             )
+             ${ltCutoff}
+           GROUP BY lt.user_id
+         ),
+         per_user_inv_payout AS (
+           SELECT ui.user_id,
+                  COALESCE(SUM(ui.value_at_obtained::numeric), 0) AS payout
+           FROM user_inventory ui
+           WHERE ui.source_type IN ('pack','battle')
+             AND ui.user_id IN ${scope}
+             AND (
+               (ui.source_type = 'pack' AND ui.source_id IN (SELECT game_session_id FROM non_borrow_pack_sessions))
+               OR (ui.source_type = 'battle' AND ui.source_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM session_windows sw
+               WHERE sw.uid = ui.user_id
+                 AND ui.obtained_at >= sw.win_start
+                 AND ui.obtained_at <  sw.win_end
+             )
+             ${uiCutoffSql(hours)}
+           GROUP BY ui.user_id
+         ),
+         per_user_ug_payout AS (
+           SELECT ug.user_id,
+                  COALESCE(SUM(ug.won_amount::numeric), 0) AS payout
+           FROM upgrader_games ug
+           WHERE ug.user_id IN ${scope}
+             AND NOT EXISTS (
+               SELECT 1 FROM session_windows sw
+               WHERE sw.uid = ug.user_id
+                 AND ug.created_at >= sw.win_start
+                 AND ug.created_at <  sw.win_end
+             )
+             ${ugCutoffSql(hours)}
+           GROUP BY ug.user_id
+         ),
+         all_users AS (
+           SELECT user_id FROM per_user_wager
+           UNION
+           SELECT user_id FROM per_user_inv_payout
+           UNION
+           SELECT user_id FROM per_user_ug_payout
+         ),
+         per_user_pnl AS (
+           SELECT u.user_id,
+                  COALESCE(w.wager, 0) AS wager,
+                  COALESCE(p.payout, 0) + COALESCE(g.payout, 0) AS payout
+           FROM all_users u
+           LEFT JOIN per_user_wager w ON w.user_id = u.user_id
+           LEFT JOIN per_user_inv_payout p ON p.user_id = u.user_id
+           LEFT JOIN per_user_ug_payout g ON g.user_id = u.user_id
+         )
+         SELECT
+           CASE WHEN b.user_id IS NOT NULL THEN '1' ELSE '0' END AS is_borrower,
+           COUNT(*)::text AS users,
+           COALESCE(SUM(p.wager), 0)::text AS total_wager,
+           COALESCE(SUM(p.payout), 0)::text AS total_payout
+         FROM per_user_pnl p
+         LEFT JOIN borrowers b ON b.user_id = p.user_id
+         GROUP BY (b.user_id IS NOT NULL)`,
       ),
     ]);
 
@@ -262,15 +503,92 @@ export async function getBorrowAnalytics(
         ? (borrowedPlaysCount / totalPlaysIncludingNonBorrow) * 100
         : 0;
 
-    const topUsers: BorrowTopUserRow[] = topUserRows.map((r) => ({
-      userId: r.user_id,
-      username: r.username,
-      image: r.image,
-      borrowedAmountSum: toNumber(r.borrowed_sum),
-      cashPaidSum: toNumber(r.cash_paid_sum),
-      borrowPlays: Number(r.borrow_plays),
-      avgBorrowPct: toNumber(r.avg_borrow_pct),
-    }));
+    const topUsers: BorrowTopUserDeepRow[] = topUserRows.map((r) => {
+      const totalWagerOnPage = toNumber(r.total_wager_paid);
+      const borrowedAmountSum = toNumber(r.borrowed_sum);
+      const cashPaidSum = toNumber(r.cash_paid_sum);
+      // Borrow share of sticker — the house-fronted dollars as a
+      // fraction of the user's full sticker exposure (cash paid for
+      // every play + house-fronted borrow). Tells the operator how
+      // much of the user's total bet volume was on credit.
+      const stickerExposure = totalWagerOnPage + borrowedAmountSum;
+      const borrowShareOfWagerPct =
+        stickerExposure > 0 ? (borrowedAmountSum / stickerExposure) * 100 : 0;
+      return {
+        userId: r.user_id,
+        username: r.username,
+        image: r.image,
+        borrowedAmountSum,
+        cashPaidSum,
+        borrowPlays: Number(r.borrow_plays),
+        avgBorrowPct: toNumber(r.avg_borrow_pct),
+        totalWagerOnPage,
+        borrowShareOfWagerPct,
+      };
+    });
+
+    // Biggest single borrow play in the period.
+    const biggestRow = biggestPlayRows[0];
+    let biggestPlay: BiggestBorrowPlayRow | null = null;
+    if (biggestRow) {
+      const cashPaid = toNumber(biggestRow.cash_paid);
+      const borrowPct = toNumber(biggestRow.borrow_pct);
+      const borrowedAmount =
+        borrowPct > 0 && borrowPct < 100
+          ? cashPaid * (borrowPct / (100 - borrowPct))
+          : 0;
+      biggestPlay = {
+        ledgerTxId: biggestRow.ledger_tx_id,
+        userId: biggestRow.user_id,
+        username: biggestRow.username,
+        image: biggestRow.image,
+        type: biggestRow.type as BiggestBorrowPlayRow["type"],
+        cashPaid,
+        borrowedAmount,
+        stickerExposure: cashPaid + borrowedAmount,
+        borrowPct,
+        createdAt: biggestRow.created_at.toISOString(),
+      };
+    }
+
+    // Cohort comparison — split users into borrowers (≥1 borrow play
+    // in period) and non-borrowers; report avg wager / payout / P&L
+    // per user so the two cohorts can be compared apples-to-apples.
+    const cohortMap: Record<"1" | "0", BorrowCohortRow> = {
+      "1": {
+        label: "Borrowers",
+        users: 0,
+        totalWager: 0,
+        totalPayout: 0,
+        avgWagerPerUser: 0,
+        avgPayoutPerUser: 0,
+        avgPnlPerUser: 0,
+        rtpPct: 0,
+      },
+      "0": {
+        label: "Non-borrowers",
+        users: 0,
+        totalWager: 0,
+        totalPayout: 0,
+        avgWagerPerUser: 0,
+        avgPayoutPerUser: 0,
+        avgPnlPerUser: 0,
+        rtpPct: 0,
+      },
+    };
+    for (const r of cohortRows) {
+      const key = r.is_borrower === "1" ? "1" : "0";
+      const acc = cohortMap[key];
+      acc.users = Number(r.users);
+      acc.totalWager = toNumber(r.total_wager);
+      acc.totalPayout = toNumber(r.total_payout);
+      acc.avgWagerPerUser = acc.users > 0 ? acc.totalWager / acc.users : 0;
+      acc.avgPayoutPerUser = acc.users > 0 ? acc.totalPayout / acc.users : 0;
+      acc.avgPnlPerUser = acc.avgWagerPerUser - acc.avgPayoutPerUser;
+      acc.rtpPct =
+        acc.totalWager > 0 ? (acc.totalPayout / acc.totalWager) * 100 : 0;
+    }
+    const cohorts: BorrowCohortRow[] = [cohortMap["1"], cohortMap["0"]];
 
     return {
       period,
@@ -284,6 +602,8 @@ export async function getBorrowAnalytics(
         borrowShareOfPlaysPct,
       },
       topUsers,
+      biggestPlay,
+      cohorts,
     };
   });
 }
