@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
 import { getDb } from "@/lib/db";
-import { requireAdmin } from "@/lib/dal";
+import { verifySession } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { uploadImage } from "@/lib/imagekit";
@@ -76,7 +76,7 @@ function isMissingCostPowerColumnError(e: unknown): boolean {
 }
 
 export async function uploadCardImage(formData: FormData): Promise<string> {
-  const session = await requireAdmin();
+  const session = await verifySession();
   await requireCapability(session, "__can_upload_card_image", "upload card images");
 
   const file = formData.get("file");
@@ -104,7 +104,7 @@ export async function createCard(data: {
   power?: number | null;
 }): Promise<ServerActionResult<{ id: string }>> {
   const db = await getDb();
-  const session = await requireAdmin();
+  const session = await verifySession();
 
   const parsed = createCardSchema.safeParse(data);
   if (!parsed.success) {
@@ -244,7 +244,7 @@ export async function updateCard(
   },
 ): Promise<ServerActionResult<{ id: string }>> {
   const db = await getDb();
-  const session = await requireAdmin();
+  const session = await verifySession();
 
   if (!data.name.trim()) return fail("Name is required", "VALIDATION");
   if (!data.imageUrl) return fail("Image is required", "VALIDATION");
@@ -324,7 +324,7 @@ export async function updateCard(
 
 export async function deleteCard(cardId: string): Promise<void> {
   const db = await getDb();
-  const session = await requireAdmin();
+  const session = await verifySession();
   await requireCapability(session, "__can_delete_card", "delete cards");
 
   const card = await db.cards.findUnique({

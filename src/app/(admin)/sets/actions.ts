@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { Prisma } from "@/generated/prisma/client";
 import { getDb } from "@/lib/db";
-import { requireAdmin } from "@/lib/dal";
+import { verifySession } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { uploadImage } from "@/lib/imagekit";
@@ -15,7 +15,7 @@ import {
 import { logError } from "@/lib/errors/logger";
 
 export async function uploadSetImage(formData: FormData): Promise<string> {
-  const session = await requireAdmin();
+  const session = await verifySession();
   await requireCapability(session, "__can_upload_set_image", "upload set images");
 
   const file = formData.get("file");
@@ -58,7 +58,7 @@ async function nextNegativeTcgplayerId(
 
 export async function createSet(data: { name: string }): Promise<string> {
   const db = await getDb();
-  const session = await requireAdmin();
+  const session = await verifySession();
 
   if (!data.name.trim()) throw new Error("Name is required");
 
@@ -128,7 +128,7 @@ export async function updateSet(
   },
 ): Promise<void> {
   const db = await getDb();
-  const session = await requireAdmin();
+  const session = await verifySession();
 
   if (!id) throw new Error("Set id is required");
   if (!data.name.trim()) throw new Error("Name is required");
@@ -189,7 +189,7 @@ export async function seedInitialSets(): Promise<{
   onepieceCreated: boolean;
 }> {
   const db = await getDb();
-  const session = await requireAdmin();
+  const session = await verifySession();
   await requireCapability(
     session,
     "__can_seed_initial_sets",
@@ -307,7 +307,7 @@ export async function forceAbsorbIntoPokemon(): Promise<{
   legacySetsDeleted: number;
 }> {
   const db = await getDb();
-  const session = await requireAdmin();
+  const session = await verifySession();
   await requireCapability(
     session,
     "__can_force_absorb_cards",
@@ -413,7 +413,7 @@ export async function deleteSet(
   id: string,
 ): Promise<ServerActionResult<{ id: string; cardsOrphaned: number }>> {
   const db = await getDb();
-  const session = await requireAdmin();
+  const session = await verifySession();
 
   try {
     await requireCapability(session, "__can_delete_set", "delete sets");
