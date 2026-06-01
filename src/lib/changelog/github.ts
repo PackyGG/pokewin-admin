@@ -59,6 +59,33 @@ export type GitHubCommitEntry = {
 };
 
 /**
+ * Result envelope for the GitHub fetch. The query helper needs to know
+ * not just WHAT came back but WHY (succeeded / token missing / API
+ * failure / etc.) so it can surface that to the admin diagnostic panel
+ * instead of silently falling back to JSON.
+ *
+ * `error` is null on success AND on the "no token configured" path
+ * (because that's an expected configuration state, not a failure). It
+ * carries a short tag like "HTTP 401" / "Network timeout" / "Empty
+ * response" only when the call was actually attempted and went wrong.
+ */
+export type GitHubFetchResult = {
+  entries: GitHubCommitEntry[];
+  /** Branch the call was made against; the env-resolved default when
+   *  the call was attempted, or null when no token was set so no call
+   *  happened. */
+  branch: string | null;
+  /** True when `GITHUB_TOKEN` was present and non-empty. Drives the
+   *  admin diagnostic panel's "Token configured: yes/no" row. */
+  tokenConfigured: boolean;
+  /** Short error tag — `null` when the call succeeded or wasn't
+   *  attempted. Surfaced into the diagnostic panel tooltip so the admin
+   *  can tell whether they're looking at a stale snapshot or a live
+   *  feed. */
+  error: string | null;
+};
+
+/**
  * Mirrors the subset of the GitHub REST `/commits` list response we
  * actually consume. Typed loosely (`unknown` everywhere except the
  * fields we read) so a future API shape change can't crash the type
@@ -126,33 +153,78 @@ function splitMessage(message: string): { subject: string; body: string } {
 }
 
 /**
- * Fetch the latest commits on the configured branch from GitHub and
- * return them in the same shape `recent-pushes.json` would.
+ * Resolve the branch the changelog should track, in priority order:
+ *   1. Explicit `branchOverride` arg (used by the cached wrapper so the
+ *      branch becomes part of the cache key — switching env-var
+ *      `CHANGELOG_GIT_BRANCH` invalidates the cache immediately
+ *      instead of carrying stale entries for the previous branch).
+ *   2. `CHANGELOG_GIT_BRANCH` env var.
+ *   3. The DEFAULT_BRANCH constant ("main").
  *
- * Returns an empty array on ANY of the following — and never throws —
- * so the caller can fall back to the build-time JSON without a
- * try/catch:
- *   - `GITHUB_TOKEN` env var missing
- *   - API call returned non-2xx (rate limit, branch not found, auth
- *     failure, etc.)
- *   - Network error / abort
- *   - Response shape unexpected
+ * Exported so the query helper can resolve the same value for the
+ * diagnostic panel without re-implementing the precedence rules.
+ */
+export function resolveChangelogBranch(branchOverride?: string): string {
+  if (branchOverride && branchOverride.trim().length > 0) {
+    return branchOverride.trim();
+  }
+  return process.env.CHANGELOG_GIT_BRANCH?.trim() || DEFAULT_BRANCH;
+}
+
+/**
+ * Resolve the configured repo slug. Exported alongside the branch
+ * resolver for the same diagnostic-panel consistency reason.
+ */
+export function resolveChangelogRepo(): string {
+  return process.env.CHANGELOG_GIT_REPO?.trim() || DEFAULT_REPO;
+}
+
+/**
+ * Fetch the latest commits on the configured branch from GitHub and
+ * return them in the same shape `recent-pushes.json` would, alongside
+ * a small diagnostic envelope (`tokenConfigured` / `branch` / `error`).
+ *
+ * Never throws. The result envelope ALWAYS comes back populated — the
+ * caller switches behaviour based on `entries.length` and `error`:
+ *   - `tokenConfigured: false`             → no call attempted, JSON path
+ *   - `entries.length > 0`                 → live GitHub source
+ *   - `entries.length === 0 && error`      → call failed, JSON fallback
+ *   - `entries.length === 0 && !error`     → API returned empty list
+ *                                            (branch has zero commits
+ *                                            matching the filter); JSON
+ *                                            fallback still kicks in
+ *                                            since "no commits" reads as
+ *                                            broken to the user.
+ *
+ * The `branch` arg lets the `unstable_cache` wrapper key on branch so
+ * a config change (e.g. `main` → `claude/foo`) doesn't return stale
+ * entries from the previous branch. Falls back to the env var → default
+ * when not supplied (matches the original behaviour).
  *
  * The 5-second timeout keeps the page render snappy on a slow / down
  * GitHub — we'd rather render the slightly-stale JSON fallback than
  * block the request for 30s waiting for `api.github.com`.
  */
-export async function getLatestCommitsFromGitHub(): Promise<GitHubCommitEntry[]> {
+export async function getLatestCommitsFromGitHub(
+  branchOverride?: string,
+): Promise<GitHubFetchResult> {
   const token = process.env.GITHUB_TOKEN;
-  if (!token || token.length === 0) {
-    // No token configured — silently fall through to the JSON path.
-    // This is the expected state on a fresh clone where the dev hasn't
-    // set the env var yet, so don't log it.
-    return [];
+  const tokenConfigured = typeof token === "string" && token.length > 0;
+  const branch = resolveChangelogBranch(branchOverride);
+
+  if (!tokenConfigured) {
+    // No token configured — caller will use the JSON path. NOT an
+    // error condition: this is the documented "configure when ready"
+    // state.
+    return {
+      entries: [],
+      branch: null,
+      tokenConfigured: false,
+      error: null,
+    };
   }
 
-  const repo = process.env.CHANGELOG_GIT_REPO?.trim() || DEFAULT_REPO;
-  const branch = process.env.CHANGELOG_GIT_BRANCH?.trim() || DEFAULT_BRANCH;
+  const repo = resolveChangelogRepo();
 
   // Construct the URL via `URL` + `searchParams.set` instead of string
   // concatenation so any future env-var change (e.g. someone passes a
@@ -188,28 +260,50 @@ export async function getLatestCommitsFromGitHub(): Promise<GitHubCommitEntry[]>
       // across revalidate windows) to interfere.
       cache: "no-store",
     });
-  } catch {
-    // Network error / timeout. Don't surface — fall back to JSON.
-    return [];
+  } catch (err) {
+    // Network error / timeout / abort. Surface a short tag so the
+    // diagnostic panel can show "Network timeout" vs "Network error".
+    const tag =
+      err instanceof Error && err.name === "AbortError"
+        ? "Network timeout"
+        : "Network error";
+    return { entries: [], branch, tokenConfigured: true, error: tag };
   } finally {
     clearTimeout(timeout);
   }
 
   if (!res.ok) {
     // Non-2xx — rate limit, 404 on a missing branch, 401 on a bad
-    // token, etc. All translate to "use the fallback".
-    return [];
+    // token, etc. Surface the status code so the admin can map it to
+    // a known failure mode (401 = bad token, 403 = rate limit, 404 =
+    // branch / repo not found).
+    return {
+      entries: [],
+      branch,
+      tokenConfigured: true,
+      error: `HTTP ${res.status}`,
+    };
   }
 
   let json: unknown;
   try {
     json = await res.json();
   } catch {
-    return [];
+    return {
+      entries: [],
+      branch,
+      tokenConfigured: true,
+      error: "Malformed JSON",
+    };
   }
 
   if (!Array.isArray(json)) {
-    return [];
+    return {
+      entries: [],
+      branch,
+      tokenConfigured: true,
+      error: "Unexpected response shape",
+    };
   }
 
   const out: GitHubCommitEntry[] = [];
@@ -261,5 +355,13 @@ export async function getLatestCommitsFromGitHub(): Promise<GitHubCommitEntry[]>
     });
   }
 
-  return out;
+  return {
+    entries: out,
+    branch,
+    tokenConfigured: true,
+    // 200 OK but zero entries kept (e.g. all commits were filtered out,
+    // or the branch is empty). Tag it so the diagnostic panel can show
+    // "Empty response" instead of pretending the call succeeded.
+    error: out.length === 0 ? "Empty response" : null,
+  };
 }
