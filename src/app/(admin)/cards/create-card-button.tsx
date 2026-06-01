@@ -247,11 +247,9 @@ export function CreateCardButton({
   const [power, setPower] = useState("");
   const [opRarity, setOpRarity] = useState<string>("C");
   const [opType, setOpType] = useState<string>("Character");
-  const [opImageUrl, setOpImageUrl] = useState("");
 
-  // Pokemon uses the ImageKit upload flow (file → CDN URL); OnePiece
-  // pastes a third-party URL directly. We track the file/preview state
-  // only for the Pokemon branch.
+  // Both variants use the ImageKit upload flow (file → CDN URL). We
+  // track the selected file and its object-URL preview here.
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
 
@@ -282,49 +280,43 @@ export function CreateCardButton({
     setPower("");
     setOpRarity("C");
     setOpType("Character");
-    setOpImageUrl("");
 
     setImageFile(null);
     setImagePreview(null);
   }
 
-  // Form validity — the submit button stays disabled until the active
-  // variant's required fields are filled. Pokemon needs an uploaded
-  // file; OnePiece needs a pasted URL.
+  // Form validity — the submit button stays disabled until the required
+  // fields are filled. Both variants now upload a file via ImageKit, so
+  // an uploaded image is required for either.
   const canSubmit = (() => {
     if (!name.trim()) return false;
-    if (variant === "pokemon") return Boolean(imageFile);
-    return Boolean(opImageUrl.trim());
+    return Boolean(imageFile);
   })();
 
   function handleSubmit() {
     startTransition(async () => {
       try {
-        let imageUrl: string;
         let payloadRarity: string;
         let payloadType: string;
         let payloadHp: number;
         let payloadCost: number | null;
         let payloadPower: number | null;
 
+        // Both variants upload the selected file to ImageKit and submit
+        // the resulting hosted URL.
+        if (!imageFile) {
+          toast.error("Image is required");
+          return;
+        }
+        const imageUrl = await uploadImageClient(imageFile, "/cards");
+
         if (variant === "pokemon") {
-          if (!imageFile) {
-            toast.error("Image is required");
-            return;
-          }
-          imageUrl = await uploadImageClient(imageFile, "/cards");
           payloadRarity = pokemonRarity;
           payloadType = pokemonType;
           payloadHp = parseInt(hp) || 0;
           payloadCost = null;
           payloadPower = null;
         } else {
-          const trimmed = opImageUrl.trim();
-          if (!trimmed) {
-            toast.error("Image URL is required");
-            return;
-          }
-          imageUrl = trimmed;
           payloadRarity = opRarity;
           payloadType = opType;
           payloadHp = 0;
@@ -396,36 +388,19 @@ export function CreateCardButton({
           <Section
             icon={ImageIcon}
             title="Image"
-            description={
-              variant === "onepiece"
-                ? "Paste the artwork URL from the source CDN."
-                : "Artwork shown in the catalog and packs."
-            }
+            description="Artwork shown in the catalog and packs."
           >
-            {variant === "pokemon" ? (
-              <ImageDropzone
-                preview={imagePreview}
-                onFile={(file) => {
-                  setImageFile(file);
-                  setImagePreview(URL.createObjectURL(file));
-                }}
-                onClear={() => {
-                  setImageFile(null);
-                  setImagePreview(null);
-                }}
-              />
-            ) : (
-              <div className="space-y-1.5">
-                <Label htmlFor="create-card-op-image-url">Image URL</Label>
-                <Input
-                  id="create-card-op-image-url"
-                  type="url"
-                  value={opImageUrl}
-                  onChange={(e) => setOpImageUrl(e.target.value)}
-                  placeholder="https://…"
-                />
-              </div>
-            )}
+            <ImageDropzone
+              preview={imagePreview}
+              onFile={(file) => {
+                setImageFile(file);
+                setImagePreview(URL.createObjectURL(file));
+              }}
+              onClear={() => {
+                setImageFile(null);
+                setImagePreview(null);
+              }}
+            />
           </Section>
 
           <Section
