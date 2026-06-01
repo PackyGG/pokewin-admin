@@ -41,7 +41,7 @@ const ROW_LIMIT = 25;
 
 export type CodePerformanceRow = {
   code: string;
-  affiliateUserId: string | null;
+  affiliateUserId: string;
   affiliateUsername: string | null;
   /** Total affiliate_clicks rows in window for this code. */
   clicks: number;
@@ -76,7 +76,7 @@ async function compute(
   const rows = await db.$queryRawUnsafe<
     {
       code: string;
-      affiliate_user_id: string | null;
+      affiliate_user_id: string;
       affiliate_username: string | null;
       clicks: string;
       signups: string;
@@ -121,8 +121,8 @@ async function compute(
       COALESCE(ua.commission_accrued, 0)::text AS commission_accrued
     FROM usage_agg ua
     LEFT JOIN click_agg ca ON ca.code = ua.code
-    LEFT JOIN "user" u ON u.id = ua.affiliate_user_id
-    WHERE u.role IS NULL OR (u.role NOT IN ('admin', 'support') ${blacklistJoin})
+    JOIN "user" u ON u.id = ua.affiliate_user_id
+    WHERE u.role NOT IN ('admin', 'support') ${blacklistJoin}
     ORDER BY COALESCE(ua.total_wager, 0) DESC, ua.signups DESC
     LIMIT ${ROW_LIMIT}
   `);

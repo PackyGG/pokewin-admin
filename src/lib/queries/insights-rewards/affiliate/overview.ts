@@ -71,7 +71,6 @@ async function compute(
   const ltDate = ctx.dateFilterFor("lt.created_at");
   const acuDate = ctx.dateFilterFor("acu.created_at");
   const blacklistSub = blacklistNotInClause("id", blacklistIds);
-  const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
 
   const chartDays = ctx.days === null ? MAX_CHART_DAYS : Math.min(ctx.days, MAX_CHART_DAYS);
 
