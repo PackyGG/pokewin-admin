@@ -3,6 +3,7 @@ import {
   Archive,
   ChevronDown,
   FileText,
+  FolderTree,
   GitCommit,
   List,
   Radio,
@@ -42,6 +43,7 @@ import {
   type ChangelogCategory,
   type ChangelogChangeKind,
   type ChangelogEntry,
+  type ChangelogFile,
 } from "@/lib/queries/changelog";
 import {
   resolveChangelogBranch,
@@ -116,6 +118,92 @@ const CHANGE_KIND_COLOR: Record<ChangelogChangeKind, string> = {
   breaking: "text-rose-500",
   infra: "text-muted-foreground",
 };
+
+// File-status letter → short label + dot color for the Files disclosure.
+// Keyed on the FIRST letter of the git status (A/M/D/R/C/T/…) so a
+// similarity-scored status like "R100" still maps. Colors are
+// informational (git semantics), NOT the house-POV financial palette —
+// added=green, modified=amber, deleted=rose, rename/other=muted.
+const FILE_STATUS_META: Record<string, { label: string; dot: string }> = {
+  A: { label: "added", dot: "bg-emerald-500" },
+  M: { label: "modified", dot: "bg-amber-500" },
+  D: { label: "deleted", dot: "bg-rose-500" },
+  R: { label: "renamed", dot: "bg-blue-500" },
+  C: { label: "copied", dot: "bg-blue-500" },
+  T: { label: "type", dot: "bg-muted-foreground" },
+};
+
+function fileStatusMeta(status: string): { label: string; dot: string } {
+  const first = status.trim().charAt(0).toUpperCase();
+  return FILE_STATUS_META[first] ?? { label: status, dot: "bg-muted-foreground" };
+}
+
+/**
+ * Group a commit's touched files by top-level area for the Files
+ * disclosure, matching the area vocabulary the per-change fallback uses
+ * (admin route segment for `src/app/(admin)/...`, flat label otherwise).
+ * Pure presentation — kept here next to the renderer rather than crossing
+ * the RSC boundary. Returns areas ordered by descending file count.
+ */
+const FILE_AREA_LABELS: Array<{ prefix: string; label: string }> = [
+  { prefix: "src/app/(auth)/", label: "Auth pages" },
+  { prefix: "src/components/data-table/", label: "Data tables" },
+  { prefix: "src/components/ui/", label: "UI primitives" },
+  { prefix: "src/components/", label: "Components" },
+  { prefix: "src/lib/queries/", label: "Queries" },
+  { prefix: "src/lib/changelog/", label: "Changelog" },
+  { prefix: "src/lib/utils/", label: "Utilities" },
+  { prefix: "src/lib/", label: "Library" },
+  { prefix: "src/hooks/", label: "Hooks" },
+  { prefix: "prisma/admin/", label: "Admin database" },
+  { prefix: "prisma/", label: "Database" },
+  { prefix: "scripts/", label: "Scripts" },
+  { prefix: "public/", label: "Public assets" },
+  { prefix: ".github/", label: "CI" },
+  { prefix: "src/", label: "App" },
+];
+
+function fileAreaLabel(path: string): string {
+  const adminMatch = path.match(/^src\/app\/\(admin\)\/([^/]+)(?:\/([^/]+))?/);
+  if (adminMatch) {
+    const titleize = (s: string) =>
+      s.replace(/-/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+    const top = adminMatch[1];
+    const sub = adminMatch[2];
+    if (sub && !sub.startsWith("[") && !sub.startsWith("_")) {
+      return `${titleize(top)} / ${titleize(sub)}`;
+    }
+    return titleize(top);
+  }
+  for (const { prefix, label } of FILE_AREA_LABELS) {
+    if (path.startsWith(prefix)) return label;
+  }
+  return path.includes("/") ? "Other" : "Project";
+}
+
+function groupFilesByArea(
+  files: ChangelogFile[],
+): Array<{ area: string; files: ChangelogFile[] }> {
+  const map = new Map<string, ChangelogFile[]>();
+  for (const f of files) {
+    const area = fileAreaLabel(f.path);
+    const list = map.get(area);
+    if (list) list.push(f);
+    else map.set(area, [f]);
+  }
+  return [...map.entries()]
+    .map(([area, list]) => ({ area, files: list }))
+    .sort((a, b) => b.files.length - a.files.length);
+}
+
+/** Strip the area-relevant leading path so the file row shows the
+ *  distinctive tail (basename + one parent) instead of the full
+ *  `src/app/(admin)/…` prefix repeated on every row. */
+function shortFilePath(path: string): string {
+  const parts = path.split("/");
+  if (parts.length <= 2) return path;
+  return parts.slice(-2).join("/");
+}
 
 // ---------------------------------------------------------------------------
 // Page
@@ -493,6 +581,19 @@ function ChangelogCard({
             <CategoryIcon className="size-3" />
             {CATEGORY_LABEL[entry.category]}
           </span>
+          {/* Area / scope badge — the conventional-commit (scope), e.g.
+              "insights/games", parsed upstream. Sits next to the category
+              badge so the admin can scan which surface a commit touched at
+              a glance. Only present on auto entries that carried a scope. */}
+          {isAuto && entry.scope && (
+            <span
+              className="inline-flex items-center gap-1 rounded-md border border-purple-500/30 bg-purple-500/15 px-2 py-0.5 font-mono text-[11px] font-medium text-purple-600 dark:text-purple-400"
+              title={`Area: ${entry.scope} (parsed from the commit scope)`}
+            >
+              <FolderTree className="size-3" />
+              {entry.scope}
+            </span>
+          )}
           {isAuto && typeof entry.filesChanged === "number" &&
             entry.filesChanged > 0 && (
               <span
@@ -522,27 +623,52 @@ function ChangelogCard({
           {entry.summary && <ChangelogSummary text={entry.summary} />}
         </div>
 
-        {/* Bullets */}
+        {/* Changes — the per-change explanation. Admin-curated entries
+            carry these from the DB; auto (git) entries now derive them
+            from the commit body (bullets / paragraphs) with a file-area
+            fallback, so each commit explains itself change-by-change. The
+            "Changes" label only shows on auto cards to distinguish the
+            derived list from a curator's hand-written bullets. */}
         {entry.changes.length > 0 && (
-          <ul className="space-y-1.5">
-            {entry.changes.map((change, idx) => {
-              const Icon = CHANGE_KIND_ICON[change.kind];
-              return (
-                <li
-                  key={idx}
-                  className="flex items-start gap-2 text-sm"
-                >
-                  <Icon
-                    className={cn(
-                      "mt-0.5 size-4 shrink-0",
-                      CHANGE_KIND_COLOR[change.kind],
-                    )}
-                  />
-                  <span className="min-w-0 flex-1">{change.text}</span>
-                </li>
-              );
-            })}
-          </ul>
+          <div className="space-y-1.5">
+            {isAuto && (
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Changes
+              </p>
+            )}
+            <ul className="space-y-1.5">
+              {entry.changes.map((change, idx) => {
+                const Icon = CHANGE_KIND_ICON[change.kind];
+                return (
+                  <li
+                    key={idx}
+                    className="flex items-start gap-2 text-sm"
+                  >
+                    <Icon
+                      className={cn(
+                        "mt-0.5 size-4 shrink-0",
+                        CHANGE_KIND_COLOR[change.kind],
+                      )}
+                    />
+                    <span className="min-w-0 flex-1">{change.text}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
+        {/* Files disclosure — collapsible list of touched file paths,
+            grouped by area, with per-file +adds / −dels when the source
+            carried them (build-time JSON path; the live GitHub list path
+            omits per-file data). Only on auto cards that captured files. */}
+        {isAuto && entry.files && entry.files.length > 0 && (
+          <ChangelogFilesDisclosure
+            files={entry.files}
+            totalFiles={entry.filesChanged ?? entry.files.length}
+            additions={entry.additions ?? null}
+            deletions={entry.deletions ?? null}
+          />
         )}
 
         {/* Footer: author + admin actions (only on DB-curated entries) */}
@@ -561,5 +687,124 @@ function ChangelogCard({
         </div>
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Files disclosure — collapsible, grouped-by-area touched-file list
+// ---------------------------------------------------------------------------
+
+/**
+ * Native `<details>` disclosure listing the files a commit touched,
+ * grouped by area and ordered by churn. Each file row shows a status dot
+ * (added / modified / deleted / renamed) + the distinctive path tail +
+ * per-file +adds / −dels when available. The summary line carries the
+ * total file count + the commit-level +/- rollup so the admin gets the
+ * headline without expanding.
+ *
+ * When the stored file list is shorter than the TRUE file count (the
+ * generator caps at 20 per commit to bound the JSON), a "+N more" row
+ * makes the truncation explicit rather than silently dropping files.
+ *
+ * Pure Server Component — `<details>` handles open/close with zero JS,
+ * matching the diagnostics panel disclosure above. The +/- coloring is
+ * git-semantic (added=emerald, deleted=rose), NOT the house-POV financial
+ * palette — changelog file churn isn't a money signal.
+ */
+function ChangelogFilesDisclosure({
+  files,
+  totalFiles,
+  additions,
+  deletions,
+}: {
+  files: ChangelogFile[];
+  totalFiles: number;
+  additions: number | null;
+  deletions: number | null;
+}) {
+  const groups = groupFilesByArea(files);
+  const hiddenCount = Math.max(0, totalFiles - files.length);
+  const hasDiffStat =
+    typeof additions === "number" && typeof deletions === "number";
+
+  return (
+    <details className="group rounded-xl border border-border/60 bg-muted/10 px-3 py-2">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-xs font-medium text-muted-foreground [&::-webkit-details-marker]:hidden">
+        <span className="inline-flex items-center gap-2">
+          <FileText className="size-3.5" />
+          {totalFiles} {totalFiles === 1 ? "file" : "files"} changed
+          {hasDiffStat && (additions > 0 || deletions > 0) && (
+            <span className="inline-flex items-center gap-1.5 font-mono text-[11px]">
+              <span className="text-emerald-600 dark:text-emerald-400">
+                +{formatNumber(additions)}
+              </span>
+              <span className="text-rose-600 dark:text-rose-400">
+                −{formatNumber(deletions)}
+              </span>
+            </span>
+          )}
+        </span>
+        <ChevronDown
+          aria-hidden
+          className="size-3.5 transition-transform duration-200 group-open:rotate-180"
+        />
+      </summary>
+      <div className="mt-2.5 space-y-3">
+        {groups.map((group) => (
+          <div key={group.area} className="space-y-1">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+              {group.area}
+              <span className="ml-1.5 font-normal normal-case tracking-normal">
+                ({group.files.length})
+              </span>
+            </p>
+            <ul className="space-y-0.5">
+              {group.files.map((file, idx) => {
+                const meta = fileStatusMeta(file.status);
+                const showCounts =
+                  typeof file.additions === "number" &&
+                  typeof file.deletions === "number" &&
+                  (file.additions > 0 || file.deletions > 0);
+                return (
+                  <li
+                    key={`${file.path}-${idx}`}
+                    className="flex items-center justify-between gap-3 text-xs"
+                  >
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span
+                        aria-hidden
+                        className={cn("size-1.5 shrink-0 rounded-full", meta.dot)}
+                        title={meta.label}
+                      />
+                      <span
+                        className="truncate font-mono text-[11px] text-foreground/80"
+                        title={file.path}
+                      >
+                        {shortFilePath(file.path)}
+                      </span>
+                    </span>
+                    {showCounts && (
+                      <span className="shrink-0 font-mono text-[10px]">
+                        <span className="text-emerald-600 dark:text-emerald-400">
+                          +{file.additions}
+                        </span>{" "}
+                        <span className="text-rose-600 dark:text-rose-400">
+                          −{file.deletions}
+                        </span>
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
+        {hiddenCount > 0 && (
+          <p className="text-[11px] italic text-muted-foreground/70">
+            +{hiddenCount} more {hiddenCount === 1 ? "file" : "files"} not shown
+          </p>
+        )}
+      </div>
+    </details>
   );
 }
