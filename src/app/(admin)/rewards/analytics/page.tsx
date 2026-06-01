@@ -14,6 +14,9 @@ import {
   CalendarDays,
   CalendarRange,
   Crown,
+  Target,
+  Sigma,
+  ArrowUpRight,
 } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import {
@@ -51,8 +54,10 @@ import {
   getPrizeBudgetBreakdown,
   type RaceLeaderboardSummary,
 } from "@/lib/queries/rewards-analytics-leaderboards";
+import { getDepositBonusAnalytics } from "@/lib/queries/deposit-bonus-analytics";
 import { RewardsPeriodFilter } from "./period-filter";
 import { RewardsCostChart } from "./rewards-chart";
+import { DepositBonusChart } from "./deposit-bonus-chart";
 import { RewardTileDrilldown } from "./reward-tile-popover";
 import {
   LifetimePrizesPopover,
@@ -126,6 +131,7 @@ export default async function RewardsAnalyticsPage({
     waitlistBreakdown,
     lifetimePrizesBreakdown,
     prizeBudgetBreakdown,
+    depositBonusAnalytics,
   ] = await Promise.all([
     getRewardsAnalytics(period),
     getRewardsLeaderboards(),
@@ -141,6 +147,10 @@ export default async function RewardsAnalyticsPage({
     // the breakdown without changing the headline, so it's
     // deliberately excluded from this call too.
     getPrizeBudgetBreakdown(["daily", "weekly"]),
+    // Deposit-bonus deep stats — drives the dedicated section below
+    // the daily-cost chart. Cached for 60s with the period in the key
+    // so admins can swap windows without hammering the ledger.
+    getDepositBonusAnalytics(period),
   ]);
 
   // KPI strip: total cost + the five biggest reward buckets. Categories
@@ -272,6 +282,21 @@ export default async function RewardsAnalyticsPage({
             </div>
           </div>
         </div>
+      </FadeIn>
+
+      {/* Deposit Bonus deep-stats panel — dedicated to the
+          deposit_bonus ledger type that drives the largest slice of
+          Bonuses & Promos. Surfaces total / count / avg / median /
+          max / unique recipients + the cap-hit rate (how often a
+          payout equals the observed cap). Below that: daily-volume
+          chart, top-10 users, top-10 days. Same rose accent the
+          rest of the page uses — deposit bonus is money the house
+          GIVES, so House-POV rose everywhere. */}
+      <FadeIn>
+        <DepositBonusPanel
+          data={depositBonusAnalytics}
+          periodLabel={periodLabel(period)}
+        />
       </FadeIn>
 
       {/* Breakdown by type + summary side by side on wide screens.
@@ -746,6 +771,322 @@ function RecipientsTable({ rows }: { rows: RewardRecipientRow[] }) {
                 </TableCell>
                 <TableCell className="text-right tabular-nums text-rose-600 dark:text-rose-400">
                   {formatCurrency(r.total)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </>
+  );
+}
+
+/**
+ * Deposit Bonus deep-stats panel.
+ *
+ * Layout mirrors the broader page: SectionHeading + KpiTile strip
+ * (rose, House-POV) + a rose area chart + side-by-side top-users /
+ * top-days tables.
+ *
+ * Cap-hit rate: the deposit-bonus cap is configured in the GAME
+ * BACKEND (not in `site_config` on the main DB, and not in this admin
+ * codebase). The query helper derives the cap empirically as
+ * `MAX(ABS(amount))` observed in the period — that IS the largest
+ * payout the backend has issued, so "rows equal to that max" is the
+ * legitimate cap-hit count. The KPI label below states the observed
+ * cap value so admins can spot a config change (the number ticking
+ * up from $100 to $200 would mean the backend cap was raised).
+ *
+ * House-POV: deposit bonus = money the house gives → rose accent on
+ * every value.
+ */
+function DepositBonusPanel({
+  data,
+  periodLabel,
+}: {
+  data: import("@/lib/queries/deposit-bonus-analytics").DepositBonusAnalytics;
+  periodLabel: string;
+}) {
+  if (data.count === 0) {
+    return (
+      <div className="space-y-3">
+        <SectionHeading icon={Gift} title="Deposit Bonus" />
+        <div className="rounded-2xl border bg-card p-4">
+          <EmptyState
+            icon={Gift}
+            title="No deposit bonuses in this window"
+            description={`No deposit bonuses were awarded in the ${periodLabel.toLowerCase()} period. Try a longer period.`}
+            compact
+          />
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      <SectionHeading icon={Gift} title="Deposit Bonus" />
+      {/* KPI strip — 7 tiles. All rose (house cost). The cap-hit
+          tile sub-label calls out the observed cap value so admins
+          can spot a backend cap change visually. */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
+        <KpiTile
+          label="Total volume"
+          value={formatCurrency(data.totalVolume)}
+          sub={periodLabel}
+          icon={TrendingDown}
+          accent="rose"
+        />
+        <KpiTile
+          label="Count"
+          value={formatNumber(data.count)}
+          sub="Bonuses awarded"
+          icon={Hash}
+          accent="rose"
+        />
+        <KpiTile
+          label="Average"
+          value={formatCurrency(data.avg)}
+          sub="Per claim"
+          icon={Sigma}
+          accent="rose"
+        />
+        <KpiTile
+          label="Median"
+          value={formatCurrency(data.median)}
+          sub="Per claim"
+          icon={Sigma}
+          accent="rose"
+        />
+        <KpiTile
+          label={`Cap hits (${formatCurrency(data.capValue)})`}
+          value={`${(data.capHitRate * 100).toFixed(1)}%`}
+          sub={`${formatNumber(data.capHits)} of ${formatNumber(data.count)} hit cap`}
+          icon={Target}
+          accent="rose"
+        />
+        <KpiTile
+          label="Max bonus"
+          value={formatCurrency(data.max)}
+          sub="Largest single payout"
+          icon={ArrowUpRight}
+          accent="rose"
+        />
+        <KpiTile
+          label="Unique recipients"
+          value={formatNumber(data.uniqueRecipients)}
+          sub={`${
+            data.uniqueRecipients > 0
+              ? formatCurrency(data.totalVolume / data.uniqueRecipients)
+              : "—"
+          } avg per user`}
+          icon={Users}
+          accent="rose"
+        />
+      </div>
+
+      {/* Daily volume chart. */}
+      <div className="surface-sheen surface-raise relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/70 p-4 sm:p-5">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -right-12 -top-12 size-32 rounded-full bg-rose-500/[0.08] blur-2xl"
+        />
+        <div className="relative">
+          <SectionHeading
+            icon={LineChartIcon}
+            title={`Daily deposit-bonus volume — ${periodLabel}`}
+          />
+          <div className="mt-3">
+            <DepositBonusChart daily={data.dailyVolume} />
+          </div>
+        </div>
+      </div>
+
+      {/* Top 10 users + top 10 days side by side on wide screens. */}
+      <div className="grid gap-4 xl:grid-cols-2">
+        <div>
+          <SectionHeading icon={Trophy} title="Top 10 users by bonus volume" />
+          <div className="surface-sheen mt-3 relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+            <DepositBonusTopUsersTable rows={data.topUsers} />
+          </div>
+        </div>
+        <div>
+          <SectionHeading icon={CalendarDays} title="Top 10 days by bonus volume" />
+          <div className="surface-sheen mt-3 relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+            <DepositBonusTopDaysTable rows={data.topDays} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Top-10 users by deposit-bonus volume in the period. Mobile card
+ * fallback + desktop table, same pattern as the broader page's
+ * RecipientsTable. Each user links to /users/[id]. Amount rose
+ * because deposit bonus is money the house gave them.
+ */
+function DepositBonusTopUsersTable({
+  rows,
+}: {
+  rows: Array<{
+    userId: string;
+    username: string | null;
+    volume: number;
+    count: number;
+  }>;
+}) {
+  if (rows.length === 0) {
+    return (
+      <EmptyState
+        icon={Users}
+        title="No recipients in this window"
+        description="No users received a deposit bonus in the selected period."
+        compact
+      />
+    );
+  }
+  return (
+    <>
+      {/* Mobile card list (<md) */}
+      <div className="space-y-1.5 md:hidden">
+        {rows.map((r, i) => (
+          <div
+            key={r.userId}
+            className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5 transition-colors hover:bg-muted/40"
+          >
+            <span className="w-7 shrink-0 text-xs tabular-nums text-muted-foreground">
+              #{i + 1}
+            </span>
+            <div className="min-w-0 flex-1">
+              <Link
+                href={`/users/${r.userId}`}
+                className="block truncate text-sm font-medium hover:underline"
+              >
+                {r.username ?? r.userId.slice(0, 8)}
+              </Link>
+              <span className="text-[11px] tabular-nums text-muted-foreground">
+                {formatNumber(r.count)} bonuses
+              </span>
+            </div>
+            <span className="shrink-0 text-sm font-medium tabular-nums text-rose-600 dark:text-rose-400">
+              {formatCurrency(r.volume)}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop table (>=md) */}
+      <div className="hidden md:block">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-[50px]">Rank</TableHead>
+              <TableHead>User</TableHead>
+              <TableHead className="text-right">Bonuses</TableHead>
+              <TableHead className="text-right">Volume</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((r, i) => (
+              <TableRow key={r.userId}>
+                <TableCell className="tabular-nums text-muted-foreground">
+                  #{i + 1}
+                </TableCell>
+                <TableCell className="font-medium">
+                  <Link href={`/users/${r.userId}`} className="hover:underline">
+                    {r.username ?? r.userId.slice(0, 8)}
+                  </Link>
+                </TableCell>
+                <TableCell className="text-right tabular-nums text-muted-foreground">
+                  {formatNumber(r.count)}
+                </TableCell>
+                <TableCell className="text-right tabular-nums text-rose-600 dark:text-rose-400">
+                  {formatCurrency(r.volume)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </>
+  );
+}
+
+/**
+ * Top-10 days by deposit-bonus volume in the period. Mobile card
+ * fallback + desktop table mirroring DepositBonusTopUsersTable's
+ * shape so the two sit side-by-side on wide screens without one
+ * looking heavier. Date renders via formatDate so it reads the same
+ * as every other date on the page.
+ */
+function DepositBonusTopDaysTable({
+  rows,
+}: {
+  rows: Array<{ date: string; volume: number; count: number }>;
+}) {
+  if (rows.length === 0) {
+    return (
+      <EmptyState
+        icon={CalendarDays}
+        title="No days with deposit bonuses"
+        description="No deposit bonuses were awarded in the selected period."
+        compact
+      />
+    );
+  }
+  return (
+    <>
+      {/* Mobile card list (<md) */}
+      <div className="space-y-1.5 md:hidden">
+        {rows.map((r, i) => (
+          <div
+            key={r.date}
+            className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5 transition-colors hover:bg-muted/40"
+          >
+            <span className="w-7 shrink-0 text-xs tabular-nums text-muted-foreground">
+              #{i + 1}
+            </span>
+            <div className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium">
+                {formatDate(r.date)}
+              </span>
+              <span className="text-[11px] tabular-nums text-muted-foreground">
+                {formatNumber(r.count)} bonuses
+              </span>
+            </div>
+            <span className="shrink-0 text-sm font-medium tabular-nums text-rose-600 dark:text-rose-400">
+              {formatCurrency(r.volume)}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop table (>=md) */}
+      <div className="hidden md:block">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-[50px]">Rank</TableHead>
+              <TableHead>Date</TableHead>
+              <TableHead className="text-right">Bonuses</TableHead>
+              <TableHead className="text-right">Volume</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((r, i) => (
+              <TableRow key={r.date}>
+                <TableCell className="tabular-nums text-muted-foreground">
+                  #{i + 1}
+                </TableCell>
+                <TableCell className="font-medium">
+                  {formatDate(r.date)}
+                </TableCell>
+                <TableCell className="text-right tabular-nums text-muted-foreground">
+                  {formatNumber(r.count)}
+                </TableCell>
+                <TableCell className="text-right tabular-nums text-rose-600 dark:text-rose-400">
+                  {formatCurrency(r.volume)}
                 </TableCell>
               </TableRow>
             ))}
