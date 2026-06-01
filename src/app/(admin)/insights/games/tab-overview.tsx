@@ -7,6 +7,8 @@ import {
   Swords,
   TrendingUp,
   Percent,
+  Minus,
+  Equal,
 } from "lucide-react";
 import { FadeIn } from "@/components/fade-in";
 import {
@@ -94,6 +96,92 @@ export async function OverviewTab({ period }: { period: GamesPeriod }) {
         <SectionHeading icon={BarChart3} title="Activity over time" />
         <div className="rounded-2xl border bg-card p-4 sm:p-5">
           <OverviewChart data={data.series} bucketByHour={data.bucketByHour} />
+        </div>
+
+        {/* Game-side P&L decomposition — the cleanest "are we
+            making money from our games?" number, without any reward
+            noise. Wager and payout sides are both gaming-only:
+            packs + battles + upgrader. Nothing from
+            bonuses/rakeback/affiliate/race-prizes mixes in, so the
+            number is the pure game margin. */}
+        <SectionHeading icon={Activity} title="Game-side P&L" />
+        <div className="rounded-2xl border bg-card p-4 sm:p-5">
+          <p className="mb-3 text-xs text-muted-foreground">
+            Pure game economics: total wagers minus total card+upgrader
+            payouts. Excludes every reward category (bonuses, rakeback,
+            affiliate, race prizes) so the figure is the real margin
+            our games produce before any incentive spend.
+          </p>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="flex items-center gap-2 rounded-lg border bg-emerald-500/5 p-3">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-emerald-500/15">
+                <Coins className="size-4 text-emerald-500" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Game wagers
+                </p>
+                <p className="truncate text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                  {formatCompactUsd(k.totalWager)}
+                </p>
+                <p className="text-[10px] text-muted-foreground">
+                  Borrow-corrected
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 rounded-lg border bg-rose-500/5 p-3">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-rose-500/15">
+                <Minus className="size-4 text-rose-500" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Game payouts
+                </p>
+                <p className="truncate text-lg font-bold tabular-nums text-rose-600 dark:text-rose-400">
+                  {formatCompactUsd(k.totalPayout)}
+                </p>
+                <p className="text-[10px] text-muted-foreground">
+                  Cards + upgrader wins only
+                </p>
+              </div>
+            </div>
+            <div
+              className={`flex items-center gap-2 rounded-lg border p-3 ${
+                k.housePnl >= 0
+                  ? "bg-emerald-500/5"
+                  : "bg-rose-500/5"
+              }`}
+            >
+              <div
+                className={`flex size-8 shrink-0 items-center justify-center rounded-full ${
+                  k.housePnl >= 0
+                    ? "bg-emerald-500/15"
+                    : "bg-rose-500/15"
+                }`}
+              >
+                <Equal
+                  className={`size-4 ${k.housePnl >= 0 ? "text-emerald-500" : "text-rose-500"}`}
+                />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Game-side P&L
+                </p>
+                <p
+                  className={`truncate text-lg font-bold tabular-nums ${
+                    k.housePnl >= 0
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-rose-600 dark:text-rose-400"
+                  }`}
+                >
+                  {formatCompactUsd(k.housePnl)}
+                </p>
+                <p className="text-[10px] text-muted-foreground">
+                  {k.housePnlMarginPct.toFixed(2)}% margin · RTP {k.rtpPct.toFixed(2)}%
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Per-product P&L breakdown */}
