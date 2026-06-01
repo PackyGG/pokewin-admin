@@ -370,6 +370,32 @@ export type AffiliateExtras = {
   distinctAffiliates: number;
   /** Average payout per affiliate = totalVolume / distinctAffiliates. */
   avgPayoutPerAffiliate: number;
+  /**
+   * Distinct referred users contributing to affiliate volume in the
+   * window — counted via `affiliate_code_usages` rows that hit in the
+   * same date range. Note: this is the count of REFERRED users whose
+   * activity drove a usage row, NOT the count of affiliate accounts.
+   */
+  distinctReferredUsers: number;
+  /**
+   * Top affiliates by REFERRED-USER WAGER volume in the window
+   * (different lens from the baseline's "top by claim volume" — this
+   * surfaces affiliates whose downstream cohort is actually generating
+   * platform activity, not just earning commission off historical
+   * referrals). Top 5.
+   */
+  topByReferredWager: Array<{
+    affiliateUserId: string;
+    username: string | null;
+    referredWagerUsd: number;
+    referredCount: number;
+  }>;
+  /**
+   * Inactive affiliates — affiliate_accounts with at least 1 total
+   * referred user but ZERO `affiliate_claim` ledger rows in the
+   * window. Returned as a count.
+   */
+  inactiveAffiliates: number;
 };
 
 async function computeAffiliateExtras(
@@ -380,7 +406,15 @@ async function computeAffiliateExtras(
   const days = daysForPeriod(period);
   const dateFilter =
     days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";
+  const usagesDateFilter =
+    days !== null
+      ? `AND acu.created_at >= NOW() - INTERVAL '${days} days'`
+      : "";
   const blacklistSubquery = blacklistNotInClause("id", blacklistIds);
+  const blacklistAffiliateAlias = blacklistNotInClause(
+    "acu.affiliate_user_id",
+    blacklistIds,
+  );
 
   // `affiliate_claim` rows file under the affiliate's user_id, so the
   // distinct count IS the number of paid affiliates in the window.
@@ -405,7 +439,81 @@ async function computeAffiliateExtras(
   const avgPayoutPerAffiliate =
     distinctAffiliates > 0 ? total / distinctAffiliates : 0;
 
-  return { distinctAffiliates, avgPayoutPerAffiliate };
+  // Distinct referred users contributing in the window. Uses
+  // affiliate_code_usages where there's actual wager volume — pure
+  // deposit-only usages also count since the affiliate earns from
+  // either signal.
+  const referredRows = await db.$queryRawUnsafe<{ cnt: string }[]>(`
+    SELECT COUNT(DISTINCT acu.referred_user_id)::text AS cnt
+    FROM affiliate_code_usages acu
+    WHERE acu.status = 'completed'
+      AND (acu.wager_amount_usd::numeric > 0 OR acu.deposit_amount_usd::numeric > 0)
+      ${usagesDateFilter}
+      ${blacklistAffiliateAlias}
+  `);
+  const distinctReferredUsers = Number(referredRows[0]?.cnt ?? 0);
+
+  // Top affiliates by their downstream cohort's WAGER volume — uses
+  // affiliate_code_usages aggregated per affiliate.
+  const topWagerRows = await db.$queryRawUnsafe<
+    {
+      affiliate_user_id: string;
+      username: string | null;
+      referred_wager: string;
+      referred_count: string;
+    }[]
+  >(`
+    SELECT
+      acu.affiliate_user_id,
+      u.username,
+      SUM(acu.wager_amount_usd::numeric)::text AS referred_wager,
+      COUNT(DISTINCT acu.referred_user_id)::text AS referred_count
+    FROM affiliate_code_usages acu
+    JOIN "user" u ON u.id = acu.affiliate_user_id
+    WHERE acu.status = 'completed'
+      ${usagesDateFilter}
+      ${blacklistAffiliateAlias}
+    GROUP BY acu.affiliate_user_id, u.username
+    HAVING SUM(acu.wager_amount_usd::numeric) > 0
+    ORDER BY SUM(acu.wager_amount_usd::numeric) DESC
+    LIMIT 5
+  `);
+  const topByReferredWager = topWagerRows.map((r) => ({
+    affiliateUserId: r.affiliate_user_id,
+    username: r.username,
+    referredWagerUsd: toNumber(r.referred_wager),
+    referredCount: Number(r.referred_count),
+  }));
+
+  // Inactive affiliates: affiliate_accounts rows with at least one
+  // referred user historically, but NO affiliate_claim ledger row in
+  // the window. The set "had referrals before this window" =
+  // affiliate_accounts.total_referred > 0 — a denormalised counter on
+  // the account row, cheap to filter.
+  const inactiveRows = await db.$queryRawUnsafe<{ cnt: string }[]>(`
+    WITH paid_in_window AS (
+      SELECT DISTINCT lt.user_id
+      FROM ledger_transactions lt
+      WHERE lt.status = 'completed'
+        AND lt.type = 'affiliate_claim'
+        ${dateFilter}
+    )
+    SELECT COUNT(*)::text AS cnt
+    FROM affiliate_accounts aa
+    JOIN "user" u ON u.id = aa.user_id
+    WHERE aa.total_referred > 0
+      AND u.role NOT IN ('admin', 'support') ${blacklistNotInClause("u.id", blacklistIds)}
+      AND NOT EXISTS (SELECT 1 FROM paid_in_window p WHERE p.user_id = aa.user_id)
+  `);
+  const inactiveAffiliates = Number(inactiveRows[0]?.cnt ?? 0);
+
+  return {
+    distinctAffiliates,
+    avgPayoutPerAffiliate,
+    distinctReferredUsers,
+    topByReferredWager,
+    inactiveAffiliates,
+  };
 }
 
 const cachedAffiliateExtras = unstable_cache(
