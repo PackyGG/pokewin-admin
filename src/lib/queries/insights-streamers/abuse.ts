@@ -6,9 +6,18 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "../_blacklist";
 import { periodSqlInterval, type StreamerPeriod } from "@/app/(admin)/insights/streamers/types";
 import type { CreatorRiskRow, SignalScore } from "./types";
-import { getCreatorSelfPlayMap } from "./creator-self-play";
-import { getCohortGameAnomalyMap } from "./cohort-rtp-anomaly";
-import { getCycleSignalMap } from "./withdraw-redeposit-cycle";
+import {
+  getCreatorSelfPlayMap,
+  type CreatorSelfPlayRow,
+} from "./creator-self-play";
+import {
+  getCohortGameAnomalyMap,
+  type CohortGameAnomalyRow,
+} from "./cohort-rtp-anomaly";
+import {
+  getCycleSignalMap,
+  type CycleSignalRow,
+} from "./withdraw-redeposit-cycle";
 import { formatCurrency } from "@/lib/utils/format";
 
 /**
@@ -76,6 +85,19 @@ function scoreFromRatio(ratio: number, threshold: number, max: number): number {
   return Math.round(r * max);
 }
 
+/**
+ * Per-signal failure logger. We never want one busted signal query to
+ * blank the whole risk panel — the rest should still render with that
+ * signal contributing 0. The log line is the only breadcrumb the
+ * operator has, since the page itself silently degrades.
+ */
+function logSignalFailure(signalName: string, reason: unknown): void {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  console.error(
+    `[insights-streamers.abuse] signal '${signalName}' threw, falling back to zero-score for every creator: ${msg}`,
+  );
+}
+
 async function fetchInner(period: StreamerPeriod): Promise<CreatorRiskRow[]> {
   const db = await getDb();
   const excluded = await getExcludedUserIds();
@@ -86,11 +108,35 @@ async function fetchInner(period: StreamerPeriod): Promise<CreatorRiskRow[]> {
   // Pull the three new signal maps in parallel with the inline SQL.
   // Each returns Map<creatorId, row>. Empty rows = no signal — they
   // don't push a SignalScore entry.
-  const [selfPlayMap, anomalyMap, cycleMap] = await Promise.all([
-    getCreatorSelfPlayMap(period),
-    getCohortGameAnomalyMap(period),
-    getCycleSignalMap(period),
-  ]);
+  //
+  // Per-signal isolation: each map is fetched independently and a
+  // failure in any one of them degrades to an empty map (= 0-score on
+  // that signal for every creator) instead of taking the whole abuse
+  // aggregate down. A bug in cohort-rtp-anomaly shouldn't blank the
+  // self-play signal, and vice versa — the page becomes resilient
+  // instead of all-or-nothing.
+  const [selfPlayResult, anomalyResult, cycleResult] = await Promise.allSettled(
+    [
+      getCreatorSelfPlayMap(period),
+      getCohortGameAnomalyMap(period),
+      getCycleSignalMap(period),
+    ],
+  );
+  const selfPlayMap: Map<string, CreatorSelfPlayRow> =
+    selfPlayResult.status === "fulfilled"
+      ? selfPlayResult.value
+      : (logSignalFailure("creator-self-play", selfPlayResult.reason),
+        new Map());
+  const anomalyMap: Map<string, CohortGameAnomalyRow> =
+    anomalyResult.status === "fulfilled"
+      ? anomalyResult.value
+      : (logSignalFailure("cohort-rtp-anomaly", anomalyResult.reason),
+        new Map());
+  const cycleMap: Map<string, CycleSignalRow> =
+    cycleResult.status === "fulfilled"
+      ? cycleResult.value
+      : (logSignalFailure("withdraw-redeposit-cycle", cycleResult.reason),
+        new Map());
 
   type Row = {
     user_id: string;
@@ -111,7 +157,16 @@ async function fetchInner(period: StreamerPeriod): Promise<CreatorRiskRow[]> {
   // top SELECT joins them. LEFT JOINs everywhere so a creator with no
   // cohort still shows up with zeros — important so the page can sort
   // them onto the bottom rather than dropping them silently.
-  const rows = await db.$queryRawUnsafe<Row[]>(`
+  //
+  // Per-signal isolation: this query covers inline signals 1-4. If it
+  // throws, we still try to render the page using only signals 5/6/7
+  // from the maps above — we synthesize a minimum set of creator rows
+  // from the union of map keys so the score-from-signals path still
+  // works. Better to show a partial risk view with one bad signal
+  // group than nothing at all.
+  let rows: Row[] = [];
+  try {
+    rows = await db.$queryRawUnsafe<Row[]>(`
     WITH creators AS (
       SELECT u.id, u.username,
              (SELECT ac.code FROM affiliate_codes ac
@@ -236,6 +291,33 @@ async function fetchInner(period: StreamerPeriod): Promise<CreatorRiskRow[]> {
       LEFT JOIN wager_stats    ws  ON ws.user_id = c.id
       LEFT JOIN battle_borrow_stats bbs ON bbs.user_id = c.id
   `);
+  } catch (err) {
+    logSignalFailure("inline-1-to-4", err);
+    // Synthesize a minimum row per creator that still appears in any
+    // of the maps so signals 5-7 can render. The "real" row shape
+    // requires cohort_wager / referred_count etc. — we set them to 0
+    // here; the missing data only affects the inline 1-4 signals
+    // which are already gated by `referredCount >= 5`, so a 0 means
+    // those signals contribute nothing for that creator. Exactly the
+    // intended degradation.
+    const userIds = new Set<string>([
+      ...selfPlayMap.keys(),
+      ...anomalyMap.keys(),
+      ...cycleMap.keys(),
+    ]);
+    rows = Array.from(userIds, (uid) => ({
+      user_id: uid,
+      username: null,
+      primary_code: null,
+      referred_count: "0",
+      cohort_wager: "0",
+      inactive_pct: "0",
+      multi_code_pct: "0",
+      max_hourly_signups: "0",
+      mean_hourly_signups: "0",
+      borrow_share: "0",
+    }));
+  }
 
   // Score & rank in TS so the math is testable / inspectable.
   const result: CreatorRiskRow[] = rows.map((r) => {
