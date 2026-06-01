@@ -1,5 +1,23 @@
-import { Trophy, Flag, Sigma, Crown } from "lucide-react";
-import { formatCurrency, formatDate } from "@/lib/utils/format";
+import Link from "next/link";
+import {
+  Trophy,
+  Flag,
+  Sigma,
+  Crown,
+  Target,
+  PieChart,
+  Repeat,
+} from "lucide-react";
+import { SectionHeading } from "@/components/modern-panels";
+import {
+  Table,
+  TableHeader,
+  TableRow,
+  TableHead,
+  TableBody,
+  TableCell,
+} from "@/components/ui/table";
+import { formatCurrency, formatDate, formatNumber } from "@/lib/utils/format";
 import { getRaceAnalytics } from "@/lib/queries/rewards-category-analytics";
 import { getRaceExtras } from "@/lib/queries/rewards-category-extras";
 import { type RewardsPeriod } from "@/lib/queries/rewards-analytics";
@@ -8,18 +26,26 @@ import {
   baseDeepStatsTiles,
   type DeepStatsTile,
 } from "./category-deep-stats";
+import { DistributionBarChart } from "./distribution-bar-chart";
 
 /**
- * Race tab on /rewards/analytics. Surfaces the shared baseline strip
- * (total / count / avg / median / max / unique recipients) plus:
+ * Race tab on /rewards/analytics. Baseline + race extras + winner
+ * position distribution + repeat winners + budget utilisation.
  *
- *   - Distinct races contributing prize claims in the window
- *   - Avg prize per race (total volume / distinct races)
- *   - Largest single prize (from race_claims, paralleled to the
- *     ledger max for sanity)
- *   - Top race in the window (race_type + period_start + total pool +
- *     winner count) — appears below the strip as a callout, NOT as a
- *     KPI tile since it doesn't fit the single-line value shape.
+ * Tiles in the KPI strip (order = cohort lens first, central tendency
+ * next, outliers / budget last):
+ *   - Distinct races, avg prize / race  (cohort lens)
+ *   - Baseline (volume, count, avg, median, max, unique recipients)
+ *   - Budget utilisation = SUM of prize tiers across races run vs
+ *     total volume paid → tells the team if races regularly pay out
+ *     less than their configured budget (under-claimed top tiers).
+ *   - Avg + median winner position (skew lens).
+ *
+ * Below the strip:
+ *   - Top race callout (race_type + period_start + total pool +
+ *     winner count) — already shipped.
+ *   - Position bucket distribution (top 3 / 4-10 / 11-25 / 26+).
+ *   - Repeat winners — count + top 5 by total prize across races.
  *
  * House-POV: race prizes are money the house GIVES users → rose.
  */
@@ -38,10 +64,11 @@ export async function RaceTab({
     countSub: "Prizes paid",
     avgPerUserSub: "avg per winner",
   });
-  // Race extras tiles sit at the front so the "how many races + per-
-  // race average" cohort lens reads first, before the per-payout
-  // central tendency stats.
-  const extraTiles: DeepStatsTile[] = [
+  // Front-load cohort lens so admins see "how many races + per-race
+  // average" before per-payout stats. Budget + position tiles
+  // appended at the end so the strip reads
+  // "races → payouts → budget → skew".
+  const extraTilesFront: DeepStatsTile[] = [
     {
       label: "Distinct races",
       value: extras.distinctRaces.toLocaleString(),
@@ -55,9 +82,35 @@ export async function RaceTab({
       icon: Sigma,
     },
   ];
-  const tiles: DeepStatsTile[] = [...extraTiles, ...base];
+  const extraTilesBack: DeepStatsTile[] = [
+    {
+      label: "Budget utilisation",
+      value:
+        extras.budgetForRunRaces > 0
+          ? `${(extras.budgetUtilisation * 100).toFixed(1)}%`
+          : "—",
+      sub:
+        extras.budgetForRunRaces > 0
+          ? `${formatCurrency(data.totalVolume)} of ${formatCurrency(extras.budgetForRunRaces)}`
+          : "No configured budget",
+      icon: Target,
+    },
+    {
+      label: "Avg winner position",
+      value:
+        extras.avgWinnerPosition > 0
+          ? `#${extras.avgWinnerPosition.toFixed(1)}`
+          : "—",
+      sub:
+        extras.medianWinnerPosition > 0
+          ? `Median #${extras.medianWinnerPosition.toFixed(0)}`
+          : "No data",
+      icon: PieChart,
+    },
+  ];
+  const tiles: DeepStatsTile[] = [...extraTilesFront, ...base, ...extraTilesBack];
   return (
-    <div className="space-y-3">
+    <div className="space-y-6">
       <CategoryDeepStatsPanel
         data={data}
         periodLabel={periodLabel}
@@ -68,10 +121,10 @@ export async function RaceTab({
         emptyTitle="No race prizes in this window"
         emptyDescription={`No race prizes were paid in the ${periodLabel.toLowerCase()} period. Try a longer period.`}
       />
-      {/* Top race callout — wraps the most-active race in the window
-          with race type, period start, total pool, and winner count.
-          Only renders when at least one race had winners; otherwise
-          the empty state from the panel above already covers it. */}
+      {/* Top race callout — already shipped. Wraps the most-active
+          race in the window with race type, period start, total
+          pool, and winner count. Only renders when at least one
+          race had winners. */}
       {data.count > 0 && extras.topRace && (
         <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
           <div className="flex flex-wrap items-center gap-3">
@@ -94,6 +147,122 @@ export async function RaceTab({
             <p className="text-xl font-bold tabular-nums text-rose-600 dark:text-rose-400 sm:text-2xl">
               {formatCurrency(extras.topRace.totalPrizePool)}
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* Position bucket distribution */}
+      {data.count > 0 && (
+        <div className="space-y-3">
+          <SectionHeading icon={PieChart} title="Winner position spread" />
+          <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+            <p className="text-[11px] text-muted-foreground">
+              Where prize claims land. Lower buckets dominating means
+              races skew top-heavy.
+            </p>
+            <div className="mt-3">
+              <DistributionBarChart
+                data={extras.positionBuckets}
+                metric="count"
+              />
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {extras.positionBuckets.map((b) => (
+                <div
+                  key={b.label}
+                  className="rounded-lg border bg-muted/20 p-2.5"
+                >
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    {b.label}
+                  </p>
+                  <p className="mt-0.5 text-sm font-bold tabular-nums">
+                    {formatNumber(b.count)}
+                  </p>
+                  <p className="text-[10px] tabular-nums text-rose-600 dark:text-rose-400">
+                    {formatCurrency(b.volume)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Repeat winners — top 5 by total prize */}
+      {data.count > 0 && extras.repeatWinnerCount > 0 && (
+        <div className="space-y-3">
+          <SectionHeading
+            icon={Repeat}
+            title={`Repeat winners (${formatNumber(extras.repeatWinnerCount)})`}
+          />
+          <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
+            <p className="text-[11px] text-muted-foreground">
+              Users who placed in more than one race in this window.
+              Top 5 by total prize volume.
+            </p>
+            {/* Mobile cards */}
+            <div className="mt-3 space-y-1.5 md:hidden">
+              {extras.topRepeatWinners.map((w, i) => (
+                <div
+                  key={w.userId}
+                  className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5"
+                >
+                  <span className="w-7 shrink-0 text-xs tabular-nums text-muted-foreground">
+                    #{i + 1}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <Link
+                      href={`/users/${w.userId}`}
+                      className="block truncate text-sm font-medium hover:underline"
+                    >
+                      {w.username ?? w.userId.slice(0, 8)}
+                    </Link>
+                    <span className="text-[11px] tabular-nums text-muted-foreground">
+                      {formatNumber(w.races)} races
+                    </span>
+                  </div>
+                  <span className="shrink-0 text-sm font-medium tabular-nums text-rose-600 dark:text-rose-400">
+                    {formatCurrency(w.totalPrize)}
+                  </span>
+                </div>
+              ))}
+            </div>
+            {/* Desktop table */}
+            <div className="mt-3 hidden md:block">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-[50px]">Rank</TableHead>
+                    <TableHead>User</TableHead>
+                    <TableHead className="text-right">Races</TableHead>
+                    <TableHead className="text-right">Total prize</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {extras.topRepeatWinners.map((w, i) => (
+                    <TableRow key={w.userId}>
+                      <TableCell className="tabular-nums text-muted-foreground">
+                        #{i + 1}
+                      </TableCell>
+                      <TableCell className="font-medium">
+                        <Link
+                          href={`/users/${w.userId}`}
+                          className="hover:underline"
+                        >
+                          {w.username ?? w.userId.slice(0, 8)}
+                        </Link>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">
+                        {formatNumber(w.races)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-rose-600 dark:text-rose-400">
+                        {formatCurrency(w.totalPrize)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           </div>
         </div>
       )}

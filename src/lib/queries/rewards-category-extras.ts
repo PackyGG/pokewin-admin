@@ -59,6 +59,47 @@ export type RaceExtras = {
     totalPrizePool: number;
     winnerCount: number;
   } | null;
+  /**
+   * Configured per-race prize budget (sum of `race_prize_tiers` USD
+   * across daily + weekly + monthly). Multiplied by `distinctRaces`
+   * gives the total budget in the window — but races are typed and
+   * a given window can contain a mix, so the headline shows just
+   * the per-instance budget. UsageRate computes the actual share
+   * spent against the right denominator.
+   */
+  perRaceBudget: number;
+  /** SUM of `race_prize_tiers` USD restricted to races that actually had winners in the window. */
+  budgetForRunRaces: number;
+  /** distinctRaces' total prize volume / budgetForRunRaces, 0–1. */
+  budgetUtilisation: number;
+  /**
+   * Average winner position across `race_claims` in the window.
+   * Lower → top-heavy (top positions dominate prize spend). 0 when
+   * no claims.
+   */
+  avgWinnerPosition: number;
+  /**
+   * Median winner position. Same lens as avgWinnerPosition but
+   * resistant to a single big-position outlier.
+   */
+  medianWinnerPosition: number;
+  /**
+   * Position-bucket distribution. Top-3 / 4-10 / 11-25 / 26+ — each
+   * bucket holds the prize-claim count and total USD volume. Bucket
+   * boundaries match the typical race-tier configuration.
+   */
+  positionBuckets: Array<{ label: string; count: number; volume: number }>;
+  /**
+   * Repeat winners — users who won in MORE than one race in the
+   * window. Returned as the count + the top 5 by total prize volume.
+   */
+  repeatWinnerCount: number;
+  topRepeatWinners: Array<{
+    userId: string;
+    username: string | null;
+    races: number;
+    totalPrize: number;
+  }>;
 };
 
 async function computeRaceExtras(
@@ -144,11 +185,167 @@ async function computeRaceExtras(
       }
     : null;
 
+  // Per-race configured budget — SUM of `race_prize_tiers.prize_amount_usd`
+  // per race_type, then summed across daily + weekly + monthly so the
+  // headline is "what every full race CAN cost". Cheap one-row aggregate
+  // (table has ≤ ~60 rows total).
+  const budgetRows = await db.$queryRawUnsafe<{ total: string }[]>(`
+    SELECT COALESCE(SUM(prize_amount_usd::numeric), 0)::text AS total
+    FROM race_prize_tiers
+  `);
+  const perRaceBudget = toNumber(budgetRows[0]?.total);
+
+  // Budget for races that actually had a winner in the window — sum
+  // the tier budget per (race_type) for every distinct race instance
+  // observed. Two-query approach: (1) get distinct race_type counts
+  // in the window, (2) multiply by per-type budget.
+  const typeCountRows = await db.$queryRawUnsafe<
+    { race_type: string; instances: string; per_type_budget: string }[]
+  >(`
+    WITH distinct_in_window AS (
+      SELECT
+        rc.race_type::text AS race_type,
+        COUNT(DISTINCT rc.race_period_start)::text AS instances
+      FROM race_claims rc
+      JOIN "user" u ON u.id = rc.user_id
+      WHERE u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        ${dateFilter}
+      GROUP BY rc.race_type
+    ),
+    type_budget AS (
+      SELECT race_type::text AS race_type, SUM(prize_amount_usd::numeric)::text AS budget
+      FROM race_prize_tiers
+      GROUP BY race_type
+    )
+    SELECT
+      d.race_type,
+      d.instances,
+      COALESCE(t.budget, '0') AS per_type_budget
+    FROM distinct_in_window d
+    LEFT JOIN type_budget t USING (race_type)
+  `);
+  let budgetForRunRaces = 0;
+  for (const r of typeCountRows) {
+    budgetForRunRaces +=
+      Number(r.instances) * toNumber(r.per_type_budget);
+  }
+  const budgetUtilisation =
+    budgetForRunRaces > 0 ? totalVolume / budgetForRunRaces : 0;
+
+  // Winner position spread — avg, median, bucket distribution.
+  const positionRows = await db.$queryRawUnsafe<
+    { position: number; prize: string }[]
+  >(`
+    SELECT
+      rc.position,
+      rc.prize_amount_usd::text AS prize
+    FROM race_claims rc
+    JOIN "user" u ON u.id = rc.user_id
+    WHERE u.role NOT IN ('admin', 'support') ${blacklistJoin}
+      ${dateFilter}
+  `);
+  const positions = positionRows
+    .map((r) => Number(r.position))
+    .filter((p) => Number.isFinite(p) && p > 0);
+  const avgWinnerPosition =
+    positions.length > 0
+      ? positions.reduce((a, b) => a + b, 0) / positions.length
+      : 0;
+  const sortedPositions = [...positions].sort((a, b) => a - b);
+  const medianWinnerPosition =
+    sortedPositions.length === 0
+      ? 0
+      : sortedPositions.length % 2 === 1
+        ? sortedPositions[(sortedPositions.length - 1) / 2]
+        : (sortedPositions[sortedPositions.length / 2 - 1] +
+            sortedPositions[sortedPositions.length / 2]) /
+          2;
+
+  // Position buckets — top 3 / 4-10 / 11-25 / 26+. Boundaries match
+  // the typical race tier breakpoints (3 podium / first 10 / first 25
+  // / overflow) so the distribution maps onto common race configs.
+  const BUCKETS = ["Top 3", "4–10", "11–25", "26+"];
+  const positionBuckets: RaceExtras["positionBuckets"] = BUCKETS.map(
+    (label) => ({ label, count: 0, volume: 0 }),
+  );
+  for (let i = 0; i < positionRows.length; i++) {
+    const pos = Number(positionRows[i].position);
+    const prize = toNumber(positionRows[i].prize);
+    let idx: number;
+    if (!Number.isFinite(pos) || pos <= 0) continue;
+    if (pos <= 3) idx = 0;
+    else if (pos <= 10) idx = 1;
+    else if (pos <= 25) idx = 2;
+    else idx = 3;
+    positionBuckets[idx].count += 1;
+    positionBuckets[idx].volume += prize;
+  }
+
+  // Repeat winners — users with claims across multiple distinct
+  // (race_type, race_period_start) instances. Returned as count + top
+  // 5 by total prize volume so the UI can spotlight the heavy hitters.
+  const repeatRows = await db.$queryRawUnsafe<
+    {
+      user_id: string;
+      username: string | null;
+      races: string;
+      total_prize: string;
+    }[]
+  >(`
+    WITH per_user AS (
+      SELECT
+        rc.user_id,
+        COUNT(DISTINCT (rc.race_type, rc.race_period_start))::int AS races,
+        SUM(rc.prize_amount_usd::numeric) AS total_prize
+      FROM race_claims rc
+      JOIN "user" u ON u.id = rc.user_id
+      WHERE u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        ${dateFilter}
+      GROUP BY rc.user_id
+      HAVING COUNT(DISTINCT (rc.race_type, rc.race_period_start)) > 1
+    )
+    SELECT
+      pu.user_id,
+      u.username,
+      pu.races::text,
+      pu.total_prize::text AS total_prize
+    FROM per_user pu
+    JOIN "user" u ON u.id = pu.user_id
+    ORDER BY pu.total_prize DESC
+    LIMIT 5
+  `);
+  const repeatCountRows = await db.$queryRawUnsafe<{ cnt: string }[]>(`
+    WITH per_user AS (
+      SELECT rc.user_id, COUNT(DISTINCT (rc.race_type, rc.race_period_start))::int AS races
+      FROM race_claims rc
+      JOIN "user" u ON u.id = rc.user_id
+      WHERE u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        ${dateFilter}
+      GROUP BY rc.user_id
+    )
+    SELECT COUNT(*)::text AS cnt FROM per_user WHERE races > 1
+  `);
+  const repeatWinnerCount = Number(repeatCountRows[0]?.cnt ?? 0);
+  const topRepeatWinners = repeatRows.map((r) => ({
+    userId: r.user_id,
+    username: r.username,
+    races: Number(r.races),
+    totalPrize: toNumber(r.total_prize),
+  }));
+
   return {
     distinctRaces,
     avgPrizePerRace,
     largestSinglePrize,
     topRace,
+    perRaceBudget,
+    budgetForRunRaces,
+    budgetUtilisation,
+    avgWinnerPosition,
+    medianWinnerPosition,
+    positionBuckets,
+    repeatWinnerCount,
+    topRepeatWinners,
   };
 }
 
