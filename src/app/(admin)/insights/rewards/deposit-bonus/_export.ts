@@ -22,6 +22,15 @@ import { getDepositBonusROI } from "@/lib/queries/insights-rewards/deposit-bonus
 import { getDepositBonusGeoSource } from "@/lib/queries/insights-rewards/deposit-bonus/geo-source";
 import { getDepositBonusTopSpenders } from "@/lib/queries/insights-rewards/deposit-bonus/top-spenders";
 import { getDepositBonusSuspicious } from "@/lib/queries/insights-rewards/deposit-bonus/suspicious";
+import {
+  getDepositBonusDepositFrequency,
+  getDepositBonusDepositSizeDistribution,
+  getDepositBonusCapHitters,
+  getDepositBonusTimeBetween,
+  getDepositBonusToWagerSegments,
+  getDepositBonusPostCapBehavior,
+  getDepositBonusCapHitterCohorts,
+} from "@/lib/queries/insights-rewards/deposit-bonus/impact";
 import { settle, unwrap, buildSection } from "../../_export-section";
 
 const AREA = "insights.export.deposit-bonus";
@@ -66,6 +75,13 @@ export async function gatherDepositBonusExportSections(
     geoR,
     topSpendersR,
     suspiciousR,
+    freqR,
+    sizeR,
+    capHittersR,
+    timeBetweenR,
+    bonusWagerR,
+    postCapR,
+    capCohortsR,
   ] = await settle([
     getDepositBonusOverview(period),
     getDepositBonusCapAnalysis(period),
@@ -80,6 +96,13 @@ export async function gatherDepositBonusExportSections(
     getDepositBonusGeoSource(period),
     getDepositBonusTopSpenders(period),
     getDepositBonusSuspicious(period),
+    getDepositBonusDepositFrequency(period),
+    getDepositBonusDepositSizeDistribution(period),
+    getDepositBonusCapHitters(period),
+    getDepositBonusTimeBetween(period),
+    getDepositBonusToWagerSegments(period),
+    getDepositBonusPostCapBehavior(period),
+    getDepositBonusCapHitterCohorts(period),
   ]);
   const overview = () => unwrap(overviewR);
   const cap = () => unwrap(capR);
@@ -94,6 +117,13 @@ export async function gatherDepositBonusExportSections(
   const geo = () => unwrap(geoR);
   const topSpenders = () => unwrap(topSpendersR);
   const suspicious = () => unwrap(suspiciousR);
+  const freq = () => unwrap(freqR);
+  const size = () => unwrap(sizeR);
+  const capHitters = () => unwrap(capHittersR);
+  const timeBetween = () => unwrap(timeBetweenR);
+  const bonusWager = () => unwrap(bonusWagerR);
+  const postCap = () => unwrap(postCapR);
+  const capCohorts = () => unwrap(capCohortsR);
 
   const periodLabel = insightsRewardsPeriodLabel(period);
 
@@ -447,6 +477,155 @@ export async function gatherDepositBonusExportSections(
           r.sampleUsernames.map((u) => u ?? "—").join(" | "),
           r.bonusInWindow,
         ]),
+    ),
+
+    // ── Impact: deposit-frequency distribution ────────────────────
+    buildSection(
+      AREA,
+      "Impact — Deposit Frequency per Day",
+      ["Deposits/day bucket", "User-days", "Share"],
+      () => freq().buckets.map((b) => [b.label, b.userDays, b.share]),
+    ),
+    buildSection(AREA, "Impact — Deposit Frequency Summary", ["Metric", "Value"], () => {
+      const f = freq();
+      return [
+        ["Total active user-days", f.totalUserDays],
+        ["Distinct depositors", f.totalUsers],
+        ["Avg deposits per user-day", f.avgDepositsPerUserDay],
+        ["Median deposits per user-day", f.medianDepositsPerUserDay],
+        ["Multi-deposit-day share", f.multiDepositDayShare],
+      ];
+    }),
+
+    // ── Impact: deposit-size distribution ─────────────────────────
+    buildSection(
+      AREA,
+      "Impact — Deposit Size Distribution",
+      ["Band", "Min (USD)", "Max (USD)", "Deposits", "Count share", "Volume (USD)", "Is large (≥$500)"],
+      () =>
+        size().buckets.map((b) => [
+          b.label,
+          b.min,
+          Number.isFinite(b.max) ? b.max : "∞",
+          b.count,
+          b.countShare,
+          b.volume,
+          b.isLarge ? "yes" : "no",
+        ]),
+    ),
+    buildSection(AREA, "Impact — Deposit Size Summary", ["Metric", "Value"], () => {
+      const s = size();
+      return [
+        ["Total deposits", s.totalDeposits],
+        ["Total volume (USD)", s.totalVolume],
+        ["Deposits ≥ $500", s.largeDepositCount],
+        ["Volume ≥ $500 (USD)", s.largeDepositVolume],
+        ["% deposits ≥ $500", s.largeDepositCountShare],
+        ["% volume ≥ $500", s.largeDepositVolumeShare],
+        ["Median deposit (USD)", s.medianDepositUsd],
+      ];
+    }),
+
+    // ── Impact: cap-hitters (headline) ────────────────────────────
+    buildSection(AREA, "Impact — Cap-Hitter Summary", ["Metric", "Value"], () => {
+      const c = capHitters();
+      return [
+        ["Empirical cap (USD)", c.capValue],
+        ["Distinct cap-hitters", c.distinctCapHitters],
+        ["Total depositors", c.totalDepositors],
+        ["Cap-hitter share of depositors", c.capHitterShare],
+        ["Combined cap-hitter wager (USD)", c.combinedWager],
+        ["Combined cap-hitter GGR (USD)", c.combinedGgr],
+        ["Total depositor wager (USD)", c.totalDepositorWager],
+        ["Cap-hitter wager share", c.wagerShare],
+      ];
+    }),
+    buildSection(
+      AREA,
+      "Impact — Cap-Hitters (top 100 by GGR)",
+      [
+        "User ID",
+        "Username",
+        "Cap hits",
+        "Frequent (>1)",
+        "Deposits (USD)",
+        "Bonus (USD)",
+        "Wager (USD)",
+        "Payouts (USD)",
+        "GGR contribution (USD)",
+      ],
+      () =>
+        capHitters().rows.map((r) => [
+          r.userId,
+          r.username,
+          r.capHits,
+          r.frequent ? "yes" : "no",
+          r.depositTotal,
+          r.bonusTotal,
+          r.wagerTotal,
+          r.payoutTotal,
+          r.ggrContribution,
+        ]),
+    ),
+
+    // ── Impact: time-between-deposits ─────────────────────────────
+    buildSection(
+      AREA,
+      "Impact — Time Between Deposits",
+      ["Gap bucket", "Count", "Share"],
+      () => timeBetween().buckets.map((b) => [b.label, b.count, b.share]),
+    ),
+    buildSection(AREA, "Impact — Time Between Deposits Summary", ["Metric", "Minutes"], () => {
+      const t = timeBetween();
+      return [
+        ["Gaps surveyed", t.totalGaps],
+        ["Median gap (min)", t.medianGapMinutes],
+        ["P25 gap (min)", t.p25GapMinutes],
+        ["P75 gap (min)", t.p75GapMinutes],
+        ["Intra-day (<24h) gap share", t.intraDayShare],
+      ];
+    }),
+
+    // ── Impact: bonus-to-wager subsidy by segment ─────────────────
+    buildSection(
+      AREA,
+      "Impact — Bonus-to-Wager Subsidy by Segment",
+      ["Deposit segment", "Users", "Avg bonus (USD)", "Avg wager (USD)", "Subsidy (bonus/wager)"],
+      () =>
+        bonusWager().segments.map((s) => [
+          s.label,
+          s.users,
+          s.avgBonus,
+          s.avgWager,
+          s.subsidyRatio,
+        ]),
+    ),
+
+    // ── Impact: post-cap re-deposit behaviour (approx.) ───────────
+    buildSection(AREA, "Impact — Post-Cap Re-Deposit Behaviour (approx.)", ["Metric", "Value"], () => {
+      const p = postCap();
+      return [
+        ["Empirical cap (USD)", p.capValue],
+        ["Cap-hitters surveyed", p.capHitters],
+        ["Kept depositing after cap", p.keptDepositing],
+        ["Stopped after cap", p.stopped],
+        ["Post-cap deposits total", p.postCapDepositsTotal],
+        ["Post-cap deposits with no extra bonus", p.postCapDepositsNoBonus],
+      ];
+    }),
+
+    // ── Impact: new vs returning cap triggers ─────────────────────
+    buildSection(
+      AREA,
+      "Impact — New vs Returning Cap Triggers",
+      ["Cohort", "Hitters", "Cap hits", "Deposits (USD)", "Wager (USD)"],
+      () => {
+        const c = capCohorts();
+        return [
+          ["New (signed up in window)", c.newCohort.users, c.newCohort.capHits, c.newCohort.depositTotal, c.newCohort.wagerTotal],
+          ["Returning", c.returningCohort.users, c.returningCohort.capHits, c.returningCohort.depositTotal, c.returningCohort.wagerTotal],
+        ];
+      },
     ),
   ];
 }

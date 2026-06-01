@@ -18,10 +18,11 @@ import { CapTab } from "./_components/cap-tab";
 import { CohortsTab } from "./_components/cohorts-tab";
 import { RoiTab } from "./_components/roi-tab";
 import { RiskTab } from "./_components/risk-tab";
+import { ImpactTab } from "./_components/impact-tab";
 
 export const metadata = { title: "Deposit Bonus Insights" };
 
-type Tab = "overview" | "cap" | "cohorts" | "roi" | "risk";
+type Tab = "overview" | "cap" | "cohorts" | "roi" | "risk" | "impact";
 
 function parseTab(value: string | undefined): Tab {
   switch (value) {
@@ -29,6 +30,7 @@ function parseTab(value: string | undefined): Tab {
     case "cohorts":
     case "roi":
     case "risk":
+    case "impact":
       return value;
     default:
       return "overview";
@@ -131,5 +133,7 @@ async function TabContent({
       return <RoiTab period={period} />;
     case "risk":
       return <RiskTab period={period} />;
+    case "impact":
+      return <ImpactTab period={period} />;
   }
 }

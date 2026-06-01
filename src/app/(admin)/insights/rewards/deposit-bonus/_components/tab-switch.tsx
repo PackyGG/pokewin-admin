@@ -9,6 +9,7 @@ import {
   TrendingUp,
   Globe2,
   Shield,
+  Split,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -39,6 +40,7 @@ const TABS = [
   { value: "cohorts", label: "Cohorts", Icon: Users },
   { value: "roi", label: "ROI & Geo", Icon: TrendingUp },
   { value: "risk", label: "Top & Risk", Icon: Shield },
+  { value: "impact", label: "Impact", Icon: Split },
 ] as const;
 
 export type DepositBonusTab = (typeof TABS)[number]["value"];
