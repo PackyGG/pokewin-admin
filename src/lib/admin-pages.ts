@@ -9,6 +9,11 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Navigation", label: "Dashboard", key: "/dashboard" },
   { group: "Navigation", label: "Analytics", key: "/analytics" },
   { group: "Navigation", label: "Raw P&L", key: "/analytics/pure-pnl" },
+  // GGR — long-form GGR breakdown page (24h/3d/7d windows, per-type
+  // cards, top-10 contributors). Same group as Dashboard/Analytics in
+  // the role editor so the admin-pages list mirrors the sidebar's
+  // Overview group.
+  { group: "Navigation", label: "GGR", key: "/ggr" },
   // Changelogs — curated admin-internal release notes. Page is read-
   // only for anyone with /changelogs access; publish/edit/delete are
   // additionally gated by __can_manage_changelog (defined in

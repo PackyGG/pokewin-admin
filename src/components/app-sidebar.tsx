@@ -144,6 +144,14 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Dashboard", href: "/dashboard", icon: "LayoutDashboard" },
       { label: "Analytics", href: "/analytics", icon: "BarChart3" },
+      // GGR — long-form deep-dive of the headline GGR number. The
+      // /dashboard GgrStatCard's popover shows the same per-type
+      // breakdown in a compact form; this page is the full version
+      // with one card per ledger type + canonical descriptions + the
+      // top-10 contributors for the active window. Lives in Overview
+      // so admins reach it from the same place they reach the
+      // dashboard.
+      { label: "GGR", href: "/ggr", icon: "TrendingUp", isNew: true },
       // Changelogs — curated release notes. Read-only for anyone with
       // /changelogs access, publish/edit/delete requires the
       // __can_manage_changelog capability (admin-only by default).
