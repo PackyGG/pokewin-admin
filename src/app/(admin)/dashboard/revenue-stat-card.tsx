@@ -2,10 +2,19 @@
 
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { TrendingUp, TrendingDown } from "lucide-react";
+import { Info, TrendingUp, TrendingDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import type {
+  GgrBreakdown,
+  GgrBreakdownRow,
+} from "@/lib/queries/dashboard";
 
 /**
  * Period-aware stat cards used in the dashboard's primary KPI strip.
@@ -114,23 +123,47 @@ export function PnlStatCard({
 // terms for card withdrawals AND every non-GGR-typed credit (rain,
 // rakeback, gifts, creator tips, race prizes, bonuses, etc.), so the
 // residual is structurally large — at the time of revert the popover
-// showed a $92k residual on a $4.6k "P&L" line, which the user
-// correctly flagged as "doesn't make sense at all". An honest "no
+// showed a $92k residual on a $4.6k "P&L" line. An honest "no
 // reconciliation" beats a wrong one.
+//
+// Round 6: instead of bridging GGR to P&L (which conflates two
+// independent formulas), the popover now shows the GGR formula
+// itself — every wager ledger type and every payout ledger type that
+// goes INTO the headline number, with its summed ABS(amount) for the
+// window. Bottom of the popover offers a "Show top contributors"
+// expander that fires a server action to GROUP BY user_id, so the
+// admin can drill from "GGR = -$102k" → "rakeback drove $89k of that"
+// → "and these are the 10 users it went to". Pure transparency, no
+// derivations.
 export function GgrStatCard({
   ggr,
   periodLabel,
+  // Period+blacklist-cached per-type breakdown sourced from
+  // getGgrBreakdown. Optional so the card still renders if a caller
+  // (e.g. a tests / storybook surface) skips it — but `breakdown.ggr`
+  // is always preferred over the headline `ggr` prop when present so
+  // the popover's bottom row matches the row totals exactly (defends
+  // against any rounding drift between the headline aggregate and the
+  // GROUP BY type sweep, even though they read from the same SQL).
+  breakdown,
 }: {
   ggr: number;
   periodLabel: string;
+  breakdown?: GgrBreakdown;
 }) {
   const isProfit = ggr >= 0;
   return (
     <Card className="bg-cyan-500/10">
       <CardHeader className="flex flex-col gap-2 pb-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-baseline gap-x-2">
-          <CardTitle className="text-card-title text-muted-foreground">
+          <CardTitle className="text-card-title text-muted-foreground inline-flex items-center gap-1">
             GGR
+            {breakdown && (
+              <GgrBreakdownPopover
+                breakdown={breakdown}
+                periodLabel={periodLabel}
+              />
+            )}
           </CardTitle>
           <span className="text-tiny text-muted-foreground">{periodLabel}</span>
         </div>
@@ -151,6 +184,186 @@ export function GgrStatCard({
     </Card>
   );
 }
+
+/**
+ * Popover that shows the GGR formula's components for the selected
+ * period: every wager-side ledger type + total, every payout-side
+ * ledger type + total, and the math at the bottom (wagersTotal −
+ * payoutsTotal = ggr). Auditable line-by-line.
+ *
+ * Bottom of the popover hosts a "Show top contributors" expander
+ * which fires a server action (fetchGgrTopContributors) — kept lazy
+ * because the per-user GROUP BY is heavier than the GROUP BY type
+ * sweep the rest of the popover uses.
+ *
+ * Wager rows render with a neutral / muted tint (money flowing IN,
+ * not a house gain or loss on its own). Payout rows render rose
+ * (money flowing OUT — house loss). Bottom GGR line is colored from
+ * the house POV (positive emerald, negative rose) per CLAUDE.md.
+ */
+function GgrBreakdownPopover({
+  breakdown,
+  periodLabel,
+}: {
+  breakdown: GgrBreakdown;
+  periodLabel: string;
+}) {
+  const ggrIsProfit = breakdown.ggr >= 0;
+  // Hide zero-total rows so the list stays readable on quiet windows
+  // (e.g. last 1h with no upgrader plays / battles). The headline
+  // aggregate at the bottom still reflects the full math.
+  const wagers = breakdown.wagers.filter((r) => r.total > 0);
+  const payouts = breakdown.payouts.filter((r) => r.total > 0);
+
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            aria-label="Show GGR breakdown"
+            title="Show GGR breakdown"
+            className="rounded text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40"
+          />
+        }
+      >
+        <Info className="size-3.5" />
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        sideOffset={6}
+        className="w-[340px] max-w-[calc(100vw-2rem)] space-y-2 p-3"
+      >
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            GGR breakdown
+          </p>
+          <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
+            {periodLabel}. Every ledger type that goes into GGR, summed
+            for the window. Staff + excluded users dropped — same
+            filter as the headline.
+          </p>
+        </div>
+
+        {/* Wager-side rows. Section header carries the bucket total so
+            the admin can compare buckets at a glance without scrolling
+            to the bottom math. Muted-foreground tint — wagers aren't a
+            house gain on their own, just flow in. */}
+        <BreakdownSection
+          title="Wagers"
+          total={breakdown.wagersTotal}
+          rows={wagers}
+          tone="wager"
+        />
+
+        {/* Payout-side rows. Rose tint — money flowing OUT of the
+            house. The headline number's "negative" component is here. */}
+        <BreakdownSection
+          title="Payouts"
+          total={breakdown.payoutsTotal}
+          rows={payouts}
+          tone="payout"
+        />
+
+        {/* Bottom math: wagersTotal − payoutsTotal = ggr. House-POV
+            colour on the final line (positive → emerald, negative →
+            rose) per CLAUDE.md. The breakdown's ggr is used directly
+            (not the headline `ggr` prop) so this number matches the
+            row totals above by construction. */}
+        <div className="border-t border-border/60 pt-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-semibold uppercase tracking-wider">
+              GGR
+            </span>
+            <span
+              className={cn(
+                "font-bold tabular-nums",
+                ggrIsProfit ? "text-emerald-400" : "text-rose-400",
+              )}
+            >
+              {ggrIsProfit ? "+" : "−"}
+              {formatCurrency(Math.abs(breakdown.ggr))}
+            </span>
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/**
+ * One bucket (wagers or payouts) inside the GGR breakdown popover. The
+ * section header carries the bucket total + count so admins can scan
+ * the popover top-to-bottom without re-summing the per-row figures.
+ *
+ * `tone` is purely the row-amount colour:
+ *   • "wager"  — muted (wagers are flow-in, not a house P&L event on
+ *     their own).
+ *   • "payout" — rose (every payout shrinks the house P&L).
+ * The section header value uses the same tone so the row + total read
+ * as one piece.
+ */
+function BreakdownSection({
+  title,
+  total,
+  rows,
+  tone,
+}: {
+  title: string;
+  total: number;
+  rows: GgrBreakdownRow[];
+  tone: "wager" | "payout";
+}) {
+  const totalColor =
+    tone === "payout" ? "text-rose-400" : "text-foreground";
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-muted-foreground">
+        <span>
+          {title}
+          {rows.length > 0 && (
+            <span className="ml-1 text-muted-foreground/60">
+              · {rows.length}
+            </span>
+          )}
+        </span>
+        <span className={cn("font-semibold tabular-nums", totalColor)}>
+          {tone === "payout" ? "−" : "+"}
+          {formatCurrency(total)}
+        </span>
+      </div>
+      {rows.length === 0 ? (
+        <p className="px-1 text-[10px] text-muted-foreground/60">
+          No activity.
+        </p>
+      ) : (
+        <ul className="space-y-0.5">
+          {rows.map((r) => (
+            <li
+              key={r.type}
+              className="flex items-center justify-between gap-2 rounded px-1 py-0.5 text-[11px] hover:bg-muted/40"
+            >
+              <span className="truncate font-mono text-muted-foreground">
+                {r.type}
+              </span>
+              <span
+                className={cn(
+                  "shrink-0 tabular-nums",
+                  tone === "payout"
+                    ? "text-rose-400/90"
+                    : "text-foreground/80",
+                )}
+              >
+                {formatCurrency(r.total)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 
 // Wagers = money the user sent into the house treasury for a bet.
 // Always positive, so we give it a purple identity color to differentiate

@@ -12,6 +12,7 @@ import {
 import {
   getDashboardStats,
   getActiveRain,
+  getGgrBreakdown,
   parseDashboardPeriod,
   type DashboardPeriod,
 } from "@/lib/queries/dashboard";
@@ -229,10 +230,16 @@ async function DashboardLoadTime({ period }: { period: DashboardPeriod }) {
 /**
  * Primary (period-aware) + secondary (snapshot) KPI strips. Async so it
  * streams behind the page-level Suspense; reads the React-cached
- * getDashboardStats.
+ * getDashboardStats. Also pulls the per-type GGR breakdown (cached
+ * separately with the same period+blacklist key) so the GgrStatCard's
+ * Info popover can render auditable wager/payout components without
+ * a second roundtrip on first paint.
  */
 async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
-  const stats = await getDashboardStats(period);
+  const [stats, ggrBreakdown] = await Promise.all([
+    getDashboardStats(period),
+    getGgrBreakdown(period),
+  ]);
 
   // Average deposit transactions per hour. depositCount24h / depositCount7d
   // are FIXED windows (not period-bound) so the tile's "last 24h avg ·
@@ -267,6 +274,7 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
         <GgrStatCard
           ggr={stats.ggr}
           periodLabel={stats.periodLabel}
+          breakdown={ggrBreakdown}
         />
         {/* Wager — customer wager only (drops wagers a creator made
             while live on a deal/stream — house-funded sponsored

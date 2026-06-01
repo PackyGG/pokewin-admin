@@ -13,6 +13,8 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
 import { getCreatorSessionWindowsCte } from "./creator-session-windows";
 import {
+  WAGER_PAYOUT_WAGER_TYPES,
+  WAGER_PAYOUT_PAYOUT_TYPES,
   WAGER_TYPES_SQL,
   PAYOUT_TYPES_SQL,
 } from "./_wager-payout-types";
@@ -1219,5 +1221,144 @@ export async function getActiveRain(): Promise<ActiveRainSummary> {
     status: rain.status,
     startsAt: rain.starts_at.toISOString(),
     endsAt: rain.ends_at.toISOString(),
+  };
+}
+
+// ============================================================
+// GGR breakdown — makes the headline GGR number auditable.
+//
+// `getGgrBreakdown` returns the SAME wager/payout type set the
+// dashboard's headline GGR uses (from _wager-payout-types.ts), grouped
+// by type with ABS(amount) totals for the selected period. The popover
+// on the GgrStatCard renders these as two columns (wagers / payouts)
+// so admins can see WHICH ledger types are driving the headline number
+// and reconcile it line-by-line without trusting a single aggregate.
+//
+// `getGgrTopContributors` is the per-user companion — a GROUP BY
+// user_id over the same window, sorted by net contribution to GGR. NOT
+// cached upfront because GROUP BY user_id over ledger_transactions is
+// heavier than the GROUP BY type sweep; called lazily from a server
+// action when the admin clicks "Show top users" in the popover.
+// ============================================================
+
+export type GgrBreakdownRow = {
+  /** Ledger transaction type (e.g. "pack_opening", "battle_refund"). */
+  type: string;
+  /** Sum of ABS(amount) for the period. Always non-negative. */
+  total: number;
+};
+
+export type GgrBreakdown = {
+  /** Wager-side ledger types — money the user put at risk. */
+  wagers: GgrBreakdownRow[];
+  /** Payout-side ledger types — money flowing back to the user. */
+  payouts: GgrBreakdownRow[];
+  /** Sum of wager totals. */
+  wagersTotal: number;
+  /** Sum of payout totals. */
+  payoutsTotal: number;
+  /** wagersTotal − payoutsTotal — matches the headline GGR aggregate. */
+  ggr: number;
+};
+
+// Cached per-period+blacklist GROUP BY type query backing the GGR
+// breakdown popover. 60s revalidate matches the dashboard's
+// auto-refresh cadence so the popover values track the headline. The
+// tag is `dashboard-stats` so admin actions that already revalidate
+// dashboard data (e.g. excluded-users edits) blow this cache too.
+const cachedGgrBreakdownRows = unstable_cache(
+  async (
+    blacklistIdNotIn: string,
+    cutoffIso: string,
+  ): Promise<{ type: string; total: string }[]> => {
+    const db = await getDb();
+    const cutoff = new Date(cutoffIso);
+    // Combined wager+payout type list — interpolated from the canonical
+    // shared constants. Pre-quoted SQL fragment, injection-safe.
+    const allTypesSql = Prisma.raw(
+      `(${[...WAGER_PAYOUT_WAGER_TYPES, ...WAGER_PAYOUT_PAYOUT_TYPES]
+        .map((t) => `'${t}'`)
+        .join(",")})`,
+    );
+    return db.$queryRaw<{ type: string; total: string }[]>`
+      SELECT
+        lt.type::text AS type,
+        COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total
+      FROM ledger_transactions lt
+      WHERE lt.status = 'completed'
+        AND lt.created_at >= ${cutoff}
+        AND lt.type IN ${allTypesSql}
+        AND lt.user_id IN (
+          SELECT id FROM "user"
+          WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+        )
+      GROUP BY lt.type
+      ORDER BY total DESC
+    `;
+  },
+  ["dashboard-ggr-breakdown-v1"],
+  { revalidate: 60, tags: ["dashboard-stats"] },
+);
+
+/**
+ * Per-type wager + payout totals for the selected period — the
+ * components that sum to the headline GGR number. Backs the breakdown
+ * popover on the dashboard's GgrStatCard.
+ *
+ * Single GROUP BY type sweep over `ledger_transactions` with the same
+ * `status = 'completed'` + staff/blacklist exclusion filter the
+ * headline GGR uses, so `ggr` here equals the headline aggregate by
+ * construction. Splits the result into wager vs. payout buckets in JS
+ * using the canonical type sets so the SQL stays one round-trip.
+ *
+ * Cached 60s, tagged `dashboard-stats` (same TTL as the auto-refresh
+ * cadence). Empty buckets are NOT filtered out here — the UI decides
+ * whether to suppress zero-total rows.
+ */
+export async function getGgrBreakdown(
+  period: DashboardPeriod,
+): Promise<GgrBreakdown> {
+  const blacklistIdNotIn = blacklistNotInClause(
+    "id",
+    await getExcludedUserIds(),
+  );
+  const cutoff = periodToCutoff(period, new Date());
+  const rows = await cachedGgrBreakdownRows(
+    blacklistIdNotIn,
+    cutoff.toISOString(),
+  );
+
+  // O(1) lookup so the bucket-assignment + totals pass over `rows` is
+  // single-pass. Re-typing the readonly tuple as `Set<string>` is the
+  // cheapest way to keep the constants source-of-truth.
+  const wagerSet = new Set<string>(WAGER_PAYOUT_WAGER_TYPES);
+  const payoutSet = new Set<string>(WAGER_PAYOUT_PAYOUT_TYPES);
+
+  const wagers: GgrBreakdownRow[] = [];
+  const payouts: GgrBreakdownRow[] = [];
+  let wagersTotal = 0;
+  let payoutsTotal = 0;
+
+  for (const r of rows) {
+    const total = parseFloat(r.total) || 0;
+    if (wagerSet.has(r.type)) {
+      wagers.push({ type: r.type, total });
+      wagersTotal += total;
+    } else if (payoutSet.has(r.type)) {
+      payouts.push({ type: r.type, total });
+      payoutsTotal += total;
+    }
+    // Unknown types are silently ignored — defensive, the SQL already
+    // filters to the canonical IN list, so this branch should never hit.
+  }
+
+  // Each bucket is already DESC by `total` from the SQL ORDER BY, so
+  // no extra sort here. wagers[] / payouts[] preserve magnitude order.
+  return {
+    wagers,
+    payouts,
+    wagersTotal,
+    payoutsTotal,
+    ggr: wagersTotal - payoutsTotal,
   };
 }
