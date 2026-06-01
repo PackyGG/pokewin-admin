@@ -6,8 +6,12 @@ import { SectionHeading } from "@/components/modern-panels";
 import { formatCompactUsd, formatNumber } from "@/lib/utils/format";
 import { getGamesTopUsers } from "@/lib/queries/insights-games/top-users";
 import type { GamesPeriod } from "@/lib/queries/insights-games/_shared";
-import type { GamesLeaderboardRow } from "@/lib/queries/insights-games/top-users";
+import type {
+  GamesLeaderboardRow,
+  GamesTopUsersFilters,
+} from "@/lib/queries/insights-games/top-users";
 import { labelForPeriod } from "@/lib/queries/insights-games/_shared";
+import { UsersFilters } from "./users-filters";
 
 /**
  * Per-user leaderboards: top wagerers, winners (user POV), losers
@@ -19,16 +23,33 @@ import { labelForPeriod } from "@/lib/queries/insights-games/_shared";
  * down → house gain (emerald tint). Matches the project-wide
  * house-POV color convention.
  */
-export async function UsersTab({ period }: { period: GamesPeriod }) {
-  const data = await getGamesTopUsers(period);
+export async function UsersTab({
+  period,
+  filters,
+}: {
+  period: GamesPeriod;
+  filters: GamesTopUsersFilters;
+}) {
+  const data = await getGamesTopUsers(period, filters);
   return (
     <FadeIn>
       <div className="space-y-6">
+        <UsersFilters
+          selectedGame={filters.game}
+          minWager={filters.minWager}
+          selectedCountry={filters.country}
+          countryOptions={data.countryCodes}
+        />
+
         <p className="text-xs text-muted-foreground">
           Wager is what each user actually paid out of balance
           (post-borrow). Net is wager − payouts (positive = house
           gained on them; negative = they won net). Period:{" "}
           {labelForPeriod(period)}.
+          {filters.game !== "all" && ` Game: ${filters.game}.`}
+          {filters.minWager > 0 &&
+            ` Min wager: ${formatCompactUsd(filters.minWager)}.`}
+          {filters.country && ` Country: ${filters.country}.`}
         </p>
 
         <Leaderboard
@@ -136,6 +157,11 @@ function Leaderboard({
                           <div className="size-7 rounded-full bg-muted" />
                         )}
                         <span className="font-medium">{r.username ?? "—"}</span>
+                        {r.countryCode && (
+                          <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
+                            {r.countryCode}
+                          </span>
+                        )}
                       </Link>
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">

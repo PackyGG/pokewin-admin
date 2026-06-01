@@ -12,6 +12,7 @@ import { BattlesTab } from "./tab-battles";
 import { UpgraderTab } from "./tab-upgrader";
 import { BorrowTab } from "./tab-borrow";
 import { UsersTab } from "./tab-users";
+import { parseTopUsersFilters } from "@/lib/queries/insights-games/top-users";
 import { TabSkeleton } from "../../analytics/tab-skeleton";
 
 export const metadata = { title: "Games — Insights" };
@@ -38,6 +39,18 @@ export default async function GamesInsightsPage({
   const params = await searchParams;
   const period = parseGamesPeriod(params.period);
   const tab = parseGamesTab(params.tab);
+  // Top-Users filters — only consumed by the users tab. URL contract
+  // is documented on the tab itself; parser sanitizes free strings so
+  // unknown / tampered values fall through to safe defaults.
+  const usersFilters = parseTopUsersFilters({
+    game: params.game,
+    minWager: params.minWager,
+    country: params.country,
+  });
+  // Suspense cache key must include the filters so a filter change
+  // triggers a fresh fetch (and the matching skeleton) instead of
+  // showing stale rows.
+  const usersKey = `${usersFilters.game}-${usersFilters.minWager}-${usersFilters.country ?? ""}`;
 
   return (
     <div className="space-y-6">
@@ -58,13 +71,16 @@ export default async function GamesInsightsPage({
       {/* Per-tab Suspense — keyed by tab + period so toggles trigger
           a fresh fetch + skeleton instead of stale content lingering
           while the new tab loads. */}
-      <Suspense key={`${tab}-${period}`} fallback={<TabSkeleton />}>
+      <Suspense
+        key={`${tab}-${period}-${tab === "users" ? usersKey : ""}`}
+        fallback={<TabSkeleton />}
+      >
         {tab === "overview" && <OverviewTab period={period} />}
         {tab === "packs" && <PacksTab period={period} />}
         {tab === "battles" && <BattlesTab period={period} />}
         {tab === "upgrader" && <UpgraderTab period={period} />}
         {tab === "borrow" && <BorrowTab period={period} />}
-        {tab === "users" && <UsersTab period={period} />}
+        {tab === "users" && <UsersTab period={period} filters={usersFilters} />}
       </Suspense>
     </div>
   );
