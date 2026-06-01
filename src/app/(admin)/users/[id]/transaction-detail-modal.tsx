@@ -31,6 +31,7 @@ import {
 } from "@/lib/utils/ledger-direction";
 import { getGameSessionDetails } from "./actions";
 import { battleUrl } from "@/lib/utils/main-site";
+import { BattlePasswordReveal } from "@/components/battle-password-reveal";
 import type { Transaction, GameSessionDetails } from "./user-tabs-types";
 
 const RARITY_COLORS: Record<string, string> = {
@@ -47,10 +48,19 @@ export function TransactionDetailModal({
   transaction,
   userId,
   onClose,
+  isAdmin = false,
 }: {
   transaction: Transaction | null;
   userId: string;
   onClose: () => void;
+  /**
+   * Gates the Battle Password row at the bottom of the modal — the row
+   * only renders for admin viewers on rows whose linked battle has a
+   * password set. The server action (`revealBattlePassword`) also
+   * re-validates the admin role on every call, so a non-admin who
+   * spoofed this prop still can't read the value.
+   */
+  isAdmin?: boolean;
 }) {
   const [gameSession, setGameSession] = useState<GameSessionDetails | null>(
     null,
@@ -201,6 +211,17 @@ export function TransactionDetailModal({
         </a>
       ),
     });
+    // Battle Password row — admins only, only when the linked battle
+    // has a password set. Reuses the shared BattlePasswordReveal which
+    // fetches the plaintext on demand via revealBattlePassword
+    // (audit-logged per reveal). The `hasPassword` boolean is the only
+    // thing about the password that ever travels in this row's payload.
+    if (isAdmin && t.hasPassword === true) {
+      rows.push({
+        label: "Battle Password",
+        value: <BattlePasswordReveal battleId={t.battleId} />,
+      });
+    }
   }
   if (t.fireblocksTxId) {
     rows.push({

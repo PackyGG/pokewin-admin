@@ -8,6 +8,7 @@ import {
   Info,
   Boxes,
   Ticket,
+  ExternalLink,
 } from "lucide-react";
 import { getTransactionDetail } from "@/lib/queries/transactions";
 import { requirePageAccess } from "@/lib/dal";
@@ -28,6 +29,8 @@ import {
   KpiTile,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { BattlePasswordReveal } from "@/components/battle-password-reveal";
+import { battleUrl } from "@/lib/utils/main-site";
 
 export const metadata = { title: "Transaction Detail" };
 
@@ -65,7 +68,7 @@ export default async function TransactionDetailPage({
   // Deposits view, so its permission key is the right gate for the detail
   // pages too. Any role that can read /transactions/deposits can drill into
   // an individual ledger row from any sub-page (packs, rewards, upgrader).
-  await requirePageAccess("/transactions/deposits");
+  const session = await requirePageAccess("/transactions/deposits");
   const { id } = await params;
   // Shape-check UUID before any DB call — see src/lib/utils/ids.ts.
   if (!isUuid(id)) notFound();
@@ -171,6 +174,38 @@ export default async function TransactionDetailPage({
                     <span className="font-mono text-xs">{data.gameSessionId}</span>
                   </InfoRow>
                 )}
+                {/* Battle row — linked battle for battle_bet /
+                    battle_sponsorship / battle_refund transactions.
+                    Direct link to the live battle on packy.gg so admins
+                    can spectate without bouncing through /battles. */}
+                {data.battleId && (
+                  <InfoRow label="Battle">
+                    <a
+                      href={battleUrl(data.battleId)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 font-mono text-xs text-blue-400 break-all hover:underline"
+                      title="Open the live battle on packy.gg"
+                    >
+                      {data.battleId}
+                      <ExternalLink className="size-3 shrink-0" />
+                    </a>
+                  </InfoRow>
+                )}
+                {/* Battle Password — admin-only, only when the linked
+                    battle has a password set. Reuses the same shared
+                    BattlePasswordReveal component as /battles/[id] and
+                    the user-detail transaction modal so the UX +
+                    audit-logging stay in lock-step across surfaces.
+                    Defence-in-depth: UI conditional here + role check
+                    in revealBattlePassword. */}
+                {data.battleId &&
+                  data.hasPassword &&
+                  session.role === "admin" && (
+                    <InfoRow label="Battle Password">
+                      <BattlePasswordReveal battleId={data.battleId} />
+                    </InfoRow>
+                  )}
                 {data.gameSession && (
                   <>
                     {/* Items Won = cards + voucher excess handed to the

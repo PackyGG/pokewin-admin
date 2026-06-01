@@ -3,16 +3,19 @@
 import React, { useEffect, useState, useTransition } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { toast } from "sonner";
 import {
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
   ExternalLink,
+  KeyRound,
   Loader2,
   Receipt,
   X,
 } from "lucide-react";
+import { revealBattlePassword } from "@/app/(admin)/battles/actions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -99,6 +102,7 @@ export const CategoryTransactionsTable = React.memo(
     initialTx,
     showCardsValue = false,
     cardWithdrawals,
+    isAdmin = false,
   }: {
     title: string;
     userId: string;
@@ -106,6 +110,14 @@ export const CategoryTransactionsTable = React.memo(
     initialTx: PaginatedTransactions;
     showCardsValue?: boolean;
     cardWithdrawals?: UserDetail["cardWithdrawals"];
+    /**
+     * Gates the admin-only "reveal + copy + open Watch URL with
+     * password" affordance on private-battle rows. Defaults to false so
+     * non-gaming tables (which never render the Watch button anyway)
+     * and non-admin viewers (support/marketing/creator) get the plain
+     * static link.
+     */
+    isAdmin?: boolean;
   }) {
     const [txData, setTxData] = useState(initialTx);
     const [typeFilter, setTypeFilter] = useState("all");
@@ -319,21 +331,18 @@ export const CategoryTransactionsTable = React.memo(
                     </button>
                   </TableCell>
                   {/* Dedicated "watch live" button — gaming tab, battle_bet
-                      only. Opens packy.gg/games/battles/<id> in a new tab.
-                      Empty cell on other gaming rows keeps the column aligned. */}
+                      only. Opens packy.gg/battle/<id> in a new tab.
+                      Empty cell on other gaming rows keeps the column aligned.
+                      Private battles + admin viewer: WatchButton reveals
+                      the password on click, copies the URL with
+                      ?password=<pw>, and opens the live battle URL. */}
                   {showCardsValue && (
                     <TableCell>
                       {t.type === "battle_bet" && t.battleId ? (
-                        <a
-                          href={battleUrl(t.battleId)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title="Open the live battle on packy.gg"
-                          className="inline-flex h-7 items-center gap-1 rounded-md border border-blue-500/30 bg-blue-500/10 px-2 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-500/20 dark:text-blue-400"
-                        >
-                          <ExternalLink className="size-3 shrink-0" />
-                          Watch
-                        </a>
+                        <WatchButton
+                          battleId={t.battleId}
+                          hasPassword={t.hasPassword === true && isAdmin}
+                        />
                       ) : null}
                     </TableCell>
                   )}
@@ -718,6 +727,7 @@ export const CategoryTransactionsTable = React.memo(
             transaction={selectedTx}
             userId={userId}
             onClose={() => setSelectedTx(null)}
+            isAdmin={isAdmin}
           />
           {txData.totalPages > 0 && (
             <div className="flex flex-wrap items-center justify-between gap-3 py-4">
@@ -945,5 +955,112 @@ function CardWithdrawalsSubTable({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Watch-live button on the Gaming-tab battle rows. Has two modes:
+ *
+ *   • Public battle (or non-admin viewer) → plain anchor that opens
+ *     packy.gg/battle/<id> in a new tab. Same shape and styling as the
+ *     historical button so the table layout is unchanged.
+ *
+ *   • Private battle + admin viewer (hasPassword=true) → click reveals
+ *     the password via the existing revealBattlePassword server action
+ *     (admin-only, audit-logged on every call), copies the live battle
+ *     URL with `?password=<pw>` to the clipboard, then opens the URL in
+ *     a new tab. One click = paste-ready URL + open tab — admins don't
+ *     have to navigate to /battles/[id] just to grab the password.
+ *
+ * The plaintext password is fetched on demand and never embedded in the
+ * SSR payload (only the `hasPassword` boolean travels with each row).
+ */
+function WatchButton({
+  battleId,
+  hasPassword,
+}: {
+  battleId: string;
+  hasPassword: boolean;
+}) {
+  const [isPending, startTransition] = useTransition();
+
+  const baseUrl = battleUrl(battleId);
+
+  // Public battle (or non-admin viewer) — original Watch behavior:
+  // plain external link, identical styling.
+  if (!hasPassword) {
+    return (
+      <a
+        href={baseUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        title="Open the live battle on packy.gg"
+        className="inline-flex h-7 items-center gap-1 rounded-md border border-blue-500/30 bg-blue-500/10 px-2 text-xs font-medium text-blue-600 transition-colors hover:bg-blue-500/20 dark:text-blue-400"
+      >
+        <ExternalLink className="size-3 shrink-0" />
+        Watch
+      </a>
+    );
+  }
+
+  // Private + admin path. Click → server action reveals password →
+  // build URL with ?password= → write to clipboard → open in new tab.
+  // We can't pre-open the window (pop-up blocker fires on the async
+  // continuation) reliably, so we open AFTER the password resolves; the
+  // initial click is the user gesture, which most browsers honour for
+  // window.open inside a transition started by the same gesture.
+  function handleClick() {
+    if (isPending) return;
+    startTransition(async () => {
+      try {
+        const password = await revealBattlePassword(battleId);
+        const url = `${baseUrl}?password=${encodeURIComponent(password)}`;
+        // Best-effort clipboard write — surface the password on failure
+        // so the admin can paste it manually rather than losing it.
+        let clipboardOk = true;
+        try {
+          await navigator.clipboard.writeText(url);
+        } catch {
+          clipboardOk = false;
+        }
+        const opened = window.open(url, "_blank", "noopener,noreferrer");
+        if (opened) {
+          toast.success(
+            clipboardOk
+              ? "Watch URL with password copied + opened in new tab"
+              : "Opened in new tab (clipboard blocked — URL in toast)",
+          );
+        } else {
+          // Pop-up blocked — still let the admin recover via clipboard.
+          toast.success(
+            clipboardOk
+              ? "Watch URL with password copied (pop-up blocked — paste it)"
+              : "Password revealed but clipboard + pop-up blocked — open /battles/" +
+                  battleId,
+          );
+        }
+      } catch (err) {
+        toast.error(
+          err instanceof Error ? err.message : "Failed to reveal password",
+        );
+      }
+    });
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={isPending}
+      title="Reveal password, copy Watch URL with ?password=…, and open the live battle"
+      className="inline-flex h-7 items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 text-xs font-medium text-amber-600 transition-colors hover:bg-amber-500/20 disabled:opacity-60 dark:text-amber-400"
+    >
+      {isPending ? (
+        <Loader2 className="size-3 shrink-0 animate-spin" />
+      ) : (
+        <KeyRound className="size-3 shrink-0" />
+      )}
+      Watch
+    </button>
   );
 }

@@ -295,6 +295,19 @@ export type Transaction = {
    */
   battleId: string | null;
   /**
+   * BOOLEAN — does the linked battle have a password set?
+   *   • true  → the row's Watch button offers a "copy URL with
+   *             password" path and the transaction-detail modal
+   *             renders a password-reveal row (both admin-only).
+   *   • false → battle exists but is public; no password affordance.
+   *   • null  → not a battle row.
+   *
+   * The plaintext value is NEVER carried in this payload — it's
+   * fetched on demand via the revealBattlePassword server action
+   * (admin-only + audit-logged on every reveal).
+   */
+  hasPassword: boolean | null;
+  /**
    * Winnings for a WON battle_bet row — the battle's total card value
    * (a battle is winner-takes-all: the winner walks away with every card
    * pulled across all participants). Same definition the battles

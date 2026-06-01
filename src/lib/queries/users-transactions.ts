@@ -110,6 +110,12 @@ export async function getUserTransactions(
     string,
     { winnerTeam: number | null; status: string }
   >();
+  // battle id → has-password flag. BOOLEAN ONLY — never the plaintext.
+  // The plaintext is fetched on demand via revealBattlePassword (which
+  // audit-logs every reveal); embedding the value here would leak it
+  // into the SSR payload on every transactions-tab paint. Same SSR-safe
+  // pattern getBattleDetail uses (see ce56eb6).
+  const battleHasPasswordMap = new Map<string, boolean>();
   if (battleIdsToFetch.size > 0) {
     try {
       const battleRows = await db.battles.findMany({
@@ -120,6 +126,9 @@ export async function getUserTransactions(
           sponsorship_percentage: true,
           winner_team: true,
           status: true,
+          // Select the column so we can derive a boolean below — the raw
+          // string never escapes this function.
+          password: true,
         },
       });
       for (const b of battleRows) {
@@ -129,6 +138,10 @@ export async function getUserTransactions(
           winnerTeam: b.winner_team,
           status: b.status,
         });
+        battleHasPasswordMap.set(
+          b.id,
+          b.password !== null && b.password.length > 0,
+        );
       }
     } catch (e) {
       console.error(
@@ -513,6 +526,17 @@ export async function getUserTransactions(
         ? (battleSponsorshipMap.get(battleId) ?? null)
         : null;
 
+      // Boolean flag — does the linked battle have a password set?
+      // Drives the "Copy Watch URL w/ password" affordance on the
+      // gaming-tab Watch button + the password reveal row in the
+      // transaction-detail modal. The plaintext is NEVER returned here
+      // (see battleHasPasswordMap comment above); admins call
+      // revealBattlePassword on demand and that audit-logs each view.
+      // Null on non-battle rows so non-battle UIs can skip the check.
+      const hasPassword = battleId
+        ? (battleHasPasswordMap.get(battleId) ?? false)
+        : null;
+
       // Battle outcome + winnings for a battle_bet row.
       //   battleResult: "win" | "lose" | null (null = not resolved yet —
       //     in_progress / animating / waiting / cancelled). Decided by
@@ -654,6 +678,7 @@ export async function getUserTransactions(
         borrowedAmountUsd,
         sponsorshipPercentage,
         battleId,
+        hasPassword,
         battleWinnings,
         upgraderResult,
         upgraderWinnings,

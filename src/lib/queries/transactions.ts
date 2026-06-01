@@ -1158,6 +1158,57 @@ export async function getTransactionDetail(id: string) {
     }
   }
 
+  // Resolve a linked battle id for the transaction so the detail page
+  // can offer a Watch link AND (for admins on private battles) the
+  // password reveal row. Same fallback chain as getUserTransactions:
+  //   1) session.game_type === "battle" → session.game_id is the battle
+  //   2) any pf row on the session carrying battle_id
+  //   3) tx.metadata.battle_id (older / out-of-session rows)
+  // Returns null on any non-battle transaction.
+  let battleId: string | null = null;
+  if (tx.game_session_id) {
+    // We need pf.battle_id and game_type — issue a focused lookup so
+    // we don't have to re-shape the heavy session/PF select above.
+    const linkedSession = await db.game_sessions.findUnique({
+      where: { id: tx.game_session_id },
+      select: {
+        game_type: true,
+        game_id: true,
+        provably_fair_results: { select: { battle_id: true }, take: 1 },
+      },
+    });
+    if (linkedSession?.game_type === "battle" && linkedSession.game_id) {
+      battleId = linkedSession.game_id;
+    } else if (linkedSession?.provably_fair_results[0]?.battle_id) {
+      battleId = linkedSession.provably_fair_results[0].battle_id;
+    }
+  }
+  if (!battleId && tx.metadata && typeof tx.metadata === "object") {
+    const meta = tx.metadata as Record<string, unknown>;
+    if (typeof meta.battle_id === "string") battleId = meta.battle_id;
+  }
+
+  // Boolean only — the plaintext password is NEVER carried in the
+  // return. Admins fetch it on demand via revealBattlePassword which
+  // audit-logs every reveal (`battle_password_viewed`). Matches the
+  // SSR-safe pattern getBattleDetail uses.
+  let hasPassword = false;
+  if (battleId) {
+    try {
+      const battle = await db.battles.findUnique({
+        where: { id: battleId },
+        select: { password: true },
+      });
+      hasPassword =
+        battle?.password != null && battle.password.length > 0;
+    } catch (e) {
+      console.error(
+        "[getTransactionDetail] battle password lookup failed (non-fatal):",
+        e,
+      );
+    }
+  }
+
   return {
     id: tx.id,
     userId: tx.user_id,
@@ -1169,6 +1220,8 @@ export async function getTransactionDetail(id: string) {
     balanceAfter,
     gameSessionId: tx.game_session_id,
     gameSession,
+    battleId,
+    hasPassword,
     cryptoAsset: tx.crypto_asset,
     cryptoAmount: tx.crypto_amount ? toNumber(tx.crypto_amount) : null,
     exchangeRate: tx.exchange_rate ? toNumber(tx.exchange_rate) : null,

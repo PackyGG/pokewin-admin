@@ -98,6 +98,7 @@ export function OverviewTab({
   gamingTx,
   financialTx,
   pnlBreakdown,
+  isAdmin,
 }: {
   data: UserDetail;
   gamingTx: PaginatedTransactions;
@@ -131,7 +132,10 @@ export function OverviewTab({
       </div>
 
       {/* Deposits & Withdrawals — recent financial activity on overview
-          per admin request. Full history still lives on Finances tab. */}
+          per admin request. Full history still lives on Finances tab.
+          isAdmin pass-through gates the password-reveal row inside the
+          transaction-detail modal (which can mount for battle_refund
+          rows reachable from this table on some flows). */}
       <SectionHeading icon={ArrowDownToLine} title="Deposits & Withdrawals" />
       <CategoryTransactionsTable
         title="Deposits & Withdrawals"
@@ -139,6 +143,7 @@ export function OverviewTab({
         types={FINANCIAL_TX_TYPES}
         initialTx={financialTx}
         cardWithdrawals={data.cardWithdrawals}
+        isAdmin={isAdmin}
       />
 
       {/* Tips & Rain — creator tips this user received/sent + rain
@@ -390,7 +395,6 @@ export function FinancesTab({
   isAdmin: boolean;
 }) {
   const { user, balances, capabilities } = data;
-  void isAdmin; // reserved for future action-gating in this tab
   void balances;
   void capabilities;
   return (
@@ -402,6 +406,7 @@ export function FinancesTab({
         types={FINANCIAL_TX_TYPES}
         initialTx={financialTx}
         cardWithdrawals={data.cardWithdrawals}
+        isAdmin={isAdmin}
       />
     </div>
   );
@@ -419,6 +424,12 @@ export function GamingTab({
   gamingTx: PaginatedTransactions;
 }) {
   const { user } = data;
+  // sessionRole drives the password-aware Watch button + password-reveal
+  // row inside the transaction-detail modal. The shared UserDetail
+  // already carries sessionRole resolved server-side in page.tsx, so the
+  // gate is single-sourced and matches every other admin-only affordance
+  // on this view (e.g. the password row on /battles/[id]).
+  const isAdmin = data.sessionRole === "admin";
   return (
     <div className="space-y-6">
       <SectionHeading icon={Swords} title="Gaming Transactions" />
@@ -428,6 +439,7 @@ export function GamingTab({
         types={GAMING_TX_TYPES}
         initialTx={gamingTx}
         showCardsValue
+        isAdmin={isAdmin}
       />
     </div>
   );
