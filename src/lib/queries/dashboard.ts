@@ -1362,3 +1362,106 @@ export async function getGgrBreakdown(
     ggr: wagersTotal - payoutsTotal,
   };
 }
+
+export type GgrTopContributorRow = {
+  userId: string;
+  username: string | null;
+  /** Sum of ABS(amount) on wager-side ledger types. */
+  wagerTotal: number;
+  /** Sum of ABS(amount) on payout-side ledger types. */
+  payoutTotal: number;
+  /** wagerTotal − payoutTotal. Positive = user lost (house profited). */
+  net: number;
+};
+
+/**
+ * Per-user net contribution to GGR for the selected period — drives
+ * the "top contributors" expander inside the GGR breakdown popover.
+ *
+ * Single GROUP BY user_id sweep over the same window/type set as the
+ * headline GGR. Joins to `user` for the username so the popover can
+ * render a clickable link to /users/<id> without a second roundtrip.
+ * Ordered by ABS(net) DESC so the loudest movers (in either
+ * direction) surface first, regardless of sign.
+ *
+ * NOT cached — GROUP BY user_id is heavier than the type-only sweep
+ * and the popover only loads it on user click. Always returns at most
+ * `limit` rows (default 10).
+ */
+export async function getGgrTopContributors(
+  period: DashboardPeriod,
+  limit = 10,
+): Promise<GgrTopContributorRow[]> {
+  // Defensive clamp — server actions take a number from the client, so
+  // an out-of-range value shouldn't blow up the query plan.
+  const safeLimit = Math.max(1, Math.min(limit, 50));
+  const db = await getDb();
+  const blacklistIdNotIn = blacklistNotInClause(
+    "u.id",
+    await getExcludedUserIds(),
+  );
+  const cutoff = periodToCutoff(period, new Date());
+  const wagerIn = Prisma.raw(WAGER_TYPES_SQL);
+  const payoutIn = Prisma.raw(PAYOUT_TYPES_SQL);
+  // Same filter shape as getGgrBreakdown:
+  //   • status = 'completed'
+  //   • created_at >= cutoff
+  //   • type IN (wager ∪ payout)
+  //   • user is not staff / blacklisted
+  // The real_users CTE applies the staff+blacklist filter UP-FRONT so
+  // the GROUP BY user_id scan over ledger_transactions only aggregates
+  // counted users — keeps the per-user totals consistent with the
+  // headline GGR (which excludes staff/blacklisted users via the same
+  // filter). JOIN to "user" at the top for the username so the popover
+  // can render a clickable link without a second roundtrip.
+  const rows = await db.$queryRaw<
+    {
+      user_id: string;
+      username: string | null;
+      wager_total: string;
+      payout_total: string;
+      net: string;
+    }[]
+  >`
+    WITH real_users AS (
+      SELECT u.id, u.username
+      FROM "user" u
+      WHERE u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+    ),
+    per_user AS (
+      SELECT
+        lt.user_id,
+        COALESCE(SUM(CASE WHEN lt.type IN ${wagerIn}
+                          THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS wager_total,
+        COALESCE(SUM(CASE WHEN lt.type IN ${payoutIn}
+                          THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS payout_total
+      FROM ledger_transactions lt
+      JOIN real_users ru ON ru.id = lt.user_id
+      WHERE lt.status = 'completed'
+        AND lt.created_at >= ${cutoff}
+        AND lt.type IN ${Prisma.raw(
+          `(${[...WAGER_PAYOUT_WAGER_TYPES, ...WAGER_PAYOUT_PAYOUT_TYPES]
+            .map((t) => `'${t}'`)
+            .join(",")})`,
+        )}
+      GROUP BY lt.user_id
+    )
+    SELECT
+      ru.id::text AS user_id,
+      ru.username,
+      pu.wager_total::text AS wager_total,
+      pu.payout_total::text AS payout_total,
+      (pu.wager_total - pu.payout_total)::text AS net
+    FROM per_user pu
+    JOIN real_users ru ON ru.id = pu.user_id
+    ORDER BY ABS(pu.wager_total - pu.payout_total) DESC
+    LIMIT ${safeLimit}
+  `;
+  return rows.map((r) => ({
+    userId: r.user_id,
+    username: r.username,
+    wagerTotal: parseFloat(r.wager_total) || 0,
+    payoutTotal: parseFloat(r.payout_total) || 0,
+    net: parseFloat(r.net) || 0,
+  }));
+}

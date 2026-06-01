@@ -275,6 +275,7 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
           ggr={stats.ggr}
           periodLabel={stats.periodLabel}
           breakdown={ggrBreakdown}
+          periodParam={period}
         />
         {/* Wager — customer wager only (drops wagers a creator made
             while live on a deal/stream — house-funded sponsored

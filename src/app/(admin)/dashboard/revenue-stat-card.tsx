@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Info, TrendingUp, TrendingDown } from "lucide-react";
+import { ChevronDown, Info, Loader2, TrendingUp, TrendingDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
@@ -14,7 +15,9 @@ import {
 import type {
   GgrBreakdown,
   GgrBreakdownRow,
+  GgrTopContributorRow,
 } from "@/lib/queries/dashboard";
+import { fetchGgrTopContributors } from "./ggr-actions";
 
 /**
  * Period-aware stat cards used in the dashboard's primary KPI strip.
@@ -146,10 +149,16 @@ export function GgrStatCard({
   // against any rounding drift between the headline aggregate and the
   // GROUP BY type sweep, even though they read from the same SQL).
   breakdown,
+  // Sanitized period string ("24h" / "7d" / ...) — passed to the
+  // server action that loads the lazy contributor list, so the action
+  // computes the per-user sweep against the SAME window the admin is
+  // currently looking at.
+  periodParam,
 }: {
   ggr: number;
   periodLabel: string;
   breakdown?: GgrBreakdown;
+  periodParam: string;
 }) {
   const isProfit = ggr >= 0;
   return (
@@ -162,6 +171,7 @@ export function GgrStatCard({
               <GgrBreakdownPopover
                 breakdown={breakdown}
                 periodLabel={periodLabel}
+                periodParam={periodParam}
               />
             )}
           </CardTitle>
@@ -204,9 +214,11 @@ export function GgrStatCard({
 function GgrBreakdownPopover({
   breakdown,
   periodLabel,
+  periodParam,
 }: {
   breakdown: GgrBreakdown;
   periodLabel: string;
+  periodParam: string;
 }) {
   const ggrIsProfit = breakdown.ggr >= 0;
   // Hide zero-total rows so the list stays readable on quiet windows
@@ -214,6 +226,41 @@ function GgrBreakdownPopover({
   // aggregate at the bottom still reflects the full math.
   const wagers = breakdown.wagers.filter((r) => r.total > 0);
   const payouts = breakdown.payouts.filter((r) => r.total > 0);
+
+  // Contributor expander state — lives in this client component so
+  // the server action only runs when the admin actually opens it.
+  const [contribState, setContribState] = useState<{
+    open: boolean;
+    rows: GgrTopContributorRow[] | null;
+    error: string | null;
+  }>({ open: false, rows: null, error: null });
+  const [isPending, startTransition] = useTransition();
+
+  const handleToggleContributors = () => {
+    if (contribState.open) {
+      setContribState((s) => ({ ...s, open: false }));
+      return;
+    }
+    // First open: fire the action. Subsequent opens reuse the cached
+    // rows in state (avoid hammering the DB on every toggle).
+    if (contribState.rows) {
+      setContribState((s) => ({ ...s, open: true }));
+      return;
+    }
+    startTransition(async () => {
+      try {
+        const rows = await fetchGgrTopContributors(periodParam, 10);
+        setContribState({ open: true, rows, error: null });
+      } catch (err) {
+        setContribState({
+          open: true,
+          rows: null,
+          error:
+            err instanceof Error ? err.message : "Failed to load contributors",
+        });
+      }
+    });
+  };
 
   return (
     <Popover>
@@ -285,6 +332,48 @@ function GgrBreakdownPopover({
               {formatCurrency(Math.abs(breakdown.ggr))}
             </span>
           </div>
+        </div>
+
+        {/* Contributors expander. Click loads the lazy GROUP BY user_id
+            query via a server action and toggles open. A single render
+            of the rows is reused on subsequent toggles — no re-fetch
+            on close→open within the same popover instance. */}
+        <div className="border-t border-border/60 pt-2">
+          <button
+            type="button"
+            onClick={handleToggleContributors}
+            disabled={isPending}
+            className="flex w-full items-center justify-between rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground disabled:opacity-60"
+          >
+            <span>
+              {contribState.open ? "Hide" : "Show"} top 10 contributors
+            </span>
+            {isPending ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : (
+              <ChevronDown
+                className={cn(
+                  "size-3 transition-transform",
+                  contribState.open && "rotate-180",
+                )}
+              />
+            )}
+          </button>
+          {contribState.open && (
+            <div className="mt-1.5">
+              {contribState.error ? (
+                <p className="px-1.5 py-2 text-[10px] text-rose-400">
+                  {contribState.error}
+                </p>
+              ) : contribState.rows && contribState.rows.length > 0 ? (
+                <ContributorList rows={contribState.rows} />
+              ) : (
+                <p className="px-1.5 py-2 text-[10px] text-muted-foreground">
+                  No contributing activity in this window.
+                </p>
+              )}
+            </div>
+          )}
         </div>
       </PopoverContent>
     </Popover>
@@ -364,6 +453,60 @@ function BreakdownSection({
   );
 }
 
+/**
+ * Top contributors expander content. Each row links to /users/<id>,
+ * shows username + wager/payout pair + net contribution. Net is
+ * coloured house-POV per CLAUDE.md:
+ *   • net > 0 → user lost (we profited) → emerald
+ *   • net < 0 → user won (we lost) → rose
+ *   • net = 0 → muted (rare; could happen on pure-wager sessions
+ *     with no payouts in the window).
+ */
+function ContributorList({ rows }: { rows: GgrTopContributorRow[] }) {
+  return (
+    <ul className="space-y-0.5">
+      {rows.map((r, idx) => {
+        const isHouseProfit = r.net > 0;
+        const isHouseLoss = r.net < 0;
+        const username = r.username ?? `${r.userId.slice(0, 6)}…`;
+        return (
+          <li key={r.userId}>
+            <Link
+              href={`/users/${r.userId}`}
+              className="flex items-center justify-between gap-2 rounded px-1 py-1 text-[11px] transition-colors hover:bg-muted/60"
+            >
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="w-4 shrink-0 text-right text-muted-foreground/60 tabular-nums">
+                  {idx + 1}.
+                </span>
+                <span className="truncate font-medium">{username}</span>
+              </span>
+              <span className="flex shrink-0 items-center gap-2 tabular-nums">
+                <span className="text-muted-foreground/60">
+                  W {formatNumber(Math.round(r.wagerTotal))} ·{" "}
+                  P {formatNumber(Math.round(r.payoutTotal))}
+                </span>
+                <span
+                  className={cn(
+                    "min-w-[64px] text-right font-semibold",
+                    isHouseProfit
+                      ? "text-emerald-400"
+                      : isHouseLoss
+                        ? "text-rose-400"
+                        : "text-muted-foreground/60",
+                  )}
+                >
+                  {isHouseProfit ? "+" : isHouseLoss ? "−" : ""}
+                  {formatCurrency(Math.abs(r.net))}
+                </span>
+              </span>
+            </Link>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 
 // Wagers = money the user sent into the house treasury for a bet.
 // Always positive, so we give it a purple identity color to differentiate
