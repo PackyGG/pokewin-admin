@@ -263,8 +263,11 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "Rewards",
     items: [
-      { label: "Rewards", href: "/rewards", icon: "Award" },
+      // Analytics sits at the top of the Rewards group — admins land here
+      // first to read the rollup before drilling into specific surfaces
+      // (Rewards listing, Rakeback, Promo Codes, Raffles, etc.).
       { label: "Analytics", href: "/rewards/analytics", icon: "BarChart3" },
+      { label: "Rewards", href: "/rewards", icon: "Award" },
       { label: "Rakeback", href: "/rewards/rakeback", icon: "Percent" },
       // Promo Codes — moved here from the Marketing group; it's a
       // user-facing promo lever, so it sits next to the other promo
