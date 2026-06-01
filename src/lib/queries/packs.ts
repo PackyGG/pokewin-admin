@@ -31,6 +31,69 @@ export type PackListItem = {
   totalCardCount: number;
 };
 
+/**
+ * The two well-known pack pools. `pokemon` is the implicit default —
+ * packs carry no first-class "type" column (the `pack_tag` enum is for
+ * battle odds: %1 / %5 / %10 / 50/50, NOT card game), so a pack's type
+ * is *derived* from the sets of the cards it contains:
+ *
+ *   • OnePiece pack  = has ≥1 card whose `set_id` is an OnePiece set
+ *   • Pokemon pack   = every other pack (the default / most common case,
+ *                      incl. packs with no OnePiece cards or no cards yet)
+ *
+ * The discriminator lives in the card→set linkage exactly like /cards,
+ * which scopes its catalog by `cards.set_id → sets.name`.
+ */
+export type PackSetFilter = "pokemon" | "onepiece";
+
+/**
+ * Resolve the set id(s) whose name is "OnePiece" (case-insensitive,
+ * matching the seed's exact "OnePiece" string and /cards' lowercase
+ * name match). Returned as an array because nothing in the schema
+ * guarantees a single OnePiece set — a future OP expansion could be its
+ * own row. Cached cross-request (5 min) since the set catalog is tiny
+ * and changes rarely; within a render unstable_cache also dedupes so a
+ * page hitting both getPacks + getPacksListStats resolves it once.
+ */
+const cachedOnePieceSetIds = unstable_cache(
+  async (): Promise<string[]> => {
+    const db = await getDb();
+    const sets = await db.sets.findMany({
+      where: { name: { equals: "onepiece", mode: "insensitive" } },
+      select: { id: true },
+    });
+    return sets.map((s) => s.id);
+  },
+  ["packs-onepiece-set-ids-v1"],
+  { revalidate: 300, tags: ["sets"] },
+);
+
+/**
+ * Build the `pack_cards` relation predicate that scopes the packs list /
+ * stats to one pool. Returns `undefined` for the Pokemon default when no
+ * OnePiece set exists at all (nothing to exclude → every pack is
+ * Pokemon), keeping the query free of a redundant clause.
+ *
+ *   • onepiece → packs with ≥1 OnePiece card  (`pack_cards.some`)
+ *   • pokemon  → packs with 0 OnePiece cards   (`pack_cards.none`)
+ */
+function buildPackSetWhere(
+  set: PackSetFilter,
+  onePieceSetIds: string[],
+): Prisma.packsWhereInput["pack_cards"] | undefined {
+  if (onePieceSetIds.length === 0) {
+    // No OnePiece set in the catalog: the OnePiece tab is empty and the
+    // Pokemon tab is the whole catalog (no exclusion needed).
+    return set === "onepiece"
+      ? { some: { card_id: { in: [] } } } // matches nothing
+      : undefined;
+  }
+  const cardInOnePiece = { cards: { set_id: { in: onePieceSetIds } } };
+  return set === "onepiece"
+    ? { some: cardInOnePiece }
+    : { none: cardInOnePiece };
+}
+
 export async function getPacks(params: {
   page?: number;
   perPage?: number;
@@ -38,6 +101,7 @@ export async function getPacks(params: {
   active?: string;
   sortBy?: string;
   sortOrder?: string;
+  set?: PackSetFilter;
 }): Promise<PaginatedResult<PackListItem>> {
   const {
     page = 1,
@@ -46,6 +110,7 @@ export async function getPacks(params: {
     active,
     sortBy = "created_at",
     sortOrder = "desc",
+    set = "pokemon",
   } = params;
   const db = await getDb();
 
@@ -60,6 +125,11 @@ export async function getPacks(params: {
 
   if (active === "active") where.active = true;
   else if (active === "inactive") where.active = false;
+
+  // Scope to the Pokemon / OnePiece pool via the card→set linkage.
+  const onePieceSetIds = await cachedOnePieceSetIds();
+  const packCardsWhere = buildPackSetWhere(set, onePieceSetIds);
+  if (packCardsWhere) where.pack_cards = packCardsWhere;
 
   const orderBy: Prisma.packsOrderByWithRelationInput = {};
   const validSortFields = ["created_at", "name", "total_revenue", "total_openings", "actual_house_edge"];
@@ -139,31 +209,37 @@ export async function getPacks(params: {
   };
 }
 
-// ─── Global KPI stats for the /packs page hero strip ───────────────────
+// ─── Tab-scoped KPI stats for the /packs page hero strip ───────────────
 //
-// Catalog-wide counts + lifetime totals shown in the hero KPI strip.
+// Counts + lifetime totals shown in the hero KPI strip, scoped to the
+// active Pokemon / OnePiece tab so the numbers match the grid below.
 // Reads off the maintained `packs.total_openings` / `total_revenue` /
 // `total_payout` columns (kept in sync by the backend pack-opening
 // pipeline) so this is one round-trip instead of the 4 .count() /
 // .aggregate() calls the page would otherwise fan out to.
+//
+// The Pokemon / OnePiece split is the same derived discriminator as
+// getPacks: a pack is OnePiece when it has ≥1 card in an OnePiece set,
+// Pokemon otherwise. Applied here as an EXISTS / NOT EXISTS subquery on
+// pack_cards → cards.set_id.
 //
 // Cached cross-request (60s revalidate) so admins spamming the search
 // box don't fan into the DB on every keystroke. Within a single render
 // unstable_cache also deduplicates, mirroring users-list-stats.
 
 export type PacksListStats = {
-  /** All packs in the DB regardless of `active`. */
+  /** Packs in the active pool regardless of `active`. */
   totalPacks: number;
-  /** Packs with `active = true`. */
+  /** Packs in the active pool with `active = true`. */
   activePacks: number;
-  /** Lifetime pack opens across the whole catalog. */
+  /** Lifetime pack opens across the active pool. */
   totalOpenings: number;
-  /** Lifetime revenue across the whole catalog (USD). */
+  /** Lifetime revenue across the active pool (USD). */
   totalRevenue: number;
-  /** Lifetime payout across the whole catalog (USD). */
+  /** Lifetime payout across the active pool (USD). */
   totalPayout: number;
   /**
-   * Catalog-level house edge as a percentage in House-POV. Positive →
+   * Pool-level house edge as a percentage in House-POV. Positive →
    * we're up overall; negative → we've paid out more than we took in,
    * which renders rose in the KPI strip. Computed from totalRevenue and
    * totalPayout rather than averaging the per-pack actual_house_edge
@@ -174,21 +250,43 @@ export type PacksListStats = {
   houseEdgePct: number;
 };
 
-const cachedPacksListStats = unstable_cache(
-  async (): Promise<PacksListStats> => {
-    const db = await getDb();
-    // Single round-trip aggregate using CASE / FILTER for the count
-    // breakdowns. Postgres folds these into a single sequential scan with
-    // FILTER predicates — strictly cheaper than four Prisma calls.
-    const rows = await db.$queryRaw<
-      {
-        total: string;
-        active: string;
-        openings: string;
-        revenue: string;
-        payout: string;
-      }[]
-    >`
+async function fetchPacksListStats(
+  set: PackSetFilter,
+  onePieceSetIds: string[],
+): Promise<PacksListStats> {
+  const db = await getDb();
+
+  // Build the pool predicate as a correlated EXISTS / NOT EXISTS on
+  // pack_cards → cards.set_id. When no OnePiece set exists the OnePiece
+  // pool is empty (FALSE) and the Pokemon pool is the whole catalog
+  // (TRUE) — mirrors buildPackSetWhere's empty-array branch.
+  let poolPredicate: string;
+  const queryParams: unknown[] = [];
+  if (onePieceSetIds.length === 0) {
+    poolPredicate = set === "onepiece" ? "FALSE" : "TRUE";
+  } else {
+    const existsClause = `EXISTS (
+      SELECT 1 FROM pack_cards pc
+      JOIN cards c ON c.id = pc.card_id
+      WHERE pc.pack_id = packs.id AND c.set_id = ANY($1::uuid[])
+    )`;
+    poolPredicate = set === "onepiece" ? existsClause : `NOT ${existsClause}`;
+    queryParams.push(onePieceSetIds);
+  }
+
+  // Single round-trip aggregate using FILTER for the count breakdown.
+  // Postgres folds these into a single scan with FILTER predicates —
+  // strictly cheaper than separate count calls.
+  const rows = await db.$queryRawUnsafe<
+    {
+      total: string;
+      active: string;
+      openings: string;
+      revenue: string;
+      payout: string;
+    }[]
+  >(
+    `
       SELECT
         COUNT(*)::text                                          AS total,
         COUNT(*) FILTER (WHERE active = true)::text             AS active,
@@ -196,27 +294,40 @@ const cachedPacksListStats = unstable_cache(
         COALESCE(SUM(total_revenue), 0)::text                   AS revenue,
         COALESCE(SUM(total_payout), 0)::text                    AS payout
       FROM packs
-    `;
-    const r = rows[0];
-    const totalRevenue = Number(r?.revenue ?? 0);
-    const totalPayout = Number(r?.payout ?? 0);
-    const houseEdgePct =
-      totalRevenue > 0 ? ((totalRevenue - totalPayout) / totalRevenue) * 100 : 0;
-    return {
-      totalPacks: Number(r?.total ?? 0),
-      activePacks: Number(r?.active ?? 0),
-      totalOpenings: Number(r?.openings ?? 0),
-      totalRevenue,
-      totalPayout,
-      houseEdgePct,
-    };
-  },
-  ["packs-list-stats-v1"],
-  { revalidate: 60, tags: ["packs-list-stats"] },
-);
+      WHERE ${poolPredicate}
+    `,
+    ...queryParams,
+  );
+  const r = rows[0];
+  const totalRevenue = Number(r?.revenue ?? 0);
+  const totalPayout = Number(r?.payout ?? 0);
+  const houseEdgePct =
+    totalRevenue > 0 ? ((totalRevenue - totalPayout) / totalRevenue) * 100 : 0;
+  return {
+    totalPacks: Number(r?.total ?? 0),
+    activePacks: Number(r?.active ?? 0),
+    totalOpenings: Number(r?.openings ?? 0),
+    totalRevenue,
+    totalPayout,
+    houseEdgePct,
+  };
+}
 
-export async function getPacksListStats(): Promise<PacksListStats> {
-  return cachedPacksListStats();
+export async function getPacksListStats(
+  set: PackSetFilter = "pokemon",
+): Promise<PacksListStats> {
+  const onePieceSetIds = await cachedOnePieceSetIds();
+  // `set` is mixed into keyParts per call: unstable_cache does NOT fold
+  // function args into the cache key automatically, so a single static
+  // key would let the Pokemon and OnePiece aggregates collide (the
+  // first to land would serve both — the exact stale-cache bug fixed on
+  // getCardsStats). The resolved OnePiece-set fingerprint is mixed in
+  // too so adding/renaming an OnePiece set busts the slot.
+  return unstable_cache(
+    () => fetchPacksListStats(set, onePieceSetIds),
+    ["packs-list-stats-v2", set, onePieceSetIds.join(",")],
+    { revalidate: 60, tags: ["packs-list-stats"] },
+  )();
 }
 
 export async function getPackDetail(id: string) {

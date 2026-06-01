@@ -7,7 +7,11 @@ import {
   Power,
   Sparkles,
 } from "lucide-react";
-import { getPacks, getPacksListStats } from "@/lib/queries/packs";
+import {
+  getPacks,
+  getPacksListStats,
+  type PackSetFilter,
+} from "@/lib/queries/packs";
 import { getUserPermissions, requirePageAccess } from "@/lib/dal";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { ensurePackCreatorCapabilities } from "@/lib/pack-creator/ensure-capabilities";
@@ -17,6 +21,7 @@ import { DataTablePagination } from "@/components/data-table/data-table-paginati
 import { Skeleton } from "@/components/ui/skeleton";
 import { PaginationSkeleton } from "@/components/loading-skeletons";
 import { CreatePackButton } from "./create-pack-button";
+import { PacksTabSwitch } from "./_components/packs-tab-switch";
 import {
   KpiTile,
   PageHero,
@@ -40,6 +45,7 @@ async function PacksContent({
   active,
   sortBy,
   sortOrder,
+  set,
   canToggle,
   canDelete,
 }: {
@@ -49,6 +55,7 @@ async function PacksContent({
   active?: string;
   sortBy?: string;
   sortOrder?: string;
+  set: PackSetFilter;
   canToggle: boolean;
   canDelete: boolean;
 }) {
@@ -59,6 +66,7 @@ async function PacksContent({
     active,
     sortBy,
     sortOrder,
+    set,
   });
 
   return (
@@ -90,7 +98,15 @@ export default async function PacksPage({
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
 
-  const suspenseKey = `${page}|${perPage}|${params.search ?? ""}|${params.active ?? ""}|${params.sortBy ?? ""}|${params.sortOrder ?? ""}`;
+  // Pokemon / OnePiece pool. Packs have no first-class type column — the
+  // split is derived from the sets of the cards inside each pack (see
+  // getPacks). `pokemon` is the default: anything that isn't an explicit
+  // "onepiece" param (absent, garbage, or "pokemon") lands on Pokemon,
+  // the larger pool.
+  const activeSet: PackSetFilter =
+    params.set === "onepiece" ? "onepiece" : "pokemon";
+
+  const suspenseKey = `${activeSet}|${page}|${perPage}|${params.search ?? ""}|${params.active ?? ""}|${params.sortBy ?? ""}|${params.sortOrder ?? ""}`;
 
   // Idempotent runtime back-fill: existing pack_creator users were
   // created before __can_update_pack landed in the role's default
@@ -115,11 +131,12 @@ export default async function PacksPage({
     canDelete = hasCapability(perms, "__can_delete_pack");
   }
 
-  // Global KPI stats — cached aggregates that stay stable across page
+  // Tab-scoped KPI stats — cached aggregates that stay stable across page
   // navigation + search refinements. Read off the maintained
   // packs.total_* columns in a single round-trip; see getPacksListStats
-  // for the unstable_cache wrap mirroring /users.
-  const stats = await getPacksListStats();
+  // for the unstable_cache wrap mirroring /users. Scoped to the active
+  // Pokemon / OnePiece pool so the strip matches the grid below.
+  const stats = await getPacksListStats(activeSet);
   // House-POV accent: positive edge means we're up overall → emerald;
   // negative means we've paid out more than we took in → rose. Mirrors
   // the per-tile financial-color rule in CLAUDE.md.
@@ -136,14 +153,14 @@ export default async function PacksPage({
         />
       </PageHero>
 
-      {/* KPI strip — catalog-wide totals that stay stable while admins
+      {/* KPI strip — pool-scoped totals that stay stable while admins
           paginate or filter the grid below. Lifetime Revenue / Payout
           come from the maintained packs.total_revenue / total_payout
           columns; house edge is derived from the two (volume-weighted,
           not the per-pack average). House-POV colors throughout. */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
         <KpiTile
-          label="Total Packs"
+          label={activeSet === "onepiece" ? "OnePiece Packs" : "Pokemon Packs"}
           value={formatNumber(stats.totalPacks)}
           sub={
             stats.totalPacks > 0
@@ -196,8 +213,19 @@ export default async function PacksPage({
         />
       </div>
 
+      {/* ── TAB SWITCH ──────────────────────────────────────────────
+          Pokemon / OnePiece pool selector. Scopes the KPI strip above
+          (via getPacksListStats(activeSet)) and the catalog grid below
+          (via getPacks({ set })) to one pool. */}
+      <div className="flex">
+        <PacksTabSwitch />
+      </div>
+
       <div className="space-y-3">
-        <SectionHeading icon={Coins} title="Catalog" />
+        <SectionHeading
+          icon={Coins}
+          title={activeSet === "onepiece" ? "OnePiece Catalog" : "Pokemon Catalog"}
+        />
         <Suspense fallback={<Skeleton className="h-10 w-full" />}>
           <DataTableToolbar
             searchPlaceholder="Search by name or slug..."
@@ -237,6 +265,7 @@ export default async function PacksPage({
             active={params.active}
             sortBy={params.sortBy}
             sortOrder={params.sortOrder}
+            set={activeSet}
             canToggle={canToggle}
             canDelete={canDelete}
           />
