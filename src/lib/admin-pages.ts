@@ -50,6 +50,10 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Insights", label: "Affiliate", key: "/insights/rewards/affiliate" },
   { group: "Insights", label: "Sign Up", key: "/insights/rewards/signup" },
   { group: "Insights", label: "Streamers", key: "/insights/streamers" },
+  // Balance Adjustments — accountability surface for admin manual
+  // credits/debits to user balances. Sits in Insights alongside the
+  // other analytical reward/finance surfaces.
+  { group: "Insights", label: "Balance Adjustments", key: "/insights/balance-adjustments" },
   // Edge Calc — theoretical EV / RTP / house-edge math + scenario
   // simulator. Pure-math companion to the empirical /insights/games
   // page so admins can model packs / upgrader / bonus stacks before

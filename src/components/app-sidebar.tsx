@@ -52,6 +52,7 @@ import {
   Wallet,
   Flag,
   UserPlus,
+  Scale,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -123,6 +124,7 @@ const ICONS: Record<string, LucideIcon> = {
   Wallet,
   Flag,
   UserPlus,
+  Scale,
 };
 
 type NavItem = {
@@ -218,6 +220,10 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Affiliate", href: "/insights/rewards/affiliate", icon: "Share2", isNew: true },
       { label: "Sign Up", href: "/insights/rewards/signup", icon: "UserPlus", isNew: true },
       { label: "Streamers", href: "/insights/streamers", icon: "Tv", isNew: true },
+      // Balance Adjustments — accountability surface for admin manual
+      // credits/debits to user balances (admin_balance_adjustment ledger
+      // rows + admin_audit_events attribution).
+      { label: "Balance Adjustments", href: "/insights/balance-adjustments", icon: "Scale", isNew: true },
       // Edge Calc — theoretical EV / scenario simulator companion to
       // the other Insights surfaces (pure math, no historical query).
       { label: "Edge Calc", href: "/insights/edge-calc", icon: "Sigma", isNew: true },
