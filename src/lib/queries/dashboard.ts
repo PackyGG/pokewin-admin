@@ -242,6 +242,17 @@ function getPeriodAggregates(
       -- global GGR can never drift from the per-creator GGR. Change
       -- the lists in that one file, not here.
       --
+      -- Creator on-stream sessions are dropped from BOTH the wager
+      -- side AND the payout side via the NOT in_session filter on
+      -- the base CTE — the same session_windows CTE the daily P&L
+      -- (pnl.ts) uses. Customer GGR shouldn't be polluted by creator
+      -- stream play that's funded by the house: those wagers aren't
+      -- real customer bets, and the matching wins / refunds aren't
+      -- real customer payouts. The filter is SYMMETRIC across the
+      -- two sides (an asymmetry would inflate / understate GGR by
+      -- the in-session leg that survived); both sides drop the same
+      -- rows.
+      --
       -- Upgrader plays ARE represented in the ledger on both sides:
       -- upgrader_bet rows debit the wager (in the WAGER set) and
       -- upgrader_payout rows credit the win (in the PAYOUT set — added
@@ -256,8 +267,8 @@ function getPeriodAggregates(
       -- over-statement of customer P&L on every period / daily /
       -- breakdown surface that mirrored the formula).
       (
-        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND created_at >= ${cutoff} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND created_at >= ${cutoff} THEN ABS(amount) ELSE 0 END), 0)
+        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND NOT in_session AND created_at >= ${cutoff} THEN ABS(amount) ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND NOT in_session AND created_at >= ${cutoff} THEN ABS(amount) ELSE 0 END), 0)
       )::text AS ggr,
 
       -- Deposit COUNT — number of completed deposit transactions in
@@ -1266,10 +1277,23 @@ export type GgrBreakdown = {
 // auto-refresh cadence so the popover values track the headline. The
 // tag is `dashboard-stats` so admin actions that already revalidate
 // dashboard data (e.g. excluded-users edits) blow this cache too.
+//
+// The query drops creator on-stream sessions from BOTH the wager-side
+// and payout-side rows via the `session_windows` CTE (same one used by
+// pnl.ts and the headline `pa.ggr` aggregate). Filter is symmetric, so
+// the per-type totals here sum to the headline GGR by construction —
+// no risk of the popover and the headline drifting because one side
+// was filtered and the other wasn't.
+//
+// `sessionWindowsCte` is part of the cache key so a change in the
+// upstream session list (creators going live / ending a stream)
+// invalidates the cached rows — the CTE source itself is 5-min cached,
+// so the key churn is bounded.
 const cachedGgrBreakdownRows = unstable_cache(
   async (
     blacklistIdNotIn: string,
     cutoffIso: string,
+    sessionWindowsCte: string,
   ): Promise<{ type: string; total: string }[]> => {
     const db = await getDb();
     const cutoff = new Date(cutoffIso);
@@ -1281,22 +1305,36 @@ const cachedGgrBreakdownRows = unstable_cache(
         .join(",")})`,
     );
     return db.$queryRaw<{ type: string; total: string }[]>`
+      WITH real_users AS (
+        SELECT u.id, u.role FROM "user" u
+        WHERE u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+      ),
+      ${Prisma.raw(sessionWindowsCte)}
       SELECT
         lt.type::text AS type,
         COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total
       FROM ledger_transactions lt
+      JOIN real_users ru ON ru.id = lt.user_id
       WHERE lt.status = 'completed'
         AND lt.created_at >= ${cutoff}
         AND lt.type IN ${allTypesSql}
-        AND lt.user_id IN (
-          SELECT id FROM "user"
-          WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+        -- Drop creator on-stream rows — same filter pa.ggr uses on
+        -- both sides. The CASE keeps the EXISTS off the hot path for
+        -- non-creator rows (the vast majority).
+        AND NOT (
+          ru.role = 'creator'
+          AND EXISTS (
+            SELECT 1 FROM session_windows sw
+            WHERE sw.uid = lt.user_id
+              AND lt.created_at >= sw.win_start
+              AND lt.created_at <  sw.win_end
+          )
         )
       GROUP BY lt.type
       ORDER BY total DESC
     `;
   },
-  ["dashboard-ggr-breakdown-v1"],
+  ["dashboard-ggr-breakdown-v2"],
   { revalidate: 60, tags: ["dashboard-stats"] },
 );
 
@@ -1318,14 +1356,19 @@ const cachedGgrBreakdownRows = unstable_cache(
 export async function getGgrBreakdown(
   period: DashboardPeriod,
 ): Promise<GgrBreakdown> {
-  const blacklistIdNotIn = blacklistNotInClause(
-    "id",
-    await getExcludedUserIds(),
-  );
+  const [excluded, sessionWindowsCte] = await Promise.all([
+    getExcludedUserIds(),
+    // Same `session_windows` CTE the headline `pa.ggr` aggregate uses
+    // — drops creator on-stream rows from BOTH wager-side and payout-
+    // side totals so the popover sums equal the headline GGR.
+    getCreatorSessionWindowsCte(),
+  ]);
+  const blacklistIdNotIn = blacklistNotInClause("id", excluded);
   const cutoff = periodToCutoff(period, new Date());
   const rows = await cachedGgrBreakdownRows(
     blacklistIdNotIn,
     cutoff.toISOString(),
+    sessionWindowsCte,
   );
 
   // O(1) lookup so the bucket-assignment + totals pass over `rows` is
@@ -1396,18 +1439,26 @@ export async function getGgrTopContributors(
   // an out-of-range value shouldn't blow up the query plan.
   const safeLimit = Math.max(1, Math.min(limit, 50));
   const db = await getDb();
-  const blacklistIdNotIn = blacklistNotInClause(
-    "u.id",
-    await getExcludedUserIds(),
-  );
+  const [excluded, sessionWindowsCte] = await Promise.all([
+    getExcludedUserIds(),
+    // Same `session_windows` CTE the headline `pa.ggr` aggregate and
+    // the breakdown popover use — drops creator on-stream rows from
+    // BOTH the wager-side and payout-side per-user sums so this list
+    // matches the headline GGR. A creator whose only contribution to
+    // the window is on-stream sponsored play vanishes from the list
+    // (correct — those rows aren't a real customer-vs-house outcome).
+    getCreatorSessionWindowsCte(),
+  ]);
+  const blacklistIdNotIn = blacklistNotInClause("u.id", excluded);
   const cutoff = periodToCutoff(period, new Date());
   const wagerIn = Prisma.raw(WAGER_TYPES_SQL);
   const payoutIn = Prisma.raw(PAYOUT_TYPES_SQL);
-  // Same filter shape as getGgrBreakdown:
+  // Same filter shape as getGgrBreakdown / pa.ggr:
   //   • status = 'completed'
   //   • created_at >= cutoff
   //   • type IN (wager ∪ payout)
   //   • user is not staff / blacklisted
+  //   • creator on-stream rows dropped on BOTH sides (NOT in_session)
   // The real_users CTE applies the staff+blacklist filter UP-FRONT so
   // the GROUP BY user_id scan over ledger_transactions only aggregates
   // counted users — keeps the per-user totals consistent with the
@@ -1424,10 +1475,11 @@ export async function getGgrTopContributors(
     }[]
   >`
     WITH real_users AS (
-      SELECT u.id, u.username
+      SELECT u.id, u.username, u.role
       FROM "user" u
       WHERE u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
     ),
+    ${Prisma.raw(sessionWindowsCte)},
     per_user AS (
       SELECT
         lt.user_id,
@@ -1444,6 +1496,18 @@ export async function getGgrTopContributors(
             .map((t) => `'${t}'`)
             .join(",")})`,
         )}
+        -- Drop creator on-stream rows on BOTH sides (symmetric with
+        -- pa.ggr + the breakdown popover). The CASE keeps the EXISTS
+        -- off the hot path for non-creator rows.
+        AND NOT (
+          ru.role = 'creator'
+          AND EXISTS (
+            SELECT 1 FROM session_windows sw
+            WHERE sw.uid = lt.user_id
+              AND lt.created_at >= sw.win_start
+              AND lt.created_at <  sw.win_end
+          )
+        )
       GROUP BY lt.user_id
     )
     SELECT

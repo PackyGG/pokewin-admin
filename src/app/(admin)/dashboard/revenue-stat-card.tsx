@@ -287,8 +287,9 @@ function GgrBreakdownPopover({
           </p>
           <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
             {periodLabel}. Every ledger type that goes into GGR, summed
-            for the window. Staff + excluded users dropped — same
-            filter as the headline.
+            for the window. Staff + excluded users dropped, and creator
+            on-stream sessions excluded on BOTH sides (same filter as
+            Daily P&L) — so the totals here match the headline.
           </p>
         </div>
 

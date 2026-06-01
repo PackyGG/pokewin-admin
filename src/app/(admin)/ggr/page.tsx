@@ -91,7 +91,7 @@ export default async function GgrPage({
           icon={TrendingUp}
           accent="cyan"
           title="GGR Breakdown"
-          subtitle="Every wager and payout component driving Gross Gaming Revenue."
+          subtitle="Every wager and payout component driving Gross Gaming Revenue. Excludes creator on-stream sessions on both sides (same filter as Daily P&L)."
           action={<GgrWindowSwitch />}
         />
       </PageHero>
