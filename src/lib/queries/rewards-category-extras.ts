@@ -548,6 +548,67 @@ export type SignupExtras = {
    * never made a balance_reward_claim (0–1, signup-window-only).
    */
   dropOffShare: number;
+  /**
+   * Conversion funnel — counts at each stage for the in-window
+   * signup cohort. Each stage is a subset of the previous:
+   *   signups        — all signups in the window
+   *   claimed        — made at least one balance_reward_claim (any time)
+   *   firstDeposit   — made a `deposit` ledger row after signup
+   *   repeatDeposit  — made ≥2 deposits
+   */
+  funnel: {
+    signups: number;
+    claimed: number;
+    firstDeposit: number;
+    repeatDeposit: number;
+  };
+  /**
+   * Avg first-deposit USD for signup-bonus claimants in the cohort
+   * vs non-claimants — answers "do claimants deposit larger?".
+   * Each side carries the cohort size + the avg first-deposit USD.
+   */
+  firstDepositCohort: {
+    claimantsCount: number;
+    claimantsAvg: number;
+    nonClaimantsCount: number;
+    nonClaimantsAvg: number;
+    /** % lift of avg-with over avg-without (0 when without is empty). */
+    liftPct: number;
+  };
+  /**
+   * Retention: % of claiming cohort who made a second deposit within
+   * 7d / 30d of their first deposit. Tells us if the signup bonus is
+   * converting to retained users or one-and-done depositors.
+   */
+  retention: {
+    shareSecondDepositWithin7d: number;
+    shareSecondDepositWithin30d: number;
+  };
+  /**
+   * Signup-source distribution — auth `account.providerId` rolled up
+   * per signup. Each row is one provider with the cohort count and %
+   * share. Defensive fallback "unknown" for users with no
+   * `account` row.
+   */
+  signupSources: Array<{ provider: string; count: number; share: number }>;
+  /**
+   * Country distribution of claiming cohort — top 6 by count, plus
+   * an aggregated "Other" bucket so the chart fits in a small card.
+   * Uses `user.country_code` (ISO-2). Unknown / NULL country
+   * counts as "??".
+   */
+  countryDistribution: Array<{
+    code: string;
+    count: number;
+    share: number;
+  }>;
+  /**
+   * Hour-of-day distribution of claim events — 24-bin histogram.
+   * Useful to find when bonus-claim spikes happen → ops scheduling.
+   * UTC bins to stay consistent with the rest of the dashboard's
+   * time bucketing.
+   */
+  hourOfDayBuckets: Array<{ label: string; count: number; volume: number }>;
 };
 
 async function computeSignupExtras(
@@ -632,6 +693,252 @@ async function computeSignupExtras(
   const dropOffShare =
     cohortSignups > 0 ? (cohortSignups - claimantCount) / cohortSignups : 0;
 
+  // ── Funnel + first-deposit cohort + retention ───────────────────────
+  // Same cohort definition as above (signups in window). Counts:
+  //   - signups        = cohortSignups (already known)
+  //   - claimed        = claimantCount (already known)
+  //   - firstDeposit   = cohort users with at least 1 `deposit` ledger
+  //                      row after signup
+  //   - repeatDeposit  = cohort users with ≥2 `deposit` ledger rows
+  //
+  // Avg first-deposit cohort cuts the same signups by claimant vs
+  // non-claimant, then averages the FIRST deposit per user inside
+  // each cut. One sweep over the cohort suffices.
+  const cohortDepositRows = await db.$queryRawUnsafe<
+    {
+      user_id: string;
+      signed_up_at: Date;
+      had_claim: number;
+      first_deposit_usd: string | null;
+      first_deposit_at: Date | null;
+      deposit_count: string;
+      second_deposit_within_7d: number;
+      second_deposit_within_30d: number;
+    }[]
+  >(`
+    WITH cohort AS (
+      SELECT u.id AS user_id, u.created_at AS signed_up_at
+      FROM "user" u
+      WHERE u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        ${signupDateFilter}
+    ),
+    claimed AS (
+      SELECT DISTINCT c.user_id
+      FROM cohort c
+      JOIN ledger_transactions lt
+        ON lt.user_id = c.user_id
+       AND lt.status = 'completed'
+       AND lt.type = 'balance_reward_claim'
+    ),
+    user_deposits AS (
+      SELECT
+        c.user_id,
+        c.signed_up_at,
+        ARRAY_AGG(lt.created_at ORDER BY lt.created_at ASC) AS deposit_times,
+        ARRAY_AGG(ABS(lt.amount::numeric) ORDER BY lt.created_at ASC) AS deposit_amounts
+      FROM cohort c
+      JOIN ledger_transactions lt
+        ON lt.user_id = c.user_id
+       AND lt.status = 'completed'
+       AND lt.type = 'deposit'
+      GROUP BY c.user_id, c.signed_up_at
+    )
+    SELECT
+      c.user_id,
+      c.signed_up_at,
+      CASE WHEN cl.user_id IS NULL THEN 0 ELSE 1 END AS had_claim,
+      CASE WHEN ud.deposit_amounts IS NULL THEN NULL ELSE (ud.deposit_amounts[1])::text END AS first_deposit_usd,
+      CASE WHEN ud.deposit_times IS NULL THEN NULL ELSE ud.deposit_times[1] END AS first_deposit_at,
+      COALESCE(array_length(ud.deposit_times, 1), 0)::text AS deposit_count,
+      CASE
+        WHEN array_length(ud.deposit_times, 1) >= 2
+         AND ud.deposit_times[2] <= ud.deposit_times[1] + INTERVAL '7 days'
+        THEN 1 ELSE 0 END AS second_deposit_within_7d,
+      CASE
+        WHEN array_length(ud.deposit_times, 1) >= 2
+         AND ud.deposit_times[2] <= ud.deposit_times[1] + INTERVAL '30 days'
+        THEN 1 ELSE 0 END AS second_deposit_within_30d
+    FROM cohort c
+    LEFT JOIN claimed cl ON cl.user_id = c.user_id
+    LEFT JOIN user_deposits ud ON ud.user_id = c.user_id
+  `);
+
+  let firstDepositCount = 0;
+  let repeatDepositCount = 0;
+  const claimantsFD: number[] = [];
+  const nonClaimantsFD: number[] = [];
+  let secondWithin7d = 0;
+  let secondWithin30d = 0;
+  let claimantsWithFirstDeposit = 0;
+  for (const r of cohortDepositRows) {
+    const depCount = Number(r.deposit_count);
+    const hadClaim = Number(r.had_claim) === 1;
+    if (depCount >= 1) {
+      firstDepositCount += 1;
+      const fd = r.first_deposit_usd != null ? toNumber(r.first_deposit_usd) : 0;
+      if (hadClaim) {
+        claimantsFD.push(fd);
+        claimantsWithFirstDeposit += 1;
+      } else {
+        nonClaimantsFD.push(fd);
+      }
+    }
+    if (depCount >= 2) {
+      repeatDepositCount += 1;
+      if (Number(r.second_deposit_within_7d) === 1) secondWithin7d += 1;
+      if (Number(r.second_deposit_within_30d) === 1) secondWithin30d += 1;
+    }
+  }
+  const avg = (arr: number[]) =>
+    arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+  const claimantsAvg = avg(claimantsFD);
+  const nonClaimantsAvg = avg(nonClaimantsFD);
+  const liftPct =
+    nonClaimantsAvg > 0
+      ? ((claimantsAvg - nonClaimantsAvg) / nonClaimantsAvg) * 100
+      : 0;
+  const shareSecondDepositWithin7d =
+    claimantsWithFirstDeposit > 0
+      ? secondWithin7d / claimantsWithFirstDeposit
+      : 0;
+  const shareSecondDepositWithin30d =
+    claimantsWithFirstDeposit > 0
+      ? secondWithin30d / claimantsWithFirstDeposit
+      : 0;
+
+  // Signup source distribution — primary `account.providerId` per
+  // user. Cohort: signups in window. One row per (user, provider)
+  // possible (multi-link accounts), so we pick the first by
+  // created_at to give one provider per user. Unknown users with no
+  // account row → "unknown".
+  const sourceRows = await db.$queryRawUnsafe<
+    { provider: string; cnt: string }[]
+  >(`
+    WITH cohort AS (
+      SELECT u.id AS user_id
+      FROM "user" u
+      WHERE u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        ${signupDateFilter}
+    ),
+    primary_provider AS (
+      SELECT DISTINCT ON (a."userId")
+        a."userId" AS user_id,
+        a."providerId" AS provider
+      FROM account a
+      JOIN cohort c ON c.user_id = a."userId"
+      ORDER BY a."userId", a.created_at ASC NULLS LAST
+    )
+    SELECT
+      COALESCE(pp.provider, 'unknown') AS provider,
+      COUNT(*)::text AS cnt
+    FROM cohort c
+    LEFT JOIN primary_provider pp ON pp.user_id = c.user_id
+    GROUP BY COALESCE(pp.provider, 'unknown')
+    ORDER BY COUNT(*) DESC
+  `);
+  const signupSources = sourceRows.map((r) => ({
+    provider: r.provider,
+    count: Number(r.cnt),
+    share: cohortSignups > 0 ? (Number(r.cnt) / cohortSignups) * 100 : 0,
+  }));
+
+  // Country distribution of CLAIMING cohort — top 6 + "Other"
+  // bucket. Restricted to cohort users with at least one claim (so
+  // the breakdown answers "where do claimants come from", not "where
+  // do signups come from" which is a different question).
+  const countryRows = await db.$queryRawUnsafe<
+    { code: string; cnt: string }[]
+  >(`
+    WITH cohort AS (
+      SELECT u.id AS user_id, COALESCE(u.country_code, '??') AS code
+      FROM "user" u
+      WHERE u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        ${signupDateFilter}
+    ),
+    claimed AS (
+      SELECT DISTINCT lt.user_id
+      FROM ledger_transactions lt
+      WHERE lt.status = 'completed'
+        AND lt.type = 'balance_reward_claim'
+    )
+    SELECT c.code, COUNT(*)::text AS cnt
+    FROM cohort c
+    JOIN claimed cl ON cl.user_id = c.user_id
+    GROUP BY c.code
+    ORDER BY COUNT(*) DESC
+  `);
+  const top6 = countryRows.slice(0, 6);
+  const rest = countryRows.slice(6);
+  const restCount = rest.reduce((acc, r) => acc + Number(r.cnt), 0);
+  const claimantTotalForCountry = countryRows.reduce(
+    (acc, r) => acc + Number(r.cnt),
+    0,
+  );
+  const countryDistribution = [
+    ...top6.map((r) => ({
+      code: r.code,
+      count: Number(r.cnt),
+      share:
+        claimantTotalForCountry > 0
+          ? (Number(r.cnt) / claimantTotalForCountry) * 100
+          : 0,
+    })),
+    ...(restCount > 0
+      ? [
+          {
+            code: "Other",
+            count: restCount,
+            share:
+              claimantTotalForCountry > 0
+                ? (restCount / claimantTotalForCountry) * 100
+                : 0,
+          },
+        ]
+      : []),
+  ];
+
+  // Hour-of-day distribution — 24-bin (UTC). Buckets are claim
+  // events for users in the signup cohort (so the histogram answers
+  // "when do this cohort's bonuses get claimed").
+  const hourRows = await db.$queryRawUnsafe<
+    { hour: number; cnt: string; volume: string }[]
+  >(`
+    WITH cohort AS (
+      SELECT u.id AS user_id
+      FROM "user" u
+      WHERE u.role NOT IN ('admin', 'support') ${blacklistJoin}
+        ${signupDateFilter}
+    )
+    SELECT
+      EXTRACT(HOUR FROM lt.created_at)::int AS hour,
+      COUNT(*)::text AS cnt,
+      COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS volume
+    FROM ledger_transactions lt
+    JOIN cohort c ON c.user_id = lt.user_id
+    WHERE lt.status = 'completed'
+      AND lt.type = 'balance_reward_claim'
+    GROUP BY 1
+    ORDER BY 1
+  `);
+  const hourByIdx = new Map<number, { count: number; volume: number }>();
+  for (const r of hourRows) {
+    hourByIdx.set(Number(r.hour), {
+      count: Number(r.cnt),
+      volume: toNumber(r.volume),
+    });
+  }
+  const hourOfDayBuckets: SignupExtras["hourOfDayBuckets"] = Array.from(
+    { length: 24 },
+    (_, h) => {
+      const row = hourByIdx.get(h) ?? { count: 0, volume: 0 };
+      return {
+        label: h.toString().padStart(2, "0"),
+        count: row.count,
+        volume: row.volume,
+      };
+    },
+  );
+
   return {
     cohortSignups,
     newClaimants: claimantCount,
@@ -639,6 +946,26 @@ async function computeSignupExtras(
     shareClaimWithin24h,
     shareClaimWithin7d,
     dropOffShare,
+    funnel: {
+      signups: cohortSignups,
+      claimed: claimantCount,
+      firstDeposit: firstDepositCount,
+      repeatDeposit: repeatDepositCount,
+    },
+    firstDepositCohort: {
+      claimantsCount: claimantsFD.length,
+      claimantsAvg,
+      nonClaimantsCount: nonClaimantsFD.length,
+      nonClaimantsAvg,
+      liftPct,
+    },
+    retention: {
+      shareSecondDepositWithin7d,
+      shareSecondDepositWithin30d,
+    },
+    signupSources,
+    countryDistribution,
+    hourOfDayBuckets,
   };
 }
 
