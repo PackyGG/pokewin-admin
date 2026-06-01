@@ -158,7 +158,6 @@ async function computeRoi(
     days !== null
       ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'`
       : "";
-  const blacklistSubquery = blacklistNotInClause("id", blacklistIds);
   const blacklistJoin = blacklistNotInClause("u.id", blacklistIds);
 
   // Each category gets a CTE that picks the cost claimants + their
