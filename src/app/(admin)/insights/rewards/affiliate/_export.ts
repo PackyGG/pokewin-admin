@@ -14,6 +14,7 @@ import { getAffiliateCodePerformance } from "@/lib/queries/insights-rewards/affi
 import { getAffiliateCodeSwitch } from "@/lib/queries/insights-rewards/affiliate/code-switch";
 import { getAffiliateGeoBreakdown } from "@/lib/queries/insights-rewards/affiliate/geo";
 import { getInactiveAffiliates } from "@/lib/queries/insights-rewards/affiliate/inactive";
+import { getAffiliateTierDistribution } from "@/lib/queries/insights-rewards/affiliate/tier-distribution";
 
 /**
  * Export gatherer for /insights/rewards/affiliate.
@@ -36,6 +37,7 @@ export async function gatherAffiliateExportSections(
   const [
     overview,
     topWager,
+    tierDistribution,
     lifetimeRoi,
     cohort,
     cadence,
@@ -46,6 +48,7 @@ export async function gatherAffiliateExportSections(
   ] = await Promise.all([
     getAffiliateOverview(period),
     getTopAffiliatesByWager(period),
+    getAffiliateTierDistribution(),
     getAffiliateLifetimeRoi(),
     getAffiliateCohort(period),
     getAffiliateClaimCadence(period),
@@ -101,6 +104,35 @@ export async function gatherAffiliateExportSections(
       r.referredWager,
       r.referredCount,
       r.commissionPaid,
+    ]),
+  });
+
+  // ── Tier distribution ───────────────────────────────────────────
+  // Period-agnostic (lifetime): tier is computed from each affiliate's
+  // lifetime referred wager vs the affiliate_level_configs threshold
+  // ladder (no stored level column exists in prod). Commission paid is
+  // house cost; referred wager is house-positive.
+  sections.push({
+    name: "Affiliate Tier Distribution (lifetime)",
+    columns: [
+      "Level",
+      "Label",
+      "Commission rate",
+      "Wager threshold (USD)",
+      "Affiliate count",
+      "% of all affiliates",
+      "Total referred wager (USD)",
+      "Total commission paid (USD)",
+    ],
+    rows: tierDistribution.rows.map((r) => [
+      r.level,
+      r.label,
+      r.commissionRate,
+      r.threshold,
+      r.affiliateCount,
+      r.sharePct,
+      r.totalReferredWager,
+      r.totalCommissionPaid,
     ]),
   });
 

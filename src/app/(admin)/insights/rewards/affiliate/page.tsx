@@ -25,12 +25,14 @@ import { AffiliateGeoTab } from "./_components/geo-tab";
 import { AffiliateLifetimeRoiTab } from "./_components/lifetime-roi-tab";
 import { AffiliateCadenceTab } from "./_components/cadence-tab";
 import { AffiliateCodeSwitchTab } from "./_components/code-switch-tab";
+import { AffiliateTierDistributionTab } from "./_components/tier-distribution-tab";
 
 export const metadata = { title: "Affiliate Insights" };
 
 type Tab =
   | "overview"
   | "top-wager"
+  | "tier-distribution"
   | "cohort"
   | "inactive"
   | "code-perf"
@@ -42,6 +44,7 @@ type Tab =
 function parseTab(value: string | undefined): Tab {
   switch (value) {
     case "top-wager":
+    case "tier-distribution":
     case "cohort":
     case "inactive":
     case "code-perf":
@@ -64,13 +67,15 @@ function parseTab(value: string | undefined): Tab {
  * Tabs:
  *   1. Overview        — KPI strip + daily commission area chart + ROI
  *   2. Top by wager    — top 25 by referred-cohort wager (activity lens)
- *   3. Cohort          — per-affiliate cohort conversion + retention
- *   4. Inactive        — affiliates with referrals but no claim in window
- *   5. Code funnel     — click → signup → first deposit → wager per code
- *   6. Geo             — affiliate geo + referred-user geo
- *   7. Lifetime ROI    — per-affiliate lifetime ROI from affiliate_accounts
- *   8. Claim cadence   — per-affiliate claim repeat rhythm
- *   9. Code-switch     — cohorts that disproportionately moved to other codes
+ *   3. Tier distrib.   — affiliate count per level (1–8), computed from
+ *                        lifetime referred wager vs the config ladder
+ *   4. Cohort          — per-affiliate cohort conversion + retention
+ *   5. Inactive        — affiliates with referrals but no claim in window
+ *   6. Code funnel     — click → signup → first deposit → wager per code
+ *   7. Geo             — affiliate geo + referred-user geo
+ *   8. Lifetime ROI    — per-affiliate lifetime ROI from affiliate_accounts
+ *   9. Claim cadence   — per-affiliate claim repeat rhythm
+ *  10. Code-switch     — cohorts that disproportionately moved to other codes
  *
  * House-POV: every dollar of commission is house cost → rose. Every
  * dollar of downstream wager is house-positive (we take the rake) →
@@ -140,6 +145,8 @@ async function TabContent({
       return <AffiliateOverviewTab period={period} />;
     case "top-wager":
       return <AffiliateTopWagerTab period={period} />;
+    case "tier-distribution":
+      return <AffiliateTierDistributionTab />;
     case "cohort":
       return <AffiliateCohortTab period={period} />;
     case "inactive":
