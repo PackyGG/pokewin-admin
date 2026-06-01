@@ -55,7 +55,9 @@ export async function adjustRainBase(rainId: string, newBaseAmount: number) {
  */
 export async function updateRainConfig(input: {
   defaultBaseAmountUsd?: number;
+  liveBaseAmountUsd?: number;
   durationMinutes?: number;
+  frequencyMs?: number;
 }) {
   const db = await getDb();
   const session = await requirePageAccess("/rain");
@@ -89,6 +91,25 @@ export async function updateRainConfig(input: {
     });
   }
 
+  if (input.liveBaseAmountUsd !== undefined) {
+    if (
+      !Number.isFinite(input.liveBaseAmountUsd) ||
+      input.liveBaseAmountUsd < 0
+    ) {
+      throw new Error("Live base amount must be a non-negative number");
+    }
+    const existing = await db.site_config.findUnique({
+      where: { key: RAIN_CONFIG_KEYS.liveBaseAmount },
+      select: { value: true },
+    });
+    toUpsert.push({
+      key: RAIN_CONFIG_KEYS.liveBaseAmount,
+      value: String(input.liveBaseAmountUsd),
+      description: "Base rain amount",
+      oldValue: existing?.value ?? null,
+    });
+  }
+
   if (input.durationMinutes !== undefined) {
     if (
       !Number.isInteger(input.durationMinutes) ||
@@ -104,6 +125,28 @@ export async function updateRainConfig(input: {
       key: RAIN_CONFIG_KEYS.durationMinutes,
       value: String(input.durationMinutes),
       description: "Duration in minutes between rain starts_at and ends_at",
+      oldValue: existing?.value ?? null,
+    });
+  }
+
+  if (input.frequencyMs !== undefined) {
+    if (
+      !Number.isInteger(input.frequencyMs) ||
+      input.frequencyMs < 60000 ||
+      input.frequencyMs > 86400000
+    ) {
+      throw new Error(
+        "Frequency must be an integer between 60000 ms (1 min) and 86400000 ms (24h)",
+      );
+    }
+    const existing = await db.site_config.findUnique({
+      where: { key: RAIN_CONFIG_KEYS.frequencyMs },
+      select: { value: true },
+    });
+    toUpsert.push({
+      key: RAIN_CONFIG_KEYS.frequencyMs,
+      value: String(input.frequencyMs),
+      description: "How frequent rains are. Default is each hour 3600000ms",
       oldValue: existing?.value ?? null,
     });
   }

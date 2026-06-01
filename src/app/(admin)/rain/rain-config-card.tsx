@@ -17,52 +17,82 @@ import { updateRainConfig } from "./actions";
 
 /**
  * Rain config editor. Reads initial values from the server component
- * (site_config table) and lets an admin update the defaults applied
- * to newly created rain instances.
+ * (site_config table) and lets an admin update all four rain-related
+ * site_config keys in one place.
  *
- * Both fields are optional on submit — only the values that changed
- * are sent through so the audit event records exactly what the admin
- * touched, not a full overwrite.
+ * Only fields the admin actually changed are sent to the server action,
+ * so the audit event records exactly what was touched instead of a
+ * full overwrite of every key.
  */
 export function RainConfigCard({
   initial,
 }: {
   initial: {
     defaultBaseAmountUsd: number | null;
+    liveBaseAmountUsd: number | null;
     durationMinutes: number | null;
+    frequencyMs: number | null;
   };
 }) {
   const [isPending, startTransition] = useTransition();
-  const [baseAmount, setBaseAmount] = useState(
+  const [defaultBaseAmount, setDefaultBaseAmount] = useState(
     initial.defaultBaseAmountUsd != null
       ? String(initial.defaultBaseAmountUsd)
+      : "",
+  );
+  const [liveBaseAmount, setLiveBaseAmount] = useState(
+    initial.liveBaseAmountUsd != null
+      ? String(initial.liveBaseAmountUsd)
       : "",
   );
   const [durationMinutes, setDurationMinutes] = useState(
     initial.durationMinutes != null ? String(initial.durationMinutes) : "",
   );
+  const [frequencyMs, setFrequencyMs] = useState(
+    initial.frequencyMs != null ? String(initial.frequencyMs) : "",
+  );
 
-  const baseAmountChanged =
-    baseAmount.trim() !== "" &&
-    Number(baseAmount) !== initial.defaultBaseAmountUsd;
+  const defaultBaseChanged =
+    defaultBaseAmount.trim() !== "" &&
+    Number(defaultBaseAmount) !== initial.defaultBaseAmountUsd;
+  const liveBaseChanged =
+    liveBaseAmount.trim() !== "" &&
+    Number(liveBaseAmount) !== initial.liveBaseAmountUsd;
   const durationChanged =
     durationMinutes.trim() !== "" &&
     Number(durationMinutes) !== initial.durationMinutes;
-  const dirty = baseAmountChanged || durationChanged;
+  const frequencyChanged =
+    frequencyMs.trim() !== "" && Number(frequencyMs) !== initial.frequencyMs;
+  const dirty =
+    defaultBaseChanged ||
+    liveBaseChanged ||
+    durationChanged ||
+    frequencyChanged;
 
   function handleSave() {
     const payload: {
       defaultBaseAmountUsd?: number;
+      liveBaseAmountUsd?: number;
       durationMinutes?: number;
+      frequencyMs?: number;
     } = {};
 
-    if (baseAmountChanged) {
-      const n = Number(baseAmount);
+    if (defaultBaseChanged) {
+      const n = Number(defaultBaseAmount);
       if (!Number.isFinite(n) || n < 0) {
         toast.error("Default base amount must be a non-negative number");
         return;
       }
       payload.defaultBaseAmountUsd = n;
+    }
+
+    if (liveBaseChanged) {
+      const n = Number(liveBaseAmount);
+      if (!Number.isFinite(n) || n < 0) {
+        toast.error("Live base amount must be a non-negative number");
+        return;
+      }
+      payload.liveBaseAmountUsd = n;
     }
 
     if (durationChanged) {
@@ -72,6 +102,17 @@ export function RainConfigCard({
         return;
       }
       payload.durationMinutes = n;
+    }
+
+    if (frequencyChanged) {
+      const n = Number(frequencyMs);
+      if (!Number.isInteger(n) || n < 60000 || n > 86400000) {
+        toast.error(
+          "Frequency must be a whole number of milliseconds between 60000 (1 min) and 86400000 (24h)",
+        );
+        return;
+      }
+      payload.frequencyMs = n;
     }
 
     if (Object.keys(payload).length === 0) return;
@@ -91,10 +132,12 @@ export function RainConfigCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-sm font-medium">Rain Defaults</CardTitle>
+        <CardTitle className="text-sm font-medium">Rain Configuration</CardTitle>
         <CardDescription>
-          Values written to <code className="rounded bg-muted px-1 text-[11px]">site_config</code>{" "}
-          and applied to newly created rain instances.
+          All four rain-related keys in{" "}
+          <code className="rounded bg-muted px-1 text-[11px]">site_config</code>{" "}
+          are managed here. Saving upserts the value and pings the backend so
+          its cache reloads.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -109,31 +152,55 @@ export function RainConfigCard({
               <code className="rounded bg-amber-500/10 px-1">site_config</code>{" "}
               and pings the backend via{" "}
               <code className="rounded bg-amber-500/10 px-1">/admin/refresh_site_config</code>.
-              The new values only take effect once the game backend is
-              actually wired to consume <code>rain_default_base_amount</code>{" "}
-              and <code>rain_duration_minutes</code>. If the backend still
-              hardcodes the defaults, changes here will persist in the DB
-              but have no runtime effect.
+              The new values only take effect once the game backend actually
+              consumes the four keys (<code>rain_base_amount_usd</code>,{" "}
+              <code>rain_default_base_amount</code>,{" "}
+              <code>rain_duration_minutes</code>, <code>rain_duration_ms</code>).
+              Note: <code>rain_duration_minutes</code> is the duration of one
+              rain (starts_at → ends_at), while <code>rain_duration_ms</code>{" "}
+              is the frequency BETWEEN rains.
             </p>
           </div>
         </div>
 
         <div className="grid gap-4 md:grid-cols-2">
           <div className="space-y-2">
-            <Label htmlFor="rain-base-amount">Default base amount (USD)</Label>
+            <Label htmlFor="rain-live-base-amount">
+              Live base amount (USD)
+            </Label>
             <Input
-              id="rain-base-amount"
+              id="rain-live-base-amount"
               type="number"
               step="0.01"
               min="0"
-              value={baseAmount}
-              onChange={(e) => setBaseAmount(e.target.value)}
+              value={liveBaseAmount}
+              onChange={(e) => setLiveBaseAmount(e.target.value)}
               placeholder="2.00"
               disabled={isPending}
             />
             <p className="text-[11px] text-muted-foreground">
-              Seeds the <code>base_amount_usd</code> column on new rains.
-              Key: <code>rain_default_base_amount</code>
+              Active baseline rain pot. Backend reads this when starting a
+              rain. Key: <code>rain_base_amount_usd</code>
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="rain-default-base-amount">
+              Default base amount (USD)
+            </Label>
+            <Input
+              id="rain-default-base-amount"
+              type="number"
+              step="0.01"
+              min="0"
+              value={defaultBaseAmount}
+              onChange={(e) => setDefaultBaseAmount(e.target.value)}
+              placeholder="2.00"
+              disabled={isPending}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Seeds the <code>base_amount_usd</code> column on newly created
+              rains. Key: <code>rain_default_base_amount</code>
             </p>
           </div>
 
@@ -152,6 +219,25 @@ export function RainConfigCard({
             <p className="text-[11px] text-muted-foreground">
               Sets <code>ends_at = starts_at + N minutes</code> on new rains.
               Key: <code>rain_duration_minutes</code>
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="rain-frequency">Frequency (ms between rains)</Label>
+            <Input
+              id="rain-frequency"
+              type="number"
+              step="1"
+              min="60000"
+              max="86400000"
+              value={frequencyMs}
+              onChange={(e) => setFrequencyMs(e.target.value)}
+              placeholder="3600000"
+              disabled={isPending}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Time between two rain starts in milliseconds. 3600000 = 1h,
+              10800000 = 3h. Key: <code>rain_duration_ms</code>
             </p>
           </div>
         </div>

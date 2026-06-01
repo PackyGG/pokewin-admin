@@ -163,25 +163,35 @@ async function ConfigTab() {
   // input so the admin can set them for the first time.
   const values = await getSiteConfigValues([
     RAIN_CONFIG_KEYS.defaultBaseAmount,
+    RAIN_CONFIG_KEYS.liveBaseAmount,
     RAIN_CONFIG_KEYS.durationMinutes,
+    RAIN_CONFIG_KEYS.frequencyMs,
   ]);
 
-  const rawBase = values[RAIN_CONFIG_KEYS.defaultBaseAmount];
-  const rawDuration = values[RAIN_CONFIG_KEYS.durationMinutes];
+  function parseNumber(raw: string | undefined): number | null {
+    return raw != null && raw !== "" && Number.isFinite(Number(raw))
+      ? Number(raw)
+      : null;
+  }
 
-  const defaultBaseAmountUsd =
-    rawBase != null && rawBase !== "" && Number.isFinite(Number(rawBase))
-      ? Number(rawBase)
-      : null;
-  const durationMinutes =
-    rawDuration != null && rawDuration !== "" && Number.isFinite(Number(rawDuration))
-      ? Number(rawDuration)
-      : null;
+  const defaultBaseAmountUsd = parseNumber(
+    values[RAIN_CONFIG_KEYS.defaultBaseAmount],
+  );
+  const liveBaseAmountUsd = parseNumber(
+    values[RAIN_CONFIG_KEYS.liveBaseAmount],
+  );
+  const durationMinutes = parseNumber(values[RAIN_CONFIG_KEYS.durationMinutes]);
+  const frequencyMs = parseNumber(values[RAIN_CONFIG_KEYS.frequencyMs]);
 
   return (
     <FadeIn>
       <RainConfigCard
-        initial={{ defaultBaseAmountUsd, durationMinutes }}
+        initial={{
+          defaultBaseAmountUsd,
+          liveBaseAmountUsd,
+          durationMinutes,
+          frequencyMs,
+        }}
       />
     </FadeIn>
   );

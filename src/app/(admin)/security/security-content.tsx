@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
@@ -17,7 +18,7 @@ import {
 } from "@/components/ui/table";
 import { upsertSiteConfig, deleteSiteConfig } from "./actions";
 import type { SiteConfigRow } from "@/lib/queries/security";
-import { Trash2, SlidersHorizontal, Plus } from "lucide-react";
+import { CloudRain, Trash2, SlidersHorizontal, Plus } from "lucide-react";
 import { SectionHeading } from "@/components/modern-panels";
 import { EmptyState } from "@/components/empty-state";
 
@@ -25,7 +26,13 @@ function isBoolean(value: string) {
   return value === "true" || value === "false";
 }
 
-export function SecurityContent({ config }: { config: SiteConfigRow[] }) {
+export function SecurityContent({
+  config,
+  rainConfigMoved = false,
+}: {
+  config: SiteConfigRow[];
+  rainConfigMoved?: boolean;
+}) {
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
 
@@ -85,6 +92,25 @@ export function SecurityContent({ config }: { config: SiteConfigRow[] }) {
     <div className="space-y-6">
       <div className="space-y-3">
         <SectionHeading icon={SlidersHorizontal} title="Site Configuration" />
+        {rainConfigMoved && (
+          <div className="flex items-center gap-2 rounded-md border border-blue-500/40 bg-blue-500/10 p-3 text-xs text-blue-600 dark:text-blue-400">
+            <CloudRain className="size-4 shrink-0" />
+            <span>
+              Rain configuration moved to{" "}
+              <Link
+                href="/rain?tab=config"
+                className="font-medium underline-offset-2 hover:underline"
+              >
+                /rain?tab=config
+              </Link>
+              . Keys <code>rain_base_amount_usd</code>,{" "}
+              <code>rain_default_base_amount</code>,{" "}
+              <code>rain_duration_minutes</code>, and{" "}
+              <code>rain_duration_ms</code> are managed there to avoid
+              double-editing.
+            </span>
+          </div>
+        )}
         <div className="rounded-md border overflow-x-auto">
           <Table>
             <TableHeader>
