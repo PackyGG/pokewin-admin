@@ -56,24 +56,18 @@ export async function UsersTab({
           title="Top wagerers"
           icon={Trophy}
           rows={data.topWagerers}
-          metric="wager"
-          tone="emerald"
         />
 
         <Leaderboard
           title="Top winners (user POV — house loss)"
           icon={Crown}
           rows={data.topWinners}
-          metric="userWin"
-          tone="rose"
         />
 
         <Leaderboard
           title="Top losers (user POV — house gain)"
           icon={Frown}
           rows={data.topLosers}
-          metric="houseGain"
-          tone="emerald"
         />
       </div>
     </FadeIn>
@@ -84,34 +78,16 @@ function Leaderboard({
   title,
   icon: Icon,
   rows,
-  metric,
-  tone,
 }: {
   title: string;
   icon: typeof Trophy;
   rows: GamesLeaderboardRow[];
-  metric: "wager" | "userWin" | "houseGain";
-  tone: "emerald" | "rose";
+  // `metric` / `tone` props removed — the headline column is ALWAYS
+  // House P&L now (was previously duplicating the sort column on the
+  // Top Wagerers board). Per-row coloring follows the sign of P&L
+  // under the house-POV rule (positive = house profit = emerald,
+  // negative = house loss = rose).
 }) {
-  // metric drives BOTH the headline column and the color rule on
-  // it. Color tone is house-POV (caller sets it explicitly).
-  const headline = (r: GamesLeaderboardRow): number => {
-    switch (metric) {
-      case "wager":
-        return r.wager;
-      case "userWin":
-        return r.payouts - r.wager;
-      case "houseGain":
-        return r.pnl;
-    }
-  };
-  const headlineLabel =
-    metric === "wager" ? "Wager" : metric === "userWin" ? "Net win" : "House gain";
-  const headlineColor =
-    tone === "emerald"
-      ? "text-emerald-600 dark:text-emerald-400"
-      : "text-rose-600 dark:text-rose-400";
-
   return (
     <div className="space-y-3">
       <SectionHeading icon={Icon} title={title} />
@@ -130,7 +106,7 @@ function Leaderboard({
                   <th className="px-3 py-2 text-right font-semibold">Plays</th>
                   <th className="px-3 py-2 text-right font-semibold">Wager</th>
                   <th className="px-3 py-2 text-right font-semibold">Payout</th>
-                  <th className="px-3 py-2 text-right font-semibold">{headlineLabel}</th>
+                  <th className="px-3 py-2 text-right font-semibold">House P&amp;L</th>
                 </tr>
               </thead>
               <tbody>
@@ -173,8 +149,15 @@ function Leaderboard({
                     <td className="px-3 py-2 text-right tabular-nums text-rose-600 dark:text-rose-400">
                       {formatCompactUsd(r.payouts)}
                     </td>
-                    <td className={`px-3 py-2 text-right tabular-nums font-medium ${headlineColor}`}>
-                      {formatCompactUsd(headline(r))}
+                    <td
+                      className={`px-3 py-2 text-right tabular-nums font-medium ${
+                        r.pnl >= 0
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-rose-600 dark:text-rose-400"
+                      }`}
+                    >
+                      {r.pnl >= 0 ? "+" : ""}
+                      {formatCompactUsd(r.pnl)}
                     </td>
                   </tr>
                 ))}
