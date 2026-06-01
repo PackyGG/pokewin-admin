@@ -39,6 +39,32 @@ export type ChangelogChange = {
   text: string;
 };
 
+/**
+ * One touched file in a commit, for the auto-entry "Files" disclosure.
+ * `status` mirrors `git log --name-status` letters (A/M/D/R/C/T/U/X/B)
+ * — kept as a free string rather than a union so an unexpected status
+ * letter (e.g. `R100` for a 100%-similar rename) can't crash the
+ * renderer; the card maps the FIRST letter to a label/color and shows
+ * the rest verbatim.
+ *
+ * Only populated for auto entries derived from the build-time JSON
+ * (`scripts/generate-changelog.mjs` captures `--name-status`). The
+ * runtime GitHub list-commits path does NOT include per-file data
+ * (that would cost one extra API call per commit), so `files` is
+ * empty there — the renderer degrades gracefully.
+ */
+export type ChangelogFile = {
+  /** Repo-relative path, e.g. "src/lib/queries/changelog.ts". */
+  path: string;
+  /** Single-letter git status (A=added, M=modified, D=deleted, R=renamed, …). */
+  status: string;
+  /** Lines added to this file (`git log --numstat`). `null` for binary
+   *  files or when the numstat pass wasn't available. */
+  additions?: number | null;
+  /** Lines deleted from this file. `null` for binary / unavailable. */
+  deletions?: number | null;
+};
+
 export type ChangelogEntry = {
   id: string;
   publishedAt: string;
@@ -59,6 +85,28 @@ export type ChangelogEntry = {
    * `null` for admin-curated DB rows where the concept doesn't apply.
    */
   filesChanged?: number | null;
+  /**
+   * Conventional-commit scope parsed from the subject — `feat(insights/games): x`
+   * → `"insights/games"`. Rendered as an "area" badge next to the
+   * category badge. `null` when the subject had no `(scope)` segment
+   * (also null for admin-curated DB rows). Distinct from the title's
+   * inline `scope:` prefix so the badge stays consistent even when the
+   * title is reverted / non-conventional.
+   */
+  scope?: string | null;
+  /**
+   * Per-file change list for the auto-entry "Files" disclosure. Capped
+   * at ~20 entries upstream to bound the payload. Empty (`[]`) when the
+   * source didn't carry file data (runtime GitHub path, or an older
+   * committed JSON written before file capture landed). `undefined` for
+   * admin-curated DB rows.
+   */
+  files?: ChangelogFile[];
+  /** Lines added across the commit (`--shortstat` rollup / GitHub
+   *  `stats.additions`). `null` when unavailable. */
+  additions?: number | null;
+  /** Lines deleted across the commit. `null` when unavailable. */
+  deletions?: number | null;
 };
 
 export type ChangelogStats = {

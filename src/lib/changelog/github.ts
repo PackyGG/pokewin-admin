@@ -43,6 +43,17 @@ import "server-only";
  * No external dependencies — uses the built-in `fetch` (Node 20+).
  */
 
+/** A single touched file. Mirrors the on-disk JSON `files[]` shape so a
+ *  caller can map GitHub + JSON entries through one normaliser. The list
+ *  endpoint never carries per-file data, so the GitHub path always emits
+ *  `[]` here — kept on the type for shape parity with the JSON source. */
+export type GitHubCommitFile = {
+  path: string;
+  status: string;
+  additions: number | null;
+  deletions: number | null;
+};
+
 /** Shape exposed to the changelog query helper. Matches the on-disk
  *  JSON entry shape one-for-one so the caller can swap sources without
  *  any further normalisation. */
@@ -56,6 +67,21 @@ export type GitHubCommitEntry = {
    *  intentionally don't follow per-commit detail links to keep the
    *  request count at exactly one). */
   filesChanged: number | null;
+  /** Conventional-commit scope parsed from the subject (free — no extra
+   *  API call). `null` when the subject isn't conventional / has no
+   *  `(scope)`. */
+  scope: string | null;
+  /** Lines added across the commit. Always `null` on the GitHub list
+   *  path — `stats` only comes from the single-commit endpoint, which we
+   *  don't follow (N extra calls). The JSON fallback carries real values. */
+  additions: number | null;
+  /** Lines deleted across the commit. Always `null` on the GitHub list
+   *  path (see `additions`). */
+  deletions: number | null;
+  /** Per-file change list. Always `[]` on the GitHub list path — the
+   *  list endpoint omits `files[]` (it's single-commit only). The JSON
+   *  fallback carries the real list. */
+  files: GitHubCommitFile[];
 };
 
 /**
@@ -129,6 +155,25 @@ function shouldKeep(subject: string): boolean {
     if (re.test(subject)) return false;
   }
   return true;
+}
+
+/**
+ * Conventional-commit subject matcher — group 3 is the `(scope)`.
+ * Kept in sync by hand with `CONVENTIONAL_RE` in
+ * `src/lib/queries/changelog.ts` and `scripts/generate-changelog.mjs`.
+ */
+const CONVENTIONAL_RE =
+  /^(feat|fix|perf|refactor|chore|docs|style|test|build|ci|revert|nav|ux)(\(([^)]*)\))?\s*:\s*(.+)$/i;
+
+/**
+ * Pull the conventional-commit scope out of a subject. Returns null when
+ * the subject isn't conventional or has no `(scope)` segment.
+ *   "feat(insights/games): foo" → "insights/games"
+ *   "nav: move thing"            → null
+ */
+function parseScope(subject: string): string | null {
+  const scope = subject.match(CONVENTIONAL_RE)?.[3]?.trim();
+  return scope && scope.length > 0 ? scope : null;
 }
 
 /**
@@ -347,11 +392,17 @@ export async function getLatestCommitsFromGitHub(
       iso,
       subject,
       body,
-      // The list endpoint does NOT include per-commit stats; pulling
-      // them would require N additional API calls (one GET per commit
-      // detail link). Not worth the rate-limit cost — the renderer
-      // treats `null` as "stat unavailable" and just hides the chip.
+      // The list endpoint does NOT include per-commit stats or file
+      // lists; pulling them would require N additional API calls (one
+      // GET per commit detail link). Not worth the rate-limit cost — the
+      // renderer treats `null` / `[]` as "unavailable" and just hides
+      // those chips. Scope is parsed from the subject, so it's free even
+      // on the live path.
       filesChanged: null,
+      scope: parseScope(subject),
+      additions: null,
+      deletions: null,
+      files: [],
     });
   }
 

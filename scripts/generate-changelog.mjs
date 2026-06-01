@@ -68,6 +68,12 @@ const OUTPUT_PATH = path.join(
 );
 
 const MAX_COMMITS = 80;
+// Per-commit file-list cap. Keeps the committed JSON bounded for a
+// sweeping commit (a tree-wide refactor can touch hundreds of files).
+// The renderer shows "+N more" when a commit's real file count exceeds
+// what we stored. 20 is enough to convey the shape of a commit without
+// bloating the payload.
+const MAX_FILES_PER_COMMIT = 20;
 const DRY = process.argv.includes("--dry");
 
 // Commits whose subject matches any of these patterns are filtered out.
@@ -92,57 +98,103 @@ function shouldKeep(subject) {
   return true;
 }
 
+// Conventional-commit subject matcher — used to pull the (scope) out of
+// e.g. `feat(insights/games): foo`. Mirrors the runtime regex in
+// `src/lib/queries/changelog.ts::CONVENTIONAL_RE` (kept in sync by
+// hand — both are intentionally narrow). Group 3 is the scope.
+const CONVENTIONAL_RE =
+  /^(feat|fix|perf|refactor|chore|docs|style|test|build|ci|revert|nav|ux)(\(([^)]*)\))?\s*:\s*(.+)$/i;
+
 /**
- * Run `git log` and return a list of `{ sha, iso, subject, body, filesChanged }`
+ * Pull the conventional-commit scope out of a subject. Returns null when
+ * the subject isn't conventional or has no `(scope)` segment.
+ *   "feat(insights/games): foo" → "insights/games"
+ *   "nav: move thing"            → null
+ *   "plain subject"              → null
+ */
+function parseScope(subject) {
+  const m = subject.match(CONVENTIONAL_RE);
+  const scope = m?.[3]?.trim();
+  return scope && scope.length > 0 ? scope : null;
+}
+
+/**
+ * Run `git log` and return a list of
+ * `{ sha, iso, subject, body, filesChanged, additions, deletions, files }`
  * objects, newest first.
  *
- * Output format uses NUL (`\0`) as the BETWEEN-RECORD separator via `-z`,
- * and `\x1f` (ASCII unit separator) as the WITHIN-RECORD field separator.
- * This sidesteps the entire class of "commit subject contains the delimiter"
- * bugs that piped/CSV formats run into — commit subjects and bodies never
- * contain NUL or `\x1f`, but they routinely contain pipes, commas, and
- * newlines.
+ * Records are delimited by `\x1e` (ASCII RECORD separator) emitted at
+ * the START of each commit's pretty-format, and fields WITHIN the
+ * pretty-format by `\x1f` (ASCII UNIT separator). Commit subjects and
+ * bodies never contain `\x1e` / `\x1f` but routinely contain pipes,
+ * commas, tabs, and newlines — so this sidesteps the entire class of
+ * "delimiter appears in the message" bugs.
  *
- * Per-record layout (with `--shortstat`):
- *   <sha>\x1f<iso>\x1f<subject>\x1f<body>\x1f\n
- *    N files changed, M insertions(+), K deletions(-)\n
- *   \0
+ * We run TWO `git log` passes and merge them by SHA:
  *
- * The body field can contain newlines (commit message bodies routinely
- * do). The shortstat line is emitted by git AFTER the format expansion
- * and is the only line in the record that starts with a leading space
- * and ends in "deletions(-)", "insertions(+)", or "file changed".
+ *   1. `--name-status` — gives the per-file STATUS letter (A/M/D/R/…)
+ *      and path, plus the subject / body / iso fields.
+ *   2. `--numstat`     — gives `<added>\t<deleted>\t<path>` per file.
+ *
+ * Git applies only ONE diff-output format per invocation (the last
+ * `--name-status` / `--numstat` / `--shortstat` wins), so a single pass
+ * CANNOT yield both the status letter AND the +/- counts. Rather than
+ * GUESS a status from numstat (ambiguous: `12\t0\tx` could be an add or
+ * a modify), we take the status from pass 1 and the counts from pass 2
+ * and join on `(sha, path)`. Both passes are local, run once at build
+ * time, so the doubled `git log` cost is negligible.
+ *
+ * We deliberately DON'T use `git log -z`: with `-z`, the diff formats
+ * switch to NUL-delimited path output which collides with the
+ * inter-record NUL. Without `-z` the formats stay newline/tab
+ * delimited, and the `\x1e` record sentinel handles the multi-line
+ * body block.
+ *
+ * Per-record layout (pass 1, `--name-status`):
+ *   \x1e<sha>\x1f<iso>\x1f<subject>\x1f<body>\x1f\n
+ *   M\tpath/one\n
+ *   A\tpath/two\n
+ *   R100\told/path\tnew/path\n
+ *
+ * Per-record layout (pass 2, `--numstat`):
+ *   \x1e<sha>\n
+ *   12\t3\tpath/one\n
+ *   40\t0\tpath/two\n
+ *   -\t-\tpath/binary\n          (binary files report "-" for both)
  *
  * We hand the format string off as a SINGLE argv slot via execFileSync
  * (not execSync) so cmd.exe on Windows doesn't try to interpret the
- * `\x1f` / `\0` bytes — execFileSync sidesteps the shell entirely.
+ * `\x1e` / `\x1f` bytes — execFileSync sidesteps the shell entirely.
  */
 function readCommits() {
+  // ---- Pass 2 first: numstat counts keyed by SHA → Map<sha, …> --------
+  // Built before the primary pass so the primary loop can look up counts
+  // as it assembles each entry.
+  const numstatBySha = readNumstat();
+
+  // ---- Pass 1: name-status (primary — subject/body/iso/files+status) --
   // %h = abbreviated SHA, %aI = author ISO-8601 strict, %s = subject,
-  // %b = body. --shortstat appends "N files changed, M insertions, ..."
-  // on its own line per commit. -z swaps the inter-commit newline for
-  // NUL so bodies + shortstats can both contain newlines without
-  // tripping the record split.
+  // %b = body. A leading %x1e marks the start of each record so the
+  // multi-line body block can't be mistaken for a new commit.
   const raw = execFileSync(
     "git",
     [
       "log",
-      "-z",
       "--no-merges",
-      "--shortstat",
+      "--name-status",
       `-${MAX_COMMITS}`,
-      "--pretty=format:%h\x1f%aI\x1f%s\x1f%b\x1f",
+      "--pretty=format:%x1e%h\x1f%aI\x1f%s\x1f%b\x1f",
     ],
     { cwd: REPO_ROOT, encoding: "utf8", maxBuffer: 8 * 1024 * 1024 },
   );
 
   const entries = [];
-  for (const record of raw.split("\0")) {
-    if (!record) continue;
+  for (const record of raw.split("\x1e")) {
+    if (!record.trim()) continue;
 
     // First four fields are SHA / ISO / subject / body. Anything after
-    // the 4th `\x1f` is the shortstat tail (which itself contains no
-    // `\x1f`, so a regular split with limit=5 captures everything).
+    // the 4th `\x1f` is the name-status tail (which itself contains no
+    // `\x1f`, so a regular split captures everything).
     const fields = record.split("\x1f");
     if (fields.length < 4) continue;
 
@@ -153,27 +205,160 @@ function readCommits() {
     // first-class signal (subject-only commit) that the renderer can
     // distinguish from missing data.
     const body = (fields[3] ?? "").trim();
-    // Tail = everything after the 4th `\x1f`. With `--shortstat` this is
-    // a newline + " N files changed, M insertions(+), K deletions(-)\n".
-    // Without `--shortstat` (or for commits that touched zero files,
-    // which `git log` skips by default) it'll be empty.
+    // Tail = everything after the 4th `\x1f`: the newline-delimited
+    // `<STATUS>\t<path>` lines. Empty for a commit that touched zero
+    // tracked files.
     const tail = fields.slice(4).join("\x1f");
 
     if (!sha || !iso || !subject) continue;
     if (!shouldKeep(subject)) continue;
 
-    // Parse "N files changed" out of the shortstat tail. Regex is
-    // permissive — git localises "file" vs "files" but never "changed"
-    // in C locale builds, so anchoring on `\d+ files? changed` is safe.
-    // Returns null when no shortstat is present (e.g. the JSON-only
-    // initial commit that doesn't touch a tracked file).
-    const filesMatch = tail.match(/(\d+)\s+files?\s+changed/);
-    const filesChanged = filesMatch ? Number(filesMatch[1]) : null;
+    const statusFiles = parseNameStatus(tail);
+    const numstat = numstatBySha.get(sha) ?? null;
 
-    entries.push({ sha, iso, subject, body, filesChanged });
+    // Merge per-file counts (pass 2) onto the status list (pass 1) by
+    // path. A path present in name-status but missing from numstat
+    // (shouldn't happen, but defends against a parse edge) keeps null
+    // counts. `filesChanged` = TRUE file count (pre-cap) so the renderer
+    // can show an accurate "+N more".
+    const totalFiles = statusFiles.length;
+    const files = statusFiles.slice(0, MAX_FILES_PER_COMMIT).map((f) => {
+      const counts = numstat?.perFile.get(f.path);
+      return {
+        path: f.path,
+        status: f.status,
+        additions: counts ? counts.additions : null,
+        deletions: counts ? counts.deletions : null,
+      };
+    });
+
+    entries.push({
+      sha,
+      iso,
+      subject,
+      body,
+      filesChanged: totalFiles > 0 ? totalFiles : null,
+      additions: numstat ? numstat.additions : null,
+      deletions: numstat ? numstat.deletions : null,
+      files,
+      scope: parseScope(subject),
+    });
   }
 
   return entries;
+}
+
+/**
+ * Pass 2: read `git log --numstat` and return a
+ * `Map<sha, { additions, deletions, perFile: Map<path, {additions, deletions}> }>`.
+ *
+ * numstat line shape: `<added>\t<deleted>\t<path>`. Binary files report
+ * `-` for both counts — we treat those as 0 for the per-file +/- (a
+ * binary blob has no meaningful line count) but they still count toward
+ * `filesChanged` via the name-status pass.
+ *
+ * Rename lines can appear as `<a>\t<d>\t{old => new}` or
+ * `<a>\t<d>\told\tnew` depending on git config; we normalise the path to
+ * the post-commit form so it joins against the name-status destination
+ * path. A rename with no content change shows `0\t0\t…` and is skipped
+ * from the per-file map (no counts to show) but its rollup adds zero.
+ */
+function readNumstat() {
+  const out = new Map();
+  let raw;
+  try {
+    raw = execFileSync(
+      "git",
+      [
+        "log",
+        "--no-merges",
+        "--numstat",
+        `-${MAX_COMMITS}`,
+        "--pretty=format:%x1e%h",
+      ],
+      { cwd: REPO_ROOT, encoding: "utf8", maxBuffer: 8 * 1024 * 1024 },
+    );
+  } catch {
+    // If the numstat pass fails for any reason, the primary pass still
+    // produces entries — just without +/- counts. Counts are an
+    // enhancement, not load-bearing.
+    return out;
+  }
+
+  for (const record of raw.split("\x1e")) {
+    if (!record.trim()) continue;
+    const lines = record.split("\n");
+    const sha = lines.shift()?.trim();
+    if (!sha) continue;
+
+    let additions = 0;
+    let deletions = 0;
+    const perFile = new Map();
+
+    for (const rawLine of lines) {
+      const line = rawLine.replace(/\r$/, "");
+      if (line.trim() === "") continue;
+      // `<added>\t<deleted>\t<path…>` — split on the FIRST two tabs only
+      // so a path containing a tab (rare but legal) stays intact.
+      const firstTab = line.indexOf("\t");
+      if (firstTab === -1) continue;
+      const secondTab = line.indexOf("\t", firstTab + 1);
+      if (secondTab === -1) continue;
+      const addStr = line.slice(0, firstTab);
+      const delStr = line.slice(firstTab + 1, secondTab);
+      let pathField = line.slice(secondTab + 1);
+
+      // Binary files: "-" for both counts. Count as 0 lines.
+      const add = addStr === "-" ? 0 : Number(addStr);
+      const del = delStr === "-" ? 0 : Number(delStr);
+      if (!Number.isFinite(add) || !Number.isFinite(del)) continue;
+      additions += add;
+      deletions += del;
+
+      // Normalise a `{old => new}` rename token to the destination path
+      // so it joins the name-status `R<score>\told\tnew` (dest) path.
+      const braceRename = pathField.match(/\{.*? => (.*?)\}/);
+      if (braceRename) {
+        pathField = pathField.replace(/\{.*? => (.*?)\}/, "$1").replace(/\/\//g, "/");
+      }
+      const path = pathField.trim();
+      if (path) perFile.set(path, { additions: add, deletions: del });
+    }
+
+    out.set(sha, { additions, deletions, perFile });
+  }
+
+  return out;
+}
+
+/**
+ * Parse the per-commit name-status tail into `[{ path, status }]` (full,
+ * uncapped — the caller applies MAX_FILES_PER_COMMIT after merging
+ * counts so the TRUE file count is preserved for "+N more").
+ *
+ * name-status line: "<STATUS>\t<path>" — STATUS is a single letter
+ * optionally followed by a similarity score (e.g. `R100`). Rename / copy
+ * entries carry "<STATUS>\t<old>\t<new>"; we record the NEW path (the
+ * last tab field) since that's the file that exists post-commit.
+ */
+function parseNameStatus(tail) {
+  const files = [];
+  if (!tail) return files;
+  for (const rawLine of tail.split("\n")) {
+    const line = rawLine.replace(/\r$/, "");
+    if (line.trim() === "") continue;
+    // Tab-split so a path containing spaces stays intact.
+    const parts = line.split("\t");
+    if (parts.length < 2) continue;
+    const status = parts[0].trim();
+    if (!/^[A-Z]/.test(status)) continue; // not a status line
+    // Rename/copy: take the destination path (last field). Otherwise the
+    // single path field.
+    const path = (parts[parts.length - 1] ?? "").trim();
+    if (!path) continue;
+    files.push({ path, status });
+  }
+  return files;
 }
 
 /**
