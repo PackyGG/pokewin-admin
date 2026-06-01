@@ -137,37 +137,49 @@ async function fetchInner(period: StreamerPeriod): Promise<CodeSwitcherRow[]> {
     first_used_at: Date;
     owner_username: string | null;
   };
-  const chrono = await db.$queryRawUnsafe<ChronoRow[]>(
-    `
-    SELECT acu.referred_user_id AS user_id,
-           UPPER(acu.code) AS code,
-           MIN(acu.created_at) AS first_used_at,
-           (
-             SELECT u_owner.username
-               FROM affiliate_codes ac
-               LEFT JOIN "user" u_owner ON u_owner.id = ac.user_id
-              WHERE UPPER(ac.code) = UPPER(acu.code)
-              ORDER BY ac.created_at ASC
-              LIMIT 1
-           ) AS owner_username
-      FROM affiliate_code_usages acu
-     WHERE acu.referred_user_id = ANY($1::text[])
-       AND acu.usage_type::text IN ('deposit', 'wager')
-     GROUP BY acu.referred_user_id, UPPER(acu.code)
-     ORDER BY acu.referred_user_id, MIN(acu.created_at) ASC
-    `,
-    userIds,
-  );
 
+  // Per-query isolation: the chronology is a secondary enrichment. If
+  // it throws, we still return the switcher list (the spine of the tab)
+  // with empty chronology arrays rather than blanking the whole tab via
+  // safeQuery's fallback tile. All columns proven against schema.prisma
+  // (affiliate_code_usages.code/created_at/usage_type, affiliate_codes).
   const chronoByUser = new Map<string, CodeSwitcherRow["codeChronology"]>();
-  for (const c of chrono) {
-    const list = chronoByUser.get(c.user_id) ?? [];
-    list.push({
-      code: c.code,
-      firstUsedAt: c.first_used_at.toISOString(),
-      ownerUsername: c.owner_username,
-    });
-    chronoByUser.set(c.user_id, list);
+  try {
+    const chrono = await db.$queryRawUnsafe<ChronoRow[]>(
+      `
+      SELECT acu.referred_user_id AS user_id,
+             UPPER(acu.code) AS code,
+             MIN(acu.created_at) AS first_used_at,
+             (
+               SELECT u_owner.username
+                 FROM affiliate_codes ac
+                 LEFT JOIN "user" u_owner ON u_owner.id = ac.user_id
+                WHERE UPPER(ac.code) = UPPER(acu.code)
+                ORDER BY ac.created_at ASC
+                LIMIT 1
+             ) AS owner_username
+        FROM affiliate_code_usages acu
+       WHERE acu.referred_user_id = ANY($1::text[])
+         AND acu.usage_type::text IN ('deposit', 'wager')
+       GROUP BY acu.referred_user_id, UPPER(acu.code)
+       ORDER BY acu.referred_user_id, MIN(acu.created_at) ASC
+      `,
+      userIds,
+    );
+    for (const c of chrono) {
+      const list = chronoByUser.get(c.user_id) ?? [];
+      list.push({
+        code: c.code,
+        firstUsedAt: c.first_used_at.toISOString(),
+        ownerUsername: c.owner_username,
+      });
+      chronoByUser.set(c.user_id, list);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(
+      `[insights-streamers.code-switching] chronology query threw, rendering switchers without code order: ${msg}`,
+    );
   }
 
   return switchers.map((s) => ({

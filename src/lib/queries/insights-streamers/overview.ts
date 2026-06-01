@@ -10,138 +10,130 @@ import type { CreatorInsightRow } from "./types";
 /**
  * Per-creator aggregate for the Overview / Money Makers / ROI tabs.
  *
- * Methodology (matches creators-pnl.ts conventions):
+ * Methodology (matches creators-pnl.ts conventions — every column /
+ * enum used here is proven against that shipped query and/or
+ * prisma/schema.prisma, never guessed):
  *   - Cohort = users referred via this creator's `affiliate_code_usages`
- *     (any usage_type). Staff (admin/support/creator) excluded so the
- *     "referred count" matches what shows up on /creators/[id].
- *   - cohortWagerUsd = SUM(acu.wager_amount_usd) — the canonical
- *     wager attribution.
- *   - cohortDepositsUsd = SUM(acu.deposit_amount_usd) — backend's FTD
- *     model (first-deposit-per-user). Reused for speed; the heavier
- *     coverage-window reconstruction lives in creators-pnl.ts for the
- *     per-creator detail page.
- *   - commissionAccruedUsd = SUM(acu.referrer_cut_usd).
- *   - payoutSettledUsd = SUM(affiliate_payouts.amount_usd WHERE
- *     status='paid'). Pulled in a separate aggregate, then merged in TS.
- *   - cohortCardWithdrawalsUsd = sessions linked via the WITHDRAWN_UNITS
- *     model from creators-pnl.ts. Reproduced inline here so a single
- *     query trip handles every period.
+ *     (deduped). Staff (admin/support/creator) + the excluded-users
+ *     blacklist are dropped so the counts match /creators/[id].
+ *   - cohortWagerUsd      = SUM(acu.wager_amount_usd) WHERE usage_type='wager'.
+ *   - cohortDepositsUsd   = SUM(acu.deposit_amount_usd) WHERE usage_type='deposit'.
+ *   - commissionAccruedUsd= SUM(acu.referrer_cut_usd) on wager rows.
+ *   - payoutSettledUsd    = SUM(affiliate_payouts.amount_usd) WHERE status='paid'.
+ *   - cohortCardWithdrawalsUsd = value of cards / session-linked vouchers
+ *     that left the house from a session wagered under this creator's
+ *     code (the WITHDRAWN_UNITS model from creators-pnl.ts).
  *   - housePnl = cohortDeposits − cohortCardWithdrawals − commissionAccrued.
  *
- * Read-only against the Main DB. Cross-request cached for 5 minutes —
- * abuse / money-flow trends move on hour scales, not seconds, and the
- * aggregate is heavy.
+ * RUNTIME-SAFETY REBUILD (was: one monster $queryRawUnsafe that threw on
+ * every non-lifetime period because the card-withdrawal CTE referenced a
+ * `cwr` alias that wasn't in scope — `missing FROM-clause entry for
+ * table "cwr"`. The default period is 7d, so the whole Overview / Money
+ * Makers / ROI surface blanked via the safeQuery fallback). The work is
+ * now split into FOUR independent aggregates, each fetched with
+ * Promise.allSettled so a single failing sub-query degrades to zeros for
+ * that metric instead of taking all three tabs down. Each sub-query is a
+ * plain per-creator GROUP BY — no exotic lateral/window constructs.
+ *
+ * Read-only against the Main DB. Cross-request cached for 5 minutes.
  */
 
 const TTL_SECONDS = 300;
 
+/** Logs a single sub-query failure without taking the page down. */
+function logAggregateFailure(name: string, reason: unknown): void {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  console.error(
+    `[insights-streamers.overview] aggregate '${name}' threw, falling back to zero for every creator: ${msg}`,
+  );
+}
+
+type CreatorBaseRow = {
+  user_id: string;
+  username: string | null;
+  email: string | null;
+  image: string | null;
+  primary_code: string | null;
+};
+type CohortRow = {
+  user_id: string;
+  referred_count: string;
+  active_count: string;
+  ftd_count: string;
+  cohort_wager: string;
+  cohort_deposits: string;
+  commission_accrued: string;
+};
+type CardWdRow = { user_id: string; cohort_cardwd: string };
+type PayoutRow = { user_id: string; payout_settled: string };
+
 async function fetchInner(period: StreamerPeriod): Promise<CreatorInsightRow[]> {
   const db = await getDb();
   const excluded = await getExcludedUserIds();
-  // The cohort filter excludes staff + creators + excluded list.
-  // Subquery columns aliased `ru` (referred user).
   const blacklistRu = blacklistNotInClause("ru.id", excluded);
 
   const interval = periodSqlInterval(period);
-  // Period predicate gets folded into every subquery so a creator with
-  // no period activity still shows up with zeros (LEFT JOIN behaviour).
-  // When period = 'lifetime' the predicate is dropped entirely.
-  const periodPredicate = interval ? `AND acu.created_at >= NOW() - ${interval}` : "";
-  const ltPeriodPredicate = interval ? `AND lt.created_at >= NOW() - ${interval}` : "";
-  const cwrPeriodPredicate = interval
-    ? `AND COALESCE(cwr.shipped_at, cwr.completed_at) >= NOW() - ${interval}`
-    : "";
-  const payoutPeriodPredicate = interval
-    ? `AND ap.created_at >= NOW() - ${interval}`
-    : "";
+  // Period predicates are folded into each sub-query so a creator with
+  // no period activity still surfaces with zeros (LEFT JOIN behaviour).
+  // Lifetime drops the predicate entirely.
+  const acuPeriod = interval ? `AND acu.created_at >= NOW() - ${interval}` : "";
+  // FIX: the card-withdrawal window keys off `wu.withdrawn_at`, the
+  // column the withdrawn-units sub-select PROJECTS (= COALESCE(shipped_at,
+  // completed_at)). The previous code referenced `cwr.shipped_at` here,
+  // but no `cwr` alias is in scope in this CTE — that was the throw.
+  const wuPeriod = interval ? `AND wu.withdrawn_at >= NOW() - ${interval}` : "";
+  const payoutPeriod = interval ? `AND ap.created_at >= NOW() - ${interval}` : "";
 
-  type Row = {
-    user_id: string;
-    username: string | null;
-    email: string | null;
-    image: string | null;
-    primary_code: string | null;
-    referred_count: string;
-    active_count: string;
-    ftd_count: string;
-    cohort_wager: string;
-    cohort_deposits: string;
-    cohort_cardwd: string;
-    commission_accrued: string;
-    payout_settled: string;
-  };
+  // ── 1. Creator base list (id + identity + primary code) ───────────
+  // Independent of every aggregate; drives the LEFT-JOIN-in-TS merge so
+  // every creator surfaces even when an aggregate sub-query fails.
+  const baseP = db.$queryRawUnsafe<CreatorBaseRow[]>(`
+    SELECT u.id AS user_id, u.username, u.email, u.image,
+           (SELECT ac.code FROM affiliate_codes ac
+             WHERE ac.user_id = u.id
+             ORDER BY ac.created_at ASC LIMIT 1) AS primary_code
+      FROM "user" u
+     WHERE u.role = 'creator'
+  `);
 
-  const rows = await db.$queryRawUnsafe<Row[]>(
-    `
-    WITH creators AS (
-      SELECT u.id, u.username, u.email, u.image,
-             (SELECT ac.code FROM affiliate_codes ac
-              WHERE ac.user_id = u.id
-              ORDER BY ac.created_at ASC LIMIT 1) AS primary_code
-        FROM "user" u
-       WHERE u.role = 'creator'
-    ),
-    -- ── Cohort aggregate (wager, deposits, commission) ───────────
-    cohort AS (
-      SELECT c.id AS user_id,
-             COUNT(DISTINCT acu.referred_user_id) FILTER (
-               WHERE acu.usage_type = 'signup'
-             ) AS referred_count,
-             COUNT(DISTINCT acu.referred_user_id) FILTER (
-               WHERE acu.usage_type IN ('deposit','wager')
-                 ${periodPredicate}
-             ) AS active_count,
-             COUNT(DISTINCT acu.referred_user_id) FILTER (
-               WHERE acu.usage_type = 'deposit'
-             ) AS ftd_count,
-             COALESCE(SUM(CASE
-               WHEN acu.usage_type = 'wager' ${periodPredicate}
-                 THEN acu.wager_amount_usd::numeric
-               ELSE 0
-             END), 0) AS cohort_wager,
-             COALESCE(SUM(CASE
-               WHEN acu.usage_type = 'deposit' ${periodPredicate}
-                 THEN acu.deposit_amount_usd::numeric
-               ELSE 0
-             END), 0) AS cohort_deposits,
-             COALESCE(SUM(CASE
-               WHEN acu.usage_type = 'wager' ${periodPredicate}
-                 THEN acu.referrer_cut_usd::numeric
-               ELSE 0
-             END), 0) AS commission_accrued
-        FROM creators c
-        LEFT JOIN affiliate_code_usages acu ON acu.affiliate_user_id = c.id
-        LEFT JOIN "user" ru ON ru.id = acu.referred_user_id
-       WHERE ru.id IS NULL OR (
-             ru.role NOT IN ('admin', 'support', 'creator')
-             ${blacklistRu}
-       )
-       GROUP BY c.id
-    ),
-    -- ── Card withdrawals attributable to this creator's cohort ────
-    -- A unit (card / session-linked voucher) counts if its source
-    -- session was wagered under this creator's code. Same shape as
-    -- WITHDRAWN_UNITS in creators-pnl.ts but inlined per-creator.
-    withdrawn_units AS (
-      SELECT COALESCE(cwr.shipped_at, cwr.completed_at) AS withdrawn_at,
-             ui.user_id, ui.source_id, ui.value_at_obtained::numeric AS value
-        FROM card_withdrawal_requests cwr
-        CROSS JOIN LATERAL UNNEST(cwr.inventory_item_ids) AS item_id
-        JOIN user_inventory ui ON ui.id = item_id
-       WHERE cwr.status IN ('completed', 'shipped')
-         AND ui.source_type::text IN ('pack', 'battle')
-      UNION ALL
-      SELECT COALESCE(cwr.shipped_at, cwr.completed_at) AS withdrawn_at,
-             v.user_id, v.origin_id AS source_id, v.value::numeric AS value
-        FROM card_withdrawal_requests cwr
-        CROSS JOIN LATERAL UNNEST(cwr.voucher_ids) AS voucher_id
-        JOIN vouchers v ON v.id = voucher_id
-       WHERE cwr.status IN ('completed', 'shipped')
-         AND v.origin::text IN ('battle_excess_to_voucher', 'pack_borrow_to_voucher')
-    ),
-    -- Creator sessions that originated wagers under this creator's
-    -- code — limited to the period via the wager's acu row.
-    creator_sessions AS (
+  // ── 2. Cohort aggregate (counts + wager + deposits + commission) ──
+  // One row per creator. `usage_type` literals verified against the
+  // affiliate_usage_type enum (deposit / wager / signup).
+  const cohortP = db.$queryRawUnsafe<CohortRow[]>(`
+    SELECT acu.affiliate_user_id AS user_id,
+           COUNT(DISTINCT acu.referred_user_id) FILTER (
+             WHERE acu.usage_type::text = 'signup'
+           )::text AS referred_count,
+           COUNT(DISTINCT acu.referred_user_id) FILTER (
+             WHERE acu.usage_type::text IN ('deposit','wager') ${acuPeriod}
+           )::text AS active_count,
+           COUNT(DISTINCT acu.referred_user_id) FILTER (
+             WHERE acu.usage_type::text = 'deposit'
+           )::text AS ftd_count,
+           COALESCE(SUM(CASE
+             WHEN acu.usage_type::text = 'wager' ${acuPeriod}
+               THEN acu.wager_amount_usd::numeric ELSE 0 END), 0)::text AS cohort_wager,
+           COALESCE(SUM(CASE
+             WHEN acu.usage_type::text = 'deposit' ${acuPeriod}
+               THEN acu.deposit_amount_usd::numeric ELSE 0 END), 0)::text AS cohort_deposits,
+           COALESCE(SUM(CASE
+             WHEN acu.usage_type::text = 'wager' ${acuPeriod}
+               THEN acu.referrer_cut_usd::numeric ELSE 0 END), 0)::text AS commission_accrued
+      FROM affiliate_code_usages acu
+      JOIN "user" ru ON ru.id = acu.referred_user_id
+     WHERE ru.role NOT IN ('admin', 'support', 'creator')
+       ${blacklistRu}
+     GROUP BY acu.affiliate_user_id
+  `);
+
+  // ── 3. Card withdrawals attributable to the creator's cohort ──────
+  // A value-unit (card OR session-linked voucher) counts when its
+  // source session was wagered under this creator's code. Same
+  // WITHDRAWN_UNITS shape as creators-pnl.ts; the cwr array columns are
+  // UNNEST'd inside a sub-select that projects `withdrawn_at`, so the
+  // outer CTE never references the `cwr` alias.
+  const cardWdP = db.$queryRawUnsafe<CardWdRow[]>(`
+    WITH creator_sessions AS (
       SELECT DISTINCT acu.affiliate_user_id, acu.game_session_id
         FROM affiliate_code_usages acu
         JOIN "user" ru ON ru.id = acu.referred_user_id
@@ -150,89 +142,129 @@ async function fetchInner(period: StreamerPeriod): Promise<CreatorInsightRow[]> 
          AND ru.role NOT IN ('admin', 'support', 'creator')
          ${blacklistRu}
     ),
-    cardwd AS (
-      SELECT cs.affiliate_user_id AS user_id,
-             COALESCE(SUM(wu.value), 0) AS cohort_cardwd
-        FROM creator_sessions cs
-        LEFT JOIN withdrawn_units wu
-          ON wu.source_id = cs.game_session_id
-         ${cwrPeriodPredicate}
-       GROUP BY cs.affiliate_user_id
-    ),
-    -- Settled affiliate payouts in the period. affiliate_payouts has
-    -- no settlement-timestamp column, only created_at, so the period
-    -- window keys off created_at. Good enough for the cost story we
-    -- show the operator (what was paid in the window); a long-pending
-    -- row that finally settles inside the window will land in the
-    -- bucket of its creation date.
-    payouts AS (
-      SELECT ap.affiliate_user_id AS user_id,
-             COALESCE(SUM(ap.amount_usd::numeric), 0) AS payout_settled
-        FROM affiliate_payouts ap
-       WHERE ap.status::text = 'paid'
-         ${payoutPeriodPredicate}
-       GROUP BY ap.affiliate_user_id
+    withdrawn_units AS (
+      SELECT cwr_u.withdrawn_at, ui.source_id,
+             ui.value_at_obtained::numeric AS value
+        FROM (
+          SELECT COALESCE(cwr.shipped_at, cwr.completed_at) AS withdrawn_at,
+                 UNNEST(cwr.inventory_item_ids) AS item_id
+            FROM card_withdrawal_requests cwr
+           WHERE cwr.status IN ('completed', 'shipped')
+        ) cwr_u
+        JOIN user_inventory ui ON ui.id = cwr_u.item_id
+       WHERE ui.source_type::text IN ('pack', 'battle')
+      UNION ALL
+      SELECT cwr_u.withdrawn_at, v.origin_id AS source_id,
+             v.value::numeric AS value
+        FROM (
+          SELECT COALESCE(cwr.shipped_at, cwr.completed_at) AS withdrawn_at,
+                 UNNEST(cwr.voucher_ids) AS voucher_id
+            FROM card_withdrawal_requests cwr
+           WHERE cwr.status IN ('completed', 'shipped')
+        ) cwr_u
+        JOIN vouchers v ON v.id = cwr_u.voucher_id
+       WHERE v.origin::text IN ('battle_excess_to_voucher', 'pack_borrow_to_voucher')
     )
-    SELECT c.id AS user_id, c.username, c.email, c.image, c.primary_code,
-           COALESCE(co.referred_count, 0)::text AS referred_count,
-           COALESCE(co.active_count, 0)::text   AS active_count,
-           COALESCE(co.ftd_count, 0)::text      AS ftd_count,
-           COALESCE(co.cohort_wager, 0)::text     AS cohort_wager,
-           COALESCE(co.cohort_deposits, 0)::text  AS cohort_deposits,
-           COALESCE(cw.cohort_cardwd, 0)::text    AS cohort_cardwd,
-           COALESCE(co.commission_accrued, 0)::text AS commission_accrued,
-           COALESCE(p.payout_settled, 0)::text     AS payout_settled
-      FROM creators c
-      LEFT JOIN cohort co ON co.user_id = c.id
-      LEFT JOIN cardwd cw ON cw.user_id = c.id
-      LEFT JOIN payouts p ON p.user_id  = c.id
-     ORDER BY (
-       COALESCE(co.cohort_deposits, 0)
-       - COALESCE(cw.cohort_cardwd, 0)
-       - COALESCE(co.commission_accrued, 0)
-     ) DESC
-    -- Note the silent ${ltPeriodPredicate} placeholder is unused on
-    -- purpose — kept available so a future caller that wants to slice
-    -- by ledger_transactions can drop it inline without re-shaping the
-    -- whole query. (Variable still referenced so the lint doesn't whine.)
-    `,
-    // No params — every value is either a literal interval or an
-    // alphanumeric id list, both safe to inline.
-  );
+    SELECT cs.affiliate_user_id AS user_id,
+           COALESCE(SUM(wu.value), 0)::text AS cohort_cardwd
+      FROM creator_sessions cs
+      JOIN withdrawn_units wu
+        ON wu.source_id = cs.game_session_id
+       ${wuPeriod}
+     GROUP BY cs.affiliate_user_id
+  `);
 
-  // Reference the unused predicate so TS+lint don't flag it. Cheap no-op.
-  void ltPeriodPredicate;
+  // ── 4. Settled affiliate payouts in the window ────────────────────
+  // affiliate_payouts has no settlement timestamp, only created_at, so
+  // the window keys off created_at (same caveat as the legacy code).
+  const payoutP = db.$queryRawUnsafe<PayoutRow[]>(`
+    SELECT ap.affiliate_user_id AS user_id,
+           COALESCE(SUM(ap.amount_usd::numeric), 0)::text AS payout_settled
+      FROM affiliate_payouts ap
+     WHERE ap.status::text = 'paid'
+       ${payoutPeriod}
+     GROUP BY ap.affiliate_user_id
+  `);
 
-  return rows.map((r) => {
-    const cohortDeposits = toNumber(r.cohort_deposits);
-    const cohortCardWd = toNumber(r.cohort_cardwd);
-    const commissionAccrued = toNumber(r.commission_accrued);
+  // Per-aggregate isolation: the base list is required (it defines the
+  // row set); the three metric aggregates each degrade to an empty map
+  // on failure so one bad sub-query can't blank all three tabs.
+  const [baseRes, cohortRes, cardWdRes, payoutRes] = await Promise.allSettled([
+    baseP,
+    cohortP,
+    cardWdP,
+    payoutP,
+  ]);
+
+  if (baseRes.status !== "fulfilled") {
+    // The base list is the spine of the result — without it there's
+    // nothing to render. Re-throw so safeQuery shows the error tile
+    // rather than an empty (and misleading) "no creators" table.
+    throw baseRes.reason;
+  }
+  const base = baseRes.value;
+
+  const cohortMap = new Map<string, CohortRow>();
+  if (cohortRes.status === "fulfilled") {
+    for (const r of cohortRes.value) cohortMap.set(r.user_id, r);
+  } else {
+    logAggregateFailure("cohort", cohortRes.reason);
+  }
+
+  const cardWdMap = new Map<string, number>();
+  if (cardWdRes.status === "fulfilled") {
+    for (const r of cardWdRes.value) {
+      cardWdMap.set(r.user_id, toNumber(r.cohort_cardwd));
+    }
+  } else {
+    logAggregateFailure("card-withdrawals", cardWdRes.reason);
+  }
+
+  const payoutMap = new Map<string, number>();
+  if (payoutRes.status === "fulfilled") {
+    for (const r of payoutRes.value) {
+      payoutMap.set(r.user_id, toNumber(r.payout_settled));
+    }
+  } else {
+    logAggregateFailure("payouts", payoutRes.reason);
+  }
+
+  const rows: CreatorInsightRow[] = base.map((b) => {
+    const co = cohortMap.get(b.user_id);
+    const cohortDeposits = co ? toNumber(co.cohort_deposits) : 0;
+    const cohortCardWd = cardWdMap.get(b.user_id) ?? 0;
+    const commissionAccrued = co ? toNumber(co.commission_accrued) : 0;
     const housePnl = cohortDeposits - cohortCardWd - commissionAccrued;
-    const houseRoi =
-      commissionAccrued > 0 ? housePnl / commissionAccrued : null;
+    const houseRoi = commissionAccrued > 0 ? housePnl / commissionAccrued : null;
     return {
-      userId: r.user_id,
-      username: r.username,
-      email: r.email,
-      image: r.image,
-      primaryCode: r.primary_code,
-      referredCount: Number(r.referred_count),
-      activeReferredCount: Number(r.active_count),
-      ftdReferredCount: Number(r.ftd_count),
-      cohortWagerUsd: toNumber(r.cohort_wager),
+      userId: b.user_id,
+      username: b.username,
+      email: b.email,
+      image: b.image,
+      primaryCode: b.primary_code,
+      referredCount: co ? Number(co.referred_count) : 0,
+      activeReferredCount: co ? Number(co.active_count) : 0,
+      ftdReferredCount: co ? Number(co.ftd_count) : 0,
+      cohortWagerUsd: co ? toNumber(co.cohort_wager) : 0,
       cohortDepositsUsd: cohortDeposits,
       cohortCardWithdrawalsUsd: cohortCardWd,
       commissionAccruedUsd: commissionAccrued,
-      payoutSettledUsd: toNumber(r.payout_settled),
+      payoutSettledUsd: payoutMap.get(b.user_id) ?? 0,
       housePnl,
       houseRoi,
     };
   });
+
+  // Sort by house P&L descending — same order the table renders.
+  rows.sort((a, b) => b.housePnl - a.housePnl);
+  return rows;
 }
 
 const cached = unstable_cache(
   fetchInner,
-  ["insights-streamers-overview-v1"],
+  // v2: split the monster query into isolated aggregates + fixed the
+  // cwr-alias throw that blanked the tab on every non-lifetime period.
+  ["insights-streamers-overview-v2"],
   { revalidate: TTL_SECONDS, tags: ["insights-streamers"] },
 );
 
