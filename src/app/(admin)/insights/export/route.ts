@@ -44,6 +44,7 @@ import { gatherRakebackExportSections } from "../rewards/rakeback/_export";
 import { gatherSignupExportSections } from "../rewards/signup/_export";
 import { gatherBalanceAdjustmentsExportSections } from "../balance-adjustments/_export";
 import { gatherEdgeCalcExportSections } from "../edge-calc/_export";
+import { gatherCostBreakdownExportSections } from "../cost-breakdown/_export";
 import {
   gatherGgrExportSections,
   parseGgrExportWindow,
@@ -164,6 +165,13 @@ const EXPORTS: Record<string, ExportDescriptor> = {
   "edge-calc": {
     permissionKey: "/insights/edge-calc",
     gather: () => gatherEdgeCalcExportSections(),
+  },
+  "cost-breakdown": {
+    permissionKey: "/insights/cost-breakdown",
+    gather: (p) =>
+      gatherCostBreakdownExportSections(
+        parseInsightsPeriod(p.get("period") ?? undefined),
+      ),
   },
   ggr: {
     permissionKey: "/ggr",

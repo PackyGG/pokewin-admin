@@ -33,6 +33,7 @@ import {
   Library,
   Percent,
   TrendingUp,
+  TrendingDown,
   UserCircle,
   Globe,
   Megaphone,
@@ -106,6 +107,7 @@ const ICONS: Record<string, LucideIcon> = {
   Library,
   Percent,
   TrendingUp,
+  TrendingDown,
   UserCircle,
   Globe,
   Megaphone,
@@ -197,6 +199,12 @@ const NAV_GROUPS: NavGroup[] = [
     // own groups.
     label: "Insights",
     items: [
+      // Cost Breakdown — the full wager → P&L leakage waterfall. First
+      // entry in the group: it's the headline "where does the money go"
+      // surface that ties total wager down to realized P&L with every
+      // cost category itemized. Sits on top of GGR / Money Flow /
+      // Rewards (it aggregates the same canonical numbers).
+      { label: "Cost Breakdown", href: "/insights/cost-breakdown", icon: "TrendingDown", isNew: true },
       { label: "Analytics", href: "/insights/analytics", icon: "LineChart", isNew: true },
       // GGR — long-form deep-dive of the headline GGR number with one
       // card per ledger type + canonical descriptions + top-10
