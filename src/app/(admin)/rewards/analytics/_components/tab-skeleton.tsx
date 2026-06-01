@@ -38,6 +38,35 @@ export function RewardsAnalyticsTabSkeleton() {
 }
 
 /**
+ * Fallback rendered while the cohort + distribution + top-cap section
+ * of the Deposit Bonus tab streams in. The headline KPI strip + chart
+ * + top-N tables paint first under the panel; this lazier section
+ * sits below the fold and gets its own (cheaper-looking) skeleton.
+ *
+ * Sized to the actual section shape: 2 cohort tiles, one cohort-
+ * compare card, one distribution chart, one top-cap-deposits table.
+ */
+export function DepositBonusCohortSkeleton() {
+  return (
+    <div className="space-y-6">
+      <KpiStripSkeleton count={2} />
+      <div className="space-y-3">
+        <SectionHeadingSkeleton titleWidth={180} />
+        <Skeleton className="h-32 rounded-2xl" />
+      </div>
+      <div className="space-y-3">
+        <SectionHeadingSkeleton titleWidth={220} />
+        <Skeleton className="h-64 rounded-2xl" />
+      </div>
+      <div className="space-y-3">
+        <SectionHeadingSkeleton titleWidth={240} />
+        <Skeleton className="h-64 rounded-2xl" />
+      </div>
+    </div>
+  );
+}
+
+/**
  * Bigger fallback for the Overview tab, which has more sections than
  * a per-category deep-stats tab. Matches the full shape: KPI strip,
  * chart, breakdown + summary side-by-side, platform leaderboards,

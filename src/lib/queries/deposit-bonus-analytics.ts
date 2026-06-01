@@ -117,10 +117,18 @@ export { parseRewardsPeriod };
  * Cohort split — completed deposits in the period, with vs without an
  * accompanying `deposit_bonus` ledger row. Links each bonus to its
  * triggering deposit using the SAME rule the live money-movement feed
- * uses (`bonus.balance_before == deposit.balance_after`, bonus fires
- * within 2 minutes of the deposit). That rule is canonical in
- * `dashboard-live.ts` — reusing it here keeps the with/without split
- * reconciled with every other deposit↔bonus pairing on the admin panel.
+ * uses (`bonus.balance_before == deposit.balance_after`). That rule is
+ * canonical in `dashboard-live.ts` — reusing it here keeps the
+ * with/without split reconciled with every other deposit↔bonus pairing
+ * on the admin panel.
+ *
+ * Note: dashboard-live.ts allows up to 2 minutes between the deposit
+ * and the bonus (defensive upper bound for slow ledger writes). For
+ * the analytics rollups here we tighten to 30 seconds — bonuses fire
+ * immediately after deposits in practice, and the tighter window
+ * dramatically shrinks the LATERAL join's cross-product before the
+ * time-window filter. The pairing accuracy is unchanged for the
+ * normal path; only freak long-delayed bonuses are dropped.
  *
  * Cohort buckets reported:
  *   - depositsWith / depositsWithout      — count split
@@ -224,7 +232,8 @@ async function computeDepositBonusCohortExtras(
 
   // Canonical bonus↔deposit linking rule (from dashboard-live.ts):
   // bonus.balance_before == deposit.balance_after AND bonus fires
-  // within 2 minutes of the deposit. We materialise the per-deposit
+  // within 30s of the deposit (tightened from 2 min for query
+  // performance — see header comment). We materialise the per-deposit
   // bonus amount via a LATERAL join — one bonus row per deposit
   // (`LIMIT 1`) so a freak duplicate bonus can't double-count.
   //
@@ -257,7 +266,7 @@ async function computeDepositBonusCohortExtras(
           AND lt.status = 'completed'
           AND lt.balance_before::numeric = wd.bal_after
           AND lt.created_at >= wd.created_at
-          AND lt.created_at < wd.created_at + INTERVAL '2 minutes'
+          AND lt.created_at < wd.created_at + INTERVAL '30 seconds'
         ORDER BY lt.created_at ASC
         LIMIT 1
       ) b ON TRUE
@@ -334,7 +343,7 @@ async function computeDepositBonusCohortExtras(
           AND lt.status = 'completed'
           AND lt.balance_before::numeric = wd.bal_after
           AND lt.created_at >= wd.created_at
-          AND lt.created_at < wd.created_at + INTERVAL '2 minutes'
+          AND lt.created_at < wd.created_at + INTERVAL '30 seconds'
         ORDER BY lt.created_at ASC
         LIMIT 1
       ) b ON TRUE
@@ -403,7 +412,7 @@ async function computeDepositBonusCohortExtras(
           AND lt.status = 'completed'
           AND lt.balance_before::numeric = wd.bal_after
           AND lt.created_at >= wd.created_at
-          AND lt.created_at < wd.created_at + INTERVAL '2 minutes'
+          AND lt.created_at < wd.created_at + INTERVAL '30 seconds'
           AND ABS(lt.amount::numeric) = ${capValue.toFixed(2)}
         ORDER BY lt.created_at ASC
         LIMIT 1
