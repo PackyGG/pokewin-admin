@@ -49,6 +49,9 @@ import {
   Joystick,
   Tv,
   Sigma,
+  Wallet,
+  Flag,
+  UserPlus,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -117,6 +120,9 @@ const ICONS: Record<string, LucideIcon> = {
   Joystick,
   Tv,
   Sigma,
+  Wallet,
+  Flag,
+  UserPlus,
 };
 
 type NavItem = {
@@ -199,6 +205,18 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "GGR", href: "/ggr", icon: "TrendingUp", isNew: true },
       { label: "Games", href: "/insights/games", icon: "Joystick", isNew: true },
       { label: "Rewards", href: "/insights/rewards", icon: "Gift", isNew: true },
+      // Per-reward-type deep-dives. Each route is the same class of
+      // analytical surface as /insights/rewards (the overview), just
+      // scoped to a single ledger type. Sit directly under the parent
+      // "Rewards" entry so admins reach the breakdown they want without
+      // first landing on the overview. The active-state logic in the
+      // render path correctly deactivates the parent when one of these
+      // sub-routes matches (longer prefix wins).
+      { label: "Deposit Bonus", href: "/insights/rewards/deposit-bonus", icon: "Coins", isNew: true },
+      { label: "Rakeback", href: "/insights/rewards/rakeback", icon: "Wallet", isNew: true },
+      { label: "Race", href: "/insights/rewards/race", icon: "Flag", isNew: true },
+      { label: "Affiliate", href: "/insights/rewards/affiliate", icon: "Share2", isNew: true },
+      { label: "Sign Up", href: "/insights/rewards/signup", icon: "UserPlus", isNew: true },
       { label: "Streamers", href: "/insights/streamers", icon: "Tv", isNew: true },
       // Edge Calc — theoretical EV / scenario simulator companion to
       // the other Insights surfaces (pure math, no historical query).

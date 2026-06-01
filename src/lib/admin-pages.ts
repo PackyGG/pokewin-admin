@@ -40,6 +40,15 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Insights", label: "GGR", key: "/ggr" },
   { group: "Insights", label: "Games", key: "/insights/games" },
   { group: "Insights", label: "Rewards", key: "/insights/rewards" },
+  // Per-reward-type deep-dives. Each is its own grantable permission key
+  // so role grants can be managed independently from the parent overview
+  // (an admin can be granted just the rakeback or affiliate breakdown
+  // without the full Rewards rollup).
+  { group: "Insights", label: "Deposit Bonus", key: "/insights/rewards/deposit-bonus" },
+  { group: "Insights", label: "Rakeback", key: "/insights/rewards/rakeback" },
+  { group: "Insights", label: "Race", key: "/insights/rewards/race" },
+  { group: "Insights", label: "Affiliate", key: "/insights/rewards/affiliate" },
+  { group: "Insights", label: "Sign Up", key: "/insights/rewards/signup" },
   { group: "Insights", label: "Streamers", key: "/insights/streamers" },
   // Edge Calc — theoretical EV / RTP / house-edge math + scenario
   // simulator. Pure-math companion to the empirical /insights/games
