@@ -36,7 +36,7 @@ import {
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
 import { getDepositBonusCapAnalysis } from "@/lib/queries/insights-rewards/deposit-bonus/cap-analysis";
-import { getDepositBonusCohortComparison } from "@/lib/queries/insights-rewards/deposit-bonus/cohort";
+import { getDepositBonusRatioDistribution } from "@/lib/queries/insights-rewards/deposit-bonus/cohort";
 import { CapAmountHistogram } from "./cap-histogram-chart";
 import { RatioBucketsBars } from "./ratio-buckets-bars";
 
@@ -62,16 +62,19 @@ export async function CapTab({
 }: {
   period: InsightsRewardsPeriod;
 }) {
-  const [capRes, cohortRes] = await Promise.all([
+  const [capRes, ratioRes] = await Promise.all([
     safeQuery(
       () => getDepositBonusCapAnalysis(period),
       null,
       "insights-rewards-deposit-bonus.cap",
     ),
+    // Ratio histogram only — not the full cohort comparison (with/without
+    // retention split lives on the Cohorts tab). Both share the same
+    // canonical pairing but are cached independently.
     safeQuery(
-      () => getDepositBonusCohortComparison(period),
+      () => getDepositBonusRatioDistribution(period),
       null,
-      "insights-rewards-deposit-bonus.cohort",
+      "insights-rewards-deposit-bonus.ratio",
     ),
   ]);
   if (capRes.error || !capRes.data) {
@@ -84,7 +87,7 @@ export async function CapTab({
     );
   }
   const cap = capRes.data;
-  const cohort = cohortRes.data;
+  const ratio = ratioRes.data;
   const label = insightsRewardsPeriodLabel(period);
 
   if (cap.capValue === 0) {
@@ -123,16 +126,16 @@ export async function CapTab({
               title="Bonus / deposit ratio distribution"
             />
             <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-card p-4 sm:p-5">
-              {cohort && cohort.totalDeposits > 0 ? (
+              {ratio && ratio.totalDeposits > 0 ? (
                 <>
-                  <RatioBucketsBars buckets={cohort.ratioBuckets} />
+                  <RatioBucketsBars buckets={ratio.ratioBuckets} />
                   <div className="mt-4 grid grid-cols-2 gap-2 text-center">
                     <div className="rounded-lg border bg-muted/20 p-2.5">
                       <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                         Mean ratio
                       </p>
                       <p className="mt-0.5 text-base font-bold tabular-nums text-rose-600 dark:text-rose-400">
-                        {(cohort.meanRatio * 100).toFixed(1)}%
+                        {(ratio.meanRatio * 100).toFixed(1)}%
                       </p>
                     </div>
                     <div className="rounded-lg border bg-muted/20 p-2.5">
@@ -140,7 +143,7 @@ export async function CapTab({
                         Median ratio
                       </p>
                       <p className="mt-0.5 text-base font-bold tabular-nums text-rose-600 dark:text-rose-400">
-                        {(cohort.medianRatio * 100).toFixed(1)}%
+                        {(ratio.medianRatio * 100).toFixed(1)}%
                       </p>
                     </div>
                   </div>

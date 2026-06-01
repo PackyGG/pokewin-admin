@@ -9,7 +9,7 @@ import {
   DEPOSIT_BONUS_CACHE_TAGS,
   getResolvedBlacklist,
   staffAndBlacklistSubquery,
-  windowDateFilter,
+  windowDateFilterCapped,
 } from "./_shared";
 
 /**
@@ -30,8 +30,18 @@ import {
  * within 30 seconds of the deposit. Same rule used by every other
  * surface that joins the two (dashboard-live.ts + deposit-bonus-analytics.ts).
  *
- * Staff + blacklist excluded. Read-only. Heavy SQL — cached with a
- * 5-minute revalidate on lifetime windows.
+ * The two lenses are split into two independently-cached helpers:
+ *   - {@link getDepositBonusCohortComparison} — the heavy with/without
+ *     retention split (used by the Cohorts tab).
+ *   - {@link getDepositBonusRatioDistribution} — the ratio histogram +
+ *     mean/median (used by the Cap & Ratio tab).
+ * Keeping them separate means the Cap tab doesn't pay for the cohort
+ * retention CTE just to draw the ratio bars, and the Cohorts tab doesn't
+ * re-run the ratio histogram. Both share the same canonical pairing.
+ *
+ * Staff + blacklist excluded. Read-only. Heavy SQL — lifetime windows
+ * cap the deposit-side scan at 365 days (see `windowDateFilterCapped`)
+ * and use a 5-minute revalidate.
  */
 
 const RATIO_LABELS = ["0–5%", "5–15%", "15–30%", "30–60%", "60%+"] as const;
@@ -71,6 +81,11 @@ export type DepositBonusCohortComparison = {
   retain7dLiftPct: number;
   /** 30d retention lift. */
   retain30dLiftPct: number;
+};
+
+export type DepositBonusRatioDistribution = {
+  /** Total completed deposits in window (for empty-state gating). */
+  totalDeposits: number;
   /** Bonus / deposit ratio bucketed histogram (5 buckets). */
   ratioBuckets: Array<{ label: string; count: number; volume: number }>;
   /** Mean of bonus/deposit ratio across paired rows (0..1). */
@@ -79,12 +94,28 @@ export type DepositBonusCohortComparison = {
   medianRatio: number;
 };
 
+const emptySide = (): DepositBonusCohortComparison["withBonus"] => ({
+  count: 0,
+  sum: 0,
+  avg: 0,
+  median: 0,
+  p99: 0,
+  uniqueUsers: 0,
+  retain7d: 0,
+  retain30d: 0,
+});
+
+const liftPct = (a: number, b: number): number =>
+  b > 0 ? ((a - b) / b) * 100 : 0;
+
+// ─── Cohort comparison (with vs without bonus) ─────────────────────
+
 async function computeCohortComparison(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusCohortComparison> {
   const db = await getDb();
-  const dateFilter = windowDateFilter(period, "d");
+  const dateFilter = windowDateFilterCapped(period, "d");
   const userScope = staffAndBlacklistSubquery(blacklistIds);
 
   // CTE pairs every deposit to its (optional) deposit_bonus row,
@@ -175,16 +206,7 @@ async function computeCohortComparison(
     side: "with" | "without",
   ): DepositBonusCohortComparison["withBonus"] => {
     if (!row || row.side !== side) {
-      return {
-        count: 0,
-        sum: 0,
-        avg: 0,
-        median: 0,
-        p99: 0,
-        uniqueUsers: 0,
-        retain7d: 0,
-        retain30d: 0,
-      };
+      return emptySide();
     }
     const count = Number(row.cnt ?? 0);
     return {
@@ -205,18 +227,52 @@ async function computeCohortComparison(
   const withoutBonus = parseSide(withoutRow, "without");
   const totalDeposits = withBonus.count + withoutBonus.count;
 
-  const liftPct = (a: number, b: number): number =>
-    b > 0 ? ((a - b) / b) * 100 : 0;
+  return {
+    totalDeposits,
+    withBonus,
+    withoutBonus,
+    avgLiftPct: liftPct(withBonus.avg, withoutBonus.avg),
+    medianLiftPct: liftPct(withBonus.median, withoutBonus.median),
+    retain7dLiftPct: liftPct(withBonus.retain7d, withoutBonus.retain7d),
+    retain30dLiftPct: liftPct(withBonus.retain30d, withoutBonus.retain30d),
+  };
+}
 
-  // Ratio histogram + mean/median ratio — separate query, only paired
-  // rows. Same bucket definitions as `deposit-bonus-analytics.ts`.
+const cachedCohort = unstable_cache(
+  async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
+    computeCohortComparison(period, blacklistIds),
+  ["insights-rewards-deposit-bonus-cohort-v2"],
+  { revalidate: 300, tags: [...DEPOSIT_BONUS_CACHE_TAGS] },
+);
+
+export async function getDepositBonusCohortComparison(
+  period: InsightsRewardsPeriod,
+): Promise<DepositBonusCohortComparison> {
+  const blacklist = await getResolvedBlacklist();
+  void cacheTtlForInsightsPeriod(period); // signature parity
+  return cachedCohort(period, blacklist);
+}
+
+// ─── Ratio distribution (bonus / deposit %) ────────────────────────
+
+async function computeRatioDistribution(
+  period: InsightsRewardsPeriod,
+  blacklistIds: string[],
+): Promise<DepositBonusRatioDistribution> {
+  const db = await getDb();
+  const dateFilter = windowDateFilterCapped(period, "d");
+  const userScope = staffAndBlacklistSubquery(blacklistIds);
+
+  // Ratio histogram + count-weighted mean + global median in a single
+  // pass over the paired set. Only paired rows count toward the
+  // distribution (an unpaired deposit has no ratio). Same bucket
+  // definitions as the legacy `deposit-bonus-analytics.ts`.
   const ratioRows = await db.$queryRawUnsafe<
     {
       bucket: number;
       cnt: string;
       volume: string;
       mean_ratio: string | null;
-      median_ratio: string | null;
     }[]
   >(`
     WITH window_deposits AS (
@@ -258,19 +314,20 @@ async function computeCohortComparison(
       END AS bucket,
       COUNT(*)::text AS cnt,
       SUM(bonus_usd)::text AS volume,
-      AVG(ratio)::text AS mean_ratio,
-      PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ratio)::text AS median_ratio
+      AVG(ratio)::text AS mean_ratio
     FROM paired
     GROUP BY 1
   `);
 
-  const buckets: DepositBonusCohortComparison["ratioBuckets"] =
+  const buckets: DepositBonusRatioDistribution["ratioBuckets"] =
     RATIO_LABELS.map((label) => ({ label, count: 0, volume: 0 }));
   let meanNumerator = 0;
   let meanDenominator = 0;
+  let totalPaired = 0;
   for (const r of ratioRows) {
     const idx = Number(r.bucket);
     const cnt = Number(r.cnt ?? 0);
+    totalPaired += cnt;
     if (idx >= 0 && idx < buckets.length) {
       buckets[idx].count = cnt;
       buckets[idx].volume = toNumber(r.volume);
@@ -324,30 +381,24 @@ async function computeCohortComparison(
     meanDenominator > 0 ? meanNumerator / meanDenominator : 0;
 
   return {
-    totalDeposits,
-    withBonus,
-    withoutBonus,
-    avgLiftPct: liftPct(withBonus.avg, withoutBonus.avg),
-    medianLiftPct: liftPct(withBonus.median, withoutBonus.median),
-    retain7dLiftPct: liftPct(withBonus.retain7d, withoutBonus.retain7d),
-    retain30dLiftPct: liftPct(withBonus.retain30d, withoutBonus.retain30d),
+    totalDeposits: totalPaired,
     ratioBuckets: buckets,
     meanRatio,
     medianRatio,
   };
 }
 
-const cachedCohort = unstable_cache(
+const cachedRatioDistribution = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeCohortComparison(period, blacklistIds),
-  ["insights-rewards-deposit-bonus-cohort-v1"],
+    computeRatioDistribution(period, blacklistIds),
+  ["insights-rewards-deposit-bonus-ratio-distribution-v1"],
   { revalidate: 300, tags: [...DEPOSIT_BONUS_CACHE_TAGS] },
 );
 
-export async function getDepositBonusCohortComparison(
+export async function getDepositBonusRatioDistribution(
   period: InsightsRewardsPeriod,
-): Promise<DepositBonusCohortComparison> {
+): Promise<DepositBonusRatioDistribution> {
   const blacklist = await getResolvedBlacklist();
   void cacheTtlForInsightsPeriod(period); // signature parity
-  return cachedCohort(period, blacklist);
+  return cachedRatioDistribution(period, blacklist);
 }

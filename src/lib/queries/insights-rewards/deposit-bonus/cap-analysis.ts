@@ -10,6 +10,7 @@ import {
   getResolvedBlacklist,
   staffAndBlacklistSubquery,
   windowDateFilter,
+  windowDateFilterCapped,
 } from "./_shared";
 
 /**
@@ -281,7 +282,7 @@ async function computeCapAnalysis(
       WHERE d.status = 'completed'
         AND d.type = 'deposit'
         AND d.user_id IN ${userScope}
-        ${windowDateFilter(period, "d")}
+        ${windowDateFilterCapped(period, "d")}
     )
     SELECT
       wd.user_id,
@@ -329,6 +330,100 @@ async function computeCapAnalysis(
     biggestCapDeposits,
   };
 }
+
+// ─── Lightweight cap-hit-rate (Overview KPI strip) ─────────────────
+
+export type DepositBonusCapHitRate = {
+  /** Empirical cap = MAX(ABS(amount)) in window. */
+  capValue: number;
+  /** Rows whose ABS(amount) equals the cap. */
+  capHits: number;
+  /** Total bonus rows in window. */
+  totalCount: number;
+  /** capHits / totalCount, 0..1. */
+  capHitRate: number;
+};
+
+/**
+ * Cheap cap-hit-rate rollup — just the two scalar aggregates the
+ * Overview tab's KPI strip needs (`capHitRate`), without the histogram,
+ * per-day series, top-hitters, or the LATERAL biggest-cap-deposit
+ * pairing that {@link computeCapAnalysis} runs. Two small aggregate
+ * scans over `deposit_bonus` rows only. Reconciles with the full cap
+ * analysis by construction (same filters, same empirical-cap definition).
+ */
+async function computeCapHitRate(
+  period: InsightsRewardsPeriod,
+  blacklistIds: string[],
+): Promise<DepositBonusCapHitRate> {
+  const db = await getDb();
+  const dateFilter = windowDateFilter(period);
+  const userScope = staffAndBlacklistSubquery(blacklistIds);
+
+  const capRows = await db.$queryRawUnsafe<
+    { max_amount: string | null; cnt: string }[]
+  >(`
+    SELECT
+      MAX(ABS(lt.amount::numeric))::text AS max_amount,
+      COUNT(*)::text AS cnt
+    FROM ledger_transactions lt
+    WHERE lt.status = 'completed'
+      AND lt.type = 'deposit_bonus'
+      AND lt.user_id IN ${userScope}
+      ${dateFilter}
+  `);
+  const capValue =
+    capRows[0]?.max_amount != null ? toNumber(capRows[0].max_amount) : 0;
+  const totalCount = Number(capRows[0]?.cnt ?? 0);
+
+  if (capValue <= 0 || totalCount === 0) {
+    return { capValue: 0, capHits: 0, totalCount, capHitRate: 0 };
+  }
+
+  const capLiteral = capValue.toFixed(2);
+  const hitsRows = await db.$queryRawUnsafe<{ hits: string }[]>(`
+    SELECT COUNT(*)::text AS hits
+    FROM ledger_transactions lt
+    WHERE lt.status = 'completed'
+      AND lt.type = 'deposit_bonus'
+      AND lt.user_id IN ${userScope}
+      AND ABS(lt.amount::numeric) = ${capLiteral}
+      ${dateFilter}
+  `);
+  const capHits = Number(hitsRows[0]?.hits ?? 0);
+  return {
+    capValue,
+    capHits,
+    totalCount,
+    capHitRate: totalCount > 0 ? capHits / totalCount : 0,
+  };
+}
+
+const cachedCapHitRate = unstable_cache(
+  async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
+    computeCapHitRate(period, blacklistIds),
+  ["insights-rewards-deposit-bonus-cap-hit-rate-v1"],
+  { revalidate: 60, tags: [...DEPOSIT_BONUS_CACHE_TAGS] },
+);
+
+const cachedCapHitRateLifetime = unstable_cache(
+  async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
+    computeCapHitRate(period, blacklistIds),
+  ["insights-rewards-deposit-bonus-cap-hit-rate-lifetime-v1"],
+  { revalidate: 300, tags: [...DEPOSIT_BONUS_CACHE_TAGS] },
+);
+
+export async function getDepositBonusCapHitRate(
+  period: InsightsRewardsPeriod,
+): Promise<DepositBonusCapHitRate> {
+  const blacklist = await getResolvedBlacklist();
+  const ttl = cacheTtlForInsightsPeriod(period);
+  return ttl >= 300
+    ? cachedCapHitRateLifetime(period, blacklist)
+    : cachedCapHitRate(period, blacklist);
+}
+
+// ─── Full cap analysis (Cap & Ratio tab) ───────────────────────────
 
 const cachedCapAnalysis = unstable_cache(
   async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>

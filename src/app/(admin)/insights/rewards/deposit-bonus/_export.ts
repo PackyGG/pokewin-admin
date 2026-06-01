@@ -8,7 +8,10 @@ import {
 import { getDepositBonusOverview } from "@/lib/queries/insights-rewards/deposit-bonus/overview";
 import { getDepositBonusCapAnalysis } from "@/lib/queries/insights-rewards/deposit-bonus/cap-analysis";
 import { getDepositBonusDailyBreakdown } from "@/lib/queries/insights-rewards/deposit-bonus/daily-breakdown";
-import { getDepositBonusCohortComparison } from "@/lib/queries/insights-rewards/deposit-bonus/cohort";
+import {
+  getDepositBonusCohortComparison,
+  getDepositBonusRatioDistribution,
+} from "@/lib/queries/insights-rewards/deposit-bonus/cohort";
 import {
   getDepositBonusRepeatClaimants,
   getDepositBonusNewVsReturning,
@@ -54,6 +57,7 @@ export async function gatherDepositBonusExportSections(
     capR,
     dailyR,
     cohortR,
+    ratioR,
     repeatR,
     newVsReturningR,
     timeToClaimR,
@@ -67,6 +71,7 @@ export async function gatherDepositBonusExportSections(
     getDepositBonusCapAnalysis(period),
     getDepositBonusDailyBreakdown(period),
     getDepositBonusCohortComparison(period),
+    getDepositBonusRatioDistribution(period),
     getDepositBonusRepeatClaimants(period),
     getDepositBonusNewVsReturning(period),
     getDepositBonusTimeToClaim(period),
@@ -80,6 +85,7 @@ export async function gatherDepositBonusExportSections(
   const cap = () => unwrap(capR);
   const daily = () => unwrap(dailyR);
   const cohort = () => unwrap(cohortR);
+  const ratio = () => unwrap(ratioR);
   const repeat = () => unwrap(repeatR);
   const newVsReturning = () => unwrap(newVsReturningR);
   const timeToClaim = () => unwrap(timeToClaimR);
@@ -251,18 +257,28 @@ export async function gatherDepositBonusExportSections(
     ),
     buildSection(AREA, "Cohort Lift & Ratio Summary", ["Metric", "Value"], () => {
       const c = cohort();
+      // meanRatio / medianRatio moved to the independent ratio-distribution
+      // helper; read defensively so a failure there leaves null cells
+      // rather than blanking the cohort-lift rows that DID resolve.
+      const ratioCell = <T,>(pick: (r: ReturnType<typeof ratio>) => T): T | null => {
+        try {
+          return pick(ratio());
+        } catch {
+          return null;
+        }
+      };
       return [
         ["Total deposits", c.totalDeposits],
         ["Avg-deposit lift %", c.avgLiftPct],
         ["Median-deposit lift %", c.medianLiftPct],
         ["Retain 7d lift %", c.retain7dLiftPct],
         ["Retain 30d lift %", c.retain30dLiftPct],
-        ["Mean bonus/deposit ratio", c.meanRatio],
-        ["Median bonus/deposit ratio", c.medianRatio],
+        ["Mean bonus/deposit ratio", ratioCell((r) => r.meanRatio)],
+        ["Median bonus/deposit ratio", ratioCell((r) => r.medianRatio)],
       ];
     }),
     buildSection(AREA, "Bonus/Deposit Ratio Histogram", ["Bucket", "Count", "Volume (USD)"], () =>
-      cohort().ratioBuckets.map((b) => [b.label, b.count, b.volume]),
+      ratio().ratioBuckets.map((b) => [b.label, b.count, b.volume]),
     ),
 
     // ── Repeat-claimant segments ──────────────────────────────────

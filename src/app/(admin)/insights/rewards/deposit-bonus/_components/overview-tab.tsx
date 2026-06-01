@@ -31,7 +31,7 @@ import {
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
 import { getDepositBonusOverview } from "@/lib/queries/insights-rewards/deposit-bonus/overview";
-import { getDepositBonusCapAnalysis } from "@/lib/queries/insights-rewards/deposit-bonus/cap-analysis";
+import { getDepositBonusCapHitRate } from "@/lib/queries/insights-rewards/deposit-bonus/cap-analysis";
 import { getDepositBonusDailyBreakdown } from "@/lib/queries/insights-rewards/deposit-bonus/daily-breakdown";
 import { DepositBonusChart } from "@/app/(admin)/rewards/analytics/deposit-bonus-chart";
 
@@ -60,10 +60,14 @@ export async function OverviewTab({
       null,
       "insights-rewards-deposit-bonus.overview",
     ),
+    // Lightweight cap-hit-rate only — the KPI strip needs a single
+    // number, not the full cap analysis (histogram / top-hitters /
+    // biggest-cap-deposit pairing). That heavier query lives on the
+    // Cap & Ratio tab.
     safeQuery(
-      () => getDepositBonusCapAnalysis(period),
+      () => getDepositBonusCapHitRate(period),
       null,
-      "insights-rewards-deposit-bonus.cap",
+      "insights-rewards-deposit-bonus.cap-hit-rate",
     ),
     safeQuery(
       () => getDepositBonusDailyBreakdown(period),
