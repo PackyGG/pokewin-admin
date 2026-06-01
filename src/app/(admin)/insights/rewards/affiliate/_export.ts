@@ -6,10 +6,7 @@ import {
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
 import { getAffiliateOverview } from "@/lib/queries/insights-rewards/affiliate/overview";
-import {
-  getTopAffiliatesByCommission,
-  getTopAffiliatesByWager,
-} from "@/lib/queries/insights-rewards/affiliate/leaderboards";
+import { getTopAffiliatesByWager } from "@/lib/queries/insights-rewards/affiliate/leaderboards";
 import { getAffiliateLifetimeRoi } from "@/lib/queries/insights-rewards/affiliate/lifetime-roi";
 import { getAffiliateCohort } from "@/lib/queries/insights-rewards/affiliate/cohort";
 import { getAffiliateClaimCadence } from "@/lib/queries/insights-rewards/affiliate/claim-cadence";
@@ -22,8 +19,8 @@ import { getInactiveAffiliates } from "@/lib/queries/insights-rewards/affiliate/
  * Export gatherer for /insights/rewards/affiliate.
  *
  * Bundles every tab's data for the active period into one CSV: overview
- * KPIs + daily commission/wager series, top affiliates by commission +
- * by wager, lifetime ROI, cohort quality, claim cadence, per-code
+ * KPIs + daily commission/wager series, top affiliates by wager,
+ * lifetime ROI, cohort quality, claim cadence, per-code
  * performance, code-switching, geo breakdowns (affiliate + referred),
  * and inactive affiliates.
  *
@@ -38,7 +35,6 @@ export async function gatherAffiliateExportSections(
 ): Promise<ExportSection[]> {
   const [
     overview,
-    topCommission,
     topWager,
     lifetimeRoi,
     cohort,
@@ -49,7 +45,6 @@ export async function gatherAffiliateExportSections(
     inactive,
   ] = await Promise.all([
     getAffiliateOverview(period),
-    getTopAffiliatesByCommission(period),
     getTopAffiliatesByWager(period),
     getAffiliateLifetimeRoi(),
     getAffiliateCohort(period),
@@ -91,23 +86,6 @@ export async function gatherAffiliateExportSections(
   });
 
   // ── Leaderboards ────────────────────────────────────────────────
-  sections.push({
-    name: "Top Affiliates by Commission",
-    columns: [
-      "Affiliate user ID",
-      "Username",
-      "Commission paid (USD)",
-      "Claim count",
-      "Referred users in window",
-    ],
-    rows: topCommission.map((r) => [
-      r.affiliateUserId,
-      r.username,
-      r.commissionPaid,
-      r.claimCount,
-      r.referredUsersInWindow,
-    ]),
-  });
   sections.push({
     name: "Top Affiliates by Wager",
     columns: [

@@ -17,7 +17,6 @@ import {
   AffiliateInsightsCompactSkeleton,
 } from "./_components/tab-skeleton";
 import { AffiliateOverviewTab } from "./_components/overview-tab";
-import { AffiliateTopCommissionTab } from "./_components/top-commission-tab";
 import { AffiliateTopWagerTab } from "./_components/top-wager-tab";
 import { AffiliateCohortTab } from "./_components/cohort-tab";
 import { AffiliateInactiveTab } from "./_components/inactive-tab";
@@ -31,7 +30,6 @@ export const metadata = { title: "Affiliate Insights" };
 
 type Tab =
   | "overview"
-  | "top-commission"
   | "top-wager"
   | "cohort"
   | "inactive"
@@ -43,7 +41,6 @@ type Tab =
 
 function parseTab(value: string | undefined): Tab {
   switch (value) {
-    case "top-commission":
     case "top-wager":
     case "cohort":
     case "inactive":
@@ -66,15 +63,14 @@ function parseTab(value: string | undefined): Tab {
  *
  * Tabs:
  *   1. Overview        — KPI strip + daily commission area chart + ROI
- *   2. Top by claim    — top 25 affiliates by commission earned
- *   3. Top by wager    — top 25 by referred-cohort wager (activity lens)
- *   4. Cohort          — per-affiliate cohort conversion + retention
- *   5. Inactive        — affiliates with referrals but no claim in window
- *   6. Code funnel     — click → signup → first deposit → wager per code
- *   7. Geo             — affiliate geo + referred-user geo
- *   8. Lifetime ROI    — per-affiliate lifetime ROI from affiliate_accounts
- *   9. Claim cadence   — per-affiliate claim repeat rhythm
- *  10. Code-switch     — cohorts that disproportionately moved to other codes
+ *   2. Top by wager    — top 25 by referred-cohort wager (activity lens)
+ *   3. Cohort          — per-affiliate cohort conversion + retention
+ *   4. Inactive        — affiliates with referrals but no claim in window
+ *   5. Code funnel     — click → signup → first deposit → wager per code
+ *   6. Geo             — affiliate geo + referred-user geo
+ *   7. Lifetime ROI    — per-affiliate lifetime ROI from affiliate_accounts
+ *   8. Claim cadence   — per-affiliate claim repeat rhythm
+ *   9. Code-switch     — cohorts that disproportionately moved to other codes
  *
  * House-POV: every dollar of commission is house cost → rose. Every
  * dollar of downstream wager is house-positive (we take the rake) →
@@ -142,8 +138,6 @@ async function TabContent({
   switch (tab) {
     case "overview":
       return <AffiliateOverviewTab period={period} />;
-    case "top-commission":
-      return <AffiliateTopCommissionTab period={period} />;
     case "top-wager":
       return <AffiliateTopWagerTab period={period} />;
     case "cohort":

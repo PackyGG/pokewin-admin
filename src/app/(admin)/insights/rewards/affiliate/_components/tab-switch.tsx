@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   Sparkles,
-  Crown,
   Trophy,
   Users,
   UserMinus,
@@ -17,7 +16,7 @@ import {
 import { cn } from "@/lib/utils";
 
 /**
- * URL-driven tab switcher for /insights/rewards/affiliate. Ten tabs
+ * URL-driven tab switcher for /insights/rewards/affiliate. Nine tabs
  * covering the full per-affiliate ROI + funnel spec.
  *
  * Active tab in `?tab=`. Period param survives every switch. Empty
@@ -27,7 +26,6 @@ import { cn } from "@/lib/utils";
 
 const TABS = [
   { value: "overview", label: "Overview", Icon: Sparkles },
-  { value: "top-commission", label: "Top by claim", Icon: Crown },
   { value: "top-wager", label: "Top by wager", Icon: Trophy },
   { value: "cohort", label: "Cohort", Icon: Users },
   { value: "inactive", label: "Inactive", Icon: UserMinus },
