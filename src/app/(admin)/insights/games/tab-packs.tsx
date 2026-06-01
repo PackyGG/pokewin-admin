@@ -7,6 +7,7 @@ import { formatCompactUsd, formatNumber } from "@/lib/utils/format";
 import { getPacksProfitability } from "@/lib/queries/insights-games/packs";
 import type { GamesPeriod } from "@/lib/queries/insights-games/_shared";
 import { labelForPeriod } from "@/lib/queries/insights-games/_shared";
+import { PackDrilldownPopover } from "./pack-drilldown-popover";
 
 /**
  * Packs tab — per-pack profitability table for the selected period.
@@ -53,6 +54,9 @@ export async function PacksTab({ period }: { period: GamesPeriod }) {
                     <th className="px-3 py-2 text-right font-semibold">P&amp;L</th>
                     <th className="px-3 py-2 text-right font-semibold">RTP</th>
                     <th className="px-3 py-2 text-right font-semibold">Margin</th>
+                    <th className="px-3 py-2 text-right font-semibold">
+                      <span className="sr-only">Drilldown</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -110,6 +114,13 @@ export async function PacksTab({ period }: { period: GamesPeriod }) {
                         className={`px-3 py-2 text-right tabular-nums ${p.marginPct >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}
                       >
                         {p.marginPct.toFixed(2)}%
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <PackDrilldownPopover
+                          packId={p.packId}
+                          period={period}
+                          packName={p.name}
+                        />
                       </td>
                     </tr>
                   ))}
