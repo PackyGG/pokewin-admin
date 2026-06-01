@@ -48,6 +48,7 @@ import {
   LineChart,
   Joystick,
   Tv,
+  Sigma,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -115,6 +116,7 @@ const ICONS: Record<string, LucideIcon> = {
   LineChart,
   Joystick,
   Tv,
+  Sigma,
 };
 
 type NavItem = {
@@ -197,6 +199,9 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Games", href: "/insights/games", icon: "Joystick", isNew: true },
       { label: "Rewards", href: "/insights/rewards", icon: "Gift", isNew: true },
       { label: "Streamers", href: "/insights/streamers", icon: "Tv", isNew: true },
+      // Edge Calc — theoretical EV / scenario simulator companion to
+      // the other Insights surfaces (pure math, no historical query).
+      { label: "Edge Calc", href: "/insights/edge-calc", icon: "Sigma", isNew: true },
     ],
   },
   {

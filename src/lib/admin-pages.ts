@@ -41,6 +41,11 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Insights", label: "Games", key: "/insights/games" },
   { group: "Insights", label: "Rewards", key: "/insights/rewards" },
   { group: "Insights", label: "Streamers", key: "/insights/streamers" },
+  // Edge Calc — theoretical EV / RTP / house-edge math + scenario
+  // simulator. Pure-math companion to the empirical /insights/games
+  // page so admins can model packs / upgrader / bonus stacks before
+  // they ship a change.
+  { group: "Insights", label: "Edge Calc", key: "/insights/edge-calc" },
   // Transactions
   // Standalone /transactions overview removed — admins land on a
   // specific sub-ledger instead. Each sub-page carries its own
