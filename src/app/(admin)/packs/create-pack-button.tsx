@@ -26,6 +26,11 @@ import { CardPickerDialog } from "./card-picker-dialog";
 import type { CardPickerItem } from "./actions";
 import { SortableCardTable, type SortableCard } from "./sortable-card-table";
 import { formatCurrency } from "@/lib/utils/format";
+import {
+  computePackEv,
+  suggestedPriceFromEv,
+  TARGET_HOUSE_EDGE,
+} from "@/app/(admin)/insights/edge-calc/math";
 import { createPack, getCardPickerFilters } from "./actions";
 import { uploadImageClient } from "@/lib/upload-image-client";
 import { pack_tag } from "@/generated/prisma/enums";
@@ -122,6 +127,7 @@ export function CreatePackButton() {
   const [slugManual, setSlugManual] = useState(false);
   const [description, setDescription] = useState("");
   const [price, setPrice] = useState("");
+  const [priceManual, setPriceManual] = useState(false);
   const [cardsPerOpen, setCardsPerOpen] = useState("1");
   const [packType, setPackType] = useState("official");
   const [tags, setTags] = useState<pack_tag[]>([]);
@@ -187,15 +193,35 @@ export function CreatePackButton() {
   }
 
   const totalOdds = cards.reduce((sum, c) => sum + c.odds, 0);
-
-  // Expected value per card = sum(price * normalizedProbability)
-  const evPerCard = totalOdds > 0
-    ? cards.reduce((sum, c) => sum + c.priceUsd * (c.odds / totalOdds), 0)
-    : 0;
+  const weightedPriceSum = cards.reduce((sum, c) => sum + c.priceUsd * c.odds, 0);
   const packPrice = parseFloat(price) || 0;
   const cpo = parseInt(cardsPerOpen) || 1;
-  const expectedPayout = evPerCard * cpo;
-  const houseEdge = packPrice > 0 ? ((packPrice - expectedPayout) / packPrice) * 100 : 0;
+
+  // Reuse the exact Edge Calc EV math: E[V_card] = Σ(w·price)/Σ(w),
+  // E[Payout] = E[V_card] × cardsPerOpen. Odds (normalized %) are the
+  // weights here — EV is scale-invariant in weights so the result is
+  // identical to the catalog computation off pack_cards.weight.
+  const ev = computePackEv({
+    pricePerOpen: packPrice,
+    cardsPerOpen: cpo,
+    totalWeight: totalOdds,
+    weightedPriceSum,
+  });
+  const evPerCard = ev.expectedCardValue;
+  const expectedPayout = ev.expectedPayoutPerOpen;
+  const houseEdge = packPrice > 0 ? ev.houseEdge * 100 : 0;
+
+  // EV-based suggested price targeting TARGET_HOUSE_EDGE. Auto-fills the
+  // price field as cards/odds/cards-per-open change, until the admin
+  // types a price manually (priceManual) — they can always override.
+  const suggestedPrice = suggestedPriceFromEv(expectedPayout);
+
+  useEffect(() => {
+    if (priceManual) return;
+    if (suggestedPrice <= 0) return;
+    const next = suggestedPrice.toFixed(2);
+    setPrice((prev) => (prev === next ? prev : next));
+  }, [suggestedPrice, priceManual]);
 
   function oddsToWeights(entries: CardEntry[]): number[] {
     return entries.map((c) => Math.max(1, Math.round(c.odds / 100 * 1_000_000)));
@@ -246,6 +272,7 @@ export function CreatePackButton() {
     setSlugManual(false);
     setDescription("");
     setPrice("");
+    setPriceManual(false);
     setCardsPerOpen("1");
     setPackType("official");
     setTags([]);
@@ -297,7 +324,38 @@ export function CreatePackButton() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div className="space-y-1.5">
                 <Label>Price (USD)</Label>
-                <Input type="number" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="0.00" min="0" step="0.01" />
+                <Input
+                  type="number"
+                  value={price}
+                  onChange={(e) => {
+                    setPriceManual(true);
+                    setPrice(e.target.value);
+                  }}
+                  placeholder="0.00"
+                  min="0"
+                  step="0.01"
+                />
+                {suggestedPrice > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    EV {formatCurrency(expectedPayout)} · Suggested {formatCurrency(suggestedPrice)} · Edge{" "}
+                    {(TARGET_HOUSE_EDGE * 100).toFixed(2)}%
+                    {priceManual && (
+                      <>
+                        {" · "}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPriceManual(false);
+                            setPrice(suggestedPrice.toFixed(2));
+                          }}
+                          className="text-primary underline underline-offset-2"
+                        >
+                          use suggested
+                        </button>
+                      </>
+                    )}
+                  </p>
+                )}
               </div>
               <div className="space-y-1.5">
                 <Label>Cards per Open</Label>

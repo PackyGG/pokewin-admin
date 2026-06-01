@@ -8,6 +8,41 @@
  * boundary so the React state machine stays serializable.
  */
 
+// ─── House-edge target ────────────────────────────────────────────────
+
+/**
+ * Target theoretical house edge used to auto-suggest a pack's sticker
+ * price from its EV (see `suggestedPriceFromEv`). 0.1099 = 10.99% edge.
+ *
+ * Centralised here (the dep-free, client-safe math module) so the
+ * pack create/edit dialogs and any future surface tune the same knob.
+ * Changing this value only affects NEW suggestions going forward — it
+ * never re-prices existing packs.
+ */
+export const TARGET_HOUSE_EDGE = 0.1099;
+
+/**
+ * Suggested sticker price for a pack given its expected payout per open
+ * (EV) at the `TARGET_HOUSE_EDGE`.
+ *
+ *   house edge = (price − EV) / price
+ *   ⇒ EV / price = 1 − edge
+ *   ⇒ price       = EV / (1 − edge)
+ *
+ * At the default 10.99% edge: price = EV / 0.8901. Returns a value
+ * rounded to 2 decimals (the DB stores price as Decimal(20,2)). Returns
+ * 0 for a non-positive EV (no pool / free pack — nothing to suggest).
+ */
+export function suggestedPriceFromEv(
+  evPerOpen: number,
+  targetHouseEdge: number = TARGET_HOUSE_EDGE,
+): number {
+  if (!Number.isFinite(evPerOpen) || evPerOpen <= 0) return 0;
+  const denom = 1 - targetHouseEdge;
+  if (denom <= 0) return 0;
+  return Math.round((evPerOpen / denom) * 100) / 100;
+}
+
 // ─── Pack EV ──────────────────────────────────────────────────────────
 
 export type PackEvBreakdown = {
