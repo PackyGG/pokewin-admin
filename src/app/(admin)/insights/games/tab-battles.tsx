@@ -1,14 +1,14 @@
-import Link from "next/link";
 import { Swords, Trophy, Users as UsersIcon } from "lucide-react";
 import { FadeIn } from "@/components/fade-in";
 import {
   KpiTile,
   SectionHeading,
 } from "@/components/modern-panels";
-import { formatCompactUsd, formatNumber, formatDateTime } from "@/lib/utils/format";
+import { formatCompactUsd, formatNumber } from "@/lib/utils/format";
 import { getBattlesProfitability } from "@/lib/queries/insights-games/battles";
 import type { GamesPeriod } from "@/lib/queries/insights-games/_shared";
 import { labelForPeriod } from "@/lib/queries/insights-games/_shared";
+import { BattleDrilldownPopover } from "./battle-drilldown-popover";
 
 /**
  * Battles tab — total + per-mode breakdown + top hits table.
@@ -140,15 +140,10 @@ export async function BattlesTab({ period }: { period: GamesPeriod }) {
                   {data.topBattles.map((b) => (
                     <tr key={b.battleId} className="border-b last:border-0 hover:bg-muted/30">
                       <td className="px-3 py-2">
-                        <Link
-                          href={`/battles/${b.battleId}`}
-                          className="flex flex-col hover:underline"
-                        >
-                          <span className="text-xs font-medium text-primary">View</span>
-                          <span className="text-[10px] text-muted-foreground">
-                            {formatDateTime(b.createdAt)}
-                          </span>
-                        </Link>
+                        <BattleDrilldownPopover
+                          battleId={b.battleId}
+                          createdAt={b.createdAt}
+                        />
                       </td>
                       <td className="px-3 py-2">{b.mode}</td>
                       <td className="px-3 py-2 text-right tabular-nums">
