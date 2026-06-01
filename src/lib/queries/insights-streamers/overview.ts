@@ -4,6 +4,7 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "../_blacklist";
+import { getStreamerSchemaProbe } from "./_schema-probe";
 import { periodSqlInterval, type StreamerPeriod } from "@/app/(admin)/insights/streamers/types";
 import type { CreatorInsightRow } from "./types";
 
@@ -69,6 +70,7 @@ type PayoutRow = { user_id: string; payout_settled: string };
 
 async function fetchInner(period: StreamerPeriod): Promise<CreatorInsightRow[]> {
   const db = await getDb();
+  const probe = await getStreamerSchemaProbe();
   const excluded = await getExcludedUserIds();
   const blacklistRu = blacklistNotInClause("ru.id", excluded);
 
@@ -132,7 +134,52 @@ async function fetchInner(period: StreamerPeriod): Promise<CreatorInsightRow[]> 
   // WITHDRAWN_UNITS shape as creators-pnl.ts; the cwr array columns are
   // UNNEST'd inside a sub-select that projects `withdrawn_at`, so the
   // outer CTE never references the `cwr` alias.
-  const cardWdP = db.$queryRawUnsafe<CardWdRow[]>(`
+  //
+  // SCHEMA-ADAPTIVE: the whole aggregate is gated on
+  // `card_withdrawal_requests`; the two UNION legs are each gated on
+  // their join table (`user_inventory` for cards, `vouchers` for
+  // session-linked vouchers). On a DB missing one of those, the leg is
+  // dropped instead of throwing `42P01`. When the requests table itself
+  // is absent the aggregate is skipped (every creator's card-WD = 0).
+  // Status / source_type / origin comparisons use members present on
+  // every DB, but origin/source_type are kept `::text`-cast so a future
+  // enum-member rename can't trip `22P02` here either.
+  const cardWdLegs: string[] = [];
+  if (probe.hasCardWithdrawalRequests && probe.hasUserInventory) {
+    cardWdLegs.push(`
+      SELECT cwr_u.withdrawn_at, ui.source_id,
+             ui.value_at_obtained::numeric AS value
+        FROM (
+          SELECT COALESCE(cwr.shipped_at, cwr.completed_at) AS withdrawn_at,
+                 UNNEST(cwr.inventory_item_ids) AS item_id
+            FROM card_withdrawal_requests cwr
+           WHERE cwr.status::text IN ('completed', 'shipped')
+        ) cwr_u
+        JOIN user_inventory ui ON ui.id = cwr_u.item_id
+       WHERE ui.source_type::text IN ('pack', 'battle')`);
+  }
+  if (probe.hasCardWithdrawalRequests && probe.hasVouchers) {
+    cardWdLegs.push(`
+      SELECT cwr_u.withdrawn_at, v.origin_id AS source_id,
+             v.value::numeric AS value
+        FROM (
+          SELECT COALESCE(cwr.shipped_at, cwr.completed_at) AS withdrawn_at,
+                 UNNEST(cwr.voucher_ids) AS voucher_id
+            FROM card_withdrawal_requests cwr
+           WHERE cwr.status::text IN ('completed', 'shipped')
+        ) cwr_u
+        JOIN vouchers v ON v.id = cwr_u.voucher_id
+       WHERE v.origin::text IN ('battle_excess_to_voucher', 'pack_borrow_to_voucher')`);
+  }
+
+  // No usable leg (requests table absent, or both join tables absent) →
+  // resolve to an empty result so the TS merge fills 0 for every
+  // creator. `affiliate_code_usages` is the spine of every other
+  // aggregate too; if it's gone there's nothing to attribute against.
+  const cardWdP: Promise<CardWdRow[]> =
+    cardWdLegs.length === 0 || !probe.hasAffiliateCodeUsages
+      ? Promise.resolve([])
+      : db.$queryRawUnsafe<CardWdRow[]>(`
     WITH creator_sessions AS (
       SELECT DISTINCT acu.affiliate_user_id, acu.game_session_id
         FROM affiliate_code_usages acu
@@ -143,27 +190,7 @@ async function fetchInner(period: StreamerPeriod): Promise<CreatorInsightRow[]> 
          ${blacklistRu}
     ),
     withdrawn_units AS (
-      SELECT cwr_u.withdrawn_at, ui.source_id,
-             ui.value_at_obtained::numeric AS value
-        FROM (
-          SELECT COALESCE(cwr.shipped_at, cwr.completed_at) AS withdrawn_at,
-                 UNNEST(cwr.inventory_item_ids) AS item_id
-            FROM card_withdrawal_requests cwr
-           WHERE cwr.status IN ('completed', 'shipped')
-        ) cwr_u
-        JOIN user_inventory ui ON ui.id = cwr_u.item_id
-       WHERE ui.source_type::text IN ('pack', 'battle')
-      UNION ALL
-      SELECT cwr_u.withdrawn_at, v.origin_id AS source_id,
-             v.value::numeric AS value
-        FROM (
-          SELECT COALESCE(cwr.shipped_at, cwr.completed_at) AS withdrawn_at,
-                 UNNEST(cwr.voucher_ids) AS voucher_id
-            FROM card_withdrawal_requests cwr
-           WHERE cwr.status IN ('completed', 'shipped')
-        ) cwr_u
-        JOIN vouchers v ON v.id = cwr_u.voucher_id
-       WHERE v.origin::text IN ('battle_excess_to_voucher', 'pack_borrow_to_voucher')
+      ${cardWdLegs.join("\n      UNION ALL\n")}
     )
     SELECT cs.affiliate_user_id AS user_id,
            COALESCE(SUM(wu.value), 0)::text AS cohort_cardwd

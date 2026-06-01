@@ -4,6 +4,7 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "../_blacklist";
+import { getStreamerSchemaProbe } from "./_schema-probe";
 import { periodSqlInterval, type StreamerPeriod } from "@/app/(admin)/insights/streamers/types";
 import type { CodeSwitcherRow } from "./types";
 
@@ -28,6 +29,13 @@ import type { CodeSwitcherRow } from "./types";
  * cleaned up an older race shows up. Race prize amounts come from
  * race_claims.prize_amount_usd directly (canonical).
  *
+ * SCHEMA-ADAPTIVE: built on `affiliate_code_usages` (skipped → empty
+ * list when absent). The race cross-reference columns are gated on
+ * `race_claims` — on a DB lacking it the race sub-selects are omitted
+ * and those columns return 0 instead of throwing `42P01`. All `code` /
+ * `usage_type` comparisons use `::text` casts so a missing enum member
+ * can never trip `22P02`.
+ *
  * Read-only against Main DB. 10-minute cache — switchers are a slow-
  * moving population.
  */
@@ -37,10 +45,40 @@ const ROW_LIMIT = 100;
 
 async function fetchInner(period: StreamerPeriod): Promise<CodeSwitcherRow[]> {
   const db = await getDb();
+  const probe = await getStreamerSchemaProbe();
+
+  // No cohort source → no switchers. Empty list (tab empty state).
+  if (!probe.hasAffiliateCodeUsages) return [];
+
   const excluded = await getExcludedUserIds();
   const blacklistU = blacklistNotInClause("u.id", excluded);
   const interval = periodSqlInterval(period);
   const acuPeriodPredicate = interval ? `AND acu.created_at >= NOW() - ${interval}` : "";
+
+  // Race cross-reference is gated on the `race_claims` table. When it's
+  // absent the count/sum correlated sub-selects (and the ORDER BY tie-
+  // breaker that reads it) would throw `42P01`, so we substitute literal
+  // zeros and drop the race term from the ORDER BY.
+  const raceCountExpr = probe.hasRaceClaims
+    ? `COALESCE((
+             SELECT COUNT(*)
+               FROM race_claims rc
+              WHERE rc.user_id = u.id
+           ), 0)::text`
+    : `'0'::text`;
+  const raceUsdExpr = probe.hasRaceClaims
+    ? `COALESCE((
+             SELECT SUM(rc.prize_amount_usd::numeric)
+               FROM race_claims rc
+              WHERE rc.user_id = u.id
+           ), 0)::text`
+    : `'0'::text`;
+  const raceOrderTerm = probe.hasRaceClaims
+    ? `,
+       (SELECT SUM(rc.prize_amount_usd::numeric)
+          FROM race_claims rc
+         WHERE rc.user_id = u.id) DESC NULLS LAST`
+    : ``;
 
   type SwitcherRow = {
     user_id: string;
@@ -98,16 +136,8 @@ async function fetchInner(period: StreamerPeriod): Promise<CodeSwitcherRow[]> {
                 AND acu.usage_type::text = 'deposit'
                 ${acuPeriodPredicate}
            ), 0)::text AS total_deposits,
-           COALESCE((
-             SELECT COUNT(*)
-               FROM race_claims rc
-              WHERE rc.user_id = u.id
-           ), 0)::text AS race_claim_count,
-           COALESCE((
-             SELECT SUM(rc.prize_amount_usd::numeric)
-               FROM race_claims rc
-              WHERE rc.user_id = u.id
-           ), 0)::text AS race_claim_usd
+           ${raceCountExpr} AS race_claim_count,
+           ${raceUsdExpr} AS race_claim_usd
       FROM sw_users sw
       JOIN "user" u ON u.id = sw.user_id
      WHERE u.role NOT IN ('admin', 'support', 'creator')
@@ -116,10 +146,7 @@ async function fetchInner(period: StreamerPeriod): Promise<CodeSwitcherRow[]> {
        SELECT COUNT(DISTINCT UPPER(acu.code))
          FROM affiliate_code_usages acu
         WHERE acu.referred_user_id = u.id
-     ) DESC,
-       (SELECT SUM(rc.prize_amount_usd::numeric)
-          FROM race_claims rc
-         WHERE rc.user_id = u.id) DESC NULLS LAST
+     ) DESC${raceOrderTerm}
      LIMIT ${ROW_LIMIT}
   `);
 

@@ -4,6 +4,7 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "../_blacklist";
+import { getStreamerSchemaProbe } from "./_schema-probe";
 import { periodSqlInterval, type StreamerPeriod } from "@/app/(admin)/insights/streamers/types";
 import type { CreatorRiskRow, SignalScore } from "./types";
 import {
@@ -73,6 +74,18 @@ import { formatCurrency } from "@/lib/utils/format";
  *   `creator_cohort_cycle_scores`. The cron output shape would match
  *   `CycleSignalRow` so the page swap is read-only.
  *
+ * SCHEMA-ADAPTIVE: this file uses the shared schema probe end to end.
+ *   The inline 1-4 query is gated on `affiliate_code_usages` and its
+ *   `balances` (signal 1) / `battles` (signal 4) reads degrade to a
+ *   0-contribution when those tables are absent — no `42P01`, and the
+ *   surviving inline signals still run (finer-grained than the old
+ *   all-or-nothing try/catch). The enum-/table-sensitive signals 5
+ *   (self-play `upgrader_bet`) and 6 (`upgrader_games`) are guarded
+ *   inside their own modules, so on a DB that predates the upgrader
+ *   launch they quietly contribute nothing instead of throwing. Each of
+ *   signals 5/6/7 is additionally fetched via `Promise.allSettled`, so a
+ *   failure in one never blanks the others.
+ *
  * Read-only against Main DB.
  */
 
@@ -100,6 +113,7 @@ function logSignalFailure(signalName: string, reason: unknown): void {
 
 async function fetchInner(period: StreamerPeriod): Promise<CreatorRiskRow[]> {
   const db = await getDb();
+  const probe = await getStreamerSchemaProbe();
   const excluded = await getExcludedUserIds();
   const blacklistRu = blacklistNotInClause("ru.id", excluded);
   const interval = periodSqlInterval(period);
@@ -164,9 +178,87 @@ async function fetchInner(period: StreamerPeriod): Promise<CreatorRiskRow[]> {
   // from the union of map keys so the score-from-signals path still
   // works. Better to show a partial risk view with one bad signal
   // group than nothing at all.
+  //
+  // SCHEMA-ADAPTIVE: the whole query is gated on `affiliate_code_usages`
+  // (the cohort spine). The inactive-cohort signal reads `balances` and
+  // the borrow-battle signal reads `battles`; each is gated on its table
+  // so a DB missing one degrades THAT signal to 0 without throwing
+  // `42P01` and without killing the other inline signals. `usage_type` /
+  // `battle.status` comparisons use `::text` casts so a missing enum
+  // member can never trip `22P02`.
+  //
+  //   • balances present → real inactive count; absent → inactive_count
+  //     forced to 0 (signal contributes nothing).
+  //   • battles present  → real borrow share; absent → an empty CTE so
+  //     borrow_share resolves to 0.
+  const inactiveCountExpr = probe.hasBalances
+    ? `COUNT(*) FILTER (
+               WHERE COALESCE(b.total_wagered::numeric, 0) < 50
+             )::int`
+    : `0`;
+  const balancesJoin = probe.hasBalances
+    ? `LEFT JOIN balances b ON b.user_id = cu.ru_id`
+    : ``;
+  // Borrow CTE: real aggregate when `battles` exists, otherwise an
+  // empty-shaped relation so the LEFT JOIN + COALESCE downstream yields
+  // borrow_share = 0 (no signal). `b.status::text` avoids any enum throw.
+  const battleBorrowCte = probe.hasBattles
+    ? `battle_borrow_stats AS (
+      SELECT cu.creator_id AS user_id,
+             COALESCE(SUM(b.bet_amount::numeric), 0) AS battle_wagered,
+             COALESCE(SUM(b.bet_amount::numeric * (b.borrow_percentage / 100.0)), 0) AS borrow_wagered
+        FROM cohort_users cu
+        JOIN battles b ON b.user_id = cu.ru_id
+        WHERE b.status::text = 'completed'
+          ${interval ? `AND b.created_at >= NOW() - ${interval}` : ""}
+       GROUP BY cu.creator_id
+    )`
+    : `battle_borrow_stats AS (
+      SELECT NULL::text AS user_id,
+             0::numeric AS battle_wagered,
+             0::numeric AS borrow_wagered
+       WHERE false
+    )`;
+
+  // Synthesize a minimum row per creator that still appears in any of
+  // the signal maps so signals 5-7 can render even when the inline
+  // 1-4 query couldn't run (table absent OR threw). The inline-signal
+  // fields are 0 here; those signals are gated by `referredCount >= 5`
+  // downstream, so a 0 means they contribute nothing — the intended
+  // degradation, not a fabricated score.
+  const synthesizeFromMaps = (): Row[] => {
+    const userIds = new Set<string>([
+      ...selfPlayMap.keys(),
+      ...anomalyMap.keys(),
+      ...cycleMap.keys(),
+    ]);
+    return Array.from(userIds, (uid) => ({
+      user_id: uid,
+      username: null,
+      primary_code: null,
+      referred_count: "0",
+      cohort_wager: "0",
+      inactive_pct: "0",
+      multi_code_pct: "0",
+      max_hourly_signups: "0",
+      mean_hourly_signups: "0",
+      borrow_share: "0",
+    }));
+  };
+
   let rows: Row[] = [];
-  try {
-    rows = await db.$queryRawUnsafe<Row[]>(`
+  if (!probe.hasAffiliateCodeUsages) {
+    // No cohort source at all — render the map-only synthesis (signals
+    // 5-7). Don't even attempt the inline query (its cohort spine is
+    // gone).
+    logSignalFailure(
+      "inline-1-to-4",
+      new Error("affiliate_code_usages table absent — inline signals skipped"),
+    );
+    rows = synthesizeFromMaps();
+  } else {
+    try {
+      rows = await db.$queryRawUnsafe<Row[]>(`
     WITH creators AS (
       SELECT u.id, u.username,
              (SELECT ac.code FROM affiliate_codes ac
@@ -190,11 +282,9 @@ async function fetchInner(period: StreamerPeriod): Promise<CreatorRiskRow[]> {
              -- wager total lives on balances.total_wagered (kept up to
              -- date by every ledger wager event). A user with no
              -- balances row has never deposited or wagered → 0.
-             COUNT(*) FILTER (
-               WHERE COALESCE(b.total_wagered::numeric, 0) < 50
-             )::int AS inactive_count
+             ${inactiveCountExpr} AS inactive_count
         FROM cohort_users cu
-        LEFT JOIN balances b ON b.user_id = cu.ru_id
+        ${balancesJoin}
        GROUP BY cu.creator_id
     ),
     -- Multi-code share: of this creator's referrals, how many used
@@ -256,17 +346,8 @@ async function fetchInner(period: StreamerPeriod): Promise<CreatorRiskRow[]> {
     -- pack-borrow (battles.borrow_percentage). Defenders against
     -- "wager farming" where a creator's referred user takes high-
     -- borrow battles to inflate apparent volume without committing
-    -- their own balance.
-    battle_borrow_stats AS (
-      SELECT cu.creator_id AS user_id,
-             COALESCE(SUM(b.bet_amount::numeric), 0) AS battle_wagered,
-             COALESCE(SUM(b.bet_amount::numeric * (b.borrow_percentage / 100.0)), 0) AS borrow_wagered
-        FROM cohort_users cu
-        JOIN battles b ON b.user_id = cu.ru_id
-        WHERE b.status = 'completed'
-          ${interval ? `AND b.created_at >= NOW() - ${interval}` : ""}
-       GROUP BY cu.creator_id
-    )
+    -- their own balance. Schema-gated (see battleBorrowCte above).
+    ${battleBorrowCte}
     SELECT c.id AS user_id, c.username, c.primary_code,
            COALESCE(cs.referred_count, 0)::text AS referred_count,
            COALESCE(ws.cohort_wager, 0)::text     AS cohort_wager,
@@ -291,32 +372,12 @@ async function fetchInner(period: StreamerPeriod): Promise<CreatorRiskRow[]> {
       LEFT JOIN wager_stats    ws  ON ws.user_id = c.id
       LEFT JOIN battle_borrow_stats bbs ON bbs.user_id = c.id
   `);
-  } catch (err) {
-    logSignalFailure("inline-1-to-4", err);
-    // Synthesize a minimum row per creator that still appears in any
-    // of the maps so signals 5-7 can render. The "real" row shape
-    // requires cohort_wager / referred_count etc. — we set them to 0
-    // here; the missing data only affects the inline 1-4 signals
-    // which are already gated by `referredCount >= 5`, so a 0 means
-    // those signals contribute nothing for that creator. Exactly the
-    // intended degradation.
-    const userIds = new Set<string>([
-      ...selfPlayMap.keys(),
-      ...anomalyMap.keys(),
-      ...cycleMap.keys(),
-    ]);
-    rows = Array.from(userIds, (uid) => ({
-      user_id: uid,
-      username: null,
-      primary_code: null,
-      referred_count: "0",
-      cohort_wager: "0",
-      inactive_pct: "0",
-      multi_code_pct: "0",
-      max_hourly_signups: "0",
-      mean_hourly_signups: "0",
-      borrow_share: "0",
-    }));
+    } catch (err) {
+      // One bad inline-signal group shouldn't blank the page — fall back
+      // to the map-only synthesis so signals 5-7 still render.
+      logSignalFailure("inline-1-to-4", err);
+      rows = synthesizeFromMaps();
+    }
   }
 
   // Score & rank in TS so the math is testable / inspectable.

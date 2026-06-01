@@ -3,6 +3,7 @@ import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "../_blacklist";
+import { getStreamerSchemaProbe } from "./_schema-probe";
 import {
   periodSqlInterval,
   type StreamerPeriod,
@@ -56,6 +57,11 @@ import {
  *     who are in someone's cohort", and run the cycle detection in
  *     application code so the SQL stays as simple per-row aggregates.
  *
+ * SCHEMA-ADAPTIVE: gated on `affiliate_code_usages` (skipped → empty
+ *   map when absent). The deposit / card_withdrawal ledger filters use
+ *   `type::text` comparisons so a missing enum member can never trip
+ *   `22P02` — the comparison just matches nothing.
+ *
  * PROPOSED follow-up:
  *   Move this to a daily cron writing into an admin DB table
  *   `creator_cohort_cycle_scores` (admin DB only — per CLAUDE.md), so
@@ -96,6 +102,13 @@ async function fetchInner(
   period: StreamerPeriod,
 ): Promise<Map<string, CycleSignalRow>> {
   const db = await getDb();
+  const probe = await getStreamerSchemaProbe();
+
+  // No cohort source → no cycles to walk. Empty map (0-score signal).
+  if (!probe.hasAffiliateCodeUsages) {
+    return new Map<string, CycleSignalRow>();
+  }
+
   const excluded = await getExcludedUserIds();
   const blacklistRu = blacklistNotInClause("ru.id", excluded);
   const interval = periodSqlInterval(period);
@@ -126,7 +139,7 @@ async function fetchInner(
              NULL::text AS code
         FROM cohort_users cu
         JOIN ledger_transactions lt ON lt.user_id = cu.ru_id
-       WHERE lt.type = 'deposit'
+       WHERE lt.type::text = 'deposit'
          AND lt.status = 'completed'
          ${ltCutoff}
     ),
@@ -137,7 +150,7 @@ async function fetchInner(
              NULL::text AS code
         FROM cohort_users cu
         JOIN ledger_transactions lt ON lt.user_id = cu.ru_id
-       WHERE lt.type = 'card_withdrawal'
+       WHERE lt.type::text = 'card_withdrawal'
          AND lt.status = 'completed'
          ${ltCutoff}
     ),

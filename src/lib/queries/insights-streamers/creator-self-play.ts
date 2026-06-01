@@ -5,7 +5,11 @@ import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "../_blacklist";
 import { getCreatorSessionWindowsCte } from "../creator-session-windows";
-import { WAGER_TYPES_SQL } from "../_wager-payout-types";
+import { WAGER_PAYOUT_WAGER_TYPES } from "../_wager-payout-types";
+import {
+  getStreamerSchemaProbe,
+  safeLedgerTypeInList,
+} from "./_schema-probe";
 import {
   periodSqlInterval,
   type StreamerPeriod,
@@ -52,10 +56,20 @@ import {
  *     selected window thus scores 0 for that window — which matches
  *     "what's happening in this period" semantics admins expect.
  *
- * Wager types match the existing GGR definition (`WAGER_TYPES_SQL`):
- *   pack_opening / battle_bet / battle_sponsorship / upgrader_bet /
- *   withdrawal_shipping_fee. Wager amounts are stored negative on the
- *   user side, so ABS() is required.
+ * Wager types match the existing GGR definition
+ *   (`WAGER_PAYOUT_WAGER_TYPES`): pack_opening / battle_bet /
+ *   battle_sponsorship / upgrader_bet / withdrawal_shipping_fee. Wager
+ *   amounts are stored negative on the user side, so ABS() is required.
+ *
+ * SCHEMA-ADAPTIVE: the wager-type list is intersected against the live
+ *   `ledger_transaction_type` enum via the schema probe before it's
+ *   interpolated. On a DB that predates the upgrader launch (enum lacks
+ *   `upgrader_bet`) the literal is silently dropped instead of throwing
+ *   `22P02 invalid input value for enum` — the exact failure that blanked
+ *   this signal on the stale snapshot. On prod the full set is used.
+ *   When the enum carries NONE of the wager types (impossible in
+ *   practice, but defended), the query is skipped and every creator
+ *   scores 0.
  *
  * Read-only against Main DB. 10-minute cache, tag `insights-streamers`.
  */
@@ -80,6 +94,17 @@ async function fetchInner(
   period: StreamerPeriod,
 ): Promise<Map<string, CreatorSelfPlayRow>> {
   const db = await getDb();
+  const probe = await getStreamerSchemaProbe();
+
+  // Schema gate: without the cohort source table there are no cohorts
+  // to compare, and the wager-type list must contain at least one member
+  // present on the connected enum. Either missing → no signal (empty
+  // map), never a throw.
+  const wagerIn = safeLedgerTypeInList(probe, WAGER_PAYOUT_WAGER_TYPES);
+  if (!probe.hasAffiliateCodeUsages || wagerIn === null) {
+    return new Map<string, CreatorSelfPlayRow>();
+  }
+
   const excluded = await getExcludedUserIds();
   const blacklistU = blacklistNotInClause("u.id", excluded);
   const blacklistRu = blacklistNotInClause("ru.id", excluded);
@@ -128,7 +153,7 @@ async function fetchInner(
          AND lt.created_at >= sw.win_start
          AND lt.created_at <  sw.win_end
        WHERE lt.status = 'completed'
-         AND lt.type IN ${WAGER_TYPES_SQL}
+         AND lt.type IN ${wagerIn}
          ${ltCutoff}
        GROUP BY lt.user_id
     ),
@@ -156,7 +181,7 @@ async function fetchInner(
          AND lt.created_at >= sw.win_start
          AND lt.created_at <  sw.win_end
        WHERE lt.status = 'completed'
-         AND lt.type IN ${WAGER_TYPES_SQL}
+         AND lt.type IN ${wagerIn}
          ${ltCutoff}
        GROUP BY cu.creator_id
     )

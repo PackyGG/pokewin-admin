@@ -4,6 +4,7 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "../_blacklist";
+import { getStreamerSchemaProbe } from "./_schema-probe";
 import { periodSqlInterval, type StreamerPeriod } from "@/app/(admin)/insights/streamers/types";
 import type { LeaderboardSnipeRow } from "./types";
 
@@ -27,6 +28,11 @@ import type { LeaderboardSnipeRow } from "./types";
  * We only return rows where the user has used 2+ DISTINCT codes
  * lifetime — that's the population where sniping is even possible.
  *
+ * SCHEMA-ADAPTIVE: the entire tab is built on `race_claims` correlated
+ * with `affiliate_code_usages`. The schema probe gates both — on a DB
+ * lacking either table the query is skipped and an empty list is
+ * returned (the tab shows its empty state) instead of throwing `42P01`.
+ *
  * Read-only against Main DB. 10-minute cache.
  */
 
@@ -35,6 +41,15 @@ const ROW_LIMIT = 100;
 
 async function fetchInner(period: StreamerPeriod): Promise<LeaderboardSnipeRow[]> {
   const db = await getDb();
+  const probe = await getStreamerSchemaProbe();
+
+  // The whole surface is a race-claim × code-history correlation. Either
+  // table missing → no rows possible, return empty (tab empty state)
+  // rather than throwing.
+  if (!probe.hasRaceClaims || !probe.hasAffiliateCodeUsages) {
+    return [];
+  }
+
   const excluded = await getExcludedUserIds();
   const blacklistU = blacklistNotInClause("u.id", excluded);
   const interval = periodSqlInterval(period);

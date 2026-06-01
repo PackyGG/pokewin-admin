@@ -4,6 +4,7 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "../_blacklist";
+import { getStreamerSchemaProbe } from "./_schema-probe";
 import {
   periodSqlInterval,
   type StreamerPeriod,
@@ -56,6 +57,17 @@ import {
  * stream or not. The session window CTE is intentionally not used
  * here. (Signal 5 covers the on-stream piece.)
  *
+ * SCHEMA-ADAPTIVE: the upgrader sub-signal reads the `upgrader_games`
+ * table, which only exists on a DB migrated past the upgrader launch.
+ * The schema probe gates it — on an older snapshot the upgrader query is
+ * skipped entirely (no `42P01 relation "upgrader_games" does not exist`),
+ * the pack-RTP sub-signal still runs, and the combined score falls back
+ * to the pack z-score alone. The pack side only references the
+ * always-present `pack_opening` type (no upgrader enum members), so it
+ * never trips `22P02`. Pack RTP itself is gated on `affiliate_code_usages`
+ * + `user_inventory` being present. Each sub-query is independently
+ * isolated so one failing side never blanks the other.
+ *
  * Read-only against Main DB. 10-minute cache, tag `insights-streamers`.
  */
 
@@ -86,6 +98,14 @@ async function fetchInner(
   period: StreamerPeriod,
 ): Promise<Map<string, CohortGameAnomalyRow>> {
   const db = await getDb();
+  const probe = await getStreamerSchemaProbe();
+
+  // Without the cohort source table there is nothing to compute. Return
+  // an empty map (no signal for any creator) rather than throwing.
+  if (!probe.hasAffiliateCodeUsages) {
+    return new Map<string, CohortGameAnomalyRow>();
+  }
+
   const excluded = await getExcludedUserIds();
   const blacklistC = blacklistNotInClause("c.id", excluded);
   const blacklistRu = blacklistNotInClause("ru.id", excluded);
@@ -116,9 +136,21 @@ async function fetchInner(
   //
   // The same `non_borrow_pack_sessions` CTE pattern as overview.ts
   // — kept inline here so this file isn't coupled to an /insights/games
-  // helper.
-  const [packRows, upgraderRows] = await Promise.all([
-    db.$queryRawUnsafe<PackRow[]>(`
+  // helper. `pack_opening` is a baseline ledger type present on every
+  // DB, so the bare-enum comparison is safe without a probe filter.
+  //
+  // PER-SUB-QUERY ISOLATION: the pack and upgrader aggregates run
+  // independently. The pack side needs `user_inventory` for the payout
+  // leg; the upgrader side needs the `upgrader_games` table. Each is
+  // gated by the probe and individually try/caught so a missing table or
+  // a busted side degrades to an empty result for THAT sub-signal only —
+  // the other still contributes its z-score.
+  let packRows: PackRow[] = [];
+  let upgraderRows: UpgraderRow[] = [];
+
+  const packP = probe.hasUserInventory
+    ? db
+        .$queryRawUnsafe<PackRow[]>(`
       WITH cohort_users AS (
         SELECT DISTINCT acu.affiliate_user_id AS creator_id,
                         acu.referred_user_id AS ru_id
@@ -169,12 +201,24 @@ async function fetchInner(
         LEFT JOIN cohort_pack_payout cpp ON cpp.user_id = c.id
        WHERE c.role = 'creator'
          ${blacklistC}
-    `),
-    // ── Per-creator-cohort upgrader bets + wins ────────────────────
-    // upgrader_games.won_amount > 0 = win. The table doesn't have
-    // borrow concept (per /insights/games _shared.ts), so we use it
-    // directly.
-    db.$queryRawUnsafe<UpgraderRow[]>(`
+    `)
+        .then((r) => {
+          packRows = r;
+        })
+        .catch((err) => {
+          logSubSignalFailure("pack-rtp", err);
+        })
+    : Promise.resolve();
+
+  // ── Per-creator-cohort upgrader bets + wins ────────────────────
+  // upgrader_games.won_amount > 0 = win. The table doesn't have a
+  // borrow concept (per /insights/games _shared.ts), so we use it
+  // directly. SCHEMA-GATED: skipped entirely when `upgrader_games` is
+  // absent (older snapshot) — the upgrader z-score is then null and the
+  // combined score falls back to the pack side.
+  const upgraderP = probe.hasUpgraderGames
+    ? db
+        .$queryRawUnsafe<UpgraderRow[]>(`
       WITH cohort_users AS (
         SELECT DISTINCT acu.affiliate_user_id AS creator_id,
                         acu.referred_user_id AS ru_id
@@ -200,8 +244,16 @@ async function fetchInner(
         LEFT JOIN cohort_upgrader cu ON cu.user_id = c.id
        WHERE c.role = 'creator'
          ${blacklistC}
-    `),
-  ]);
+    `)
+        .then((r) => {
+          upgraderRows = r;
+        })
+        .catch((err) => {
+          logSubSignalFailure("upgrader-hit-rate", err);
+        })
+    : Promise.resolve();
+
+  await Promise.all([packP, upgraderP]);
 
   // Build per-creator metrics + the population for σ calculation.
   // The population for σ is the set of cohorts with enough activity
@@ -322,6 +374,18 @@ async function fetchInner(
   }
 
   return out;
+}
+
+/**
+ * Logs a single sub-signal (pack-rtp / upgrader-hit-rate) query failure
+ * without taking the whole anomaly signal down. The dependent z-score
+ * simply stays null (no signal) for that axis.
+ */
+function logSubSignalFailure(name: string, reason: unknown): void {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  console.error(
+    `[insights-streamers.cohort-rtp-anomaly] sub-signal '${name}' threw, falling back to no-signal for that axis: ${msg}`,
+  );
 }
 
 /**
