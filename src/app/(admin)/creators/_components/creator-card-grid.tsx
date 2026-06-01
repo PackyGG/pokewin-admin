@@ -349,6 +349,341 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
   );
 }
 
+/**
+ * Compact list view for /creators — one creator per row, dense and
+ * scannable for working through a large roster fast. Surfaces the SAME
+ * data the card shows, laid out inline as columns instead of a card:
+ * avatar + username (link to the detail page), Active / Live status,
+ * current-deal status + fill progress, the affiliate stats (code,
+ * wager volume, signups, FTDs, converted), the house-cost chips
+ * (withdrawal cap, leaderboard %), and the row-action kebab.
+ *
+ * House-POV colors preserved exactly as on the card: wager volume +
+ * converted-withdrawn (house income / throughput) stay emerald;
+ * withdrawal cap + leaderboard cost (house spend) stay rose.
+ *
+ * Wide screens get a fixed column grid; below `lg` the row degrades to
+ * a stacked card-ish block so it stays readable on narrow viewports —
+ * no horizontal scrolling.
+ */
+export function CreatorListView({
+  creators,
+}: {
+  creators: CreatorWithSocials[];
+}) {
+  if (creators.length === 0) {
+    return (
+      <div className="rounded-xl border bg-muted/20">
+        <EmptyState
+          icon={Crown}
+          title="No creators found"
+          description="No creators match the current search or tab. Try a different search term or switch the deal program."
+        />
+      </div>
+    );
+  }
+  return (
+    <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
+      {/* Column header — desktop only. Mirrors the row grid below so the
+          inline columns read as a table. Hidden on narrow viewports
+          where rows stack. */}
+      <div className="hidden border-b border-border/60 bg-muted/30 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground lg:grid lg:grid-cols-[minmax(0,2fr)_minmax(0,1.6fr)_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.7fr)_minmax(0,0.7fr)_minmax(0,1fr)_2.25rem] lg:items-center lg:gap-3">
+        <span>Creator</span>
+        <span>Deal</span>
+        <span>Code</span>
+        <span className="text-right">Wager Volume</span>
+        <span className="text-right">Signups</span>
+        <span className="text-right">FTDs</span>
+        <span className="text-right">Converted</span>
+        <span className="sr-only">Actions</span>
+      </div>
+      <div className="divide-y divide-border/60">
+        {creators.map((creator) => (
+          <CreatorListRow key={creator.id} creator={creator} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CreatorListRow({ creator }: { creator: CreatorWithSocials }) {
+  const display =
+    creator.username ?? creator.email ?? creator.id.slice(0, 8);
+  const live = creator.active_session_id !== null;
+  const deal = creator.current_deal;
+  const hasActiveDeal = deal?.status === "active";
+  const initials = display.slice(0, 2).toUpperCase();
+  const conv =
+    creator.signups > 0
+      ? Math.min(100, (creator.ftds / creator.signups) * 100).toFixed(0)
+      : null;
+
+  return (
+    <div className="grid grid-cols-1 gap-2 px-4 py-3 transition-colors hover:bg-muted/30 lg:grid-cols-[minmax(0,2fr)_minmax(0,1.6fr)_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.7fr)_minmax(0,0.7fr)_minmax(0,1fr)_2.25rem] lg:items-center lg:gap-3">
+      {/* IDENTITY — avatar + username link + status badges + house-cost
+          chips (cap / leaderboard). Same signals as the card header. */}
+      <div className="flex min-w-0 items-center gap-2.5">
+        <Link
+          href={`/creators/${creator.id}`}
+          className="shrink-0"
+          aria-label={`Open ${display}`}
+        >
+          <Avatar className="size-8">
+            {creator.image && <AvatarImage src={creator.image} alt="" />}
+            <AvatarFallback className="bg-pink-500/15 text-[11px] font-semibold text-pink-700 dark:text-pink-300">
+              {initials}
+            </AvatarFallback>
+          </Avatar>
+        </Link>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Link
+              href={`/creators/${creator.id}`}
+              className="truncate text-sm font-semibold leading-tight hover:underline"
+            >
+              {display}
+            </Link>
+            {hasActiveDeal && (
+              <span
+                className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
+                title="Deal is currently active this week"
+              >
+                <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
+                Active
+              </span>
+            )}
+            {live && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                <span className="relative flex size-1.5">
+                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-500 opacity-75" />
+                  <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
+                </span>
+                Live
+              </span>
+            )}
+            {creator.withdrawalCapUsd != null && (
+              <span
+                className="inline-flex items-center gap-0.5 rounded-full border border-rose-500/30 bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-medium text-rose-600 dark:text-rose-400"
+                title="Max withdrawal cap on the creator's active deal"
+              >
+                Cap {formatCurrency(creator.withdrawalCapUsd)}
+              </span>
+            )}
+            {creator.leaderboardSponsoredPct != null && (
+              <span
+                className="inline-flex items-center gap-0.5 rounded-full border border-rose-500/30 bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-medium text-rose-600 dark:text-rose-400"
+                title="Leaderboard: the % we sponsor + our 14-day leaderboard cost"
+              >
+                LB {Math.round(creator.leaderboardSponsoredPct)}%
+                {creator.leaderboard2wkMaxUsd != null && (
+                  <span className="text-rose-600/70 dark:text-rose-400/70">
+                    {" · "}
+                    {formatCurrency(creator.leaderboard2wkMaxUsd)}
+                  </span>
+                )}
+              </span>
+            )}
+          </div>
+          <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+            {formatDate(new Date(creator.created_at))}
+            {" · "}
+            {formatNumber(creator.total_deals_count)} deals
+          </p>
+        </div>
+      </div>
+
+      {/* DEAL — compact status pill + fill progress. Mirrors the card's
+          DealSummary, condensed to a single line + thin bar. */}
+      <ListDealCell deal={deal} />
+
+      {/* CODE */}
+      <ListStatCell label="Code">
+        {creator.code ? (
+          <span
+            className="block truncate font-mono text-sm font-semibold"
+            title={creator.code}
+          >
+            {creator.code}
+          </span>
+        ) : (
+          <span className="block text-sm text-muted-foreground/60">—</span>
+        )}
+      </ListStatCell>
+
+      {/* WAGER VOLUME — emerald (house income), same as the card. */}
+      <ListStatCell label="Wager Volume" align="right">
+        <span
+          className="block truncate text-sm font-semibold tabular-nums text-emerald-600 dark:text-emerald-400"
+          title={`${creator.wagerVolumeUsd} USD — wagers from referred users`}
+        >
+          {creator.wagerVolumeUsd > 0
+            ? formatCurrency(creator.wagerVolumeUsd)
+            : "—"}
+        </span>
+      </ListStatCell>
+
+      {/* SIGNUPS */}
+      <ListStatCell label="Signups" align="right">
+        <span className="block truncate text-sm font-semibold tabular-nums">
+          {creator.signups > 0 ? formatNumber(creator.signups) : "—"}
+        </span>
+      </ListStatCell>
+
+      {/* FTDs — with conversion % trailing, matching the card. */}
+      <ListStatCell label="FTDs" align="right">
+        <span className="flex items-baseline justify-start gap-1 lg:justify-end">
+          <span className="text-sm font-semibold tabular-nums">
+            {creator.ftds > 0 ? formatNumber(creator.ftds) : "—"}
+          </span>
+          {conv !== null && (
+            <span className="font-mono text-[10px] text-muted-foreground/70">
+              {conv}%
+            </span>
+          )}
+        </span>
+      </ListStatCell>
+
+      {/* CONVERTED — deal throughput (neutral), with the withdrawn
+          sub-line in emerald when there's off-platform activity, same
+          split as the card. */}
+      <ListStatCell label="Converted" align="right">
+        <span
+          className="block truncate text-sm font-semibold tabular-nums"
+          title={
+            creator.convertedUsd != null
+              ? `${creator.convertedUsd} USD converted into payout vouchers (counted against this deal's withdraw cap)`
+              : "No active deal"
+          }
+        >
+          {creator.convertedUsd != null
+            ? formatCurrency(creator.convertedUsd)
+            : "—"}
+        </span>
+        {creator.convertedUsd != null &&
+          creator.withdrawnFromConverted != null &&
+          (creator.withdrawnFromConverted.withdrawnUsd > 0 ||
+            creator.withdrawnFromConverted.withdrawPendingUsd > 0) && (
+            <span className="mt-0.5 block truncate font-mono text-[10px] text-emerald-600/80 dark:text-emerald-400/80">
+              ↳ {formatCurrency(creator.withdrawnFromConverted.withdrawnUsd)}{" "}
+              withdrawn
+              {creator.withdrawnFromConverted.withdrawPendingUsd > 0 && (
+                <>
+                  {" "}
+                  · +
+                  {formatCurrency(
+                    creator.withdrawnFromConverted.withdrawPendingUsd,
+                  )}{" "}
+                  in flight
+                </>
+              )}
+            </span>
+          )}
+      </ListStatCell>
+
+      {/* ACTIONS — same kebab as the card. */}
+      <div className="flex justify-end lg:justify-center">
+        <CreatorRowActions
+          userId={creator.id}
+          hasActiveSession={live}
+          hasActiveDeal={
+            deal?.status === "active" || deal?.status === "scheduled"
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+// A list-row stat cell. Renders an inline uppercase label only below
+// `lg` (where the row stacks and the column header is hidden); at `lg`+
+// the header row provides the labels so the cell shows just the value.
+function ListStatCell({
+  label,
+  align = "left",
+  children,
+}: {
+  label: string;
+  align?: "left" | "right";
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex items-center justify-between gap-2 lg:block",
+        align === "right" && "lg:text-right",
+      )}
+    >
+      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground lg:hidden">
+        {label}
+      </span>
+      <div className="min-w-0">{children}</div>
+    </div>
+  );
+}
+
+// Compact deal cell for the list row — status pill + used/cap on one
+// line, a thin progress bar below. Mirrors the card's DealSummary in a
+// denser footprint. "No deal" collapses to a single muted line.
+function ListDealCell({
+  deal,
+}: {
+  deal: CreatorListItem["current_deal"];
+}) {
+  if (!deal) {
+    return (
+      <div className="flex items-center justify-between gap-2 lg:block">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground lg:hidden">
+          Deal
+        </span>
+        <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70">
+          <Coins className="size-3" />
+          No active deal
+        </span>
+      </div>
+    );
+  }
+
+  const fillsPct =
+    deal.fills_allowed > 0
+      ? Math.min(100, (deal.fills_used / deal.fills_allowed) * 100)
+      : 0;
+  const perFill = parseFloat(deal.per_fill_amount_usd) || 0;
+  const totalCap = perFill * deal.fills_allowed;
+  const totalUsed = perFill * deal.fills_used;
+
+  return (
+    <div className="min-w-0 space-y-1">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Badge
+          variant="outline"
+          className={cn(
+            "h-4 px-1.5 text-[10px] font-medium",
+            DEAL_STATUS_STYLE[deal.status],
+          )}
+        >
+          {deal.status}
+        </Badge>
+        <span className="font-mono text-[11px] font-medium tabular-nums">
+          <span className="text-foreground">${totalUsed.toFixed(0)}</span>
+          <span className="text-muted-foreground">
+            {" / $"}
+            {totalCap.toFixed(0)}
+          </span>
+        </span>
+        <span className="font-mono text-[10px] text-muted-foreground">
+          {deal.fills_used}/{deal.fills_allowed}
+        </span>
+      </div>
+      <div className="h-1 overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full rounded-full bg-pink-500 transition-all duration-500"
+          style={{ width: `${fillsPct}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 // Single 5-up stats strip replacing the old 2x2-bordered-tile layout.
 // Borderless — just type + spacing + subtle vertical hairlines on
 // desktop. Cleaner, more scannable, and reads as a single row of

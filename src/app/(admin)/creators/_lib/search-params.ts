@@ -25,6 +25,19 @@ export type CreatorsSortMode = z.infer<typeof CreatorsSortMode>;
 export const CreatorsTab = z.enum(["fill", "multiplier"]);
 export type CreatorsTab = z.infer<typeof CreatorsTab>;
 
+/**
+ * How the creator list is rendered.
+ *   • grid — default. Self-contained cards (1 / 2 / 3 cols), rich
+ *            per-creator detail. Best for browsing.
+ *   • list — compact one-creator-per-row table for scanning a large
+ *            roster quickly. Surfaces the same data the card shows,
+ *            inline as columns.
+ * URL-driven via `?view=`; absent → `grid` so the default experience
+ * is unchanged for anyone who doesn't pick list.
+ */
+export const CreatorsView = z.enum(["grid", "list"]);
+export type CreatorsView = z.infer<typeof CreatorsView>;
+
 const CreatorsSearchParamsSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   perPage: z.coerce.number().int().min(1).max(100).default(20),
@@ -38,6 +51,10 @@ const CreatorsSearchParamsSchema = z.object({
   filter: z.enum(["live", "active-deals"]).optional(),
   sortBy: CreatorsSortMode.default("recent"),
   tab: CreatorsTab.default("fill"),
+  // Grid (cards) vs list (compact rows). Default `grid` carries no
+  // `?view` param. `z.enum` rejects unknown values so a bad URL falls
+  // back to the card grid rather than breaking the render.
+  view: CreatorsView.default("grid"),
 });
 
 export type CreatorsSearchParams = z.infer<typeof CreatorsSearchParamsSchema>;

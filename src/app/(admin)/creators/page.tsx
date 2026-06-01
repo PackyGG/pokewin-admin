@@ -33,6 +33,7 @@ import {
   parseCreatorsSearchParams,
   type CreatorsSearchParams,
   type CreatorsTab,
+  type CreatorsView,
 } from "./_lib/search-params";
 import { type CreatorsListPage } from "./_queries/list-creators";
 import { listCreatorsFiltered } from "./_queries/list-creators-filtered";
@@ -63,10 +64,12 @@ import {
 } from "./_queries/leaderboard-cost";
 import {
   CreatorCardGrid,
+  CreatorListView,
   type CreatorWithSocials,
 } from "./_components/creator-card-grid";
 import { AddCreatorDialog } from "./_components/add-creator-dialog";
 import { CreatorsTabSwitch } from "./_components/creators-tab-switch";
+import { CreatorsViewToggle } from "./_components/creators-view-toggle";
 import { GlobalPnlByCreatorPopover } from "./_components/global-pnl-by-creator-popover";
 import { getAllCreatorsLifetimePnl } from "./_queries/all-creators-lifetime-pnl";
 
@@ -125,22 +128,27 @@ export default async function CreatorsPage({
         />
         <FadeIn className="space-y-4">
           {/* Toolbar is OUTSIDE the Suspense boundary so the search +
-              tab switch stay responsive while the cards stream in.
-              Tab switch hides while a filter is active — the filter
-              overrides the Fill / Multiplier view. */}
+              tab switch + view toggle stay responsive while the rows
+              stream in. Tab switch (leading) hides while a filter is
+              active — the filter overrides the Fill / Multiplier view.
+              The Grid / List view toggle (trailing `children`) is a
+              pure presentation switch over the same data, so it shows
+              in every mode and preserves all other params. */}
           <DataTableToolbar
             searchPlaceholder="Search by username or email..."
             leading={params.filter ? undefined : <CreatorsTabSwitch />}
-          />
-          {/* Card grid + pagination — Suspense boundary keyed on `tab`
-              + `search` + `page` + `sortBy` + `filter` so any
-              navigation that swaps the underlying data set shows the
-              skeleton instead of leaving the stale grid blocking.
-              `key=` forces React to throw the fresh boundary on every
-              navigation. */}
+          >
+            <CreatorsViewToggle />
+          </DataTableToolbar>
+          {/* Card grid / list + pagination — Suspense boundary keyed on
+              `tab` + `search` + `page` + `sortBy` + `filter` + `view`
+              so any navigation that swaps the underlying data set OR
+              the render mode shows the skeleton instead of leaving the
+              stale grid blocking. `key=` forces React to throw the
+              fresh boundary on every navigation. */}
           <Suspense
-            key={`grid-${params.tab}-${params.search ?? ""}-${params.page}-${params.sortBy}-${params.perPage}-${params.filter ?? ""}`}
-            fallback={<CreatorsGridSkeleton />}
+            key={`grid-${params.tab}-${params.search ?? ""}-${params.page}-${params.sortBy}-${params.perPage}-${params.filter ?? ""}-${params.view}`}
+            fallback={<CreatorsGridSkeleton view={params.view} />}
           >
             <CreatorsGridSection params={params} />
           </Suspense>
@@ -469,6 +477,50 @@ async function CreatorsGridSection({
     leaderboard2wkByUser = lb2wk;
   }
 
+  // Enriched + ordered creator rows — identical data for both render
+  // modes; only the presentation (cards vs compact rows) differs by
+  // `view`. Active/scheduled-deal creators pinned to the top in the
+  // default "recent" sort (skipped for explicit PnL sorts so the
+  // ranking isn't scrambled).
+  const view = params.view;
+  const creators = (result?.data ?? [])
+    .map<CreatorWithSocials>((c) => {
+      const cw = codeAndWagerByUser.get(c.id);
+      return {
+        ...c,
+        socials: socialsByUser.get(c.id) ?? [],
+        code: cw?.code ?? null,
+        wagerVolumeUsd: cw?.wagerVolumeUsd ?? 0,
+        signups: cw?.signups ?? 0,
+        ftds: cw?.ftds ?? 0,
+        deposits3dUsd: cw?.deposits3dUsd ?? 0,
+        wagers3dUsd: cw?.wagers3dUsd ?? 0,
+        convertedUsd: dealCapByUser.get(c.id)?.usedUsd ?? null,
+        withdrawnFromConverted:
+          withdrawnFromConvertedByUser.get(c.id) ?? null,
+        deal2wkMaxUsd: dealCapByUser.get(c.id)?.totalCapUsd ?? null,
+        leaderboard2wkMaxUsd:
+          leaderboard2wkByUser.get(c.id)?.costUsd ?? null,
+        withdrawalCapUsd: dealCapByUser.get(c.id)?.totalCapUsd ?? null,
+        leaderboardSponsoredPct:
+          leaderboard2wkByUser.get(c.id)?.effectivePct ?? null,
+      };
+    })
+    .sort((a, b) => {
+      if (params.sortBy !== "recent") return 0;
+      const aActive =
+        a.current_deal?.status === "active" ||
+        a.current_deal?.status === "scheduled"
+          ? 1
+          : 0;
+      const bActive =
+        b.current_deal?.status === "active" ||
+        b.current_deal?.status === "scheduled"
+          ? 1
+          : 0;
+      return bActive - aActive;
+    });
+
   return (
     <>
       {loadError && (
@@ -486,50 +538,11 @@ async function CreatorsGridSection({
           </div>
         </div>
       )}
-      <CreatorCardGrid
-        creators={(result?.data ?? [])
-          .map<CreatorWithSocials>((c) => {
-            const cw = codeAndWagerByUser.get(c.id);
-            return {
-              ...c,
-              socials: socialsByUser.get(c.id) ?? [],
-              code: cw?.code ?? null,
-              wagerVolumeUsd: cw?.wagerVolumeUsd ?? 0,
-              signups: cw?.signups ?? 0,
-              ftds: cw?.ftds ?? 0,
-              deposits3dUsd: cw?.deposits3dUsd ?? 0,
-              wagers3dUsd: cw?.wagers3dUsd ?? 0,
-              convertedUsd: dealCapByUser.get(c.id)?.usedUsd ?? null,
-              withdrawnFromConverted:
-                withdrawnFromConvertedByUser.get(c.id) ?? null,
-              deal2wkMaxUsd: dealCapByUser.get(c.id)?.totalCapUsd ?? null,
-              leaderboard2wkMaxUsd:
-                leaderboard2wkByUser.get(c.id)?.costUsd ?? null,
-              withdrawalCapUsd:
-                dealCapByUser.get(c.id)?.totalCapUsd ?? null,
-              leaderboardSponsoredPct:
-                leaderboard2wkByUser.get(c.id)?.effectivePct ?? null,
-            };
-          })
-          // Pin creators with an active or scheduled deal to the top of
-          // the page — ONLY in the default "recent" sort. When the user
-          // is explicitly sorting by PnL, this re-order would scramble
-          // the PnL ranking.
-          .sort((a, b) => {
-            if (params.sortBy !== "recent") return 0;
-            const aActive =
-              a.current_deal?.status === "active" ||
-              a.current_deal?.status === "scheduled"
-                ? 1
-                : 0;
-            const bActive =
-              b.current_deal?.status === "active" ||
-              b.current_deal?.status === "scheduled"
-                ? 1
-                : 0;
-            return bActive - aActive;
-          })}
-      />
+      {view === "list" ? (
+        <CreatorListView creators={creators} />
+      ) : (
+        <CreatorCardGrid creators={creators} />
+      )}
       {/* Pagination is hidden while a tile filter is active because
           `listCreatorsFiltered` collapses the result to a single page
           — the filtered set is small enough to fit on one screen, and
@@ -549,19 +562,35 @@ async function CreatorsGridSection({
 // ─── Skeletons ────────────────────────────────────────────────────
 
 /**
- * Card-grid + pagination skeleton — mirrors the real <CreatorCardGrid>
- * (1 / 2 / 3 cols responsive) and the pagination row underneath. Used
- * as the fallback for the table-side Suspense boundary so tab swaps
- * don't freeze on the stale grid.
+ * List/grid skeleton + pagination — mirrors the active render mode so
+ * switching the view (or tab / search / sort / page) shows a matching
+ * skeleton instead of freezing on the stale content. Grid → 6 card
+ * blocks (1 / 2 / 3 cols). List → a bordered container of 8 thin rows.
  */
-function CreatorsGridSkeleton() {
+function CreatorsGridSkeleton({
+  view = "grid",
+}: {
+  view?: CreatorsView;
+}) {
   return (
     <>
-      <div className="grid gap-3 grid-cols-1 sm:gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {Array.from({ length: 6 }).map((_, i) => (
-          <Skeleton key={i} className="h-64 rounded-2xl" />
-        ))}
-      </div>
+      {view === "list" ? (
+        <div className="overflow-hidden rounded-xl border border-border/60 bg-card divide-y divide-border/60">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-3 px-4 py-3">
+              <Skeleton className="size-8 shrink-0 rounded-full" />
+              <Skeleton className="h-4 w-40" />
+              <Skeleton className="ml-auto h-4 w-24" />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="grid gap-3 grid-cols-1 sm:gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-64 rounded-2xl" />
+          ))}
+        </div>
+      )}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <Skeleton className="h-4 w-48" />
         <div className="flex items-center gap-2">
