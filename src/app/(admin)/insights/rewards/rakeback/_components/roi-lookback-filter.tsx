@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { RAKEBACK_ROI_LOOKBACK_OPTIONS } from "@/lib/queries/insights-rewards/rakeback/roi";
+import { RAKEBACK_ROI_LOOKBACK_OPTIONS } from "../_constants";
 
 /**
  * Lookback selector for the ROI tab. Lookback drives how many forward

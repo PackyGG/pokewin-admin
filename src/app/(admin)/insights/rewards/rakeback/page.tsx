@@ -9,7 +9,7 @@ import {
 import {
   parseRakebackRoiLookback,
   type RakebackRoiLookback,
-} from "@/lib/queries/insights-rewards/rakeback/roi";
+} from "./_constants";
 import {
   parseRakebackTopClaimerScope,
   type RakebackTopClaimerScope,

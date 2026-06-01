@@ -8,6 +8,22 @@ import {
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
+import {
+  RAKEBACK_ROI_LOOKBACK_DEFAULT,
+  type RakebackRoiLookback,
+} from "@/app/(admin)/insights/rewards/rakeback/_constants";
+
+// Re-export the client-safe lookback constants/helpers so server callers
+// can keep importing them from this module. The runtime values live in
+// `_constants.ts` (no server imports) so the `"use client"` lookback
+// filter can use them without pulling this server-only module into the
+// client bundle.
+export {
+  RAKEBACK_ROI_LOOKBACK_DEFAULT,
+  RAKEBACK_ROI_LOOKBACK_OPTIONS,
+  parseRakebackRoiLookback,
+} from "@/app/(admin)/insights/rewards/rakeback/_constants";
+export type { RakebackRoiLookback } from "@/app/(admin)/insights/rewards/rakeback/_constants";
 
 /**
  * Rakeback ROI — rakeback cost in window vs subsequent gameplay GGR
@@ -35,10 +51,6 @@ const WAGER_TYPES_SQL = `(
   'pack_opening','battle_bet','battle_sponsorship','upgrader_bet'
 )`;
 const PAYOUT_TYPES_SQL = `('battle_refund','upgrader_payout')`;
-
-export const RAKEBACK_ROI_LOOKBACK_DEFAULT = 14;
-export const RAKEBACK_ROI_LOOKBACK_OPTIONS = [3, 7, 14, 30, 60] as const;
-export type RakebackRoiLookback = (typeof RAKEBACK_ROI_LOOKBACK_OPTIONS)[number];
 
 export type RakebackRoi = {
   /** Rakeback cost paid out in window. */
@@ -174,16 +186,4 @@ export async function getRakebackRoi(
   return cacheTtlForInsightsPeriod(period) >= 300
     ? cachedLong(period, lookbackDays, sorted)
     : cachedShort(period, lookbackDays, sorted);
-}
-
-export function parseRakebackRoiLookback(
-  raw: string | undefined,
-): RakebackRoiLookback {
-  const num = Number(raw);
-  if (Number.isFinite(num)) {
-    for (const opt of RAKEBACK_ROI_LOOKBACK_OPTIONS) {
-      if (opt === num) return opt;
-    }
-  }
-  return RAKEBACK_ROI_LOOKBACK_DEFAULT;
 }
