@@ -1,76 +1,73 @@
 "use client";
 
 import * as React from "react";
-import { Download, Loader2 } from "lucide-react";
+import { Download } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import {
-  downloadCsv,
-  sectionsToCsv,
-  totalRowCount,
-  type ExportSection,
-} from "@/lib/utils/export-csv";
 
 /**
- * Shared "Export data" button for the Insights pages.
+ * Shared "Export data" button for the Insights pages (and /ggr).
  *
  * Sized to sit in a PageHero action slot next to the period / tab
- * switchers. On click it calls the server `action` passed in from the
- * page (server actions are passable to client components as props in
- * Next 15), serializes the returned `ExportSection[]` to CSV, and
- * triggers a browser download.
+ * switchers. On click it navigates to the streaming CSV route handler
+ * (`/insights/export?page=<page>&<params>`); the browser handles the
+ * `Content-Disposition: attachment` response as a native file download,
+ * leaving the current page untouched.
  *
- * This component imports ONLY client-safe modules (the csv util +
- * lucide + sonner + the shadcn Button) so it never drags a server-only
- * graph into the client bundle. The per-page export query logic lives
- * server-side inside `action`.
+ * Why a route handler and not a server action: the old version called a
+ * server action that returned the whole `ExportSection[]` array to the
+ * client to serialize into CSV here. On large datasets (lifetime period,
+ * thousands of rows) that array exceeded the Next.js server-action
+ * response body-size limit and the export broke. The route handler has
+ * no such cap — it builds + serializes the CSV server-side and streams
+ * it back as a file.
  *
- * `useTransition` drives the spinner so the button stays responsive and
- * disables itself while the export query runs. Errors surface as a
- * toast (matching the codebase's sonner error pattern) instead of
- * throwing into the client.
+ * This component imports ONLY client-safe modules (lucide + sonner + the
+ * shadcn Button) so it never drags a server-only graph into the client
+ * bundle. All export query logic lives server-side in the route handler.
+ *
+ * A native download gives no JS completion signal, so the button shows a
+ * brief disabled state + a "Preparing download…" toast on click rather
+ * than a success toast. The flag clears on a short timer (the navigation
+ * itself doesn't fire an event we can hook).
  */
 export function ExportButton({
-  action,
-  filename,
+  page,
+  params = {},
   label = "Export data",
 }: {
   /**
-   * Server action that gathers every section for the active
-   * period / tab / filters and returns them. Passed from the page so
-   * its server-only imports never reach the client bundle.
+   * Export page key — selects the gatherer + permission gate in the
+   * route handler's registry (e.g. `"deposit-bonus"`, `"games"`,
+   * `"ggr"`).
    */
-  action: () => Promise<ExportSection[]>;
-  /** Download filename, e.g. `insights-deposit-bonus-30d.csv`. */
-  filename: string;
+  page: string;
+  /**
+   * Active view params (period / tab lens / filters) forwarded to the
+   * route so the export matches what the admin is currently looking at.
+   * `undefined` values are dropped.
+   */
+  params?: Record<string, string | undefined>;
   /** Button text. Defaults to "Export data". */
   label?: string;
 }) {
-  const [pending, startTransition] = React.useTransition();
+  const [preparing, setPreparing] = React.useState(false);
 
   function handleClick() {
-    startTransition(async () => {
-      try {
-        const sections = await action();
-        const rowCount = totalRowCount(sections);
-        if (rowCount === 0) {
-          toast.info("No data to export for this view.");
-          return;
-        }
-        const csv = sectionsToCsv(sections);
-        downloadCsv(filename, csv);
-        toast.success(
-          `Exported ${rowCount.toLocaleString("en-US")} ${
-            rowCount === 1 ? "row" : "rows"
-          }.`,
-        );
-      } catch (err) {
-        toast.error(
-          err instanceof Error ? err.message : "Export failed.",
-        );
-      }
-    });
+    const query = new URLSearchParams({ page });
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== "") query.set(key, value);
+    }
+    const href = `/insights/export?${query.toString()}`;
+
+    setPreparing(true);
+    toast.info("Preparing download…");
+    // Navigating to an attachment response triggers the browser's file
+    // download without unloading the current page. No completion event
+    // is exposed, so re-enable on a short timer.
+    window.location.href = href;
+    window.setTimeout(() => setPreparing(false), 3000);
   }
 
   return (
@@ -79,14 +76,10 @@ export function ExportButton({
       variant="outline"
       size="sm"
       onClick={handleClick}
-      disabled={pending}
-      aria-busy={pending}
+      disabled={preparing}
+      aria-busy={preparing}
     >
-      {pending ? (
-        <Loader2 className="size-3.5 animate-spin" />
-      ) : (
-        <Download className="size-3.5" />
-      )}
+      <Download className="size-3.5" />
       {label}
     </Button>
   );

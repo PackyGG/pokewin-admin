@@ -6,7 +6,6 @@ import { ExportButton } from "@/components/export-button";
 import { PeriodFilter } from "./period-filter";
 import { StreamersTabNav } from "./tab-nav";
 import { parsePeriod, parseTab } from "./types";
-import { exportStreamersData } from "./_export";
 import { OverviewTab } from "./tab-overview";
 import { MoneyMakersTab } from "./tab-money-makers";
 import { SusTab } from "./tab-sus";
@@ -55,10 +54,7 @@ export default async function StreamerInsightsPage({
           />
           <div className="flex flex-wrap items-center gap-2">
             <PeriodFilter />
-            <ExportButton
-              action={exportStreamersData.bind(null, period)}
-              filename={`insights-streamers-${period}.csv`}
-            />
+            <ExportButton page="streamers" params={{ period }} />
           </div>
         </div>
       </PageHero>

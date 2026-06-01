@@ -10,7 +10,6 @@ import {
   parseInsightsRewardsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
-import { exportDepositBonusData } from "./_export";
 import { DepositBonusPeriodFilter } from "./_components/period-filter";
 import { DepositBonusTabSwitch } from "./_components/tab-switch";
 import { DepositBonusTabSkeleton } from "./_components/tab-skeleton";
@@ -97,10 +96,7 @@ export default async function DepositBonusInsightsPage({
           />
           <div className="flex flex-wrap items-center gap-2">
             <DepositBonusPeriodFilter />
-            <ExportButton
-              action={exportDepositBonusData.bind(null, period)}
-              filename={`insights-deposit-bonus-${period}.csv`}
-            />
+            <ExportButton page="deposit-bonus" params={{ period }} />
           </div>
         </div>
       </PageHero>

@@ -10,7 +10,6 @@ import {
   parseInsightsRewardsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
-import { exportRewardsOverviewData } from "./_export";
 import { InsightsRewardsPeriodFilter } from "./_components/period-filter";
 import { InsightsRewardsTabSwitch } from "./_components/tab-switch";
 import {
@@ -108,10 +107,7 @@ export default async function InsightsRewardsPage({
           />
           <div className="flex flex-wrap items-center gap-2">
             <InsightsRewardsPeriodFilter />
-            <ExportButton
-              action={exportRewardsOverviewData.bind(null, period)}
-              filename={`insights-rewards-overview-${period}.csv`}
-            />
+            <ExportButton page="rewards" params={{ period }} />
           </div>
         </div>
       </PageHero>

@@ -4,7 +4,6 @@ import { requirePageAccess } from "@/lib/dal";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { ExportButton } from "@/components/export-button";
 import { parseInsightsPeriod, parseInsightsTab } from "./types";
-import { exportAnalyticsData } from "./_export";
 import { PeriodSelector } from "./period-selector";
 import { InsightsTabNav } from "./tab-nav";
 import { InsightsTabSkeleton } from "./tab-skeleton";
@@ -72,15 +71,16 @@ export default async function InsightsAnalyticsPage({
           <div className="flex flex-wrap items-center gap-2">
             <PeriodSelector />
             <ExportButton
-              action={exportAnalyticsData.bind(null, period, {
+              page="analytics"
+              params={{
+                period,
                 cohortsBy,
                 retentionBy,
                 ltvBy,
                 funnelBy,
                 whalesBy,
                 geoBy,
-              })}
-              filename={`insights-analytics-${period}.csv`}
+              }}
             />
           </div>
         </div>

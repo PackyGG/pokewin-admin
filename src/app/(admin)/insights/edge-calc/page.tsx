@@ -11,7 +11,6 @@ import {
   getUpgraderPoolStats,
 } from "@/lib/queries/insights-edge-calc";
 
-import { exportEdgeCalcData } from "./_export";
 import { EdgeCalcTabNav } from "./tab-nav";
 import { parseEdgeCalcTab } from "./types";
 import { PacksTab } from "./packs-tab";
@@ -75,10 +74,7 @@ export default async function EdgeCalcPage({
           title="Edge Calc"
           subtitle="Theoretical EV, RTP, and house-edge math for packs, upgrader, and reward stacks."
           action={
-            <ExportButton
-              action={exportEdgeCalcData}
-              filename="insights-edge-calc.csv"
-            />
+            <ExportButton page="edge-calc" />
           }
         />
       </PageHero>

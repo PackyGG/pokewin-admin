@@ -10,7 +10,6 @@ import {
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
 import { ExportButton } from "@/components/export-button";
-import { exportSignupData } from "./_export";
 import { SignupInsightsPeriodFilter } from "./_components/period-filter";
 import { SignupInsightsTabSwitch } from "./_components/tab-switch";
 import {
@@ -131,10 +130,7 @@ export default async function SignupInsightsPage({
           />
           <div className="flex flex-wrap items-center gap-2">
             <SignupInsightsPeriodFilter />
-            <ExportButton
-              action={exportSignupData.bind(null, period)}
-              filename={`insights-signup-${period}.csv`}
-            />
+            <ExportButton page="signup" params={{ period }} />
           </div>
         </div>
       </PageHero>

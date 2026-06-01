@@ -37,7 +37,6 @@ import { describeLedgerType } from "@/lib/queries/_wager-payout-descriptions";
 import { ExportButton } from "@/components/export-button";
 
 import { GgrWindowSwitch } from "./ggr-window-switch";
-import { exportGgrData } from "./_export";
 
 export const metadata = { title: "GGR Breakdown" };
 
@@ -97,10 +96,7 @@ export default async function GgrPage({
           action={
             <>
               <GgrWindowSwitch />
-              <ExportButton
-                action={exportGgrData.bind(null, ggrWindow)}
-                filename={`ggr-${ggrWindow}.csv`}
-              />
+              <ExportButton page="ggr" params={{ window: ggrWindow }} />
             </>
           }
         />

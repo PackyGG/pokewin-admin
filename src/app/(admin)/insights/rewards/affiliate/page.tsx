@@ -10,7 +10,6 @@ import {
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
 import { ExportButton } from "@/components/export-button";
-import { exportAffiliateData } from "./_export";
 import { AffiliatePeriodFilter } from "./_components/period-filter";
 import { AffiliateInsightsTabSwitch } from "./_components/tab-switch";
 import {
@@ -108,10 +107,7 @@ export default async function AffiliateInsightsPage({
           />
           <div className="flex flex-wrap items-center gap-2">
             <AffiliatePeriodFilter />
-            <ExportButton
-              action={exportAffiliateData.bind(null, period)}
-              filename={`insights-affiliate-${period}.csv`}
-            />
+            <ExportButton page="affiliate" params={{ period }} />
           </div>
         </div>
       </PageHero>

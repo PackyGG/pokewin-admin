@@ -5,7 +5,6 @@ import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { ExportButton } from "@/components/export-button";
 import { GamesTabNav } from "./tab-nav";
 import { GamesPeriodFilter } from "./period-filter";
-import { exportGamesData } from "./_export";
 import { parseGamesTab } from "./types";
 import { parseGamesPeriod } from "@/lib/queries/insights-games/_shared";
 import { OverviewTab } from "./tab-overview";
@@ -67,8 +66,13 @@ export default async function GamesInsightsPage({
           <div className="flex flex-wrap items-center gap-2">
             <GamesPeriodFilter />
             <ExportButton
-              action={exportGamesData.bind(null, period, usersFilters)}
-              filename={`insights-games-${period}.csv`}
+              page="games"
+              params={{
+                period,
+                game: usersFilters.game,
+                minWager: String(usersFilters.minWager),
+                country: usersFilters.country ?? undefined,
+              }}
             />
           </div>
         </div>
