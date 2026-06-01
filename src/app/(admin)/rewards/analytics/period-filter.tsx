@@ -8,6 +8,9 @@ import { cn } from "@/lib/utils";
  * Period selector for the rewards analytics page. Mirrors the
  * /analytics PeriodFilter (chip row, replace navigation, no prefetch)
  * but with the windows this page supports: 24h / 7d / 30d / all.
+ *
+ * Preserves the `?category=` tab selector so flipping the period
+ * doesn't kick the admin back to the Overview tab.
  */
 const PERIODS = [
   { label: "24h", value: "today" },
@@ -20,13 +23,17 @@ export function RewardsPeriodFilter() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const current = searchParams.get("period") ?? "30d";
+  const category = searchParams.get("category");
+  const carryCategory = category
+    ? `&category=${encodeURIComponent(category)}`
+    : "";
 
   return (
     <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/50 p-1">
       {PERIODS.map(({ label, value }) => (
         <Link
           key={value}
-          href={`${pathname}?period=${value}`}
+          href={`${pathname}?period=${value}${carryCategory}`}
           replace
           prefetch={false}
           className={cn(
