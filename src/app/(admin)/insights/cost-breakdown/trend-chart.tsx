@@ -28,23 +28,24 @@ type Point = {
 };
 
 /**
- * Daily GGR vs total cost vs net P&L over the active window.
+ * Daily canonical GGR vs reward giveback vs NGR over the active window.
  *
- * GGR is the gross margin captured; cost is everything that flowed out
- * of it that day (gameplay givebacks beyond GGR + liabilities +
- * residual = GGR − P&L); P&L is what survived. Lets the operator see if
- * leakage is GROWING relative to GGR over time.
+ * GGR is the gross gaming margin captured; the cost bar is the day's
+ * house-funded reward giveback (GGR − NGR); NGR is the net gaming margin
+ * the house kept after rewards. All three come from the canonical
+ * per-day metric series (`getDailyGamingMetrics`), so the daily GGR/NGR
+ * reconcile with the headline by construction. Lets the operator see if
+ * reward spend is GROWING relative to GGR over time.
  *
- * House-POV colors, consistent with the Money Flow tab so the two
- * surfaces read together: GGR = blue (the identity line), P&L = emerald
- * (house gain), cost = rose (money back to users). The cost bar sits
- * under the GGR line so the visible headroom between the bar top and
- * the GGR line is the day's P&L.
+ * House-POV colors: GGR = blue (the gross line), NGR = emerald (house
+ * keeps), reward giveback = rose (money back to users). The cost bar
+ * sits under the GGR line so the visible headroom between the bar top
+ * and the GGR line is the day's NGR.
  */
 const chartConfig = {
   ggr: { label: "GGR", color: "rgb(59 130 246)" },
-  cost: { label: "Cost (back to users)", color: "rgb(244 63 94)" },
-  pnl: { label: "Net P&L", color: "rgb(16 185 129)" },
+  cost: { label: "Reward giveback", color: "rgb(244 63 94)" },
+  pnl: { label: "NGR", color: "rgb(16 185 129)" },
 } satisfies ChartConfig;
 
 export function CostTrendChart({ data }: { data: Point[] }) {
@@ -52,11 +53,12 @@ export function CostTrendChart({ data }: { data: Point[] }) {
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-xs font-medium">
-          GGR vs total cost vs net P&L — daily
+          GGR vs reward giveback vs NGR — daily
         </CardTitle>
         <p className="text-[11px] text-muted-foreground">
-          Cost (rose) is what flowed out of GGR each day. The gap between the
-          GGR line and the cost bar is the day&apos;s realized P&L.
+          The rose bar is the day&apos;s house-funded reward giveback. The gap
+          between the GGR line and the bar top is the day&apos;s net gaming
+          margin (NGR).
         </p>
       </CardHeader>
       <CardContent>

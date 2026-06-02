@@ -51,24 +51,28 @@ export const metadata = { title: "Cost Breakdown" };
  *
  * Answers the operator's recurring question: "$2.5M wagered but only
  * $17k P&L — where does all the money go?" One waterfall ties total
- * wager → realized P&L, itemizing every cost / leakage category in
- * between, each with its dollar amount, %-of-GGR, and %-of-wager so the
- * biggest leak is obvious.
+ * wager → GGR → NGR → realized P&L, itemizing every cost / leakage
+ * category in between, each with its dollar amount, %-of-GGR, and
+ * %-of-wager so the biggest leak is obvious.
  *
- * Every number is an AGGREGATION of the existing query infrastructure
- * (getCostBreakdown → getMoneyFlowDecomposition + the canonical GGR
- * type sets + the gaming-margin contributor sweep), so the figures
- * reconcile by construction with /ggr, /dashboard, and the
- * /insights/analytics Money Flow tab. Cross-consistency is the point —
- * if this page says bonuses = $X, /insights/rewards agrees.
+ * Every gaming-margin number comes from the canonical `@/lib/metrics`
+ * layer (getCostBreakdown → getWindowMetrics + sumLedgerTypes +
+ * calculateWindowedPnl), so the figures reconcile by construction with
+ * /ggr, /dashboard, and every other migrated surface — there is exactly
+ * one definition of GGR/NGR site-wide and this page calls it. GGR is the
+ * verified inventory-delta model (card conversions are NEUTRAL, not a
+ * payout); NGR nets house-funded rewards (creator tips are a RESIDUAL
+ * pass-through, not a cost; affiliate-leaderboard prizes ARE a cost).
  *
  * House-POV throughout (CLAUDE.md): money flowing BACK to users (every
- * cost line) is rose; the house's gross margin (GGR) and realized P&L
- * are emerald when positive, rose when negative. Inventory + voucher
- * liability are surfaced as prominent first-class lines because they're
- * the big "hidden" leaks the operator keeps not seeing — GGR can be
- * positive while P&L is thin precisely because users are holding cards
- * (unrealized winnings the house still owes).
+ * cost line) is rose; the house's gross/net margin (GGR/NGR) and
+ * realized P&L are emerald when positive, rose when negative. Inventory
+ * + voucher liability are surfaced as prominent first-class lines because
+ * they're the big "hidden" leaks the operator keeps not seeing — GGR can
+ * be positive while P&L is thin precisely because users are holding cards
+ * (unrealized winnings the house still owes). Every RESIDUAL_TYPES ledger
+ * flow is itemized as a named bridge row, so the old catch-all "residual"
+ * shrinks to a small honest rounding/timing remainder.
  */
 export default async function CostBreakdownPage({
   searchParams,
@@ -309,10 +313,13 @@ function HeroKpis({
 
 /**
  * Maps a cost line to an accent + a server-rendered lucide icon node.
- * Cost lines (gaming / reward / liability / residual) are rose; the
- * base wager is blue; GGR + P&L flip emerald/rose on sign. Keeping the
- * icon resolution server-side keeps lucide off the client WaterfallRow
- * bundle and the accent token deterministic.
+ * House-POV: money flowing BACK to users (gaming payout / reward /
+ * liability) is rose; the base wager is blue; the GGR + NGR subtotals
+ * and the final P&L flip emerald/rose on sign. Named RESIDUAL_TYPES
+ * bridge rows colour by their effect on P&L (inflow emerald, outflow
+ * rose, net-zero transfer blue); the honest leftover is amber when
+ * material. Keeping the icon resolution server-side keeps lucide off the
+ * client WaterfallRow bundle and the accent token deterministic.
  */
 function lineVisual(line: CostLine): {
   accent: AccentColor;
@@ -338,9 +345,35 @@ function lineVisual(line: CostLine): {
               : ArrowUpFromLine,
       };
     case "residual":
+      // Named RESIDUAL_TYPES bridge row. signedAmount > 0 = a cash
+      // inflow to the house (deposits) → emerald; < 0 = an outflow
+      // (card-withdrawal leg, rain-pool funding, admin debit) → rose;
+      // == 0 = a net-zero transfer (vault, creator-tip pass-through,
+      // escrow, creator-fill) → blue (informational).
+      return {
+        accent:
+          line.signedAmount > 0
+            ? "emerald"
+            : line.signedAmount < 0
+              ? "rose"
+              : "blue",
+        sign:
+          line.signedAmount > 0
+            ? "+"
+            : line.signedAmount < 0
+              ? "−"
+              : "=",
+        icon:
+          line.signedAmount > 0
+            ? ArrowDownToLine
+            : line.signedAmount < 0
+              ? ArrowUpFromLine
+              : Scale,
+      };
+    case "unexplained":
       return {
         accent: line.label.startsWith("Unexplained") ? "amber" : "blue",
-        sign: line.signedAmount <= 0 ? "−" : "+",
+        sign: line.signedAmount < 0 ? "−" : "+",
         icon: AlertCircle,
       };
     case "subtotal":
@@ -490,7 +523,7 @@ function MarginHealth({ data }: { data: CostBreakdown }) {
       <KpiTile
         label="RTP"
         value={ratio(m.rtp)}
-        sub="Payouts ÷ wager"
+        sub="Gaming payouts ÷ wager"
         icon={ArrowDownToLine}
         accent="rose"
       />

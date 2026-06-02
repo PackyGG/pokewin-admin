@@ -19,9 +19,9 @@ const AREA = "insights.export.cost-breakdown";
  *
  * Reuses the exact same `getCostBreakdown` helper the page renders (top
  * 50 contributors here vs 10 on-screen), so the export reconciles with
- * the page — and, transitively, with /ggr + /insights/analytics Money
- * Flow + /insights/rewards (since getCostBreakdown is itself an
- * assembly of getMoneyFlowDecomposition + the canonical GGR type sets).
+ * the page — and, transitively, with /ggr + /dashboard + the other
+ * migrated surfaces (since getCostBreakdown is itself an assembly of the
+ * canonical `@/lib/metrics` layer — one definition of each metric).
  * Read-only. Server-only; auth is enforced by the route handler that
  * calls this (`/insights/export`), which gates on the same page-access
  * key as the page.
@@ -45,11 +45,13 @@ export async function gatherCostBreakdownExportSections(
         ["Period", periodLabel],
         ["Total wager (USD)", d.totalWager],
         ["Gameplay winnings paid back (USD)", d.gamingPayouts],
-        ["Reward / marketing payouts (USD)", d.rewardPayouts],
         ["GGR / gaming margin (USD)", d.ggr],
+        ["Reward / marketing payouts (USD)", d.rewardPayouts],
+        ["NGR / net gaming margin (USD)", d.ngr],
         ["Inventory value held by users (USD)", d.inventoryDelta],
         ["Card withdrawals shipped (USD)", d.cardWithdrawals],
         ["Unclaimed voucher liability (USD)", d.voucherDelta],
+        ["Residual ledger flows itemized — net (USD)", d.residualNamedTotal],
         ["Unexplained residual (USD)", d.residual],
         ["Net P&L realized (USD)", d.pnl],
         ["Total cost wager − P&L (USD)", d.totalCost],
@@ -89,9 +91,10 @@ export async function gatherCostBreakdownExportSections(
     buildSection(AREA, "Margin Health", ["Metric", "Value"], () => {
       const m = data().margin;
       return [
-        ["RTP (payouts / wager)", m.rtp],
+        ["RTP (gaming payouts / wager)", m.rtp],
         ["House edge (GGR / wager)", m.houseEdge],
         ["GGR % of wager", m.ggrPctOfWager],
+        ["NGR % of wager", m.ngrPctOfWager],
         ["P&L % of wager", m.pnlPctOfWager],
         ["Cost % of GGR", m.costPctOfGgr],
         ["P&L % of GGR", m.pnlPctOfGgr],
@@ -101,8 +104,8 @@ export async function gatherCostBreakdownExportSections(
     // ── Daily trend ───────────────────────────────────────────────
     buildSection(
       AREA,
-      "Daily Trend (GGR / cost / P&L)",
-      ["Date", "GGR (USD)", "Cost (USD)", "Net P&L (USD)"],
+      "Daily Trend (GGR / reward giveback / NGR)",
+      ["Date", "GGR (USD)", "Reward giveback (USD)", "NGR (USD)"],
       () => data().trend.map((t) => [t.date, t.ggr, t.cost, t.pnl]),
     ),
 
