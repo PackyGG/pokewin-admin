@@ -1,6 +1,7 @@
 import "server-only";
 
 import { adminDb } from "@/lib/admin-db";
+import { isMissingColumnError } from "@/lib/admin-user-roles";
 
 // Module-level cache so we only hit the DB once per server process.
 // Reset to false on failure so a transient error doesn't lock out
@@ -41,30 +42,52 @@ let ensured = false;
 export async function ensureSupportBaseline(): Promise<void> {
   if (ensured) return;
   try {
-    // Single UPDATE per missing page key — both statements are
-    // guarded by `NOT (… = ANY(allowed_pages))` so they no-op for
-    // users that already have access. Each matches BOTH legacy
-    // single-role rows (role = 'support') AND multi-role rows that
-    // merely INCLUDE support among `roles` (primary `role` may differ),
-    // so a support+pack_creator user still gets the /users + /dashboard
-    // baseline.
-    await adminDb.$executeRawUnsafe(
-      `UPDATE "admin_users"
-          SET "allowed_pages" = array_append("allowed_pages", '/users')
-        WHERE (role = 'support' OR 'support'::"admin_role" = ANY("roles"))
-          AND NOT ('/users' = ANY("allowed_pages"))`,
-    );
-    await adminDb.$executeRawUnsafe(
-      `UPDATE "admin_users"
-          SET "allowed_pages" = array_append("allowed_pages", '/dashboard')
-        WHERE (role = 'support' OR 'support'::"admin_role" = ANY("roles"))
-          AND NOT ('/dashboard' = ANY("allowed_pages"))`,
-    );
+    await runSupportBaseline(true);
     ensured = true;
   } catch (err) {
+    // If the additive `roles` column hasn't been migrated yet, the
+    // `ANY("roles")` predicate throws P2022. Retry the legacy
+    // single-role-only form so the /users + /dashboard baseline still
+    // self-heals exactly as it did before multi-role shipped. Behaviour
+    // is then identical to the pre-migration code path.
+    if (isMissingColumnError(err)) {
+      try {
+        await runSupportBaseline(false);
+        ensured = true;
+        return;
+      } catch (legacyErr) {
+        ensured = false;
+        console.error("[support] ensureSupportBaseline failed:", legacyErr);
+        return;
+      }
+    }
     // Don't crash the page on a back-fill failure — surface it in the
     // server log and let the next caller retry on a transient blip.
     ensured = false;
     console.error("[support] ensureSupportBaseline failed:", err);
   }
+}
+
+// Single UPDATE per missing page key — both statements are guarded by
+// `NOT (… = ANY(allowed_pages))` so they no-op for users that already
+// have access. When `includeRolesArray` is true each matches BOTH legacy
+// single-role rows (role = 'support') AND multi-role rows that merely
+// INCLUDE support among `roles`. When false (the `roles` column hasn't
+// been migrated yet) it matches the legacy single-role rows only.
+async function runSupportBaseline(includeRolesArray: boolean): Promise<void> {
+  const match = includeRolesArray
+    ? `(role = 'support' OR 'support'::"admin_role" = ANY("roles"))`
+    : `role = 'support'`;
+  await adminDb.$executeRawUnsafe(
+    `UPDATE "admin_users"
+        SET "allowed_pages" = array_append("allowed_pages", '/users')
+      WHERE ${match}
+        AND NOT ('/users' = ANY("allowed_pages"))`,
+  );
+  await adminDb.$executeRawUnsafe(
+    `UPDATE "admin_users"
+        SET "allowed_pages" = array_append("allowed_pages", '/dashboard')
+      WHERE ${match}
+        AND NOT ('/dashboard' = ANY("allowed_pages"))`,
+  );
 }

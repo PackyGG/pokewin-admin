@@ -1,27 +1,50 @@
 import { adminDb } from "@/lib/admin-db";
 import { getDb } from "@/lib/db";
 import { getEffectiveRoles } from "@/lib/admin-roles";
+import { readAdminUserWithRoles } from "@/lib/admin-user-roles";
 import type { PaginatedResult } from "@/lib/types";
 
 export async function getAdminUserDetail(id: string) {
   const db = await getDb();
-  const user = await adminDb.admin_users.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      email: true,
-      username: true,
-      role: true,
-      roles: true,
-      role_id: true,
-      custom_role: { select: { id: true, name: true, capabilities: true } },
-      totp_enabled: true,
-      is_active: true,
-      allowed_pages: true,
-      created_at: true,
-      updated_at: true,
-    },
-  });
+  // Resilient to the unapplied `roles` migration: degrades to `roles: []`
+  // (→ effective `[role]` below) so the detail page renders pre-migration.
+  const user = await readAdminUserWithRoles(
+    () =>
+      adminDb.admin_users.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          email: true,
+          username: true,
+          role: true,
+          roles: true,
+          role_id: true,
+          custom_role: { select: { id: true, name: true, capabilities: true } },
+          totp_enabled: true,
+          is_active: true,
+          allowed_pages: true,
+          created_at: true,
+          updated_at: true,
+        },
+      }),
+    () =>
+      adminDb.admin_users.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          email: true,
+          username: true,
+          role: true,
+          role_id: true,
+          custom_role: { select: { id: true, name: true, capabilities: true } },
+          totp_enabled: true,
+          is_active: true,
+          allowed_pages: true,
+          created_at: true,
+          updated_at: true,
+        },
+      }),
+  );
 
   if (!user) return null;
 

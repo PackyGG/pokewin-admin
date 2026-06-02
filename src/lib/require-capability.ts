@@ -1,6 +1,7 @@
 import { adminDb } from "@/lib/admin-db";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { getEffectiveRoles } from "@/lib/admin-roles";
+import { readAdminUserWithRoles } from "@/lib/admin-user-roles";
 
 /**
  * Capability gate for admin server actions.
@@ -28,10 +29,22 @@ export async function requireCapability(
   // caller already carries the role set.
   if (getEffectiveRoles(session.role, session.roles).includes("admin")) return;
 
-  const perms = await adminDb.admin_users.findUnique({
-    where: { id: session.userId },
-    select: { role: true, roles: true, allowed_pages: true },
-  });
+  // Resilient to the unapplied `roles` migration: degrades to `roles: []`
+  // (→ effective `[role]`) so a gated server action can't crash when the
+  // column is absent. Security is unchanged — `[role]` grants no more than
+  // the user's single role.
+  const perms = await readAdminUserWithRoles(
+    () =>
+      adminDb.admin_users.findUnique({
+        where: { id: session.userId },
+        select: { role: true, roles: true, allowed_pages: true },
+      }),
+    () =>
+      adminDb.admin_users.findUnique({
+        where: { id: session.userId },
+        select: { role: true, allowed_pages: true },
+      }),
+  );
 
   if (!perms) {
     throw new Error(`You do not have permission to ${actionLabel}`);

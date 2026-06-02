@@ -9,6 +9,7 @@ import { generateSecret } from "@/lib/totp";
 import { redirect } from "next/navigation";
 import { getDefaultRouteForUser } from "@/lib/dal";
 import { getEffectiveRoles, pickPrimaryRole } from "@/lib/admin-roles";
+import { readAdminUserWithRoles } from "@/lib/admin-user-roles";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { MS_PER_MINUTE, MS_PER_HOUR } from "@/lib/utils/time";
 
@@ -59,21 +60,40 @@ export async function login(
 
   // Explicit select so missing columns (e.g. `preferences` when the
   // migration hasn't been applied on prod yet) don't crash the login
-  // flow. Only fields actually used below.
-  const adminUser = await adminDb.admin_users.findUnique({
-    where: { email },
-    select: {
-      id: true,
-      email: true,
-      username: true,
-      role: true,
-      roles: true,
-      password_hash: true,
-      totp_enabled: true,
-      totp_secret: true,
-      is_active: true,
-    },
-  });
+  // flow. Only fields actually used below. The additive `roles` column is
+  // read resiliently — if its migration hasn't run, the read degrades to
+  // `roles: []` (→ effective `[role]`) so admins can still log in.
+  const adminUser = await readAdminUserWithRoles(
+    () =>
+      adminDb.admin_users.findUnique({
+        where: { email },
+        select: {
+          id: true,
+          email: true,
+          username: true,
+          role: true,
+          roles: true,
+          password_hash: true,
+          totp_enabled: true,
+          totp_secret: true,
+          is_active: true,
+        },
+      }),
+    () =>
+      adminDb.admin_users.findUnique({
+        where: { email },
+        select: {
+          id: true,
+          email: true,
+          username: true,
+          role: true,
+          password_hash: true,
+          totp_enabled: true,
+          totp_secret: true,
+          is_active: true,
+        },
+      }),
+  );
 
   if (!adminUser) {
     return { error: "Invalid email or password" };

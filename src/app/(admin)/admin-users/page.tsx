@@ -3,6 +3,7 @@ import { Shield, CheckCircle2, XCircle, ShieldCheck, Wallet } from "lucide-react
 import { requirePageAccess } from "@/lib/dal";
 import { adminDb } from "@/lib/admin-db";
 import { getEffectiveRoles } from "@/lib/admin-roles";
+import { readAdminUsersWithRoles } from "@/lib/admin-user-roles";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatDateTime } from "@/lib/utils/format";
@@ -27,21 +28,39 @@ export default async function AdminUsersPage() {
 
   // Explicit select — same defensive rationale as login/actions.ts. A
   // missing column from an unrun migration would otherwise crash this page
-  // with P2022 before anything renders.
+  // with P2022 before anything renders. `readAdminUsersWithRoles` degrades
+  // each row to `roles: []` (→ effective `[role]`) when the additive
+  // `roles` column hasn't been migrated yet.
   const [users, balanceLimits] = await Promise.all([
-    adminDb.admin_users.findMany({
-      orderBy: { created_at: "desc" },
-      select: {
-        id: true,
-        email: true,
-        username: true,
-        role: true,
-        roles: true,
-        totp_enabled: true,
-        is_active: true,
-        created_at: true,
-      },
-    }),
+    readAdminUsersWithRoles(
+      () =>
+        adminDb.admin_users.findMany({
+          orderBy: { created_at: "desc" },
+          select: {
+            id: true,
+            email: true,
+            username: true,
+            role: true,
+            roles: true,
+            totp_enabled: true,
+            is_active: true,
+            created_at: true,
+          },
+        }),
+      () =>
+        adminDb.admin_users.findMany({
+          orderBy: { created_at: "desc" },
+          select: {
+            id: true,
+            email: true,
+            username: true,
+            role: true,
+            totp_enabled: true,
+            is_active: true,
+            created_at: true,
+          },
+        }),
+    ),
     isCurrentUserAdmin
       ? adminDb.admin_balance_limits.findMany({
           select: { admin_user_id: true, period_type: true },

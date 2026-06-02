@@ -1,6 +1,7 @@
 import "server-only";
 
 import { adminDb } from "@/lib/admin-db";
+import { isMissingColumnError } from "@/lib/admin-user-roles";
 
 // Module-level cache so we only hit the DB once per server process.
 // Reset to false on failure so a transient error doesn't lock out
@@ -92,19 +93,27 @@ export const PACK_CREATOR_DEFAULT_PAGES: readonly string[] = [
 export async function ensurePackCreatorCapabilities(): Promise<void> {
   if (ensured) return;
   try {
-    for (const key of PACK_CREATOR_DEFAULT_PAGES) {
-      // Match BOTH legacy single-role rows (role = 'pack_creator') AND
-      // multi-role rows that merely INCLUDE pack_creator among `roles`
-      // (their primary `role` may be something else, e.g. support). The
-      // `::"admin_role"` cast keeps the array-membership test type-safe.
-      await adminDb.$executeRaw`
-        UPDATE "admin_users"
-           SET "allowed_pages" = array_append("allowed_pages", ${key})
-         WHERE (role = 'pack_creator' OR 'pack_creator'::"admin_role" = ANY("roles"))
-           AND NOT (${key} = ANY("allowed_pages"))`;
-    }
+    await runPackCreatorBaseline(true);
     ensured = true;
   } catch (err) {
+    // If the additive `roles` column hasn't been migrated yet, the
+    // `ANY("roles")` predicate throws P2022. Retry the legacy
+    // single-role-only form so existing pack_creator rows still get their
+    // capability baseline exactly as before multi-role shipped.
+    if (isMissingColumnError(err)) {
+      try {
+        await runPackCreatorBaseline(false);
+        ensured = true;
+        return;
+      } catch (legacyErr) {
+        ensured = false;
+        console.error(
+          "[pack-creator] ensurePackCreatorCapabilities failed:",
+          legacyErr,
+        );
+        return;
+      }
+    }
     // Don't crash the page on a back-fill failure — the capabilities
     // are non-critical for the page to render. Reset so a future
     // caller retries (e.g. transient connection blip).
@@ -113,5 +122,31 @@ export async function ensurePackCreatorCapabilities(): Promise<void> {
       "[pack-creator] ensurePackCreatorCapabilities failed:",
       err,
     );
+  }
+}
+
+// Append every missing key with a `NOT (… = ANY(allowed_pages))` guard so
+// the statement no-ops for keys the user already holds. When
+// `includeRolesArray` is true it matches BOTH legacy single-role rows
+// (role = 'pack_creator') AND multi-role rows that merely INCLUDE
+// pack_creator among `roles`. When false (the `roles` column hasn't been
+// migrated yet) it matches the legacy single-role rows only.
+async function runPackCreatorBaseline(includeRolesArray: boolean): Promise<void> {
+  for (const key of PACK_CREATOR_DEFAULT_PAGES) {
+    if (includeRolesArray) {
+      // The `::"admin_role"` cast keeps the array-membership test
+      // type-safe.
+      await adminDb.$executeRaw`
+        UPDATE "admin_users"
+           SET "allowed_pages" = array_append("allowed_pages", ${key})
+         WHERE (role = 'pack_creator' OR 'pack_creator'::"admin_role" = ANY("roles"))
+           AND NOT (${key} = ANY("allowed_pages"))`;
+    } else {
+      await adminDb.$executeRaw`
+        UPDATE "admin_users"
+           SET "allowed_pages" = array_append("allowed_pages", ${key})
+         WHERE role = 'pack_creator'
+           AND NOT (${key} = ANY("allowed_pages"))`;
+    }
   }
 }

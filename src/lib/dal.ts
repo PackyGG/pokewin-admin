@@ -8,6 +8,7 @@ import {
   getEffectiveRoles,
   pickPrimaryRole,
 } from "./admin-roles";
+import { readAdminUserWithRoles } from "./admin-user-roles";
 import type { AdminRole } from "./admin-roles";
 
 export { getDefaultRoute };
@@ -43,10 +44,24 @@ export const verifySession = cache(async (): Promise<SessionPayload> => {
   // contain a stale role set if the user was demoted/promoted after login
   // — relying on the JWT alone would let a demoted admin keep full access
   // until their session expires (up to 12h).
-  const adminUser = await adminDb.admin_users.findUnique({
-    where: { id: session.userId },
-    select: { is_active: true, role: true, roles: true },
-  });
+  //
+  // This runs in the ROOT LAYOUT on every request, so it must NEVER throw
+  // because the additive `roles` column hasn't been migrated yet. The
+  // resilient read degrades to `roles: []` when the column is missing,
+  // which `getEffectiveRoles` collapses to the legacy `[role]` — identical
+  // behaviour to before multi-role shipped.
+  const adminUser = await readAdminUserWithRoles(
+    () =>
+      adminDb.admin_users.findUnique({
+        where: { id: session.userId },
+        select: { is_active: true, role: true, roles: true },
+      }),
+    () =>
+      adminDb.admin_users.findUnique({
+        where: { id: session.userId },
+        select: { is_active: true, role: true },
+      }),
+  );
   if (!adminUser?.is_active) {
     redirect("/login");
   }
@@ -76,10 +91,20 @@ export const verifySession = cache(async (): Promise<SessionPayload> => {
  * already the union of the user's roles.
  */
 export const getUserPermissions = cache(async (userId: string): Promise<string[]> => {
-  const user = await adminDb.admin_users.findUnique({
-    where: { id: userId },
-    select: { role: true, roles: true, allowed_pages: true },
-  });
+  // Resilient to the unapplied `roles` migration: degrades to `roles: []`
+  // (→ effective `[role]`) so this read can't crash a non-admin's request.
+  const user = await readAdminUserWithRoles(
+    () =>
+      adminDb.admin_users.findUnique({
+        where: { id: userId },
+        select: { role: true, roles: true, allowed_pages: true },
+      }),
+    () =>
+      adminDb.admin_users.findUnique({
+        where: { id: userId },
+        select: { role: true, allowed_pages: true },
+      }),
+  );
   if (!user) return [];
   // `admin` among the user's effective roles = full access, no page list.
   if (getEffectiveRoles(user.role, user.roles).includes("admin")) return [];
@@ -122,11 +147,20 @@ export async function requirePageAccess(pageKey: string): Promise<SessionPayload
 export async function getDefaultRouteForUser(userId: string, role: string): Promise<string> {
   // Re-read the full effective role set so a multi-role user lands on the
   // right surface (admin → /dashboard, support → /users, …). The `role`
-  // argument is the login-time primary; the DB is authoritative.
-  const user = await adminDb.admin_users.findUnique({
-    where: { id: userId },
-    select: { role: true, roles: true },
-  });
+  // argument is the login-time primary; the DB is authoritative. Resilient
+  // to the unapplied `roles` migration → falls back to `[role]`.
+  const user = await readAdminUserWithRoles(
+    () =>
+      adminDb.admin_users.findUnique({
+        where: { id: userId },
+        select: { role: true, roles: true },
+      }),
+    () =>
+      adminDb.admin_users.findUnique({
+        where: { id: userId },
+        select: { role: true },
+      }),
+  );
   const roles = getEffectiveRoles(user?.role ?? role, user?.roles);
   if (roles.includes("admin")) return "/dashboard";
   const allowedPages = await getUserPermissions(userId);

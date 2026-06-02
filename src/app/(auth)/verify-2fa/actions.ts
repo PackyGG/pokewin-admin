@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { getDefaultRouteForUser } from "@/lib/dal";
 import { getEffectiveRoles, pickPrimaryRole } from "@/lib/admin-roles";
+import { readAdminUserWithRoles } from "@/lib/admin-user-roles";
 import { adminDb } from "@/lib/admin-db";
 import {
   getPendingSession,
@@ -74,17 +75,32 @@ export async function verify2FA(
 
   // Explicit select — same reason as login/actions.ts: a missing column
   // (e.g. `preferences` added in a later migration that prod hasn't run yet)
-  // would otherwise throw P2022 and crash the 2FA verify page.
-  const adminUser = await adminDb.admin_users.findUnique({
-    where: { id: pending.adminUserId },
-    select: {
-      id: true,
-      role: true,
-      roles: true,
-      totp_secret: true,
-      recovery_codes: true,
-    },
-  });
+  // would otherwise throw P2022 and crash the 2FA verify page. The additive
+  // `roles` column is read resiliently: if its migration hasn't run, the
+  // read degrades to `roles: []` (→ effective `[role]`).
+  const adminUser = await readAdminUserWithRoles(
+    () =>
+      adminDb.admin_users.findUnique({
+        where: { id: pending.adminUserId },
+        select: {
+          id: true,
+          role: true,
+          roles: true,
+          totp_secret: true,
+          recovery_codes: true,
+        },
+      }),
+    () =>
+      adminDb.admin_users.findUnique({
+        where: { id: pending.adminUserId },
+        select: {
+          id: true,
+          role: true,
+          totp_secret: true,
+          recovery_codes: true,
+        },
+      }),
+  );
   if (!adminUser || !adminUser.totp_secret) {
     return { error: "Account error. Please contact an administrator." };
   }
