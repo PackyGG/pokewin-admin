@@ -66,9 +66,17 @@ export async function OverviewTab({ period }: { period: AnalyticsPeriod }) {
           title="GGR (Gross Gaming Revenue)"
           animatedValue={data.ggr}
           formatKind="currency"
-          subtitle={`${formatCurrency(totalWager)} wagered total`}
+          subtitle={`Wager − gaming payout · ${formatCurrency(totalWager)} wagered`}
           icon={DollarSign}
-          color="emerald"
+          color={data.ggr >= 0 ? "emerald" : "rose"}
+        />
+        <StatCard
+          title="NGR (Net Gaming Revenue)"
+          animatedValue={data.ngr}
+          formatKind="currency"
+          subtitle="GGR − reward cost (incl. net rain)"
+          icon={DollarSign}
+          color={data.ngr >= 0 ? "emerald" : "rose"}
         />
         <StatCard
           title="Unique Visitors"

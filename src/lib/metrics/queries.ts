@@ -419,6 +419,176 @@ export async function getWindowMetrics(opts: {
   };
 }
 
+// ─── Daily canonical gaming-margin series ────────────────────────────
+
+export type DailyGamingMetricPoint = {
+  /** YYYY-MM-DD (UTC date of the bucket). */
+  date: string;
+  wager: number;
+  gamingPayout: number;
+  /** Canonical GGR for the day = wager − gamingPayout. */
+  ggr: number;
+  /** Canonical NGR for the day = GGR − reward − net rain (per-day floor). */
+  ngr: number;
+  /** Reward cost (excl. rain) booked on the day. */
+  rewardCostExclRain: number;
+  rainWinTotal: number;
+  rainTipTotal: number;
+};
+
+/**
+ * Per-DAY canonical gaming-margin series for a window — the daily
+ * companion to `getWindowMetrics`, sharing the EXACT same type sets
+ * (`ledger-sets`), the EXACT same real-customer + borrow-corrected scope,
+ * and the EXACT same pure formulas (`ggr`/`ngr`). This is what lets a
+ * surface render a daily GGR/NGR chart that reconciles with the headline
+ * by construction (Σ daily wager − Σ daily payout = headline GGR), closing
+ * the historical "daily GGR set ≠ headline GGR set" bug (M2).
+ *
+ * Buckets:
+ *  • wager / reward / rain legs bucketed by `created_at::date`
+ *  • inventory payout bucketed by `obtained_at::date`
+ *  • battle_refund cash leg bucketed by `created_at::date`
+ * then merged per UTC date.
+ *
+ * Rain is netted PER DAY (`max(0, rain_win_day − rain_tip_day)`) — the
+ * correct granularity because a rain pool's wins and tips settle the same
+ * day. The aggregate headline (`getWindowMetrics`) floors at the window
+ * level; for GGR (no floor) daily always sums to the headline exactly, and
+ * for NGR the two agree unless a single day is tip-saturated (rain_tip >
+ * rain_win that day), which is the same conservative house-POV treatment.
+ *
+ * Upgrader is NOT included here while `UPGRADER_IN_LEDGER` is false (it has
+ * no per-day ledger presence; it is reported separately via
+ * `upgraderMetrics`). When the flag flips this builder should fold it in
+ * via the `*_WITH_UPGRADER` unions, mirroring `getWindowMetrics`.
+ */
+export async function getDailyGamingMetrics(
+  window: MetricWindow,
+): Promise<DailyGamingMetricPoint[]> {
+  return withTiming("metrics.dailyGamingMetrics", async () => {
+    const db = await getDb();
+    const scope = await realCustomersScope();
+    const since = window.since;
+
+    type LedgerDayRow = {
+      date: Date;
+      wager: string;
+      battle_refund: string;
+      reward_excl_rain: string;
+      rain_win: string;
+      rain_tip: string;
+    };
+    type InvDayRow = { date: Date; inv_payout: string };
+
+    const [ledgerRows, invRows] = await Promise.all([
+      db.$queryRawUnsafe<LedgerDayRow[]>(
+        `SELECT
+           DATE(created_at) AS date,
+           COALESCE(SUM(CASE WHEN type IN ${WAGER_TYPES_SQL}
+             AND (
+               (type = 'pack_opening' AND (description IS NULL OR description NOT ILIKE '%borrow%'))
+               OR (type IN ('battle_bet','battle_sponsorship') AND game_session_id IN ${NON_BORROW_BATTLE_SESSIONS})
+             )
+             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS wager,
+           COALESCE(SUM(CASE WHEN type IN ${GAMING_PAYOUT_TYPES_SQL} THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_refund,
+           COALESCE(SUM(CASE WHEN type IN ${REWARD_PAYOUT_TYPES_SQL} AND type <> 'rain_win' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS reward_excl_rain,
+           COALESCE(SUM(CASE WHEN type = 'rain_win' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rain_win,
+           COALESCE(SUM(CASE WHEN type = 'rain_tip' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rain_tip
+         FROM ledger_transactions
+         WHERE status = 'completed'
+           AND user_id IN ${scope}
+           ${sinceClause("created_at", since)}
+         GROUP BY DATE(created_at)`,
+      ),
+      db.$queryRawUnsafe<InvDayRow[]>(
+        `SELECT
+           DATE(obtained_at) AS date,
+           COALESCE(SUM(value_at_obtained::numeric), 0)::text AS inv_payout
+         FROM user_inventory
+         WHERE source_type IN ('pack','battle')
+           AND user_id IN ${scope}
+           ${sinceClause("obtained_at", since)}
+           AND (
+             (source_type = 'pack' AND source_id IN ${NON_BORROW_PACK_SESSIONS})
+             OR (source_type = 'battle' AND source_id IN ${NON_BORROW_BATTLE_SESSIONS})
+           )
+         GROUP BY DATE(obtained_at)`,
+      ),
+    ]);
+
+    // Merge the two day-keyed sets. A day can appear in either (wager-only
+    // days, or inventory-payout-only days when cards from an earlier wager
+    // settle later) — union the key space so neither side is dropped.
+    const byDate = new Map<
+      string,
+      {
+        wager: number;
+        battleRefund: number;
+        inventoryPayout: number;
+        rewardCostExclRain: number;
+        rainWinTotal: number;
+        rainTipTotal: number;
+      }
+    >();
+    const blank = () => ({
+      wager: 0,
+      battleRefund: 0,
+      inventoryPayout: 0,
+      rewardCostExclRain: 0,
+      rainWinTotal: 0,
+      rainTipTotal: 0,
+    });
+    const dayKey = (d: Date) => new Date(d).toISOString().slice(0, 10);
+
+    for (const r of ledgerRows) {
+      const key = dayKey(r.date);
+      const e = byDate.get(key) ?? blank();
+      e.wager += toNumber(r.wager);
+      e.battleRefund += toNumber(r.battle_refund);
+      e.rewardCostExclRain += toNumber(r.reward_excl_rain);
+      e.rainWinTotal += toNumber(r.rain_win);
+      e.rainTipTotal += toNumber(r.rain_tip);
+      byDate.set(key, e);
+    }
+    for (const r of invRows) {
+      const key = dayKey(r.date);
+      const e = byDate.get(key) ?? blank();
+      e.inventoryPayout += toNumber(r.inv_payout);
+      byDate.set(key, e);
+    }
+
+    return [...byDate.entries()]
+      .map(([date, e]) => {
+        const gamingPayout = gamingPayoutTotal({
+          inventoryPayout: e.inventoryPayout,
+          battleRefund: e.battleRefund,
+        });
+        const ggrValue = ggrFormula({ wager: e.wager, gamingPayout });
+        const ngrValue = ngrFormula({
+          ggr: ggrValue,
+          rewardCostExclRain: e.rewardCostExclRain,
+          rainHouseCost: {
+            kind: "net",
+            rainWinTotal: e.rainWinTotal,
+            rainTipTotal: e.rainTipTotal,
+          },
+        });
+        return {
+          date,
+          wager: e.wager,
+          gamingPayout,
+          ggr: ggrValue,
+          ngr: ngrValue,
+          rewardCostExclRain: e.rewardCostExclRain,
+          rainWinTotal: e.rainWinTotal,
+          rainTipTotal: e.rainTipTotal,
+        };
+      })
+      .sort((a, b) => a.date.localeCompare(b.date));
+  });
+}
+
 // ─── Ad-hoc ledger sum (escape hatch for cost-breakdown residual) ────
 
 /**

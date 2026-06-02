@@ -3,22 +3,41 @@ import { toNumber } from "@/lib/utils/decimal";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause, escapeBlacklistIds } from "./_blacklist";
+import {
+  getDailyGamingMetrics,
+  upgraderMetrics,
+  type MetricWindow,
+} from "@/lib/metrics/queries";
 
-// SQL fragment builder for user_id filtering — admin + support are
-// internal accounts so we drop them from analytics. Creators stay in
-// per the documented decision in _exclude-staff.ts (their
-// wagers/deposits are real revenue/payouts). Now ALSO appends the
-// admin-managed blacklist from `excluded_users` so manually-excluded
-// accounts drop out of every analytics aggregate. IDs inlined as
-// quoted literals — they're packy.gg user_ids (alphanum), and we
-// double-up embedded single quotes defensively.
+// SQL fragment builder for user_id filtering — drops staff (admin /
+// support) AND the creator role, matching the canonical real-customer
+// scope in `@/lib/metrics/queries` (`realCustomersScope`). Creators were
+// previously KEPT in analytics, which put analytics GGR/NGR on a different
+// population than dashboard / /ggr / money-flow / cost-breakdown (all of
+// which drop creators) — the M4 scope-drift bug. Aligning here makes "one
+// GGR = one population" hold site-wide. Also appends the admin-managed
+// blacklist from `excluded_users` so manually-excluded accounts drop out
+// of every analytics aggregate. IDs inlined as quoted literals — they're
+// packy.gg user_ids (alphanum), single quotes doubled defensively.
 function buildExclStaffFrag(excluded: string[]): string {
   const tail =
     excluded.length > 0 ? ` AND id NOT IN (${escapeBlacklistIds(excluded)})` : "";
-  return `AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','support')${tail})`;
+  return `AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','support','creator')${tail})`;
 }
 
 type Period = "today" | "7d" | "30d" | "90d" | "all";
+
+/**
+ * Convert an analytics `Period` to a metric-window `since` Date for the
+ * canonical `@/lib/metrics` builders. `all` → null (lifetime, no lower
+ * bound). The day-count mirrors `periodToDateFilter` / `parseDays` so the
+ * canonical window matches the rest of the page's date filter exactly.
+ */
+function periodToMetricWindow(period: Period): MetricWindow {
+  if (period === "all") return { since: null };
+  const days = parseDays(period);
+  return { since: new Date(Date.now() - days * 24 * 60 * 60 * 1000) };
+}
 
 function periodToDateFilter(period: Period): string {
   // Values are hardcoded — no injection risk with $queryRawUnsafe
@@ -135,7 +154,20 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
       ? `WHERE ${battleStaffExclAliased}`
       : `WHERE b.created_at >= NOW() - INTERVAL '${parseDays(period)} days' AND ${battleStaffExclAliased}`;
 
+  // Canonical gaming-margin metrics come from `@/lib/metrics`: the daily
+  // GGR/NGR series (`getDailyGamingMetrics`) and the upgrader figure from
+  // `upgrader_games` (`upgraderMetrics`). The headline GGR/NGR are derived
+  // as the SUM of the daily canonical series so the daily chart reconciles
+  // with the headline by construction (M2 closed). GGR/NGR here are
+  // pack/battle gaming margin (inventory-delta payout, card conversions
+  // neutral, borrow plays excluded, real-customer scope) — upgrader is NOT
+  // in the ledger (UPGRADER_IN_LEDGER=false) so it is reported separately,
+  // never summed into GGR (M1 + the upgrader-bug fix).
+  const metricWindow = periodToMetricWindow(period);
+
   const [
+    dailyCanonical,
+    upgrader,
     aggregates,
     visitors,
     dailyTx,
@@ -148,40 +180,23 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
     topPacksRows,
     realizedPnl,
   ] = await Promise.all([
+      getDailyGamingMetrics(metricWindow),
+      upgraderMetrics(metricWindow),
       db.$queryRawUnsafe<
         {
-          total_wagers: string;
-          total_payouts: string;
-          total_bonuses: string;
           pack_wager: string;
           battle_wager: string;
-          upgrader_wager: string;
           pack_wager_borrowed: string;
           battle_wager_borrowed: string;
         }[]
       >(`
         SELECT
           COALESCE(SUM(CASE
-            WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship', 'upgrader_bet')
-            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS total_wagers,
-          COALESCE(SUM(CASE
-            WHEN type IN ('battle_refund', 'upgrader_payout', 'card_sale', 'reward_card_sale')
-            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS total_payouts,
-          COALESCE(SUM(CASE
-            WHEN type IN ('deposit_bonus', 'promo_code_redeemed', 'gift_card_redeemed',
-              'rakeback_claim', 'affiliate_claim', 'rain_win', 'race_prize',
-              'creator_tip', 'waitlist_prize', 'voucher_redeemed', 'voucher_exchange',
-              'exchange_excess_credit', 'exchange_excess_to_voucher', 'battle_excess_to_voucher')
-            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS total_bonuses,
-          COALESCE(SUM(CASE
             WHEN type = 'pack_opening'
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager,
           COALESCE(SUM(CASE
             WHEN type IN ('battle_bet', 'battle_sponsorship')
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager,
-          COALESCE(SUM(CASE
-            WHEN type = 'upgrader_bet'
-            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS upgrader_wager,
           COALESCE(SUM(CASE
             WHEN type = 'pack_opening' AND description ILIKE '%borrow%'
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager_borrowed,
@@ -199,9 +214,6 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
       db.$queryRawUnsafe<
         {
           date: Date;
-          total_wagers: string;
-          total_payouts: string;
-          total_bonuses: string;
           pack_wager: string;
           battle_wager: string;
           unique_visitors: string;
@@ -224,18 +236,6 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
         SELECT
           DATE(created_at) AS date,
           COALESCE(SUM(CASE
-            WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship', 'upgrader_bet')
-            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS total_wagers,
-          COALESCE(SUM(CASE
-            WHEN type IN ('battle_refund', 'card_sale', 'reward_card_sale')
-            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS total_payouts,
-          COALESCE(SUM(CASE
-            WHEN type IN ('deposit_bonus', 'promo_code_redeemed', 'gift_card_redeemed',
-              'rakeback_claim', 'affiliate_claim', 'rain_win', 'race_prize',
-              'creator_tip', 'waitlist_prize', 'voucher_redeemed', 'voucher_exchange',
-              'exchange_excess_credit', 'exchange_excess_to_voucher', 'battle_excess_to_voucher')
-            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS total_bonuses,
-          COALESCE(SUM(CASE
             WHEN type = 'pack_opening'
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager,
           COALESCE(SUM(CASE
@@ -247,14 +247,14 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
               THEN ABS(amount::numeric) END
           ), 0)::text AS avg_deposit,
           COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY
-            CASE WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship', 'upgrader_bet')
+            CASE WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
               THEN ABS(amount::numeric) END
           ), 0)::text AS avg_bet,
           COALESCE(SUM(CASE
             WHEN type = 'deposit'
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS total_deposit,
           COALESCE(SUM(CASE
-            WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship', 'upgrader_bet')
+            WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS total_bet,
           COALESCE(MIN(CASE
             WHEN type = 'deposit'
@@ -263,10 +263,10 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
             WHEN type = 'deposit'
             THEN ABS(amount::numeric) END), 0)::text AS max_deposit,
           COALESCE(MIN(CASE
-            WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship', 'upgrader_bet')
+            WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
             THEN ABS(amount::numeric) END), 0)::text AS min_bet,
           COALESCE(MAX(CASE
-            WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship', 'upgrader_bet')
+            WHEN type IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
             THEN ABS(amount::numeric) END), 0)::text AS max_bet,
           COALESCE(SUM(CASE
             WHEN type = 'rakeback_claim'
@@ -294,7 +294,7 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
       db.$queryRawUnsafe<{ date: Date; count: string }[]>(`
         SELECT DATE(created_at) AS date, COUNT(*)::text AS count
         FROM "user"
-        WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn} ${dateFilter}
+        WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn} ${dateFilter}
         GROUP BY DATE(created_at)
         ORDER BY date
       `),
@@ -362,7 +362,7 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
         JOIN game_sessions gs ON lt.game_session_id = gs.id AND gs.game_type = 'pack'
         JOIN packs p ON gs.game_id = p.id
         WHERE lt.type = 'pack_opening' AND lt.status = 'completed' ${dateFilter.replace(/created_at/g, "lt.created_at")}
-          AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})
+          AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn})
         GROUP BY p.id, p.name
         ORDER BY COUNT(*) DESC
         LIMIT 20
@@ -373,11 +373,18 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
     ]);
 
   const agg = aggregates[0];
-  const totalWagers = toNumber(agg?.total_wagers);
-  const totalPayouts = toNumber(agg?.total_payouts);
-  const totalBonuses = toNumber(agg?.total_bonuses);
-  const ggr = totalWagers - totalPayouts;
-  const ngr = ggr - totalBonuses;
+
+  // Canonical GGR/NGR (M1/M2/M4): the daily series comes straight from
+  // `@/lib/metrics` (inventory-delta gaming payout, card conversions
+  // neutral, net-rain NGR, real-customer scope). The HEADLINE is the SUM
+  // of that same daily series, so the daily chart reconciles with the
+  // headline by construction — the old bug where the daily payout set
+  // (3 types) differed from the headline payout set (4 types) is gone.
+  const canonicalByDate = new Map(
+    dailyCanonical.map((p) => [p.date, p]),
+  );
+  const ggr = dailyCanonical.reduce((acc, p) => acc + p.ggr, 0);
+  const ngr = dailyCanonical.reduce((acc, p) => acc + p.ngr, 0);
 
   // Merge daily transaction data with daily signups. The headline
   // signups number is just the period sum of dailySignups — derived in
@@ -393,13 +400,13 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
 
   const daily = dailyTx.map((d) => {
     const dateStr = new Date(d.date).toISOString().split("T")[0];
-    const dayWagers = toNumber(d.total_wagers);
-    const dayPayouts = toNumber(d.total_payouts);
-    const dayBonuses = toNumber(d.total_bonuses);
+    const canon = canonicalByDate.get(dateStr);
     return {
       date: dateStr,
-      ggr: dayWagers - dayPayouts,
-      ngr: dayWagers - dayPayouts - dayBonuses,
+      // Canonical gaming-margin for the day (or 0 if this day had only
+      // non-gaming ledger flow). Same definition as the headline.
+      ggr: canon?.ggr ?? 0,
+      ngr: canon?.ngr ?? 0,
       packWager: toNumber(d.pack_wager),
       battleWager: toNumber(d.battle_wager),
       uniqueVisitors: Number(d.unique_visitors),
@@ -450,6 +457,40 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
     }
   }
 
+  // Add canonical gaming-margin days the ledger day-series missed — e.g. a
+  // day where cards from an earlier wager settled into inventory but no
+  // ledger row was booked. Without this the daily chart's GGR/NGR would not
+  // sum exactly to the headline (which IS the canonical daily sum).
+  const dailyDates = new Set(daily.map((d) => d.date));
+  for (const p of dailyCanonical) {
+    if (!dailyDates.has(p.date)) {
+      daily.push({
+        date: p.date,
+        ggr: p.ggr,
+        ngr: p.ngr,
+        packWager: 0,
+        battleWager: 0,
+        uniqueVisitors: 0,
+        newSignups: signupsMap.get(p.date) ?? 0,
+        avgDeposit: 0,
+        avgBet: 0,
+        totalDeposit: 0,
+        totalBet: 0,
+        minDeposit: 0,
+        maxDeposit: 0,
+        minBet: 0,
+        maxBet: 0,
+        rewardRakeback: 0,
+        rewardSignupPacks: 0,
+        rewardLeaderboard: 0,
+        rewardRain: 0,
+        rewardPromo: 0,
+        rewardAffiliate: 0,
+      });
+      dailyDates.add(p.date);
+    }
+  }
+
   daily.sort((a, b) => a.date.localeCompare(b.date));
 
   return {
@@ -468,7 +509,12 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
     newSignups: signups,
     packWager: toNumber(agg?.pack_wager),
     battleWager: toNumber(agg?.battle_wager),
-    upgraderWager: toNumber(agg?.upgrader_wager),
+    // Upgrader volume from the upgrader-native `upgrader_games` table (the
+    // canonical source) — NOT ledger `upgrader_bet`. Prod does not write
+    // upgrader rows to the ledger, so the ledger figure would be 0/wrong
+    // and must never feed GGR. `null` on the pre-upgrader snapshot (no
+    // `upgrader_games` table) → 0.
+    upgraderWager: upgrader?.wager ?? 0,
     packWagerBorrowed: toNumber(agg?.pack_wager_borrowed),
     battleWagerBorrowed: toNumber(agg?.battle_wager_borrowed),
     battleStats: {
