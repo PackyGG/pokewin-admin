@@ -712,7 +712,17 @@ export function WithdrawalsStatCard({
 /**
  * Creator-only slice of the period withdrawal volume — how many of the
  * `Withdrawals` card's transactions came from users with role =
- * 'creator' (creator personal cash-outs).
+ * 'creator', summing their `card_withdrawal_requests`.
+ *
+ * IMPORTANT (scope): this is a creator's PERSONAL cash-out of their own
+ * balance — every completed/shipped withdrawal by any creator-role user,
+ * including money they deposited themselves. It is NOT the creator-DEAL
+ * payout/cost. Per the creator model a creator's personal withdrawal is
+ * not a house "creator cost". This is deliberately a DIFFERENT figure
+ * from the /creators page's "Converted / withdrawn" tile, which counts
+ * ONLY the fill-conversion payout vouchers (`creator_fill_conversion`)
+ * tied to a deal — hence the two can differ by a large multiple. The
+ * Info tooltip on the title spells this out so the gap isn't mysterious.
  *
  * Hero number is the COUNT (the user explicitly asked for "how many"),
  * sub-line carries the dollar amount + period label so the card stays
@@ -735,8 +745,42 @@ export function CreatorWithdrawalsStatCard({
     <Card className="bg-purple-500/10">
       <CardHeader className="flex flex-col gap-2 pb-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-baseline gap-x-2">
-          <CardTitle className="text-card-title text-muted-foreground">
-            Creator Withdrawals
+          <CardTitle className="text-card-title text-muted-foreground inline-flex items-center gap-1">
+            Creator personal cash-outs
+            <Popover>
+              <PopoverTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label="What this counts"
+                    title="What this counts"
+                    className="rounded text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500/40"
+                  />
+                }
+              >
+                <Info className="size-3.5" />
+              </PopoverTrigger>
+              <PopoverContent
+                align="start"
+                sideOffset={6}
+                className="w-[300px] max-w-[calc(100vw-2rem)] p-3 text-[11px] leading-snug text-muted-foreground"
+              >
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-foreground">
+                  Creator personal cash-outs
+                </p>
+                <p>
+                  Completed/shipped withdrawals by any user whose role is{" "}
+                  <code className="font-mono">creator</code> — their own
+                  cash-out (incl. money they deposited themselves).
+                </p>
+                <p className="mt-1.5">
+                  This is <strong>not</strong> a creator-deal payout/cost. The
+                  /creators page&apos;s &ldquo;Converted / withdrawn&rdquo; tile
+                  counts only fill-conversion payout vouchers tied to a deal, so
+                  it is a much smaller, different figure.
+                </p>
+              </PopoverContent>
+            </Popover>
           </CardTitle>
           <span className="text-tiny text-muted-foreground">{periodLabel}</span>
         </div>
@@ -746,7 +790,8 @@ export function CreatorWithdrawalsStatCard({
           <AnimatedNumber value={count} format="number" />
         </div>
         <p className="text-stat-label mt-0.5">
-          <AnimatedNumber value={amount} format="currency" /> total
+          <AnimatedNumber value={amount} format="currency" /> total · personal
+          cash-outs
         </p>
       </CardContent>
     </Card>

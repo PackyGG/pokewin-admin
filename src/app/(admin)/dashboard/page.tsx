@@ -385,11 +385,14 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
           icon={Gauge}
           color="emerald"
         />
-        {/* Creator Withdrawals — count of period withdrawals from users
-            with role = 'creator', dollar total in subtitle. Moved here
-            from the primary row so the top strip stays at 7 wider
-            period-aware cards. Lives in this secondary row as the
-            "creator slice" companion to Deposits / Hour. */}
+        {/* Creator personal cash-outs — count of period withdrawals from
+            users with role = 'creator' (their OWN balance cash-out, incl.
+            self-deposited money), dollar total in subtitle. NOT a
+            creator-deal payout/cost — deliberately distinct from the
+            /creators "Converted / withdrawn" tile (fill-conversion
+            vouchers only), which is why the two figures differ a lot. The
+            card's Info tooltip explains the scope. Lives in this secondary
+            row as the "creator slice" companion to Deposits / Hour. */}
         <CreatorWithdrawalsStatCard
           count={stats.creatorWithdrawalsCount}
           amount={stats.creatorWithdrawals}

@@ -160,7 +160,7 @@ export async function CreatorNetPnlPanel({
           accent={netAccent}
           action={
             <InfoHint
-              text="Lifetime code-user GGR minus everything we paid this creator (fill payouts + funded tips/sponsors + leaderboard share + commission). House POV — emerald = house up, rose = house down."
+              text="Lifetime code-user GGR minus everything we paid this creator (fill-deal + multiplier payouts + funded tips/sponsors + leaderboard share + commission). House POV — emerald = house up, rose = house down."
               side="bottom"
             />
           }
@@ -190,7 +190,7 @@ export async function CreatorNetPnlPanel({
           accent="rose"
           action={
             <InfoHint
-              text="Total the house paid this creator (lifetime): fill-voucher payouts + net fill + leaderboard sponsor share. Referral commission is shown separately in the breakdown below, not in this total."
+              text="Total the house paid this creator (lifetime): fill-deal payouts (converted vouchers) + multiplier-deal payouts + net fill + leaderboard sponsor share. Referral commission is shown separately in the breakdown below, not in this total."
               side="bottom"
             />
           }
@@ -335,7 +335,7 @@ export async function CreatorNetPnlPanel({
                   <span aria-hidden className="opacity-60">
                     •
                   </span>
-                  Fill payouts + net fill + leaderboard
+                  Fill + multiplier payouts + net fill + leaderboard
                 </span>
                 <span className="tabular-nums">see breakdown ↓</span>
               </div>
@@ -386,7 +386,7 @@ export async function CreatorNetPnlPanel({
         accent={hasCost ? "rose" : "blue"}
         action={
           <InfoHint
-            text="Every house outflow tied to this creator, lifetime (rose): fill payouts, net fill (incl. funded tips/sponsors), and leaderboard sponsor share. Referral commission sits below the total as a separate line — the owner decides whether it counts as creator cost."
+            text="Every house outflow tied to this creator, lifetime (rose): fill-deal payouts (converted vouchers), multiplier-deal payouts, net fill (incl. funded tips/sponsors), and leaderboard sponsor share. Referral commission sits below the total as a separate line — the owner decides whether it counts as creator cost."
             side="left"
           />
         }
@@ -410,7 +410,7 @@ export async function CreatorNetPnlPanel({
               : `${partial ? "≥ " : ""}${formatCurrency(totalCost.total)}`}
           </div>
           <p className="text-xs text-muted-foreground">
-            Fill payouts + net fill + leaderboard cost
+            Fill + multiplier payouts + net fill + leaderboard cost
             <br />
             <span className="text-[10px]">
               House-POV cost (rose) — commission excluded from this total
@@ -422,7 +422,20 @@ export async function CreatorNetPnlPanel({
 
         <div className="mt-4 space-y-0.5">
           <PanelRow
-            label="Fill payouts"
+            label="Fill-deal payouts (converted vouchers)"
+            value={
+              breakdown.fillConversionPayouts === 0
+                ? "—"
+                : formatCurrency(breakdown.fillConversionPayouts)
+            }
+            valueClassName={
+              breakdown.fillConversionPayouts > 0
+                ? "text-rose-600 dark:text-rose-400"
+                : undefined
+            }
+          />
+          <PanelRow
+            label="Multiplier-deal payouts"
             value={
               breakdown.fillPayouts === 0
                 ? "—"

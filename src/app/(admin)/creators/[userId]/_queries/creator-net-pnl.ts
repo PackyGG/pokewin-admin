@@ -23,6 +23,7 @@ import { ggr as ggrFormula, gamingPayoutTotal } from "@/lib/metrics/formulas";
 import { creatorAttributionExists } from "../../_queries/creator-attribution-sql";
 import { getCreatorLeaderboardCost } from "./leaderboard-cost-by-creator";
 import { getCreatorMultiplierCost } from "./multiplier-cost-by-creator";
+import { getCreatorFillConversionCost } from "./fill-conversion-cost-by-creator";
 
 /**
  * creator-net-pnl.ts — the CANONICAL, ADDITIVE "Net Creator P&L + total
@@ -74,12 +75,31 @@ import { getCreatorMultiplierCost } from "./multiplier-cost-by-creator";
 
 export type CreatorCostBreakdown = {
   /**
-   * Σ `withdrawable_voucher_usd` over the creator's multiplier deals
-   * (`creator_multiplier_payout` / `creator_fill_conversion`). The
-   * withdrawable payout voucher issued at end-of-stream settlement.
+   * Σ `withdrawable_voucher_usd` over the creator's MULTIPLIER deals
+   * (mints `creator_multiplier_payout` vouchers). The withdrawable payout
+   * voucher issued at end-of-stream settlement of a multiplier deal.
    * Sourced from `getCreatorMultiplierCost` (`payoutUsd`).
+   *
+   * DISTINCT from `fillConversionPayouts` below: that is the WEEKLY FILL
+   * program's `creator_fill_conversion` voucher (a different
+   * `voucher_origin`). Both are real house payouts; summing both never
+   * double-counts (disjoint origins).
    */
   fillPayouts: number;
+  /**
+   * Σ `vouchers.value` where `origin = 'creator_fill_conversion'` for this
+   * creator (lifetime, all deals) — the WEEKLY FILL program's end-of-
+   * session payout voucher (§2 of the creator model). Sourced from
+   * `getCreatorFillConversionCost`. This is the SAME canonical source the
+   * /creators "Converted" KPI reads, so the detail-page cost and the list
+   * KPI agree on what a fill-deal payout is.
+   *
+   * Previously MISSING from the cost (the breakdown only summed the
+   * MULTIPLIER program), which overstated the Net Creator PnL of any
+   * weekly-fill creator by their entire fill-conversion payout. House cost
+   * → rose.
+   */
+  fillConversionPayouts: number;
   /**
    * Σ `(platform_funding_usd − fill_refunded_usd)` — the net house fill
    * funded across the creator's multiplier deals (= `creator_fill_activation`
@@ -109,7 +129,8 @@ export type CreatorCostBreakdown = {
 
 export type CreatorTotalCost = {
   /**
-   * Default total creator cost = fillPayouts + netFill + leaderboardCost.
+   * Default total creator cost =
+   *   fillPayouts + fillConversionPayouts + netFill + leaderboardCost.
    * Commission is DELIBERATELY excluded (see `breakdown.commission`).
    */
   total: number;
@@ -328,13 +349,18 @@ async function getCreatorCodeUserGgr(
  * Unify the house's total spend ON this creator. Sources mostly already
  * exist; this just sums them and exposes commission distinctly.
  *
- *   totalCost = fillPayouts + netFill + leaderboardCost
+ *   totalCost = fillPayouts + fillConversionPayouts + netFill + leaderboardCost
  *   ( + commission, exposed separately — owner decides )
  *
- *   • fillPayouts + netFill — `getCreatorMultiplierCost` (the
- *     `creator_multiplier_payout` voucher + the net `creator_fill_*`
- *     lifecycle, which already absorbs the house-funded
+ *   • fillPayouts + netFill — `getCreatorMultiplierCost` (the MULTIPLIER
+ *     program: the `creator_multiplier_payout` voucher + the net
+ *     `creator_fill_*` lifecycle, which already absorbs the house-funded
  *     `creator_fill_spend_tip` / `creator_fill_spend_battle`).
+ *   • fillConversionPayouts — `getCreatorFillConversionCost` (the WEEKLY
+ *     FILL program's `creator_fill_conversion` payout vouchers; the SAME
+ *     source the /creators "Converted" KPI reads). This was MISSING —
+ *     a weekly-fill creator's payout cost was previously 0 here, which
+ *     overstated their Net Creator PnL.
  *   • leaderboardCost — `getCreatorLeaderboardCost`
  *     (Σ `(prize − refund) × house%` over APPROVED leaderboards).
  *   • commission — `affiliate_accounts.total_paid_out_usd` (lifetime).
@@ -354,11 +380,12 @@ async function getCreatorCodeUserGgr(
  * `leaderboardCost` to that — the shape here does not change.
  *
  * ── BEST-EFFORT ──
- * The multiplier + leaderboard sub-fetches are backend round-trips; each
- * is caught independently so one failure degrades that bucket to 0 and
- * flips `partial = true` (the total becomes a lower bound) rather than
- * blanking the whole figure. Commission is a Main-DB read; on failure it
- * degrades to `null` (the creator has no commission attributed).
+ * The multiplier + leaderboard sub-fetches are backend round-trips and the
+ * fill-conversion sub-fetch is a Main-DB read; each is caught independently
+ * so one failure degrades that bucket to 0 and flips `partial = true` (the
+ * total becomes a lower bound) rather than blanking the whole figure.
+ * Commission is a Main-DB read; on failure it degrades to `null` (the
+ * creator has no commission attributed).
  */
 export async function getCreatorTotalCost(
   creatorUserId: string,
@@ -366,10 +393,22 @@ export async function getCreatorTotalCost(
   return withTiming("creators.netPnl.totalCost", async () => {
     const db = await getDb();
 
-    const [multiplier, leaderboard, commissionRow] = await Promise.all([
+    const [multiplier, fillConversion, leaderboard, commissionRow] =
+      await Promise.all([
       getCreatorMultiplierCost(creatorUserId).catch((e) => {
         console.error(
           "[creator-net-pnl] multiplier cost fetch failed (bucket = 0, total is a lower bound):",
+          e,
+        );
+        return null;
+      }),
+      // Weekly FILL program payout — `creator_fill_conversion` vouchers
+      // (the source the /creators "Converted" KPI reads), summed lifetime
+      // for this creator. Was MISSING from the cost before, so a weekly-
+      // fill creator's Net PnL overstated house profit by this amount.
+      getCreatorFillConversionCost(creatorUserId).catch((e) => {
+        console.error(
+          "[creator-net-pnl] fill-conversion cost fetch failed (bucket = 0, total is a lower bound):",
           e,
         );
         return null;
@@ -399,19 +438,28 @@ export async function getCreatorTotalCost(
     ]);
 
     const fillPayouts = multiplier?.payoutUsd ?? 0;
+    const fillConversionPayouts = fillConversion?.payoutUsd ?? 0;
     const netFill = multiplier?.netFillUsd ?? 0;
     const leaderboardCost = leaderboard?.costUsd ?? 0;
     const commission =
       commissionRow == null ? null : toNumber(commissionRow.total_paid_out_usd);
 
-    const total = fillPayouts + netFill + leaderboardCost;
+    const total =
+      fillPayouts + fillConversionPayouts + netFill + leaderboardCost;
     const totalWithCommission = total + (commission ?? 0);
-    const partial = multiplier === null || leaderboard === null;
+    const partial =
+      multiplier === null || fillConversion === null || leaderboard === null;
 
     return {
       total,
       totalWithCommission,
-      breakdown: { fillPayouts, netFill, leaderboardCost, commission },
+      breakdown: {
+        fillPayouts,
+        fillConversionPayouts,
+        netFill,
+        leaderboardCost,
+        commission,
+      },
       partial,
     };
   });
