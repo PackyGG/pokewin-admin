@@ -38,6 +38,7 @@ import { FinancialsCard } from "./financials-card";
 import { CountryBreakdown } from "./country-breakdown";
 import { LeaderboardsCard } from "./leaderboards-card";
 import { CreatorPnlPanel } from "./creator-pnl-panel";
+import { CreatorDealCostPanel } from "./creator-deal-cost-panel";
 
 import { parseCreatorDetailSearchParams } from "./_lib/search-params";
 import { getCreatorDealData } from "./_queries/get-creator-deal-data";
@@ -350,6 +351,18 @@ export default async function CreatorDetailPage({
           <CreatorPnlPanel userId={profile.userId} />
         </Suspense>
 
+        {/* House deal-cost panel — the money the house spends ON this
+            creator's promo programs: approved-leaderboard prizes (net of
+            the creation/refund escrow, sponsored-% weighted), multiplier
+            payout vouchers, and net multiplier fill. The leaderboard
+            prize cost was previously invisible on the creator view; this
+            surfaces it alongside the multiplier costs. Streamed via its
+            own Suspense so the two backend round-trips it makes don't
+            block the rest of the page. */}
+        <Suspense fallback={<CreatorDealCostSkeleton />}>
+          <CreatorDealCostPanel userId={profile.userId} />
+        </Suspense>
+
         {/* Bottom band: three equal-width analytics cards. On phone they
             stack full-width; tablet shows two-up wherever possible. */}
         <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -398,6 +411,27 @@ function LeaderboardsSkeleton() {
         <Skeleton className="h-9 w-full" />
       </div>
     </Card>
+  );
+}
+
+// Single StatPanel placeholder matching the CreatorDealCostPanel shape
+// (heading + one hero panel with a few breakdown rows) so the page
+// doesn't reflow when the real content lands.
+function CreatorDealCostSkeleton() {
+  return (
+    <div className="space-y-3">
+      <Skeleton className="h-5 w-36" />
+      <Card size="sm" className="space-y-3 p-4 sm:p-5">
+        <Skeleton className="h-4 w-44" />
+        <Skeleton className="h-9 w-32" />
+        <Skeleton className="h-3 w-56" />
+        <div className="space-y-1.5 pt-2">
+          <Skeleton className="h-3 w-full" />
+          <Skeleton className="h-3 w-full" />
+          <Skeleton className="h-3 w-full" />
+        </div>
+      </Card>
+    </div>
   );
 }
 

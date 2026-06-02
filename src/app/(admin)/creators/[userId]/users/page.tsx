@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { AlertTriangle, ArrowLeft, Users } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Shuffle, Users } from "lucide-react";
 
 import {
   getCreatorHeader,
@@ -23,6 +23,11 @@ import { EmptyState } from "@/components/empty-state";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 
 import { CodeActivityNav } from "../_components/code-activity-nav";
+import { CodeHopperBadge } from "../_components/code-hopper-badge";
+import {
+  getCodeHopperFlags,
+  type CodeHopperInfo,
+} from "../_queries/code-hopper-flags";
 
 export const metadata = { title: "Users on Code · Creator" };
 
@@ -53,6 +58,18 @@ export default async function CreatorUsersPage({
   const loadFailed = referralsResult !== null && !referralsResult.ok;
   const referrals =
     referralsResult && referralsResult.ok ? referralsResult.referrals : [];
+
+  // Code-hopper flags — which of these referred users have used 2+
+  // distinct affiliate codes (the code-switching / leaderboard-sniping
+  // signal reused from the streamers abuse-detection surface). One
+  // batched grouped query over the resolved user-id set; best-effort, so
+  // a failure just renders the list without badges. Skipped entirely
+  // when there are no users to flag.
+  const codeHopperFlags: Map<string, CodeHopperInfo> =
+    referrals.length > 0
+      ? await getCodeHopperFlags(referrals.map((r) => r.referredUserId))
+      : new Map();
+  const codeHopperCount = codeHopperFlags.size;
 
   return (
     <div className="space-y-6">
@@ -110,14 +127,30 @@ export default async function CreatorUsersPage({
                 : "Users on this code"
             }
             action={
-              profile.code ? (
-                <Link
-                  href={`/creators/codes/${profile.code}`}
-                  className="text-xs text-muted-foreground hover:text-foreground hover:underline"
-                >
-                  Full code analytics →
-                </Link>
-              ) : undefined
+              <div className="flex items-center gap-3">
+                {/* Code-hopper summary — how many of the listed users
+                    used 2+ distinct codes. Amber caution chip so an admin
+                    can gauge at a glance whether this code's numbers are
+                    inflated by code-switchers before scanning the rows. */}
+                {codeHopperCount > 0 && (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-semibold text-amber-600 dark:text-amber-400"
+                    title={`${codeHopperCount} of ${referrals.length} listed users have used 2+ distinct affiliate codes (possible code-hoppers).`}
+                  >
+                    <Shuffle className="size-3" aria-hidden />
+                    {codeHopperCount} code-hopper
+                    {codeHopperCount === 1 ? "" : "s"}
+                  </span>
+                )}
+                {profile.code ? (
+                  <Link
+                    href={`/creators/codes/${profile.code}`}
+                    className="text-xs text-muted-foreground hover:text-foreground hover:underline"
+                  >
+                    Full code analytics →
+                  </Link>
+                ) : null}
+              </div>
             }
           />
           <div className="rounded-2xl border bg-card/60">
@@ -134,17 +167,27 @@ export default async function CreatorUsersPage({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {referrals.map((r) => (
+                {referrals.map((r) => {
+                  const hopper = codeHopperFlags.get(r.referredUserId);
+                  return (
                   <TableRow key={r.referredUserId}>
                     <TableCell>
-                      <Link
-                        href={`/users/${r.referredUserId}`}
-                        className="font-medium hover:underline"
-                      >
-                        {r.referredUsername ??
-                          r.referredEmail ??
-                          r.referredUserId.slice(0, 8)}
-                      </Link>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Link
+                          href={`/users/${r.referredUserId}`}
+                          className="font-medium hover:underline"
+                        >
+                          {r.referredUsername ??
+                            r.referredEmail ??
+                            r.referredUserId.slice(0, 8)}
+                        </Link>
+                        {/* Code-hopper flag — used 2+ distinct codes.
+                            Inline so the admin sees inflated-by-switcher
+                            users right in the row. */}
+                        {hopper && (
+                          <CodeHopperBadge codeCount={hopper.distinctCodeCount} />
+                        )}
+                      </div>
                       {r.referredEmail && r.referredUsername && (
                         <p className="text-xs text-muted-foreground truncate">
                           {r.referredEmail}
@@ -161,7 +204,8 @@ export default async function CreatorUsersPage({
                       {formatRelative(r.lastActivityAt)}
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
                 {loadFailed && (
                   <TableRow>
                     <TableCell colSpan={4} className="h-24 text-center">
