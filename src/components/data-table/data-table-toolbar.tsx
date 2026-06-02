@@ -22,6 +22,7 @@ export function DataTableToolbar({
   filters,
   children,
   leading,
+  searchSlot,
 }: {
   searchPlaceholder?: string;
   filters?: {
@@ -45,6 +46,17 @@ export function DataTableToolbar({
    * the search input; at sm+ it sits inline to the left of the search.
    */
   leading?: React.ReactNode;
+  /**
+   * Optional override for the built-in search input. When provided, this
+   * node is rendered in the search slot INSTEAD of the default
+   * `?search=`-param input, and the toolbar's own search state +
+   * debounce are inert (a custom search owns the term). Used by /creators
+   * to drop in an instant client-side filter (no server round-trip) where
+   * the URL-param search would otherwise re-run the page's heavy data
+   * fetch on every keystroke. Callers that don't pass it keep the
+   * standard debounced URL-param search unchanged.
+   */
+  searchSlot?: React.ReactNode;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -108,19 +120,21 @@ export function DataTableToolbar({
           {leading}
         </div>
       )}
-      <div className="relative w-full sm:flex-1 sm:min-w-[200px] sm:max-w-sm">
-        {isPending ? (
-          <Loader2 className="absolute left-2.5 top-2.5 size-4 text-muted-foreground animate-spin" />
-        ) : (
-          <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-        )}
-        <Input
-          placeholder={searchPlaceholder}
-          value={searchValue}
-          onChange={(e) => handleSearchChange(e.target.value)}
-          className="pl-8"
-        />
-      </div>
+      {searchSlot ?? (
+        <div className="relative w-full sm:flex-1 sm:min-w-[200px] sm:max-w-sm">
+          {isPending ? (
+            <Loader2 className="absolute left-2.5 top-2.5 size-4 text-muted-foreground animate-spin" />
+          ) : (
+            <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
+          )}
+          <Input
+            placeholder={searchPlaceholder}
+            value={searchValue}
+            onChange={(e) => handleSearchChange(e.target.value)}
+            className="pl-8"
+          />
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2 sm:contents">
         {filters?.map((filter) => {
           const currentValue = searchParams.get(filter.paramKey) ?? "all";
