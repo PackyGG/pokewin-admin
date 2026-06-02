@@ -424,6 +424,20 @@ Rollen in `src/lib/admin-roles.ts`: `admin`, `support`, `marketing`, `creator`.
 - Mutations über **Server Actions** (`"use server"`) + `revalidatePath()` nach Erfolg.
 - Data Fetching direkt in Server Components (kein SWR / React Query in bestehenden Flows — nicht einführen ohne Absprache).
 
+### Performance & Daten-Laden — Active-Timeframe-Only (CRITICAL, verbindlich)
+
+**Wenn eine Seite mehrere Timespans anbietet (z. B. 3h / 12h / 24h / 7d / 30d / lifetime), wird beim initialen Render NUR der aktuell aktive Timespan geladen. NIEMALS alle Timespans vorladen.**
+
+- **Kein Preload aller Zeiträume.** Nicht „auf Vorrat" alle Fenster vorberechnen. Der neue Timespan wird erst gefetcht, wenn der User ihn auswählt (`?period=`-Wechsel → eigener Query). Bereits angesehene Fenster dürfen optional in-memory gecached werden, aber nie eager geladen.
+- **Kein Preload versteckter Tabs.** Bei tab-Seiten lädt initial NUR der aktive Tab seine Daten. Hidden Tabs werden erst beim Klick geladen (lazy, eigene `<Suspense key={`${tab}-${period}`}>`-Boundary). Eine tabbed Seite darf NIEMALS alle Tab-Queries auf einmal feuern.
+- **Kein Laden versteckter Komponenten.** Drawer, Modals, Drilldowns, expandierte Rows, collapsed Sections: keine Heavy-Queries bevor sie geöffnet werden.
+- **Lifetime-Fenster bounden.** Unbounded Lifetime-Scans vermeiden — gecappte Lookbacks nutzen (`windowDateFilterCapped`, Referenz: deposit-bonus / rakeback ROI), sonst hängt die Query.
+- **Caching + Timeout:** Heavy Queries via `unstable_cache` keyed auf `(period, …)` (60s/300s), und über die `safeQuery`-Timeout-Wrapper laufen lassen, damit langsame Queries zu einem Fallback degradieren statt die Seite zu blocken.
+
+Referenz-Pattern: `src/lib/queries/insights-rewards/_period.ts` + die lazy-tab-Struktur der Insights-Seiten + der Dashboard-Period-Selector. Jede neue Seite mit Timespan-/Tab-Auswahl folgt diesem Muster.
+
+**Merkregel:** Eine Timespan-/Tab-Seite, die beim Laden mehr als das aktive Fenster + den aktiven Tab abfragt, ist falsch gebaut.
+
 ### Validation
 
 - Alle Input-Validation über Zod-Schemas mit `safeParse()`.
