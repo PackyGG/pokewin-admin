@@ -36,6 +36,23 @@ export type WithdrawalListItem = {
   cryptoAsset: string | null;
 };
 
+/**
+ * Withdrawals tab list query.
+ *
+ * NOTE — deliberately NOT `unstable_cache`-wrapped (unlike the Deposits
+ * tab's {@link getDepositTransactions}). `card_withdrawal_requests` is
+ * mutated by the admin actions in `withdrawals/actions.ts`
+ * (process / ship / complete / cancel / fail), which invalidate the view
+ * via `revalidatePath("/withdrawals")`. `revalidatePath` does NOT evict
+ * `unstable_cache` entries (those clear only on a matching
+ * `revalidateTag` or their TTL), so caching this list would leave a
+ * just-actioned withdrawal showing its stale status for up to the TTL —
+ * a behaviour regression. The AutoRefresh on the page + the fresh read
+ * on every navigation keep the withdrawals tab correct; switching back
+ * re-runs this lean indexed query. (Cacheing it safely would mean adding
+ * `revalidateTag("transactions-withdrawals-list")` to those actions,
+ * which live outside this change's scope.)
+ */
 export async function getWithdrawals(params: {
   page?: number;
   perPage?: number;

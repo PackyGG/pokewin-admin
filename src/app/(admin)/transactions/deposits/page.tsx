@@ -28,6 +28,7 @@ import {
   SectionHeading,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { AutoRefresh } from "@/app/(admin)/dashboard/auto-refresh";
 import { BigDepositsToggle } from "./big-deposits-toggle";
 
 export const metadata = { title: "Transactions" };
@@ -66,6 +67,14 @@ export default async function TransactionsPage({
 
   return (
     <div className="space-y-6">
+      {/* Periodic server refresh so the active tab's list stays fresh
+          without a manual reload. router.refresh() re-runs ONLY the
+          rendered route segment — i.e. the active tab's query — so the
+          hidden tab is never fetched by the refresh either. 60s matches
+          the list query's unstable_cache revalidate window. The
+          component itself skips the refresh when the tab is
+          backgrounded. */}
+      <AutoRefresh intervalMs={60_000} />
       <PageHero>
         <PageHeroIdentity
           icon={Receipt}
@@ -85,7 +94,18 @@ export default async function TransactionsPage({
           param — the two tabs use disjoint filter sets (BigDeposits
           toggle vs Status/Method/Value-range), so carrying them
           across would either error or render the wrong filter UI.
-          Mirrors the outcome-tab pattern on /transactions/upgrader. */}
+          Mirrors the outcome-tab pattern on /transactions/upgrader.
+
+          `prefetch={false}` is what makes this Active-Tab-Only: without
+          it Next.js prefetches the INACTIVE tab's route segment on
+          hover / viewport-enter, which runs that tab's list query
+          (deposits OR withdrawals) before the admin ever clicks it — so
+          the page would effectively fetch BOTH tabs' data up front. With
+          prefetch off, the hidden tab's query only fires on the actual
+          click, into its own `<Suspense>` boundary below. `replace` +
+          `scroll={false}` mirror the Insights lazy-tab switch so the
+          back button skips intermediate tab states and the viewport
+          doesn't jump on switch. */}
       <div className="-mx-1 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="inline-flex gap-1 rounded-lg bg-muted p-1">
           {TABS.map((t) => {
@@ -97,6 +117,9 @@ export default async function TransactionsPage({
               <Link
                 key={t.value}
                 href={href}
+                replace
+                scroll={false}
+                prefetch={false}
                 className={cn(
                   "inline-flex shrink-0 items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
                   tab === t.value

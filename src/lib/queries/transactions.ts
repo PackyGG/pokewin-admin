@@ -1,4 +1,6 @@
-import { getDb } from "@/lib/db";
+import { unstable_cache } from "next/cache";
+import { getDb, getDevDb, getProdDb } from "@/lib/db";
+import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
@@ -141,21 +143,34 @@ export type TransactionListItem = {
  * deposit) are still returned as their own row.
  *
  * Filters supported: search (UUID or username), status.
+ *
+ * ── Caching ──────────────────────────────────────────────────────────
+ * The public entry point is the `unstable_cache`-wrapped
+ * {@link getDepositTransactions} below. This `compute*` does the actual
+ * work and takes the resolved DB env as its first argument so it can
+ * pick the right Prisma client WITHOUT calling `getDb()` (which reads
+ * the request cookie via `cookies()` — illegal inside `unstable_cache`).
+ * Resolving the env in the request scope and threading it through as a
+ * cache-key dimension keeps the dev-DB toggle honest: a dev-toggled
+ * admin's cache entry never collides with the prod one.
  */
-export async function getDepositTransactions(params: {
-  page?: number;
-  perPage?: number;
-  search?: string;
-  status?: string;
-  /**
-   * USD threshold — only return rows with `amount >= minAmount`. Used
-   * by the Deposits page's "$200+" filter to surface big-ticket
-   * deposits. Filters on the raw `t.amount` (deposit amount, before
-   * the bonus merge) since that's the natural reading of "deposit
-   * size". A $0 / falsy value disables the filter.
-   */
-  minAmount?: number;
-}): Promise<PaginatedResult<TransactionListItem>> {
+async function computeDepositTransactions(
+  env: DbEnv,
+  params: {
+    page?: number;
+    perPage?: number;
+    search?: string;
+    status?: string;
+    /**
+     * USD threshold — only return rows with `amount >= minAmount`. Used
+     * by the Deposits page's "$200+" filter to surface big-ticket
+     * deposits. Filters on the raw `t.amount` (deposit amount, before
+     * the bonus merge) since that's the natural reading of "deposit
+     * size". A $0 / falsy value disables the filter.
+     */
+    minAmount?: number;
+  },
+): Promise<PaginatedResult<TransactionListItem>> {
   const {
     page = 1,
     perPage = 20,
@@ -163,7 +178,7 @@ export async function getDepositTransactions(params: {
     status,
     minAmount,
   } = params;
-  const db = await getDb();
+  const db = env === "dev" ? getDevDb() : getProdDb();
   const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
   const safePage = Math.max(1, Math.floor(page));
   const offset = (safePage - 1) * safePerPage;
@@ -347,6 +362,45 @@ export async function getDepositTransactions(params: {
     perPage: safePerPage,
     totalPages: Math.ceil(total / safePerPage),
   };
+}
+
+/**
+ * Cross-request cache layer for the Deposits tab list.
+ *
+ * Wraps {@link computeDepositTransactions} in a 60s `unstable_cache`
+ * keyed on `(env, page, perPage, search, status, minAmount)`. The
+ * arguments passed to a cached function participate in its cache key, so
+ * each distinct filter/page combination gets its own entry — switching
+ * back to a previously-viewed page is an instant cache hit, and the
+ * Active-Timeframe-Only refresh window stays short (60s) so figures
+ * don't go stale. Mirrors the `unstable_cache` list pattern in
+ * `users-list.ts`.
+ *
+ * `env` is the FIRST key dimension so a dev-DB-toggled admin's cache
+ * entries never collide with the prod ones — behaviour is identical to
+ * the uncached `getDb()` path, just memoized.
+ */
+const cachedDepositTransactions = unstable_cache(
+  computeDepositTransactions,
+  ["transactions-deposits-list-v1"],
+  { revalidate: 60, tags: ["transactions-deposits-list"] },
+);
+
+/**
+ * Public entry point for the Deposits tab. Resolves the request's DB env
+ * (cookie read happens HERE, in the request scope) then delegates to the
+ * cached compute fn. See {@link computeDepositTransactions} for the
+ * query itself.
+ */
+export async function getDepositTransactions(params: {
+  page?: number;
+  perPage?: number;
+  search?: string;
+  status?: string;
+  minAmount?: number;
+}): Promise<PaginatedResult<TransactionListItem>> {
+  const env = await readDbEnv();
+  return cachedDepositTransactions(env, params);
 }
 
 /**
