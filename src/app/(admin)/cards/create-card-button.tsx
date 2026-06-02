@@ -262,6 +262,19 @@ export function CreateCardButton({
     return isOnePieceSetName(selected?.name) ? "onepiece" : "pokemon";
   }, [sets, setId]);
 
+  // value → label map for the Set <Select>. base-ui's <Select.Value>
+  // renders the raw `value` (here a set UUID) unless it can look the
+  // value up in an `items` map — without this the trigger shows the
+  // pre-selected set's UUID instead of its name while the popup is
+  // closed (the bug: opening the dialog from the OnePiece tab showed
+  // a "weird id" rather than "OnePiece"). Keyed by id so the resolver
+  // maps `defaultSetId` straight to the set name on first render.
+  const setItems = useMemo<Record<string, string>>(() => {
+    const map: Record<string, string> = {};
+    for (const s of sets) map[s.id] = s.name;
+    return map;
+  }, [sets]);
+
   function resetForm() {
     setName("");
     setPrice("");
@@ -476,7 +489,11 @@ export function CreateCardButton({
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="create-card-set">Set</Label>
-                <Select value={setId} onValueChange={(v) => setSetId(v ?? "")}>
+                <Select
+                  items={setItems}
+                  value={setId}
+                  onValueChange={(v) => setSetId(v ?? "")}
+                >
                   <SelectTrigger id="create-card-set" className="w-full">
                     <SelectValue placeholder="Select set..." />
                   </SelectTrigger>
