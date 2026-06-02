@@ -17,6 +17,7 @@ import {
   canUserAdjustBalance,
   hasCapability,
 } from "@/app/(admin)/settings/roles/permissions-utils";
+import { usdAmountSchema } from "@/lib/utils/money";
 
 // Hosts we accept as a "Giveaway" source URL. Anything else is rejected
 // at the action boundary so the giveaway log can't be polluted with
@@ -63,7 +64,13 @@ function classifyGiveawaySourceUrl(rawUrl: string): {
 
 const adjustBalanceSchema = z.object({
   userId: z.string(),
-  amount: z.number(),
+  // Finite, cent-precise amount (may be +/-). The server never trusts
+  // the client's parse: a malformed number like 17.878 (3 decimals, the
+  // old parseFloat-truncation symptom) is rejected here, not rounded.
+  // Zero is a no-op (no ledger row) so it's rejected too.
+  amount: usdAmountSchema().refine((n) => n !== 0, {
+    message: "Amount can't be zero",
+  }),
   reason: z.string().min(1),
   // Optional giveaway payload — required iff the reason category was
   // "giveaway" on the client. The client always sends the source URL
@@ -439,7 +446,10 @@ export async function moveBalanceToVault(
 // balance adjustment does).
 const manualWithdrawalSchema = z.object({
   userId: z.string(),
-  amountUsd: z.number().positive("Amount must be positive"),
+  // Same robust money rule as adjustBalance: finite, cent-precise, > 0.
+  // Guards against the parseFloat-truncation class of bug on the
+  // withdrawal amount too (shared Adjust-Balance dialog file).
+  amountUsd: usdAmountSchema({ positive: true }),
   reason: z.string().min(1, "Reason is required"),
 });
 

@@ -264,6 +264,7 @@ export function ModernBalancePanel({
       {showAdjust && userId && (
         <BalanceAdjustDialog
           userId={userId}
+          availableBalance={balances.availableBalance}
           open={adjustOpen}
           onOpenChange={setAdjustOpen}
         />

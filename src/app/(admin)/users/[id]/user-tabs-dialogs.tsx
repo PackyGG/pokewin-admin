@@ -34,6 +34,8 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { ROLES } from "@/lib/constants";
+import { formatCurrency } from "@/lib/utils/format";
+import { parseUsdAmount } from "@/lib/utils/money";
 import {
   adjustBalance,
   adjustXp,
@@ -167,10 +169,15 @@ const BALANCE_ADJUST_REASONS = [
 
 export function BalanceAdjustDialog({
   userId,
+  availableBalance,
   open,
   onOpenChange,
 }: {
   userId: string;
+  // Current on-site cash balance, used only for the live "resulting
+  // balance" preview. Optional so existing call sites that don't have it
+  // still render (the preview just omits the resulting-balance line).
+  availableBalance?: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -197,10 +204,18 @@ export function BalanceAdjustDialog({
   }
 
   function handleAdjust() {
-    const numAmount = parseFloat(amount);
+    // Robust parse — never silently truncates a malformed thousands
+    // amount (e.g. "17.878.54") the way parseFloat did. Rejected input
+    // surfaces the parser's message instead of writing a wrong ledger row.
+    const parsedAmount = parseUsdAmount(amount);
     const resolvedReason = resolveReason();
-    if (isNaN(numAmount)) {
-      toast.error("Please enter a valid amount");
+    if (!parsedAmount.ok) {
+      toast.error(parsedAmount.error);
+      return;
+    }
+    const numAmount = parsedAmount.value;
+    if (numAmount === 0) {
+      toast.error("Amount can't be zero");
       return;
     }
     if (!resolvedReason) {
@@ -254,6 +269,20 @@ export function BalanceAdjustDialog({
     });
   }
 
+  // Live parse of whatever the admin has typed so far. Drives the preview
+  // line below + gates the submit button, so a misparse (or zero) is
+  // visible BEFORE confirming — the same parser the submit handler uses.
+  const trimmedAmount = amount.trim();
+  const parsedPreview = parseUsdAmount(amount);
+  const previewValue = parsedPreview.ok ? parsedPreview.value : null;
+  const isAmountValid = previewValue !== null && previewValue !== 0;
+  // Direction label from the parsed sign (explicit add vs remove).
+  const isRemoval = previewValue !== null && previewValue < 0;
+  const newBalance =
+    previewValue !== null && availableBalance !== undefined
+      ? availableBalance + previewValue
+      : null;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
@@ -263,12 +292,54 @@ export function BalanceAdjustDialog({
         <div className="space-y-3 py-2">
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Amount</Label>
+            {/* text + inputMode="decimal" (not type="number") so commas and
+                malformed multi-dot input reach the robust parser intact —
+                a number input would silently drop them. */}
             <Input
-              type="number"
-              placeholder="Amount (+/-)"
+              type="text"
+              inputMode="decimal"
+              autoComplete="off"
+              placeholder="Amount (+/-), e.g. 17878.54 or -50"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
             />
+            {/* Live parsed-amount preview. Green/red follow the HOUSE POV:
+                crediting the user (positive) = our liability = rose;
+                removing from the user (negative) = our gain = emerald. */}
+            {trimmedAmount.length > 0 &&
+              (isAmountValid && previewValue !== null ? (
+                <div className="rounded-md border bg-muted/30 px-2.5 py-1.5 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-muted-foreground">
+                      {isRemoval ? "Removing" : "Adding"}
+                    </span>
+                    <span
+                      className={`font-semibold tabular-nums ${
+                        isRemoval
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-rose-600 dark:text-rose-400"
+                      }`}
+                    >
+                      {isRemoval ? "−" : "+"}
+                      {formatCurrency(Math.abs(previewValue))}
+                    </span>
+                  </div>
+                  {newBalance !== null && (
+                    <div className="mt-1 flex items-center justify-between gap-2 border-t pt-1">
+                      <span className="text-muted-foreground">New balance</span>
+                      <span className="font-semibold tabular-nums">
+                        {formatCurrency(newBalance)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-[11px] text-rose-600 dark:text-rose-400">
+                  {parsedPreview.ok
+                    ? "Amount can't be zero"
+                    : parsedPreview.error}
+                </p>
+              ))}
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Reason</Label>
@@ -337,7 +408,7 @@ export function BalanceAdjustDialog({
           <Button
             size="sm"
             onClick={handleAdjust}
-            disabled={isPending || !totpCode.trim()}
+            disabled={isPending || !totpCode.trim() || !isAmountValid}
             className="w-full sm:w-auto"
           >
             {isPending ? "Adjusting..." : "Apply Adjustment"}
@@ -391,9 +462,16 @@ export function ManualWithdrawalDialog({
   }
 
   function handleSubmit() {
-    const numAmount = parseFloat(amount);
+    // Robust parse (same rule as Adjust Balance) — rejects malformed
+    // multi-dot thousands input instead of silently truncating it.
+    const parsedAmount = parseUsdAmount(amount);
     const resolvedReason = resolveReason();
-    if (isNaN(numAmount) || numAmount <= 0) {
+    if (!parsedAmount.ok) {
+      toast.error(parsedAmount.error);
+      return;
+    }
+    const numAmount = parsedAmount.value;
+    if (numAmount <= 0) {
       toast.error("Enter a positive amount");
       return;
     }
@@ -461,16 +539,26 @@ export function ManualWithdrawalDialog({
             <Label className="text-xs text-muted-foreground">
               Amount (USD)
             </Label>
+            {/* text + inputMode="decimal" so commas / multi-dot input
+                reach the robust parser intact (a number input drops them). */}
             <Input
-              type="number"
-              min={0}
-              step={0.01}
-              placeholder="0.00"
+              type="text"
+              inputMode="decimal"
+              autoComplete="off"
+              placeholder="0.00 (e.g. 17878.54)"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
             />
             {(() => {
-              const numAmount = parseFloat(amount);
+              const parsed = parseUsdAmount(amount);
+              if (amount.trim().length > 0 && !parsed.ok) {
+                return (
+                  <p className="text-[11px] text-rose-600 dark:text-rose-400">
+                    {parsed.error}
+                  </p>
+                );
+              }
+              const numAmount = parsed.ok ? parsed.value : NaN;
               const exceeds =
                 !isNaN(numAmount) && numAmount > availableBalance;
               if (exceeds) {
@@ -481,6 +569,17 @@ export function ManualWithdrawalDialog({
                     {availableBalance.toFixed(2)} will be deducted from
                     balance; the remaining ${phantom.toFixed(2)} only
                     bumps total_withdrawn (backfill / P&amp;L fix).
+                  </p>
+                );
+              }
+              if (parsed.ok && numAmount > 0) {
+                return (
+                  <p className="text-[11px] text-muted-foreground">
+                    Recording{" "}
+                    <span className="font-semibold text-foreground tabular-nums">
+                      {formatCurrency(numAmount)}
+                    </span>{" "}
+                    · Available: ${availableBalance.toFixed(2)}
                   </p>
                 );
               }
