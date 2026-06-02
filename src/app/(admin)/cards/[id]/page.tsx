@@ -1,18 +1,37 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { Layers, DollarSign, Heart, Package, Boxes } from "lucide-react";
+import {
+  Layers,
+  DollarSign,
+  Heart,
+  Package,
+  Boxes,
+  Swords,
+  Coins,
+  Fingerprint,
+  Gauge,
+  Tag,
+  Clock,
+} from "lucide-react";
 import { BackButton } from "@/components/back-button";
 import { getCardDetail, getSets } from "@/lib/queries/cards";
 import { requirePageAccess } from "@/lib/dal";
 import { isUuid } from "@/lib/utils/ids";
 import { Badge } from "@/components/ui/badge";
 import { CardImage } from "@/components/card-image";
-import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import {
+  formatCurrency,
+  formatNumber,
+  formatDateTime,
+  formatRelative,
+} from "@/lib/utils/format";
 import {
   PageHero,
   PageHeroIdentity,
   SectionHeading,
   KpiTile,
+  StatPanel,
+  PanelRow,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { EditCardButton } from "./edit-card-button";
@@ -41,13 +60,13 @@ export default async function CardDetailPage({
 
   if (!data) notFound();
 
-  const detailRows = [
-    { label: "Type", value: data.type },
-    { label: "Artist", value: data.artist },
-    { label: "Set", value: data.setName ?? "—" },
-    { label: "Card #", value: data.cardNumber ?? "—" },
-    { label: "TCGPlayer ID", value: data.tcgplayerId ? String(data.tcgplayerId) : "—" },
-  ];
+  // OnePiece game-design stats. `cost` / `power` are only meaningful for
+  // OnePiece cards (Pokemon store them null) and may be absent on a DB
+  // that hasn't run the cost/power migration — getCardDetail returns null
+  // in both cases. Render the Game Stats column only when at least one is
+  // present so Pokemon cards don't show two empty rows.
+  const hasGameStats = data.cost != null || data.power != null;
+  const dash = "—";
 
   return (
     <div className="space-y-6">
@@ -81,7 +100,11 @@ export default async function CardDetailPage({
         />
       </PageHero>
 
-      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 md:grid-cols-3 lg:grid-cols-6">
+        {/* House-POV note: `Price` is the card's catalog value, not a
+            user win/loss event, so the emerald/blue/cyan accents here are
+            purely categorical (matching the rest of the catalog UI) — no
+            financial-direction meaning is implied. */}
         <KpiTile
           label="Price"
           value={formatCurrency(data.priceUsd)}
@@ -90,10 +113,26 @@ export default async function CardDetailPage({
         />
         <KpiTile
           label="HP"
-          value={String(data.hp)}
+          value={data.hp != null ? String(data.hp) : dash}
           icon={Heart}
           accent="rose"
         />
+        {hasGameStats && (
+          <>
+            <KpiTile
+              label="Cost"
+              value={data.cost != null ? String(data.cost) : dash}
+              icon={Coins}
+              accent="amber"
+            />
+            <KpiTile
+              label="Power"
+              value={data.power != null ? formatNumber(data.power) : dash}
+              icon={Swords}
+              accent="purple"
+            />
+          </>
+        )}
         <KpiTile
           label="In Packs"
           value={String(data.packs.length)}
@@ -108,25 +147,139 @@ export default async function CardDetailPage({
         />
       </div>
 
-      <FadeIn>
-        <div className="rounded-2xl border bg-card p-5">
-          <div className="flex flex-col gap-6 items-start sm:flex-row sm:gap-8">
-            <div className="shrink-0 w-[160px] sm:w-[200px]">
-              <CardImage src={data.imageUrl} alt={data.name} className="w-full rounded-lg" />
+      <div className="space-y-3">
+        <SectionHeading icon={Layers} title="Card attributes" />
+        <FadeIn>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
+            {/* Artwork — the image field, shown at a comfortable size with
+                a soft card frame so it reads as the canonical asset. */}
+            <div className="rounded-2xl border bg-card p-4">
+              <CardImage
+                src={data.imageUrl}
+                alt={data.name}
+                className="w-full rounded-lg"
+              />
             </div>
-            <div className="flex-1 min-w-0 grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-2 lg:grid-cols-3">
-              {detailRows.map((s) => (
-                <div key={s.label}>
-                  <p className="text-xs uppercase tracking-wider text-muted-foreground">
-                    {s.label}
-                  </p>
-                  <p className="mt-0.5 text-base font-semibold">{s.value}</p>
-                </div>
-              ))}
+
+            {/* Every other stored field, grouped into panels. Each row is
+                a single column on the card so nothing is hidden — HP,
+                cost/power, rarity, set, artist, pricing, ids and the
+                create/update timestamps are all surfaced. */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <StatPanel title="Catalog" icon={Tag} accent="blue">
+                <PanelRow label="Name" value={data.name} />
+                <PanelRow
+                  label="Rarity"
+                  value={
+                    data.rarity ? (
+                      <Badge
+                        variant="outline"
+                        className={RARITY_COLORS[data.rarity.toLowerCase()] ?? ""}
+                      >
+                        {data.rarity}
+                      </Badge>
+                    ) : (
+                      dash
+                    )
+                  }
+                />
+                <PanelRow label="Type" value={data.type} />
+                <PanelRow label="Set" value={data.setName ?? dash} />
+                <PanelRow label="Artist" value={data.artist ?? dash} />
+              </StatPanel>
+
+              <StatPanel title="Game stats" icon={Gauge} accent="rose">
+                <PanelRow
+                  label="HP"
+                  value={data.hp != null ? formatNumber(data.hp) : dash}
+                />
+                <PanelRow
+                  label="Cost"
+                  value={data.cost != null ? formatNumber(data.cost) : dash}
+                />
+                <PanelRow
+                  label="Power"
+                  value={data.power != null ? formatNumber(data.power) : dash}
+                />
+              </StatPanel>
+
+              <StatPanel title="Economy" icon={Coins} accent="emerald">
+                <PanelRow
+                  label="Price"
+                  value={formatCurrency(data.priceUsd)}
+                />
+                {/* `price_raw` is the pre-fee catalog price the create/edit
+                    actions mirror from `price`. Surfaced for transparency
+                    so every stored money column is visible. */}
+                <PanelRow
+                  label="Price (raw)"
+                  value={formatCurrency(data.priceRawUsd)}
+                />
+                <PanelRow
+                  label="In packs"
+                  value={formatNumber(data.packs.length)}
+                />
+                <PanelRow
+                  label="In inventory"
+                  value={formatNumber(data.inventoryCount)}
+                />
+              </StatPanel>
+
+              <StatPanel title="Identifiers" icon={Fingerprint} accent="cyan">
+                <PanelRow
+                  label="Card #"
+                  value={data.cardNumber ?? dash}
+                />
+                <PanelRow
+                  label="TCGPlayer ID"
+                  value={data.tcgplayerId != null ? String(data.tcgplayerId) : dash}
+                />
+                <PanelRow
+                  label="Card ID"
+                  value={
+                    <span className="font-mono text-xs">{data.id}</span>
+                  }
+                />
+                <PanelRow
+                  label="Set ID"
+                  value={
+                    data.setId ? (
+                      <span className="font-mono text-xs">{data.setId}</span>
+                    ) : (
+                      dash
+                    )
+                  }
+                />
+              </StatPanel>
+
+              <StatPanel
+                title="Timestamps"
+                icon={Clock}
+                accent="amber"
+              >
+                <PanelRow
+                  label="Created"
+                  value={formatDateTime(data.createdAt)}
+                />
+                <PanelRow
+                  label="Created (relative)"
+                  value={formatRelative(data.createdAt)}
+                  valueClassName="text-muted-foreground font-normal"
+                />
+                <PanelRow
+                  label="Updated"
+                  value={formatDateTime(data.updatedAt)}
+                />
+                <PanelRow
+                  label="Updated (relative)"
+                  value={formatRelative(data.updatedAt)}
+                  valueClassName="text-muted-foreground font-normal"
+                />
+              </StatPanel>
             </div>
           </div>
-        </div>
-      </FadeIn>
+        </FadeIn>
+      </div>
 
       {data.packs.length > 0 && (
         <div className="space-y-3">

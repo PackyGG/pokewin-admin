@@ -1,6 +1,7 @@
 import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import { safeQueryOrNull } from "@/lib/errors/safe-query";
 import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
 
@@ -122,17 +123,25 @@ export async function getCards(params: {
 
 export async function getCardDetail(id: string) {
   const db = await getDb();
-  // Explicit `select` on the card columns so a newly-added Prisma schema
-  // field that hasn't reached the live DB (e.g. the OnePiece-only
-  // `cost` / `power` columns added in commit a865aa8) cannot crash this
-  // query in production. The detail page renders only the fields named
-  // here — `cost` / `power` are write-only fields used by the create
-  // dialog, not the detail surface.
+  // Explicit `select` on the card columns. Everything named here is a
+  // column present on EVERY card DB (original schema), so the typed
+  // `findUnique` is safe on production and on older snapshots alike.
+  //
+  // `cost` / `power` are deliberately NOT in this select: they're the
+  // OnePiece-only columns added by a later migration (commit a865aa8) and
+  // may be absent on a DB that hasn't run it yet. Naming them here would
+  // make Prisma emit them in the SELECT column list and crash the whole
+  // detail query with P2022 on such a DB. Instead we read them in a
+  // SEPARATE, defensively-wrapped raw query below (safeQueryOrNull) so a
+  // missing column degrades those two attributes to "—" rather than
+  // taking the page down. `price_raw` IS an original column (the pre-fee
+  // catalog price the create/edit actions mirror from `price`), so it
+  // stays in the typed select.
   //
   // pack_cards relation: we only need the related `packs` row per join,
   // not the join-row's own columns (weight, color, animation, etc.).
   // Switching include → select drops them from the wire.
-  const [card, inventoryCountRows] = await Promise.all([
+  const [card, inventoryCountRows, statsResult] = await Promise.all([
     db.cards.findUnique({
       where: { id },
       select: {
@@ -140,6 +149,7 @@ export async function getCardDetail(id: string) {
         name: true,
         image_url: true,
         price: true,
+        price_raw: true,
         hp: true,
         rarity: true,
         artist: true,
@@ -161,16 +171,36 @@ export async function getCardDetail(id: string) {
       `SELECT COUNT(*)::text AS count FROM user_inventory WHERE card_id = $1`,
       id
     ),
+    // OnePiece game-design columns. Read on their own so a DB without the
+    // cost/power migration (missing-column → P2022 / 42703) degrades to
+    // `null` here instead of crashing the detail page. Mirrors the
+    // schema-defensive pattern in src/lib/queries/insights-streamers/
+    // _schema-probe.ts. `cost`/`power` are stored as `Int?` so the row
+    // values come back as numbers (or null) — cast nothing.
+    safeQueryOrNull(
+      () =>
+        db.$queryRaw<{ cost: number | null; power: number | null }[]>`
+          SELECT cost, power FROM cards WHERE id = ${id}::uuid`,
+      "cards.getCardDetail.costPower",
+    ),
   ]);
 
   if (!card) return null;
+
+  const statsRow = statsResult.data?.[0] ?? null;
 
   return {
     id: card.id,
     name: card.name,
     imageUrl: card.image_url,
     priceUsd: toNumber(card.price),
+    priceRawUsd: toNumber(card.price_raw),
     hp: card.hp,
+    // null when the cost/power migration hasn't reached this DB (the
+    // defensive read above returned null) OR when the card simply has no
+    // value (Pokemon cards). The page treats both as "not applicable".
+    cost: statsRow?.cost ?? null,
+    power: statsRow?.power ?? null,
     rarity: card.rarity,
     artist: card.artist,
     tcgplayerId: card.tcgplayer_id,
