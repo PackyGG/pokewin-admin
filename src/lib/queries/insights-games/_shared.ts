@@ -174,11 +174,18 @@ export function notInCreatorSessionSql(
  *     analytics.ts + dashboard-live.ts). The check matches
  *     "borrow" anywhere in the description so it survives label
  *     drift.
- *   • battle_bet / battle_sponsorship: the linked battle's
- *     `borrow_percentage` column is > 0 when the battle was on
- *     borrow. Borrow on a battle is set at battle-create time and
- *     applies to every participant — exclude the whole battle's
- *     wager rows.
+ *   • battle_bet: the linked battle's `borrow_percentage` column is
+ *     > 0 when the battle was on borrow. Borrow on a battle is set at
+ *     battle-create time and applies to every participant — exclude
+ *     the whole battle's wager rows.
+ *   • battle_sponsorship: counted DIRECTLY (no borrow gate). Its ledger
+ *     rows have `game_session_id = NULL`, so a
+ *     `game_session_id IN (non_borrow_battle_sessions)` gate would
+ *     silently DROP every sponsorship row (NULL IN (...) → NULL →
+ *     excluded) — the bug that made GGR omit sponsorship while the
+ *     dashboard wager tile counted it. Verified (owner-confirmed): ALL
+ *     sponsored battles have borrow_percentage = 0, so no borrow gate is
+ *     needed; sponsorship is real customer wager and is summed directly.
  *   • upgrader_bet: borrow doesn't apply to upgrader plays (no field
  *     on the schema, no convention) so this filter is a no-op for
  *     them — every upgrader row passes.
@@ -195,7 +202,8 @@ export function notInCreatorSessionSql(
 export const WAGER_NON_BORROW_FILTER = `
   AND (
     (lt.type = 'pack_opening' AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%'))
-    OR (lt.type IN ('battle_bet','battle_sponsorship') AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
+    OR (lt.type = 'battle_bet' AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
+    OR lt.type = 'battle_sponsorship'
     OR (lt.type NOT IN ('pack_opening','battle_bet','battle_sponsorship'))
   )
 `;

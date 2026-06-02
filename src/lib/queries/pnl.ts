@@ -897,6 +897,19 @@ export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
       JOIN battles b ON b.id = bp.battle_id
       WHERE COALESCE(b.borrow_percentage, 0) = 0
     )`;
+    // Reward/daily-pack game_sessions (packs.pack_type='reward', price 0).
+    // These $0-wager real-card giveaways are tracked as a reward cost in
+    // /insights/rewards, so they are EXCLUDED from this pure gaming P&L on
+    // BOTH sides (wager ≈$0; the won-card inventory is the material leg) —
+    // aligning with the canonical getGamingLegs and the per-pack
+    // insights-games/packs.ts edge (which already filters pack_type<>'reward').
+    // Resolved via the same game_type='pack' → packs.pack_type='reward' join
+    // daily-packs.ts uses.
+    const rewardPackSessions = `(
+      SELECT gs.id FROM game_sessions gs
+      JOIN packs p ON p.id = gs.game_id AND p.pack_type = 'reward'
+      WHERE gs.game_type = 'pack'
+    )`;
 
     type LedgerRow = {
       pack_wager_h24: string; pack_wager_d3: string; pack_wager_d7: string; pack_wager_all: string;
@@ -949,13 +962,28 @@ export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
            AND type IN ('pack_opening','battle_bet','battle_sponsorship','battle_excess_to_voucher')
            AND ${scope}
            -- Borrow mode exclusion: drop pack opens tagged "borrow"
-           -- in their description, and drop battle wagers whose
+           -- in their description, and drop battle_bet wagers whose
            -- linked battle has any borrow_percentage > 0.
            -- battle_excess_to_voucher passes through unconditionally (it is
            -- a battle-win settlement remainder, not a wager row).
+           --
+           -- battle_sponsorship is counted DIRECTLY (no borrow gate) — its
+           -- rows have game_session_id=NULL, so the non-borrow battle
+           -- session IN-gate would drop every sponsorship row
+           -- (NULL IN (...) => NULL => excluded), the bug that made this
+           -- pure-PnL omit sponsorship while the dashboard wager tile
+           -- counted it. All sponsored battles are borrow_percentage=0
+           -- (owner-confirmed), so no gate is needed.
+           --
+           -- Reward/daily packs (packs.pack_type='reward') are excluded
+           -- from the pack wager (≈$0 anyway) — a giveaway tracked as a
+           -- reward cost, not gaming. Fix mirrors getGamingLegs.
            AND (
-             (type = 'pack_opening' AND (description IS NULL OR description NOT ILIKE '%borrow%'))
-             OR (type IN ('battle_bet','battle_sponsorship') AND game_session_id IN ${nonBorrowBattleSessions})
+             (type = 'pack_opening'
+              AND (description IS NULL OR description NOT ILIKE '%borrow%')
+              AND (game_session_id IS NULL OR game_session_id NOT IN ${rewardPackSessions}))
+             OR (type = 'battle_bet' AND game_session_id IN ${nonBorrowBattleSessions})
+             OR type = 'battle_sponsorship'
              OR type = 'battle_excess_to_voucher'
            )`,
         h24, d3, d7,
@@ -979,7 +1007,15 @@ export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
            AND (
              (source_type = 'pack' AND source_id IN ${nonBorrowPackSessions})
              OR (source_type = 'battle' AND source_id IN ${nonBorrowBattleSessions})
-           )`,
+           )
+           -- Fix 2: exclude won-card inventory from reward/daily-pack opens
+           -- (keyed on source_id = originating game_session_id). The
+           -- giveaway is a reward cost, not a gaming payout — counting it
+           -- here would double-count it and show the pack as a straight
+           -- loss. ('reward' source_type rows never enter this leg — it
+           -- filters source_type IN ('pack','battle') — so this drops the
+           -- 'pack'-typed reward cards; mirrors getGamingLegs.)
+           AND (source_id IS NULL OR source_id NOT IN ${rewardPackSessions})`,
         h24, d3, d7,
       ),
     ]);

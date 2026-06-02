@@ -23,6 +23,12 @@ import {
   type EmpiricalRatio,
 } from "./formulas";
 import { getMetricsScope } from "./scope";
+import {
+  NON_BORROW_BATTLE_SESSIONS,
+  REWARD_PACK_SESSIONS,
+  WAGER_LEG_FILTER,
+  PAYOUT_LEG_FILTER,
+} from "./gaming-sql";
 
 /**
  * queries.ts — documented CANONICAL query builders for the metric layer.
@@ -79,27 +85,21 @@ function sinceClause(column: string, since: Date | null): string {
   return `AND ${column} >= '${since.toISOString()}'::timestamptz`;
 }
 
-// ─── Borrow-exclusion fragments (mirror insights-games/_shared.ts) ───
+// ─── Borrow + reward-pack exclusion fragments ────────────────────────
 //
-// Re-expressed locally as subqueries so the wager and payout builders
-// stay self-contained (no CTE injection ordering to coordinate). Same
-// semantics as `BORROW_FILTER_CTES`: drop pack opens tagged "borrow" in
-// their description, and drop battle wagers whose battle has any
-// borrow_percentage > 0 — on BOTH the wager (ledger) and payout
-// (inventory) side so the two never drift.
-
-const NON_BORROW_PACK_SESSIONS = `(
-  SELECT game_session_id FROM ledger_transactions
-  WHERE type = 'pack_opening' AND status = 'completed'
-    AND game_session_id IS NOT NULL
-    AND (description IS NULL OR description NOT ILIKE '%borrow%')
-)`;
-
-const NON_BORROW_BATTLE_SESSIONS = `(
-  SELECT bp.game_session_id FROM battle_participants bp
-  JOIN battles b ON b.id = bp.battle_id
-  WHERE COALESCE(b.borrow_percentage, 0) = 0
-)`;
+// The pure SQL fragments (`NON_BORROW_*_SESSIONS`, `REWARD_PACK_SESSIONS`)
+// and the composed wager/payout predicates (`WAGER_LEG_FILTER` /
+// `PAYOUT_LEG_FILTER`) live in the client-safe `./gaming-sql` module so
+// the pure `__checks__` can assert their shape without the DB. They encode
+// the two owner-confirmed fixes:
+//   • Fix 1 — `battle_sponsorship` is counted as customer WAGER directly
+//     (no borrow gate; its `game_session_id` is NULL, all sponsored
+//     battles are borrow_percentage=0). `battle_bet` keeps the gate.
+//   • Fix 2 — reward/daily packs (`packs.pack_type='reward'`) are dropped
+//     from BOTH the wager and the won-card inventory legs (a giveaway
+//     tracked as a reward cost in `/insights/rewards`, not gaming).
+// Same `BORROW_FILTER_CTES` borrow semantics as insights-games/_shared.ts;
+// the reward-pack join mirrors insights-rewards/daily-packs.ts.
 
 // ─── Gaming legs (wager, inventory payout, ledger gaming payout) ─────
 
@@ -199,16 +199,16 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
            AND user_id IN ${scope.userScopeSql}
            AND ${scope.notInCreatorSession("user_id", "created_at")}
            ${sinceClause("created_at", since)}
-           -- Borrow exclusion on the wager side. The GAMING_PAYOUT legs
-           -- (battle_refund + battle_excess_to_voucher) are battle-win
-           -- settlement legs that carry no borrow flag of their own, so
-           -- they are summed unconditionally within the type filter above
-           -- (same treatment battle_refund always had).
-           AND (
-             type NOT IN ('pack_opening','battle_bet','battle_sponsorship')
-             OR (type = 'pack_opening' AND (description IS NULL OR description NOT ILIKE '%borrow%'))
-             OR (type IN ('battle_bet','battle_sponsorship') AND game_session_id IN ${NON_BORROW_BATTLE_SESSIONS})
-           )`,
+           -- Wager-side borrow + reward-pack exclusion (Fix 1 + Fix 2),
+           -- from the shared client-safe predicate so the pure __checks__
+           -- assert its exact shape. battle_sponsorship is counted
+           -- DIRECTLY (no borrow gate — its game_session_id is NULL, all
+           -- sponsored battles are borrow_percentage=0); battle_bet stays
+           -- borrow-gated; reward/daily packs (pack_type='reward', ≈$0) are
+           -- dropped. The GAMING_PAYOUT legs (battle_refund +
+           -- battle_excess_to_voucher) carry no borrow flag and are summed
+           -- unconditionally within their type filter above.
+           AND ${WAGER_LEG_FILTER}`,
       ),
       db.$queryRawUnsafe<InvRow[]>(
         `WITH ${scope.sessionWindowsCte}
@@ -221,10 +221,12 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
            -- symmetric with the wager side's created_at predicate.
            AND ${scope.notInCreatorSession("user_id", "obtained_at")}
            ${sinceClause("obtained_at", since)}
-           AND (
-             (source_type = 'pack' AND source_id IN ${NON_BORROW_PACK_SESSIONS})
-             OR (source_type = 'battle' AND source_id IN ${NON_BORROW_BATTLE_SESSIONS})
-           )`,
+           -- Payout-side borrow + reward-pack exclusion (Fix 2 is the
+           -- material leg): non-borrow pack/battle, then reward/daily-pack
+           -- won cards dropped (keyed on source_id = originating
+           -- game_session_id) so the giveaway is not counted as a gaming
+           -- payout. Shared predicate → asserted by __checks__.
+           AND ${PAYOUT_LEG_FILTER}`,
       ),
       // Upgrader from upgrader_games (real gameplay, not in the ledger).
       // `null` on a pre-upgrader DB (to_regclass guard) → contributes 0.
@@ -598,10 +600,21 @@ export async function getDailyGamingMetrics(
         `WITH ${scope.sessionWindowsCte}
          SELECT
            DATE(created_at) AS date,
+           -- Per-day wager. Mirrors getGamingLegs exactly:
+           --  • pack_opening: non-borrow AND NOT a reward/daily pack
+           --    (packs.pack_type='reward', ≈$0 anyway) — Fix 2.
+           --  • battle_bet: borrow-gated by its game_session.
+           --  • battle_sponsorship: counted DIRECTLY (no borrow gate) — its
+           --    rows have game_session_id=NULL so the IN-gate would drop
+           --    them (the GGR-omits-sponsorship bug); all sponsored battles
+           --    are borrow_percentage=0, so no gate is needed — Fix 1.
            COALESCE(SUM(CASE WHEN type IN ${WAGER_TYPES_SQL}
              AND (
-               (type = 'pack_opening' AND (description IS NULL OR description NOT ILIKE '%borrow%'))
-               OR (type IN ('battle_bet','battle_sponsorship') AND game_session_id IN ${NON_BORROW_BATTLE_SESSIONS})
+               (type = 'pack_opening'
+                AND (description IS NULL OR description NOT ILIKE '%borrow%')
+                AND (game_session_id IS NULL OR game_session_id NOT IN ${REWARD_PACK_SESSIONS}))
+               OR (type = 'battle_bet' AND game_session_id IN ${NON_BORROW_BATTLE_SESSIONS})
+               OR type = 'battle_sponsorship'
              )
              THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS wager,
            -- GAMING_PAYOUT_TYPES = battle_refund + battle_excess_to_voucher
@@ -635,10 +648,11 @@ export async function getDailyGamingMetrics(
            AND user_id IN ${scope.userScopeSql}
            AND ${scope.notInCreatorSession("user_id", "obtained_at")}
            ${sinceClause("obtained_at", since)}
-           AND (
-             (source_type = 'pack' AND source_id IN ${NON_BORROW_PACK_SESSIONS})
-             OR (source_type = 'battle' AND source_id IN ${NON_BORROW_BATTLE_SESSIONS})
-           )
+           -- Same payout-side predicate as getGamingLegs (non-borrow +
+           -- reward-pack exclusion, Fix 2) so Σ daily payout reconciles
+           -- with the headline. Shared client-safe fragment → asserted by
+           -- __checks__.
+           AND ${PAYOUT_LEG_FILTER}
          GROUP BY DATE(obtained_at)`,
       ),
       // Per-day upgrader wager + payout from upgrader_games (real gameplay,

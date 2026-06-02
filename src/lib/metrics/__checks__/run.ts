@@ -43,6 +43,15 @@ import {
   empiricalRtp,
   empiricalHouseEdge,
 } from "../formulas";
+// Client-safe SQL FRAGMENT strings for the canonical gaming legs — the
+// real source the server-only builders compose. Imported here so the two
+// owner-confirmed fixes are asserted at the SQL-shape level (no DB).
+import {
+  REWARD_PACK_SESSIONS,
+  NON_BORROW_BATTLE_SESSIONS,
+  WAGER_LEG_FILTER,
+  PAYOUT_LEG_FILTER,
+} from "../gaming-sql";
 
 let passed = 0;
 let failed = 0;
@@ -157,6 +166,62 @@ check("classifyLedgerType returns null for an unknown type", classifyLedgerType(
 console.log("[metrics checks] specific membership (the booking model)");
 
 check("WAGER = pack_opening/battle_bet/battle_sponsorship only", arrEq(WAGER_TYPES, ["pack_opening", "battle_bet", "battle_sponsorship"]));
+// Fix 1 — battle_sponsorship is a CUSTOMER WAGER type. It is summed on
+// the wager side of GGR everywhere (getGamingLegs / getDailyGamingMetrics
+// / getPackBattlePurePnl / _shared.WAGER_NON_BORROW_FILTER), so the GGR
+// wager leg AGREES with the dashboard "Total Wager" tile (which also
+// counts it). The SQL detail — counting it DIRECTLY without the
+// `game_session_id IN (non_borrow_battle_sessions)` borrow gate, because
+// sponsorship rows have game_session_id=NULL (the gate would drop them)
+// and all sponsored battles are borrow_percentage=0 — is a query-layer
+// concern in those builders; the PURE invariant pinned here is its
+// WAGER membership (the precondition that makes the sum include it).
+check("Fix 1: battle_sponsorship is a WAGER type (customer wager, counted in GGR)", WAGER_TYPES.includes("battle_sponsorship") && classifyLedgerType("battle_sponsorship") === "WAGER");
+check("Fix 1: battle_sponsorship is summed by WAGER_TYPES_SQL (in the IN-list)", WAGER_TYPES_SQL.includes("'battle_sponsorship'"));
+// Fix 2 — reward/daily packs (packs.pack_type='reward') are EXCLUDED from
+// gaming GGR (wager + payout). There is NO "reward pack" LEDGER TYPE:
+// pack_opening rows carry no pack_type, so reward-pack identification is a
+// `game_type='pack' → packs.pack_type='reward'` JOIN, making the exclusion
+// necessarily a query-layer SQL row filter (REWARD_PACK_SESSIONS in
+// getGamingLegs / getDailyGamingMetrics / getPackBattlePurePnl on BOTH the
+// wager and the inventory-payout side), NOT a type-bucket change — exactly
+// like the manual-voucher carve-out. The PURE invariant pinned here is
+// that pack gaming flows through pack_opening only and the partition is
+// UNCHANGED by Fix 2 (reward packs do not get their own bucket).
+check("Fix 2: pack gaming wager type is pack_opening only (reward-pack split is SQL-level, no type change)", WAGER_TYPES.includes("pack_opening") && classifyLedgerType("pack_opening") === "WAGER");
+check("Fix 2: GAMING_PAYOUT unchanged (reward-pack exclusion is an inventory/source_id SQL filter, not a payout-type change)", arrEq(GAMING_PAYOUT_TYPES, ["battle_refund", "battle_excess_to_voucher"]));
+
+// ─── 2b. SQL-shape assertions for the two fixes (gaming-sql.ts) ──────
+// gaming-sql.ts is client-safe (no DB / no server-only), so the EXACT
+// SQL fragment strings the canonical gaming-leg builders compose can be
+// asserted here without a database. These pin the SQL behaviour the type
+// checks above only set the precondition for.
+console.log("[metrics checks] SQL-shape: sponsorship counted, reward packs excluded");
+
+// Fix 1 — the reward/daily-pack identifier joins packs.pack_type='reward'
+// through a game_type='pack' session (mirrors daily-packs.ts).
+check("REWARD_PACK_SESSIONS joins packs.pack_type='reward' via game_type='pack'", REWARD_PACK_SESSIONS.includes("p.pack_type = 'reward'") && REWARD_PACK_SESSIONS.includes("gs.game_type = 'pack'"));
+
+// Fix 1 — WAGER leg counts battle_sponsorship DIRECTLY (a bare
+// `OR type = 'battle_sponsorship'` arm), and does NOT gate it behind the
+// non-borrow battle-session IN-list (which would drop its NULL
+// game_session_id rows). battle_bet KEEPS the borrow gate.
+check("Fix 1: WAGER_LEG_FILTER counts battle_sponsorship directly (bare OR arm)", /OR\s+type\s*=\s*'battle_sponsorship'/.test(WAGER_LEG_FILTER));
+check("Fix 1: WAGER_LEG_FILTER does NOT borrow-gate battle_sponsorship (no IN-list on it)", !WAGER_LEG_FILTER.includes("'battle_sponsorship') AND") && !/battle_sponsorship'\)\s*AND\s+game_session_id\s+IN/.test(WAGER_LEG_FILTER));
+check("Fix 1: WAGER_LEG_FILTER keeps the borrow gate on battle_bet", /type\s*=\s*'battle_bet'\s+AND\s+game_session_id\s+IN/.test(WAGER_LEG_FILTER) && WAGER_LEG_FILTER.includes(NON_BORROW_BATTLE_SESSIONS));
+
+// Fix 2 — both the WAGER leg (pack_opening arm) and the PAYOUT leg
+// (inventory) exclude reward-pack sessions via the SAME REWARD_PACK_SESSIONS
+// set, NULL-guarded so a NULL-session pack open / inventory row is not
+// accidentally dropped.
+check("Fix 2: WAGER_LEG_FILTER excludes reward-pack opens from the pack wager (NULL-guarded)", WAGER_LEG_FILTER.includes(`game_session_id NOT IN ${REWARD_PACK_SESSIONS}`) && WAGER_LEG_FILTER.includes("game_session_id IS NULL OR"));
+check("Fix 2: PAYOUT_LEG_FILTER excludes reward-pack won cards from the pack payout (NULL-guarded)", PAYOUT_LEG_FILTER.includes(`source_id NOT IN ${REWARD_PACK_SESSIONS}`) && PAYOUT_LEG_FILTER.includes("source_id IS NULL OR"));
+// The reward-pack exclusion must apply REGARDLESS of source_type so it
+// catches the 'pack'-typed reward cards in this pack/battle leg (the
+// 'reward'-typed rows never enter the leg). I.e. the source_id NOT IN
+// guard is AND'd with the borrow predicate, not nested inside one branch.
+check("Fix 2: PAYOUT reward exclusion is AND'd across both source types", /\)\s*AND\s*\(source_id IS NULL OR source_id NOT IN/.test(PAYOUT_LEG_FILTER));
+
 check("withdrawal_shipping_fee is a FEE, not WAGER", FEE_TYPES.includes("withdrawal_shipping_fee") && !(WAGER_TYPES as readonly string[]).includes("withdrawal_shipping_fee"));
 // GAMING_PAYOUT = battle_refund + battle_excess_to_voucher (both ledger
 // battle-win settlement legs; upgrader stays isolated). battle_excess_to_
