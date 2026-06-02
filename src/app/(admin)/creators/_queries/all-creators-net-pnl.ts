@@ -1,5 +1,7 @@
 import "server-only";
 
+import { cache } from "react";
+
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
@@ -102,8 +104,16 @@ export type AllCreatorsNetGgr = {
  * flat query over the UNALIASED source table. Staff + blacklist +
  * session-window drop are identical to the CTE form — they resolve from
  * the same `getMetricsScope` snapshot.
+ *
+ * Wrapped in React `cache()` keyed on `period` so a single page render
+ * that consults it from more than one boundary (e.g. the /creators KPI
+ * strip's roster-wide GGR tile + the per-row GGR merge in the grid
+ * section) runs the 3 heavy ledger scans exactly ONCE per window. Same
+ * per-request dedup the underlying `getMetricsScope` / `getExcludedUserIds`
+ * already use; no cross-request caching, so a window's figure is always
+ * recomputed on the next request.
  */
-export async function getAllCreatorsNetGgr(
+export const getAllCreatorsNetGgr = cache(async function getAllCreatorsNetGgr(
   period: DashboardPeriod,
 ): Promise<AllCreatorsNetGgr> {
   return withTiming("creators.allNetGgr", async () => {
@@ -308,4 +318,4 @@ export async function getAllCreatorsNetGgr(
 
     return { period, totalGgr, byCreator };
   });
-}
+});

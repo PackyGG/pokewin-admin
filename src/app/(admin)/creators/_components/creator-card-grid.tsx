@@ -152,8 +152,50 @@ export type CreatorWithSocials = CreatorListItem & {
    */
   withdrawalCapUsd: number | null;
   leaderboardSponsoredPct: number | null;
+  /**
+   * Windowed code-user GGR for this creator's cohort over the selected
+   * `?period=` window — the GGR-side (Term 1) of the canonical Net
+   * Creator PnL, sourced from `getAllCreatorsNetGgr(period)` and merged
+   * on by `creatorUserId`. House-POV: positive = the cohort lost money
+   * to us (house win → emerald); negative = we paid the cohort out
+   * (house loss → rose). GGR-side ONLY — the full Net PnL (GGR − cost)
+   * is a backend round-trip that lives on /creators/[id]. null when the
+   * batch GGR fetch failed → the row shows "—".
+   */
+  windowedGgrUsd: number | null;
 };
 
+
+/**
+ * Windowed code-user GGR value, House-POV.
+ *   • > 0 → cohort lost money to us → house win → 🟢 emerald, `+` prefix
+ *   • < 0 → we paid the cohort out → house loss → 🔴 rose, `−` prefix
+ *   • = 0 → no margin → neutral muted "—"
+ *   • null → batch fetch failed → muted "—"
+ * Mirrors the per-(creator) GGR coloring on /creators/[id]'s PnL panel.
+ */
+function GgrValue({ usd }: { usd: number | null }) {
+  if (usd == null || usd === 0) {
+    return <span className="text-muted-foreground/60">—</span>;
+  }
+  const win = usd > 0;
+  return (
+    <span
+      className={cn(
+        "tabular-nums",
+        win
+          ? "text-emerald-600 dark:text-emerald-400"
+          : "text-rose-600 dark:text-rose-400",
+      )}
+      title={`${usd} USD code-user GGR over the selected window — ${
+        win ? "house win (cohort lost to us)" : "house loss (we paid the cohort out)"
+      }`}
+    >
+      {win ? "+" : "−"}
+      {formatCurrency(Math.abs(usd))}
+    </span>
+  );
+}
 
 /**
  * Card-grid for /creators replacing the old wide-table layout. Each
@@ -318,10 +360,11 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
           leaderboardUsd={creator.leaderboard2wkMaxUsd}
         />
 
-        {/* STATS — single 5-up row, divider-separated, no inner borders */}
+        {/* STATS — single 6-up row, divider-separated, no inner borders */}
         <StatsStrip
           code={creator.code}
           wagerVolumeUsd={creator.wagerVolumeUsd}
+          windowedGgrUsd={creator.windowedGgrUsd}
           signups={creator.signups}
           ftds={creator.ftds}
           convertedUsd={creator.convertedUsd}
@@ -387,14 +430,15 @@ export function CreatorListView({
       {/* Column header — desktop only. Mirrors the row grid below so the
           inline columns read as a table. Hidden on narrow viewports
           where rows stack. */}
-      <div className="hidden border-b border-border/60 bg-muted/30 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground lg:grid lg:grid-cols-[minmax(0,2fr)_minmax(0,1.6fr)_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.7fr)_minmax(0,0.7fr)_minmax(0,1fr)_2.25rem] lg:items-center lg:gap-3">
+      <div className="hidden border-b border-border/60 bg-muted/30 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground lg:grid lg:grid-cols-[minmax(0,2fr)_minmax(0,1.5fr)_minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.7fr)_minmax(0,0.7fr)_minmax(0,1fr)_2.25rem] lg:items-center lg:gap-3">
         <span>Creator</span>
         <span>Deal</span>
         <span>Code</span>
         <span className="text-right">Wager Volume</span>
+        <span className="text-right">GGR</span>
         <span className="text-right">Signups</span>
         <span className="text-right">FTDs</span>
-        <span className="text-right">Converted</span>
+        <span className="text-right">Cap used</span>
         <span className="sr-only">Actions</span>
       </div>
       <div className="divide-y divide-border/60">
@@ -419,7 +463,7 @@ function CreatorListRow({ creator }: { creator: CreatorWithSocials }) {
       : null;
 
   return (
-    <div className="grid grid-cols-1 gap-2 px-4 py-3 transition-colors hover:bg-muted/30 lg:grid-cols-[minmax(0,2fr)_minmax(0,1.6fr)_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.7fr)_minmax(0,0.7fr)_minmax(0,1fr)_2.25rem] lg:items-center lg:gap-3">
+    <div className="grid grid-cols-1 gap-2 px-4 py-3 transition-colors hover:bg-muted/30 lg:grid-cols-[minmax(0,2fr)_minmax(0,1.5fr)_minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.7fr)_minmax(0,0.7fr)_minmax(0,1fr)_2.25rem] lg:items-center lg:gap-3">
       {/* IDENTITY — avatar + username link + status badges + house-cost
           chips (cap / leaderboard). Same signals as the card header. */}
       <div className="flex min-w-0 items-center gap-2.5">
@@ -522,6 +566,14 @@ function CreatorListRow({ creator }: { creator: CreatorWithSocials }) {
         </span>
       </ListStatCell>
 
+      {/* GGR — windowed code-user GGR, House-POV (emerald = house win,
+          rose = house loss). Same color rule as the card. */}
+      <ListStatCell label="GGR" align="right">
+        <span className="block truncate text-sm font-semibold">
+          <GgrValue usd={creator.windowedGgrUsd} />
+        </span>
+      </ListStatCell>
+
       {/* SIGNUPS */}
       <ListStatCell label="Signups" align="right">
         <span className="block truncate text-sm font-semibold tabular-nums">
@@ -543,15 +595,16 @@ function CreatorListRow({ creator }: { creator: CreatorWithSocials }) {
         </span>
       </ListStatCell>
 
-      {/* CONVERTED — deal throughput (neutral), with the withdrawn
-          sub-line in emerald when there's off-platform activity, same
-          split as the card. */}
-      <ListStatCell label="Converted" align="right">
+      {/* CAP USED — deal-cap usage (neutral), relabeled from the old
+          "Converted" misnomer (the field is cap-usage, not money out),
+          with the withdrawn sub-line in emerald when there's off-
+          platform activity, same split as the card. */}
+      <ListStatCell label="Cap used" align="right">
         <span
           className="block truncate text-sm font-semibold tabular-nums"
           title={
             creator.convertedUsd != null
-              ? `${creator.convertedUsd} USD converted into payout vouchers (counted against this deal's withdraw cap)`
+              ? `${creator.convertedUsd} USD of the deal's withdraw cap used (minted into payout vouchers)`
               : "No active deal"
           }
         >
@@ -691,6 +744,7 @@ function ListDealCell({
 function StatsStrip({
   code,
   wagerVolumeUsd,
+  windowedGgrUsd,
   signups,
   ftds,
   convertedUsd,
@@ -698,6 +752,7 @@ function StatsStrip({
 }: {
   code: string | null;
   wagerVolumeUsd: number;
+  windowedGgrUsd: number | null;
   signups: number;
   ftds: number;
   convertedUsd: number | null;
@@ -709,7 +764,7 @@ function StatsStrip({
   const conv =
     signups > 0 ? Math.min(100, (ftds / signups) * 100).toFixed(0) : null;
   return (
-    <div className="grid grid-cols-2 gap-x-3 gap-y-3 sm:grid-cols-5 sm:divide-x sm:divide-border/60">
+    <div className="grid grid-cols-2 gap-x-3 gap-y-3 sm:grid-cols-6 sm:divide-x sm:divide-border/60">
       <Stat label="Code">
         {code ? (
           <span
@@ -728,6 +783,14 @@ function StatsStrip({
           title={`${wagerVolumeUsd} USD — wagers from referred users`}
         >
           {wagerVolumeUsd > 0 ? formatCurrency(wagerVolumeUsd) : "—"}
+        </span>
+      </Stat>
+      {/* Code-User GGR — windowed canonical gaming margin for this
+          creator's cohort (House-POV: emerald = house win, rose =
+          house loss). GGR-side only; full Net PnL on /creators/[id]. */}
+      <Stat label="GGR">
+        <span className="block truncate text-sm font-semibold">
+          <GgrValue usd={windowedGgrUsd} />
         </span>
       </Stat>
       <Stat label="Signups">
@@ -749,22 +812,23 @@ function StatsStrip({
           {ftds > 0 ? formatNumber(ftds) : "—"}
         </span>
       </Stat>
-      {/* Converted — how much of stream earnings have been converted
-          into payout vouchers (against the deal's withdraw cap, via
-          `withdraw_cap_used_usd`). Neutral color: deal throughput,
-          not a house gain/loss.
+      {/* Cap used — how much of the deal's withdraw cap has been used
+          up (`withdraw_cap_used_usd`). Relabeled from the old
+          "Converted" misnomer: the underlying field is cap-USAGE, not
+          money actually withdrawn off-platform. Neutral color: it's a
+          deal-throughput figure, not a house gain/loss direction.
 
-          Sub-line shows of that converted amount, how much actually
-          left the platform (completed card_withdrawal_requests) and
-          how much is in flight (pending/processing/shipped). Hidden
-          when there's no withdraw activity for this deal so dormant
-          creators stay visually quiet. */}
-      <Stat label="Converted">
+          Sub-line shows of that cap usage, how much actually left the
+          platform (completed card_withdrawal_requests) and how much is
+          in flight (pending/processing/shipped). Hidden when there's no
+          withdraw activity for this deal so dormant creators stay
+          visually quiet. */}
+      <Stat label="Cap used">
         <span
           className="block truncate text-sm font-semibold tabular-nums"
           title={
             convertedUsd != null
-              ? `${convertedUsd} USD converted into payout vouchers (counted against this deal's withdraw cap)`
+              ? `${convertedUsd} USD of the deal's withdraw cap used (minted into payout vouchers)`
               : "No active deal"
           }
         >

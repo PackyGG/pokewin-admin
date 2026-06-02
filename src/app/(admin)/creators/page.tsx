@@ -7,6 +7,7 @@ import {
   LineChart,
   Megaphone,
   Radio,
+  Sparkles,
   Trophy,
   Users,
   Wallet,
@@ -67,8 +68,14 @@ import { CreatorsTabSwitch } from "./_components/creators-tab-switch";
 import { CreatorsViewToggle } from "./_components/creators-view-toggle";
 import { CreatorsViewProvider } from "./_components/creators-view-context";
 import { CreatorsViewRender } from "./_components/creators-view-render";
+import {
+  CreatorsSortControl,
+  CreatorsPeriodControl,
+} from "./_components/creators-sort-control";
 import { GlobalPnlByCreatorPopover } from "./_components/global-pnl-by-creator-popover";
 import { getAllCreatorsLifetimePnl } from "./_queries/all-creators-lifetime-pnl";
+import { getAllCreatorsNetGgr } from "./_queries/all-creators-net-pnl";
+import { DASHBOARD_PERIOD_LABELS } from "@/lib/queries/dashboard-period";
 
 export const metadata = { title: "Creators" };
 
@@ -103,9 +110,14 @@ export default async function CreatorsPage({
           re-renders the matching subset via `listCreatorsFiltered`. */}
       <Suspense
         key={`kpi-${params.tab}-${params.filter ?? ""}`}
-        fallback={<KpiStripSkeleton count={6} />}
+        fallback={<KpiStripSkeleton count={7} />}
       >
-        <CreatorsKpiStrip tab={params.tab} filter={params.filter} search={params.search} />
+        <CreatorsKpiStrip
+          tab={params.tab}
+          filter={params.filter}
+          search={params.search}
+          period={params.period}
+        />
       </Suspense>
 
       <div className="space-y-3">
@@ -141,6 +153,12 @@ export default async function CreatorsPage({
               searchPlaceholder="Search by username or email..."
               leading={params.filter ? undefined : <CreatorsTabSwitch />}
             >
+              {/* Period chips scope the windowed code-user GGR on each
+                  row (+ the roster-wide Net GGR tile); the sort dropdown
+                  re-orders the page by GGR / FTDs. Both drive URL params
+                  and live alongside the Grid / List view toggle. */}
+              <CreatorsPeriodControl />
+              <CreatorsSortControl />
               <CreatorsViewToggle />
             </DataTableToolbar>
             {/* Card grid / list + pagination — Suspense boundary keyed on
@@ -153,7 +171,7 @@ export default async function CreatorsPage({
                 `key=` forces React to throw the fresh boundary on every
                 data-changing navigation. */}
             <Suspense
-              key={`grid-${params.tab}-${params.search ?? ""}-${params.page}-${params.sortBy}-${params.perPage}-${params.filter ?? ""}`}
+              key={`grid-${params.tab}-${params.search ?? ""}-${params.page}-${params.sortBy}-${params.perPage}-${params.filter ?? ""}-${params.period}`}
               fallback={<CreatorsGridSkeleton />}
             >
               <CreatorsGridSection params={params} />
@@ -182,10 +200,12 @@ async function CreatorsKpiStrip({
   tab,
   filter,
   search,
+  period,
 }: {
   tab: CreatorsTab;
   filter: CreatorsSearchParams["filter"];
   search: string | undefined;
+  period: CreatorsSearchParams["period"];
 }) {
   // Per-tab count for the swap tile — only the active tab's count is
   // needed each render. Each helper is its own 5-min cached fan-out so
@@ -239,7 +259,7 @@ async function CreatorsKpiStrip({
         };
 
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-6">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-7">
       {/* Swap tile — flips between Fill and Multiplier counts based on
           the active tab. Replaces the previous Fill + Multiplier pair
           of tiles (one of which always rendered "—" on the inactive
@@ -251,6 +271,21 @@ async function CreatorsKpiStrip({
         icon={tabTile.icon}
         accent={tabTile.accent}
       />
+      {/* Net Code-User GGR — roster-wide windowed code-user GGR summed
+          across every attributed creator (`getAllCreatorsNetGgr.totalGgr`)
+          over the active `?period=` window. House-POV: positive = the
+          cohorts net-lost to us (house win → emerald), negative = we
+          net-paid them out (house loss → rose). GGR-side only — the full
+          Net PnL (GGR − cost) lives per-creator on /creators/[id].
+          Streamed via its own Suspense keyed on `period` so flipping the
+          window repaints just this tile, and the same `cache()`d query
+          backs the per-row GGR below (one ledger scan per window). */}
+      <Suspense
+        key={`ggr-${period}`}
+        fallback={<NetGgrTileSkeleton />}
+      >
+        <NetGgrTile period={period} />
+      </Suspense>
       {/* Global PnL — coverage-aware aggregate, tab-scoped to the
           creators in the active program (Fill vs Multiplier). Streamed
           via its own Suspense (keyed on `tab` so flipping tabs paints
@@ -376,17 +411,22 @@ async function CreatorsGridSection({
   let result: CreatorsListPage | null = null;
   let socialsByUser: Map<string, CreatorSocialSummary[]> = new Map();
   let codeAndWagerByUser: Map<string, CreatorCodeAndWager> = new Map();
+  // Windowed code-user GGR per creator over the active `?period=` window,
+  // keyed on `creatorUserId`. GGR-side ONLY — the full Net PnL (GGR −
+  // cost) is a per-creator backend round-trip that lives on the detail
+  // page, intentionally NOT batched for the whole list. Best-effort: a
+  // failure leaves the map empty and the rows render GGR as "—".
+  let ggrByUser = new Map<string, number>();
   let loadError: { title: string; detail: string } | null = null;
   try {
-    // Wave 1 — socials are needed regardless of filter mode. The list
-    // fetch itself diverges:
-    //   1. KPI-tile filter is active (?filter=live / ?filter=active-
-    //      deals) → walk the whole creator pool and narrow in memory
-    //      via `listCreatorsFiltered`. Pagination collapses in this
-    //      mode (the filtered set fits on one screen).
-    //   2. No filter → tab-aware fetch (`getCreatorsListForTab`),
-    //      which respects the Fill / Multiplier tab + sortBy chip.
-    const [socials, list] = await Promise.all([
+    // Wave 1 — socials + the roster-wide windowed GGR (one cached pass
+    // for EVERY creator over the active window). Fetched first because
+    // the GGR map feeds BOTH the per-row merge below AND the global
+    // `ggr_*` ordering of the list (so page 1 carries the genuine
+    // top/bottom creators by GGR, not just a re-shuffle of the current
+    // page). `getAllCreatorsNetGgr` is `cache()`d, so the strip's GGR
+    // tile and this consult resolve to a single ledger pass per window.
+    const [socials, ggr] = await Promise.all([
       getApprovedSocialsByUser().catch((e) => {
         console.error(
           "[creators] socials fetch failed (rendering without):",
@@ -394,12 +434,33 @@ async function CreatorsGridSection({
         );
         return new Map<string, CreatorSocialSummary[]>();
       }),
-      params.filter
-        ? listCreatorsFiltered(params.filter, params.search)
-        : getCreatorsListForTab(params, params.tab),
+      getAllCreatorsNetGgr(params.period).catch((e) => {
+        console.error(
+          "[creators] windowed GGR fetch failed (rows render '—'):",
+          e,
+        );
+        return null;
+      }),
     ]);
     socialsByUser = socials;
-    result = list;
+    if (ggr) {
+      ggrByUser = new Map(
+        ggr.byCreator.map((r) => [r.creatorUserId, r.ggr]),
+      );
+    }
+
+    // The list fetch diverges by mode:
+    //   1. KPI-tile filter is active (?filter=live / ?filter=active-
+    //      deals) → walk the whole creator pool and narrow in memory
+    //      via `listCreatorsFiltered`. Pagination collapses in this
+    //      mode (the filtered set fits on one screen), so the page's
+    //      in-memory `.sort()` orders the whole filtered set by GGR/FTD.
+    //   2. No filter → tab-aware fetch (`getCreatorsListForTab`). The
+    //      GGR map is passed through so the `ggr_*` sorts order the
+    //      WHOLE tab pool before pagination.
+    result = params.filter
+      ? await listCreatorsFiltered(params.filter, params.search)
+      : await getCreatorsListForTab(params, params.tab, ggrByUser);
 
     codeAndWagerByUser = await getCodeAndWagerByUser(
       result.data.map((c) => c.id),
@@ -487,9 +548,25 @@ async function CreatorsGridSection({
   // Enriched + ordered creator rows — identical data for both render
   // modes; only the presentation (cards vs compact rows) differs, and
   // that choice is pure client state (CreatorsViewRender), so this
-  // server component fetches once regardless of view. Active/scheduled-
-  // deal creators pinned to the top in the default "recent" sort
-  // (skipped for explicit PnL sorts so the ranking isn't scrambled).
+  // server component fetches once regardless of view.
+  //
+  // Final in-memory ordering by `sortBy`:
+  //   • recent   — active/scheduled-deal creators pinned to the top of
+  //                the page (the backend walk order otherwise).
+  //   • ggr_*    — by the windowed code-user GGR merged on above. For
+  //                the unfiltered tab path this is already GLOBAL (the
+  //                pool was ordered by the cached GGR map before
+  //                pagination in `getCreatorsListForTab`); this pass
+  //                re-applies the same comparator so the filtered path
+  //                (a single collapsed page) is ordered too, and the
+  //                two paths share one rule. A creator with no
+  //                attributed activity sorts as 0.
+  //   • ftd_*    — by the lifetime first-time-depositor count. This is
+  //                a PAGE-LOCAL sort (the current page's rows only): a
+  //                roster-wide FTD ranking would need a full-pool FTD
+  //                fan-out, the expensive walk the active-timeframe rule
+  //                forbids eager-loading. GGR is the globally-rankable
+  //                economic sort; FTD re-orders what's on the page.
   const creators = (result?.data ?? [])
     .map<CreatorWithSocials>((c) => {
       const cw = codeAndWagerByUser.get(c.id);
@@ -511,21 +588,37 @@ async function CreatorsGridSection({
         withdrawalCapUsd: dealCapByUser.get(c.id)?.totalCapUsd ?? null,
         leaderboardSponsoredPct:
           leaderboard2wkByUser.get(c.id)?.effectivePct ?? null,
+        // null when the creator has no attributed activity in the window
+        // (absent from the batch GGR result) → the row shows "—".
+        windowedGgrUsd: ggrByUser.has(c.id) ? ggrByUser.get(c.id)! : null,
       };
     })
     .sort((a, b) => {
-      if (params.sortBy !== "recent") return 0;
-      const aActive =
-        a.current_deal?.status === "active" ||
-        a.current_deal?.status === "scheduled"
-          ? 1
-          : 0;
-      const bActive =
-        b.current_deal?.status === "active" ||
-        b.current_deal?.status === "scheduled"
-          ? 1
-          : 0;
-      return bActive - aActive;
+      switch (params.sortBy) {
+        case "ggr_desc":
+          return (b.windowedGgrUsd ?? 0) - (a.windowedGgrUsd ?? 0);
+        case "ggr_asc":
+          return (a.windowedGgrUsd ?? 0) - (b.windowedGgrUsd ?? 0);
+        case "ftd_desc":
+          return b.ftds - a.ftds;
+        case "ftd_asc":
+          return a.ftds - b.ftds;
+        case "recent":
+        default: {
+          // Pin active/scheduled-deal creators to the top of the page.
+          const aActive =
+            a.current_deal?.status === "active" ||
+            a.current_deal?.status === "scheduled"
+              ? 1
+              : 0;
+          const bActive =
+            b.current_deal?.status === "active" ||
+            b.current_deal?.status === "scheduled"
+              ? 1
+              : 0;
+          return bActive - aActive;
+        }
+      }
     });
 
   return (
@@ -751,6 +844,66 @@ function GlobalPnlTileSkeleton({ tab }: { tab: CreatorsTab }) {
         <LineChart className="size-3.5 shrink-0 text-blue-500 sm:size-4" />
         <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[11px]">
           {pnlTileLabel(tab)}
+        </span>
+      </div>
+      <Skeleton className="mt-1 h-6 w-24 sm:h-7" />
+      <Skeleton className="mt-1 h-3 w-32" />
+    </div>
+  );
+}
+
+// ─── Net Code-User GGR tile (streamed via Suspense) ───────────────
+//
+// Roster-wide windowed code-user GGR — Σ ggr across every attributed
+// creator over the active `?period=` window
+// (`getAllCreatorsNetGgr().totalGgr`). House-POV: positive = the cohorts
+// net-lost to us (house win → emerald), negative = we net-paid them out
+// (house loss → rose), zero/null → neutral blue. GGR-side ONLY; the
+// per-creator full Net PnL (GGR − cost) lives on /creators/[id].
+//
+// Backed by the SAME `cache()`d query the grid section consults for the
+// per-row GGR merge, so the 3 ledger scans run once per window. Best-
+// effort: a query failure renders "—" rather than crashing the strip.
+
+async function NetGgrTile({
+  period,
+}: {
+  period: CreatorsSearchParams["period"];
+}) {
+  const data = await getAllCreatorsNetGgr(period).catch((err) => {
+    console.error(
+      "[creators] roster-wide net GGR query failed (tile will render '—'):",
+      err,
+    );
+    return null;
+  });
+
+  const total = data?.totalGgr;
+  const accent: "emerald" | "rose" | "blue" =
+    total == null || total === 0 ? "blue" : total > 0 ? "emerald" : "rose";
+
+  return (
+    <KpiTile
+      label="Net Code-User GGR"
+      value={
+        total == null
+          ? "—"
+          : `${total > 0 ? "+" : total < 0 ? "−" : ""}${formatCurrency(Math.abs(total))}`
+      }
+      sub={`All creators · ${DASHBOARD_PERIOD_LABELS[period].toLowerCase()}`}
+      icon={Sparkles}
+      accent={accent}
+    />
+  );
+}
+
+function NetGgrTileSkeleton() {
+  return (
+    <div className="relative overflow-hidden rounded-xl border bg-blue-500/10 border-blue-500/20 px-3 py-2.5 sm:px-4 sm:py-3">
+      <div className="flex items-center gap-1.5 sm:gap-2">
+        <Sparkles className="size-3.5 shrink-0 text-blue-500 sm:size-4" />
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[11px]">
+          Net Code-User GGR
         </span>
       </div>
       <Skeleton className="mt-1 h-6 w-24 sm:h-7" />

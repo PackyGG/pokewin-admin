@@ -42,6 +42,15 @@ async function walkAllCreators(): Promise<CreatorListItem[]> {
 export async function getCreatorsListForTab(
   params: CreatorsSearchParams,
   tab: CreatorsSearchParams["tab"],
+  // Optional roster-wide windowed code-user GGR map (creatorUserId →
+  // ggr) used ONLY for the `ggr_*` sorts. When supplied, the WHOLE
+  // tab/search pool is ordered by GGR before pagination, so page 1
+  // carries the genuine top/bottom creators by GGR — not just a
+  // re-shuffle of the current page. Sourced from the same cached
+  // `getAllCreatorsNetGgr(period)` the page merges onto the rows, so
+  // passing it here costs nothing extra. Creators absent from the map
+  // (no attributed activity in the window) sort as 0.
+  ggrByUser?: Map<string, number>,
 ): Promise<CreatorsListPage> {
   const all = await walkAllCreators();
 
@@ -68,10 +77,26 @@ export async function getCreatorsListForTab(
     );
   }
 
-  // Sort. Only `recent` (backend walk order) is supported — the
-  // pnl_* modes were removed when the per-card PnL display was
-  // dropped from /creators (the per-(creator, user) cap that makes
-  // PnL correct lives on /creators/[id] only).
+  // Sort.
+  //   • ggr_desc / ggr_asc — order the WHOLE pool by the roster-wide
+  //     windowed GGR map (when supplied) BEFORE pagination, so page 1
+  //     carries the real top/bottom creators by GGR. This is the cheap
+  //     global path: the GGR is already computed roster-wide and
+  //     cached, so no per-creator fan-out is added.
+  //   • ftd_* — NOT globally sorted here. A true roster-wide FTD
+  //     ranking would need a full-pool FTD fan-out (the expensive walk
+  //     the old pnl_* modes used, dropped for the active-timeframe
+  //     rule). Instead the page re-orders the CURRENT page's rows by
+  //     their (already-fetched) FTD count — a page-local sort, the same
+  //     in-memory model as the `recent` active-deal pin.
+  //   • recent — backend walk order (active-deal pin applied by page).
+  if (ggrByUser && (params.sortBy === "ggr_desc" || params.sortBy === "ggr_asc")) {
+    const dir = params.sortBy === "ggr_desc" ? -1 : 1;
+    pool = [...pool].sort(
+      (a, b) =>
+        dir * ((ggrByUser.get(a.id) ?? 0) - (ggrByUser.get(b.id) ?? 0)),
+    );
+  }
 
   // Paginate in memory.
   const total = pool.length;

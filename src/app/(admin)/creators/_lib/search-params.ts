@@ -1,18 +1,36 @@
 import { z } from "zod";
 
+import {
+  DASHBOARD_PERIODS,
+  DEFAULT_DASHBOARD_PERIOD,
+} from "@/lib/queries/dashboard-period";
+
 /**
  * Sort modes for /creators.
  *   • recent   — default backend-paginated view (creation-order
  *                tiebreak); active-deal creators are pinned to the
- *                top of each page client-side. Cheap — only 20
- *                rows + their PnLs hit the main DB per page.
- *   • pnl_desc — best house P&L first. Forces a full creator-pool
- *                walk + per-creator lifetime PnL fetch, then
- *                sorts + slices in memory. Bounded by SORT_FETCH_CAP.
- *   • pnl_asc  — worst house P&L first (creators we LOST money on).
- *                Same expensive path as pnl_desc.
+ *                top of each page client-side.
+ *   • ggr_desc — biggest house win first. Orders the page rows by the
+ *                windowed code-user GGR (`getAllCreatorsNetGgr`) merged
+ *                onto each visible creator — positive = the cohort lost
+ *                money to us (house win). GGR-side only; the full Net
+ *                PnL (GGR − cost) lives on /creators/[id].
+ *   • ggr_asc  — biggest house loss first (cohorts we paid out to).
+ *   • ftd_desc — most first-time depositors first.
+ *   • ftd_asc  — fewest first-time depositors first.
+ *
+ * The ggr_* / ftd_* sorts re-order ONLY the current page's rows in
+ * memory (after the per-row GGR/FTD enrichment lands) — the same model
+ * the `recent` active-deal pin uses. They do NOT trigger a full-pool
+ * walk; the proper roster-wide ranking lives on the detail surfaces.
  */
-export const CreatorsSortMode = z.enum(["recent", "pnl_desc", "pnl_asc"]);
+export const CreatorsSortMode = z.enum([
+  "recent",
+  "ggr_desc",
+  "ggr_asc",
+  "ftd_desc",
+  "ftd_asc",
+]);
 export type CreatorsSortMode = z.infer<typeof CreatorsSortMode>;
 
 /**
@@ -44,6 +62,13 @@ const CreatorsSearchParamsSchema = z.object({
   filter: z.enum(["live", "active-deals"]).optional(),
   sortBy: CreatorsSortMode.default("recent"),
   tab: CreatorsTab.default("fill"),
+  // `period` scopes the per-creator windowed code-user GGR shown on the
+  // list (and the roster-wide Net Code-User GGR tile). Reuses the
+  // dashboard period set so the chip values line up with the rest of
+  // the app. Active-timeframe-only: only this one window is fetched per
+  // render — switching it is a fresh `?period=` navigation, never an
+  // eager preload of every window.
+  period: z.enum(DASHBOARD_PERIODS).default(DEFAULT_DASHBOARD_PERIOD),
 });
 
 export type CreatorsSearchParams = z.infer<typeof CreatorsSearchParamsSchema>;
