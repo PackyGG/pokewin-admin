@@ -1,8 +1,10 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { AlertTriangle, ArrowLeft } from "lucide-react";
 import {
   getUserDetail,
+  getUserHeader,
   getUserTransactions,
   getUserInventory,
   getUserPnlBreakdown,
@@ -23,9 +25,22 @@ import {
 } from "@/lib/fraud/shared-identity";
 import { UserViewModern } from "./user-view-modern";
 import { coerceTab } from "./user-tabs-types";
-import { safeQuery } from "@/lib/errors/safe-query";
+import type { TabKey } from "./user-tabs-types";
+import { safeQuery, safeQueryOrNull } from "@/lib/errors/safe-query";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  KpiStripSkeleton,
+  TabBarSkeleton,
+} from "@/components/loading-skeletons";
 
 export const metadata = { title: "User Detail" };
+
+// Per-query wall-clock bound for the heavy detail fetches. Long enough that
+// a healthy query on prod-sized data finishes well inside it, short enough
+// that a pathological scan (e.g. an unbounded ledger join) degrades to a
+// fallback tile instead of hanging the streamed band until the platform
+// kills the request. Matches the reward-insights default (REWARD_QUERY_TIMEOUT_MS).
+const USER_DETAIL_QUERY_TIMEOUT_MS = 15_000;
 
 // GAMING is pack / battle / upgrader play — entry, payout, refund.
 // Sale / exchange rows live in FINANCIAL_TYPES below so card sales
@@ -82,19 +97,127 @@ export default async function UserDetailPage({
   // tab clicks are instant — see UserViewModern.
   const initialTab = coerceTab(sp.tab);
 
-  // ── UPFRONT FETCH ──────────────────────────────────────────────
-  // All tab data is fetched in one Promise.all so tab switching is
-  // instant client-side — the alternative (per-tab Suspense fanout)
-  // makes every click a server round-trip and feels broken.
+  // ── CRITICAL PATH — keep it tiny so first paint is instant ─────────
   //
-  // getUserDetail + permissions are the page's primary data — if they
-  // throw, the segment-level error.tsx takes over (the page can't render
-  // without them). The peripheral queries (tags, history, risk score)
-  // are non-critical hero metadata — wrap them in safeQuery so a slow
-  // admin DB lookup or a heavy fraud-score SQL hiccup doesn't blank the
-  // entire user-detail view. Each falls back to a neutral empty shape
-  // that the downstream rendering already tolerates.
+  // The bug this guards against: the page used to BLOCK its entire first
+  // paint on a single `Promise.all([...])` of ~14 queries — getUserDetail
+  // (~19 Main-DB round-trips + the canonical P&L helper), two inventory
+  // pages, the P&L breakdown, the risk-score aggregate, rewards, and the
+  // tab transactions. A SINGLE slow/failing query among them threw a
+  // promise that propagated to the segment error.tsx and replaced the
+  // WHOLE page with "Couldn't load this user". Mirrors the /creators/[userId]
+  // fix (commit 27d35c0): await only a cheap header on the critical path,
+  // then stream the heavy body in its own Suspense boundary.
   //
+  // getUserHeader is two indexed identity reads — username/email for the
+  // back-link header. A null here is the ONLY 404 path (genuinely unknown
+  // id); once it resolves, a downstream failure degrades the streamed body
+  // instead of crashing the page.
+  const header = await getUserHeader(id);
+  if (!header) notFound();
+
+  // Permissions for the union-capability checks. For admins this is a
+  // constant (no query); for non-admins it's a single cache()'d admin-DB
+  // read that `requirePageAccess("/users")` above ALREADY resolved for this
+  // request, so reading it here is free (memoized) — NOT one of the heavy
+  // Main-DB queries that crash the page. Resolved on the critical path so
+  // the tag panel keeps its real manage-capability (a CRM role with
+  // __can_manage_user_tags must stay able to edit tags), and passed down to
+  // the streamed body so its capability gating uses the same value.
+  const permissions =
+    session.role === "admin"
+      ? null
+      : await getUserPermissions(session.userId);
+
+  // Tag management is independent of the per-action capabilities so it can
+  // be granted to a CRM/sales role without giving them ban/edit-identity/
+  // wipe etc.
+  const canManageUserTags =
+    session.role === "admin" ||
+    hasCapability(permissions ?? [], "__can_manage_user_tags");
+
+  // VIP tags (admin-CRM metadata) back the dashed tag-panel row that sits
+  // with the header. Cheap admin-DB read, but still safeQuery-wrapped so a
+  // transient admin-DB hiccup renders the empty-state row rather than
+  // taking down the header.
+  const { data: userTags } = await safeQuery(
+    () => getUserTags(id),
+    [],
+    "users.detail.tags",
+  );
+
+  return (
+    <div className="space-y-4">
+      {/* Re-fetch server data every 60s so admins watching a user-detail
+          tab don't see stale gaming transactions / balances. router.refresh
+          re-runs the page-level fetches and re-renders the whole tree, so
+          the active tab's tables update in place without changing tab. */}
+      <AutoRefresh intervalMs={60_000} />
+      <div className="space-y-2">
+        <div className="flex items-center gap-3 flex-wrap">
+          <Link href="/users" className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground">
+            <ArrowLeft className="size-4" />
+          </Link>
+          <div className="min-w-0">
+            <h1 className="text-2xl font-bold leading-tight">
+              {header.username ?? header.email}
+            </h1>
+            <p className="text-sm text-muted-foreground">{header.email}</p>
+          </div>
+        </div>
+        {/* VIP tag manager — dedicated dashed-border row so admins
+            always notice the section (even on empty profiles). Read-
+            only for viewers without __can_manage_user_tags. */}
+        <UserTagsPanel
+          userId={id}
+          initialTags={userTags}
+          canManage={canManageUserTags}
+        />
+      </div>
+
+      {/* ── STREAMED HEAVY BODY ─────────────────────────────────────────
+          The hero KPI strip + tabbed content (balances, P&L, inventory,
+          gaming/financial transactions, rewards, trust) all live in
+          UserViewModern, which needs the heavy getUserDetail aggregate +
+          ~half a dozen other Main-DB reads. Streaming it behind its own
+          Suspense keeps those reads off the header's TTFB, and every fetch
+          inside is timeout-wrapped (safeQuery) so a slow/failed one shows a
+          fallback section instead of throwing the whole page. ─────────── */}
+      <Suspense fallback={<UserDetailBodySkeleton />}>
+        <UserDetailBody
+          id={id}
+          sessionRole={session.role}
+          permissions={permissions}
+          initialTab={initialTab}
+        />
+      </Suspense>
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  STREAMED BODY — owns the heavy getUserDetail aggregate + the rest of
+//  the per-tab data. Rendered behind its own Suspense from the page so
+//  those reads never extend the header's TTFB. Every heavy fetch is
+//  timeout-bounded (safeQuery) so a slow scan degrades to a fallback
+//  shape the downstream components already tolerate, rather than hanging
+//  the band; getUserDetail failing surfaces a compact degraded banner
+//  for this band (the header above already rendered) instead of a 404.
+// ───────────────────────────────────────────────────────────────────
+async function UserDetailBody({
+  id,
+  sessionRole,
+  permissions,
+  initialTab,
+}: {
+  id: string;
+  sessionRole: string;
+  // Union permission keys for non-admin viewers (null for admins), resolved
+  // on the critical path and threaded down so capability gating matches the
+  // tag panel's and avoids a second (cache()'d, but clearer-as-prop) read.
+  permissions: string[] | null;
+  initialTab: TabKey;
+}) {
   // Empty paginated-transaction shape used as the safeQuery fallback for
   // the gaming + financial tx fetches below. Same shape
   // `getUserTransactions` already returns for users with zero matching
@@ -113,51 +236,132 @@ export default async function UserDetailPage({
     perPage: 10,
     totalPages: 0,
   };
+  // Empty paginated-inventory shape — same shape getUserInventory returns
+  // for a user with no matching rows, so InventoryTab renders its normal
+  // empty-state grid instead of crashing on undefined access.
+  const EMPTY_INVENTORY_PAGE = {
+    data: [],
+    total: 0,
+    page: 1,
+    perPage: 24,
+    totalPages: 0,
+  };
+  // Zeroed P&L breakdown — every field the Platform-P&L panels read, set to
+  // 0 so the panels render a neutral "no realized P&L" state on failure
+  // rather than throwing. Mirrors the all-zero shape getUserPnlBreakdown
+  // already returns for a user with no ledger activity.
+  const EMPTY_PNL = {
+    packRevenue: 0,
+    battleRevenue: 0,
+    upgraderRevenue: 0,
+    cardSalesPayouts: 0,
+    gamblingPnlRealized: 0,
+    unrealizedLiability: 0,
+    gamblingPnlTrue: 0,
+    bonusesCost: 0,
+    rakebackCost: 0,
+    affiliateCost: 0,
+    otherCosts: 0,
+    otherCostsDetail: {
+      rainWin: 0,
+      racePrize: 0,
+      balanceRewardClaim: 0,
+      creatorTip: 0,
+      voucherRedeemed: 0,
+      voucherExchange: 0,
+      exchangeExcessCredit: 0,
+      exchangeExcessToVoucher: 0,
+      battleExcessToVoucher: 0,
+      affiliateLeaderboard: 0,
+    },
+    netPnlRealized: 0,
+    netPnlTrue: 0,
+    pnl12h: 0,
+    pnl24h: 0,
+    pnl3d: 0,
+    pnl7d: 0,
+    pnl14d: 0,
+  };
+
   const [
-    data,
-    inventory,
-    disposedInventory,
-    pnlBreakdown,
-    notes,
+    detailResult,
+    inventoryResult,
+    disposedInventoryResult,
+    pnlResult,
+    notesResult,
     gamingTxResult,
     financialTxResult,
-    rewards,
-    permissions,
-    userTagsResult,
+    rewardsResult,
     creatorHistoryResult,
     riskResult,
     sharedIpsResult,
     sharedFingerprintsResult,
   ] = await Promise.all([
-    getUserDetail(id),
-    getUserInventory(id, 1, 24, { status: "owned" }),
-    getUserInventory(id, 1, 24, { status: "disposed" }),
-    getUserPnlBreakdown(id),
-    getNotesForUser(id),
-    // Gaming + Finances tab data — wrapped in safeQuery because the
-    // gaming query path joins through provably_fair_results,
-    // battle_participants, and a raw-SQL upgrader_games lookup. A
-    // transient failure in any of those (e.g. the upgrader sub-query
-    // throwing on a malformed game_session_id) used to crash the
-    // entire page via the segment error boundary, surfacing as "I
-    // can't click Gaming" because the redirect to error.tsx replaced
-    // the tab bar. Degrading to an empty tx page keeps the tabs
-    // clickable while logging the failure for engineering.
+    // getUserDetail is THE heavy aggregate (~19 Main-DB round-trips + the
+    // canonical calculateUserPnl helper). Previously it ran un-wrapped in
+    // the page's Promise.all, so any failure/timeout in it crashed the
+    // whole page. Now it's timeout-bounded and null-on-failure → the body
+    // renders a compact degraded banner (the header already painted).
+    safeQueryOrNull(
+      () => getUserDetail(id),
+      "users.detail.detail",
+      USER_DETAIL_QUERY_TIMEOUT_MS,
+    ),
+    // Owned + disposed inventory pages. Both were un-wrapped before, so a
+    // slow user_inventory scan blanked the page. Degrade to an empty
+    // inventory page.
+    safeQuery(
+      () => getUserInventory(id, 1, 24, { status: "owned" }),
+      EMPTY_INVENTORY_PAGE,
+      "users.detail.inventory",
+      USER_DETAIL_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () => getUserInventory(id, 1, 24, { status: "disposed" }),
+      EMPTY_INVENTORY_PAGE,
+      "users.detail.disposedInventory",
+      USER_DETAIL_QUERY_TIMEOUT_MS,
+    ),
+    // Platform-P&L breakdown — multiple ledger aggregates + the windowed
+    // rolling-P&L scans. Un-wrapped before; degrade to the all-zero shape.
+    safeQuery(
+      () => getUserPnlBreakdown(id),
+      EMPTY_PNL,
+      "users.detail.pnl",
+      USER_DETAIL_QUERY_TIMEOUT_MS,
+    ),
+    // Admin notes (admin-DB). Cheap, but wrap it so an admin-DB hiccup
+    // doesn't blank the page — the Account tab renders its empty notes
+    // state instead.
+    safeQuery(() => getNotesForUser(id), [], "users.detail.notes"),
+    // Gaming + Finances tab data — the gaming query path joins through
+    // provably_fair_results, battle_participants, and a raw-SQL
+    // upgrader_games lookup. A transient failure in any of those used to
+    // crash the entire page via the segment error boundary, surfacing as
+    // "I can't click Gaming" because the redirect to error.tsx replaced
+    // the tab bar. Degrading to an empty tx page keeps the tabs clickable
+    // while logging the failure for engineering.
     safeQuery(
       () => getUserTransactions(id, 1, 10, { types: GAMING_TYPES }),
       EMPTY_TX_PAGE,
       "users.detail.gamingTx",
+      USER_DETAIL_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => getUserTransactions(id, 1, 10, { types: FINANCIAL_TYPES }),
       EMPTY_TX_PAGE,
       "users.detail.financialTx",
+      USER_DETAIL_QUERY_TIMEOUT_MS,
     ),
-    getUserRewards(id),
-    session.role === "admin" ? Promise.resolve(null) : getUserPermissions(session.userId),
-    // VIP tags (admin-CRM metadata). Empty array on failure → the
-    // UserTagsPanel renders the empty-state dashed row, no crash.
-    safeQuery(() => getUserTags(id), [], "users.detail.tags"),
+    // Rewards summary (one_time reward count + rakeback claimable/claimed).
+    // Un-wrapped before; degrade to the zeroed summary so the Rewards tab
+    // renders its empty state.
+    safeQuery(
+      () => getUserRewards(id),
+      { openOneTimeCount: 0, rakebackClaimableUsd: 0, rakebackClaimedUsd: 0 },
+      "users.detail.rewards",
+      USER_DETAIL_QUERY_TIMEOUT_MS,
+    ),
     // Creator history already self-degrades inside the query (its own
     // try/catch returns the empty shape). safeQuery adds the central
     // log line on top so the failure surfaces in Vercel logs with the
@@ -189,6 +393,7 @@ export default async function UserDetailPage({
         computeDurationMs: 0,
       },
       "users.detail.riskScore",
+      USER_DETAIL_QUERY_TIMEOUT_MS,
     ),
     // Fingerprints table may be absent in fresh/dev environments —
     // degrade gracefully to an empty list rather than crashing the
@@ -201,12 +406,39 @@ export default async function UserDetailPage({
     ),
   ]);
 
-  if (!data) notFound();
-  const userTags = userTagsResult.data;
+  const data = detailResult.data;
+
+  // getUserDetail returns null only for a truly unknown user — but the
+  // header already resolved via getUserHeader, so a null here means the
+  // aggregate read failed/timed out. Surface a compact degraded state for
+  // this band rather than 404-ing the whole (already-rendered) page.
+  if (!data) {
+    return (
+      <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
+        <AlertTriangle className="size-4 mt-0.5 text-amber-500 shrink-0" />
+        <div>
+          <div className="font-medium text-amber-500">
+            User details are taking too long to load
+          </div>
+          <div className="mt-0.5 text-muted-foreground">
+            The balances, P&amp;L, and activity for this user timed out or
+            failed against the main DB. Refresh to retry — the header above
+            is unaffected.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const creatorHistory = creatorHistoryResult.data;
   const riskBreakdown = riskResult.data;
   const sharedIps = sharedIpsResult.data;
   const sharedFingerprints = sharedFingerprintsResult.data;
+  const inventory = inventoryResult.data;
+  const disposedInventory = disposedInventoryResult.data;
+  const pnlBreakdown = pnlResult.data;
+  const notes = notesResult.data;
+  const rewards = rewardsResult.data;
   // Unwrap the gaming + financial tx safeQuery results back to the bare
   // PaginatedTransactions shape UserViewModern + the tab tables expect.
   const gamingTx = gamingTxResult.data;
@@ -223,7 +455,7 @@ export default async function UserDetailPage({
   const wasCreator = everCreator && data.user.role !== "creator";
 
   const capabilities =
-    session.role === "admin"
+    sessionRole === "admin"
       ? {
           canAdjustBalance: true,
           canAdjustXp: true,
@@ -249,63 +481,50 @@ export default async function UserDetailPage({
           canRecordManualWithdrawal: hasCapability(permissions ?? [], "__can_record_manual_withdrawal"),
         };
 
-  // Tag management is independent of the per-action capabilities
-  // above so it can be granted to a CRM/sales role without giving
-  // them ban/edit-identity/wipe etc.
-  const canManageUserTags =
-    session.role === "admin" ||
-    hasCapability(permissions ?? [], "__can_manage_user_tags");
-
   const detailWithSession = {
     ...data,
-    sessionRole: session.role,
+    sessionRole,
     capabilities,
     wasCreator,
     creatorSince: creatorHistory.creatorSince,
   };
 
   return (
-    <div className="space-y-4">
-      {/* Re-fetch server data every 60s so admins watching a user-detail
-          tab don't see stale gaming transactions / balances. router.refresh
-          re-runs the page-level fetches and re-renders the whole tree, so
-          the active tab's tables update in place without changing tab. */}
-      <AutoRefresh intervalMs={60_000} />
-      <div className="space-y-2">
-        <div className="flex items-center gap-3 flex-wrap">
-          <Link href="/users" className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground">
-            <ArrowLeft className="size-4" />
-          </Link>
-          <div className="min-w-0">
-            <h1 className="text-2xl font-bold leading-tight">
-              {data.user.username ?? data.user.email}
-            </h1>
-            <p className="text-sm text-muted-foreground">{data.user.email}</p>
-          </div>
-        </div>
-        {/* VIP tag manager — dedicated dashed-border row so admins
-            always notice the section (even on empty profiles). Read-
-            only for viewers without __can_manage_user_tags. */}
-        <UserTagsPanel
-          userId={id}
-          initialTags={userTags}
-          canManage={canManageUserTags}
-        />
+    <UserViewModern
+      data={detailWithSession}
+      gamingTx={gamingTx}
+      financialTx={financialTx}
+      rewards={rewards}
+      notes={notes}
+      pnlBreakdown={pnlBreakdown}
+      inventory={inventory}
+      disposedInventory={disposedInventory}
+      riskBreakdown={riskBreakdown}
+      sharedIps={sharedIps}
+      sharedFingerprints={sharedFingerprints}
+      initialTab={initialTab}
+    />
+  );
+}
+
+// ── Suspense fallback ────────────────────────────────────────────────
+//
+// Matches the heavy body's shape (UserViewModern's identity hero + KPI
+// strip + tab bar + tab content) so the swap-in is jank-free. Same shape
+// the route-level loading.tsx renders for the full page.
+function UserDetailBodySkeleton() {
+  return (
+    <div className="space-y-6">
+      {/* Modern user view: identity hero with avatar + status pills + KPIs. */}
+      <Skeleton className="h-32 rounded-2xl" />
+      <KpiStripSkeleton count={7} />
+      <TabBarSkeleton count={7} />
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <Skeleton className="h-48 rounded-2xl" />
+        <Skeleton className="h-48 rounded-2xl" />
+        <Skeleton className="h-48 rounded-2xl" />
       </div>
-      <UserViewModern
-        data={detailWithSession}
-        gamingTx={gamingTx}
-        financialTx={financialTx}
-        rewards={rewards}
-        notes={notes}
-        pnlBreakdown={pnlBreakdown}
-        inventory={inventory}
-        disposedInventory={disposedInventory}
-        riskBreakdown={riskBreakdown}
-        sharedIps={sharedIps}
-        sharedFingerprints={sharedFingerprints}
-        initialTab={initialTab}
-      />
+      <Skeleton className="h-64 rounded-2xl" />
     </div>
   );
 }

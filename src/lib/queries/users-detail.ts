@@ -285,6 +285,39 @@ async function enrichLeaderboardWins(
   });
 }
 
+/**
+ * Slim header-only query for /users/[id]. Returns just the identity
+ * fields the page's critical-path header renders (username / email)
+ * without pulling in the whole detail-page aggregate.
+ *
+ * The full `getUserDetail()` fans out to ~19 Main-DB round-trips plus the
+ * canonical `calculateUserPnl` helper. Blocking first paint on all of
+ * that means a SINGLE slow/failing query (P&L scan, risk-score aggregate,
+ * a join hiccup) takes down the WHOLE page via the segment error boundary.
+ * The page now awaits only THIS cheap lookup on the critical path so the
+ * back-link header + tag panel paint immediately, then streams the heavy
+ * `UserViewModern` body in its own Suspense boundary (each heavy fetch
+ * timeout-wrapped via safeQuery). Mirrors `getCreatorHeader`, which does
+ * the same for /creators/[userId].
+ *
+ * Returns null for a genuinely unknown user id → the page 404s. A null
+ * here is the ONLY 404 path; once this resolves, a downstream failure in
+ * the streamed body degrades that band rather than crashing the page.
+ */
+export async function getUserHeader(id: string): Promise<{
+  id: string;
+  username: string | null;
+  email: string | null;
+} | null> {
+  const db = await getDb();
+  const user = await db.user.findUnique({
+    where: { id },
+    select: { id: true, username: true, email: true },
+  });
+  if (!user) return null;
+  return { id: user.id, username: user.username, email: user.email };
+}
+
 export async function getUserDetail(id: string) {
   const db = await getDb();
   // Everything is independent — one Promise.all instead of two serialized ones
