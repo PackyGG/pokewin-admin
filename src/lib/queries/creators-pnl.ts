@@ -1,12 +1,27 @@
 import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { escapeBlacklistIds } from "./_blacklist";
+import { WITHDRAWAL_LIABILITY_STATUSES } from "./pnl";
 import type {
   CreatorLifetimePnl,
   CreatorPnlData,
   CreatorPnlPeriod,
   CreatorPnlPeriodUser,
 } from "./creators-types";
+
+// card_withdrawal_requests statuses that count as a house liability —
+// the SAME set the per-user / lifetime balance-sheet P&L uses
+// (`WITHDRAWAL_LIABILITY_STATUSES` in pnl.ts): pending + processing
+// (in-flight) plus shipped + completed (done). Counting in-flight
+// withdrawals keeps the creator P&L (deposits − cardWithdrawals)
+// CONTINUOUS across the withdrawal lifecycle — previously only
+// completed/shipped counted, so a pending withdrawal's value vanished
+// from the creator's books until it shipped (the same pending-WD hole the
+// per-user P&L was fixed for). Rendered once as a quoted SQL list; the
+// values are hardcoded enum-ish strings (no external input).
+const WD_LIABILITY_STATUS_SQL = `(${WITHDRAWAL_LIABILITY_STATUSES.map(
+  (s) => `'${s}'`,
+).join(", ")})`;
 
 /**
  * Per-creator House P&L with **coverage-aware code attribution**.
@@ -97,10 +112,14 @@ const COVERING_CREATOR_SQL = `(
 )`;
 
 // "Withdrawn unit" derived table: emits one row per value-unit (card
-// OR session-linked voucher) leaving the house via a completed
-// `card_withdrawal_requests`. Used in place of `JOIN user_inventory`
-// throughout the cardWD queries so vouchers contribute to the same
-// total as physical cards.
+// OR session-linked voucher) leaving the house via a
+// `card_withdrawal_requests` that is a HOUSE LIABILITY — in-flight
+// (pending/processing) OR done (shipped/completed), per
+// WITHDRAWAL_LIABILITY_STATUSES. Counting in-flight requests closes the
+// pending-WD hole (the creator P&L stays continuous across the withdrawal
+// lifecycle, matching the per-user balance-sheet P&L). Used in place of
+// `JOIN user_inventory` throughout the cardWD queries so vouchers
+// contribute to the same total as physical cards.
 //
 // Two sources, both UNNEST'd from the cwr array columns and joined on
 // equality to their parent table — much faster than the equivalent
@@ -124,16 +143,23 @@ const COVERING_CREATOR_SQL = `(
 // `creator_fill_conversion` is excluded — those are creator's own deal
 // commission, unrelated to referrer attribution.
 //
-// `withdrawn_at` (= COALESCE(shipped_at, completed_at)) is projected
-// out so windowed period filters can apply uniformly.
+// `withdrawn_at` is the lifecycle timestamp the value left / became a
+// liability: COALESCE(shipped_at, completed_at, processing_at,
+// requested_at). The processing_at / requested_at fallbacks are NEW — a
+// pending/processing request has no shipped_at/completed_at yet, so
+// without them its value would have a NULL `withdrawn_at` and silently
+// drop out of every rolling-period window. Falling back to processing_at
+// (processing) / requested_at (pending) buckets in-flight requests at the
+// moment they were made, so the per-period figures are continuous too
+// (shipped/completed rows are unchanged — shipped_at/completed_at win).
 const WITHDRAWN_UNITS_SQL = `(
   SELECT cwr_unnested.withdrawn_at,
          ui.user_id, ui.source_id, ui.value_at_obtained::numeric AS value
     FROM (
-      SELECT COALESCE(cwr.shipped_at, cwr.completed_at) AS withdrawn_at,
+      SELECT COALESCE(cwr.shipped_at, cwr.completed_at, cwr.processing_at, cwr.requested_at) AS withdrawn_at,
              UNNEST(cwr.inventory_item_ids) AS item_id
         FROM card_withdrawal_requests cwr
-       WHERE cwr.status IN ('completed', 'shipped')
+       WHERE cwr.status IN ${WD_LIABILITY_STATUS_SQL}
     ) cwr_unnested
     JOIN user_inventory ui ON ui.id = cwr_unnested.item_id
    WHERE ui.source_type::text IN ('pack', 'battle')
@@ -141,10 +167,10 @@ const WITHDRAWN_UNITS_SQL = `(
   SELECT cwr_unnested.withdrawn_at,
          v.user_id, v.origin_id AS source_id, v.value::numeric AS value
     FROM (
-      SELECT COALESCE(cwr.shipped_at, cwr.completed_at) AS withdrawn_at,
+      SELECT COALESCE(cwr.shipped_at, cwr.completed_at, cwr.processing_at, cwr.requested_at) AS withdrawn_at,
              UNNEST(cwr.voucher_ids) AS voucher_id
         FROM card_withdrawal_requests cwr
-       WHERE cwr.status IN ('completed', 'shipped')
+       WHERE cwr.status IN ${WD_LIABILITY_STATUS_SQL}
     ) cwr_unnested
     JOIN vouchers v ON v.id = cwr_unnested.voucher_id
    WHERE v.origin::text IN ('battle_excess_to_voucher', 'pack_borrow_to_voucher')
