@@ -20,6 +20,14 @@ import { blacklistNotInClause } from "./_blacklist";
  * users-detail) sticks to the canonical five terms so the User Detail page
  * stays in sync with what the user themselves would see.
  *
+ * Withdrawal continuity: the `withdrawals` term counts card_withdrawal_requests
+ * with status IN ('pending','processing','shipped','completed') — i.e.
+ * in-flight withdrawals are a house liability, not just completed ones (see
+ * WITHDRAWAL_LIABILITY_STATUSES in pnl.ts). Pending/processing value is held
+ * as withdrawal-locked inventory, which the inventory subquery excludes
+ * (withdrawal_locked_at IS NULL), so it is counted exactly once and the
+ * lifetime P&L does not jump when a withdrawal moves pending → completed.
+ *
  * All aggregates exclude only the `admin` role. Creators are real
  * users — their wagers/deposits/payouts count in P&L like everyone
  * else (consistent with src/lib/queries/_exclude-staff.ts).
@@ -96,10 +104,10 @@ async function realizedPnlSnapshotInner(): Promise<RealizedPnlSnapshot> {
     SELECT
       COALESCE((SELECT SUM(total_deposited::numeric)     FROM balances                 WHERE user_id IN (SELECT id FROM real_users)), 0)::text AS deposited,
       COALESCE((SELECT SUM(total_withdrawn::numeric)     FROM balances                 WHERE user_id IN (SELECT id FROM real_users)), 0)::text AS balance_withdrawn,
-      COALESCE((SELECT SUM(total_value_usd::numeric)     FROM card_withdrawal_requests  WHERE status IN ('completed','shipped') AND user_id IN (SELECT id FROM real_users)), 0)::text AS card_withdrawn,
+      COALESCE((SELECT SUM(total_value_usd::numeric)     FROM card_withdrawal_requests  WHERE status IN ('pending','processing','shipped','completed') AND user_id IN (SELECT id FROM real_users)), 0)::text AS card_withdrawn,
       COALESCE((SELECT SUM(available_balance::numeric)   FROM balances                 WHERE user_id IN (SELECT id FROM real_users)), 0)::text AS available_balance,
       COALESCE((SELECT SUM(locked_balance::numeric)      FROM balances                 WHERE user_id IN (SELECT id FROM real_users)), 0)::text AS locked_balance,
-      COALESCE((SELECT SUM(value_at_obtained::numeric)   FROM user_inventory            WHERE sold_at IS NULL AND exchanged_at IS NULL AND user_id IN (SELECT id FROM real_users)), 0)::text AS inventory,
+      COALESCE((SELECT SUM(value_at_obtained::numeric)   FROM user_inventory            WHERE sold_at IS NULL AND exchanged_at IS NULL AND withdrawal_locked_at IS NULL AND user_id IN (SELECT id FROM real_users)), 0)::text AS inventory,
       COALESCE((SELECT SUM(value::numeric)               FROM vouchers                  WHERE claimed_at IS NULL AND user_id IN (SELECT id FROM real_users)), 0)::text AS vouchers,
       COALESCE((SELECT SUM(rakeback_amount_usd::numeric) FROM rakeback_claims           WHERE claimed_at IS NULL AND user_id IN (SELECT id FROM real_users)), 0)::text AS unclaimed_rakeback
   `);

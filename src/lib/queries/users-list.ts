@@ -264,13 +264,21 @@ export async function getUsers(params: {
       LEFT JOIN (
         SELECT user_id, COALESCE(SUM(value_at_obtained::numeric), 0) AS inv_value
         FROM user_inventory
-        WHERE sold_at IS NULL AND exchanged_at IS NULL
+        -- Exclude cards locked for an in-flight withdrawal — their value is
+        -- carried by the withdrawals join below (pending/processing count
+        -- there). Matches calculateUsersPnlBatch so the pnl/inventoryValue/
+        -- netHoldings sorts agree with the displayed (lock-excluded) values.
+        WHERE sold_at IS NULL AND exchanged_at IS NULL AND withdrawal_locked_at IS NULL
         GROUP BY user_id
       ) inv ON inv.user_id = u.id
       LEFT JOIN (
         SELECT user_id, COALESCE(SUM(total_value_usd::numeric), 0) AS wd_value
         FROM card_withdrawal_requests
-        WHERE status IN ('completed', 'shipped')
+        -- In-flight (pending/processing) + done (shipped/completed) all count
+        -- as a house withdrawal liability so the pnl sort stays continuous
+        -- across the withdrawal lifecycle and matches the displayed
+        -- totalWithdrawn from calculateUsersPnlBatch.
+        WHERE status IN ('pending', 'processing', 'shipped', 'completed')
         GROUP BY user_id
       ) cw ON cw.user_id = u.id
       LEFT JOIN (

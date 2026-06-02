@@ -16,11 +16,18 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
  *   pnl < 0  → House is down (user holds more than they net-deposited)     → 🔴 rose
  *
  * `onSiteBalance` = available_balance + locked_balance.
- * `withdrawals`    = balances.total_withdrawn (ledger withdrawals) +
+ * `withdrawals`    = balances.total_withdrawn (legacy ledger withdrawals) +
  *                    sum(card_withdrawal_requests.total_value_usd) for
- *                    completed/shipped requests.
+ *                    IN-FLIGHT + DONE requests, i.e. status IN
+ *                    ('pending','processing','shipped','completed').
+ *                    Pending/processing are counted as a house liability so
+ *                    the P&L stays CONTINUOUS across the withdrawal
+ *                    lifecycle — see WITHDRAWAL_LIABILITY_STATUSES below.
  * `inventoryValue` = sum(user_inventory.value_at_obtained) where the row is
- *                    neither sold nor exchanged.
+ *                    neither sold nor exchanged AND not locked for an
+ *                    in-flight withdrawal (withdrawal_locked_at IS NULL).
+ *                    The locked value is carried by the `withdrawals` term
+ *                    instead, so it is counted exactly once.
  * `unclaimedVouchers` = sum(vouchers.value) where claimed_at IS NULL.
  *
  * House-wide (global) variants may extend this with additional liability
@@ -28,10 +35,53 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
  * five terms so it lines up with the User Detail panel on the page.
  */
 
+/**
+ * Card-withdrawal statuses that count toward the balance-sheet
+ * `withdrawals` liability term.
+ *
+ * Verified mechanism (packy.gg, read against a prod snapshot): a
+ * withdrawal — crypto OR physical — bundles `inventory_item_ids` and on
+ * creation sets `withdrawal_locked_at` on those rows; `total_value_usd`
+ * equals the bundled value. `balances.total_withdrawn` is NOT moved for
+ * card/crypto withdrawals (it stayed 0 across the snapshot while
+ * completed withdrawals existed) — there is no `card_withdrawal` ledger
+ * type, so the request's `total_value_usd` is the sole record of the
+ * outflow.
+ *
+ * Lifecycle:
+ *   pending/processing → value is locked inventory (left open inventory,
+ *     not yet a completed outflow). The lifetime balance-sheet P&L
+ *     excludes locked inventory (withdrawal_locked_at IS NULL), so unless
+ *     we count these here the value VANISHES → house P&L falsely jumps up
+ *     by the in-flight amount. Counting them keeps continuity.
+ *   shipped/completed → value has actually left the house (items removed
+ *     from inventory). Already counted historically.
+ *   cancelled/failed → backend restores balance + clears
+ *     withdrawal_locked_at, so the value returns to inventory and these
+ *     rows are (correctly) excluded.
+ *
+ * Including pending+processing here while excluding withdrawal-locked
+ * inventory means the in-flight value is counted EXACTLY ONCE (as a
+ * withdrawal liability, never also as inventory), and a
+ * pending→completed transition does not move the figure — the status
+ * just shifts from one member of this set to another.
+ */
+export const WITHDRAWAL_LIABILITY_STATUSES = [
+  "pending",
+  "processing",
+  "shipped",
+  "completed",
+] as const;
+
 export type PnlComponents = {
   /** Sum of completed deposits credited to the user's balance. */
   deposits: number;
-  /** balances.total_withdrawn + completed/shipped card_withdrawal_requests. */
+  /**
+   * balances.total_withdrawn + card_withdrawal_requests with status IN
+   * WITHDRAWAL_LIABILITY_STATUSES (pending/processing/shipped/completed).
+   * In-flight withdrawals are counted as a house liability so the P&L is
+   * continuous across the withdrawal lifecycle.
+   */
   withdrawals: number;
   /** available_balance + locked_balance. */
   onSiteBalance: number;
@@ -87,7 +137,13 @@ export async function calculateUserPnl(userId: string): Promise<UserPnl> {
         db.card_withdrawal_requests.aggregate({
           where: {
             user_id: userId,
-            status: { in: ["completed", "shipped"] },
+            // In-flight (pending/processing) + done (shipped/completed)
+            // all count as a house liability — see
+            // WITHDRAWAL_LIABILITY_STATUSES. Pending/processing value is
+            // locked inventory excluded below, so counting it here is the
+            // only place it appears (no double-count) and keeps the P&L
+            // continuous when a withdrawal completes.
+            status: { in: [...WITHDRAWAL_LIABILITY_STATUSES] },
           },
           _sum: { total_value_usd: true },
         }),
@@ -96,11 +152,12 @@ export async function calculateUserPnl(userId: string): Promise<UserPnl> {
             user_id: userId,
             sold_at: null,
             exchanged_at: null,
-            // Cards locked for a card_withdrawal have effectively left
-            // the user's holdings (awaiting shipment). Exclude them
-            // from per-user PnL inventory so the User Detail / Users
-            // List PnL matches the dashboard's totalInventoryValue
-            // aggregate (which already filters the same way).
+            // Cards locked for an in-flight withdrawal have effectively
+            // left the user's holdings — their value is carried by the
+            // `withdrawals` term above instead (pending/processing count
+            // there). Excluding them here avoids double-counting and keeps
+            // the User Detail / Users List PnL aligned with the dashboard's
+            // totalInventoryValue aggregate (which filters the same way).
             withdrawal_locked_at: null,
           },
           _sum: { value_at_obtained: true },
@@ -279,7 +336,9 @@ export async function calculateUsersPnlBatch(
           by: ["user_id"],
           where: {
             user_id: { in: userIds },
-            status: { in: ["completed", "shipped"] },
+            // Same in-flight + done liability set as calculateUserPnl so
+            // the users-LIST P&L matches the user-DETAIL P&L.
+            status: { in: [...WITHDRAWAL_LIABILITY_STATUSES] },
           },
           _sum: { total_value_usd: true },
         }),
@@ -289,6 +348,13 @@ export async function calculateUsersPnlBatch(
             user_id: { in: userIds },
             sold_at: null,
             exchanged_at: null,
+            // M10: apply the SAME withdrawal-lock exclusion calculateUserPnl
+            // uses, so locked-for-withdrawal cards drop out of LIST
+            // inventory exactly as they do on DETAIL. Their value is
+            // carried by the withdrawals term above (pending/processing are
+            // counted there), so it appears exactly once — list PnL now
+            // equals detail PnL.
+            withdrawal_locked_at: null,
           },
           _sum: { value_at_obtained: true },
         }),
