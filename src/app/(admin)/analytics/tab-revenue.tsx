@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { PieChart, ArrowDown, ArrowUp, Coins } from "lucide-react";
+import { PieChart, ArrowDown, ArrowUp, Coins, Gift, Repeat } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -26,13 +26,23 @@ import { RevenueStackedCharts } from "./revenue-chart";
 import type { AnalyticsPeriod } from "./types";
 
 /**
- * Revenue-by-source breakdown. Two tables — one for inflows (house
- * revenue: wagers, sponsorship, shipping fees), one for outflows (paid
- * to users: card sales, bonuses, rakeback, affiliate, rain, etc.). Each
- * row shows absolute amount + % contribution to its category.
+ * Revenue-by-source breakdown — rendered from the canonical
+ * `@/lib/metrics` payload (`getRevenueBreakdown`).
  *
- * Stacked area charts below the tables show how each category's share
- * moves over time.
+ * Three category groups, each a table with amount + % contribution:
+ *   • Inflows (house revenue) — wager + shipping fee. House gains → emerald.
+ *   • Gaming payout (the payout side of GGR) — cards kept + battle refunds
+ *     + upgrader payouts. User gets value back → rose.
+ *   • Reward / marketing spend (the GGR→NGR gap) — bonuses, rakeback,
+ *     affiliate, rain/race, etc. House gives → rose.
+ *   • Neutral conversions — card / voucher ↔ balance moves of value the
+ *     user already owns. Excluded from GGR/NGR → muted.
+ *
+ * GGR = inflow gaming revenue − gaming payout (gaming-only; card
+ * conversions NEUTRAL; upgrader from `upgrader_games`, never the ledger).
+ * NGR = GGR − reward spend − net rain. House-POV colors throughout.
+ *
+ * Stacked area charts below show how each category moves over time.
  */
 export async function RevenueTab({
   period: heroPeriod,
@@ -64,34 +74,44 @@ export async function RevenueTab({
           <div className="text-sm">
             <h3 className="font-semibold">Revenue by source</h3>
             <p className="text-muted-foreground">
-              Every dollar that flows through the ledger bucketed by
-              category. Inflows are house revenue; outflows are money paid
-              back to users. GGR is the delta — what we keep.
+              Ledger flow bucketed by category. Inflows are house revenue
+              (wagers, fees); gaming payout is value returned on packs /
+              battles / upgrader. GGR = inflow gaming revenue − gaming
+              payout; NGR = GGR after reward spend. Card / voucher
+              conversions are neutral (value the user already owns) and are
+              excluded from both.
             </p>
           </div>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <MetricTile
             label="Total Inflow"
             value={formatCurrency(data.totalInflow)}
             icon={ArrowUp}
             accent="emerald"
-            sub={`${data.inflows.length} source categories`}
+            sub={`${data.inflows.length} revenue categories`}
           />
           <MetricTile
-            label="Total Outflow"
-            value={formatCurrency(data.totalOutflow)}
+            label="Gaming Payout"
+            value={formatCurrency(data.totalGamingPayout)}
             icon={ArrowDown}
             accent="rose"
-            sub={`${data.outflows.length} sink categories`}
+            sub="Cards kept + refunds + upgrader"
           />
           <MetricTile
-            label="GGR (net)"
+            label="GGR"
             value={formatCurrency(data.ggr)}
             icon={PieChart}
             accent={data.ggr >= 0 ? "emerald" : "rose"}
-            sub="Inflow − Outflow"
+            sub="Wager − gaming payout"
+          />
+          <MetricTile
+            label="NGR"
+            value={formatCurrency(data.ngr)}
+            icon={Gift}
+            accent={data.ngr >= 0 ? "emerald" : "rose"}
+            sub="GGR − reward spend"
           />
         </div>
 
@@ -99,11 +119,13 @@ export async function RevenueTab({
           <RevenuePeriodFilter current={period} />
         </div>
 
-        {/* Breakdown tables */}
+        {/* Breakdown tables — gaming revenue (inflow vs gaming payout),
+            then reward spend, then neutral conversions. */}
         <div className="grid gap-4 xl:grid-cols-2">
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm font-medium">
+              <CardTitle className="flex items-center gap-2 text-sm font-medium">
+                <ArrowUp className="size-4 text-emerald-500" />
                 Inflows (house revenue)
               </CardTitle>
             </CardHeader>
@@ -117,15 +139,53 @@ export async function RevenueTab({
           </Card>
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm font-medium">
-                Outflows (paid to users)
+              <CardTitle className="flex items-center gap-2 text-sm font-medium">
+                <ArrowDown className="size-4 text-rose-500" />
+                Gaming payout (returned to users)
               </CardTitle>
             </CardHeader>
             <CardContent>
               <SourceTable
-                rows={data.outflows}
-                total={data.totalOutflow}
+                rows={data.gamingOutflows}
+                total={data.totalGamingPayout}
                 accent="rose"
+              />
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm font-medium">
+                <Gift className="size-4 text-rose-500" />
+                Reward &amp; marketing spend
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">
+                House-funded giveaways — the gap between GGR and NGR.
+              </p>
+            </CardHeader>
+            <CardContent>
+              <SourceTable
+                rows={data.rewardOutflows}
+                total={data.totalRewardSpend}
+                accent="rose"
+              />
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm font-medium">
+                <Repeat className="size-4 text-muted-foreground" />
+                Neutral conversions
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Card / voucher ↔ balance moves of value the user already
+                owns. Excluded from GGR and NGR.
+              </p>
+            </CardHeader>
+            <CardContent>
+              <SourceTable
+                rows={data.neutral}
+                total={data.totalNeutral}
+                accent="neutral"
               />
             </CardContent>
           </Card>
@@ -369,14 +429,21 @@ function SourceTable({
 }: {
   rows: { key: string; label: string; total: number }[];
   total: number;
-  accent: "emerald" | "rose";
+  accent: "emerald" | "rose" | "neutral";
 }) {
   const sorted = [...rows].sort((a, b) => b.total - a.total);
   const colorClass =
     accent === "emerald"
       ? "text-emerald-600 dark:text-emerald-400"
-      : "text-rose-600 dark:text-rose-400";
-  const barClass = accent === "emerald" ? "bg-emerald-500/60" : "bg-rose-500/60";
+      : accent === "rose"
+        ? "text-rose-600 dark:text-rose-400"
+        : "text-foreground";
+  const barClass =
+    accent === "emerald"
+      ? "bg-emerald-500/60"
+      : accent === "rose"
+        ? "bg-rose-500/60"
+        : "bg-muted-foreground/40";
 
   return (
     <>

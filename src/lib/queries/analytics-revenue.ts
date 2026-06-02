@@ -1,40 +1,66 @@
+import "server-only";
+
 import { getDb } from "@/lib/db";
-import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause } from "./_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
+import {
+  getWindowMetrics,
+  getGamingLegs,
+  upgraderMetrics,
+  sumLedgerTypes,
+  type MetricWindow,
+} from "@/lib/metrics/queries";
+import {
+  REWARD_PAYOUT_TYPES,
+  NEUTRAL_TYPES,
+  FEE_TYPES,
+  GAMING_PAYOUT_TYPES,
+  ledgerTypesToSqlList,
+  type LedgerTransactionType,
+} from "@/lib/metrics";
+import { realCustomersScopeSql } from "./insights-games/_shared";
 
 /**
- * Revenue-by-source analysis.
+ * Revenue-by-source analysis — MIGRATED onto the canonical `@/lib/metrics`
+ * layer.
  *
- * Source breakdown = same ledger types the GGR query uses, grouped into
- * categories for the stacked area chart and contribution table.
+ * The headline GGR/NGR are the canonical gaming-margin numbers
+ * (`getWindowMetrics`): GGR = wager − gamingPayout where the dominant
+ * pack/battle payout is the `user_inventory.value_at_obtained` delta (NOT
+ * a ledger type), `battle_refund` is the only ledger cash gaming-payout
+ * leg, card conversions are NEUTRAL, and upgrader comes from
+ * `upgrader_games` (NEVER ledger `upgrader_payout`). Scope = real
+ * customers (admin/support/creator dropped + blacklist), borrow plays
+ * excluded — identical to analytics.ts / dashboard / /ggr.
  *
- *   Inflows (house revenue):
- *     • pack_opening         → Pack wagers
- *     • battle_bet           → Battle wagers
- *     • battle_sponsorship   → Battle sponsorship
- *     • withdrawal_shipping_fee → Shipping fees
+ * The source-category breakdown below is a presentational split of the
+ * ledger flow into buckets, every bucket sourced from the canonical type
+ * sets (`@/lib/metrics` `ledger-sets`) through the canonical real-customer
+ * scope (`realCustomersScopeSql`). It deliberately separates:
  *
- *   Outflows (paid to users, reduce GGR):
- *     • battle_refund        → Battle refunds
- *     • card_sale / reward_card_sale → Card sales (cashed-out inventory)
- *     • card_exchange / exchange_excess_credit → Card exchanges
- *     • deposit_bonus / promo_code_redeemed / gift_card_redeemed →
- *       Bonuses & promos
- *     • rakeback_claim       → Rakeback
- *     • affiliate_claim      → Affiliate commissions
- *     • rain_win / race_prize → Rain / race rewards
- *     • balance_reward_claim → Signup packs
- *     • creator_tip          → Creator tips
- *     • voucher_* / *_to_voucher → Vouchers
- *     • waitlist_prize       → Waitlist prizes
+ *   • Gaming revenue (house keeps) — wager in, gaming payout out. GGR is
+ *     the delta of these two and matches `getWindowMetrics().ggr` exactly.
+ *   • Reward / marketing spend (REWARD_PAYOUT_TYPES) — reduces NGR, NOT
+ *     GGR. Broken into sub-rows for the chart from the canonical set.
+ *   • Neutral conversions (NEUTRAL_TYPES — card_sale / card_exchange /
+ *     voucher↔balance, etc.) — value the user already owns changing form.
+ *     Surfaced for visibility but EXCLUDED from GGR and NGR.
  *
- * Per-day series + totals. Staff excluded. Period-aware.
+ * The previous version treated card sales as an outflow that reduced GGR
+ * and pulled upgrader payouts from the ledger — both wrong under the
+ * verified booking model. Those are corrected here.
+ *
+ * Per-day series + totals. Period-aware.
  */
 
 export type RevenuePeriod = "7d" | "30d" | "90d" | "all";
 
-function daysForPeriod(period: RevenuePeriod): number | null {
+function periodToMetricWindow(period: RevenuePeriod): MetricWindow {
+  if (period === "all") return { since: null };
+  const days = daysForPeriod(period);
+  return { since: new Date(Date.now() - days * 24 * 60 * 60 * 1000) };
+}
+
+function daysForPeriod(period: RevenuePeriod): number {
   switch (period) {
     case "7d":
       return 7;
@@ -43,25 +69,47 @@ function daysForPeriod(period: RevenuePeriod): number | null {
     case "90d":
       return 90;
     case "all":
-      return null;
+      // Lifetime — only used to build the `created_at >= …` chart filter;
+      // the canonical metric window is `{ since: null }` (no lower bound).
+      return 36500;
   }
+}
+
+/** Inline `AND created_at >= NOW() - INTERVAL …` for the daily chart query. */
+function dateFilterForPeriod(period: RevenuePeriod): string {
+  if (period === "all") return "";
+  return `AND created_at >= NOW() - INTERVAL '${daysForPeriod(period)} days'`;
 }
 
 export type RevenueSource = {
   key: string;
   label: string;
-  direction: "inflow" | "outflow";
+  direction: "inflow" | "outflow" | "neutral";
   total: number;
 };
 
 export type RevenueData = {
   period: RevenuePeriod;
+  /** House revenue captured from the user (wager + shipping fee). */
   inflows: RevenueSource[];
-  outflows: RevenueSource[];
+  /** Gaming payout returned to the user (inventory keep + battle_refund). */
+  gamingOutflows: RevenueSource[];
+  /** House-funded reward / marketing spend (reduces NGR, not GGR). */
+  rewardOutflows: RevenueSource[];
+  /** Inventory↔balance / voucher↔balance conversions — neutral to GGR/NGR. */
+  neutral: RevenueSource[];
   totalInflow: number;
-  totalOutflow: number;
+  /** Total gaming payout (the payout side of GGR). */
+  totalGamingPayout: number;
+  /** Total house-funded reward spend (the gap between GGR and NGR). */
+  totalRewardSpend: number;
+  /** Total neutral conversion volume (informational; excluded from GGR/NGR). */
+  totalNeutral: number;
+  /** Canonical GGR = wager − gamingPayout (gaming-only, house POV). */
   ggr: number;
-  // For stacked area chart (top source series over time):
+  /** Canonical NGR = GGR − reward spend − net rain (house POV). */
+  ngr: number;
+  // For the stacked area charts (per-day category series over time):
   daily: {
     date: string;
     packWager: number;
@@ -81,77 +129,143 @@ export type RevenueData = {
   }[];
 };
 
+// ─── Chart sub-category groupings ────────────────────────────────────
+//
+// The stacked chart breaks the coarse canonical buckets into finer rows
+// for readability. Every member below is drawn from the canonical
+// `REWARD_PAYOUT_TYPES` / `NEUTRAL_TYPES` arrays (single source of truth)
+// — no parallel literal list is authored here, so they can never drift
+// from the canonical partition. `creator_tip` is a RESIDUAL pass-through
+// (user→user, $0 net house cost) and is surfaced only as an informational
+// chart series, never folded into GGR/NGR.
+const rewardSubset = (
+  ...members: LedgerTransactionType[]
+): LedgerTransactionType[] =>
+  REWARD_PAYOUT_TYPES.filter((t) => members.includes(t));
+
+const BONUS_TYPES = rewardSubset(
+  "deposit_bonus",
+  "promo_code_redeemed",
+  "gift_card_redeemed",
+);
+const RAKEBACK_TYPES = rewardSubset("rakeback_claim");
+const AFFILIATE_TYPES = rewardSubset("affiliate_claim");
+const RAIN_RACE_TYPES = rewardSubset("rain_win", "race_prize");
+const SIGNUP_PACK_TYPES = rewardSubset("balance_reward_claim");
+const WAITLIST_TYPES = rewardSubset("waitlist_prize");
+// `voucher_redeemed` is a REWARD (house-funded voucher → reduces NGR);
+// `affiliate_leaderboard_prize` is also a reward. Both are part of the
+// canonical `REWARD_PAYOUT_TYPES` set and are surfaced in the reward
+// breakdown so it sums to the full reward cost.
+const VOUCHER_REDEEMED_TYPES = rewardSubset("voucher_redeemed");
+const LEADERBOARD_PRIZE_TYPES = rewardSubset("affiliate_leaderboard_prize");
+// Chart `vouchers` series = the NEUTRAL voucher↔balance conversions only
+// (value the user already owns changing form). `voucher_redeemed` is NOT
+// here — it is a reward, handled above. The filter intersects against the
+// canonical NEUTRAL_TYPES array so it can never drift.
+const VOUCHER_CONVERSION_TYPES = NEUTRAL_TYPES.filter((t) =>
+  (
+    [
+      "voucher_exchange",
+      "exchange_excess_to_voucher",
+      "battle_excess_to_voucher",
+    ] as LedgerTransactionType[]
+  ).includes(t),
+);
+const CREATOR_TIP_TYPES: LedgerTransactionType[] = ["creator_tip"];
+
+/** Build a `COALESCE(SUM(CASE WHEN type IN (...) …))` daily column. */
+function dailyCol(
+  types: readonly LedgerTransactionType[],
+  alias: string,
+): string {
+  if (types.length === 0) {
+    return `0::numeric::text AS ${alias}`;
+  }
+  return `COALESCE(SUM(CASE WHEN type IN ${ledgerTypesToSqlList(
+    types,
+  )} THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS ${alias}`;
+}
+
 /**
- * Runs one aggregated query returning all category totals + daily rows.
- * All amounts are positive (we use ABS); "direction" tracks which way
- * they move GGR.
+ * Runs the canonical metric reads (headline + legs + upgrader) plus ONE
+ * presentational per-day breakdown query (canonical scope + canonical
+ * type sets) for the stacked charts.
  */
 export async function getRevenueBreakdown(
   period: RevenuePeriod,
 ): Promise<RevenueData> {
   const db = await getDb();
-  const days = daysForPeriod(period);
-  const dateFilter =
-    days !== null ? `AND created_at >= NOW() - INTERVAL '${days} days'` : "";
-  const excluded = await getExcludedUserIds();
-  const blacklistIdNotIn = blacklistNotInClause("id", excluded);
+  const window = periodToMetricWindow(period);
+  const scope = await realCustomersScopeSql();
+  const dateFilter = dateFilterForPeriod(period);
 
-  const dailyRows = await db.$queryRawUnsafe<
-    {
-      date: Date;
-      pack_wager: string;
-      battle_wager: string;
-      battle_sponsorship: string;
-      upgrader_wager: string;
-      shipping_fees: string;
-      battle_refund: string;
-      upgrader_payout: string;
-      card_sale: string;
-      bonuses: string;
-      rakeback: string;
-      affiliate: string;
-      rain_race: string;
-      signup_pack: string;
-      creator_tip: string;
-      vouchers: string;
-      waitlist: string;
-    }[]
-  >(`
-    SELECT
-      DATE(created_at) AS date,
-      COALESCE(SUM(CASE WHEN type = 'pack_opening' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager,
-      COALESCE(SUM(CASE WHEN type = 'battle_bet' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager,
-      COALESCE(SUM(CASE WHEN type = 'battle_sponsorship' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_sponsorship,
-      COALESCE(SUM(CASE WHEN type = 'upgrader_bet' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS upgrader_wager,
-      COALESCE(SUM(CASE WHEN type = 'withdrawal_shipping_fee' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS shipping_fees,
-      COALESCE(SUM(CASE WHEN type = 'battle_refund' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_refund,
-      COALESCE(SUM(CASE WHEN type = 'upgrader_payout' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS upgrader_payout,
-      COALESCE(SUM(CASE WHEN type IN ('card_sale','reward_card_sale','card_exchange','exchange_excess_credit') THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS card_sale,
-      COALESCE(SUM(CASE WHEN type IN ('deposit_bonus','promo_code_redeemed','gift_card_redeemed') THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS bonuses,
-      COALESCE(SUM(CASE WHEN type = 'rakeback_claim' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rakeback,
-      COALESCE(SUM(CASE WHEN type = 'affiliate_claim' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS affiliate,
-      COALESCE(SUM(CASE WHEN type IN ('rain_win','race_prize') THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rain_race,
-      COALESCE(SUM(CASE WHEN type = 'balance_reward_claim' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS signup_pack,
-      COALESCE(SUM(CASE WHEN type = 'creator_tip' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS creator_tip,
-      COALESCE(SUM(CASE WHEN type IN ('voucher_redeemed','voucher_exchange','exchange_excess_to_voucher','battle_excess_to_voucher') THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS vouchers,
-      COALESCE(SUM(CASE WHEN type = 'waitlist_prize' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS waitlist
-    FROM ledger_transactions
-    WHERE status = 'completed'
-      AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})
-      ${dateFilter}
-    GROUP BY DATE(created_at)
-    ORDER BY date
-  `);
+  const [
+    windowMetrics,
+    legs,
+    upgrader,
+    neutralTotal,
+    voucherRedeemedTotal,
+    leaderboardPrizeTotal,
+    dailyRows,
+  ] = await Promise.all([
+      getWindowMetrics({ window }),
+      getGamingLegs(window),
+      upgraderMetrics(window),
+      sumLedgerTypes({ types: NEUTRAL_TYPES, window }),
+      sumLedgerTypes({ types: VOUCHER_REDEEMED_TYPES, window }),
+      sumLedgerTypes({ types: LEADERBOARD_PRIZE_TYPES, window }),
+      db.$queryRawUnsafe<
+        {
+          date: Date;
+          pack_wager: string;
+          battle_wager: string;
+          battle_sponsorship: string;
+          shipping_fees: string;
+          battle_refund: string;
+          card_sale: string;
+          bonuses: string;
+          rakeback: string;
+          affiliate: string;
+          rain_race: string;
+          signup_pack: string;
+          creator_tip: string;
+          vouchers: string;
+          waitlist: string;
+        }[]
+      >(`
+        SELECT
+          DATE(created_at) AS date,
+          COALESCE(SUM(CASE WHEN type = 'pack_opening' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager,
+          COALESCE(SUM(CASE WHEN type = 'battle_bet' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager,
+          COALESCE(SUM(CASE WHEN type = 'battle_sponsorship' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_sponsorship,
+          ${dailyCol(FEE_TYPES, "shipping_fees")},
+          ${dailyCol(GAMING_PAYOUT_TYPES, "battle_refund")},
+          ${dailyCol(NEUTRAL_TYPES, "card_sale")},
+          ${dailyCol(BONUS_TYPES, "bonuses")},
+          ${dailyCol(RAKEBACK_TYPES, "rakeback")},
+          ${dailyCol(AFFILIATE_TYPES, "affiliate")},
+          ${dailyCol(RAIN_RACE_TYPES, "rain_race")},
+          ${dailyCol(SIGNUP_PACK_TYPES, "signup_pack")},
+          ${dailyCol(CREATOR_TIP_TYPES, "creator_tip")},
+          ${dailyCol(VOUCHER_CONVERSION_TYPES, "vouchers")},
+          ${dailyCol(WAITLIST_TYPES, "waitlist")}
+        FROM ledger_transactions
+        WHERE status = 'completed'
+          AND user_id IN ${scope}
+          ${dateFilter}
+        GROUP BY DATE(created_at)
+        ORDER BY date
+      `),
+    ]);
 
   const daily = dailyRows.map((r) => ({
     date: new Date(r.date).toISOString().split("T")[0],
     packWager: toNumber(r.pack_wager),
     battleWager: toNumber(r.battle_wager),
     battleSponsorship: toNumber(r.battle_sponsorship),
-    upgraderWager: toNumber(r.upgrader_wager),
     shippingFees: toNumber(r.shipping_fees),
     battleRefund: toNumber(r.battle_refund),
-    upgraderPayout: toNumber(r.upgrader_payout),
     cardSale: toNumber(r.card_sale),
     bonuses: toNumber(r.bonuses),
     rakeback: toNumber(r.rakeback),
@@ -163,41 +277,145 @@ export async function getRevenueBreakdown(
     waitlist: toNumber(r.waitlist),
   }));
 
-  const sum = (pick: (d: (typeof daily)[number]) => number): number =>
+  const sumDaily = (pick: (d: (typeof daily)[number]) => number): number =>
     daily.reduce((a, d) => a + pick(d), 0);
 
+  // ─── Inflows (house revenue captured from the user) ───
+  // Wager comes from the canonical legs (borrow-corrected, real-customer
+  // scope). Upgrader wager comes from `upgrader_games` (NOT ledger) and is
+  // only present once the upgrader table exists in the connected DB.
+  const upgraderWager = upgrader?.wager ?? 0;
+  const shippingFees = sumDaily((d) => d.shippingFees);
   const inflows: RevenueSource[] = [
-    { key: "pack_wager", label: "Pack Wagers", direction: "inflow", total: sum((d) => d.packWager) },
-    { key: "battle_wager", label: "Battle Wagers", direction: "inflow", total: sum((d) => d.battleWager) },
-    { key: "battle_sponsorship", label: "Battle Sponsorship", direction: "inflow", total: sum((d) => d.battleSponsorship) },
-    { key: "upgrader_wager", label: "Upgrader Wagers", direction: "inflow", total: sum((d) => d.upgraderWager) },
-    { key: "shipping_fees", label: "Shipping Fees", direction: "inflow", total: sum((d) => d.shippingFees) },
+    {
+      key: "wager",
+      label: "Pack / Battle Wagers",
+      direction: "inflow",
+      total: legs.wager,
+    },
+    {
+      key: "upgrader_wager",
+      label: "Upgrader Wagers",
+      direction: "inflow",
+      total: upgraderWager,
+    },
+    {
+      key: "shipping_fees",
+      label: "Shipping Fees",
+      direction: "inflow",
+      total: shippingFees,
+    },
   ];
-
-  const outflows: RevenueSource[] = [
-    { key: "card_sale", label: "Card Sales / Exchanges", direction: "outflow", total: sum((d) => d.cardSale) },
-    { key: "battle_refund", label: "Battle Refunds", direction: "outflow", total: sum((d) => d.battleRefund) },
-    { key: "upgrader_payout", label: "Upgrader Payouts", direction: "outflow", total: sum((d) => d.upgraderPayout) },
-    { key: "bonuses", label: "Bonuses & Promos", direction: "outflow", total: sum((d) => d.bonuses) },
-    { key: "rakeback", label: "Rakeback", direction: "outflow", total: sum((d) => d.rakeback) },
-    { key: "affiliate", label: "Affiliate Commissions", direction: "outflow", total: sum((d) => d.affiliate) },
-    { key: "rain_race", label: "Rain / Race Prizes", direction: "outflow", total: sum((d) => d.rainRace) },
-    { key: "signup_pack", label: "Signup Packs", direction: "outflow", total: sum((d) => d.signupPack) },
-    { key: "creator_tip", label: "Creator Tips", direction: "outflow", total: sum((d) => d.creatorTip) },
-    { key: "vouchers", label: "Vouchers", direction: "outflow", total: sum((d) => d.vouchers) },
-    { key: "waitlist", label: "Waitlist Prizes", direction: "outflow", total: sum((d) => d.waitlist) },
-  ];
-
   const totalInflow = inflows.reduce((a, s) => a + s.total, 0);
-  const totalOutflow = outflows.reduce((a, s) => a + s.total, 0);
+
+  // ─── Gaming outflows (the payout side of GGR) ───
+  // Inventory keep is the dominant pack/battle payout; battle_refund is
+  // the ledger cash leg; upgrader payout from `upgrader_games`.
+  const upgraderPayout = upgrader?.payout ?? 0;
+  const gamingOutflows: RevenueSource[] = [
+    {
+      key: "inventory_keep",
+      label: "Cards Kept (inventory)",
+      direction: "outflow",
+      total: legs.inventoryPayout,
+    },
+    {
+      key: "battle_refund",
+      label: "Battle Refunds",
+      direction: "outflow",
+      total: legs.battleRefund,
+    },
+    {
+      key: "upgrader_payout",
+      label: "Upgrader Payouts",
+      direction: "outflow",
+      total: upgraderPayout,
+    },
+  ];
+  const totalGamingPayout = windowMetrics.gamingPayout;
+
+  // ─── Reward / marketing spend (the GGR→NGR gap) ───
+  // rain_race here shows the FULL rain_win + race_prize magnitude for
+  // transparency; the NGR figure nets rain against rain_tip per the
+  // canonical model (`getWindowMetrics`), so totalRewardSpend (display)
+  // and (GGR − NGR) can differ by the netted rain tip — intentional.
+  const rewardOutflows: RevenueSource[] = [
+    {
+      key: "bonuses",
+      label: "Bonuses & Promos",
+      direction: "outflow",
+      total: sumDaily((d) => d.bonuses),
+    },
+    {
+      key: "rakeback",
+      label: "Rakeback",
+      direction: "outflow",
+      total: sumDaily((d) => d.rakeback),
+    },
+    {
+      key: "affiliate",
+      label: "Affiliate Commissions",
+      direction: "outflow",
+      total: sumDaily((d) => d.affiliate),
+    },
+    {
+      key: "rain_race",
+      label: "Rain / Race Prizes",
+      direction: "outflow",
+      total: sumDaily((d) => d.rainRace),
+    },
+    {
+      key: "signup_pack",
+      label: "Signup Packs",
+      direction: "outflow",
+      total: sumDaily((d) => d.signupPack),
+    },
+    {
+      key: "waitlist",
+      label: "Waitlist Prizes",
+      direction: "outflow",
+      total: sumDaily((d) => d.waitlist),
+    },
+    {
+      key: "voucher_redeemed",
+      label: "Vouchers Redeemed",
+      direction: "outflow",
+      total: voucherRedeemedTotal,
+    },
+    {
+      key: "leaderboard_prize",
+      label: "Leaderboard Prizes",
+      direction: "outflow",
+      total: leaderboardPrizeTotal,
+    },
+  ];
+  const totalRewardSpend = rewardOutflows.reduce((a, s) => a + s.total, 0);
+
+  // ─── Neutral conversions (excluded from GGR/NGR) ───
+  // card_sale / reward_card_sale / card_exchange / excess-credit and the
+  // voucher↔balance variants: value the user already owns changing form.
+  // Summed via the canonical NEUTRAL_TYPES set; surfaced for visibility.
+  const neutral: RevenueSource[] = [
+    {
+      key: "card_conversions",
+      label: "Card / Voucher Conversions",
+      direction: "neutral",
+      total: neutralTotal,
+    },
+  ];
 
   return {
     period,
     inflows,
-    outflows,
+    gamingOutflows,
+    rewardOutflows,
+    neutral,
     totalInflow,
-    totalOutflow,
-    ggr: totalInflow - totalOutflow,
+    totalGamingPayout,
+    totalRewardSpend,
+    totalNeutral: neutralTotal,
+    ggr: windowMetrics.ggr,
+    ngr: windowMetrics.ngr,
     daily,
   };
 }

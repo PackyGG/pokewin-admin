@@ -88,9 +88,12 @@ export async function TopPerformersTab({
           <div className="text-sm">
             <h3 className="font-semibold">Top performers</h3>
             <p className="text-muted-foreground">
-              Top 20 in each category. Winners = users who took money off
-              the house (house P&amp;L negative). Losers = users we made
-              money from. Clickable rows go to the user / creator detail.
+              Top 20 in each category. House P&amp;L = canonical gaming
+              margin (borrow-corrected wager − cards kept − battle refunds,
+              upgrader from its own table; card conversions neutral).
+              Winners = users who took money off the house. Losers = users
+              we made money from. Clickable rows go to the user / creator
+              detail.
             </p>
           </div>
         </div>
@@ -114,7 +117,7 @@ export async function TopPerformersTab({
         {active === "wagerers" && (
           <LeaderCard
             title="Top wagerers"
-            subtitle="Largest wager volume (pack + battle)"
+            subtitle="Largest borrow-corrected wager (pack + battle + upgrader)"
             icon={Dice5}
           >
             <UserLeaderTable
