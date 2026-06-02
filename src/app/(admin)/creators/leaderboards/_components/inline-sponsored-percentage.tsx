@@ -15,9 +15,10 @@ import {
 import { setLeaderboardSponsorship } from "../actions";
 
 /**
- * Inline editor for a leaderboard's admin-side "Sponsored %" — the
- * cost-accounting weight the /creators "Leaderboard Cost" KPI applies
- * to this leaderboard's prize pool.
+ * Inline editor for a leaderboard's admin-side "House share %" — the
+ * portion of this prize pool the house pays on-site (the rest is the
+ * creator's off-site contribution). It's the cost-accounting weight the
+ * /creators "Leaderboard Cost" KPI applies to this leaderboard's pool.
  *
  * `current` is null when the leaderboard has no annotation yet; it
  * then renders the muted default "100%" (a leaderboard with no row
@@ -50,7 +51,7 @@ export function InlineSponsoredPercentage({
         toast.error(r.error);
         return;
       }
-      toast.success("Sponsored % updated");
+      toast.success("House share % updated");
       setOpen(false);
       router.refresh();
     });
@@ -62,7 +63,7 @@ export function InlineSponsoredPercentage({
         render={
           <button
             type="button"
-            title="Sponsored % — counted in the /creators Leaderboard Cost"
+            title="House share % — the portion of this prize pool the house pays on-site"
             className="tabular-nums text-sm font-medium hover:underline"
           />
         }
@@ -71,12 +72,13 @@ export function InlineSponsoredPercentage({
           {displayPct}%
         </span>
       </PopoverTrigger>
-      <PopoverContent className="w-[230px] space-y-3 p-4" align="end">
+      <PopoverContent className="w-[250px] space-y-3 p-4" align="end">
         <div>
-          <p className="text-sm font-medium">Sponsored %</p>
+          <p className="text-sm font-medium">House share %</p>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            Share of this leaderboard counted in the /creators
-            Leaderboard Cost KPI. Default is 100%.
+            The portion of this prize pool the house pays on-site. The
+            rest is the creator&apos;s off-site contribution. Default
+            100%.
           </p>
         </div>
         <div className="flex items-center gap-2">

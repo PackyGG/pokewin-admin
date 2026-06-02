@@ -103,8 +103,8 @@ export function EditDialog({
     // lowered after creation. Validation below stops a save that would
     // push the tier sum above the new pool.
     const [siteBonus, setSiteBonus] = useState(leaderboard.site_bonus_usd);
-    // Sponsored % — cost-math annotation. Starts at the saved value or
-    // the 100% default.
+    // House share % — cost-math annotation (the house's share of the
+    // prize pool). Starts at the saved value or the 100% default.
     const [sponsoredPct, setSponsoredPct] = useState(
         String(currentSponsoredPct ?? 100),
     );
@@ -315,7 +315,7 @@ export function EditDialog({
 
         const backendChanged = Object.keys(payload).length > 0;
 
-        // Sponsored % — saved to the admin DB, separately from the
+        // House share % — saved to the admin DB, separately from the
         // backend leaderboard fields above.
         const pctNum = Number(sponsoredPct);
         const sponsoredChanged = pctNum !== (currentSponsoredPct ?? 100);
@@ -323,7 +323,7 @@ export function EditDialog({
             sponsoredChanged &&
             (!Number.isFinite(pctNum) || pctNum < 0 || pctNum > 100)
         ) {
-            toast.error("Sponsored % must be between 0 and 100");
+            toast.error("House share % must be between 0 and 100");
             return;
         }
 
@@ -721,13 +721,13 @@ export function EditDialog({
                         </div>
                     </div>
 
-                    {/* Sponsored % — admin-side cost-accounting input.
+                    {/* House share % — admin-side cost-accounting input.
                         Saved to the admin DB, NOT the backend leaderboard;
                         it weights this leaderboard in the /creators
                         Leaderboard Cost KPI. */}
                     <div className="space-y-2">
                         <Label htmlFor="sponsored_pct">
-                            Sponsored % (cost math only)
+                            House share % (cost math only)
                         </Label>
                         <Input
                             id="sponsored_pct"
@@ -740,9 +740,11 @@ export function EditDialog({
                             placeholder="100"
                         />
                         <p className="text-xs text-muted-foreground">
-                            Share of this leaderboard counted in the
-                            /creators Leaderboard Cost KPI. Doesn&apos;t
-                            change the leaderboard itself. Default 100%.
+                            The portion of this prize pool the house pays
+                            on-site. The rest is the creator&apos;s
+                            off-site contribution. Weights the /creators
+                            Leaderboard Cost KPI; doesn&apos;t change the
+                            leaderboard itself. Default 100%.
                         </p>
                     </div>
 

@@ -62,7 +62,8 @@ export function CreateDialog({ trigger, fixedCreatorUserId }: Props) {
     const [tiers, setTiers] = useState<Array<{ position: string; amount: string }>>([
         { position: "1", amount: "" },
     ]);
-    // Sponsored % — admin-side cost-math annotation. Default 100%.
+    // House share % — admin-side cost-math annotation (the house's
+    // share of the prize pool). Default 100%.
     const [sponsoredPct, setSponsoredPct] = useState("100");
 
     const totalPool = Number(siteBonus) || 0;
@@ -296,7 +297,7 @@ export function CreateDialog({ trigger, fixedCreatorUserId }: Props) {
             sponsoredPctNum < 0 ||
             sponsoredPctNum > 100
         ) {
-            toast.error("Sponsored % must be between 0 and 100");
+            toast.error("House share % must be between 0 and 100");
             return;
         }
 
@@ -315,7 +316,7 @@ export function CreateDialog({ trigger, fixedCreatorUserId }: Props) {
                 toast.error(r.error);
                 return;
             }
-            // Sponsored % — admin-side cost annotation. Only persisted
+            // House share % — admin-side cost annotation. Only persisted
             // when it differs from the 100% default; needs the new
             // leaderboard's id, returned by createLeaderboard.
             if (r.data?.id && sponsoredPctNum !== 100) {
@@ -325,7 +326,7 @@ export function CreateDialog({ trigger, fixedCreatorUserId }: Props) {
                 );
                 if (!sr.success) {
                     toast.error(
-                        `Leaderboard created, but sponsored % not saved: ${sr.error}`,
+                        `Leaderboard created, but house share % not saved: ${sr.error}`,
                     );
                 }
             }
@@ -642,13 +643,13 @@ export function CreateDialog({ trigger, fixedCreatorUserId }: Props) {
                         </div>
                     </div>
 
-                    {/* Sponsored % — admin-side cost-accounting input.
+                    {/* House share % — admin-side cost-accounting input.
                         Saved to the admin DB after the leaderboard is
                         created; it weights this leaderboard in the
                         /creators Leaderboard Cost KPI. */}
                     <div className="space-y-2">
                         <Label htmlFor="sponsored_pct">
-                            Sponsored % (cost math only)
+                            House share % (cost math only)
                         </Label>
                         <Input
                             id="sponsored_pct"
@@ -661,9 +662,11 @@ export function CreateDialog({ trigger, fixedCreatorUserId }: Props) {
                             placeholder="100"
                         />
                         <p className="text-xs text-muted-foreground">
-                            Share of this leaderboard counted in the
-                            /creators Leaderboard Cost KPI. Doesn&apos;t
-                            change the leaderboard itself. Default 100%.
+                            The portion of this prize pool the house pays
+                            on-site. The rest is the creator&apos;s
+                            off-site contribution. Weights the /creators
+                            Leaderboard Cost KPI; doesn&apos;t change the
+                            leaderboard itself. Default 100%.
                         </p>
                     </div>
 

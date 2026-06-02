@@ -9,7 +9,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatDateTime, formatRelative } from "@/lib/utils/format";
+import { formatCurrency, formatDateTime, formatRelative } from "@/lib/utils/format";
 import { EmptyState } from "@/components/empty-state";
 import { ListRowActions } from "./list-row-actions";
 import { InlineSponsoredPercentage } from "./inline-sponsored-percentage";
@@ -18,6 +18,23 @@ import type {
   ApprovalStatus,
   TimeStatus,
 } from "@/lib/backend-api/affiliate-leaderboards";
+
+/**
+ * Derived house cost for a single leaderboard row, House-POV (rose):
+ *   (total_prize_usd − refund_amount_usd) × (house share % / 100)
+ *
+ * `housePct` is the admin-side "sponsored %" (the house's share of the
+ * prize pool); null = no annotation → 100% (full pool counted). Mirrors
+ * the committed-cost formula of getLeaderboardCostTotal exactly. Refund
+ * is netted out so a cancelled-and-refunded board doesn't show a cost we
+ * clawed back.
+ */
+function rowHouseCost(r: LeaderboardAdminRow, housePct: number | null): number {
+  const pool = Number(r.total_prize_usd) || 0;
+  const refund = Number(r.refund_amount_usd) || 0;
+  const pct = Math.min(100, Math.max(0, housePct ?? 100));
+  return (pool - refund) * (pct / 100);
+}
 
 const APPROVAL_COLORS: Record<ApprovalStatus, string> = {
   pending: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
@@ -117,14 +134,19 @@ function LeaderboardMobileCard({
           <div className="text-[10px] text-muted-foreground tabular-nums">
             ${r.creator_prize_usd} + ${r.site_bonus_usd}
           </div>
-          {/* Admin-side sponsored % — counted in the /creators
+          {/* House share % (admin-side "sponsored %") + the derived
+              house cost it weights — counted in the /creators
               Leaderboard Cost KPI. */}
           <div className="flex items-center justify-end gap-1 text-[10px] text-muted-foreground">
-            <span>Sponsored</span>
+            <span>House</span>
             <InlineSponsoredPercentage
               leaderboardId={r.id}
               current={sponsoredPct}
             />
+          </div>
+          {/* House cost = (total − refund) × house % → rose. */}
+          <div className="text-[10px] font-medium tabular-nums text-rose-600 dark:text-rose-400">
+            {formatCurrency(rowHouseCost(r, sponsoredPct))}
           </div>
           <ListRowActions row={r} />
         </div>
@@ -182,7 +204,8 @@ export function LeaderboardsTable({
               <TableHead className="text-right">Creator $</TableHead>
               <TableHead className="text-right">Bonus $</TableHead>
               <TableHead className="text-right">Total $</TableHead>
-              <TableHead className="text-right">Sponsored %</TableHead>
+              <TableHead className="text-right">House %</TableHead>
+              <TableHead className="text-right">House Cost</TableHead>
               <TableHead>Starts</TableHead>
               <TableHead>Ends</TableHead>
               <TableHead className="w-[200px]" />
@@ -191,7 +214,7 @@ export function LeaderboardsTable({
           <TableBody>
             {rows.length === 0 ? (
               <TableRow className="hover:bg-transparent">
-                <TableCell colSpan={11} className="p-0">
+                <TableCell colSpan={12} className="p-0">
                   <EmptyState
                     icon={Trophy}
                     title="No leaderboards found"
@@ -285,6 +308,13 @@ export function LeaderboardsTable({
                         leaderboardId={r.id}
                         current={sponsorshipMap.get(r.id) ?? null}
                       />
+                    </TableCell>
+                    {/* Derived house cost — (total − refund) × house %.
+                        Rose: prize money the house pays out is our cost. */}
+                    <TableCell className="text-right tabular-nums font-medium text-rose-600 dark:text-rose-400">
+                      {formatCurrency(
+                        rowHouseCost(r, sponsorshipMap.get(r.id) ?? null),
+                      )}
                     </TableCell>
                     <TableCell className="text-xs">
                       {formatDateTime(r.start_date)}

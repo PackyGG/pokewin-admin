@@ -288,7 +288,7 @@ async function CreatorsKpiStrip({
       />
       {/* Leaderboard Cost — combined prize pool of every approved
           creator leaderboard, net of refunds, each weighted by its
-          admin-set sponsored % (set inline on /creators/leaderboards;
+          admin-set house share % (set inline on /creators/leaderboards;
           defaults to 100%). Rose: prize money paid out to users is a
           house cost (matches the rose total-prize coloring on the
           leaderboards table). */}
@@ -297,7 +297,7 @@ async function CreatorsKpiStrip({
         value={
           leaderboardCost != null ? formatCurrency(leaderboardCost) : "—"
         }
-        sub="Approved leaderboard prizes × sponsored %"
+        sub="Approved leaderboard prizes × house share %"
         icon={Trophy}
         accent="rose"
       />

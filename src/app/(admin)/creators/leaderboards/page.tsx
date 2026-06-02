@@ -1,5 +1,15 @@
 import Link from "next/link";
-import { Trophy, Plus, ArrowUp, ArrowDown } from "lucide-react";
+import {
+    Trophy,
+    Plus,
+    ArrowUp,
+    ArrowDown,
+    Coins,
+    Layers,
+    Handshake,
+    Percent,
+    Activity,
+} from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
 import { getDb } from "@/lib/db";
@@ -7,11 +17,12 @@ import {
     affiliateLeaderboardsApi,
     type LeaderboardAdminRow,
 } from "@/lib/backend-api/affiliate-leaderboards";
-import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { formatCurrency, formatNumber } from "@/lib/utils/format";
 
 import { LeaderboardsTable } from "./_components/leaderboards-table";
 import { CreateDialog } from "./_components/create-dialog";
@@ -140,10 +151,15 @@ export default async function AffiliateLeaderboardsPage({
         : [];
     const creatorMap = new Map(creators.map((c) => [c.id, c]));
 
-    // Admin-side sponsored % per leaderboard (admin DB). Best-effort —
-    // a failure just renders every row at the 100% default.
+    // Admin-side sponsored % (= the house's prize-pool share) per
+    // leaderboard (admin DB). Best-effort — a failure renders every row
+    // at the 100% default. Fetched over the WHOLE active-tab set
+    // (allRows, already bounded by FETCH_CAP) — not just the visible
+    // page — so the KPI strip below can weight house cost across every
+    // row in the tab in a single query. The table only reads its own
+    // page's ids out of the map.
     const sponsorshipMap = await getLeaderboardSponsorshipMap(
-        rows.map((r) => r.id),
+        allRows.map((r) => r.id),
     ).catch((e) => {
         console.error(
             "[leaderboards] sponsorship fetch failed (rows show 100%):",
@@ -151,6 +167,44 @@ export default async function AffiliateLeaderboardsPage({
         );
         return new Map<string, number>();
     });
+
+    // KPI strip — computed over the active status-tab's full fetched set
+    // (allRows), net of refunds, weighted by each row's house share %
+    // (the admin-side "sponsored %"; absent → 100%). Mirrors the exact
+    // committed-cost formula of getLeaderboardCostTotal / the /creators
+    // Leaderboard Cost tile, just scoped to the rows already on screen.
+    //
+    // House-POV: prize money the house pays out to users is a house cost
+    // → rose. The creator-funded off-site remainder isn't our spend →
+    // blue/neutral. Active/Upcoming counts are operational → emerald/blue.
+    //
+    // NOTE: committed (pool − refund), NOT claimed. The list API / row
+    // shape exposes no claimed-prize amount (prizes are manually claimed;
+    // `paid_manually` is only a boolean), so a realized/claimed figure
+    // would need a backend endpoint we don't have. This matches the
+    // existing Leaderboard Cost tile.
+    let kpiHouseCost = 0; // Σ (pool − refund) × house%
+    let kpiPools = 0; // Σ (pool − refund) — full committed pools
+    let kpiActive = 0;
+    let kpiUpcoming = 0;
+    for (const lb of allRows) {
+        const pool = Number(lb.total_prize_usd) || 0;
+        const refund = Number(lb.refund_amount_usd) || 0;
+        const net = pool - refund;
+        const pct = Math.min(
+            100,
+            Math.max(0, sponsorshipMap.get(lb.id) ?? 100),
+        );
+        kpiHouseCost += net * (pct / 100);
+        kpiPools += net;
+        if (lb.time_status === "active") kpiActive += 1;
+        else if (lb.time_status === "upcoming") kpiUpcoming += 1;
+    }
+    // Creator-funded off-site = committed pools − the house's share.
+    const kpiCreatorFunded = kpiPools - kpiHouseCost;
+    // Blended "% we pay" — prize-weighted, i.e. house cost / pools. This
+    // is the headline house-share %, not a naive mean of the per-row %s.
+    const kpiAvgHouseShare = kpiPools > 0 ? (kpiHouseCost / kpiPools) * 100 : 0;
 
     const hasNext = offset + perPage < sortedRows.length;
     const hasPrev = offset > 0;
@@ -202,6 +256,50 @@ export default async function AffiliateLeaderboardsPage({
                     }
                 />
             </PageHero>
+
+            {/* KPI strip — house cost + pools + the headline house-share
+                %, over the active status-tab's full fetched set. House-POV:
+                house spend is rose; the creator-funded off-site remainder
+                is blue/neutral; live operational counts are emerald/blue. */}
+            <FadeIn>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                    <KpiTile
+                        label="House Cost"
+                        value={formatCurrency(kpiHouseCost)}
+                        sub="Σ (pool − refund) × house share"
+                        icon={Coins}
+                        accent="rose"
+                    />
+                    <KpiTile
+                        label="Total Prize Pools"
+                        value={formatCurrency(kpiPools)}
+                        sub="Committed pools, net of refunds"
+                        icon={Layers}
+                        accent="rose"
+                    />
+                    <KpiTile
+                        label="Creator-Funded Off-Site"
+                        value={formatCurrency(kpiCreatorFunded)}
+                        sub="Pools − house cost"
+                        icon={Handshake}
+                        accent="blue"
+                    />
+                    <KpiTile
+                        label="Avg House Share"
+                        value={`${kpiAvgHouseShare.toFixed(1)}%`}
+                        sub="Prize-weighted — the % we pay"
+                        icon={Percent}
+                        accent="rose"
+                    />
+                    <KpiTile
+                        label="Active / Upcoming"
+                        value={`${formatNumber(kpiActive)} / ${formatNumber(kpiUpcoming)}`}
+                        sub={`${formatNumber(allRows.length)} in ${tab === "all" ? "all tabs" : `“${tab}”`}`}
+                        icon={Activity}
+                        accent="emerald"
+                    />
+                </div>
+            </FadeIn>
 
             <div className="space-y-4">
                 <div className="flex items-center justify-between gap-4 flex-wrap">
