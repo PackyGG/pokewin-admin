@@ -358,7 +358,7 @@ function EmployeeRow({ employee }: { employee: Employee }) {
               ≈ $
               {(
                 employee.salaryUsdt *
-                (employee.cadence === "weekly" ? 52 / 12 : 26 / 12)
+                (employee.cadence === "weekly" ? 4 : 2)
               ).toLocaleString(undefined, { maximumFractionDigits: 2 })}{" "}
               /mo
             </div>
@@ -401,8 +401,7 @@ function EmployeeMobileCard({ employee }: { employee: Employee }) {
   const perMonth =
     employee.cadence === "monthly"
       ? null
-      : employee.salaryUsdt *
-        (employee.cadence === "weekly" ? 52 / 12 : 26 / 12);
+      : employee.salaryUsdt * (employee.cadence === "weekly" ? 4 : 2);
   return (
     <div
       className={cn(
@@ -801,15 +800,16 @@ function EmployeeFormDialog({
               onChange={(e) => setSalary(e.target.value)}
               placeholder="500"
             />
-            {/* For weekly/biweekly cadences show the calendar-month
-                equivalent so it's obvious what the actual monthly
-                cost is. Same factor used in page.tsx for the
-                Monthly Budget KPI: weekly ×52/12, biweekly ×26/12. */}
+            {/* For weekly/biweekly cadences show the monthly equivalent
+                so it's obvious what the actual monthly cost is. Same
+                fixed multiples used in page.tsx for the Monthly Budget
+                KPI — dead-simple, NO calendar math: weekly ×4,
+                biweekly ×2. */}
             {(() => {
               const sal = parseFloat(salary);
               if (!Number.isFinite(sal) || sal <= 0) return null;
               if (cadence === "monthly") return null;
-              const factor = cadence === "weekly" ? 52 / 12 : 26 / 12;
+              const factor = cadence === "weekly" ? 4 : 2;
               const perMonth = sal * factor;
               return (
                 <p className="text-[10px] text-muted-foreground">

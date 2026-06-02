@@ -59,16 +59,17 @@ export default async function SalariesPage() {
   const now = new Date();
   const activeEmployees = employees.filter((e) => e.active).length;
   // Monthly budget = sum of (salary × periods-per-month) across all
-  // active employees, normalized to a calendar month. Per-period
-  // salary stays as the input; cadence converts it to monthly:
-  //   weekly   → ×52/12 (≈4.33)
-  //   biweekly → ×26/12 (≈2.17)
+  // active employees. Per-period salary stays as the input; cadence
+  // converts it to monthly using dead-simple fixed multiples — NO
+  // calendar math (no 52/12 ≈ 4.33, no days-in-month):
+  //   weekly   → ×4   (a $1,625/wk line contributes exactly $6,500/mo)
+  //   biweekly → ×2
   //   monthly  → ×1
   // Fallback: anything else (or stale rows from before the cadence
   // column existed) is treated as monthly.
   const periodsPerMonth = (cadence: string): number => {
-    if (cadence === "weekly") return 52 / 12;
-    if (cadence === "biweekly") return 26 / 12;
+    if (cadence === "weekly") return 4;
+    if (cadence === "biweekly") return 2;
     return 1;
   };
   const monthlyBudget = employees
