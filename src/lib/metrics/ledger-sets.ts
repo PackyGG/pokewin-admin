@@ -209,11 +209,15 @@ export const NEUTRAL_TYPES = [
  * expense that does not exist.
  *
  * RAIN CAVEAT: `rain_win` is included as a reward type, but rain is
- * MIXED-funded ($2/hr house base + user tips + founder tips). The NGR
- * helper does NOT hard-code the full `rain_win` magnitude as house cost —
- * it parameterises the rain house-cost via a hook (see `formulas.ts`
- * `ngr` / `RainHouseCost`). The funding leg `rain_tip` is RESIDUAL (a
- * transfer), not a reward.
+ * SYSTEM-AUTOMATIC and MIXED-funded (the platform auto-adds whatever the
+ * pool pays out beyond the user/founder tip contributions; there is no
+ * funding account behind it). The NGR helper does NOT hard-code the full
+ * `rain_win` magnitude as house cost — it parameterises the rain
+ * house-cost via a hook (see `formulas.ts` `ngr` / `RainHouseCost`), whose
+ * canonical default is the OWNER-CONFIRMED net model
+ * `rainHouseCost = max(0, Σ|rain_win| − Σ|rain_tip|)`. The funding leg
+ * `rain_tip` is RESIDUAL (a transfer / the user+founder contribution that
+ * is netted out of the house cost), not a reward.
  */
 export const REWARD_PAYOUT_TYPES = [
   "deposit_bonus",
@@ -247,9 +251,11 @@ export const REWARD_PAYOUT_TYPES = [
  *    balance delta, not GGR/NGR. The precise debit/credit split is a
  *    cost-breakdown concern, not a gaming-margin one.
  *  • `vault_lock` / `vault_unlock` — balance↔vault transfer (cancel out).
- *  • `rain_tip` — rain pool FUNDING leg (user/house/founder mix). A
- *    transfer, not a reward cost; the house slice of rain cost is
- *    surfaced via the parameterised rain hook in `formulas.ts`.
+ *  • `rain_tip` — rain pool FUNDING leg: the user + founder contribution
+ *    into a pool. A transfer, not a reward cost. The house slice of rain
+ *    cost is `max(0, Σ|rain_win| − Σ|rain_tip|)` (owner-confirmed), netted
+ *    via the parameterised rain hook in `formulas.ts`; `rain_tip` is the
+ *    amount subtracted there.
  *  • `creator_tip` — VERIFIED pure user→user pass-through; both legs
  *    cancel to $0 net house cost. NOT a reward cost.
  *  • `pack_borrow_to_voucher` — borrow-mode remainder → voucher (borrow

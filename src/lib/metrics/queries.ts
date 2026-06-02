@@ -17,6 +17,7 @@ import {
   ggr as ggrFormula,
   ngr as ngrFormula,
   gamingPayoutTotal,
+  resolveRainHouseCost,
   empiricalRtp,
   empiricalHouseEdge,
   type RainHouseCost,
@@ -195,13 +196,22 @@ export type RewardCost = {
   rewardCostExclRain: number;
   /** Σ |rain_win| over the window — for the parameterised rain hook. */
   rainWinTotal: number;
+  /**
+   * Σ |rain_tip| over the window — the user + founder contribution into
+   * rain pools. Subtracted from `rainWinTotal` by the owner-confirmed net
+   * rain model (`max(0, rain_win − rain_tip)`). `rain_tip` is RESIDUAL (a
+   * transfer), surfaced here only so the NGR rain hook can net it out.
+   */
+  rainTipTotal: number;
 };
 
 /**
- * Read house-funded reward cost for a window, splitting `rain_win` out so
- * the NGR helper can apply the mixed-funding rain hook (see `formulas.ts`
- * `RainHouseCost`). `creator_tip` is intentionally NOT summed here (it is
- * a RESIDUAL pass-through, not a reward cost).
+ * Read house-funded reward cost for a window, splitting `rain_win` and
+ * `rain_tip` out so the NGR helper can apply the owner-confirmed net rain
+ * model (see `formulas.ts` `RainHouseCost`, `{ kind: "net" }`):
+ * `rainHouseCost = max(0, Σ|rain_win| − Σ|rain_tip|)`. `creator_tip` is
+ * intentionally NOT summed here (it is a RESIDUAL pass-through, not a
+ * reward cost).
  */
 export async function getRewardCost(window: MetricWindow): Promise<RewardCost> {
   return withTiming("metrics.rewardCost", async () => {
@@ -209,11 +219,16 @@ export async function getRewardCost(window: MetricWindow): Promise<RewardCost> {
     const scope = await realCustomersScope();
     const since = window.since;
 
-    type Row = { reward_excl_rain: string; rain_win: string };
+    type Row = {
+      reward_excl_rain: string;
+      rain_win: string;
+      rain_tip: string;
+    };
     const rows = await db.$queryRawUnsafe<Row[]>(
       `SELECT
          COALESCE(SUM(CASE WHEN type IN ${REWARD_PAYOUT_TYPES_SQL} AND type <> 'rain_win' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS reward_excl_rain,
-         COALESCE(SUM(CASE WHEN type = 'rain_win' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rain_win
+         COALESCE(SUM(CASE WHEN type = 'rain_win' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rain_win,
+         COALESCE(SUM(CASE WHEN type = 'rain_tip' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rain_tip
        FROM ledger_transactions
        WHERE status = 'completed'
          AND user_id IN ${scope}
@@ -223,6 +238,7 @@ export async function getRewardCost(window: MetricWindow): Promise<RewardCost> {
     return {
       rewardCostExclRain: toNumber(rows[0]?.reward_excl_rain),
       rainWinTotal: toNumber(rows[0]?.rain_win),
+      rainTipTotal: toNumber(rows[0]?.rain_tip),
     };
   });
 }
@@ -324,8 +340,11 @@ export type WindowMetrics = {
   /** Empirical house edge 0..1, or null below MIN_SAMPLE. */
   houseEdge: EmpiricalRatio;
   bets: number;
-  /** Echo of the rain treatment used, for surfacing the assumption. */
+  /** Echo of the rain inputs used, for surfacing the assumption. */
   rainWinTotal: number;
+  rainTipTotal: number;
+  /** Resolved house slice of rain that reduced NGR (net model by default). */
+  rainHouseCost: number;
 };
 
 /**
@@ -333,10 +352,13 @@ export type WindowMetrics = {
  * the DB reads (`getGamingLegs`, `getRewardCost`, and — when the table
  * exists — `upgraderMetrics`) with the pure `formulas.ts` arithmetic.
  *
- * `rainHouseCost` controls how rain reduces NGR (mixed-funded). Defaults
- * to the CONSERVATIVE `{ kind: "full" }` (all `rain_win` counts as house
- * cost) — an upper bound until a prod funding signal lets us net out
- * user-funded `rain_tip`. Pass an explicit `RainHouseCost` to override.
+ * `rainHouseCost` controls how rain reduces NGR (system-automatic,
+ * mixed-funded). Defaults to the OWNER-CONFIRMED net model
+ * `{ kind: "net", rainWinTotal, rainTipTotal }` =
+ * `max(0, Σ|rain_win| − Σ|rain_tip|)`: the house only funded the winnings
+ * beyond the user/founder tip contributions. Pass an explicit
+ * `RainHouseCost` to override (e.g. `{ kind: "full" }` for the
+ * conservative upper bound).
  *
  * Upgrader is folded into wager/payout ONLY when `UPGRADER_IN_LEDGER` is
  * true (post prod-confirm). While false, upgrader is reported separately
@@ -370,12 +392,17 @@ export async function getWindowMetrics(opts: {
   const bets = legs.bets + upgraderBets;
 
   const ggrValue = ggrFormula({ wager, gamingPayout });
-  const rainHouseCost: RainHouseCost =
-    opts.rainHouseCost ?? { kind: "full", rainWinTotal: reward.rainWinTotal };
+  const rainHouseCostInput: RainHouseCost =
+    opts.rainHouseCost ?? {
+      kind: "net",
+      rainWinTotal: reward.rainWinTotal,
+      rainTipTotal: reward.rainTipTotal,
+    };
+  const rainHouseCost = resolveRainHouseCost(rainHouseCostInput);
   const ngrValue = ngrFormula({
     ggr: ggrValue,
     rewardCostExclRain: reward.rewardCostExclRain,
-    rainHouseCost,
+    rainHouseCost: rainHouseCostInput,
   });
 
   return {
@@ -387,6 +414,8 @@ export async function getWindowMetrics(opts: {
     houseEdge: empiricalHouseEdge({ wager, ggr: ggrValue, bets }),
     bets,
     rainWinTotal: reward.rainWinTotal,
+    rainTipTotal: reward.rainTipTotal,
+    rainHouseCost,
   };
 }
 

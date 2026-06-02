@@ -201,10 +201,23 @@ check("rain 'full' counts entire rain_win", approx(resolveRainHouseCost({ kind: 
 check("rain 'fraction' applies the fraction", approx(resolveRainHouseCost({ kind: "fraction", fraction: 0.25, rainWinTotal: 80 }), 20));
 check("rain 'amount' passes through (clamped ≥0)", approx(resolveRainHouseCost({ kind: "amount", houseCost: 33 }), 33));
 check("rain 'amount' clamps negatives to 0", approx(resolveRainHouseCost({ kind: "amount", houseCost: -5 }), 0));
+// Owner-confirmed NET model: house cost = max(0, rain_win − rain_tip).
+check("rain 'net' = rain_win − rain_tip (tips < winnings)", approx(resolveRainHouseCost({ kind: "net", rainWinTotal: 80, rainTipTotal: 30 }), 50));
+check("rain 'net' clamps to 0 when tips ≥ winnings", approx(resolveRainHouseCost({ kind: "net", rainWinTotal: 80, rainTipTotal: 120 }), 0));
+check("rain 'net' with zero tips equals full", approx(resolveRainHouseCost({ kind: "net", rainWinTotal: 80, rainTipTotal: 0 }), resolveRainHouseCost({ kind: "full", rainWinTotal: 80 })));
 const nRain = ngr({ ggr: g, rewardCostExclRain: 50, rainHouseCost: { kind: "full", rainWinTotal: 80 } });
 check("NGR with full rain = GGR − reward − rain = 120", approx(nRain, 120));
 const nRainPartial = ngr({ ggr: g, rewardCostExclRain: 50, rainHouseCost: { kind: "fraction", fraction: 0.25, rainWinTotal: 80 } });
 check("NGR with 25% rain = 250 − 50 − 20 = 180", approx(nRainPartial, 180));
+// NGR with the canonical net model: rain_win 80, rain_tip 30 → house rain
+// cost 50 → NGR = 250 − 50 − 50 = 150. This is the default every analytics
+// surface now consumes.
+const nRainNet = ngr({ ggr: g, rewardCostExclRain: 50, rainHouseCost: { kind: "net", rainWinTotal: 80, rainTipTotal: 30 } });
+check("NGR with net rain = 250 − 50 − 50 = 150", approx(nRainNet, 150));
+// When tips fully cover winnings the net model adds NO rain cost: NGR ==
+// GGR − reward only (rain is not a house expense in that window).
+const nRainCovered = ngr({ ggr: g, rewardCostExclRain: 50, rainHouseCost: { kind: "net", rainWinTotal: 40, rainTipTotal: 90 } });
+check("NGR net rain floored at 0 when tips ≥ winnings = 200", approx(nRainCovered, 200));
 
 // ─── 5. RTP / edge sample guard ──────────────────────────────────────
 console.log(`[metrics checks] empirical RTP/edge sample guard (MIN_SAMPLE=${MIN_SAMPLE})`);

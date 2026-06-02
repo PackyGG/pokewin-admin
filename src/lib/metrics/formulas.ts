@@ -123,37 +123,52 @@ export function ggrFromLegs(input: {
 // ─── NGR ─────────────────────────────────────────────────────────────
 
 /**
- * Rain is MIXED-funded ($2/hr house base + user tips + founder tips), so
- * the full `rain_win` magnitude is NOT a pure house cost. The NGR helper
- * takes a `RainHouseCost` to resolve the HOUSE slice of rain that should
- * reduce NGR.
+ * Rain is SYSTEM-AUTOMATIC and MIXED-funded: the platform auto-adds a base
+ * to every rain pool (there is no funding account behind it — the system
+ * tops the pool up to whatever it pays out beyond the user/founder tip
+ * contributions), and users + founders also tip into the pool. So the full
+ * `rain_win` magnitude is NOT a pure house cost: the slice that real users
+ * (and founders) funded via `rain_tip` was never the house's money. The
+ * NGR helper takes a `RainHouseCost` to resolve the HOUSE slice of rain
+ * that should reduce NGR.
  *
+ *   • `{ kind: "net", rainWinTotal, rainTipTotal }` — the OWNER-CONFIRMED
+ *     model and the canonical default (see `queries.ts` `getWindowMetrics`):
+ *     the house only funded the winnings beyond what tips covered, i.e.
+ *
+ *         rainHouseCost = max(0, Σ|rain_win| − Σ|rain_tip|)
+ *
+ *     `rain_tip` is the user/founder contribution; the house auto-added the
+ *     remainder, so only that remainder is a house reward cost. `rain_tip`
+ *     itself is RESIDUAL (a transfer, not a reward) — see `ledger-sets.ts`.
  *   • `{ kind: "amount", houseCost }` — caller already computed the house
- *     slice (e.g. from a prod funding signal) and passes the dollar
- *     figure directly.
+ *     slice (e.g. from a more precise prod funding signal) and passes the
+ *     dollar figure directly.
  *   • `{ kind: "fraction", fraction, rainWinTotal }` — apply a fraction
  *     of total `rain_win` as house cost (0..1).
  *   • `{ kind: "full", rainWinTotal }` — treat ALL of `rain_win` as house
- *     cost. CONSERVATIVE default (overstates cost rather than understating
- *     it) used when no funding split is known.
- *
- * TODO(prod): the precise house-vs-user rain split needs a prod funding
- * signal — the system/founder `user_id`(s) that fund the $2/hr base and
- * founder tips, so `rain_tip` rows from real users can be netted out. We
- * do NOT fake a number here; until that signal exists, callers should use
- * `{ kind: "full" }` (conservative) and flag the figure as an upper
- * bound on rain cost.
+ *     cost. The CONSERVATIVE upper bound (overstates cost), kept available
+ *     for surfaces that deliberately want the worst-case rain figure; it is
+ *     no longer the default now that the net model is owner-confirmed.
  */
 export type RainHouseCost =
+  | { kind: "net"; rainWinTotal: number; rainTipTotal: number }
   | { kind: "amount"; houseCost: number }
   | { kind: "fraction"; fraction: number; rainWinTotal: number }
   | { kind: "full"; rainWinTotal: number };
 
 /**
  * Resolve the house-funded slice of rain cost from a `RainHouseCost`.
+ *
+ * Every branch is clamped at ≥ 0: rain can never be NEGATIVE house cost
+ * (tips exceeding winnings do not make rain a house profit — the surplus
+ * tip is residual, handled elsewhere), so `net` floors at 0 just like the
+ * owner-confirmed formula `max(0, Σ|rain_win| − Σ|rain_tip|)`.
  */
 export function resolveRainHouseCost(cost: RainHouseCost): number {
   switch (cost.kind) {
+    case "net":
+      return Math.max(0, cost.rainWinTotal - cost.rainTipTotal);
     case "amount":
       return Math.max(0, cost.houseCost);
     case "fraction":
@@ -180,7 +195,10 @@ export type NgrInput = {
   rewardCostExclRain: number;
   /**
    * House slice of rain cost — see `RainHouseCost`. Defaults to 0 (no
-   * rain cost) if omitted; pass a value to include rain in NGR.
+   * rain cost) if omitted; pass a value to include rain in NGR. The
+   * canonical query layer (`queries.ts` `getWindowMetrics`) supplies
+   * `{ kind: "net", … }` (the owner-confirmed `max(0, rain_win − rain_tip)`
+   * model) by default.
    */
   rainHouseCost?: RainHouseCost;
 };
