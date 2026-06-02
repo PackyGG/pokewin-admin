@@ -14,9 +14,11 @@ import {
 
 import {
   getCreatorDetail,
+  getCreatorHeader,
   refreshStaleSocials,
 } from "@/lib/queries/creators";
 import { requirePageAccess } from "@/lib/dal";
+import { safeQueryOrNull } from "@/lib/errors/safe-query";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card } from "@/components/ui/card";
@@ -37,6 +39,7 @@ import { CreatorNetPnlPanel } from "./creator-net-pnl-panel";
 
 import { parseCreatorDetailSearchParams } from "./_lib/search-params";
 import { getCreatorDealData } from "./_queries/get-creator-deal-data";
+import { getCreatorHeaderSocials } from "./_queries/header-socials";
 import { DealTabs } from "./_components/deal-tabs";
 import { DealsTab } from "./_components/deals-tab";
 import { DealsSubTabs } from "./_components/deals-sub-tabs";
@@ -45,6 +48,8 @@ import { PendingTab } from "./_components/pending-tab";
 import { DealFormDialog } from "./_components/deal-form-dialog";
 import { ApiKeyDialog } from "./_components/api-key-dialog";
 import { listMultiplierDealsForCreator } from "../multiplier-actions";
+import type { DashboardPeriod } from "@/lib/queries/dashboard-period";
+import type { CreatorDetailSearchParams } from "./_lib/search-params";
 
 export const metadata = { title: "Creator Detail" };
 
@@ -59,34 +64,333 @@ export default async function CreatorDetailPage({
   const { userId } = await params;
   const sp = parseCreatorDetailSearchParams(await searchParams);
 
-  // Header data still comes from the legacy query for now — it carries
-  // the profile fields (username/email/code/role/socials) the backend's
-  // admin API doesn't expose yet. Deal data is fetched fresh from the
-  // backend in parallel with per-tab pagination/filters. Multiplier
-  // deals come in as a separate page-1 slice (25 most recent) — they're
-  // rendered as grouped sections rather than a paginated table.
-  const [profile, dealData, multiplierDealsPage] = await Promise.all([
-    getCreatorDetail(userId),
-    getCreatorDealData(userId, {
-      dealsPage: sp.dealsPage,
-      dealsPerPage: sp.dealsPerPage,
-      sessionsPage: sp.sessionsPage,
-      sessionsPerPage: sp.sessionsPerPage,
-      sessionsStatus: sp.sessionsStatus,
-      pendingStatus: sp.pendingStatus,
-    }),
-    listMultiplierDealsForCreator(userId, { offset: 0, limit: 25 }).catch(
-      () => null,
-    ),
-  ]);
-
-  if (!profile) notFound();
-
-  const multiplierDeals = multiplierDealsPage?.data ?? [];
-  const multiplierCount = multiplierDealsPage?.total ?? 0;
+  // CRITICAL — active-timeframe-only + lazy streaming (CLAUDE.md):
+  //
+  // The page used to BLOCK its entire first paint on a single
+  // `Promise.all([getCreatorDetail, getCreatorDealData,
+  // listMultiplierDealsForCreator])` — i.e. 12 Main-DB analytics
+  // round-trips PLUS 4 backend-API round-trips all had to resolve before
+  // even the PageHero rendered. That is the "loads ~10x too long" cause.
+  //
+  // Now the page fetches ONLY the cheap header (2 indexed lookups) on the
+  // critical path so the hero + nav paint immediately, then streams every
+  // heavy region through its OWN independent Suspense boundary:
+  //   • CreatorFinancialBand — the single getCreatorDetail() analytics
+  //     round-trip + the Net Creator P&L band (whose windowed GGR is
+  //     itself active-timeframe-only, re-streaming only its own tile on a
+  //     `?period=` chip switch).
+  //   • CreatorDealBand — the 4 backend deal/session/pending/multiplier
+  //     round-trips, streamed IN PARALLEL with the analytics band (neither
+  //     blocks the other, neither blocks the hero).
+  //   • LeaderboardsCard — already its own boundary.
+  // Each heavy fetch is timeout-bounded (safeQuery) so a slow one degrades
+  // to a fallback instead of hanging the segment.
+  const header = await getCreatorHeader(userId);
+  if (!header) notFound();
 
   // Non-blocking: socials cache refresh for header display.
   refreshStaleSocials(userId).catch(() => {});
+
+  return (
+    <div className="space-y-6">
+      <PageHero>
+        <div className="flex items-start gap-2.5 sm:gap-3 flex-wrap">
+          <Link
+            href="/creators"
+            className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground shrink-0"
+          >
+            <ArrowLeft className="size-4" />
+          </Link>
+          <Avatar className="size-10 sm:size-11 shrink-0">
+            {header.image && <AvatarImage src={header.image} alt="" />}
+            <AvatarFallback className="text-xs font-semibold">
+              {(header.username ?? header.email ?? "?")
+                .slice(0, 2)
+                .toUpperCase()}
+            </AvatarFallback>
+          </Avatar>
+          <div className="hidden sm:flex size-10 items-center justify-center rounded-xl bg-pink-500/10 shrink-0">
+            <Star className="size-5 text-pink-500" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Link
+                href={`/users/${header.userId}`}
+                className="text-xl sm:text-2xl font-bold leading-tight hover:underline truncate"
+              >
+                {header.username ?? header.email}
+              </Link>
+              {header.code ? (
+                <Badge variant="outline" className="font-mono text-[11px]">
+                  {header.code}
+                </Badge>
+              ) : (
+                <Badge variant="secondary" className="text-[11px]">
+                  No affiliate code
+                </Badge>
+              )}
+              <span className="hidden sm:inline text-muted-foreground/40">·</span>
+              <RoleSelect userId={header.userId} currentRole={header.role} />
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+              {header.email && <MaskedEmail email={header.email} />}
+              {/* Socials chips stream in their own boundary so the hero
+                  text paints instantly; a thin admin-DB read (not the heavy
+                  analytics aggregate) backs them. */}
+              <Suspense
+                fallback={
+                  <span className="inline-flex items-center rounded-md border border-dashed px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                    …
+                  </span>
+                }
+              >
+                <HeaderSocialsStreamed userId={header.userId} />
+              </Suspense>
+            </div>
+          </div>
+          {header.role === "creator" && (
+            <div className="ml-auto shrink-0">
+              <ApiKeyDialog userId={header.userId} />
+            </div>
+          )}
+        </div>
+      </PageHero>
+
+      <FadeIn className="space-y-4 sm:space-y-6">
+        {/* ── Net Creator P&L + acquisition + affiliate-payouts band —
+            owns the single getCreatorDetail() analytics round-trip, streamed
+            so its 12 Main-DB reads don't extend the hero's TTFB. The Net P&L
+            panel inside re-streams only its windowed GGR tile on a period
+            chip switch (active-timeframe-only). ─────────────────────── */}
+        <Suspense fallback={<CreatorFinancialBandSkeleton />}>
+          <CreatorFinancialBand userId={userId} period={sp.period} />
+        </Suspense>
+
+        {/* Per-code activity entry points. Each is its own dedicated page
+            (full-width tables, breadcrumb back, pill-tab nav). Lives above
+            the deal management band so the admin sees the entry points
+            before drilling into deal terms. Driven by the cheap header code
+            so it paints with the hero, not behind the analytics band. */}
+        {header.code && (
+          <div className="grid gap-3 sm:gap-4 sm:grid-cols-2">
+            <Link
+              href={`/creators/${header.userId}/users`}
+              className="group flex items-center gap-3 rounded-2xl border bg-card/60 p-4 transition-all hover:border-foreground/20 hover:bg-card hover:shadow-sm"
+            >
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-500">
+                <Users className="size-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold">Users on code</div>
+                <div className="truncate text-xs text-muted-foreground">
+                  Everyone tied to this creator&apos;s code
+                </div>
+              </div>
+              <ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
+            </Link>
+            <Link
+              href={`/creators/${header.userId}/wagers`}
+              className="group flex items-center gap-3 rounded-2xl border bg-card/60 p-4 transition-all hover:border-foreground/20 hover:bg-card hover:shadow-sm"
+            >
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-500">
+                <Activity className="size-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold">Last wagers</div>
+                <div className="truncate text-xs text-muted-foreground">
+                  Recent wager events from those users
+                </div>
+              </div>
+              <ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
+            </Link>
+          </div>
+        )}
+
+        {/* ── Deal management band — the 4 backend round-trips
+            (deals/sessions/pending/multiplier), streamed in its OWN
+            boundary so it loads in parallel with the analytics band above
+            rather than serially behind it. The acquisition chart lives in
+            the analytics band (it shares that band's getCreatorDetail
+            aggregate). ──────────────────────────────────────────────── */}
+        <Suspense fallback={<CreatorDealBandSkeleton />}>
+          <CreatorDealBand userId={userId} sp={sp} />
+        </Suspense>
+
+        {/* Affiliate leaderboards owned by this creator — read-only summary
+            with deep-link to the dedicated management surface. Its own
+            Suspense so a slow backend call here doesn't block the rest of
+            the page. */}
+        <Suspense fallback={<LeaderboardsSkeleton />}>
+          <LeaderboardsCard userId={userId} />
+        </Suspense>
+      </FadeIn>
+    </div>
+  );
+}
+
+// ── Streamed header socials ──────────────────────────────────────────
+//
+// Thin admin-DB read of the creator's connected-social chips, streamed so
+// the hero text never waits on it. Best-effort: a failure renders the
+// "No socials linked" empty state (HeaderSocials with []) rather than
+// crashing the hero.
+async function HeaderSocialsStreamed({ userId }: { userId: string }) {
+  const socials = await getCreatorHeaderSocials(userId).catch(() => []);
+  return <HeaderSocials socials={socials} />;
+}
+
+// ── Streamed financial + acquisition band ────────────────────────────
+//
+// Owns the SINGLE heavy getCreatorDetail() aggregate (12 Main-DB
+// round-trips). Rendered behind its own Suspense from the page so those
+// reads never extend the hero's TTFB. Timeout-bounded so a slow scan
+// degrades to a fallback instead of hanging the segment.
+async function CreatorFinancialBand({
+  userId,
+  period,
+}: {
+  userId: string;
+  period: DashboardPeriod;
+}) {
+  const { data: profile } = await safeQueryOrNull(
+    () => getCreatorDetail(userId),
+    "creators.detail.profile",
+    20_000,
+  );
+
+  // getCreatorDetail returns null only for a truly unknown user — but the
+  // hero already resolved via getCreatorHeader, so a null here means the
+  // analytics read failed/timed out. Surface a compact degraded state for
+  // this band rather than 404-ing the whole (already-rendered) page.
+  if (!profile) {
+    return (
+      <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
+        <Info className="size-4 mt-0.5 text-amber-500 shrink-0" />
+        <div>
+          <div className="font-medium text-amber-500">
+            Creator analytics are taking too long to load
+          </div>
+          <div className="mt-0.5 text-muted-foreground">
+            The financial + acquisition metrics timed out. Refresh to retry —
+            the rest of the page is unaffected.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4 sm:space-y-6">
+      {!profile.hasAffiliateAccount && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
+          <Info className="size-4 mt-0.5 text-amber-500 shrink-0" />
+          <div>
+            <div className="font-medium text-amber-500">
+              This user has no affiliate account
+            </div>
+            <div className="mt-0.5 text-muted-foreground">
+              Not yet provisioned as a creator — affiliate code, deal, click,
+              and signup metrics will appear empty.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* The financial KPI strip leads the Net Creator P&L band — those
+          headline values require getCreatorDetail's aggregates, so the whole
+          strip streams in with the rest of the financial story. */}
+      <CreatorNetPnlPanel
+        userId={profile.userId}
+        period={period}
+        code={profile.code}
+        ftdCount={profile.ftdCount}
+        activeReferrals7d={profile.activeReferrals7d}
+        activeReferrals24h={profile.activeReferrals24h}
+        wagerVolumeUsd={profile.totalWagerVolumeUsd}
+      />
+
+      {/* ── Acquisition — the clicks/signups time-series chart + the
+          clicks → signups → FTDs funnel + per-game wager-volume breakdown +
+          geographic split. The chart's hourly/daily series come from the
+          SAME getCreatorDetail aggregate this band already resolved, so it
+          lives here (acquisition analytics) rather than forcing a second
+          heavy read elsewhere. ──────────────────────────────────────── */}
+      <div className="space-y-3">
+        <SectionHeading icon={TrendingUp} title="Acquisition" />
+        <AcquisitionChart
+          hourly={profile.acquisition.hourly}
+          daily={profile.acquisition.daily}
+        />
+        <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <FunnelTable
+            clicks={profile.clicks}
+            signups={profile.signups}
+            ftdByPeriod={profile.ftdByPeriod}
+          />
+          <WagerBreakdownCard
+            wagerVolumeUsd={profile.totalWagerVolumeUsd}
+            wagerBreakdown={profile.wagerBreakdown}
+          />
+          <CountryBreakdown rows={profile.countryBreakdown} />
+        </div>
+      </div>
+
+      {/* ── Affiliate payouts — the creator's commission account state
+          (earned / available / paid-out / bonus). ──────────────────── */}
+      <div className="space-y-3">
+        <SectionHeading icon={HandCoins} title="Affiliate payouts" />
+        <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <AffiliatePayoutsCard
+            earnedUsd={profile.totalEarnedUsd}
+            availableUsd={profile.availableUsd}
+            paidOutUsd={profile.totalPaidOutUsd}
+            bonusDistributedUsd={profile.totalBonusDistributedUsd}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Streamed deal-management band ─────────────────────────────────────
+//
+// Owns the 4 backend-API round-trips (deals + sessions + pending +
+// multiplier deals) + the acquisition chart. Streamed from the page so it
+// loads IN PARALLEL with the analytics band rather than serially behind a
+// shared blocking await. Backend failures degrade to empty states (the
+// underlying helpers already handle 404 → null).
+async function CreatorDealBand({
+  userId,
+  sp,
+}: {
+  userId: string;
+  sp: CreatorDetailSearchParams;
+}) {
+  const [dealDataResult, multiplierResult] = await Promise.all([
+    safeQueryOrNull(
+      () =>
+        getCreatorDealData(userId, {
+          dealsPage: sp.dealsPage,
+          dealsPerPage: sp.dealsPerPage,
+          sessionsPage: sp.sessionsPage,
+          sessionsPerPage: sp.sessionsPerPage,
+          sessionsStatus: sp.sessionsStatus,
+          pendingStatus: sp.pendingStatus,
+        }),
+      "creators.detail.dealData",
+      20_000,
+    ),
+    safeQueryOrNull(
+      () => listMultiplierDealsForCreator(userId, { offset: 0, limit: 25 }),
+      "creators.detail.multiplierDeals",
+      20_000,
+    ),
+  ]);
+
+  const dealData = dealDataResult.data;
+  const multiplierDealsPage = multiplierResult.data;
+  const multiplierDeals = multiplierDealsPage?.data ?? [];
+  const multiplierCount = multiplierDealsPage?.total ?? 0;
 
   const deals = dealData?.deals ?? {
     data: [],
@@ -105,267 +409,40 @@ export default async function CreatorDetailPage({
   const pending = dealData?.pending ?? [];
 
   return (
-    <div className="space-y-6">
-      <PageHero>
-        <div className="flex items-start gap-2.5 sm:gap-3 flex-wrap">
-          <Link
-            href="/creators"
-            className="inline-flex size-9 items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground shrink-0"
-          >
-            <ArrowLeft className="size-4" />
-          </Link>
-          <Avatar className="size-10 sm:size-11 shrink-0">
-            {profile.image && <AvatarImage src={profile.image} alt="" />}
-            <AvatarFallback className="text-xs font-semibold">
-              {(profile.username ?? profile.email ?? "?")
-                .slice(0, 2)
-                .toUpperCase()}
-            </AvatarFallback>
-          </Avatar>
-          <div className="hidden sm:flex size-10 items-center justify-center rounded-xl bg-pink-500/10 shrink-0">
-            <Star className="size-5 text-pink-500" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <Link
-                href={`/users/${profile.userId}`}
-                className="text-xl sm:text-2xl font-bold leading-tight hover:underline truncate"
-              >
-                {profile.username ?? profile.email}
-              </Link>
-              {profile.code ? (
-                <Badge variant="outline" className="font-mono text-[11px]">
-                  {profile.code}
-                </Badge>
-              ) : (
-                <Badge variant="secondary" className="text-[11px]">
-                  No affiliate code
-                </Badge>
-              )}
-              <span className="hidden sm:inline text-muted-foreground/40">·</span>
-              <RoleSelect
-                userId={profile.userId}
-                currentRole={profile.role}
-              />
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-              {profile.email && <MaskedEmail email={profile.email} />}
-              <HeaderSocials socials={profile.socials} />
-            </div>
-          </div>
-          {profile.role === "creator" && (
-            <div className="ml-auto shrink-0">
-              <ApiKeyDialog userId={profile.userId} />
-            </div>
-          )}
-        </div>
-      </PageHero>
-
-      {!profile.hasAffiliateAccount && (
-        <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
-          <Info className="size-4 mt-0.5 text-amber-500 shrink-0" />
-          <div>
-            <div className="font-medium text-amber-500">
-              This user has no affiliate account
-            </div>
-            <div className="mt-0.5 text-muted-foreground">
-              Not yet provisioned as a creator — affiliate code, deal, click,
-              and signup metrics will appear empty.
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* The financial KPI strip (Net Creator PnL · Code-User GGR ·
-          Creator Cost · FTDs · Active code-users · Wager Volume) now
-          leads the streamed Net Creator P&L band below — those three
-          financial headline values require the canonical foundation
-          fetch (getCreatorNetPnl), so the whole strip streams in with
-          the rest of the financial story rather than splitting the
-          funnel KPIs off into a second top strip. Clicks / Signups live
-          in the Acquisition funnel section. */}
-
-      <FadeIn className="space-y-4 sm:space-y-6">
-        {/* ── Net Creator P&L — the single coherent financial story:
-            KPI strip + two-sided net hero + complete cost breakdown
-            (commission as a separate line + net-incl-commission) +
-            windowed Code-User GGR trend + code-hopper risk. Replaces the
-            three previously-disconnected panels. Streamed via Suspense so
-            its canonical GGR + cost round-trips don't extend the rest of
-            the page's TTFB; re-keyed on `period` so a chip switch
-            re-streams only the windowed GGR slice. ──────────────────── */}
-        <Suspense key={`netpnl-${sp.period}`} fallback={<CreatorNetPnlSkeleton />}>
-          <CreatorNetPnlPanel
-            userId={profile.userId}
-            period={sp.period}
-            code={profile.code}
-            ftdCount={profile.ftdCount}
-            activeReferrals7d={profile.activeReferrals7d}
-            activeReferrals24h={profile.activeReferrals24h}
-            wagerVolumeUsd={profile.totalWagerVolumeUsd}
+    <Card size="sm">
+      <DealTabs
+        value={sp.tab}
+        counts={{
+          deals: deals.total + multiplierCount,
+          sessions: sessions.total,
+          pending: pending.length,
+        }}
+        action={<DealFormDialog userId={userId} />}
+        dealsPanel={
+          <DealsSubTabs
+            userId={userId}
+            fillCount={deals.total}
+            multiplierCount={multiplierCount}
+            fillPanel={<DealsTab userId={userId} deals={deals} />}
+            multiplierDeals={multiplierDeals}
           />
-        </Suspense>
-
-        {/* Per-code activity entry points. Each is its own dedicated
-            page (full-width tables, breadcrumb back, pill-tab nav to
-            flip between the two views). Lives above the deal
-            management band so the admin sees the entry points before
-            drilling into deal terms. */}
-        {profile.code && (
-          <div className="grid gap-3 sm:gap-4 sm:grid-cols-2">
-            <Link
-              href={`/creators/${profile.userId}/users`}
-              className="group flex items-center gap-3 rounded-2xl border bg-card/60 p-4 transition-all hover:border-foreground/20 hover:bg-card hover:shadow-sm"
-            >
-              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-500">
-                <Users className="size-5" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-semibold">Users on code</div>
-                <div className="truncate text-xs text-muted-foreground">
-                  Everyone tied to this creator&apos;s code
-                </div>
-              </div>
-              <ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
-            </Link>
-            <Link
-              href={`/creators/${profile.userId}/wagers`}
-              className="group flex items-center gap-3 rounded-2xl border bg-card/60 p-4 transition-all hover:border-foreground/20 hover:bg-card hover:shadow-sm"
-            >
-              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-500">
-                <Activity className="size-5" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-semibold">Last wagers</div>
-                <div className="truncate text-xs text-muted-foreground">
-                  Recent wager events from those users
-                </div>
-              </div>
-              <ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
-            </Link>
-          </div>
-        )}
-
-        {/* Top band: deal management on the left (3/5), the acquisition
-            chart on the right (2/5). Both in matching Card chrome so the
-            row reads as one visual system with the analytics below. On
-            phone they stack full-width. */}
-        <div className="grid gap-3 sm:gap-4 lg:grid-cols-5">
-          <Card size="sm" className="lg:col-span-3">
-            <DealTabs
-              value={sp.tab}
-              counts={{
-                deals: deals.total + multiplierCount,
-                sessions: sessions.total,
-                pending: pending.length,
-              }}
-              action={<DealFormDialog userId={profile.userId} />}
-              dealsPanel={
-                <DealsSubTabs
-                  userId={profile.userId}
-                  fillCount={deals.total}
-                  multiplierCount={multiplierCount}
-                  fillPanel={
-                    <DealsTab userId={profile.userId} deals={deals} />
-                  }
-                  multiplierDeals={multiplierDeals}
-                />
-              }
-              sessionsPanel={
-                <SessionsTab
-                  userId={profile.userId}
-                  sessions={sessions}
-                  currentStatus={sp.sessionsStatus}
-                />
-              }
-              pendingPanel={
-                <PendingTab
-                  pending={pending}
-                  currentStatus={sp.pendingStatus}
-                />
-              }
-            />
-          </Card>
-
-          <aside className="lg:col-span-2">
-            <AcquisitionChart
-              hourly={profile.acquisition.hourly}
-              daily={profile.acquisition.daily}
-            />
-          </aside>
-        </div>
-
-        {/* Affiliate leaderboards owned by this creator — read-only summary
-            with deep-link to the dedicated /creators/leaderboards management
-            surface for full action set (approve/reject/edit/sponsor/cancel).
-            Sits directly below the deal tabs row so leaderboards read as
-            part of the same "deal management" cluster, before the analytics
-            band kicks in.
-            Wrapped in Suspense so a slow backend API call here doesn't
-            block the rest of the page from rendering — Next streams this
-            section in once it resolves. */}
-        <Suspense fallback={<LeaderboardsSkeleton />}>
-          <LeaderboardsCard userId={profile.userId} />
-        </Suspense>
-
-        {/* The former "Affiliates PnL" (gross deposits − cardWD) and the
-            separate "Deal Costs" panel are retired — their story is now
-            the one coherent Net Creator P&L band above. The creator's
-            commission / paid-out / bonus account state moved into the
-            modern AffiliatePayoutsCard below (alongside the cost), and
-            the per-game wager breakdown moved into the Acquisition
-            section. */}
-
-        {/* ── Acquisition — clicks → signups → FTDs funnel + the per-game
-            wager-volume breakdown + geographic split. Tables stay
-            @tanstack/react-table (FunnelTable) / list (CountryBreakdown)
-            inside their cards, under a modern SectionHeading; the wager
-            breakdown is a modern StatPanel. ─────────────────────────── */}
-        <div className="space-y-3">
-          <SectionHeading icon={TrendingUp} title="Acquisition" />
-          <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <FunnelTable
-              clicks={profile.clicks}
-              signups={profile.signups}
-              ftdByPeriod={profile.ftdByPeriod}
-            />
-            <WagerBreakdownCard
-              wagerVolumeUsd={profile.totalWagerVolumeUsd}
-              // Per-game-type breakdown of the wager volume — packs +
-              // battles + upgrader sum to it exactly.
-              wagerBreakdown={profile.wagerBreakdown}
-            />
-            <CountryBreakdown rows={profile.countryBreakdown} />
-          </div>
-        </div>
-
-        {/* ── Affiliate payouts — the creator's commission account state
-            (earned / available / paid-out / bonus), migrated out of the
-            old plain-Card Financials into a modern panel beside the cost
-            story. "Paid out" is the same source as the Net's separate
-            commission line — shown here for the full account picture. ── */}
-        <div className="space-y-3">
-          <SectionHeading icon={HandCoins} title="Affiliate payouts" />
-          <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <AffiliatePayoutsCard
-              earnedUsd={profile.totalEarnedUsd}
-              availableUsd={profile.availableUsd}
-              paidOutUsd={profile.totalPaidOutUsd}
-              bonusDistributedUsd={profile.totalBonusDistributedUsd}
-            />
-          </div>
-        </div>
-      </FadeIn>
-    </div>
+        }
+        sessionsPanel={
+          <SessionsTab
+            userId={userId}
+            sessions={sessions}
+            currentStatus={sp.sessionsStatus}
+          />
+        }
+        pendingPanel={
+          <PendingTab pending={pending} currentStatus={sp.pendingStatus} />
+        }
+      />
+    </Card>
   );
 }
 
 // ── Suspense fallbacks ───────────────────────────────────────────────
-//
-// Both panels do their own DB / backend round-trips, so streaming them
-// in via Suspense lets the rest of the page paint immediately. The
-// skeletons below match the rough shape of each panel so the page
-// doesn't visibly jump when the real content swaps in.
 
 function LeaderboardsSkeleton() {
   return (
@@ -383,38 +460,72 @@ function LeaderboardsSkeleton() {
   );
 }
 
-// Placeholder matching the CreatorNetPnlPanel shape — a 6-tile KPI strip
-// plus two large StatPanels (the net hero + the cost breakdown) — so the
-// page doesn't reflow when the real financial band streams in.
-function CreatorNetPnlSkeleton() {
+function AcquisitionChartSkeleton() {
+  return <Skeleton className="h-72 w-full rounded-2xl" />;
+}
+
+// Placeholder matching the deal-management band — a full-width tabbed deal
+// card (tab bar + a few rows).
+function CreatorDealBandSkeleton() {
   return (
-    <div className="space-y-4 sm:space-y-5">
-      <div className="flex items-center justify-between">
-        <Skeleton className="h-6 w-44" />
-        <Skeleton className="h-8 w-48" />
+    <Card size="sm" className="space-y-3 p-4">
+      <div className="flex items-center justify-between border-b pb-3">
+        <div className="flex gap-3">
+          <Skeleton className="h-7 w-16" />
+          <Skeleton className="h-7 w-20" />
+          <Skeleton className="h-7 w-20" />
+        </div>
+        <Skeleton className="h-8 w-24" />
       </div>
-      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        {[0, 1, 2, 3, 4, 5].map((i) => (
-          <Card key={i} size="sm" className="space-y-2 p-4">
-            <Skeleton className="h-3 w-16" />
-            <Skeleton className="h-6 w-20" />
-            <Skeleton className="h-2.5 w-14" />
-          </Card>
-        ))}
-      </div>
-      {[0, 1].map((i) => (
-        <Card key={i} size="sm" className="space-y-3 p-4 sm:p-5">
-          <Skeleton className="h-4 w-44" />
-          <Skeleton className="h-9 w-32" />
-          <Skeleton className="h-3 w-56" />
-          <div className="space-y-1.5 pt-2">
-            <Skeleton className="h-3 w-full" />
-            <Skeleton className="h-3 w-full" />
-            <Skeleton className="h-3 w-full" />
-          </div>
-        </Card>
-      ))}
-    </div>
+      <Skeleton className="h-9 w-full" />
+      <Skeleton className="h-9 w-full" />
+      <Skeleton className="h-9 w-full" />
+    </Card>
   );
 }
 
+// Placeholder matching the financial band — the "no account" banner space,
+// the Net P&L panel's 6-tile KPI strip + two large StatPanels, then the
+// acquisition + payouts section headings.
+function CreatorFinancialBandSkeleton() {
+  return (
+    <div className="space-y-4 sm:space-y-6">
+      <div className="space-y-4 sm:space-y-5">
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-6 w-44" />
+          <Skeleton className="h-8 w-48" />
+        </div>
+        <div className="grid grid-cols-2 gap-2.5 sm:gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <Card key={i} size="sm" className="space-y-2 p-4">
+              <Skeleton className="h-3 w-16" />
+              <Skeleton className="h-6 w-20" />
+              <Skeleton className="h-2.5 w-14" />
+            </Card>
+          ))}
+        </div>
+        {[0, 1].map((i) => (
+          <Card key={i} size="sm" className="space-y-3 p-4 sm:p-5">
+            <Skeleton className="h-4 w-44" />
+            <Skeleton className="h-9 w-32" />
+            <Skeleton className="h-3 w-56" />
+            <div className="space-y-1.5 pt-2">
+              <Skeleton className="h-3 w-full" />
+              <Skeleton className="h-3 w-full" />
+              <Skeleton className="h-3 w-full" />
+            </div>
+          </Card>
+        ))}
+      </div>
+      <div className="space-y-3">
+        <Skeleton className="h-6 w-32" />
+        <AcquisitionChartSkeleton />
+        <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <Skeleton className="h-48 rounded-2xl" />
+          <Skeleton className="h-48 rounded-2xl" />
+          <Skeleton className="h-48 rounded-2xl" />
+        </div>
+      </div>
+    </div>
+  );
+}

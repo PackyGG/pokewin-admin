@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import {
   ArrowRight,
@@ -21,18 +22,16 @@ import {
   type AccentColor,
 } from "@/components/modern-panels";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import {
-  DASHBOARD_PERIOD_LABELS,
-  type DashboardPeriod,
-} from "@/lib/queries/dashboard-period";
+import { type DashboardPeriod } from "@/lib/queries/dashboard-period";
 import { cn } from "@/lib/utils";
+import { safeQueryOrNull } from "@/lib/errors/safe-query";
 
-import {
-  getCreatorNetPnl,
-  getCreatorCodeUserGgrForPeriod,
-  type CreatorCodeUserGgr,
-} from "./_queries/creator-net-pnl";
+import { getCreatorNetPnl } from "./_queries/creator-net-pnl";
 import { getCodeHopperSummary } from "./_queries/code-hopper-summary";
+import {
+  CreatorWindowedGgrTile,
+  CreatorWindowedGgrSkeleton,
+} from "./creator-windowed-ggr-tile";
 import { NetPnlPeriodSelector } from "./_components/net-pnl-period-selector";
 import { InfoHint } from "../_components/info-hint";
 
@@ -51,14 +50,19 @@ import { InfoHint } from "../_components/info-hint";
  *     because `totalCost` is a lifetime aggregate (the backend has no
  *     per-window cost slice) — lifetime GGR − lifetime cost is the only
  *     apples-to-apples net. A "windowed GGR − lifetime cost" net would
- *     be misleading, so we never present one.
- *   • getCreatorCodeUserGgrForPeriod(userId, period) — the WINDOWED
- *     code-user GGR ONLY, driving the secondary "GGR trend" tile under
- *     the `?period=` chip. Skipped when the active period is "all" (the
- *     windowed GGR == the lifetime GGR we already have), so we never
- *     fire a redundant read — active-timeframe-only.
+ *     be misleading, so we never present one. Timeout-bounded via
+ *     `safeQueryOrNull` so a slow lifetime scan degrades to a partial
+ *     placeholder instead of hanging this Suspense segment.
  *   • getCodeHopperSummary(code)                   — aggregate code-hop
  *     risk for the small amber tile (drill-down lives on /…/users).
+ *
+ * The WINDOWED code-user GGR trend (the `?period=`-driven secondary view)
+ * is split into its OWN async child — `CreatorWindowedGgrTile` — behind an
+ * inner `<Suspense key={period}>`. A chip switch re-streams ONLY that
+ * single cohort-GGR read; the lifetime net + 4-source cost above are NOT
+ * re-fetched (they don't depend on the chip). Active-timeframe-only — one
+ * window per render. The tile is mounted only when the chip isn't "all"
+ * (windowed == lifetime there, so we never fire a redundant read).
  *
  * House POV (per CLAUDE.md), strict, no exceptions:
  *   • Net PnL  > 0 → cohort margin covered creator spend → 🟢 emerald
@@ -91,35 +95,58 @@ export async function CreatorNetPnlPanel({
   /** All-time real-customer wager volume on this code (profile aggregate). */
   wagerVolumeUsd: number;
 }) {
-  const isAll = period === "all";
-
-  // Lifetime net is always needed (headline + cost). The windowed GGR is
-  // a SECONDARY trend view; only fetch it when the active chip isn't
-  // "all" (otherwise it equals the lifetime GGR we already have). The
-  // hopper summary is best-effort and only when the creator has a code.
-  const [lifetime, windowedGgrRaw, hopper] = await Promise.all([
-    getCreatorNetPnl(userId, "all"),
-    isAll
-      ? Promise.resolve<CreatorCodeUserGgr | null>(null)
-      : getCreatorCodeUserGgrForPeriod(userId, period).catch((e) => {
-          console.error(
-            "[creator-net-pnl-panel] windowed GGR fetch failed (trend tile renders lifetime fallback):",
-            e,
-          );
-          return null;
-        }),
+  // Lifetime net + cost are always needed (headline). The WINDOWED GGR
+  // trend is a SECONDARY, period-driven view rendered by its own streamed
+  // child (CreatorWindowedGgrTile) so a chip switch never re-fetches this
+  // lifetime block. The hopper summary is best-effort and only when the
+  // creator has a code. Both lifetime reads are timeout-bounded so a slow
+  // scan degrades to a placeholder instead of hanging this segment.
+  const [lifetimeResult, hopper] = await Promise.all([
+    safeQueryOrNull(
+      () => getCreatorNetPnl(userId, "all"),
+      "creators.netPnl.lifetime",
+      15_000,
+    ),
     code
       ? getCodeHopperSummary(code).catch(() => null)
       : Promise.resolve(null),
   ]);
 
-  const { netPnl, netPnlWithCommission, codeUserGgr, totalCost } = lifetime;
-  const { breakdown, partial } = totalCost;
+  // Degrade to a zero-valued lifetime shape (flagged partial) when the
+  // lifetime read failed / timed out, so the panel renders a sensible
+  // placeholder rather than crashing the whole financial band.
+  const lifetime = lifetimeResult.data ?? {
+    period: "all" as DashboardPeriod,
+    netPnl: 0,
+    netPnlWithCommission: 0,
+    codeUserGgr: {
+      ggr: 0,
+      wager: 0,
+      gamingPayout: 0,
+      inventoryPayout: 0,
+      ledgerGamingPayout: 0,
+      upgraderWager: 0,
+      upgraderPayout: 0,
+    },
+    totalCost: {
+      total: 0,
+      totalWithCommission: 0,
+      breakdown: {
+        fillPayouts: 0,
+        fillConversionPayouts: 0,
+        netFill: 0,
+        leaderboardCost: 0,
+        commission: null,
+      },
+      partial: true,
+    },
+  };
 
-  // Windowed GGR for the trend tile — falls back to the lifetime GGR when
-  // the chip is "all" or the windowed read failed (labelled accordingly).
-  const windowedGgr = windowedGgrRaw ?? codeUserGgr;
-  const windowLabel = DASHBOARD_PERIOD_LABELS[period];
+  const { netPnl, netPnlWithCommission, codeUserGgr, totalCost } = lifetime;
+  const { breakdown } = totalCost;
+  // Mark partial when a cost source failed OR the whole lifetime read
+  // degraded — the headline figures are then a lower bound / placeholder.
+  const partial = totalCost.partial || lifetimeResult.data == null;
 
   // ── House-POV accents ──────────────────────────────────────────────
   const netWin = netPnl > 0;
@@ -528,70 +555,21 @@ export async function CreatorNetPnlPanel({
       </StatPanel>
 
       {/* ── Windowed Code-User GGR trend — the SECONDARY, period-driven
-          view. Clearly labelled windowed (vs the lifetime headline). The
-          chip lives in the section heading above. ─────────────────── */}
-      <StatPanel
-        title={`Code-User GGR · ${windowLabel}`}
-        icon={Coins}
-        accent={windowedGgr.ggr > 0 ? "emerald" : windowedGgr.ggr < 0 ? "rose" : "blue"}
-        action={
-          <InfoHint
-            text="Windowed code-user GGR (wager − payout) for this creator's cohort over the period chip above — a trend signal only. It is NOT netted against the lifetime Creator Cost, so don't read it as a windowed Net PnL."
-            side="left"
-          />
-        }
+          view, split into its own streamed child behind a `?period=`-keyed
+          Suspense so a chip switch re-streams ONLY this single cohort-GGR
+          read (the lifetime net + cost above are NOT re-fetched). Passes
+          the already-resolved lifetime GGR as the fallback for a
+          timed-out / "all" render. ─────────────────────────────────── */}
+      <Suspense
+        key={`windowed-ggr-${period}`}
+        fallback={<CreatorWindowedGgrSkeleton />}
       >
-        <div className="space-y-1">
-          <div
-            className={cn(
-              "text-2xl font-bold tabular-nums leading-none sm:text-3xl",
-              windowedGgr.ggr > 0
-                ? "text-emerald-600 dark:text-emerald-400"
-                : windowedGgr.ggr < 0
-                  ? "text-rose-600 dark:text-rose-400"
-                  : "text-muted-foreground",
-            )}
-            title={`Code-User GGR over ${windowLabel} — wager minus gaming payout (House POV)`}
-          >
-            {windowedGgr.ggr === 0 ? "—" : formatCurrency(windowedGgr.ggr)}
-          </div>
-          <p className="text-[11px] text-muted-foreground">
-            Windowed ({windowLabel}) cohort gaming margin — wager − payout.
-            {windowedGgrRaw == null && !isAll && (
-              <span className="text-rose-500"> (windowed read failed — showing lifetime)</span>
-            )}
-          </p>
-        </div>
-        <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-0.5">
-          <PanelRow
-            label="Wager"
-            value={
-              windowedGgr.wager === 0 ? "—" : formatCurrency(windowedGgr.wager)
-            }
-            valueClassName={
-              windowedGgr.wager > 0
-                ? "text-emerald-600 dark:text-emerald-400"
-                : ""
-            }
-          />
-          <PanelRow
-            label="Gaming payout"
-            value={
-              windowedGgr.gamingPayout === 0
-                ? "—"
-                : formatCurrency(windowedGgr.gamingPayout)
-            }
-            valueClassName="text-muted-foreground"
-          />
-        </div>
-        <p className="mt-3 text-[10px] text-muted-foreground">
-          GGR is window-scoped (driven by the chip above). Creator Cost is
-          always lifetime, so this windowed GGR is a trend signal — not
-          netted against the lifetime cost. Same canonical attribution +
-          staff/blacklist scope as the dashboard / /ggr GGR, narrowed to
-          this creator&apos;s code cohort.
-        </p>
-      </StatPanel>
+        <CreatorWindowedGgrTile
+          userId={userId}
+          period={period}
+          lifetimeGgr={codeUserGgr}
+        />
+      </Suspense>
 
       {/* Code-hopper risk callout — when the cohort has hoppers, a small
           amber strip with a deep-link to the per-user badges on /…/users.
