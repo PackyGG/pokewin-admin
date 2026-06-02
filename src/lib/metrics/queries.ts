@@ -10,7 +10,6 @@ import {
   GAMING_PAYOUT_TYPES_SQL,
   REWARD_PAYOUT_TYPES_SQL,
   ledgerTypesToSqlList,
-  UPGRADER_IN_LEDGER,
   type LedgerTransactionType,
 } from "./ledger-sets";
 import {
@@ -23,6 +22,7 @@ import {
   type RainHouseCost,
   type EmpiricalRatio,
 } from "./formulas";
+import { getMetricsScope } from "./scope";
 
 /**
  * queries.ts — documented CANONICAL query builders for the metric layer.
@@ -62,23 +62,13 @@ export type MetricWindow = {
   since: Date | null;
 };
 
-/**
- * Real-customers scope subquery, identical in spirit to
- * `insights-games/_shared.ts` `realCustomersScopeSql` and the scope in
- * `getPackBattlePurePnl`: drops admin / support / creator and the
- * admin-managed excluded-users blacklist. Returns a `(SELECT id FROM
- * "user" …)` fragment for use as `user_id IN ${scope}`.
- *
- * Creators are dropped here (unlike lifetime realized PnL, which keeps
- * them) because gaming-margin metrics report REAL customer economics —
- * house-funded creator stream play would inflate the wager side. This is
- * the same choice `getPackBattlePurePnl` makes.
- */
-async function realCustomersScope(): Promise<string> {
-  const excluded = await getExcludedUserIds();
-  const blacklist = blacklistNotInClause("u.id", excluded);
-  return `(SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklist})`;
-}
+// The canonical real-customer scope now lives in `./scope`
+// (`getMetricsScope`): staff + blacklist dropped, creators KEPT, and
+// creator-on-session rows excluded per-row via a session-window predicate
+// (NOT a blunt role drop). It is EXPORTED so the dashboard / analytics
+// hand-rolled scopes can be swept onto it ("one scope, fixed once"). The
+// builders below consume it; the old wholesale-creator-drop
+// `realCustomersScope` helper has been removed.
 
 /** Inline `AND created_at >= <since>` clause, or empty for lifetime. */
 function sinceClause(column: string, since: Date | null): string {
@@ -111,55 +101,109 @@ const NON_BORROW_BATTLE_SESSIONS = `(
   WHERE COALESCE(b.borrow_percentage, 0) = 0
 )`;
 
-// ─── Gaming legs (wager, inventory payout, battle_refund) ────────────
+// ─── Gaming legs (wager, inventory payout, ledger gaming payout) ─────
 
 export type GamingLegs = {
-  /** Σ |amount| over WAGER_TYPES, completed, real customers, non-borrow. */
+  /**
+   * Σ wager for the window, real customers, non-borrow — pack/battle
+   * ledger WAGER_TYPES PLUS upgrader (`Σ upgrader_games.bet_amount`).
+   *
+   * Upgrader is INCLUDED here by default. It is NOT in the ledger
+   * (`UPGRADER_IN_LEDGER` stays false) but it IS real gameplay, so the
+   * canonical GGR must contain it — sourced from `upgrader_games` via
+   * `upgraderMetrics` (to_regclass-guarded; contributes 0 on a
+   * pre-upgrader DB). The pack/battle-only slice is `wager −
+   * upgraderWager` (see `upgraderWager` below).
+   */
   wager: number;
   /**
    * Σ `user_inventory.value_at_obtained` for source pack/battle, obtained
-   * in window, non-borrow — the dominant pack/battle payout.
+   * in window, non-borrow — the dominant pack/battle payout. (Upgrader
+   * payout is NOT here — it is in `battleRefund` alongside the ledger
+   * gaming-payout legs; see below.)
    */
   inventoryPayout: number;
-  /** Σ |battle_refund| over the window — the cash gaming-payout leg. */
+  /**
+   * The non-inventory gaming payout for the window: the LEDGER cash
+   * gaming-payout legs over GAMING_PAYOUT_TYPES — `battle_refund` (the
+   * battle winner's cash leg) AND `battle_excess_to_voucher` (the voucher
+   * remainder of a battle win the inventory card under-counts — booked at
+   * settlement, completes the win; its later `voucher_redeemed` redemption
+   * is NEUTRAL, so no double-count) — PLUS upgrader payout
+   * (`Σ upgrader_games.won_amount`).
+   *
+   * Field name kept as `battleRefund` for call-site stability; it now
+   * carries the ledger legs + upgrader payout. So `inventoryPayout +
+   * battleRefund` = the full gaming payout (pack/battle + upgrader), which
+   * keeps `getGgrBreakdown` (dashboard) reconciling with the headline
+   * `getWindowMetrics.ggr` by construction. The upgrader-only slice is
+   * `upgraderPayout` (see below); the ledger-only slice is `battleRefund −
+   * upgraderPayout`.
+   */
   battleRefund: number;
-  /** COUNT of settled wager rows in the window — the empirical bet count. */
+  /** COUNT of settled bets (pack/battle ledger wager rows + upgrader bets). */
   bets: number;
+  /**
+   * Upgrader wager only (`Σ upgrader_games.bet_amount`), already INCLUDED
+   * in `wager`. Exposed so a breakdown can show an upgrader row without a
+   * second read — do NOT add it to `wager` again. 0 on a pre-upgrader DB.
+   */
+  upgraderWager: number;
+  /**
+   * Upgrader payout only (`Σ upgrader_games.won_amount`), already INCLUDED
+   * in `battleRefund`. Do NOT add it again. 0 on a pre-upgrader DB.
+   */
+  upgraderPayout: number;
+  /** Upgrader bet count only, already INCLUDED in `bets`. */
+  upgraderBets: number;
 };
 
 /**
- * Read the canonical gaming legs for a window. Two parallel queries
- * (ledger wager + bet count; inventory payout) plus the battle_refund sum
- * folded into the ledger pass — exactly the structure of
- * `getPackBattlePurePnl`, generalised to a single window and with the
- * `battle_refund` cash leg added (which `getPackBattlePurePnl` omits
- * because it reports pure pack/battle gameplay only).
+ * Read the canonical gaming legs for a window. Three parallel reads:
+ *   • ledger wager (WAGER_TYPES, borrow-corrected) + bet count + the
+ *     ledger gaming-payout sum (`battle_refund` + `battle_excess_to_voucher`
+ *     over GAMING_PAYOUT_TYPES),
+ *   • inventory payout (the dominant pack/battle win delta),
+ *   • upgrader (`upgrader_games` via `upgraderMetrics`).
  *
- * Does NOT include upgrader — use `upgraderMetrics` for that (isolated
- * while `UPGRADER_IN_LEDGER` is false).
+ * Upgrader is FOLDED IN BY DEFAULT — its wager joins `wager`, its payout
+ * joins `battleRefund`, its bets join `bets` — so the canonical GGR
+ * (`getWindowMetrics`) and the dashboard GGR breakdown (which both read
+ * these legs) cover pack + battle + upgrader. Upgrader is sourced from
+ * `upgrader_games` (NOT the ledger; `UPGRADER_IN_LEDGER` stays false) and
+ * is `to_regclass`-guarded, contributing 0 on a pre-upgrader DB. The
+ * upgrader-only slices are also returned separately (`upgraderWager` /
+ * `upgraderPayout` / `upgraderBets`) for transparent breakdowns.
  */
 export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
   return withTiming("metrics.gamingLegs", async () => {
     const db = await getDb();
-    const scope = await realCustomersScope();
+    // Canonical scope: staff + blacklist dropped, creators KEPT, with
+    // creator-on-session rows excluded per-row via the session-window
+    // predicate (symmetric on wager + payout). See scope.ts.
+    const scope = await getMetricsScope();
     const since = window.since;
 
     type LedgerRow = { wager: string; battle_refund: string; bets: string };
     type InvRow = { inv_payout: string };
 
-    const [ledger, inv] = await Promise.all([
+    const [ledger, inv, upg] = await Promise.all([
       db.$queryRawUnsafe<LedgerRow[]>(
-        `SELECT
+        `WITH ${scope.sessionWindowsCte}
+         SELECT
            COALESCE(SUM(CASE WHEN type IN ${WAGER_TYPES_SQL} THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS wager,
            COALESCE(SUM(CASE WHEN type IN ${GAMING_PAYOUT_TYPES_SQL} THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_refund,
            COALESCE(SUM(CASE WHEN type IN ${WAGER_TYPES_SQL} THEN 1 ELSE 0 END), 0)::text AS bets
          FROM ledger_transactions
          WHERE status = 'completed'
-           AND user_id IN ${scope}
+           AND user_id IN ${scope.userScopeSql}
+           AND ${scope.notInCreatorSession("user_id", "created_at")}
            ${sinceClause("created_at", since)}
-           -- Borrow exclusion on the wager side (battle_refund is a cash
-           -- winner leg; it carries no borrow flag of its own, so it is
-           -- summed unconditionally within the type filter above).
+           -- Borrow exclusion on the wager side. The GAMING_PAYOUT legs
+           -- (battle_refund + battle_excess_to_voucher) are battle-win
+           -- settlement legs that carry no borrow flag of their own, so
+           -- they are summed unconditionally within the type filter above
+           -- (same treatment battle_refund always had).
            AND (
              type NOT IN ('pack_opening','battle_bet','battle_sponsorship')
              OR (type = 'pack_opening' AND (description IS NULL OR description NOT ILIKE '%borrow%'))
@@ -167,24 +211,51 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
            )`,
       ),
       db.$queryRawUnsafe<InvRow[]>(
-        `SELECT
+        `WITH ${scope.sessionWindowsCte}
+         SELECT
            COALESCE(SUM(value_at_obtained::numeric), 0)::text AS inv_payout
          FROM user_inventory
          WHERE source_type IN ('pack','battle')
-           AND user_id IN ${scope}
+           AND user_id IN ${scope.userScopeSql}
+           -- Payout-side creator-on-session exclusion keyed on obtained_at,
+           -- symmetric with the wager side's created_at predicate.
+           AND ${scope.notInCreatorSession("user_id", "obtained_at")}
            ${sinceClause("obtained_at", since)}
            AND (
              (source_type = 'pack' AND source_id IN ${NON_BORROW_PACK_SESSIONS})
              OR (source_type = 'battle' AND source_id IN ${NON_BORROW_BATTLE_SESSIONS})
            )`,
       ),
+      // Upgrader from upgrader_games (real gameplay, not in the ledger).
+      // `null` on a pre-upgrader DB (to_regclass guard) → contributes 0.
+      // NOTE: upgraderMetrics uses the wholesale-creator-drop scope (a
+      // shared reader also used by insights-games); the ledger/inventory
+      // legs above use the session-window scope. So creator OFF-session
+      // packs/battles count but creator upgrader never does — a documented
+      // minor asymmetry (upgrader is a smaller product line and the shared
+      // reader is intentionally left untouched).
+      upgraderMetrics(window),
     ]);
 
+    const ledgerWager = toNumber(ledger[0]?.wager);
+    const ledgerGamingPayout = toNumber(ledger[0]?.battle_refund);
+    const ledgerBets = toNumber(ledger[0]?.bets);
+    const inventoryPayout = toNumber(inv[0]?.inv_payout);
+
+    const upgraderWager = upg?.wager ?? 0;
+    const upgraderPayout = upg?.payout ?? 0;
+    const upgraderBets = upg?.bets ?? 0;
+
     return {
-      wager: toNumber(ledger[0]?.wager),
-      battleRefund: toNumber(ledger[0]?.battle_refund),
-      bets: toNumber(ledger[0]?.bets),
-      inventoryPayout: toNumber(inv[0]?.inv_payout),
+      // Upgrader folded into the headline legs by default.
+      wager: ledgerWager + upgraderWager,
+      battleRefund: ledgerGamingPayout + upgraderPayout,
+      bets: ledgerBets + upgraderBets,
+      inventoryPayout,
+      // Upgrader-only slices (already included above; do not re-add).
+      upgraderWager,
+      upgraderPayout,
+      upgraderBets,
     };
   });
 }
@@ -212,11 +283,23 @@ export type RewardCost = {
  * `rainHouseCost = max(0, Σ|rain_win| − Σ|rain_tip|)`. `creator_tip` is
  * intentionally NOT summed here (it is a RESIDUAL pass-through, not a
  * reward cost).
+ *
+ * VOUCHER MANUAL CARVE-OUT: `voucher_redeemed` is NEUTRAL by default (see
+ * `ledger-sets.ts`), so it is NOT in REWARD_PAYOUT_TYPES and the base
+ * reward leg ignores it. But admin HOUSE-GRANTED vouchers
+ * (`metadata->>'origin' = 'manual'`) have no earlier "grant" ledger row —
+ * their only ledger touchpoint is the redemption — so for THOSE rows the
+ * redemption IS the house cost and is added to `reward_excl_rain` here.
+ * Every other `voucher_redeemed` row (gameplay/borrow remainders, already
+ * booked at production) stays neutral — no double-count.
  */
 export async function getRewardCost(window: MetricWindow): Promise<RewardCost> {
   return withTiming("metrics.rewardCost", async () => {
     const db = await getDb();
-    const scope = await realCustomersScope();
+    // Same canonical session-window scope as the gaming legs so NGR is on
+    // the SAME population as GGR (staff + blacklist dropped, creators kept,
+    // creator-on-session reward rows excluded).
+    const scope = await getMetricsScope();
     const since = window.since;
 
     type Row = {
@@ -225,13 +308,18 @@ export async function getRewardCost(window: MetricWindow): Promise<RewardCost> {
       rain_tip: string;
     };
     const rows = await db.$queryRawUnsafe<Row[]>(
-      `SELECT
-         COALESCE(SUM(CASE WHEN type IN ${REWARD_PAYOUT_TYPES_SQL} AND type <> 'rain_win' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS reward_excl_rain,
+      `WITH ${scope.sessionWindowsCte}
+       SELECT
+         COALESCE(SUM(CASE
+           WHEN (type IN ${REWARD_PAYOUT_TYPES_SQL} AND type <> 'rain_win')
+             OR (type = 'voucher_redeemed' AND metadata->>'origin' = 'manual')
+           THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS reward_excl_rain,
          COALESCE(SUM(CASE WHEN type = 'rain_win' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rain_win,
          COALESCE(SUM(CASE WHEN type = 'rain_tip' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rain_tip
        FROM ledger_transactions
        WHERE status = 'completed'
-         AND user_id IN ${scope}
+         AND user_id IN ${scope.userScopeSql}
+         AND ${scope.notInCreatorSession("user_id", "created_at")}
          ${sinceClause("created_at", since)}`,
     );
 
@@ -243,7 +331,7 @@ export async function getRewardCost(window: MetricWindow): Promise<RewardCost> {
   });
 }
 
-// ─── Upgrader (ISOLATED — reads upgrader_games; prod-confirm pending) ─
+// ─── Upgrader (reads upgrader_games — the GGR upgrader source) ────────
 
 export type UpgraderMetrics = {
   wager: number;
@@ -266,11 +354,16 @@ export type UpgraderMetrics = {
  * skip rather than a `42P01` throw, the same degradation
  * `insights-streamers/_schema-probe.ts` uses.
  *
- * This is the ISOLATED upgrader path used while `UPGRADER_IN_LEDGER` is
- * `false`. When prod confirms the ledger carries `upgrader_payout` (the
- * `SELECT count(*) … WHERE type='upgrader_payout' > 0` check) and the flag
- * flips, upgrader should instead be folded into `getGamingLegs` via the
- * `*_WITH_UPGRADER` type unions and this separate read retired.
+ * This is the SOURCE OF TRUTH for upgrader GGR. `getGamingLegs` /
+ * `getWindowMetrics` / `getDailyGamingMetrics` fold upgrader into the
+ * canonical GGR FROM HERE (upgrader is real gameplay; it is NOT in the
+ * ledger, so `UPGRADER_IN_LEDGER` stays false and the ledger wager/payout
+ * type sets deliberately exclude `upgrader_bet`/`upgrader_payout`). It is
+ * also called directly by surfaces that want a standalone upgrader panel
+ * (wins/losses/players). If prod ever starts writing `upgrader_*` to the
+ * ledger, flip `UPGRADER_IN_LEDGER`, move upgrader onto the ledger type
+ * sets, and source the fold from there instead — but the canonical GGR
+ * already contains upgrader either way.
  */
 export async function upgraderMetrics(
   window: MetricWindow,
@@ -349,8 +442,8 @@ export type WindowMetrics = {
 
 /**
  * One call → the canonical gaming-margin metrics for a window, composing
- * the DB reads (`getGamingLegs`, `getRewardCost`, and — when the table
- * exists — `upgraderMetrics`) with the pure `formulas.ts` arithmetic.
+ * the DB reads (`getGamingLegs`, `getRewardCost`) with the pure
+ * `formulas.ts` arithmetic.
  *
  * `rainHouseCost` controls how rain reduces NGR (system-automatic,
  * mixed-funded). Defaults to the OWNER-CONFIRMED net model
@@ -360,36 +453,33 @@ export type WindowMetrics = {
  * `RainHouseCost` to override (e.g. `{ kind: "full" }` for the
  * conservative upper bound).
  *
- * Upgrader is folded into wager/payout ONLY when `UPGRADER_IN_LEDGER` is
- * true (post prod-confirm). While false, upgrader is reported separately
- * via `upgraderMetrics` and is NOT mixed into these gaming-margin
- * numbers — keeping the contradiction isolated.
+ * Upgrader IS folded into the headline GGR by default — `getGamingLegs`
+ * sources it from `upgrader_games` (real gameplay; NOT the ledger, so
+ * `UPGRADER_IN_LEDGER` stays false) and merges its wager/payout/bets into
+ * the legs. So headline GGR = pack + battle + upgrader. There is no
+ * separate upgrader read here anymore (that would double-count what the
+ * legs already include).
  */
 export async function getWindowMetrics(opts: {
   window: MetricWindow;
   rainHouseCost?: RainHouseCost;
 }): Promise<WindowMetrics> {
   const { window } = opts;
-  const [legs, reward, upg] = await Promise.all([
+  const [legs, reward] = await Promise.all([
     getGamingLegs(window),
     getRewardCost(window),
-    UPGRADER_IN_LEDGER ? Promise.resolve(null) : upgraderMetrics(window),
   ]);
 
-  // Upgrader is only mixed into the gaming-margin headline when the
-  // ledger is the source of truth (post-flip). While isolated, its
-  // contribution here is 0 and it is surfaced via upgraderMetrics().
-  const upgraderPayout = UPGRADER_IN_LEDGER && upg ? upg.payout : 0;
-  const upgraderWager = UPGRADER_IN_LEDGER && upg ? upg.wager : 0;
-  const upgraderBets = UPGRADER_IN_LEDGER && upg ? upg.bets : 0;
-
-  const wager = legs.wager + upgraderWager;
+  // legs already include upgrader (folded in by getGamingLegs from
+  // upgrader_games). `battleRefund` carries the ledger gaming-payout legs
+  // PLUS upgrader payout; `wager`/`bets` likewise include upgrader. So we
+  // pass them straight through — no separate upgrader term here.
+  const wager = legs.wager;
   const gamingPayout = gamingPayoutTotal({
     inventoryPayout: legs.inventoryPayout,
     battleRefund: legs.battleRefund,
-    upgraderPayout,
   });
-  const bets = legs.bets + upgraderBets;
+  const bets = legs.bets;
 
   const ggrValue = ggrFormula({ wager, gamingPayout });
   const rainHouseCostInput: RainHouseCost =
@@ -449,6 +539,7 @@ export type DailyGamingMetricPoint = {
  *  • wager / reward / rain legs bucketed by `created_at::date`
  *  • inventory payout bucketed by `obtained_at::date`
  *  • battle_refund cash leg bucketed by `created_at::date`
+ *  • upgrader wager/payout (`upgrader_games`) bucketed by `created_at::date`
  * then merged per UTC date.
  *
  * Rain is netted PER DAY (`max(0, rain_win_day − rain_tip_day)`) — the
@@ -458,18 +549,38 @@ export type DailyGamingMetricPoint = {
  * for NGR the two agree unless a single day is tip-saturated (rain_tip >
  * rain_win that day), which is the same conservative house-POV treatment.
  *
- * Upgrader is NOT included here while `UPGRADER_IN_LEDGER` is false (it has
- * no per-day ledger presence; it is reported separately via
- * `upgraderMetrics`). When the flag flips this builder should fold it in
- * via the `*_WITH_UPGRADER` unions, mirroring `getWindowMetrics`.
+ * Upgrader IS included here by default (mirroring `getGamingLegs` /
+ * `getWindowMetrics`): per-day `upgrader_games.bet_amount` joins the day's
+ * wager and `won_amount` joins the day's payout, so Σ daily GGR reconciles
+ * with the headline (pack + battle + upgrader). Upgrader is sourced from
+ * `upgrader_games` (NOT the ledger; `UPGRADER_IN_LEDGER` stays false) and
+ * is `to_regclass`-guarded — contributes 0 on a pre-upgrader DB.
  */
 export async function getDailyGamingMetrics(
   window: MetricWindow,
 ): Promise<DailyGamingMetricPoint[]> {
   return withTiming("metrics.dailyGamingMetrics", async () => {
     const db = await getDb();
-    const scope = await realCustomersScope();
+    // Canonical session-window scope for the ledger + inventory legs.
+    const scope = await getMetricsScope();
     const since = window.since;
+
+    // Upgrader uses the wholesale-creator-drop scope (matching the shared
+    // `upgraderMetrics` reader), so the daily upgrader figure here agrees
+    // with `getGamingLegs`' upgrader fold. (Same documented asymmetry as
+    // getGamingLegs: creator upgrader is dropped wholesale while creator
+    // off-session packs/battles count.)
+    const upgScope = `(SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklistNotInClause(
+      "u.id",
+      await getExcludedUserIds(),
+    )})`;
+
+    // Probe once: does this DB carry upgrader_games? (pre-upgrader snapshot
+    // returns NULL, not an error). Gates the per-day upgrader read so it
+    // degrades to 0 rather than throwing 42P01.
+    const upgProbe = await db.$queryRaw<{ exists: string | null }[]>`
+      SELECT to_regclass('public.upgrader_games')::text AS exists`;
+    const hasUpgrader = upgProbe[0]?.exists != null;
 
     type LedgerDayRow = {
       date: Date;
@@ -480,10 +591,12 @@ export async function getDailyGamingMetrics(
       rain_tip: string;
     };
     type InvDayRow = { date: Date; inv_payout: string };
+    type UpgDayRow = { date: Date; upg_wager: string; upg_payout: string };
 
-    const [ledgerRows, invRows] = await Promise.all([
+    const [ledgerRows, invRows, upgRows] = await Promise.all([
       db.$queryRawUnsafe<LedgerDayRow[]>(
-        `SELECT
+        `WITH ${scope.sessionWindowsCte}
+         SELECT
            DATE(created_at) AS date,
            COALESCE(SUM(CASE WHEN type IN ${WAGER_TYPES_SQL}
              AND (
@@ -491,23 +604,36 @@ export async function getDailyGamingMetrics(
                OR (type IN ('battle_bet','battle_sponsorship') AND game_session_id IN ${NON_BORROW_BATTLE_SESSIONS})
              )
              THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS wager,
+           -- GAMING_PAYOUT_TYPES = battle_refund + battle_excess_to_voucher
+           -- (both battle-win settlement legs; field name kept for the
+           -- daily merge). voucher_redeemed redemption is NEUTRAL, so the
+           -- battle_excess_to_voucher win is counted once, at settlement.
            COALESCE(SUM(CASE WHEN type IN ${GAMING_PAYOUT_TYPES_SQL} THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_refund,
-           COALESCE(SUM(CASE WHEN type IN ${REWARD_PAYOUT_TYPES_SQL} AND type <> 'rain_win' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS reward_excl_rain,
+           -- Reward cost (excl rain) + the manual-voucher carve-out: admin
+           -- house-granted vouchers (metadata->>'origin'='manual') whose
+           -- only ledger touchpoint is redemption. Mirrors getRewardCost.
+           COALESCE(SUM(CASE
+             WHEN (type IN ${REWARD_PAYOUT_TYPES_SQL} AND type <> 'rain_win')
+               OR (type = 'voucher_redeemed' AND metadata->>'origin' = 'manual')
+             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS reward_excl_rain,
            COALESCE(SUM(CASE WHEN type = 'rain_win' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rain_win,
            COALESCE(SUM(CASE WHEN type = 'rain_tip' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rain_tip
          FROM ledger_transactions
          WHERE status = 'completed'
-           AND user_id IN ${scope}
+           AND user_id IN ${scope.userScopeSql}
+           AND ${scope.notInCreatorSession("user_id", "created_at")}
            ${sinceClause("created_at", since)}
          GROUP BY DATE(created_at)`,
       ),
       db.$queryRawUnsafe<InvDayRow[]>(
-        `SELECT
+        `WITH ${scope.sessionWindowsCte}
+         SELECT
            DATE(obtained_at) AS date,
            COALESCE(SUM(value_at_obtained::numeric), 0)::text AS inv_payout
          FROM user_inventory
          WHERE source_type IN ('pack','battle')
-           AND user_id IN ${scope}
+           AND user_id IN ${scope.userScopeSql}
+           AND ${scope.notInCreatorSession("user_id", "obtained_at")}
            ${sinceClause("obtained_at", since)}
            AND (
              (source_type = 'pack' AND source_id IN ${NON_BORROW_PACK_SESSIONS})
@@ -515,6 +641,22 @@ export async function getDailyGamingMetrics(
            )
          GROUP BY DATE(obtained_at)`,
       ),
+      // Per-day upgrader wager + payout from upgrader_games (real gameplay,
+      // not in the ledger). Uses the wholesale-creator-drop `upgScope` to
+      // match the shared `upgraderMetrics` reader (see note above).
+      // Skipped (empty) on a pre-upgrader DB via the to_regclass probe.
+      hasUpgrader
+        ? db.$queryRawUnsafe<UpgDayRow[]>(
+            `SELECT
+               DATE(created_at) AS date,
+               COALESCE(SUM(bet_amount::numeric), 0)::text AS upg_wager,
+               COALESCE(SUM(won_amount::numeric), 0)::text AS upg_payout
+             FROM upgrader_games
+             WHERE user_id IN ${upgScope}
+               ${sinceClause("created_at", since)}
+             GROUP BY DATE(created_at)`,
+          )
+        : Promise.resolve([] as UpgDayRow[]),
     ]);
 
     // Merge the two day-keyed sets. A day can appear in either (wager-only
@@ -557,6 +699,16 @@ export async function getDailyGamingMetrics(
       e.inventoryPayout += toNumber(r.inv_payout);
       byDate.set(key, e);
     }
+    // Fold upgrader into the day's gaming legs: bet_amount → wager,
+    // won_amount → the payout side (battleRefund), so daily GGR =
+    // pack + battle + upgrader and Σ daily reconciles with the headline.
+    for (const r of upgRows) {
+      const key = dayKey(r.date);
+      const e = byDate.get(key) ?? blank();
+      e.wager += toNumber(r.upg_wager);
+      e.battleRefund += toNumber(r.upg_payout);
+      byDate.set(key, e);
+    }
 
     return [...byDate.entries()]
       .map(([date, e]) => {
@@ -592,11 +744,13 @@ export async function getDailyGamingMetrics(
 // ─── Ad-hoc ledger sum (escape hatch for cost-breakdown residual) ────
 
 /**
- * Σ |amount| over an arbitrary set of ledger types for a window + real-
- * customer scope. Provided so cost-breakdown / residual surfaces can sum
- * RESIDUAL_TYPES (or any subset) through the SAME scope as the gaming
- * metrics without re-deriving the predicate. The type list is rendered
- * via `ledgerTypesToSqlList`; pass only members known to exist on the
+ * Σ |amount| over an arbitrary set of ledger types for a window, through
+ * the SAME canonical scope as the gaming metrics (`getMetricsScope`: staff
+ * + blacklist dropped, creators kept, creator-on-session rows excluded).
+ * Provided so cost-breakdown / residual surfaces can sum RESIDUAL_TYPES
+ * (or any subset) and have their residual reconcile against GGR/NGR
+ * without re-deriving the predicate. The type list is rendered via
+ * `ledgerTypesToSqlList`; pass only members known to exist on the
  * connected DB (the base sets are safe; for upgrader members on a lagged
  * DB use the streamers probe instead).
  */
@@ -607,15 +761,17 @@ export async function sumLedgerTypes(opts: {
   if (opts.types.length === 0) return 0;
   return withTiming("metrics.sumLedgerTypes", async () => {
     const db = await getDb();
-    const scope = await realCustomersScope();
+    const scope = await getMetricsScope();
     const list = ledgerTypesToSqlList(opts.types);
     type Row = { total: string };
     const rows = await db.$queryRawUnsafe<Row[]>(
-      `SELECT COALESCE(SUM(ABS(amount::numeric)), 0)::text AS total
+      `WITH ${scope.sessionWindowsCte}
+       SELECT COALESCE(SUM(ABS(amount::numeric)), 0)::text AS total
        FROM ledger_transactions
        WHERE status = 'completed'
          AND type IN ${list}
-         AND user_id IN ${scope}
+         AND user_id IN ${scope.userScopeSql}
+         AND ${scope.notInCreatorSession("user_id", "created_at")}
          ${sinceClause("created_at", opts.window.since)}`,
     );
     return toNumber(rows[0]?.total);
