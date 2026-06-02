@@ -1,10 +1,11 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { Users, Ban, Archive, UserPlus } from "lucide-react";
+import { Users, Ban, Archive, UserPlus, AlertTriangle } from "lucide-react";
 import { getUsers, getUsersListStats } from "@/lib/queries/users";
 import { requirePageAccess } from "@/lib/dal";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
+import { parseUsersSearchParams } from "./_lib/search-params";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { adminDb } from "@/lib/admin-db";
 import { ensureSupportBaseline } from "@/lib/support-baseline";
@@ -30,6 +31,18 @@ import {
 
 export const metadata = { title: "Users" };
 
+/**
+ * Wall-clock bound for the user-list query. The list's PnL sort (top
+ * losers/winners) is the heaviest query on the page — a slow main-DB
+ * read used to hang the segment until the platform killed the whole
+ * request. Bounding the wait lets a pathological read degrade to the
+ * empty-list fallback + an inline notice instead of blocking the page.
+ * Generous enough that a healthy prod-sized query finishes well inside
+ * it; the underlying statement keeps running on its own connection and
+ * warms the next cache fill (see safe-query.ts TIMEOUT note).
+ */
+const USERS_LIST_TIMEOUT_MS = 15_000;
+
 export default async function UsersPage({
   searchParams,
 }: {
@@ -42,9 +55,16 @@ export default async function UsersPage({
   // once per server process; see src/lib/support-baseline.ts.
   await ensureSupportBaseline();
   const session = await requirePageAccess("/users");
-  const params = await searchParams;
-  const page = Number(params.page) || 1;
-  const perPage = Number(params.perPage) || 20;
+  // Validate + clamp the raw searchParams through Zod BEFORE any value
+  // reaches the query. A malformed page/perPage (e.g. ?page=-5 →
+  // negative OFFSET, ?page=1e10 → 10-billion-row scan) or an unknown
+  // filter/sort key used to be handed straight to getUsers and could
+  // crash the whole list at the SQL layer. parseUsersSearchParams snaps
+  // every bad value back to a safe default (dropping only the offending
+  // param, keeping the rest) so the query only ever sees values it can
+  // execute. See ./_lib/search-params.ts.
+  const params = parseUsersSearchParams(await searchParams);
+  const { page, perPage } = params;
 
   // The "Deleted users" header button is gated by the same
   // __can_delete_user capability as the delete action itself —
@@ -76,24 +96,43 @@ export default async function UsersPage({
   // handled inside getUsersListStats (60s unstable_cache) so spamming
   // the search box doesn't fan into the DB on every keystroke.
   //
-  // The KPI strip query is wrapped in safeQuery so a slow / failed
-  // global aggregate doesn't block the table query — admins can still
-  // browse + search users when only the strip is degraded. The table
-  // query itself is the page's primary deliverable, so if it throws
-  // the segment-level error.tsx takes over (intentional — there's
-  // nothing usable to render without the list itself).
-  const [result, statsResult] = await Promise.all([
-    getUsers({
-      page,
-      perPage,
-      search: params.search,
-      role: params.role,
-      status: params.status,
-      sortBy: params.sortBy,
-      sortOrder: params.sortOrder,
-    }),
+  // Both queries are wrapped in safeQuery so neither a slow/failed
+  // global aggregate NOR a slow/failed list query can take the page
+  // down. The list query is the page's primary deliverable, but the
+  // PnL sort it can run (top losers/winners) is the heaviest query on
+  // the page — an upstream main-DB timeout on it used to throw and the
+  // segment-level error.tsx replaced the WHOLE view. Wrapping it (with a
+  // wall-clock timeout) degrades a failure to an empty, recoverable
+  // list + an inline notice instead: the hero, KPI strip, toolbar and
+  // pagination all still render so the admin can clear filters / retry
+  // without losing the page. On the happy path the result is identical.
+  const EMPTY_LIST: Awaited<ReturnType<typeof getUsers>> = {
+    data: [],
+    total: 0,
+    page,
+    perPage,
+    totalPages: 0,
+  };
+  const [listResult, statsResult] = await Promise.all([
+    safeQuery(
+      () =>
+        getUsers({
+          page,
+          perPage,
+          search: params.search,
+          role: params.role,
+          status: params.status,
+          sortBy: params.sortBy,
+          sortOrder: params.sortOrder,
+        }),
+      EMPTY_LIST,
+      "users.list",
+      USERS_LIST_TIMEOUT_MS,
+    ),
     safeQuery(() => getUsersListStats(), null, "users.listStats"),
   ]);
+  const result = listResult.data;
+  const listFailed = listResult.error !== null;
   const stats = statsResult.data;
 
   return (
@@ -191,6 +230,31 @@ export default async function UsersPage({
               <ExportUsersButton />
             </DataTableToolbar>
           </Suspense>
+          {/* Recoverable empty state — the list query degraded (timeout
+              or error) and safeQuery returned EMPTY_LIST. The toolbar
+              above + pagination below still render, so the admin can
+              clear filters or refresh without a full page crash. Never
+              echoes the raw error string (see safe-query.ts SECURITY
+              note) — a generic, actionable notice only. */}
+          {listFailed && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3"
+            >
+              <AlertTriangle
+                aria-hidden
+                className="mt-0.5 size-4 shrink-0 text-amber-500"
+              />
+              <p className="text-xs text-amber-700 dark:text-amber-300">
+                Couldn&apos;t load the user list — the query timed out or
+                failed. Try{" "}
+                <span className="font-medium">clearing your filters</span>{" "}
+                or refreshing the page. If it keeps failing, a narrower
+                search (exact username, email, or user ID) loads faster.
+              </p>
+            </div>
+          )}
           <UsersDataTable data={result.data} />
           <DataTablePagination
             page={result.page}
