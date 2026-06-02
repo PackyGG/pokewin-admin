@@ -5,11 +5,16 @@ import {
   Activity,
   ArrowLeft,
   ArrowRight,
+  BadgeDollarSign,
+  Flame,
   HandCoins,
   Info,
+  MousePointerClick,
   Star,
   TrendingUp,
+  UserPlus,
   Users,
+  Wallet,
 } from "lucide-react";
 
 import {
@@ -23,8 +28,9 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PageHero, SectionHeading } from "@/components/modern-panels";
+import { PageHero, SectionHeading, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { formatCurrency, formatNumber } from "@/lib/utils/format";
 
 import { MaskedEmail } from "./masked-email";
 import { HeaderSocials } from "./header-socials";
@@ -35,7 +41,8 @@ import { WagerBreakdownCard } from "./wager-breakdown-card";
 import { AffiliatePayoutsCard } from "./affiliate-payouts-card";
 import { CountryBreakdown } from "./country-breakdown";
 import { LeaderboardsCard } from "./leaderboards-card";
-import { CreatorNetPnlPanel } from "./creator-net-pnl-panel";
+import { CreatorPnlPanel } from "./creator-pnl-panel";
+import { CreatorDealCostPanel } from "./creator-deal-cost-panel";
 
 import { parseCreatorDetailSearchParams } from "./_lib/search-params";
 import { getCreatorDealData } from "./_queries/get-creator-deal-data";
@@ -48,7 +55,6 @@ import { PendingTab } from "./_components/pending-tab";
 import { DealFormDialog } from "./_components/deal-form-dialog";
 import { ApiKeyDialog } from "./_components/api-key-dialog";
 import { listMultiplierDealsForCreator } from "../multiplier-actions";
-import type { DashboardPeriod } from "@/lib/queries/dashboard-period";
 import type { CreatorDetailSearchParams } from "./_lib/search-params";
 
 export const metadata = { title: "Creator Detail" };
@@ -76,12 +82,16 @@ export default async function CreatorDetailPage({
   // critical path so the hero + nav paint immediately, then streams every
   // heavy region through its OWN independent Suspense boundary:
   //   • CreatorFinancialBand — the single getCreatorDetail() analytics
-  //     round-trip + the Net Creator P&L band (whose windowed GGR is
-  //     itself active-timeframe-only, re-streaming only its own tile on a
-  //     `?period=` chip switch).
+  //     round-trip feeding the KPI strip, acquisition section, and
+  //     affiliate-payouts card.
+  //   • CreatorPnlPanel — its own getCreatorPnl() ledger scan, streamed in
+  //     its OWN boundary so the heavier per-window P&L + per-user popover
+  //     data doesn't extend the rest of the page's TTFB.
+  //   • CreatorDealCostPanel — the leaderboard + multiplier cost backend
+  //     round-trips, streamed in its OWN boundary.
   //   • CreatorDealBand — the 4 backend deal/session/pending/multiplier
-  //     round-trips, streamed IN PARALLEL with the analytics band (neither
-  //     blocks the other, neither blocks the hero).
+  //     round-trips, streamed IN PARALLEL with the bands above (none blocks
+  //     the others, none blocks the hero).
   //   • LeaderboardsCard — already its own boundary.
   // Each heavy fetch is timeout-bounded (safeQuery) so a slow one degrades
   // to a fallback instead of hanging the segment.
@@ -157,13 +167,11 @@ export default async function CreatorDetailPage({
       </PageHero>
 
       <FadeIn className="space-y-4 sm:space-y-6">
-        {/* ── Net Creator P&L + acquisition + affiliate-payouts band —
-            owns the single getCreatorDetail() analytics round-trip, streamed
-            so its 12 Main-DB reads don't extend the hero's TTFB. The Net P&L
-            panel inside re-streams only its windowed GGR tile on a period
-            chip switch (active-timeframe-only). ─────────────────────── */}
+        {/* ── KPI strip + acquisition + affiliate-payouts band — owns the
+            single getCreatorDetail() analytics round-trip, streamed so its
+            12 Main-DB reads don't extend the hero's TTFB. ──────────────── */}
         <Suspense fallback={<CreatorFinancialBandSkeleton />}>
-          <CreatorFinancialBand userId={userId} period={sp.period} />
+          <CreatorFinancialBand userId={userId} />
         </Suspense>
 
         {/* Per-code activity entry points. Each is its own dedicated page
@@ -209,9 +217,7 @@ export default async function CreatorDetailPage({
         {/* ── Deal management band — the 4 backend round-trips
             (deals/sessions/pending/multiplier), streamed in its OWN
             boundary so it loads in parallel with the analytics band above
-            rather than serially behind it. The acquisition chart lives in
-            the analytics band (it shares that band's getCreatorDetail
-            aggregate). ──────────────────────────────────────────────── */}
+            rather than serially behind it. ──────────────────────────── */}
         <Suspense fallback={<CreatorDealBandSkeleton />}>
           <CreatorDealBand userId={userId} sp={sp} />
         </Suspense>
@@ -222,6 +228,25 @@ export default async function CreatorDetailPage({
             the page. */}
         <Suspense fallback={<LeaderboardsSkeleton />}>
           <LeaderboardsCard userId={userId} />
+        </Suspense>
+
+        {/* ── Affiliates P&L — the all-time hero + 5 windowed boxes
+            (1d / 3d / 7d / 2w / 1m), each with the per-user hover popover.
+            Only needs userId (its own getCreatorPnl ledger scan), so it
+            streams in its OWN boundary in parallel with everything above
+            rather than blocking on the profile aggregate. ─────────────── */}
+        <Suspense fallback={<CreatorPnlSkeleton />}>
+          <CreatorPnlPanel userId={userId} />
+        </Suspense>
+
+        {/* ── House deal-cost panel — the money the house spends ON this
+            creator's promo programs: approved-leaderboard prizes (net of
+            the creation/refund escrow, sponsored-% weighted), multiplier
+            payout vouchers, and net multiplier fill. Streamed via its own
+            Suspense so the two backend round-trips it makes don't block the
+            rest of the page. ──────────────────────────────────────────── */}
+        <Suspense fallback={<CreatorDealCostSkeleton />}>
+          <CreatorDealCostPanel userId={userId} />
         </Suspense>
       </FadeIn>
     </div>
@@ -239,19 +264,13 @@ async function HeaderSocialsStreamed({ userId }: { userId: string }) {
   return <HeaderSocials socials={socials} />;
 }
 
-// ── Streamed financial + acquisition band ────────────────────────────
+// ── Streamed KPI + acquisition + affiliate-payouts band ───────────────
 //
 // Owns the SINGLE heavy getCreatorDetail() aggregate (12 Main-DB
 // round-trips). Rendered behind its own Suspense from the page so those
 // reads never extend the hero's TTFB. Timeout-bounded so a slow scan
 // degrades to a fallback instead of hanging the segment.
-async function CreatorFinancialBand({
-  userId,
-  period,
-}: {
-  userId: string;
-  period: DashboardPeriod;
-}) {
+async function CreatorFinancialBand({ userId }: { userId: string }) {
   const { data: profile } = await safeQueryOrNull(
     () => getCreatorDetail(userId),
     "creators.detail.profile",
@@ -296,25 +315,67 @@ async function CreatorFinancialBand({
         </div>
       )}
 
-      {/* The financial KPI strip leads the Net Creator P&L band — those
-          headline values require getCreatorDetail's aggregates, so the whole
-          strip streams in with the rest of the financial story. */}
-      <CreatorNetPnlPanel
-        userId={profile.userId}
-        period={period}
-        code={profile.code}
-        ftdCount={profile.ftdCount}
-        activeReferrals7d={profile.activeReferrals7d}
-        activeReferrals24h={profile.activeReferrals24h}
-        wagerVolumeUsd={profile.totalWagerVolumeUsd}
-      />
+      {/* KPI strip — house-POV financial colors:
+          - Total Earned: money paid TO creator → rose (house loss)
+          - Wager Volume: money flowing FROM users TO us → emerald
+          - Clicks / Signups / FTDs: funnel events → blue family
+          - Active affi: currently-engaged referrals → amber
+          Phone: 2 cols, tablet: 3 cols, desktop: 6 cols (1 row). */}
+      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <KpiTile
+          label="Clicks"
+          value={formatNumber(profile.clicks.total)}
+          icon={MousePointerClick}
+          accent="blue"
+        />
+        <KpiTile
+          label="Signups"
+          value={formatNumber(profile.signups.total)}
+          icon={UserPlus}
+          accent="cyan"
+        />
+        {/* FTDs — distinct referrals who actually deposited (gates on
+            both an affiliate_code_usages 'deposit' row for this code
+            AND a balances row with total_deposited > 0). All-time
+            count across this creator's primary code. */}
+        <KpiTile
+          label="FTDs"
+          value={formatNumber(profile.ftdCount)}
+          icon={BadgeDollarSign}
+          accent="purple"
+        />
+        {/* Active affi — distinct referrals with any deposit /
+            wager activity. Headline value is the 7-day count (the
+            window the affiliate system uses to count them as
+            "active"); subtitle layers in the 24h count so the admin
+            can see momentum at a glance. Amber to read as
+            "currently warm". */}
+        <KpiTile
+          label="Active affi"
+          value={formatNumber(profile.activeReferrals7d)}
+          sub={`${formatNumber(profile.activeReferrals24h)} in 24h · 7d window`}
+          icon={Flame}
+          accent="amber"
+        />
+        <KpiTile
+          label="Wager Volume"
+          value={formatCurrency(profile.totalWagerVolumeUsd)}
+          icon={Wallet}
+          accent="emerald"
+        />
+        <KpiTile
+          label="Total Earned"
+          value={formatCurrency(profile.totalEarnedUsd)}
+          sub={`Paid out: ${formatCurrency(profile.totalPaidOutUsd)}`}
+          icon={HandCoins}
+          accent="rose"
+        />
+      </div>
 
       {/* ── Acquisition — the clicks/signups time-series chart + the
           clicks → signups → FTDs funnel + per-game wager-volume breakdown +
           geographic split. The chart's hourly/daily series come from the
-          SAME getCreatorDetail aggregate this band already resolved, so it
-          lives here (acquisition analytics) rather than forcing a second
-          heavy read elsewhere. ──────────────────────────────────────── */}
+          SAME getCreatorDetail aggregate this band already resolved. ──── */}
       <div className="space-y-3">
         <SectionHeading icon={TrendingUp} title="Acquisition" />
         <AcquisitionChart
@@ -355,10 +416,10 @@ async function CreatorFinancialBand({
 // ── Streamed deal-management band ─────────────────────────────────────
 //
 // Owns the 4 backend-API round-trips (deals + sessions + pending +
-// multiplier deals) + the acquisition chart. Streamed from the page so it
-// loads IN PARALLEL with the analytics band rather than serially behind a
-// shared blocking await. Backend failures degrade to empty states (the
-// underlying helpers already handle 404 → null).
+// multiplier deals). Streamed from the page so it loads IN PARALLEL with
+// the analytics band rather than serially behind a shared blocking await.
+// Backend failures degrade to empty states (the underlying helpers
+// already handle 404 → null).
 async function CreatorDealBand({
   userId,
   sp,
@@ -485,35 +546,16 @@ function CreatorDealBandSkeleton() {
 }
 
 // Placeholder matching the financial band — the "no account" banner space,
-// the Net P&L panel's 6-tile KPI strip + two large StatPanels, then the
-// acquisition + payouts section headings.
+// the KPI strip's 6 tiles, then the acquisition + payouts sections.
 function CreatorFinancialBandSkeleton() {
   return (
     <div className="space-y-4 sm:space-y-6">
-      <div className="space-y-4 sm:space-y-5">
-        <div className="flex items-center justify-between">
-          <Skeleton className="h-6 w-44" />
-          <Skeleton className="h-8 w-48" />
-        </div>
-        <div className="grid grid-cols-2 gap-2.5 sm:gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          {[0, 1, 2, 3, 4, 5].map((i) => (
-            <Card key={i} size="sm" className="space-y-2 p-4">
-              <Skeleton className="h-3 w-16" />
-              <Skeleton className="h-6 w-20" />
-              <Skeleton className="h-2.5 w-14" />
-            </Card>
-          ))}
-        </div>
-        {[0, 1].map((i) => (
-          <Card key={i} size="sm" className="space-y-3 p-4 sm:p-5">
-            <Skeleton className="h-4 w-44" />
-            <Skeleton className="h-9 w-32" />
-            <Skeleton className="h-3 w-56" />
-            <div className="space-y-1.5 pt-2">
-              <Skeleton className="h-3 w-full" />
-              <Skeleton className="h-3 w-full" />
-              <Skeleton className="h-3 w-full" />
-            </div>
+      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <Card key={i} size="sm" className="space-y-2 p-4">
+            <Skeleton className="h-3 w-16" />
+            <Skeleton className="h-6 w-20" />
+            <Skeleton className="h-2.5 w-14" />
           </Card>
         ))}
       </div>
@@ -525,6 +567,66 @@ function CreatorFinancialBandSkeleton() {
           <Skeleton className="h-48 rounded-2xl" />
           <Skeleton className="h-48 rounded-2xl" />
         </div>
+      </div>
+      <div className="space-y-3">
+        <Skeleton className="h-6 w-32" />
+        <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <Skeleton className="h-48 rounded-2xl" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Single StatPanel placeholder matching the CreatorDealCostPanel shape
+// (heading + one hero panel with a few breakdown rows) so the page
+// doesn't reflow when the real content lands.
+function CreatorDealCostSkeleton() {
+  return (
+    <div className="space-y-3">
+      <Skeleton className="h-5 w-36" />
+      <Card size="sm" className="space-y-3 p-4 sm:p-5">
+        <Skeleton className="h-4 w-44" />
+        <Skeleton className="h-9 w-32" />
+        <Skeleton className="h-3 w-56" />
+        <div className="space-y-1.5 pt-2">
+          <Skeleton className="h-3 w-full" />
+          <Skeleton className="h-3 w-full" />
+          <Skeleton className="h-3 w-full" />
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// Placeholder matching the CreatorPnlPanel shape — the all-time hero panel
+// plus the 5 windowed boxes — so the page doesn't reflow when the real
+// content lands.
+function CreatorPnlSkeleton() {
+  return (
+    <div className="space-y-3">
+      <Skeleton className="h-5 w-36" />
+      <Card size="sm" className="space-y-3 p-4 sm:p-5">
+        <Skeleton className="h-9 w-40" />
+        <Skeleton className="h-3 w-56" />
+        <div className="grid grid-cols-1 gap-2 pt-2 sm:grid-cols-3">
+          <Skeleton className="h-3 w-full" />
+          <Skeleton className="h-3 w-full" />
+          <Skeleton className="h-3 w-full" />
+        </div>
+      </Card>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        {[0, 1, 2, 3, 4].map((i) => (
+          <Card key={i} size="sm" className="space-y-2 p-4">
+            <Skeleton className="h-4 w-10" />
+            <Skeleton className="h-7 w-24" />
+            <Skeleton className="h-3 w-20" />
+            <div className="space-y-1.5 pt-1">
+              <Skeleton className="h-3 w-full" />
+              <Skeleton className="h-3 w-full" />
+            </div>
+          </Card>
+        ))}
       </div>
     </div>
   );
