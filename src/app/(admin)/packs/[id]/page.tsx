@@ -22,7 +22,7 @@ import { PackStatsSection } from "./revenue-chart";
 import { TogglePackButton } from "./toggle-pack-button";
 import { EditPackButton } from "./edit-pack-button";
 import { DeletePackButton } from "./delete-pack-button";
-import { PageHero, KpiTile } from "@/components/modern-panels";
+import { PageHero, KpiTile, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
 export const metadata = { title: "Pack Detail" };
@@ -89,34 +89,42 @@ export default async function PackDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <div className="flex items-start gap-3 sm:gap-4 flex-wrap">
-          <BackButton />
-          <div className="shrink-0 hidden md:block">
-            <CardImage
-              src={data.imageUrl}
-              alt={data.name}
-              className="h-20 w-auto rounded-lg"
-            />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-xl sm:text-2xl font-bold leading-tight truncate">{data.name}</h1>
-              <Badge
-                variant="outline"
-                className={
-                  data.active
-                    ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
-                    : "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"
-                }
-              >
-                {data.active ? "Active" : "Inactive"}
-              </Badge>
-              <Badge variant="outline">{data.packType}</Badge>
+        {/* Identity row — the pack title is the headline of this page, so
+            it gets a large, fully-visible treatment (no harsh truncate).
+            Pack art is shown on every viewport at a generous size, ringed
+            so it reads as the pack's avatar. */}
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 items-start gap-3 sm:gap-4">
+            <BackButton />
+            <div className="shrink-0 overflow-hidden rounded-xl border bg-muted/40 shadow-sm ring-1 ring-inset ring-white/5">
+              <CardImage
+                src={data.imageUrl}
+                alt={data.name}
+                className="h-16 w-16 object-cover sm:h-20 sm:w-20"
+              />
             </div>
-            <p className="font-mono text-xs text-muted-foreground mt-0.5 truncate">{data.slug}</p>
+            <div className="min-w-0 pt-0.5">
+              <h1 className="text-2xl font-bold leading-tight tracking-tight sm:text-3xl md:text-4xl">
+                {data.name}
+              </h1>
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <Badge
+                  variant="outline"
+                  className={
+                    data.active
+                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                      : "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30"
+                  }
+                >
+                  {data.active ? "Active" : "Inactive"}
+                </Badge>
+                <Badge variant="outline" className="capitalize">{data.packType}</Badge>
+                <span className="font-mono text-xs text-muted-foreground">{data.slug}</span>
+              </div>
+            </div>
           </div>
           {(canToggle || showEditButton || canDelete) && (
-            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 w-full sm:w-auto">
+            <div className="flex shrink-0 flex-wrap items-center gap-1.5 sm:gap-2">
               {canToggle && (
                 <TogglePackButton packId={data.id} active={data.active} />
               )}
@@ -188,7 +196,12 @@ export default async function PackDetailPage({
         <PackStatsSection stats={packStats} />
       </FadeIn>
 
-      <PackTabs data={data} initialGames={initialGames} />
+      <FadeIn>
+        <div className="space-y-3">
+          <SectionHeading icon={Boxes} title="Pack Contents" />
+          <PackTabs data={data} initialGames={initialGames} />
+        </div>
+      </FadeIn>
     </div>
   );
 }
