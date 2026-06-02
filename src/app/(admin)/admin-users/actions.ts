@@ -12,6 +12,7 @@ import { ok, fail, type ServerActionResult } from "@/lib/errors/server-action-re
 import { logError } from "@/lib/errors/logger";
 import { computeAllowedPagesForRoles } from "@/lib/role-baselines";
 import { isAdminRole, pickPrimaryRole } from "@/lib/admin-roles";
+import { writeAdminUserWithRoles } from "@/lib/admin-user-roles";
 
 /**
  * Normalize a caller-supplied role payload into a deduped, validated set
@@ -80,18 +81,36 @@ export async function createAdminUser(data: {
   // crashes with P2022 even though the write itself would succeed.
   let created: { id: string };
   try {
-    created = await adminDb.admin_users.create({
-      data: {
-        email: data.email,
-        username: data.username,
-        password_hash: passwordHash,
-        // `role` stays the canonical primary; `roles` holds the full set.
-        role: primary,
-        roles,
-        allowed_pages: allowedPages,
-      },
-      select: { id: true },
-    });
+    // Resilient to the un-applied `roles` migration: if the additive
+    // `roles` column doesn't exist yet, retry the create without it so the
+    // canonical `role` + `allowed_pages` still persist (effective role set
+    // collapses to `[role]` — identical to legacy single-role behaviour).
+    created = await writeAdminUserWithRoles(
+      () =>
+        adminDb.admin_users.create({
+          data: {
+            email: data.email,
+            username: data.username,
+            password_hash: passwordHash,
+            // `role` stays the canonical primary; `roles` holds the full set.
+            role: primary,
+            roles,
+            allowed_pages: allowedPages,
+          },
+          select: { id: true },
+        }),
+      () =>
+        adminDb.admin_users.create({
+          data: {
+            email: data.email,
+            username: data.username,
+            password_hash: passwordHash,
+            role: primary,
+            allowed_pages: allowedPages,
+          },
+          select: { id: true },
+        }),
+    );
   } catch (err) {
     // Most common path: P2002 unique-violation on email / username.
     // Surface a friendly message; the raw Prisma error goes to logs.
@@ -227,11 +246,26 @@ export async function setAdminRoles(
     ? []
     : [...new Set([...target.allowed_pages, ...baseline])];
 
-  await adminDb.admin_users.update({
-    where: { id: adminUserId },
-    data: { role: primary, roles, allowed_pages: mergedAllowed },
-    select: { id: true },
-  });
+  // Resilient to the un-applied `roles` migration: if the additive `roles`
+  // column doesn't exist yet, retry the update without it. The canonical
+  // `role` (primary) and the additively-merged `allowed_pages` still
+  // persist, so the role change takes effect; the effective set collapses
+  // to `[role]` until the migration is applied — identical to the legacy
+  // single-role path, and never wipes the merged grants.
+  await writeAdminUserWithRoles(
+    () =>
+      adminDb.admin_users.update({
+        where: { id: adminUserId },
+        data: { role: primary, roles, allowed_pages: mergedAllowed },
+        select: { id: true },
+      }),
+    () =>
+      adminDb.admin_users.update({
+        where: { id: adminUserId },
+        data: { role: primary, allowed_pages: mergedAllowed },
+        select: { id: true },
+      }),
+  );
 
   await createAdminAuditEvent({
     adminUserId: session.userId,

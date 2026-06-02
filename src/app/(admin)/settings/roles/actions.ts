@@ -39,7 +39,28 @@ export type RoleConfig = {
 
 /**
  * Read the current effective permissions for each non-admin role.
- * Derived from the first user of that role (they're batch-synced).
+ *
+ * The canonical preset for a role is the RICHEST `allowed_pages` among its
+ * users (the user with the most granted keys), NOT an arbitrary "first"
+ * row. This is a deliberate safety choice:
+ *
+ *   `updateRolePermissions` (the Save below) OVERWRITES `allowed_pages` for
+ *   EVERY user of the role with whatever this editor displays. If we seeded
+ *   the editor from an arbitrary row, a single under-provisioned account
+ *   (e.g. a stub support user with only /users + /dashboard) could be
+ *   picked as "the support preset" — the admin opens the editor, sees a
+ *   near-empty config, and a Save would then strip every other support
+ *   user down to that stub. `findMany` has no inherent ordering, so the
+ *   row picked was effectively random.
+ *
+ *   Picking the max-length set means the editor always shows the fullest
+ *   real grant for the role, so an accidental Save can only ever re-assert
+ *   the broadest existing preset — never silently narrow everyone to a
+ *   stripped-down account. An admin who genuinely wants to reduce access
+ *   still un-ticks entries explicitly.
+ *
+ * Reads only `role` + `allowed_pages` (not the additive `roles` column),
+ * so it is unaffected by whether that migration has been applied.
  */
 export async function getRolePermissions(): Promise<
   Record<ConfigurableRole, RoleConfig>
@@ -63,12 +84,14 @@ export async function getRolePermissions(): Promise<
     pack_creator: emptyConfig(),
   };
 
-  // Use the first user of each role as the canonical preset
-  const found = new Set<string>();
+  // Track the richest allowed_pages seen per role so the editor seeds from
+  // the fullest real grant, not an arbitrary (unordered) first row.
+  const bestLen: Partial<Record<ConfigurableRole, number>> = {};
   for (const u of users) {
     if (!isConfigurableRole(u.role)) continue;
-    if (found.has(u.role)) continue;
-    found.add(u.role);
+    const len = u.allowed_pages.length;
+    if (bestLen[u.role] !== undefined && len <= bestLen[u.role]!) continue;
+    bestLen[u.role] = len;
     result[u.role] = {
       pages: u.allowed_pages.filter((p) => !p.startsWith("__")),
       capabilities: extractCapabilityStates(u.allowed_pages),

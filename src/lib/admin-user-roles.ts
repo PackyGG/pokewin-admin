@@ -88,3 +88,38 @@ export async function readAdminUsersWithRoles<
     return rows.map((row) => ({ ...row, roles: [] as string[] }));
   }
 }
+
+/**
+ * Resilient WRITE for an `admin_users` mutation that sets `roles` (create
+ * or update). The read wrappers above degrade reads of the additive
+ * `roles` column; this is the symmetric guard for WRITES.
+ *
+ * Until migration 20260602000000_add_admin_users_roles_array is applied,
+ * any write touching `roles` throws P2022 ("column does not exist"). That
+ * means — on an un-migrated DB — every "Edit Roles" action (setAdminRoles)
+ * and every new-admin creation (createAdminUser) would throw instead of
+ * persisting. This wrapper retries the SAME write with `roles` omitted, so
+ * the singular `role` column + `allowed_pages` still persist correctly.
+ *
+ * Effective behaviour is IDENTICAL whether or not the column exists: with
+ * no `roles` column, getEffectiveRoles(role, []) collapses to `[role]`,
+ * which is exactly the legacy single-role semantics. Once the migration is
+ * applied, only `withRoles` runs and the real column is written — no
+ * fallback, no extra round-trip on the happy path.
+ *
+ * `withRoles` performs the full write (including `roles`); `withoutRoles`
+ * performs the SAME write with `roles` removed from the data payload. Any
+ * non-missing-column error is re-thrown unchanged so real failures
+ * (unique-violation, connection issues) are not masked.
+ */
+export async function writeAdminUserWithRoles<T>(
+  withRoles: () => Promise<T>,
+  withoutRoles: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await withRoles();
+  } catch (err) {
+    if (!isMissingColumnError(err)) throw err;
+    return await withoutRoles();
+  }
+}
