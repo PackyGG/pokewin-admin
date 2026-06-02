@@ -122,12 +122,29 @@ export type PackEdgeRow = {
  * `insights-games/packs.ts` (`WHERE p.pack_type <> 'reward'`) and the
  * dedicated daily-pack cost tab in `insights-rewards/daily-packs.ts`
  * (`WHERE p.pack_type = 'reward'`). The other live pack types
- * (`official`, `custom`, `promo`) stay in.
+ * (`official`, `custom`) stay in.
+ *
+ * The signup "Welcome Pack" (`packs.slug = 'welcome-pack'`) is excluded
+ * too. It is NOT a `reward`-type pack, so the reward filter above does
+ * not catch it — it is the catalog's lone `promo` pack: a near-free
+ * onboarding giveaway priced at $0.01 against a card pool worth more
+ * than that, so its theoretical RTP comes out >100% (a deliberate
+ * loss-leader). Left in, it drags the catalog avg-RTP / house-edge
+ * aggregates and renders a meaningless ~131%-RTP row in the EV table.
+ * We drop it by its stable unique slug rather than by
+ * `pack_type = 'promo'`, so any genuine future promo pack still gets
+ * analyzed here. (Distinct from the "Welcome Reward" `one_time` reward,
+ * whose granted pack is `pack_type = 'reward'` and is therefore already
+ * dropped by the filter above.)
  */
 export async function getPackEdgeRows(): Promise<PackEdgeRow[]> {
   const db = await getDb();
   const packs = await db.packs.findMany({
-    where: { active: true, pack_type: { not: "reward" } },
+    where: {
+      active: true,
+      pack_type: { not: "reward" },
+      slug: { not: "welcome-pack" },
+    },
     select: {
       id: true,
       name: true,
