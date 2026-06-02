@@ -130,14 +130,16 @@ export function PnlStatCard({
 // reconciliation" beats a wrong one.
 //
 // Round 6: instead of bridging GGR to P&L (which conflates two
-// independent formulas), the popover now shows the GGR formula
-// itself — every wager ledger type and every payout ledger type that
-// goes INTO the headline number, with its summed ABS(amount) for the
-// window. Bottom of the popover offers a "Show top contributors"
-// expander that fires a server action to GROUP BY user_id, so the
-// admin can drill from "GGR = -$102k" → "rakeback drove $89k of that"
-// → "and these are the 10 users it went to". Pure transparency, no
-// derivations.
+// independent formulas), the popover shows the GGR formula's LEGS for
+// the window — the wager leg (ledger pack/battle stake) and the payout
+// leg (pack/battle wins valued from inventory + battle refunds), per the
+// canonical @/lib/metrics inventory-delta definition. Bottom of the
+// popover offers a "Show top contributors" expander that fires a server
+// action computing the SAME per-user inventory-delta net, so the admin
+// can drill from "GGR = -$102k" → which users drove it. Pure
+// transparency, no derivations. (NOTE: card/voucher conversions and
+// reward giveaways are NOT on the payout leg — they're neutral /
+// NGR-side; and upgrader is excluded entirely, surfaced in its own panel.)
 export function GgrStatCard({
   ggr,
   periodLabel,
@@ -286,10 +288,12 @@ function GgrBreakdownPopover({
             GGR breakdown
           </p>
           <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
-            {periodLabel}. Every ledger type that goes into GGR, summed
-            for the window. Staff + excluded users dropped, and creator
-            on-stream sessions excluded on BOTH sides (same filter as
-            Daily P&L) — so the totals here match the headline.
+            {periodLabel}. GGR = wager − (pack/battle wins + battle
+            refunds). Wins are valued from inventory (the cards kept),
+            not a ledger payout. Card/voucher conversions are neutral and
+            excluded. Real customers only (staff, creators + excluded
+            users dropped, borrow plays removed) — so this matches the
+            headline.
           </p>
         </div>
 
@@ -433,7 +437,7 @@ function BreakdownSection({
               key={r.type}
               className="flex items-center justify-between gap-2 rounded px-1 py-0.5 text-[11px] hover:bg-muted/40"
             >
-              <span className="truncate font-mono text-muted-foreground">
+              <span className="truncate text-muted-foreground">
                 {r.type}
               </span>
               <span

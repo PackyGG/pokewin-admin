@@ -12,12 +12,23 @@ import {
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
 import { getCreatorSessionWindowsCte } from "./creator-session-windows";
+// Canonical metric layer (single source of truth for GGR / wager / payout
+// / scope). The dashboard's headline GGR + the GGR breakdown popover are
+// migrated onto these — the inline `wager − Σ payout(19)` formula (which
+// folded the 328k-row `card_sale` and the other NEUTRAL conversions into
+// the payout side, and assumed a phantom ledger `upgrader_payout`) is
+// gone. See src/lib/metrics/ledger-sets.ts for the verified booking model
+// (CASE iii: gross-in via ledger, win via `user_inventory` delta).
 import {
-  WAGER_PAYOUT_WAGER_TYPES,
-  WAGER_PAYOUT_PAYOUT_TYPES,
-  WAGER_TYPES_SQL,
-  PAYOUT_TYPES_SQL,
-} from "./_wager-payout-types";
+  WAGER_TYPES_SQL as METRICS_WAGER_TYPES_SQL,
+  GAMING_PAYOUT_TYPES_SQL as METRICS_GAMING_PAYOUT_TYPES_SQL,
+} from "@/lib/metrics";
+import {
+  getWindowMetrics,
+  getGamingLegs,
+  upgraderMetrics,
+  type MetricWindow,
+} from "@/lib/metrics/queries";
 import {
   DASHBOARD_PERIOD_LABELS,
   DEFAULT_DASHBOARD_PERIOD,
@@ -39,8 +50,25 @@ export {
 export type { DashboardPeriod } from "./dashboard-period";
 
 /**
+ * Convert a dashboard period chip to the canonical `MetricWindow` the
+ * `@/lib/metrics` query builders take. The "all" chip maps to
+ * `since: null` (true lifetime, no lower bound) rather than the epoch
+ * sentinel `periodToCutoff` returns — the canonical layer drops the
+ * `created_at >= …` clause entirely for `null`, which is cheaper and
+ * semantically exact. Every other chip maps to its rolling cutoff.
+ */
+function periodToMetricWindow(
+  period: DashboardPeriod,
+  now: Date,
+): MetricWindow {
+  return period === "all"
+    ? { since: null }
+    : { since: periodToCutoff(period, now) };
+}
+
+/**
  * Single raw query that returns revenue (deposits), withdrawal, wager,
- * GGR, and the windowed-P&L building blocks for the SELECTED period
+ * and the windowed-P&L building blocks for the SELECTED period
  * only. Previously this computed all 9 windows at once (1h … all) in
  * one massive CASE-WHEN scan — fast in round-trip count but very heavy
  * in plan + execution, because every aggregate had to evaluate 9 time
@@ -56,13 +84,34 @@ export type { DashboardPeriod } from "./dashboard-period";
  * Row shape: one text column per metric. Caller converts to number via
  * toNumber / parseFloat.
  *
- * Note on withdrawals: revenue/wager/GGR come from `ledger_transactions`,
+ * Note on withdrawals: revenue/wager come from `ledger_transactions`,
  * but withdrawals come from `card_withdrawal_requests` (status IN
  * completed/shipped) so the StatCard matches the PnL formula's source of
  * truth. Some pre-Fireblocks completions never got their ledger entry's
  * status flipped to 'completed' — those withdrawals are real (money left
  * the house) but a ledger-based query misses them. The request table is
  * the authoritative record.
+ *
+ * GGR is NO LONGER computed here. The headline GGR now comes from the
+ * canonical `@/lib/metrics` inventory-delta definition (`getWindowMetrics`
+ * in `dashboardStatsInner`) — wager (ledger) minus the
+ * `user_inventory.value_at_obtained` win delta plus `|battle_refund|`,
+ * with the central real-customer + borrow-corrected scope. The old inline
+ * `wager − Σ payout(19)` aggregate that lived in this query subtracted the
+ * NEUTRAL card/voucher conversions (card_sale alone was hundreds of
+ * thousands of rows) and a phantom ledger `upgrader_payout`; both are
+ * removed. This query still produces the wager DISPLAY tiles + the
+ * windowed-P&L building blocks.
+ *
+ * The wager-side type list is sourced from the canonical
+ * `WAGER_TYPES` (`pack_opening`/`battle_bet`/`battle_sponsorship`) — the
+ * phantom `upgrader_bet` ledger member is gone (upgrader lives only in
+ * `upgrader_games`; the enum doesn't even carry `upgrader_bet` on a
+ * migration-lagged DB, so referencing it threw `22P02`). Upgrader wager is
+ * surfaced separately from `upgrader_games` via the canonical
+ * `upgraderMetrics`. `withdrawal_shipping_fee` is NOT in the wager list
+ * (it is a FEE, not a stake) — so this tile and the canonical GGR wager
+ * leg now agree on the fee (closes M3).
  */
 function getPeriodAggregates(
   db: PrismaClient,
@@ -76,13 +125,15 @@ function getPeriodAggregates(
   // the customer wager figure.
   sessionWindowsCte: string,
 ) {
-  // GGR wager/payout type sets — built ONCE from the canonical shared
-  // constants (src/lib/queries/_wager-payout-types.ts) and interpolated
-  // via Prisma.raw, instead of being re-typed inline (where the 19-item
-  // payout list inevitably drifts). The values are hardcoded ledger-
-  // type strings — no external input — so Prisma.raw is injection-safe.
-  const ggrWagerIn = Prisma.raw(WAGER_TYPES_SQL);
-  const ggrPayoutIn = Prisma.raw(PAYOUT_TYPES_SQL);
+  // Wager-side type set — the canonical `WAGER_TYPES` from
+  // `@/lib/metrics` (`pack_opening`/`battle_bet`/`battle_sponsorship`),
+  // rendered as a pre-quoted SQL `IN` list. Hardcoded enum strings (no
+  // external input) so interpolation via Prisma.raw is injection-safe.
+  // This is the SAME set the canonical GGR wager leg uses, so the wager
+  // DISPLAY tiles below reconcile with the headline GGR's wager leg
+  // (closes M3 on the `withdrawal_shipping_fee` split — neither includes
+  // the fee). The phantom `upgrader_bet` member is intentionally absent.
+  const wagerTypesIn = Prisma.raw(METRICS_WAGER_TYPES_SQL);
   return db.$queryRaw<
     {
       revenue: string;
@@ -97,16 +148,16 @@ function getPeriodAggregates(
       // Customer wager — wager MINUS wagers a creator made while live
       // on a deal/stream (house-funded "sponsored" play).
       wager_excl_session: string;
-      // Customer wager broken down by source (Packs / Battles /
-      // Upgrader). Sum to wager_excl_session.
+      // Customer GAMEPLAY wager broken down by ledger source (Packs /
+      // Battles). These two sum to wager_excl_session. Upgrader is NOT a
+      // ledger source — it is added on top from `upgrader_games` by the
+      // caller (see `upgraderMetrics`), so it is not a column here.
       pack_wager_excl_session: string;
       battle_wager_excl_session: string;
-      upgrader_wager_excl_session: string;
       // Wager from users who did NOT join under an official creator
       // code AND are not creator on-stream play (NOT in_session AND
       // NOT under_creator). Pure organic customer wager.
       wager_organic: string;
-      ggr: string;
       deposit_count: string;
       // Windowed balance-change components used by the period P&L
       // figure (was the 24h-only realizedPnl24h, now keyed on the
@@ -212,64 +263,35 @@ function getPeriodAggregates(
       COALESCE((SELECT SUM(CASE WHEN effective_at >= ${cutoff} AND user_role = 'creator' THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS creator_wd_amount,
       (SELECT COUNT(*) FROM withdrawals WHERE effective_at >= ${cutoff} AND user_role = 'creator')::text AS creator_wd_count,
 
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS wager,
+      COALESCE(SUM(CASE WHEN type IN ${wagerTypesIn} AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS wager,
 
       -- Customer wager — the wager set MINUS wagers a creator made
       -- while live on a deal/stream (in_session). Creators wager
       -- house-funded "sponsored" balance on stream — recorded as
       -- ordinary pack_opening/battle_bet rows — which is not a real
       -- customer bet. A creator's OFF-session personal play stays in.
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS wager_excl_session,
+      COALESCE(SUM(CASE WHEN type IN ${wagerTypesIn} AND NOT in_session AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS wager_excl_session,
 
-      -- Packs / Battles / Upgrader split of the customer wager. Same
-      -- NOT in_session filter as wager_excl_session, so the three sum
+      -- Packs / Battles split of the customer GAMEPLAY wager. Same
+      -- NOT in_session filter as wager_excl_session, so the two sum
       -- to it. Drives the "Where the wager comes from" chip row under
-      -- the Total Wager card.
+      -- the Total Wager card. Upgrader is added on top by the caller
+      -- from upgrader_games (it is not a ledger wager source).
       COALESCE(SUM(CASE WHEN type = 'pack_opening' AND NOT in_session AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS pack_wager_excl_session,
       COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND NOT in_session AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS battle_wager_excl_session,
-      COALESCE(SUM(CASE WHEN type = 'upgrader_bet' AND NOT in_session AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS upgrader_wager_excl_session,
 
-      -- Organic wager — pack / battle / upgrader wager from users who
+      -- Organic wager — pack / battle gameplay wager from users who
       -- did NOT join under an official creator code (and isn't a
       -- creator's own on-stream play, via NOT in_session). Reads off
       -- the under_creator flag set on the real_users CTE above.
-      COALESCE(SUM(CASE WHEN type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet') AND NOT in_session AND NOT under_creator AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS wager_organic,
+      COALESCE(SUM(CASE WHEN type IN ${wagerTypesIn} AND NOT in_session AND NOT under_creator AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS wager_organic,
 
-      -- GGR = wagers − payouts. The wager (ggrWagerIn) + payout
-      -- (ggrPayoutIn) type sets are interpolated from the canonical
-      -- shared constants in src/lib/queries/_wager-payout-types.ts
-      -- (the same lists creators-pnl.ts uses), so the dashboard's
-      -- global GGR can never drift from the per-creator GGR. Change
-      -- the lists in that one file, not here.
-      --
-      -- Creator on-stream sessions are dropped from BOTH the wager
-      -- side AND the payout side via the NOT in_session filter on
-      -- the base CTE — the same session_windows CTE the daily P&L
-      -- (pnl.ts) uses. Customer GGR shouldn't be polluted by creator
-      -- stream play that's funded by the house: those wagers aren't
-      -- real customer bets, and the matching wins / refunds aren't
-      -- real customer payouts. The filter is SYMMETRIC across the
-      -- two sides (an asymmetry would inflate / understate GGR by
-      -- the in-session leg that survived); both sides drop the same
-      -- rows.
-      --
-      -- Upgrader plays ARE represented in the ledger on both sides:
-      -- upgrader_bet rows debit the wager (in the WAGER set) and
-      -- upgrader_payout rows credit the win (in the PAYOUT set — added
-      -- when Upgrader shipped on packy.gg, see commit 696b716). So
-      -- this aggregate already captures upgrader on both legs; do NOT
-      -- subtract a parallel upgrader_games.won_amount figure on top
-      -- of it. A prior correction did exactly that based on a stale
-      -- assumption (documented in dashboard-upgrader.ts) that the
-      -- backend never wrote upgrader_payout rows; that assumption was
-      -- already false by the time the correction landed, producing a
-      -- -$150k+ phantom drag on the 24h GGR card (and a matching
-      -- over-statement of customer P&L on every period / daily /
-      -- breakdown surface that mirrored the formula).
-      (
-        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND NOT in_session AND created_at >= ${cutoff} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND NOT in_session AND created_at >= ${cutoff} THEN ABS(amount) ELSE 0 END), 0)
-      )::text AS ggr,
+      -- NOTE: GGR is intentionally NOT computed here anymore. It is
+      -- produced by the canonical @/lib/metrics inventory-delta
+      -- definition (getWindowMetrics) in dashboardStatsInner. The
+      -- previous inline wager minus 19-type payout aggregate folded the
+      -- NEUTRAL card/voucher conversions and a phantom ledger
+      -- upgrader_payout into the payout side; both are removed.
 
       -- Deposit COUNT — number of completed deposit transactions in
       -- the selected period. Pairs with revenue so the Deposits
@@ -319,11 +341,16 @@ function getPeriodAggregates(
 const cachedDailyChart = unstable_cache(
   async (blacklistIdNotIn: string) => {
     const db = await getDb();
+    // GAMEPLAY wager (packs + battles) + deposits per day, last 30 days,
+    // from the ledger. Upgrader is NOT here — it lives only in
+    // `upgrader_games` (see `cachedDailyUpgrader`); the phantom
+    // `upgrader_bet` ledger member doesn't exist on a migration-lagged DB
+    // and threw `22P02`. The daily upgrader series is merged in by the
+    // caller from the upgrader-native table.
     return db.$queryRaw<{
       date: Date;
       packs: string;
       battles: string;
-      upgrader: string;
       deposits: string;
       active_depositors: string;
     }[]>`
@@ -331,18 +358,54 @@ const cachedDailyChart = unstable_cache(
         DATE(created_at) as date,
         COALESCE(SUM(CASE WHEN type = 'pack_opening' THEN ABS(amount::numeric) ELSE 0 END), 0)::text as packs,
         COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') THEN ABS(amount::numeric) ELSE 0 END), 0)::text as battles,
-        COALESCE(SUM(CASE WHEN type = 'upgrader_bet' THEN ABS(amount::numeric) ELSE 0 END), 0)::text as upgrader,
         COALESCE(SUM(CASE WHEN type = 'deposit' THEN amount::numeric ELSE 0 END), 0)::text as deposits,
         COUNT(DISTINCT CASE WHEN type = 'deposit' THEN user_id END)::text as active_depositors
       FROM ledger_transactions
-      WHERE type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet','deposit') AND status = 'completed'
+      WHERE type IN ('pack_opening','battle_bet','battle_sponsorship','deposit') AND status = 'completed'
         AND created_at >= NOW() - INTERVAL '30 days'
         AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)})
       GROUP BY DATE(created_at)
       ORDER BY date
     `;
   },
-  ["dashboard-daily-chart-v1"],
+  ["dashboard-daily-chart-v2"],
+  { revalidate: 300, tags: ["dashboard-lifetime"] },
+);
+
+/**
+ * Daily upgrader wager (`upgrader_games.bet_amount`) per day for the last
+ * 30 days — the upgrader-native companion to `cachedDailyChart` (which no
+ * longer reads the phantom `upgrader_bet` ledger member). Merged into the
+ * `dailyWagers` series by date so the Wagers chart's Upgrader segment is
+ * sourced from the SAME table the dedicated Upgrader Stats panel uses.
+ *
+ * Guarded by a `to_regclass` probe — returns an empty series when the
+ * connected DB has no `upgrader_games` table (the pre-upgrader snapshot),
+ * a graceful skip rather than a `42P01` throw (same pattern as the
+ * canonical `upgraderMetrics`). Real-customer scope mirrors the canonical
+ * layer (admin / support / creator + blacklist dropped).
+ */
+const cachedDailyUpgrader = unstable_cache(
+  async (blacklistIdNotIn: string): Promise<{ date: Date; upgrader: string }[]> => {
+    const db = await getDb();
+    const probe = await db.$queryRaw<{ exists: string | null }[]>`
+      SELECT to_regclass('public.upgrader_games')::text AS exists`;
+    if (probe[0]?.exists == null) return [];
+    return db.$queryRaw<{ date: Date; upgrader: string }[]>`
+      SELECT
+        DATE(created_at) as date,
+        COALESCE(SUM(bet_amount::numeric), 0)::text as upgrader
+      FROM upgrader_games
+      WHERE created_at >= NOW() - INTERVAL '30 days'
+        AND user_id IN (
+          SELECT id FROM "user"
+          WHERE role NOT IN ('admin', 'support', 'creator') ${Prisma.raw(blacklistIdNotIn)}
+        )
+      GROUP BY DATE(created_at)
+      ORDER BY date
+    `;
+  },
+  ["dashboard-daily-upgrader-v1"],
   { revalidate: 300, tags: ["dashboard-lifetime"] },
 );
 
@@ -727,6 +790,12 @@ async function dashboardStatsInner(period: DashboardPeriod) {
   // selector. `new Date(0)` for "all" lets the cutoff filter degrade
   // to a no-op without a special SQL branch.
   const periodCutoff = periodToCutoff(period, now);
+  // Canonical metric window for the selected period — `since: null` for
+  // "all" (true lifetime), else the rolling cutoff. Drives the
+  // `@/lib/metrics` GGR + upgrader reads, which bake in the central
+  // real-customer + borrow-corrected scope (so the session-window /
+  // scope fixes landing in `@/lib/metrics` propagate here automatically).
+  const metricWindow = periodToMetricWindow(period, now);
 
   // Perf audit (2026-05-27): cut the dashboard's parallel query batch
   // from 17 to 12 queries, and dropped the 4-query
@@ -754,9 +823,12 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     userCounts,
     balanceAggregates,
     dailyChart,
+    dailyUpgrader,
     dailySignups,
     dailyWagerAttribution,
     periodAggregates,
+    windowMetrics,
+    upgraderWindow,
     uniqueDepositorsResult,
     realizedPnlResult,
     packsOpened24h,
@@ -799,6 +871,11 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     // change and today's row moves slowly enough that operators
     // wouldn't notice a 5-min lag.
     withTiming("dashboard.dailyChart", () => cachedDailyChart(blacklistIdNotIn)),
+    // Daily upgrader wager (last 30 days) from `upgrader_games` — the
+    // upgrader-native companion to the daily ledger scan above. Merged
+    // into the dailyWagers series by date. Empty on a pre-upgrader DB
+    // (to_regclass guard). 5-min cached.
+    withTiming("dashboard.dailyUpgrader", () => cachedDailyUpgrader(blacklistIdNotIn)),
     // Signups last 30 days. 5-min cached for the same reason.
     withTiming("dashboard.dailySignups", () => cachedDailySignups(blacklistIdNotIn)),
     // Daily wager attribution split — organic (no creator-code
@@ -807,17 +884,34 @@ async function dashboardStatsInner(period: DashboardPeriod) {
       cachedDailyWagerAttribution(blacklistIdNotIn),
     ),
     // Single batched query — computes revenue / withdrawal / wager /
-    // ggr / deposit_count / balance_change / manual_wd for the SELECTED
+    // deposit_count / balance_change / manual_wd for the SELECTED
     // period only. Previously this fanned out into 9 windows × many
     // metrics per render; now only the chip the admin clicked gets
     // computed, which is the headline perf win of the period selector.
     // Also produces `balance_change` and `manual_wd` so the windowed
-    // P&L no longer needs a separate calculateWindowedPnl() call.
+    // P&L no longer needs a separate calculateWindowedPnl() call. GGR is
+    // NO LONGER produced here — see `windowMetrics` below.
     // NOT cached — recomputes every render because the cutoff depends
     // on the selected period.
     withTiming("dashboard.periodAggregates", () =>
       getPeriodAggregates(db, periodCutoff, blacklistIdNotIn, sessionWindowsCte),
     ),
+    // Canonical headline GGR (+ NGR / RTP / house-edge / bets) for the
+    // selected window, from the `@/lib/metrics` inventory-delta
+    // definition: wager (ledger WAGER_TYPES) − (Σ user_inventory win
+    // delta + |battle_refund|), with the central real-customer +
+    // borrow-corrected scope and upgrader EXCLUDED from the gaming margin
+    // (M6 — upgrader has no ledger payout; it is reported via the
+    // dedicated Upgrader Stats panel). Replaces the old inline
+    // `wager − Σ payout(19)` aggregate. NOT cached — window-dependent.
+    withTiming("dashboard.windowMetrics", () =>
+      getWindowMetrics({ window: metricWindow }),
+    ),
+    // Upgrader gaming metrics for the selected window from
+    // `upgrader_games` (canonical helper) — drives the Total Wager
+    // card's Upgrader chip + breakdown. `null` on a pre-upgrader DB
+    // (to_regclass guard). NOT cached — window-dependent.
+    withTiming("dashboard.upgraderWindow", () => upgraderMetrics(metricWindow)),
     // Distinct depositors = real users whose LIFETIME completed-deposit
     // total is > 0. 5-min cached — lifetime depositor count moves
     // slower than 5 minutes.
@@ -915,9 +1009,7 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     wager_excl_session: "0",
     pack_wager_excl_session: "0",
     battle_wager_excl_session: "0",
-    upgrader_wager_excl_session: "0",
     wager_organic: "0",
-    ggr: "0",
     deposit_count: "0",
     balance_change: "0",
     manual_wd: "0",
@@ -925,6 +1017,13 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     creator_wd_count: "0",
   };
   const num = (s: string) => parseFloat(s) || 0;
+  // Canonical upgrader wager for the window (from `upgrader_games`), or 0
+  // on a pre-upgrader DB. Added to the customer wager DISPLAY tiles as a
+  // product line on top of the ledger gameplay wager — it is NOT part of
+  // the headline GGR (M6: upgrader has no ledger payout; the gaming
+  // margin would be one-legged). Upgrader's own house edge is in the
+  // dedicated Upgrader Stats panel.
+  const upgraderWagerPeriod = upgraderWindow?.wager ?? 0;
   // Lifetime deposit transaction count comes from
   // `lifetimeDepositMetrics` (a tiny indexed count, not the period
   // aggregate). Independent of the selected period so the Avg Deposit
@@ -992,6 +1091,17 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     inventoryChangePeriod -
     voucherChangePeriod;
 
+  // Daily upgrader wager keyed by ISO date (YYYY-MM-DD) so the
+  // dailyWagers series can merge the `upgrader_games`-sourced upgrader
+  // figure onto each ledger row's packs/battles. Empty map on a
+  // pre-upgrader DB → every day's upgrader segment is 0.
+  const dailyUpgraderByDate = new Map<string, number>(
+    dailyUpgrader.map((d) => [
+      new Date(d.date).toISOString().split("T")[0],
+      Number(d.upgrader),
+    ]),
+  );
+
   return {
     // Selected period meta — drives the UI labels (so a card title can
     // read "Wager · Last 24h") without the client component re-deriving
@@ -1004,17 +1114,22 @@ async function dashboardStatsInner(period: DashboardPeriod) {
       week: Number(userCounts[0]?.week ?? 0),
       month: Number(userCounts[0]?.month ?? 0),
     },
-    // Gaming margin (wagers − payouts) for the SELECTED period. Pure
-    // GGR, no liability adjustment. Use realizedPnl for the balance-
-    // sheet-true number.
+    // Gaming margin for the SELECTED period — the canonical
+    // `@/lib/metrics` inventory-delta GGR (house POV; positive = house
+    // up). GGR = wager (ledger WAGER_TYPES) − (Σ `user_inventory` win
+    // delta + |battle_refund|), real-customer + borrow-corrected scope.
+    // Pure GGR, no liability adjustment — use realizedPnl for the
+    // balance-sheet-true number.
     //
-    // Upgrader is fully represented in `pa.ggr`: upgrader_bet on the
-    // wager side and upgrader_payout on the payout side (both already
-    // in the canonical WAGER / PAYOUT type sets). No additional
-    // correction needed; the previous `- upgraderWonPeriod` term was
-    // double-subtracting every upgrader payout (see SQL comment above
-    // the periodAggregates query).
-    ggr: num(pa.ggr),
+    // Upgrader is NOT in this number (M6): upgrader wins live in
+    // `upgrader_games`, not the ledger, so there is no ledger
+    // `upgrader_payout` to net against `upgrader_bet`. Folding upgrader
+    // in would leave a one-legged (wager-only) contribution that
+    // overstates house GGR. Upgrader's own margin is surfaced in the
+    // dedicated Upgrader Stats panel. The previous inline aggregate that
+    // subtracted ledger `upgrader_payout` (and the NEUTRAL card/voucher
+    // conversions) on the payout side is removed.
+    ggr: windowMetrics.ggr,
     // Lifetime realized P&L from the house perspective — see getRealizedPnlSnapshot.
     // This is a single snapshot value, not a period series.
     realizedPnl: realizedPnlResult.pnl,
@@ -1062,30 +1177,35 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     // creator personal cash-outs during the SELECTED period.
     creatorWithdrawals: Math.abs(num(pa.creator_wd_amount)),
     creatorWithdrawalsCount: num(pa.creator_wd_count),
-    // Customer wager — wagers a creator made while live on a deal/
-    // stream are EXCLUDED (house-funded "sponsored" play, not a real
-    // customer bet). A creator's off-session personal play is kept.
-    // This is the figure the dashboard's "Total Wager" card shows.
-    wagers: Math.abs(num(pa.wager_excl_session)),
+    // Customer wager — the dashboard's "Total Wager" card. Ledger
+    // GAMEPLAY wager (packs + battles, creator-on-stream sessions
+    // EXCLUDED) PLUS upgrader wager from `upgrader_games`. The two
+    // ledger legs + the upgrader leg are the three breakdown chips
+    // below, so they sum to this hero exactly.
+    wagers: Math.abs(num(pa.wager_excl_session)) + upgraderWagerPeriod,
     // Per-source breakdown of the customer wager. Packs + Battles +
-    // Upgrader add up to `wagers`. All three sourced from the same
-    // NOT in_session filter as wager_excl_session.
+    // Upgrader add up to `wagers`. Packs/Battles come from the ledger
+    // (NOT in_session filter, same as wager_excl_session); Upgrader
+    // comes from `upgrader_games` (the canonical upgrader source — it is
+    // NOT a ledger wager type).
     wagersBreakdown: {
       packs: Math.abs(num(pa.pack_wager_excl_session)),
       battles: Math.abs(num(pa.battle_wager_excl_session)),
-      upgrader: Math.abs(num(pa.upgrader_wager_excl_session)),
+      upgrader: upgraderWagerPeriod,
     },
-    // Organic wager — customer wager from users who did NOT join
-    // under an official creator code (referrer null or non-creator).
-    // Excludes creator on-stream play via the same NOT in_session
-    // filter as `wagers`. Surfaces volume not attributed to creator
-    // marketing.
+    // Organic wager — customer GAMEPLAY wager from users who did NOT
+    // join under an official creator code (referrer null or
+    // non-creator). Excludes creator on-stream play via the same NOT
+    // in_session filter as `wagers`. Surfaces volume not attributed to
+    // creator marketing. Ledger gameplay only — the upgrader source
+    // can't be split by creator-code attribution, so it is not added
+    // here (this card is a distinct metric, not required to equal
+    // Total Wager).
     wagersOrganic: Math.abs(num(pa.wager_organic)),
     // Raw wager — every non-staff user, INCLUDING creators' on-stream
-    // sponsored play. The "Raw Wager" card shows this; (wagersRaw −
-    // wagers) is the creator deal/stream sponsored-balance
-    // contribution.
-    wagersRaw: Math.abs(num(pa.wager)),
+    // sponsored play, plus upgrader. (wagersRaw − wagers) is the creator
+    // deal/stream sponsored-balance contribution on the ledger legs.
+    wagersRaw: Math.abs(num(pa.wager)) + upgraderWagerPeriod,
     financials: {
       totalDeposited: parseFloat(ba.total_deposited) || 0,
       totalWithdrawn: parseFloat(ba.total_withdrawn) || 0,
@@ -1126,12 +1246,18 @@ async function dashboardStatsInner(period: DashboardPeriod) {
       battlesPlayed24h,
       signups24h: Number(userCounts[0]?.rolling24h ?? 0),
     },
-    dailyWagers: dailyChart.map((d) => ({
-      date: new Date(d.date).toISOString().split("T")[0],
-      packs: Number(d.packs),
-      battles: Number(d.battles),
-      upgrader: Number(d.upgrader),
-    })),
+    dailyWagers: dailyChart.map((d) => {
+      const date = new Date(d.date).toISOString().split("T")[0];
+      return {
+        date,
+        packs: Number(d.packs),
+        battles: Number(d.battles),
+        // Upgrader segment sourced from `upgrader_games` (merged by
+        // date), not the ledger. 0 on days with no upgrader plays or on
+        // a pre-upgrader DB.
+        upgrader: dailyUpgraderByDate.get(date) ?? 0,
+      };
+    }),
     dailyDeposits: dailyChart.map((d) => ({
       date: new Date(d.date).toISOString().split("T")[0],
       amount: Math.abs(Number(d.deposits)),
@@ -1238,31 +1364,42 @@ export async function getActiveRain(): Promise<ActiveRainSummary> {
 // ============================================================
 // GGR breakdown — makes the headline GGR number auditable.
 //
-// `getGgrBreakdown` returns the SAME wager/payout type set the
-// dashboard's headline GGR uses (from _wager-payout-types.ts), grouped
-// by type with ABS(amount) totals for the selected period. The popover
-// on the GgrStatCard renders these as two columns (wagers / payouts)
-// so admins can see WHICH ledger types are driving the headline number
-// and reconcile it line-by-line without trusting a single aggregate.
+// Both helpers below now mirror the canonical `@/lib/metrics`
+// inventory-delta GGR (NOT the old `_wager-payout-types.ts` 19-type
+// payout list, which folded the NEUTRAL card/voucher conversions and a
+// phantom ledger `upgrader_payout` into the payout side). The popover
+// therefore reconciles with the headline `getWindowMetrics.ggr` by
+// construction.
 //
-// `getGgrTopContributors` is the per-user companion — a GROUP BY
-// user_id over the same window, sorted by net contribution to GGR. NOT
-// cached upfront because GROUP BY user_id over ledger_transactions is
-// heavier than the GROUP BY type sweep; called lazily from a server
-// action when the admin clicks "Show top users" in the popover.
+// `getGgrBreakdown` returns the canonical GGR LEGS for the window:
+//   wagers  = ledger WAGER_TYPES (packs + battles), one combined row
+//   payouts = pack/battle wins (the `user_inventory.value_at_obtained`
+//             delta — the dominant payout, NOT a ledger type) +
+//             |battle_refund| (the only ledger cash gaming-payout leg)
+//   ggr     = wager − (inventory wins + battle_refund)
+//
+// `getGgrTopContributors` is the per-user companion using the SAME
+// inventory-delta model: per-user wager − (per-user inventory wins +
+// per-user |battle_refund|). NOT cached upfront because the per-user
+// ledger+inventory join is heavier than the window aggregate; called
+// lazily from a server action when the admin opens the expander.
+//
+// Upgrader is excluded from both (M6 — no ledger upgrader payout; the
+// gaming margin would be one-legged). It is surfaced separately via the
+// Upgrader Stats panel.
 // ============================================================
 
 export type GgrBreakdownRow = {
-  /** Ledger transaction type (e.g. "pack_opening", "battle_refund"). */
+  /** Display label for the leg (e.g. "pack & battle wager", "battle_refund"). */
   type: string;
-  /** Sum of ABS(amount) for the period. Always non-negative. */
+  /** Sum for the period. Always non-negative. */
   total: number;
 };
 
 export type GgrBreakdown = {
-  /** Wager-side ledger types — money the user put at risk. */
+  /** Wager-side legs — money the user put at risk on games. */
   wagers: GgrBreakdownRow[];
-  /** Payout-side ledger types — money flowing back to the user. */
+  /** Payout-side legs — value returned to the user on games (inventory wins + battle_refund). */
   payouts: GgrBreakdownRow[];
   /** Sum of wager totals. */
   wagersTotal: number;
@@ -1272,131 +1409,39 @@ export type GgrBreakdown = {
   ggr: number;
 };
 
-// Cached per-period+blacklist GROUP BY type query backing the GGR
-// breakdown popover. 60s revalidate matches the dashboard's
-// auto-refresh cadence so the popover values track the headline. The
-// tag is `dashboard-stats` so admin actions that already revalidate
-// dashboard data (e.g. excluded-users edits) blow this cache too.
-//
-// The query drops creator on-stream sessions from BOTH the wager-side
-// and payout-side rows via the `session_windows` CTE (same one used by
-// pnl.ts and the headline `pa.ggr` aggregate). Filter is symmetric, so
-// the per-type totals here sum to the headline GGR by construction —
-// no risk of the popover and the headline drifting because one side
-// was filtered and the other wasn't.
-//
-// `sessionWindowsCte` is part of the cache key so a change in the
-// upstream session list (creators going live / ending a stream)
-// invalidates the cached rows — the CTE source itself is 5-min cached,
-// so the key churn is bounded.
-const cachedGgrBreakdownRows = unstable_cache(
-  async (
-    blacklistIdNotIn: string,
-    cutoffIso: string,
-    sessionWindowsCte: string,
-  ): Promise<{ type: string; total: string }[]> => {
-    const db = await getDb();
-    const cutoff = new Date(cutoffIso);
-    // Combined wager+payout type list — interpolated from the canonical
-    // shared constants. Pre-quoted SQL fragment, injection-safe.
-    const allTypesSql = Prisma.raw(
-      `(${[...WAGER_PAYOUT_WAGER_TYPES, ...WAGER_PAYOUT_PAYOUT_TYPES]
-        .map((t) => `'${t}'`)
-        .join(",")})`,
-    );
-    return db.$queryRaw<{ type: string; total: string }[]>`
-      WITH real_users AS (
-        SELECT u.id, u.role FROM "user" u
-        WHERE u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
-      ),
-      ${Prisma.raw(sessionWindowsCte)}
-      SELECT
-        lt.type::text AS type,
-        COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total
-      FROM ledger_transactions lt
-      JOIN real_users ru ON ru.id = lt.user_id
-      WHERE lt.status = 'completed'
-        AND lt.created_at >= ${cutoff}
-        AND lt.type IN ${allTypesSql}
-        -- Drop creator on-stream rows — same filter pa.ggr uses on
-        -- both sides. The CASE keeps the EXISTS off the hot path for
-        -- non-creator rows (the vast majority).
-        AND NOT (
-          ru.role = 'creator'
-          AND EXISTS (
-            SELECT 1 FROM session_windows sw
-            WHERE sw.uid = lt.user_id
-              AND lt.created_at >= sw.win_start
-              AND lt.created_at <  sw.win_end
-          )
-        )
-      GROUP BY lt.type
-      ORDER BY total DESC
-    `;
-  },
-  ["dashboard-ggr-breakdown-v2"],
-  { revalidate: 60, tags: ["dashboard-stats"] },
-);
-
 /**
- * Per-type wager + payout totals for the selected period — the
- * components that sum to the headline GGR number. Backs the breakdown
- * popover on the dashboard's GgrStatCard.
+ * Canonical GGR legs for the selected period — the components that sum
+ * to the headline GGR number. Backs the breakdown popover on the
+ * dashboard's GgrStatCard.
  *
- * Single GROUP BY type sweep over `ledger_transactions` with the same
- * `status = 'completed'` + staff/blacklist exclusion filter the
- * headline GGR uses, so `ggr` here equals the headline aggregate by
- * construction. Splits the result into wager vs. payout buckets in JS
- * using the canonical type sets so the SQL stays one round-trip.
+ * Reads the canonical `@/lib/metrics` `getGamingLegs` (real-customer +
+ * borrow-corrected scope), so `ggr` here equals the headline
+ * `getWindowMetrics.ggr` by construction (both read the same legs). The
+ * wager side is shown as one combined "pack & battle wager" row; the
+ * payout side as two rows — the `user_inventory` win delta (the dominant
+ * pack/battle payout) and the `battle_refund` cash leg. Per-ledger-type
+ * granularity is intentionally gone from the payout side: the dominant
+ * payout is NOT a ledger type under the verified booking model, and the
+ * old per-type popover wrongly summed `card_sale` & friends into it.
  *
- * Cached 60s, tagged `dashboard-stats` (same TTL as the auto-refresh
- * cadence). Empty buckets are NOT filtered out here — the UI decides
- * whether to suppress zero-total rows.
+ * NOT separately cached — `getGamingLegs` is wrapped in its own timing
+ * and the popover loads up-front with the (already cached) stats batch.
  */
 export async function getGgrBreakdown(
   period: DashboardPeriod,
 ): Promise<GgrBreakdown> {
-  const [excluded, sessionWindowsCte] = await Promise.all([
-    getExcludedUserIds(),
-    // Same `session_windows` CTE the headline `pa.ggr` aggregate uses
-    // — drops creator on-stream rows from BOTH wager-side and payout-
-    // side totals so the popover sums equal the headline GGR.
-    getCreatorSessionWindowsCte(),
-  ]);
-  const blacklistIdNotIn = blacklistNotInClause("id", excluded);
-  const cutoff = periodToCutoff(period, new Date());
-  const rows = await cachedGgrBreakdownRows(
-    blacklistIdNotIn,
-    cutoff.toISOString(),
-    sessionWindowsCte,
-  );
+  const legs = await getGamingLegs(periodToMetricWindow(period, new Date()));
 
-  // O(1) lookup so the bucket-assignment + totals pass over `rows` is
-  // single-pass. Re-typing the readonly tuple as `Set<string>` is the
-  // cheapest way to keep the constants source-of-truth.
-  const wagerSet = new Set<string>(WAGER_PAYOUT_WAGER_TYPES);
-  const payoutSet = new Set<string>(WAGER_PAYOUT_PAYOUT_TYPES);
+  const wagers: GgrBreakdownRow[] = [
+    { type: "pack & battle wager", total: legs.wager },
+  ];
+  const payouts: GgrBreakdownRow[] = [
+    { type: "pack & battle wins (inventory)", total: legs.inventoryPayout },
+    { type: "battle_refund", total: legs.battleRefund },
+  ];
+  const wagersTotal = legs.wager;
+  const payoutsTotal = legs.inventoryPayout + legs.battleRefund;
 
-  const wagers: GgrBreakdownRow[] = [];
-  const payouts: GgrBreakdownRow[] = [];
-  let wagersTotal = 0;
-  let payoutsTotal = 0;
-
-  for (const r of rows) {
-    const total = parseFloat(r.total) || 0;
-    if (wagerSet.has(r.type)) {
-      wagers.push({ type: r.type, total });
-      wagersTotal += total;
-    } else if (payoutSet.has(r.type)) {
-      payouts.push({ type: r.type, total });
-      payoutsTotal += total;
-    }
-    // Unknown types are silently ignored — defensive, the SQL already
-    // filters to the canonical IN list, so this branch should never hit.
-  }
-
-  // Each bucket is already DESC by `total` from the SQL ORDER BY, so
-  // no extra sort here. wagers[] / payouts[] preserve magnitude order.
   return {
     wagers,
     payouts,
@@ -1409,9 +1454,9 @@ export async function getGgrBreakdown(
 export type GgrTopContributorRow = {
   userId: string;
   username: string | null;
-  /** Sum of ABS(amount) on wager-side ledger types. */
+  /** Per-user gaming wager (ledger WAGER_TYPES, borrow-corrected). */
   wagerTotal: number;
-  /** Sum of ABS(amount) on payout-side ledger types. */
+  /** Per-user gaming payout (inventory pack/battle wins + |battle_refund|). */
   payoutTotal: number;
   /** wagerTotal − payoutTotal. Positive = user lost (house profited). */
   net: number;
@@ -1421,15 +1466,21 @@ export type GgrTopContributorRow = {
  * Per-user net contribution to GGR for the selected period — drives
  * the "top contributors" expander inside the GGR breakdown popover.
  *
- * Single GROUP BY user_id sweep over the same window/type set as the
- * headline GGR. Joins to `user` for the username so the popover can
- * render a clickable link to /users/<id> without a second roundtrip.
- * Ordered by ABS(net) DESC so the loudest movers (in either
- * direction) surface first, regardless of sign.
+ * Uses the canonical inventory-delta model so each user's `net`
+ * reconciles with the headline GGR definition: wager (ledger
+ * WAGER_TYPES) − (inventory pack/battle win delta + |battle_refund|),
+ * borrow-corrected on both sides. The scope predicate
+ * (`role NOT IN ('admin','support','creator')` + blacklist) and the
+ * borrow-exclusion subqueries mirror the canonical
+ * `@/lib/metrics/queries` `getGamingLegs` / `realCustomersScope` — they
+ * are re-expressed here only because that module exposes no per-USER
+ * builder (it is window-aggregate only) and must not be edited from the
+ * dashboard. The canonical SQL list constants are imported, so the
+ * type sets cannot drift from the headline.
  *
- * NOT cached — GROUP BY user_id is heavier than the type-only sweep
- * and the popover only loads it on user click. Always returns at most
- * `limit` rows (default 10).
+ * NOT cached — the per-user ledger+inventory join is heavier than the
+ * window aggregate and the popover only loads it on click. Returns at
+ * most `limit` rows (default 10), ordered by ABS(net) DESC.
  */
 export async function getGgrTopContributors(
   period: DashboardPeriod,
@@ -1439,32 +1490,30 @@ export async function getGgrTopContributors(
   // an out-of-range value shouldn't blow up the query plan.
   const safeLimit = Math.max(1, Math.min(limit, 50));
   const db = await getDb();
-  const [excluded, sessionWindowsCte] = await Promise.all([
-    getExcludedUserIds(),
-    // Same `session_windows` CTE the headline `pa.ggr` aggregate and
-    // the breakdown popover use — drops creator on-stream rows from
-    // BOTH the wager-side and payout-side per-user sums so this list
-    // matches the headline GGR. A creator whose only contribution to
-    // the window is on-stream sponsored play vanishes from the list
-    // (correct — those rows aren't a real customer-vs-house outcome).
-    getCreatorSessionWindowsCte(),
-  ]);
+  const excluded = await getExcludedUserIds();
   const blacklistIdNotIn = blacklistNotInClause("u.id", excluded);
   const cutoff = periodToCutoff(period, new Date());
-  const wagerIn = Prisma.raw(WAGER_TYPES_SQL);
-  const payoutIn = Prisma.raw(PAYOUT_TYPES_SQL);
-  // Same filter shape as getGgrBreakdown / pa.ggr:
-  //   • status = 'completed'
-  //   • created_at >= cutoff
-  //   • type IN (wager ∪ payout)
-  //   • user is not staff / blacklisted
-  //   • creator on-stream rows dropped on BOTH sides (NOT in_session)
-  // The real_users CTE applies the staff+blacklist filter UP-FRONT so
-  // the GROUP BY user_id scan over ledger_transactions only aggregates
-  // counted users — keeps the per-user totals consistent with the
-  // headline GGR (which excludes staff/blacklisted users via the same
-  // filter). JOIN to "user" at the top for the username so the popover
-  // can render a clickable link without a second roundtrip.
+  // `null` since = lifetime; mirror the canonical `sinceClause` by
+  // dropping the lower bound entirely for the "all" chip.
+  const isAll = period === "all";
+  const sinceLedger = isAll
+    ? Prisma.empty
+    : Prisma.sql`AND lt.created_at >= ${cutoff}`;
+  const sinceInv = isAll
+    ? Prisma.empty
+    : Prisma.sql`AND ui.obtained_at >= ${cutoff}`;
+  const wagerIn = Prisma.raw(METRICS_WAGER_TYPES_SQL);
+  const gamingPayoutIn = Prisma.raw(METRICS_GAMING_PAYOUT_TYPES_SQL);
+  // Per-user inventory-delta GGR. Two per-user aggregates merged by
+  // user_id:
+  //   • ledger leg — wager (Σ|amount| over WAGER_TYPES, borrow-
+  //     corrected) + battle_refund (Σ|amount| over GAMING_PAYOUT_TYPES,
+  //     the cash winner leg).
+  //   • inventory leg — Σ value_at_obtained for source pack/battle,
+  //     obtained in window, borrow-corrected (the dominant payout).
+  // payout_total = inventory wins + battle_refund; net = wager − payout.
+  // Borrow-exclusion subqueries mirror the canonical layer (drop
+  // pack opens tagged "borrow" + battle plays on borrow_percentage>0).
   const rows = await db.$queryRaw<
     {
       user_id: string;
@@ -1475,49 +1524,73 @@ export async function getGgrTopContributors(
     }[]
   >`
     WITH real_users AS (
-      SELECT u.id, u.username, u.role
+      SELECT u.id, u.username
       FROM "user" u
-      WHERE u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+      WHERE u.role NOT IN ('admin', 'support', 'creator') ${Prisma.raw(blacklistIdNotIn)}
     ),
-    ${Prisma.raw(sessionWindowsCte)},
-    per_user AS (
+    non_borrow_pack_sessions AS (
+      SELECT game_session_id FROM ledger_transactions
+      WHERE type = 'pack_opening' AND status = 'completed'
+        AND game_session_id IS NOT NULL
+        AND (description IS NULL OR description NOT ILIKE '%borrow%')
+    ),
+    non_borrow_battle_sessions AS (
+      SELECT bp.game_session_id FROM battle_participants bp
+      JOIN battles b ON b.id = bp.battle_id
+      WHERE COALESCE(b.borrow_percentage, 0) = 0
+    ),
+    ledger_leg AS (
       SELECT
         lt.user_id,
         COALESCE(SUM(CASE WHEN lt.type IN ${wagerIn}
                           THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS wager_total,
-        COALESCE(SUM(CASE WHEN lt.type IN ${payoutIn}
-                          THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS payout_total
+        COALESCE(SUM(CASE WHEN lt.type IN ${gamingPayoutIn}
+                          THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS battle_refund_total
       FROM ledger_transactions lt
       JOIN real_users ru ON ru.id = lt.user_id
       WHERE lt.status = 'completed'
-        AND lt.created_at >= ${cutoff}
-        AND lt.type IN ${Prisma.raw(
-          `(${[...WAGER_PAYOUT_WAGER_TYPES, ...WAGER_PAYOUT_PAYOUT_TYPES]
-            .map((t) => `'${t}'`)
-            .join(",")})`,
-        )}
-        -- Drop creator on-stream rows on BOTH sides (symmetric with
-        -- pa.ggr + the breakdown popover). The CASE keeps the EXISTS
-        -- off the hot path for non-creator rows.
-        AND NOT (
-          ru.role = 'creator'
-          AND EXISTS (
-            SELECT 1 FROM session_windows sw
-            WHERE sw.uid = lt.user_id
-              AND lt.created_at >= sw.win_start
-              AND lt.created_at <  sw.win_end
-          )
+        ${sinceLedger}
+        AND (
+          lt.type NOT IN ('pack_opening','battle_bet','battle_sponsorship')
+          OR (lt.type = 'pack_opening' AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%'))
+          OR (lt.type IN ('battle_bet','battle_sponsorship') AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
         )
       GROUP BY lt.user_id
+    ),
+    inv_leg AS (
+      SELECT
+        ui.user_id,
+        COALESCE(SUM(ui.value_at_obtained::numeric), 0) AS inv_payout
+      FROM user_inventory ui
+      JOIN real_users ru ON ru.id = ui.user_id
+      WHERE ui.source_type IN ('pack','battle')
+        ${sinceInv}
+        AND (
+          (ui.source_type = 'pack' AND ui.source_id IN (SELECT game_session_id FROM non_borrow_pack_sessions))
+          OR (ui.source_type = 'battle' AND ui.source_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
+        )
+      GROUP BY ui.user_id
+    ),
+    per_user AS (
+      SELECT
+        ru.id AS user_id,
+        ru.username,
+        COALESCE(l.wager_total, 0) AS wager_total,
+        COALESCE(i.inv_payout, 0) + COALESCE(l.battle_refund_total, 0) AS payout_total
+      FROM real_users ru
+      LEFT JOIN ledger_leg l ON l.user_id = ru.id
+      LEFT JOIN inv_leg i ON i.user_id = ru.id
+      WHERE COALESCE(l.wager_total, 0) <> 0
+         OR COALESCE(i.inv_payout, 0) <> 0
+         OR COALESCE(l.battle_refund_total, 0) <> 0
     )
     SELECT
-      ru.id::text AS user_id,
-      ru.username,
+      pu.user_id::text AS user_id,
+      pu.username,
       pu.wager_total::text AS wager_total,
       pu.payout_total::text AS payout_total,
       (pu.wager_total - pu.payout_total)::text AS net
     FROM per_user pu
-    JOIN real_users ru ON ru.id = pu.user_id
     ORDER BY ABS(pu.wager_total - pu.payout_total) DESC
     LIMIT ${safeLimit}
   `;
