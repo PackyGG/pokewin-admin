@@ -413,7 +413,8 @@ export const ModelName = {
   employee_managers: 'employee_managers',
   employee_manager_workspaces: 'employee_manager_workspaces',
   admin_deleted_users: 'admin_deleted_users',
-  admin_leaderboard_sponsorship: 'admin_leaderboard_sponsorship'
+  admin_leaderboard_sponsorship: 'admin_leaderboard_sponsorship',
+  admin_changelog_entries: 'admin_changelog_entries'
 } as const
 
 export type ModelName = (typeof ModelName)[keyof typeof ModelName]
@@ -429,7 +430,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "admin_users" | "admin_giveaway_actions" | "admin_user_tags" | "excluded_users" | "admin_roles" | "admin_sessions" | "admin_notes" | "admin_audit_events" | "admin_gift_card_actions" | "admin_voucher_actions" | "creator_webhooks" | "creator_deals" | "creator_socials" | "webhook_deliveries" | "creator_balance_fills" | "admin_balance_limits" | "expenses" | "recurring_expenses" | "admin_settings" | "admin_shifts" | "admin_shift_assignments" | "salary_employees" | "salary_payouts" | "salary_payments" | "employee_workspaces" | "employee_board_placements" | "employee_managers" | "employee_manager_workspaces" | "admin_deleted_users" | "admin_leaderboard_sponsorship"
+    modelProps: "admin_users" | "admin_giveaway_actions" | "admin_user_tags" | "excluded_users" | "admin_roles" | "admin_sessions" | "admin_notes" | "admin_audit_events" | "admin_gift_card_actions" | "admin_voucher_actions" | "creator_webhooks" | "creator_deals" | "creator_socials" | "webhook_deliveries" | "creator_balance_fills" | "admin_balance_limits" | "expenses" | "recurring_expenses" | "admin_settings" | "admin_shifts" | "admin_shift_assignments" | "salary_employees" | "salary_payouts" | "salary_payments" | "employee_workspaces" | "employee_board_placements" | "employee_managers" | "employee_manager_workspaces" | "admin_deleted_users" | "admin_leaderboard_sponsorship" | "admin_changelog_entries"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -2653,6 +2654,80 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         }
       }
     }
+    admin_changelog_entries: {
+      payload: Prisma.$admin_changelog_entriesPayload<ExtArgs>
+      fields: Prisma.admin_changelog_entriesFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.admin_changelog_entriesFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_changelog_entriesPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.admin_changelog_entriesFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_changelog_entriesPayload>
+        }
+        findFirst: {
+          args: Prisma.admin_changelog_entriesFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_changelog_entriesPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.admin_changelog_entriesFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_changelog_entriesPayload>
+        }
+        findMany: {
+          args: Prisma.admin_changelog_entriesFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_changelog_entriesPayload>[]
+        }
+        create: {
+          args: Prisma.admin_changelog_entriesCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_changelog_entriesPayload>
+        }
+        createMany: {
+          args: Prisma.admin_changelog_entriesCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.admin_changelog_entriesCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_changelog_entriesPayload>[]
+        }
+        delete: {
+          args: Prisma.admin_changelog_entriesDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_changelog_entriesPayload>
+        }
+        update: {
+          args: Prisma.admin_changelog_entriesUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_changelog_entriesPayload>
+        }
+        deleteMany: {
+          args: Prisma.admin_changelog_entriesDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.admin_changelog_entriesUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.admin_changelog_entriesUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_changelog_entriesPayload>[]
+        }
+        upsert: {
+          args: Prisma.admin_changelog_entriesUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_changelog_entriesPayload>
+        }
+        aggregate: {
+          args: Prisma.Admin_changelog_entriesAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateAdmin_changelog_entries>
+        }
+        groupBy: {
+          args: Prisma.admin_changelog_entriesGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Admin_changelog_entriesGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.admin_changelog_entriesCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Admin_changelog_entriesCountAggregateOutputType> | number
+        }
+      }
+    }
   }
 } & {
   other: {
@@ -3133,6 +3208,22 @@ export const Admin_leaderboard_sponsorshipScalarFieldEnum = {
 export type Admin_leaderboard_sponsorshipScalarFieldEnum = (typeof Admin_leaderboard_sponsorshipScalarFieldEnum)[keyof typeof Admin_leaderboard_sponsorshipScalarFieldEnum]
 
 
+export const Admin_changelog_entriesScalarFieldEnum = {
+  id: 'id',
+  published_at: 'published_at',
+  title: 'title',
+  summary: 'summary',
+  version: 'version',
+  category: 'category',
+  changes: 'changes',
+  author_admin_user_id: 'author_admin_user_id',
+  created_at: 'created_at',
+  updated_at: 'updated_at'
+} as const
+
+export type Admin_changelog_entriesScalarFieldEnum = (typeof Admin_changelog_entriesScalarFieldEnum)[keyof typeof Admin_changelog_entriesScalarFieldEnum]
+
+
 export const SortOrder = {
   asc: 'asc',
   desc: 'desc'
@@ -3514,6 +3605,7 @@ export type GlobalOmitConfig = {
   employee_manager_workspaces?: Prisma.employee_manager_workspacesOmit
   admin_deleted_users?: Prisma.admin_deleted_usersOmit
   admin_leaderboard_sponsorship?: Prisma.admin_leaderboard_sponsorshipOmit
+  admin_changelog_entries?: Prisma.admin_changelog_entriesOmit
 }
 
 /* Types for Logging */

@@ -216,3 +216,8 @@ export type admin_deleted_users = Prisma.admin_deleted_usersModel
  * 
  */
 export type admin_leaderboard_sponsorship = Prisma.admin_leaderboard_sponsorshipModel
+/**
+ * Model admin_changelog_entries
+ * 
+ */
+export type admin_changelog_entries = Prisma.admin_changelog_entriesModel

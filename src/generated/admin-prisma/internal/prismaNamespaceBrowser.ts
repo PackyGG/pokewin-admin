@@ -80,7 +80,8 @@ export const ModelName = {
   employee_managers: 'employee_managers',
   employee_manager_workspaces: 'employee_manager_workspaces',
   admin_deleted_users: 'admin_deleted_users',
-  admin_leaderboard_sponsorship: 'admin_leaderboard_sponsorship'
+  admin_leaderboard_sponsorship: 'admin_leaderboard_sponsorship',
+  admin_changelog_entries: 'admin_changelog_entries'
 } as const
 
 export type ModelName = (typeof ModelName)[keyof typeof ModelName]
@@ -538,6 +539,22 @@ export const Admin_leaderboard_sponsorshipScalarFieldEnum = {
 } as const
 
 export type Admin_leaderboard_sponsorshipScalarFieldEnum = (typeof Admin_leaderboard_sponsorshipScalarFieldEnum)[keyof typeof Admin_leaderboard_sponsorshipScalarFieldEnum]
+
+
+export const Admin_changelog_entriesScalarFieldEnum = {
+  id: 'id',
+  published_at: 'published_at',
+  title: 'title',
+  summary: 'summary',
+  version: 'version',
+  category: 'category',
+  changes: 'changes',
+  author_admin_user_id: 'author_admin_user_id',
+  created_at: 'created_at',
+  updated_at: 'updated_at'
+} as const
+
+export type Admin_changelog_entriesScalarFieldEnum = (typeof Admin_changelog_entriesScalarFieldEnum)[keyof typeof Admin_changelog_entriesScalarFieldEnum]
 
 
 export const SortOrder = {
