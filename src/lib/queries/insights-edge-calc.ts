@@ -112,11 +112,22 @@ export type PackEdgeRow = {
  * on this surface. The filter sits at the query so every consumer (the
  * Packs table, the catalog-level aggregate KPIs/edge, the Scenario and
  * Bonus pack pickers, and the CSV export) drops them in one place.
+ *
+ * Daily / free reward packs (`packs.pack_type = 'reward'`) are excluded
+ * too. These are the zero-price packs the site hands users for free — a
+ * straight house cost (the user wins real cards for ≈$0 wager), so their
+ * RTP is unbounded (price is 0) and they would only skew the avg-RTP /
+ * house-edge aggregates and pollute the EV table. This is the SAME
+ * identifier every other analytics surface uses to drop them — see
+ * `insights-games/packs.ts` (`WHERE p.pack_type <> 'reward'`) and the
+ * dedicated daily-pack cost tab in `insights-rewards/daily-packs.ts`
+ * (`WHERE p.pack_type = 'reward'`). The other live pack types
+ * (`official`, `custom`, `promo`) stay in.
  */
 export async function getPackEdgeRows(): Promise<PackEdgeRow[]> {
   const db = await getDb();
   const packs = await db.packs.findMany({
-    where: { active: true },
+    where: { active: true, pack_type: { not: "reward" } },
     select: {
       id: true,
       name: true,

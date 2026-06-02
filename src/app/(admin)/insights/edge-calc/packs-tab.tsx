@@ -30,8 +30,9 @@ import { formatPct } from "./math";
  */
 export function PacksTab({ rows }: { rows: PackEdgeRow[] }) {
   // Aggregate header KPIs across the active catalog. `getPackEdgeRows`
-  // already filters to `active = true`, so every row here is live —
-  // inactive packs are not part of the edge-calc surface.
+  // already filters to `active = true` AND `pack_type <> 'reward'`, so
+  // every row here is a live, paid pack — inactive packs and free
+  // daily/reward packs are not part of the edge-calc surface.
   const total = rows.length;
   // Average theoretical RTP across packs with a populated pool. Weighted
   // equally per-pack (catalog-level "what's the math saying overall");
@@ -73,7 +74,7 @@ export function PacksTab({ rows }: { rows: PackEdgeRow[] }) {
         <KpiTile
           label="Active Packs"
           value={formatNumber(total)}
-          sub="live in catalog"
+          sub="paid, live in catalog"
           icon={Package}
           accent="blue"
         />
