@@ -43,20 +43,86 @@ import { logError } from "./logger";
  * without sanitization. (Server Components can't dangerouslySetInnerHTML
  * the string back to the client anyway, but copy-pasting the value into
  * an attribute or a JSON payload is the leak vector.)
+ *
+ * TIMEOUT: a plain `try/catch` only catches a query that THROWS — it does
+ * NOT catch one that is merely SLOW. A genuinely slow query (e.g. an
+ * unbounded lifetime scan) blocks the awaiting segment until Postgres
+ * returns or the platform kills the whole request, so it never degrades
+ * to a fallback tile. Pass `timeoutMs` to either wrapper to bound the
+ * wait: once it elapses the wrapper resolves to the same fallback shape a
+ * throw would (with a `[timeout]`-prefixed error string), and the tile
+ * degrades instead of hanging the segment. The underlying DB statement
+ * is NOT cancelled (Postgres keeps running it to completion on its own
+ * connection) — the timeout only stops US waiting on it; the next cache
+ * fill picks up the warmed result. Use {@link withTimeout} directly when
+ * you want the race without the surrounding `safeQuery` catch.
  */
 export type SafeQueryResult<T> =
   | { data: T; error: null }
   | { data: T; error: string };
 
+/**
+ * Default statement-timeout (ms) for the heaviest reward-insights queries
+ * (rakeback ROI lifetime forward scan; deposit-bonus Impact's 7-query
+ * batch). Long enough that a healthy query on prod-sized data finishes
+ * well inside it, short enough that a pathological scan degrades to the
+ * fallback tile instead of hanging the segment until the platform kills
+ * the request. Callers pass this as the `timeoutMs` arg to {@link safeQuery}
+ * / {@link safeQueryOrNull}.
+ */
+export const REWARD_QUERY_TIMEOUT_MS = 15_000;
+
+/** Sentinel a timed-out race rejects with so we can label it distinctly. */
+class QueryTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Query exceeded ${timeoutMs}ms statement timeout`);
+    this.name = "QueryTimeoutError";
+  }
+}
+
+export function isQueryTimeoutError(err: unknown): err is QueryTimeoutError {
+  return err instanceof QueryTimeoutError;
+}
+
+/**
+ * Race a promise-returning query against a wall-clock timeout. Resolves
+ * with the query's value if it settles first; rejects with a
+ * {@link QueryTimeoutError} if `timeoutMs` elapses first.
+ *
+ * The timer is always cleared (success OR failure) so a fast query never
+ * leaves a dangling `setTimeout` holding the event loop. NOTE this does
+ * not abort the query itself — it only stops the caller awaiting it.
+ */
+export async function withTimeout<T>(
+  fn: () => Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new QueryTimeoutError(timeoutMs)), timeoutMs);
+  });
+  try {
+    return await Promise.race([fn(), timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export async function safeQuery<T>(
   fn: () => Promise<T>,
   fallback: T,
   context: string,
+  timeoutMs?: number,
 ): Promise<SafeQueryResult<T>> {
   try {
-    const data = await fn();
+    const data =
+      timeoutMs != null ? await withTimeout(fn, timeoutMs) : await fn();
     return { data, error: null };
   } catch (err) {
+    if (isQueryTimeoutError(err)) {
+      logError(context, "safeQuery timed out", err);
+      return { data: fallback, error: err.message };
+    }
     logError(context, "safeQuery caught", err);
     const message = err instanceof Error ? err.message : "Unknown query error";
     return { data: fallback, error: message };
@@ -73,11 +139,17 @@ export async function safeQuery<T>(
 export async function safeQueryOrNull<T>(
   fn: () => Promise<T>,
   context: string,
+  timeoutMs?: number,
 ): Promise<{ data: T | null; error: string | null }> {
   try {
-    const data = await fn();
+    const data =
+      timeoutMs != null ? await withTimeout(fn, timeoutMs) : await fn();
     return { data, error: null };
   } catch (err) {
+    if (isQueryTimeoutError(err)) {
+      logError(context, "safeQueryOrNull timed out", err);
+      return { data: null, error: err.message };
+    }
     logError(context, "safeQueryOrNull caught", err);
     const message = err instanceof Error ? err.message : "Unknown query error";
     return { data: null, error: message };

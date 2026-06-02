@@ -1,13 +1,12 @@
-import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
-import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
-  cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
+import { makeCachedPair } from "@/lib/queries/insights-rewards/_cache";
+import { RAKEBACK_CACHE_TAGS } from "@/lib/queries/insights-rewards/rakeback/_cache-tags";
 
 /**
  * Rakeback overview headline numbers for /insights/rewards/rakeback.
@@ -142,29 +141,11 @@ async function computeOverview(
   };
 }
 
-// Two cache layers — short (60s) for finite windows that change as new
-// claims land, long (5m) for the lifetime sweep that barely moves.
-// Mirrors the cross-category-summary.ts pattern.
-const cachedShort = unstable_cache(
-  async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeOverview(period, blacklistIds),
-  ["insights-rewards-rakeback-overview-v1"],
-  { revalidate: 60, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
+// Shared 60s/300s `(period,blacklist)`-keyed cache pair (short for finite
+// windows that change as new claims land, long for the lifetime sweep that
+// barely moves). Behaviour identical to the hand-rolled pair this replaces.
+export const getRakebackOverview = makeCachedPair(
+  computeOverview,
+  "insights-rewards-rakeback-overview",
+  RAKEBACK_CACHE_TAGS,
 );
-
-const cachedLong = unstable_cache(
-  async (period: InsightsRewardsPeriod, blacklistIds: string[]) =>
-    computeOverview(period, blacklistIds),
-  ["insights-rewards-rakeback-overview-lifetime-v1"],
-  { revalidate: 300, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
-);
-
-export async function getRakebackOverview(
-  period: InsightsRewardsPeriod,
-): Promise<RakebackOverview> {
-  const blacklist = await getExcludedUserIds();
-  const sorted = [...blacklist].sort();
-  return cacheTtlForInsightsPeriod(period) >= 300
-    ? cachedLong(period, sorted)
-    : cachedShort(period, sorted);
-}

@@ -9,7 +9,7 @@ import { SectionHeading, KpiTile, StatPanel, PanelRow } from "@/components/moder
 import { FadeIn } from "@/components/fade-in";
 import { EmptyState } from "@/components/empty-state";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import {
   getRakebackRoi,
@@ -41,6 +41,7 @@ export async function RoiTab({
     () => getRakebackRoi(period, lookback),
     null,
     "insights-rewards-rakeback.roi",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (roiRes.error || !roiRes.data) {
     return (
@@ -78,11 +79,16 @@ export async function RoiTab({
             ROI compares the rakeback paid in the active window to each
             claimant&rsquo;s wager-net-of-payouts in the trailing lookback
             window from their first claim.
-            {data.lookbackDays !== null && (
-              <> Current lookback: <strong>{data.lookbackDays}d</strong>.</>
-            )}
-            {data.lookbackDays === null && (
-              <> Lookback: full forward history (lifetime period).</>
+            {period === "all" ? (
+              <>
+                {" "}
+                Lifetime forward play is bounded to the last{" "}
+                <strong>{data.lookbackDays}d</strong> of activity.
+              </>
+            ) : (
+              data.lookbackDays !== null && (
+                <> Current lookback: <strong>{data.lookbackDays}d</strong>.</>
+              )
             )}
           </p>
           <RakebackRoiLookbackFilter />

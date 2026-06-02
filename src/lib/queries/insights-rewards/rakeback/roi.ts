@@ -1,13 +1,16 @@
-import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
-import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
-  cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
+import { makeCachedPair } from "@/lib/queries/insights-rewards/_cache";
+import { RAKEBACK_CACHE_TAGS } from "@/lib/queries/insights-rewards/rakeback/_cache-tags";
+import {
+  LIFETIME_PAIRING_LOOKBACK_DAYS,
+  windowDateFilterCapped,
+} from "@/lib/queries/insights-rewards/deposit-bonus/_shared";
 import {
   RAKEBACK_ROI_LOOKBACK_DEFAULT,
   type RakebackRoiLookback,
@@ -32,8 +35,10 @@ export type { RakebackRoiLookback } from "@/app/(admin)/insights/rewards/rakebac
  * Cost: SUM(rakeback_amount_usd) in window.
  * Subsequent GGR: each claimant's wager-side − payout-side ledger rows
  *                 that landed AFTER their first rakeback claim in the
- *                 window, within `lookbackDays`. Lifetime windows use
- *                 the full forward history per claimant.
+ *                 window, within `lookbackDays`. Lifetime windows score
+ *                 the forward history bounded to the last
+ *                 {@link LIFETIME_PAIRING_LOOKBACK_DAYS} days (see the
+ *                 perf note on `lookbackClause` below).
  *
  * Wager / payout match `getGgrBreakdown`:
  *   wagers   = pack_opening + battle_bet + battle_sponsorship + upgrader_bet
@@ -63,7 +68,11 @@ export type RakebackRoi = {
   netReturn: number;
   /** Distinct claimants the ROI was measured against. */
   claimants: number;
-  /** Lookback used (days), or `null` for lifetime windows. */
+  /**
+   * Lookback used (days). Finite windows report the effective per-claimant
+   * forward window; lifetime reports {@link LIFETIME_PAIRING_LOOKBACK_DAYS}
+   * (the bound applied to the forward scan), never `null`.
+   */
   lookbackDays: number | null;
 };
 
@@ -82,10 +91,21 @@ async function computeRoi(
   // unrelated future activity bleed into the comparison).
   const effectiveLookback =
     days !== null && days <= 3 ? Math.max(days, 1) : lookbackDays;
+  // Forward-play bound. Finite windows cap the per-claimant forward scan to
+  // `first_claim_at + effectiveLookback`. The lifetime (`all`) window used
+  // to leave this EMPTY, so `forward_play` LEFT-JOINed every later ledger
+  // row per claimant with no upper bound — the heaviest plan on this surface
+  // and the one most likely to actually hang in prod. Mirror the deposit-bonus
+  // precedent (`windowDateFilterCapped`, bounds lifetime scans to
+  // LIFETIME_PAIRING_LOOKBACK_DAYS=365): on lifetime, bound the forward scan
+  // to the last 365 days of ledger activity (`lt.created_at >= NOW() - 365d`,
+  // applied on top of the existing `>= fc.first_claim_at` floor) so a
+  // lifetime view never triggers a full-history scan. Reported `lookbackDays`
+  // surfaces 365 on lifetime (was `null`) so the bound is honest in the UI.
   const lookbackClause =
     days !== null
       ? `AND lt.created_at <= fc.first_claim_at + INTERVAL '${effectiveLookback} days'`
-      : "";
+      : windowDateFilterCapped("all", "lt");
 
   const rows = await db.$queryRawUnsafe<
     {
@@ -153,37 +173,23 @@ async function computeRoi(
     roiRatio,
     netReturn,
     claimants,
-    lookbackDays: days === null ? null : effectiveLookback,
+    lookbackDays: days === null ? LIFETIME_PAIRING_LOOKBACK_DAYS : effectiveLookback,
   };
 }
 
-const cachedShort = unstable_cache(
-  async (
-    period: InsightsRewardsPeriod,
-    lookbackDays: RakebackRoiLookback,
-    blacklistIds: string[],
-  ) => computeRoi(period, lookbackDays, blacklistIds),
-  ["insights-rewards-rakeback-roi-v1"],
-  { revalidate: 60, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
-);
-
-const cachedLong = unstable_cache(
-  async (
-    period: InsightsRewardsPeriod,
-    lookbackDays: RakebackRoiLookback,
-    blacklistIds: string[],
-  ) => computeRoi(period, lookbackDays, blacklistIds),
-  ["insights-rewards-rakeback-roi-lifetime-v1"],
-  { revalidate: 300, tags: ["rewards-analytics", "insights-rewards-rakeback"] },
+// Shared 60s/300s cache pair, keyed on `(period, lookbackDays, blacklist)`.
+// The lookback selector stays part of the cache key (an extra key dimension
+// threaded through `makeCachedPair`), so each `?lookback=` value caches
+// independently — identical behaviour to the hand-rolled pair this replaces.
+const cachedRoi = makeCachedPair(
+  computeRoi,
+  "insights-rewards-rakeback-roi",
+  RAKEBACK_CACHE_TAGS,
 );
 
 export async function getRakebackRoi(
   period: InsightsRewardsPeriod,
   lookbackDays: RakebackRoiLookback = RAKEBACK_ROI_LOOKBACK_DEFAULT,
 ): Promise<RakebackRoi> {
-  const blacklist = await getExcludedUserIds();
-  const sorted = [...blacklist].sort();
-  return cacheTtlForInsightsPeriod(period) >= 300
-    ? cachedLong(period, lookbackDays, sorted)
-    : cachedShort(period, lookbackDays, sorted);
+  return cachedRoi(period, lookbackDays);
 }

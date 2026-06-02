@@ -29,7 +29,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
@@ -87,42 +87,52 @@ export async function ImpactTab({
 }: {
   period: InsightsRewardsPeriod;
 }) {
+  // All 7 run concurrently; each is statement-timeout bounded so a single
+  // pathological scan on the lifetime window degrades to its own fallback
+  // tile instead of blocking the whole tab from painting.
   const [freqRes, sizeRes, capRes, gapRes, segRes, postRes, cohortRes] =
     await Promise.all([
       safeQuery(
         () => getDepositBonusDepositFrequency(period),
         null,
         "insights-rewards-deposit-bonus.impact.frequency",
+        REWARD_QUERY_TIMEOUT_MS,
       ),
       safeQuery(
         () => getDepositBonusDepositSizeDistribution(period),
         null,
         "insights-rewards-deposit-bonus.impact.size",
+        REWARD_QUERY_TIMEOUT_MS,
       ),
       safeQuery(
         () => getDepositBonusCapHitters(period),
         null,
         "insights-rewards-deposit-bonus.impact.cap-hitters",
+        REWARD_QUERY_TIMEOUT_MS,
       ),
       safeQuery(
         () => getDepositBonusTimeBetween(period),
         null,
         "insights-rewards-deposit-bonus.impact.time-between",
+        REWARD_QUERY_TIMEOUT_MS,
       ),
       safeQuery(
         () => getDepositBonusToWagerSegments(period),
         null,
         "insights-rewards-deposit-bonus.impact.bonus-wager",
+        REWARD_QUERY_TIMEOUT_MS,
       ),
       safeQuery(
         () => getDepositBonusPostCapBehavior(period),
         null,
         "insights-rewards-deposit-bonus.impact.post-cap",
+        REWARD_QUERY_TIMEOUT_MS,
       ),
       safeQuery(
         () => getDepositBonusCapHitterCohorts(period),
         null,
         "insights-rewards-deposit-bonus.impact.cohorts",
+        REWARD_QUERY_TIMEOUT_MS,
       ),
     ]);
 

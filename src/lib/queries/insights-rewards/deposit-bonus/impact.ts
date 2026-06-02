@@ -1,14 +1,10 @@
-import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
-import {
-  cacheTtlForInsightsPeriod,
-  type InsightsRewardsPeriod,
-} from "../_period";
+import { type InsightsRewardsPeriod } from "../_period";
+import { makeCachedPair } from "../_cache";
 import {
   DEPOSIT_BONUS_CACHE_TAGS,
-  getResolvedBlacklist,
   staffAndBlacklistSubquery,
   windowDateFilter,
   windowDateFilterCapped,
@@ -1160,57 +1156,48 @@ async function computeCapHitterCohorts(
 }
 
 // ─── Cache wrappers ─────────────────────────────────────────────────
-
-function makeCachedPair<T>(
-  fn: (period: InsightsRewardsPeriod, blacklistIds: string[]) => Promise<T>,
-  baseKey: string,
-) {
-  const short = unstable_cache(fn, [`${baseKey}-v1`], {
-    revalidate: 60,
-    tags: [...DEPOSIT_BONUS_CACHE_TAGS],
-  });
-  const lifetime = unstable_cache(fn, [`${baseKey}-lifetime-v1`], {
-    revalidate: 300,
-    tags: [...DEPOSIT_BONUS_CACHE_TAGS],
-  });
-  return async (period: InsightsRewardsPeriod): Promise<T> => {
-    const blacklist = await getResolvedBlacklist();
-    const ttl = cacheTtlForInsightsPeriod(period);
-    return ttl >= 300 ? lifetime(period, blacklist) : short(period, blacklist);
-  };
-}
+// Shared `makeCachedPair` (60s/300s, (period,blacklist)-keyed) lives in
+// `../_cache`; pass this surface's cache-tag bucket so invalidation still
+// ties to `insights-rewards-deposit-bonus`.
 
 export const getDepositBonusDepositFrequency = makeCachedPair(
   computeDepositFrequency,
   "insights-rewards-deposit-bonus-impact-frequency",
+  DEPOSIT_BONUS_CACHE_TAGS,
 );
 
 export const getDepositBonusDepositSizeDistribution = makeCachedPair(
   computeDepositSizeDistribution,
   "insights-rewards-deposit-bonus-impact-size",
+  DEPOSIT_BONUS_CACHE_TAGS,
 );
 
 export const getDepositBonusCapHitters = makeCachedPair(
   computeCapHitters,
   "insights-rewards-deposit-bonus-impact-cap-hitters",
+  DEPOSIT_BONUS_CACHE_TAGS,
 );
 
 export const getDepositBonusTimeBetween = makeCachedPair(
   computeTimeBetween,
   "insights-rewards-deposit-bonus-impact-time-between",
+  DEPOSIT_BONUS_CACHE_TAGS,
 );
 
 export const getDepositBonusToWagerSegments = makeCachedPair(
   computeBonusWagerSegments,
   "insights-rewards-deposit-bonus-impact-bonus-wager",
+  DEPOSIT_BONUS_CACHE_TAGS,
 );
 
 export const getDepositBonusPostCapBehavior = makeCachedPair(
   computePostCapBehavior,
   "insights-rewards-deposit-bonus-impact-post-cap",
+  DEPOSIT_BONUS_CACHE_TAGS,
 );
 
 export const getDepositBonusCapHitterCohorts = makeCachedPair(
   computeCapHitterCohorts,
   "insights-rewards-deposit-bonus-impact-cohorts",
+  DEPOSIT_BONUS_CACHE_TAGS,
 );
