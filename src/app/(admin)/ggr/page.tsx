@@ -591,6 +591,10 @@ function LedgerTypeCard({
   bucketTotal: number;
 }) {
   const desc = describeLedgerType(row.type);
+  // `row.label` overrides the type-derived label for per-row carve-outs
+  // (e.g. the manual admin-voucher slice split out of `voucher_redeemed`),
+  // where the raw type name alone would be ambiguous across groups.
+  const label = row.label ?? desc.label;
   const pct = bucketTotal > 0 ? Math.round((row.total / bucketTotal) * 100) : 0;
   const isReward = kind === "reward";
   const valueColor = isReward
@@ -611,7 +615,7 @@ function LedgerTypeCard({
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold tracking-tight">
-            {desc.label}
+            {label}
           </p>
           <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground/70">
             {row.type}

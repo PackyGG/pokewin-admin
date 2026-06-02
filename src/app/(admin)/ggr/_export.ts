@@ -105,7 +105,7 @@ export async function gatherGgrExportSections(
         const d = data();
         return d.neutral.rows.map((r) => [
           r.type,
-          describeLedgerType(r.type).label,
+          r.label ?? describeLedgerType(r.type).label,
           r.total,
           d.neutral.total > 0 ? (r.total / d.neutral.total) * 100 : 0,
         ]);
@@ -121,7 +121,7 @@ export async function gatherGgrExportSections(
         const d = data();
         return d.reward.rows.map((r) => [
           r.type,
-          describeLedgerType(r.type).label,
+          r.label ?? describeLedgerType(r.type).label,
           r.total,
           d.reward.total > 0 ? (r.total / d.reward.total) * 100 : 0,
         ]);

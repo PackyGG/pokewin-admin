@@ -27,8 +27,6 @@ import {
   WAGER_TYPES_SQL,
   GAMING_PAYOUT_TYPES_SQL,
   ledgerTypesToSqlList,
-  empiricalRtp,
-  empiricalHouseEdge,
 } from "@/lib/metrics";
 import {
   getWindowMetrics,
@@ -38,6 +36,20 @@ import {
   sumLedgerTypes,
   type MetricWindow,
 } from "@/lib/metrics/queries";
+// The CANONICAL "real customer" scope — staff + blacklist dropped,
+// creators KEPT, creator-on-session rows excluded per-row via session
+// windows. The page's own per-type / per-category / per-user queries adopt
+// the SAME scope the headline (`getWindowMetrics`) uses so their figures
+// reconcile with it (the old wholesale `role NOT IN (…,'creator')` drop
+// diverged — it dropped a creator's off-session real-customer play that
+// the headline counts). "One scope, fixed once." Import/call only.
+import { getMetricsScope } from "@/lib/metrics/scope";
+// The CANONICAL wager/payout-side borrow + reward-pack predicates — the
+// EXACT fragments `getGamingLegs` ANDs in. Imported (never duplicated) so
+// the page's per-category and per-user legs cannot drift from the headline:
+// battle_sponsorship counted directly (no borrow gate) + reward/daily packs
+// excluded on both sides. Client-safe module (no DB / server-only import).
+import { WAGER_LEG_FILTER, PAYOUT_LEG_FILTER } from "@/lib/metrics/gaming-sql";
 
 /**
  * ggr.ts — the `/ggr` page's OWN data layer.
@@ -103,6 +115,16 @@ export type GgrLedgerTypeRow = {
   type: string;
   /** Σ |amount| over the window. Always non-negative. */
   total: number;
+  /**
+   * Optional display-label override. Used for the per-row carve-out where a
+   * single ledger type is split across groups by a `metadata` slice and the
+   * raw type name alone would be ambiguous — currently only the admin
+   * house-granted voucher slice (`voucher_redeemed` +
+   * `metadata->>'origin'='manual'`), which is lifted into the REWARD group
+   * while the remaining `voucher_redeemed` stays NEUTRAL. When unset the
+   * page derives the label from `describeLedgerType(type)`.
+   */
+  label?: string;
 };
 
 /** A single synthetic leg inside the gaming-payouts group. */
@@ -179,6 +201,12 @@ export type GgrPageData = {
    * Group 2 — neutral conversions (`NEUTRAL_TYPES`). NOT house cost; they
    * move value the user already owns. `total` is informational only and
    * does NOT enter GGR or NGR.
+   *
+   * The admin house-granted voucher slice (`voucher_redeemed` +
+   * `metadata->>'origin'='manual'`) is carved OUT of this group and into
+   * `reward` (canonically REWARD cost), so `total` and the
+   * `voucher_redeemed` row exclude it — matching the canonical
+   * neutral-vs-reward split.
    */
   neutral: {
     rows: GgrLedgerTypeRow[];
@@ -186,14 +214,19 @@ export type GgrPageData = {
   };
 
   /**
-   * Group 3 — reward giveback (`REWARD_PAYOUT_TYPES`). House-funded
-   * incentive spend that reduces NGR (not GGR).
+   * Group 3 — reward giveback (`REWARD_PAYOUT_TYPES` + the manual-voucher
+   * carve-out). House-funded incentive spend that reduces NGR (not GGR).
    *
    * `rain_win` is shown as its own row at its GROSS magnitude (what the
    * user received), but only the NET house slice
    * (`max(0, rain_win − rain_tip)`) reduces NGR — the canonical model.
    * `appliedToNgr` is the figure that actually reduced NGR
    * (rewardCostExclRain + net rain) so the card footer can reconcile.
+   *
+   * The admin house-granted voucher slice (`voucher_redeemed` +
+   * `metadata->>'origin'='manual'`) appears here as its own row and is
+   * already inside `costExclRain` (and thus `appliedToNgr`) — mirroring the
+   * canonical `getRewardCost` manual carve-out.
    */
   reward: {
     rows: GgrLedgerTypeRow[];
@@ -224,89 +257,133 @@ export type GgrPageData = {
 // `getRewardCost`, `getWindowMetrics`), so the cards reconcile with the
 // headline by construction (same sets, same scope).
 //
-// TODO: switch to central scope helper — `@/lib/metrics/queries` exposes
-// no per-TYPE breakdown builder (it is window-aggregate only) and the
-// shared `realCustomersScopeSql` lives under `insights-games/` which is
-// being consolidated; the scope predicate is mirrored inline here
-// (identical to `realCustomersScope` in `@/lib/metrics/queries`) until
-// the consolidation exports a reusable per-type scope helper.
+// MANUAL-VOUCHER CARVE-OUT (mirrors `getRewardCost` in
+// `@/lib/metrics/queries`): `voucher_redeemed` is NEUTRAL by default, but
+// the admin house-granted slice (`metadata->>'origin'='manual'`) is the
+// ONLY ledger touchpoint of a house-funded voucher, so the canonical NGR
+// lifts that slice into REWARD cost. This query therefore splits
+// `voucher_redeemed` into its manual slice (emitted as a REWARD row) and
+// its remainder (kept as the NEUTRAL row), and returns the manual total so
+// the caller can subtract it from the neutral group total — keeping
+// `/ggr`'s neutral-vs-reward split byte-for-byte with canonical.
+//
+// SCOPE: the CANONICAL `getMetricsScope()` (staff + blacklist dropped,
+// creators KEPT, creator-on-session rows excluded per-row) — the SAME
+// population the headline / `sumLedgerTypes` / `getRewardCost` use, so the
+// per-type card totals reconcile with the canonical group totals.
 
 async function getNeutralAndRewardRows(
   window: MetricWindow,
 ): Promise<{
   neutral: GgrLedgerTypeRow[];
   reward: GgrLedgerTypeRow[];
+  /**
+   * Σ |amount| of the manual voucher slice (`voucher_redeemed` +
+   * `metadata->>'origin'='manual'`) lifted from NEUTRAL into REWARD. The
+   * caller subtracts this from the neutral group total so the neutral and
+   * reward totals reconcile with canonical (which counts it as reward).
+   */
+  manualVoucherTotal: number;
 }> {
   return withTiming("ggr.neutralRewardRows", async () => {
     const db = await getDb();
-    const excluded = await getExcludedUserIds();
-    const blacklist = blacklistNotInClause("u.id", excluded);
+    const scope = await getMetricsScope();
     const since = window.since;
-    const sinceClause =
+    const sinceFrag =
       since === null
         ? ""
-        : `AND lt.created_at >= '${since.toISOString()}'::timestamptz`;
+        : `AND created_at >= '${since.toISOString()}'::timestamptz`;
 
     // Single GROUP BY over NEUTRAL_TYPES ∪ REWARD_PAYOUT_TYPES. The IN
     // list is rendered from the canonical type sets via
     // `ledgerTypesToSqlList` (hardcoded enum strings — injection is
-    // structurally impossible), so it tracks the sets automatically.
+    // structurally impossible), so it tracks the sets automatically. The
+    // manual voucher slice is split out in the SAME pass via a
+    // `metadata->>'origin'` GROUP BY key, so no second query is needed.
     const typeList = ledgerTypesToSqlList([
       ...NEUTRAL_TYPES,
       ...REWARD_PAYOUT_TYPES,
     ]);
 
-    type Row = { type: string; total: string };
+    // `is_manual_voucher` is COALESCE-guarded so it is a strict boolean
+    // (never NULL): a voucher_redeemed row with NULL/absent metadata
+    // resolves to FALSE (non-manual → neutral), not a third NULL group.
+    // This mirrors the canonical `getRewardCost`, where a non-'manual'
+    // origin (incl. NULL) falls to the reward-leg ELSE 0.
+    type Row = { type: string; is_manual_voucher: boolean; total: string };
     const rows = await db.$queryRawUnsafe<Row[]>(
-      `WITH real_users AS (
-         SELECT u.id FROM "user" u
-         WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklist}
-       )
-       SELECT lt.type::text AS type,
-              COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total
-       FROM ledger_transactions lt
-       JOIN real_users ru ON ru.id = lt.user_id
-       WHERE lt.status = 'completed'
-         AND lt.type IN ${typeList}
-         ${sinceClause}
-       GROUP BY lt.type`,
+      `WITH ${scope.sessionWindowsCte}
+       SELECT type::text AS type,
+              (type = 'voucher_redeemed'
+                 AND COALESCE(metadata->>'origin', '') = 'manual') AS is_manual_voucher,
+              COALESCE(SUM(ABS(amount::numeric)), 0)::text AS total
+       FROM ledger_transactions
+       WHERE status = 'completed'
+         AND type IN ${typeList}
+         AND user_id IN ${scope.userScopeSql}
+         AND ${scope.notInCreatorSession("user_id", "created_at")}
+         ${sinceFrag}
+       GROUP BY type,
+                (type = 'voucher_redeemed'
+                   AND COALESCE(metadata->>'origin', '') = 'manual')`,
     );
 
     const neutralSet = new Set<string>(NEUTRAL_TYPES);
     const rewardSet = new Set<string>(REWARD_PAYOUT_TYPES);
     const neutral: GgrLedgerTypeRow[] = [];
     const reward: GgrLedgerTypeRow[] = [];
+    let manualVoucherTotal = 0;
 
     for (const r of rows) {
       const total = toNumber(r.total);
       if (total <= 0) continue;
+      // Manual voucher slice → REWARD cost (admin house-granted voucher),
+      // labelled distinctly so it doesn't read as the neutral redemption.
+      if (r.is_manual_voucher) {
+        manualVoucherTotal += total;
+        reward.push({
+          type: "voucher_redeemed",
+          total,
+          label: "Admin voucher (manual grant)",
+        });
+        continue;
+      }
       if (neutralSet.has(r.type)) neutral.push({ type: r.type, total });
       else if (rewardSet.has(r.type)) reward.push({ type: r.type, total });
     }
     neutral.sort((a, b) => b.total - a.total);
     reward.sort((a, b) => b.total - a.total);
-    return { neutral, reward };
+    return { neutral, reward, manualVoucherTotal };
   });
 }
 
 // ─── Per-category gaming wager split (packs vs battles) ──────────────
 //
 // Splits the SAME ledger wager leg `getGamingLegs` sums (WAGER_TYPES,
-// completed, real customers, borrow-corrected) into its pack_opening
-// slice and its battle_bet + battle_sponsorship slice. Because the WHERE
-// clause (scope + borrow filter) is byte-for-byte the same as
-// `getGamingLegs`, the two slices partition the identical row set, so
-// `packs + battles === legs.wager` (the ledger component of the headline
-// wager) by construction. Upgrader is added in `getGgrPageData` from the
-// SAME `upg.wager` the headline folds in, so packs + battles + upgrader
-// === headline.wager.
+// completed, real customers, non-borrow + reward-pack-excluded) into its
+// pack_opening slice and its battle_bet + battle_sponsorship slice. The
+// wager-side predicate is the CANONICAL `WAGER_LEG_FILTER` imported from
+// `@/lib/metrics/gaming-sql` — the EXACT same fragment `getGamingLegs`
+// ANDs in — so the two slices partition the identical row set and
+// `packs + battles === legs.wager − legs.upgraderWager` (the ledger
+// component of the headline wager) by construction. Upgrader is added in
+// `getGgrPageData` from the SAME `legs.upgraderWager` the headline folds
+// in, so packs + battles + upgrader === headline.wager.
 //
-// TODO: switch to central scope helper — same note as
-// `getNeutralAndRewardRows` / `getGgrTopContributors`: `@/lib/metrics`
-// exposes no per-CATEGORY wager builder, and the real-customer +
-// borrow-exclusion predicate is mirrored inline (identical to
-// `getGamingLegs` in `@/lib/metrics/queries`) until the consolidation
-// exports a reusable per-category helper.
+// Using the shared predicate fixes two bugs the old hand-rolled filter
+// had vs the canonical headline:
+//   • battle_sponsorship was gated on `game_session_id IN (non-borrow
+//     battle sessions)`, but sponsorship rows carry game_session_id=NULL
+//     → silently dropped. WAGER_LEG_FILTER counts battle_sponsorship
+//     DIRECTLY (all sponsored battles are borrow_percentage=0).
+//   • reward/daily packs (packs.pack_type='reward', ≈$0) were NOT
+//     excluded; WAGER_LEG_FILTER drops them (Fix 2).
+//
+// SCOPE: the CANONICAL `getMetricsScope()` (the SAME population
+// `getGamingLegs` uses) so `packs + battles` reconciles with the headline
+// ledger wager leg (`legs.wager − legs.upgraderWager`); + upgrader =
+// `headline.wager`. The old wholesale-creator-drop scope diverged from the
+// headline (it dropped creator off-session play the headline counts).
 
 async function getCategoryLedgerWager(
   window: MetricWindow,
@@ -316,13 +393,12 @@ async function getCategoryLedgerWager(
 }> {
   return withTiming("ggr.categoryWager", async () => {
     const db = await getDb();
-    const excluded = await getExcludedUserIds();
-    const blacklist = blacklistNotInClause("u.id", excluded);
+    const scope = await getMetricsScope();
     const since = window.since;
-    const sinceClause =
+    const sinceFrag =
       since === null
         ? ""
-        : `AND lt.created_at >= '${since.toISOString()}'::timestamptz`;
+        : `AND created_at >= '${since.toISOString()}'::timestamptz`;
 
     type Row = {
       packs_wager: string;
@@ -330,40 +406,29 @@ async function getCategoryLedgerWager(
       battles_wager: string;
       battles_count: string;
     };
-    // The borrow filter is the SAME predicate as `getGamingLegs`'
-    // ledger leg: pack_opening dropped when tagged "borrow" in its
-    // description; battle_bet / battle_sponsorship dropped when their
-    // battle has borrow_percentage > 0. The category CASE splits only
-    // the WAGER_TYPES rows that pass that filter, so the two slices sum
-    // back to the headline's ledger wager leg.
+    // Unaliased `FROM ledger_transactions` (mirroring `getGamingLegs`) so
+    // the canonical `WAGER_LEG_FILTER` columns (type / description /
+    // game_session_id) resolve unqualified. The CASE then splits only the
+    // WAGER_TYPES rows that pass that shared filter into packs vs battles,
+    // so the two slices sum back to the headline's ledger wager leg.
     const rows = await db.$queryRawUnsafe<Row[]>(
-      `WITH real_users AS (
-         SELECT u.id FROM "user" u
-         WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklist}
-       ),
-       non_borrow_battle_sessions AS (
-         SELECT bp.game_session_id FROM battle_participants bp
-         JOIN battles b ON b.id = bp.battle_id
-         WHERE COALESCE(b.borrow_percentage, 0) = 0
-       )
+      `WITH ${scope.sessionWindowsCte}
        SELECT
-         COALESCE(SUM(CASE WHEN lt.type = 'pack_opening'
-                           THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS packs_wager,
-         COALESCE(SUM(CASE WHEN lt.type = 'pack_opening'
+         COALESCE(SUM(CASE WHEN type = 'pack_opening'
+                           THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS packs_wager,
+         COALESCE(SUM(CASE WHEN type = 'pack_opening'
                            THEN 1 ELSE 0 END), 0)::text AS packs_count,
-         COALESCE(SUM(CASE WHEN lt.type IN ('battle_bet','battle_sponsorship')
-                           THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS battles_wager,
-         COALESCE(SUM(CASE WHEN lt.type IN ('battle_bet','battle_sponsorship')
+         COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship')
+                           THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battles_wager,
+         COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship')
                            THEN 1 ELSE 0 END), 0)::text AS battles_count
-       FROM ledger_transactions lt
-       JOIN real_users ru ON ru.id = lt.user_id
-       WHERE lt.status = 'completed'
-         AND lt.type IN ${WAGER_TYPES_SQL}
-         ${sinceClause}
-         AND (
-           (lt.type = 'pack_opening' AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%'))
-           OR (lt.type IN ('battle_bet','battle_sponsorship') AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
-         )`,
+       FROM ledger_transactions
+       WHERE status = 'completed'
+         AND user_id IN ${scope.userScopeSql}
+         AND ${scope.notInCreatorSession("user_id", "created_at")}
+         AND type IN ${WAGER_TYPES_SQL}
+         ${sinceFrag}
+         AND ${WAGER_LEG_FILTER}`,
     );
 
     const r = rows[0];
@@ -405,28 +470,38 @@ export async function getGgrPageData(
       getCategoryLedgerWager(window),
     ]);
 
-  // Upgrader contribution — `getWindowMetrics` excludes it while
-  // `UPGRADER_IN_LEDGER` is false, so fold it in for the headline.
-  const upgraderWager = upg?.wager ?? 0;
-  const upgraderPayout = upg?.payout ?? 0;
-  const upgraderGgr = upg?.ggr ?? 0;
-  const upgraderBets = upg?.bets ?? 0;
+  // Headline figures come STRAIGHT from `getWindowMetrics`, which already
+  // folds upgrader in (via `getGamingLegs` reading `upgrader_games`). The
+  // page must NOT re-add the upgrader leg — doing so double-counted it
+  // (the headline already contains pack + battle + upgrader). `metrics.*`
+  // is therefore used directly; the upgrader-only slices for the breakdown
+  // come from `legs.upgrader*` (the SAME fold the headline used), never a
+  // second standalone read.
+  const wager = metrics.wager;
+  const gamingPayout = metrics.gamingPayout;
+  const ggr = metrics.ggr;
+  const ngr = metrics.ngr;
+  const bets = metrics.bets;
 
-  const wager = metrics.wager + upgraderWager;
-  const gamingPayout = metrics.gamingPayout + upgraderPayout;
-  const ggr = metrics.ggr + upgraderGgr;
-  // NGR = GGR − rewards − net rain. Upgrader adds to GGR with no reward
-  // leg, so it flows straight into NGR by the same delta.
-  const ngr = metrics.ngr + upgraderGgr;
-  const bets = metrics.bets + upgraderBets;
+  // Upgrader-only slices, already INCLUDED in the headline via
+  // `getGamingLegs`. Sourced from `legs` (not the standalone `upg` read)
+  // so the breakdown row equals the slice the headline folded in.
+  const upgraderWager = legs.upgraderWager;
+  const upgraderPayout = legs.upgraderPayout;
+  const upgraderBets = legs.upgraderBets;
 
   // Gaming payout legs — the inventory win delta (dominant), the
-  // battle_refund cash leg, and (when present) the upgrader payout.
+  // ledger gaming-payout cash leg, and (when present) the upgrader payout.
+  // `legs.battleRefund` carries the ledger gaming-payout legs PLUS upgrader
+  // payout, so the standalone upgrader payout is subtracted out into its
+  // own row to keep the three legs summing to `gamingPayout` exactly
+  // (inventory + battle-refund-only + upgrader = headline gamingPayout).
+  const ledgerGamingPayout = legs.battleRefund - upgraderPayout;
   const gamingLegs: GgrGamingLeg[] = [
     { label: "Pack & battle wins (inventory)", total: legs.inventoryPayout },
-    { label: "Battle refund (cash winner leg)", total: legs.battleRefund },
+    { label: "Battle refund (cash winner leg)", total: ledgerGamingPayout },
   ];
-  if (upg && upgraderPayout > 0) {
+  if (upgraderPayout > 0) {
     gamingLegs.push({ label: "Upgrader payout", total: upgraderPayout });
   }
 
@@ -436,11 +511,11 @@ export async function getGgrPageData(
       gamingPayout,
       ggr,
       ngr,
-      // Empirical RTP / house-edge on the UPGRADER-INCLUSIVE legs, via
-      // the canonical sample-guarded formulas (`MIN_SAMPLE`). Not taken
-      // from `metrics.rtp` because that excludes the upgrader leg.
-      rtp: empiricalRtp({ gamingPayout, wager, bets }),
-      houseEdge: empiricalHouseEdge({ wager, ggr, bets }),
+      // RTP / house-edge come straight from the canonical metrics — they
+      // are computed there on the SAME upgrader-inclusive legs, so the
+      // page reports the identical sample-guarded ratios.
+      rtp: metrics.rtp,
+      houseEdge: metrics.houseEdge,
       bets,
     },
     gaming: {
@@ -450,8 +525,9 @@ export async function getGgrPageData(
       ggr,
     },
     // Per-category wager split. packs + battles = the ledger wager leg
-    // (`legs.wager` = `metrics.wager`); + upgrader (the SAME `upg.wager`
-    // folded into the headline) = `headline.wager` by construction.
+    // (`legs.wager − legs.upgraderWager` = `metrics.wager` minus upgrader);
+    // + upgrader (the SAME `legs.upgraderWager` folded into the headline)
+    // = `headline.wager` by construction.
     categoryWager: {
       packs: categoryLedger.packs,
       battles: categoryLedger.battles,
@@ -459,7 +535,13 @@ export async function getGgrPageData(
     },
     neutral: {
       rows: detail.neutral,
-      total: neutralTotal,
+      // `sumLedgerTypes(NEUTRAL_TYPES)` counts ALL voucher_redeemed, but
+      // the admin house-granted slice (`metadata->>'origin'='manual'`) is
+      // canonically REWARD cost (it is in `getRewardCost.rewardCostExclRain`
+      // and shown as a reward row). Subtract it so the neutral total
+      // excludes what the reward side already counts — no double-count, and
+      // neutral-vs-reward matches canonical.
+      total: neutralTotal - detail.manualVoucherTotal,
     },
     reward: {
       rows: detail.reward,
@@ -502,16 +584,21 @@ export type GgrTopContributorRow = {
  * than the window aggregate. Returns at most `limit` rows (default 10),
  * ordered by ABS(net) DESC.
  *
- * TODO: switch to central scope helper — the real-customer predicate
- * (`role NOT IN ('admin','support','creator')` + blacklist) and the
- * borrow-exclusion subqueries mirror the canonical `realCustomersScope` /
- * `getGamingLegs` in `@/lib/metrics/queries`. They are re-expressed here
- * only because that module exposes no per-USER builder (it is
- * window-aggregate only) and must not be edited from a page. The
- * canonical SQL list constants (`WAGER_TYPES_SQL` /
- * `GAMING_PAYOUT_TYPES_SQL`) are imported so the type sets cannot drift
- * from the headline. When the consolidation exports a reusable per-user
- * scope helper, swap this predicate for it.
+ * The borrow + reward-pack predicates are the CANONICAL shared fragments
+ * (`WAGER_LEG_FILTER` / `PAYOUT_LEG_FILTER` from `@/lib/metrics/gaming-sql`)
+ * — the EXACT ones `getGamingLegs` ANDs in — so the per-user legs cannot
+ * drift from the headline: battle_sponsorship is counted DIRECTLY (no
+ * borrow gate) and reward/daily packs are dropped on both sides.
+ *
+ * SCOPE: the pack/battle legs use the CANONICAL `getMetricsScope()` (staff
+ * + blacklist dropped, creators KEPT, creator-on-session rows excluded
+ * per-row), the SAME population the headline uses, so a user's `net`
+ * matches their contribution to the headline GGR. The upgrader leg uses
+ * the wholesale-creator-drop scope (`role NOT IN
+ * ('admin','support','creator')` + blacklist) to match the canonical
+ * `upgraderMetrics` reader the headline folds in — the SAME documented
+ * minor asymmetry as `getGamingLegs` (creator off-session pack/battle play
+ * counts; creator upgrader never does).
  */
 export async function getGgrTopContributors(
   window: MetricWindow,
@@ -522,6 +609,9 @@ export async function getGgrTopContributors(
     // shouldn't blow up the query plan.
     const safeLimit = Math.max(1, Math.min(limit, 50));
     const db = await getDb();
+    const scope = await getMetricsScope();
+    // Blacklist for the upgrader leg's wholesale-drop user filter (the
+    // pack/battle legs get blacklist + staff drop via `scope.userScopeSql`).
     const excluded = await getExcludedUserIds();
     const blacklist = blacklistNotInClause("u.id", excluded);
     const since = window.since;
@@ -545,14 +635,20 @@ export async function getGgrTopContributors(
         ? ""
         : `AND ug.created_at >= '${since.toISOString()}'::timestamptz`;
 
+    // Upgrader leg uses the WHOLESALE-creator-drop scope (matching the
+    // canonical `upgraderMetrics` the headline folds in), NOT `real_users`
+    // (which keeps creators for the pack/battle legs). So creator upgrader
+    // play is excluded here exactly as it is from the headline.
     const upgraderLegCte = hasUpgrader
       ? `, upg_leg AS (
            SELECT ug.user_id,
              COALESCE(SUM(ug.bet_amount::numeric), 0) AS upg_wager,
              COALESCE(SUM(ug.won_amount::numeric), 0) AS upg_payout
            FROM upgrader_games ug
-           JOIN real_users ru ON ru.id = ug.user_id
-           WHERE TRUE ${sinceUpg}
+           WHERE ug.user_id IN (
+             SELECT u.id FROM "user" u
+             WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklist}
+           ) ${sinceUpg}
            GROUP BY ug.user_id
          )`
       : "";
@@ -574,21 +670,11 @@ export async function getGgrTopContributors(
       net: string;
     };
     const rows = await db.$queryRawUnsafe<QueryRow[]>(
-      `WITH real_users AS (
+      `WITH ${scope.sessionWindowsCte},
+       real_users AS (
          SELECT u.id, u.username
          FROM "user" u
-         WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklist}
-       ),
-       non_borrow_pack_sessions AS (
-         SELECT game_session_id FROM ledger_transactions
-         WHERE type = 'pack_opening' AND status = 'completed'
-           AND game_session_id IS NOT NULL
-           AND (description IS NULL OR description NOT ILIKE '%borrow%')
-       ),
-       non_borrow_battle_sessions AS (
-         SELECT bp.game_session_id FROM battle_participants bp
-         JOIN battles b ON b.id = bp.battle_id
-         WHERE COALESCE(b.borrow_percentage, 0) = 0
+         WHERE u.id IN ${scope.userScopeSql}
        ),
        ledger_leg AS (
          SELECT
@@ -601,11 +687,17 @@ export async function getGgrTopContributors(
          JOIN real_users ru ON ru.id = lt.user_id
          WHERE lt.status = 'completed'
            ${sinceLedger}
-           AND (
-             lt.type NOT IN ('pack_opening','battle_bet','battle_sponsorship')
-             OR (lt.type = 'pack_opening' AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%'))
-             OR (lt.type IN ('battle_bet','battle_sponsorship') AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
-           )
+           -- Creator-on-session rows excluded per-row (canonical scope),
+           -- symmetric with the inventory leg below.
+           AND ${scope.notInCreatorSession("lt.user_id", "lt.created_at")}
+           -- CANONICAL wager-side predicate (WAGER_LEG_FILTER from
+           -- gaming-sql.ts): battle_sponsorship counted DIRECTLY (no
+           -- borrow gate — its game_session_id is NULL; the old gate
+           -- dropped it), reward/daily packs excluded (Fix 2). The
+           -- GAMING_PAYOUT_TYPES rows (battle_refund +
+           -- battle_excess_to_voucher) pass via the filter's type-NOT-IN
+           -- arm, so the battle_refund_total leg is unaffected.
+           AND ${WAGER_LEG_FILTER}
          GROUP BY lt.user_id
        ),
        inv_leg AS (
@@ -616,10 +708,14 @@ export async function getGgrTopContributors(
          JOIN real_users ru ON ru.id = ui.user_id
          WHERE ui.source_type IN ('pack','battle')
            ${sinceInv}
-           AND (
-             (ui.source_type = 'pack' AND ui.source_id IN (SELECT game_session_id FROM non_borrow_pack_sessions))
-             OR (ui.source_type = 'battle' AND ui.source_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
-           )
+           -- Creator-on-session rows excluded per-row, keyed on obtained_at
+           -- (symmetric with the wager side's created_at predicate).
+           AND ${scope.notInCreatorSession("ui.user_id", "ui.obtained_at")}
+           -- CANONICAL payout-side predicate (PAYOUT_LEG_FILTER from
+           -- gaming-sql.ts): non-borrow pack/battle won cards, then
+           -- reward/daily-pack won cards dropped (Fix 2) so the giveaway
+           -- is not counted as a per-user gaming payout.
+           AND ${PAYOUT_LEG_FILTER}
          GROUP BY ui.user_id
        )${upgraderLegCte},
        per_user AS (
