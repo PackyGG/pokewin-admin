@@ -69,6 +69,8 @@ import {
 } from "./_queries/leaderboard-cost";
 import { type CreatorWithSocials } from "./_components/creator-card-grid";
 import { AddCreatorDialog } from "./_components/add-creator-dialog";
+import { CreatorsSearchProvider } from "./_components/creators-search-context";
+import { CreatorsSearchInput } from "./_components/creators-search-input";
 import { CreatorsTabSwitch } from "./_components/creators-tab-switch";
 import { CreatorsViewToggle } from "./_components/creators-view-toggle";
 import { CreatorsViewProvider } from "./_components/creators-view-context";
@@ -84,6 +86,16 @@ import { getAllCreatorsNetGgr } from "./_queries/all-creators-net-pnl";
 import { DASHBOARD_PERIOD_LABELS } from "@/lib/queries/dashboard-period";
 
 export const metadata = { title: "Creators" };
+
+// Server pagination is disabled on /creators: every render path now fits a
+// single page (the default tab path fetches the whole pool at `perPage: 100`
+// so the instant client-side search can filter every creator; the tile-filter
+// and Past paths were already single-page). This flag gates the pagination
+// control off while keeping its (narrowing) guard + element in place for a
+// future paginated path. Typed `boolean` (not the literal `false`) on purpose
+// so TS can't dead-code-eliminate the branch and drop the `result` non-null
+// narrowing the JSX below relies on.
+const SHOW_PAGINATION: boolean = false;
 
 export default async function CreatorsPage({
   searchParams,
@@ -149,47 +161,64 @@ export default async function CreatorsPage({
             The provider wraps BOTH the toggle (in the toolbar) and the
             renderer (inside the Suspense boundary) so they share one
             state; the toggle keeps rendering during data refetches. */}
-        <CreatorsViewProvider>
-          <FadeIn className="space-y-4">
-            {/* Toolbar is OUTSIDE the Suspense boundary so the search +
-                tab switch + view toggle stay responsive while the rows
-                stream in. Tab switch (leading) hides while a filter is
-                active — the filter overrides the Fill / Multiplier view.
-                The Grid / List view toggle (trailing `children`) flips
-                the render mode via client state — no refetch. */}
-            <DataTableToolbar
-              searchPlaceholder="Search by username or email..."
-              leading={params.filter ? undefined : <CreatorsTabSwitch />}
-            >
-              {/* Period chips scope the windowed code-user GGR on each
-                  row (+ the roster-wide Net GGR tile); the sort dropdown
-                  re-orders the page by GGR / FTDs. Both drive URL params
-                  and live alongside the Grid / List view toggle. The
-                  period chips are hidden on the Past Creators tab — GGR
-                  is creator-gated there (ex-creators always render "—"),
-                  so scoping a window has no effect. The sort dropdown
-                  stays (its FTD / recent modes still work page-locally). */}
-              {params.tab !== "past" && <CreatorsPeriodControl />}
-              <CreatorsSortControl />
-              <CreatorsViewToggle />
-            </DataTableToolbar>
-            {/* Card grid / list + pagination — Suspense boundary keyed on
-                `tab` + `search` + `page` + `sortBy` + `filter` so any
-                navigation that swaps the underlying data set shows the
-                skeleton instead of leaving the stale grid blocking.
-                `view` is intentionally NOT in the key (and not read
-                server-side) — switching it is a client re-render of the
-                same data, so it must not throw a fresh boundary / refetch.
-                `key=` forces React to throw the fresh boundary on every
-                data-changing navigation. */}
-            <Suspense
-              key={`grid-${params.tab}-${params.search ?? ""}-${params.page}-${params.sortBy}-${params.perPage}-${params.filter ?? ""}-${params.period}`}
-              fallback={<CreatorsGridSkeleton />}
-            >
-              <CreatorsGridSection params={params} />
-            </Suspense>
-          </FadeIn>
-        </CreatorsViewProvider>
+        {/* The username/email search is ALSO pure client state
+            (CreatorsSearchProvider) — it filters the already-fetched
+            rows in place, with no `?search=` URL param and no server
+            refetch (the old URL-param search re-ran the heaviest query
+            on the page per keystroke). The provider wraps BOTH the
+            search input (in the toolbar) and the renderer (inside the
+            Suspense boundary), mirroring CreatorsViewProvider, so they
+            share one state and the input keeps rendering during data
+            refetches. */}
+        <CreatorsSearchProvider>
+          <CreatorsViewProvider>
+            <FadeIn className="space-y-4">
+              {/* Toolbar is OUTSIDE the Suspense boundary so the search +
+                  tab switch + view toggle stay responsive while the rows
+                  stream in. Tab switch (leading) hides while a filter is
+                  active — the filter overrides the Fill / Multiplier view.
+                  The search slot is an instant client-side filter
+                  (CreatorsSearchInput → CreatorsSearchProvider); the
+                  Grid / List view toggle (trailing `children`) flips the
+                  render mode via client state — neither refetches. */}
+              <DataTableToolbar
+                searchSlot={
+                  <CreatorsSearchInput placeholder="Search by username or email..." />
+                }
+                leading={params.filter ? undefined : <CreatorsTabSwitch />}
+              >
+                {/* Period chips scope the windowed code-user GGR on each
+                    row (+ the roster-wide Net GGR tile); the sort dropdown
+                    re-orders the page by GGR / FTDs. Both drive URL params
+                    and live alongside the Grid / List view toggle. The
+                    period chips are hidden on the Past Creators tab — GGR
+                    is creator-gated there (ex-creators always render "—"),
+                    so scoping a window has no effect. The sort dropdown
+                    stays (its FTD / recent modes still work page-locally). */}
+                {params.tab !== "past" && <CreatorsPeriodControl />}
+                <CreatorsSortControl />
+                <CreatorsViewToggle />
+              </DataTableToolbar>
+              {/* Card grid / list + pagination — Suspense boundary keyed on
+                  `tab` + `page` + `sortBy` + `filter` so any navigation that
+                  swaps the underlying data set shows the skeleton instead of
+                  leaving the stale grid blocking. `view` AND `search` are
+                  intentionally NOT in the key (and not read server-side) —
+                  both are pure client state (view toggle / instant search),
+                  so changing either must NOT throw a fresh boundary / refetch.
+                  Dropping `search` from the key also keeps a stale `?search=`
+                  URL param from forcing a server re-render. `key=` forces
+                  React to throw the fresh boundary on every data-changing
+                  navigation. */}
+              <Suspense
+                key={`grid-${params.tab}-${params.page}-${params.sortBy}-${params.perPage}-${params.filter ?? ""}-${params.period}`}
+                fallback={<CreatorsGridSkeleton />}
+              >
+                <CreatorsGridSection params={params} />
+              </Suspense>
+            </FadeIn>
+          </CreatorsViewProvider>
+        </CreatorsSearchProvider>
       </div>
     </div>
   );
@@ -541,7 +570,17 @@ async function CreatorsGridSection({
       ? await getExCreatorsList(params)
       : params.filter
         ? await listCreatorsFiltered(params.filter, params.search)
-        : await getCreatorsListForTab(params, params.tab, ggrByUser);
+        : // Render the ENTIRE tab pool on one page (page 1, capped at the
+          // 100-creator schema max — the same FETCH_CAP-bounded full walk
+          // this query already does) so the instant client-side search
+          // (CreatorsSearchInput → CreatorsViewRender) filters across every
+          // creator, not just the current page's slice. Pagination is hidden
+          // on this path (see the guard on <DataTablePagination/> below).
+          await getCreatorsListForTab(
+            { ...params, page: 1, perPage: 100 },
+            params.tab,
+            ggrByUser,
+          );
 
     codeAndWagerByUser = await getCodeAndWagerByUser(
       result.data.map((c) => c.id),
@@ -732,11 +771,21 @@ async function CreatorsGridSection({
       {/* Grid / List render mode is client state — same `creators` data
           either way, switched in place with no refetch. */}
       <CreatorsViewRender creators={creators} />
-      {/* Pagination is hidden while a tile filter is active because
-          `listCreatorsFiltered` collapses the result to a single page
-          — the filtered set is small enough to fit on one screen, and
-          showing fake "1 of 1" pagination would just be visual noise. */}
-      {result && !params.filter && (
+      {/* Pagination is now hidden on the default (unfiltered) path too:
+          that path renders the WHOLE tab pool on a single page
+          (`perPage: 100` above) so the instant client-side search can
+          filter every creator, which makes server pagination meaningless
+          here — it would only ever show "1 of 1". The tile-filter path
+          (`params.filter`) was already single-page via
+          `listCreatorsFiltered`, and the Past tab is the only other path,
+          which also fits one screen. So pagination is disabled across the
+          board. The original `result && !params.filter` guard is kept so
+          the bound `result` shape stays documented (and TS keeps narrowing
+          `result` to non-null) in case a future paginated path wants it
+          back; `SHOW_PAGINATION` (a runtime-false flag, typed `boolean` so
+          the compiler can't dead-code-eliminate the branch and lose that
+          narrowing) gates the actual render off. */}
+      {SHOW_PAGINATION && result && !params.filter && (
         <DataTablePagination
           page={result.page}
           totalPages={result.totalPages}
