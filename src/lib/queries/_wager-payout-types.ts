@@ -10,8 +10,13 @@
  *  - creators-pnl.ts computes per-creator GGR from
  *    `affiliate_code_usages.wager_amount_usd`, NOT from these ledger
  *    types — a different mechanism, intentionally not coupled here.
- *  - analytics.ts / analytics-cohorts.ts use their own smaller payout
- *    lists (a known divergence pending a product decision).
+ *  - analytics.ts / analytics-cohorts.ts have MIGRATED off this set onto
+ *    the canonical `@/lib/metrics` layer (inventory-delta gaming payout,
+ *    card conversions neutral, net-rain NGR, real-customer scope). They no
+ *    longer carry a local payout list. NOTE: this `WAGER_PAYOUT_PAYOUT_TYPES`
+ *    set still folds reward/marketing types + card conversions into the
+ *    payout side (it is the dashboard's single-step "GGR", closer to NGR)
+ *    and is a DIFFERENT definition from the canonical lib/metrics GGR.
  * Don't assume importing these constants makes a surface match the
  * dashboard's GGR; only dashboard.ts is wired to them today.
  */
