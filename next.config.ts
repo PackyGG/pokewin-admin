@@ -32,8 +32,12 @@ const nextConfig: NextConfig = {
         permanent: true,
       },
       {
+        // The race surface was consolidated into /rewards/leaderboards (the
+        // wager/race standings board); the old /rewards/races page no longer
+        // exists. Retarget the legacy /races deep-link to the live route so
+        // bookmarks keep resolving.
         source: "/races",
-        destination: "/rewards/races",
+        destination: "/rewards/leaderboards",
         permanent: true,
       },
     ];

@@ -1,11 +1,16 @@
-// Single source of truth for the global command palette (CMD+K) and the
-// `/system/commands` docs page.
+// Command palette (CMD+K) + `/system/commands` docs page command lists.
 //
-// Every command lives in one place so:
-//   - the palette can render them grouped by section with icons + shortcuts
-//   - the docs page can render a human-readable list without drifting from
-//     what the palette actually offers
-//   - permission filtering can be applied once (ADMIN_PAGES keys)
+// Navigation commands are DERIVED from the single shared nav config in
+// `src/lib/nav-config.ts` (the same source the sidebar derives from), so the
+// palette and sidebar can no longer drift. This file:
+//   - resolves the nav config's string icon keys into `lucide-react`
+//     components and exposes them as `NavCommand`s (`NAV_COMMANDS`),
+//   - defines the palette-only quick actions (`ACTION_COMMANDS`),
+//   - re-exposes the docs grouping (also derived from the nav config).
+//
+// Because navigation now comes from `nav-config.ts`, the palette genuinely
+// mirrors the permission-key universe (`ADMIN_PAGES`) one-for-one via each
+// entry's `pageKey`.
 //
 // This file is imported from both a Client Component (the palette) and a
 // Server Component (the docs page), so it must stay dependency-free — no
@@ -18,6 +23,7 @@ import {
   Award,
   BarChart3,
   Bot,
+  CalendarClock,
   CalendarDays,
   CloudRain,
   Command,
@@ -27,7 +33,6 @@ import {
   Keyboard,
   Layers,
   LayoutDashboard,
-  CalendarClock,
   LogOut,
   Megaphone,
   MessageSquare,
@@ -35,6 +40,7 @@ import {
   Package,
   Percent,
   Plus,
+  Receipt,
   Search,
   Settings,
   Shield,
@@ -51,6 +57,12 @@ import {
   Users,
   type LucideIcon,
 } from "lucide-react";
+
+import {
+  getPaletteNavEntries,
+  getDocsNavGroups,
+  type NavEntry,
+} from "@/lib/nav-config";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -107,348 +119,64 @@ export type ActionCommand = {
 export type PaletteCommand = NavCommand | ActionCommand;
 
 // ---------------------------------------------------------------------------
-// Navigation commands — mirrors src/lib/admin-pages.ts one-for-one.
+// Icon resolution — maps nav-config string icon keys to lucide components.
+// Only the keys used by palette-surfaced nav entries need to be present.
 // ---------------------------------------------------------------------------
 
-export const NAV_COMMANDS: NavCommand[] = [
-  // ── Overview ──────────────────────────────────────────────────────────
-  {
-    kind: "nav",
-    id: "nav.dashboard",
-    label: "Dashboard",
-    description: "Platform overview",
-    icon: LayoutDashboard,
-    href: "/dashboard",
-    pageKey: "/dashboard",
-    keywords: ["home", "overview"],
-  },
-  {
-    kind: "nav",
-    id: "nav.shifts",
-    label: "Shifts",
-    description: "Weekly support rota",
-    icon: CalendarClock,
-    href: "/shifts",
-    pageKey: "/shifts",
-    keywords: ["schedule", "rota", "shift", "team", "planner", "support"],
-  },
-  {
-    kind: "nav",
-    id: "nav.analytics",
-    label: "Analytics",
-    description: "GGR, NGR, PnL charts",
-    icon: BarChart3,
-    href: "/analytics",
-    pageKey: "/analytics",
-    keywords: ["metrics", "chart", "ggr", "ngr", "pnl"],
-  },
-  {
-    kind: "nav",
-    id: "nav.map",
-    label: "Map",
-    description: "Geographic user distribution",
-    icon: Globe,
-    // /map was folded into /analytics as a tab — link still surfaces in
-    // the palette under "Map", just routes through the analytics shell.
-    // Permission inherits from /analytics.
-    href: "/analytics?tab=map",
-    pageKey: "/analytics",
-    keywords: ["geo", "world", "country"],
-  },
-  {
-    kind: "nav",
-    id: "nav.users",
-    label: "Users",
-    description: "Browse end-users",
-    icon: Users,
-    href: "/users",
-    pageKey: "/users",
-    keywords: ["players", "accounts", "search"],
-  },
-  {
-    kind: "nav",
-    id: "nav.deposits",
-    label: "Deposits",
-    description: "Deposit & withdrawal ledger",
-    icon: ArrowDownToLine,
-    href: "/transactions/deposits",
-    pageKey: "/transactions/deposits",
-    keywords: ["crypto", "payments"],
-  },
-  {
-    kind: "nav",
-    id: "nav.withdrawals",
-    label: "Withdrawals",
-    description: "Withdrawal queue",
-    icon: ArrowDownToLine,
-    href: "/withdrawals",
-    pageKey: "/withdrawals",
-    keywords: ["payouts", "shipping"],
-  },
+const NAV_ICONS: Record<string, LucideIcon> = {
+  ArrowDownToLine,
+  ArrowUpCircle,
+  Award,
+  BarChart3,
+  Bot,
+  CalendarClock,
+  CloudRain,
+  Command,
+  FileText,
+  Gift,
+  Globe,
+  Layers,
+  LayoutDashboard,
+  Megaphone,
+  Package,
+  Percent,
+  Receipt,
+  Settings,
+  Shield,
+  ShieldCheck,
+  Swords,
+  Tag,
+  Ticket,
+  TrendingUp,
+  Trophy,
+  UserCircle,
+  Users,
+};
 
-  // ── Creators ──────────────────────────────────────────────────────────
-  {
+function navEntryToCommand(e: NavEntry): NavCommand {
+  const icon = NAV_ICONS[e.icon] ?? Command;
+  return {
     kind: "nav",
-    id: "nav.creators",
-    label: "Creators",
-    description: "Affiliate creator directory",
-    icon: Users,
-    href: "/creators",
-    pageKey: "/creators",
-    keywords: ["affiliate", "influencer"],
-  },
-  // /creators/codes was removed from CMD+K nav — the route still exists
-  // but is no longer surfaced (mirrors sidebar + role editor).
-  {
-    kind: "nav",
-    id: "nav.creators.ads",
-    label: "Ads",
-    description: "Campaign / house codes",
-    icon: Megaphone,
-    href: "/creators/ads",
-    pageKey: "/creators/ads",
-    keywords: ["campaign", "house"],
-  },
-  {
-    kind: "nav",
-    id: "nav.creators.analytics",
-    label: "Creator Analytics",
-    description: "Creator performance",
-    icon: BarChart3,
-    href: "/creators/analytics",
-    pageKey: "/creators/analytics",
-  },
-  {
-    kind: "nav",
-    id: "nav.creators.settings",
-    label: "Creator Settings",
-    description: "Global affiliate config",
-    icon: Settings,
-    href: "/creators/settings",
-    pageKey: "/creators/settings",
-  },
-
-  // ── Marketing ─────────────────────────────────────────────────────────
-  {
-    kind: "nav",
-    id: "nav.promo",
-    label: "Promo Codes",
-    description: "Bonus code directory",
-    icon: Tag,
-    href: "/promo-codes",
-    pageKey: "/promo-codes",
-    keywords: ["coupons", "bonus"],
-  },
-  {
-    kind: "nav",
-    id: "nav.gift-cards",
-    label: "Gift Cards",
-    icon: Gift,
-    href: "/gift-cards",
-    pageKey: "/gift-cards",
-  },
-  // /vouchers was removed from CMD+K nav — the route still exists but is
-  // no longer surfaced (mirrors sidebar + role editor).
-
-  // ── Content ───────────────────────────────────────────────────────────
-  {
-    kind: "nav",
-    id: "nav.packs",
-    label: "Packs",
-    description: "Pack catalog",
-    icon: Package,
-    href: "/packs",
-    pageKey: "/packs",
-  },
-  {
-    kind: "nav",
-    id: "nav.cards",
-    label: "Cards",
-    description: "Card catalog",
-    icon: Layers,
-    href: "/cards",
-    pageKey: "/cards",
-  },
-  {
-    kind: "nav",
-    id: "nav.battles",
-    label: "Battles",
-    description: "Pack battle directory",
-    icon: Swords,
-    href: "/battles",
-    pageKey: "/battles",
-  },
-
-  // ── Transactions ──────────────────────────────────────────────────────
-  // Standalone /transactions overview was removed; per-type sub-pages
-  // are the canonical entry-points now.
-  {
-    kind: "nav",
-    id: "nav.transactions.packs",
-    label: "Pack Transactions",
-    icon: Package,
-    href: "/transactions/packs",
-    pageKey: "/transactions/packs",
-  },
-  {
-    kind: "nav",
-    id: "nav.transactions.upgrader",
-    label: "Upgrader Transactions",
-    icon: ArrowUpCircle,
-    href: "/transactions/upgrader",
-    pageKey: "/transactions/upgrader",
-    keywords: ["upgrader", "bet", "payout"],
-  },
-  {
-    kind: "nav",
-    id: "nav.transactions.rewards",
-    label: "Reward Transactions",
-    icon: Award,
-    href: "/transactions/rewards",
-    pageKey: "/transactions/rewards",
-  },
-
-  // ── Rewards ───────────────────────────────────────────────────────────
-  {
-    kind: "nav",
-    id: "nav.rewards",
-    label: "Rewards",
-    icon: Award,
-    href: "/rewards",
-    pageKey: "/rewards",
-  },
-  {
-    kind: "nav",
-    id: "nav.rewards.rakeback",
-    label: "Rakeback",
-    icon: Percent,
-    href: "/rewards/rakeback",
-    pageKey: "/rewards/rakeback",
-  },
-  {
-    kind: "nav",
-    id: "nav.rewards.raffles",
-    label: "Raffles",
-    icon: Ticket,
-    href: "/rewards/raffles",
-    pageKey: "/rewards/raffles",
-  },
-  {
-    kind: "nav",
-    id: "nav.rain",
-    label: "Rain",
-    icon: CloudRain,
-    href: "/rain",
-    pageKey: "/rain",
-  },
-  {
-    kind: "nav",
-    id: "nav.rewards.leaderboards",
-    label: "Leaderboards",
-    icon: Trophy,
-    href: "/rewards/leaderboards",
-    pageKey: "/rewards/leaderboards",
-    keywords: ["races"],
-  },
-  {
-    kind: "nav",
-    id: "nav.rewards.level-up",
-    label: "Level Up",
-    icon: TrendingUp,
-    href: "/rewards/level-up",
-    pageKey: "/rewards/level-up",
-  },
-  {
-    kind: "nav",
-    id: "nav.rewards.settings",
-    label: "Reward Settings",
-    icon: Settings,
-    href: "/rewards/settings",
-    pageKey: "/rewards/settings",
-  },
-
-  // ── Creator Portal (creator-only) ─────────────────────────────────────
-  {
-    kind: "nav",
-    id: "nav.my-profile",
-    label: "My Profile",
-    description: "Creator self-service",
-    icon: UserCircle,
-    href: "/my-profile",
-    pageKey: "/my-profile",
-  },
-
-  // ── Security ──────────────────────────────────────────────────────────
-  {
-    kind: "nav",
-    id: "nav.security",
-    label: "Security",
-    description: "Site security config",
-    icon: Shield,
-    href: "/security",
-    pageKey: "/security",
-  },
-
-  // ── System ────────────────────────────────────────────────────────────
-  {
-    kind: "nav",
-    id: "nav.admin-users",
-    label: "Users",
-    description: "Admin panel users",
-    icon: ShieldCheck,
-    href: "/admin-users",
-    pageKey: "/admin-users",
-  },
-  {
-    kind: "nav",
-    id: "nav.settings.roles",
-    label: "Roles",
-    description: "Built-in & custom roles",
-    icon: Shield,
-    href: "/settings/roles",
-    pageKey: "/settings/roles",
-  },
-  {
-    kind: "nav",
-    id: "nav.bots",
-    label: "Bots",
-    icon: Bot,
-    href: "/bots",
-    pageKey: "/bots",
-  },
-  {
-    kind: "nav",
-    id: "nav.settings",
-    label: "Settings",
-    description: "Global admin settings",
-    icon: Settings,
-    href: "/settings",
-    pageKey: "/settings",
-  },
-  {
-    kind: "nav",
-    id: "nav.audit",
-    label: "Audit Log",
-    description: "Every admin action, searchable",
-    icon: FileText,
-    href: "/audit",
-    pageKey: "/audit",
-    keywords: ["log", "history"],
-  },
-  {
-    kind: "nav",
-    id: "nav.commands",
-    label: "Commands",
-    description: "All palette commands",
-    icon: Command,
-    href: "/system/commands",
-    pageKey: "/system/commands",
-    keywords: ["palette", "shortcuts", "cmd+k"],
-  },
-];
+    id: e.id,
+    label: e.paletteLabel ?? e.label,
+    description: e.description,
+    icon,
+    href: e.href,
+    pageKey: e.pageKey,
+    keywords: e.keywords,
+  };
+}
 
 // ---------------------------------------------------------------------------
-// Quick-action commands
+// Navigation commands — derived from src/lib/nav-config.ts (one-for-one with
+// the ADMIN_PAGES permission keys via each entry's pageKey).
+// ---------------------------------------------------------------------------
+
+export const NAV_COMMANDS: NavCommand[] =
+  getPaletteNavEntries().map(navEntryToCommand);
+
+// ---------------------------------------------------------------------------
+// Quick-action commands (palette-only — not part of the shared nav config).
 // ---------------------------------------------------------------------------
 
 export const ACTION_COMMANDS: ActionCommand[] = [
@@ -562,102 +290,23 @@ export function filterCommandsForUser<T extends PaletteCommand>(
 }
 
 // ---------------------------------------------------------------------------
-// Docs helpers — grouped views for /system/commands.
+// Docs helpers — grouped views for /system/commands (derived from nav-config).
 // ---------------------------------------------------------------------------
 
 /**
- * Group nav commands by their sidebar section. Mirrors the NAV_GROUPS
- * ordering in src/components/app-sidebar.tsx so the docs page matches what
- * users see in the nav.
+ * Group nav commands by their sidebar section for the docs page. Fully
+ * derived from the shared nav config (`getDocsNavGroups`), then mapped into
+ * `NavCommand`s — so the docs page can never drift from the palette or the
+ * sidebar.
  */
-export const DOCS_NAV_GROUPS: Array<{ label: string; pageKeys: string[] }> = [
-  {
-    label: "Overview",
-    pageKeys: [
-      "/dashboard",
-      "/analytics",
-      // /map removed — now a tab inside /analytics, inherits its permission.
-      "/users",
-      "/transactions/deposits",
-      "/withdrawals",
-    ],
-  },
-  {
-    label: "Creators",
-    pageKeys: [
-      "/creators",
-      "/creators/ads",
-      "/creators/analytics",
-      "/creators/settings",
-    ],
-  },
-  {
-    label: "Marketing",
-    pageKeys: ["/promo-codes", "/gift-cards"],
-  },
-  {
-    label: "Employees",
-    pageKeys: ["/shifts"],
-  },
-  {
-    label: "Content",
-    pageKeys: ["/packs", "/cards"],
-  },
-  {
-    label: "Transactions",
-    pageKeys: [
-      // Standalone /transactions overview removed — per-type sub-pages
-      // are the canonical entry-points.
-      "/transactions/packs",
-      "/battles",
-      "/transactions/upgrader",
-      "/transactions/rewards",
-    ],
-  },
-  {
-    label: "Rewards",
-    pageKeys: [
-      "/rewards",
-      "/rewards/rakeback",
-      "/rewards/raffles",
-      "/rain",
-      "/rewards/leaderboards",
-      "/rewards/level-up",
-      "/rewards/settings",
-    ],
-  },
-  {
-    label: "Creator Portal",
-    pageKeys: ["/my-profile"],
-  },
-  {
-    label: "Security",
-    pageKeys: ["/security"],
-  },
-  {
-    label: "System",
-    pageKeys: [
-      "/admin-users",
-      "/settings/roles",
-      "/bots",
-      "/settings",
-      "/audit",
-      "/system/commands",
-    ],
-  },
-];
-
 export function getNavCommandsByDocsGroup(): Array<{
   label: string;
   items: NavCommand[];
 }> {
-  const byKey = new Map<string, NavCommand>(
-    NAV_COMMANDS.map((c) => [c.pageKey, c]),
-  );
-  return DOCS_NAV_GROUPS.map((g) => ({
+  return getDocsNavGroups().map((g) => ({
     label: g.label,
-    items: g.pageKeys.map((k) => byKey.get(k)).filter((c): c is NavCommand => Boolean(c)),
-  })).filter((g) => g.items.length > 0);
+    items: g.items.map(navEntryToCommand),
+  }));
 }
 
 // ---------------------------------------------------------------------------
