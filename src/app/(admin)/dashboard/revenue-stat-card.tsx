@@ -131,15 +131,18 @@ export function PnlStatCard({
 //
 // Round 6: instead of bridging GGR to P&L (which conflates two
 // independent formulas), the popover shows the GGR formula's LEGS for
-// the window — the wager leg (ledger pack/battle stake) and the payout
-// leg (pack/battle wins valued from inventory + battle refunds), per the
-// canonical @/lib/metrics inventory-delta definition. Bottom of the
-// popover offers a "Show top contributors" expander that fires a server
-// action computing the SAME per-user inventory-delta net, so the admin
-// can drill from "GGR = -$102k" → which users drove it. Pure
-// transparency, no derivations. (NOTE: card/voucher conversions and
+// the window — the wager leg (pack/battle + upgrader stake) and the
+// payout leg (pack/battle wins valued from inventory + battle refunds +
+// upgrader payout), per the canonical @/lib/metrics inventory-delta
+// definition. Bottom of the popover offers a "Show top contributors"
+// expander that fires a server action computing the SAME per-user net,
+// so the admin can drill from "GGR = -$102k" → which users drove it.
+// Pure transparency, no derivations. (NOTE: card/voucher conversions and
 // reward giveaways are NOT on the payout leg — they're neutral /
-// NGR-side; and upgrader is excluded entirely, surfaced in its own panel.)
+// NGR-side. Upgrader IS included now — it's folded into the canonical
+// GGR from `upgrader_games`, shown as its own wager + payout rows; the
+// dedicated Upgrader Stats panel still breaks it down with
+// wins/losses/hit-rate.)
 export function GgrStatCard({
   ggr,
   periodLabel,
@@ -289,11 +292,12 @@ function GgrBreakdownPopover({
           </p>
           <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
             {periodLabel}. GGR = wager − (pack/battle wins + battle
-            refunds). Wins are valued from inventory (the cards kept),
-            not a ledger payout. Card/voucher conversions are neutral and
-            excluded. Real customers only (staff, creators + excluded
-            users dropped, borrow plays removed) — so this matches the
-            headline.
+            refunds + upgrader payout). Wins are valued from inventory
+            (the cards kept), not a ledger payout; upgrader comes from
+            its own table. Card/voucher conversions are neutral and
+            excluded. Real customers only (staff + excluded users dropped,
+            creator on-stream play removed, borrow plays removed) — so
+            this matches the headline.
           </p>
         </div>
 
