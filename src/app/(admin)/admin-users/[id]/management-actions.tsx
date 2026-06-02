@@ -18,11 +18,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import type { AdminRole } from "@/lib/dal";
-import { RolesEditor } from "../_components/roles-editor";
 import {
   toggleAdminActive,
-  setAdminRoles,
   resetAdmin2FA,
 } from "../actions";
 import { forceExpireAllSessions } from "./actions";
@@ -32,12 +29,9 @@ import type { AdminUserDetail } from "@/lib/queries/admin-users";
 export function ManagementActions({
   detail,
   startTransition,
-  rolesColumnExists,
 }: {
   detail: AdminUserDetail;
   startTransition: React.TransitionStartFunction;
-  /** Whether admin_users.roles is migrated — gates the multi-role notice. */
-  rolesColumnExists: boolean;
 }) {
   const router = useRouter();
 
@@ -60,12 +54,6 @@ export function ManagementActions({
       </CardHeader>
       <CardContent className="flex flex-wrap gap-2">
         <ToggleActiveDialog detail={detail} handleAction={handleAction} />
-
-        <ChangeRoleDialog
-          detail={detail}
-          handleAction={handleAction}
-          rolesColumnExists={rolesColumnExists}
-        />
 
         {detail.totpEnabled && (
           <Reset2FADialog detail={detail} handleAction={handleAction} />
@@ -237,99 +225,6 @@ function Reset2FADialog({
           >
             Confirm
           </Button>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  );
-}
-
-/**
- * Multi-role editor. An admin can grant several system roles to one user
- * at once (e.g. Support + Pack Creator). Preselected to the user's current
- * effective roles; the RolesEditor shows them as removable chips with an
- * add-picker for the rest. Saving replaces the set. Permissions are merged
- * additively server-side (setAdminRoles) so adding a role only grants
- * access. 2FA-gated, exactly like the old single-role change.
- */
-export function ChangeRoleDialog({
-  detail,
-  handleAction,
-  rolesColumnExists,
-}: {
-  detail: AdminUserDetail;
-  handleAction: (action: () => Promise<void>, label: string) => void;
-  /** Whether admin_users.roles is migrated — gates the multi-role notice. */
-  rolesColumnExists: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [selected, setSelected] = useState<Set<AdminRole>>(
-    () => new Set(detail.roles as AdminRole[]),
-  );
-  const [totpCode, setTotpCode] = useState("");
-
-  function reset() {
-    setSelected(new Set(detail.roles as AdminRole[]));
-    setTotpCode("");
-  }
-
-  const current = [...detail.roles].sort().join(",");
-  const picked = [...selected].sort().join(",");
-  const dirty = current !== picked;
-  const empty = selected.size === 0;
-
-  return (
-    <AlertDialog
-      open={open}
-      onOpenChange={(v) => {
-        setOpen(v);
-        if (!v) reset();
-      }}
-    >
-      <AlertDialogTrigger className={buttonVariants({ variant: "outline", size: "sm" })}>
-        Edit Roles
-      </AlertDialogTrigger>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Edit roles for {detail.username}</AlertDialogTitle>
-          <AlertDialogDescription>
-            A user can hold several roles at once and gets the combined access
-            of all of them.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <RolesEditor
-          selected={selected}
-          onChange={setSelected}
-          rolesColumnExists={rolesColumnExists}
-        />
-        <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">2FA Code</Label>
-          <Input
-            type="text"
-            inputMode="numeric"
-            placeholder="Enter your 6-digit code"
-            value={totpCode}
-            onChange={(e) => setTotpCode(e.target.value)}
-            maxLength={6}
-            autoComplete="one-time-code"
-          />
-        </div>
-        <AlertDialogFooter>
-          <AlertDialogCancel onClick={reset}>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            disabled={!dirty || empty || !totpCode.trim()}
-            onClick={() => {
-              if (dirty && !empty && totpCode.trim()) {
-                handleAction(
-                  () => setAdminRoles(detail.id, [...selected], totpCode.trim()),
-                  "Roles updated",
-                );
-                setTotpCode("");
-                setOpen(false);
-              }
-            }}
-          >
-            Save
-          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

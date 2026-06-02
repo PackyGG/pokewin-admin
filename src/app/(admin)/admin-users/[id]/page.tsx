@@ -14,7 +14,6 @@ import {
   getAdminUserAuditEvents,
 } from "@/lib/queries/admin-users";
 import { getLimitsForAdmin } from "@/lib/balance-limits";
-import { adminRolesColumnExists } from "@/lib/admin-user-roles";
 import { Badge } from "@/components/ui/badge";
 import { formatRelative } from "@/lib/utils/format";
 import { PageHero, PageHeroIdentity, KpiTile } from "@/components/modern-panels";
@@ -47,7 +46,7 @@ export default async function AdminUserDetailPage({
   // the wire, so it can't leak through React DevTools or DOM inspection.
   const isCurrentUserAdmin = session.role === "admin";
 
-  const [detail, auditStats, auditEvents, balanceLimits, rolesColumnExists] =
+  const [detail, auditStats, auditEvents, balanceLimits] =
     await Promise.all([
       getAdminUserDetail(id),
       getAdminUserAuditStats(id),
@@ -56,9 +55,6 @@ export default async function AdminUserDetailPage({
         search: typeof sp.auditSearch === "string" ? sp.auditSearch : undefined,
       }),
       isCurrentUserAdmin ? getLimitsForAdmin(id) : Promise.resolve([]),
-      // Whether the additive `roles` column is migrated — drives the honest
-      // multi-role notice in the detail-page role editor.
-      adminRolesColumnExists(),
     ]);
 
   if (!detail) notFound();
@@ -127,7 +123,6 @@ export default async function AdminUserDetailPage({
             updated_at: l.updated_at.toISOString(),
           }))}
           isCurrentUserAdmin={isCurrentUserAdmin}
-          rolesColumnExists={rolesColumnExists}
         />
       </FadeIn>
     </div>
