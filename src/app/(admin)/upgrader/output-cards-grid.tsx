@@ -219,15 +219,33 @@ function UpgraderOutputCardTile({ card }: { card: UpgraderOutputCard }) {
   return (
     <div
       className={cn(
-        "group relative flex flex-col gap-2 rounded-xl border bg-card/40 p-2.5 transition-colors",
+        "surface-sheen group relative flex flex-col gap-2 rounded-xl border border-border/60 bg-card/40 p-2.5 transition-colors hover:border-border hover:bg-card/70",
         !card.enabled && "opacity-60",
       )}
     >
-      <CardImage
-        src={card.image_url}
-        alt={card.name}
-        className={cn("w-full rounded-md", !card.enabled && "grayscale")}
-      />
+      <div className="relative">
+        <CardImage
+          src={card.image_url}
+          alt={card.name}
+          className={cn("w-full rounded-md", !card.enabled && "grayscale")}
+        />
+        {/* Tier swatch — mirrors the resolved color override / price band
+            shown in the Liability-by-Tier panel, so the same card reads
+            the same hue in both places. A dashed neutral ring marks a
+            card with no override (price-derived tone only). */}
+        <span
+          aria-hidden
+          className={cn(
+            "absolute right-1.5 top-1.5 inline-block size-3 rounded-full shadow-sm ring-2 ring-background",
+            currentColor === null && "border border-dashed border-muted-foreground/70",
+          )}
+          style={
+            currentColor !== null
+              ? { backgroundColor: COLOR_SWATCH[currentColor] }
+              : undefined
+          }
+        />
+      </div>
 
       <div className="flex flex-col gap-1 px-0.5">
         <p className="truncate text-xs font-medium leading-tight">
