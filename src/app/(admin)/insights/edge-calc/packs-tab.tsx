@@ -29,9 +29,10 @@ import { formatPct } from "./math";
  * for the initial pass).
  */
 export function PacksTab({ rows }: { rows: PackEdgeRow[] }) {
-  // Aggregate header KPIs across the whole catalog.
+  // Aggregate header KPIs across the active catalog. `getPackEdgeRows`
+  // already filters to `active = true`, so every row here is live —
+  // inactive packs are not part of the edge-calc surface.
   const total = rows.length;
-  const active = rows.filter((r) => r.active).length;
   // Average theoretical RTP across packs with a populated pool. Weighted
   // equally per-pack (catalog-level "what's the math saying overall");
   // a volume-weighted variant would just reproduce the empirical column
@@ -70,9 +71,9 @@ export function PacksTab({ rows }: { rows: PackEdgeRow[] }) {
       {/* ── KPI strip ─────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <KpiTile
-          label="Packs in Catalog"
+          label="Active Packs"
           value={formatNumber(total)}
-          sub={`${active} active`}
+          sub="live in catalog"
           icon={Package}
           accent="blue"
         />
@@ -272,7 +273,6 @@ export function PacksTab({ rows }: { rows: PackEdgeRow[] }) {
                               <p className="truncate font-medium">{p.name}</p>
                               <p className="truncate text-[11px] text-muted-foreground">
                                 {p.slug}
-                                {!p.active ? " · inactive" : ""}
                               </p>
                             </div>
                           </div>

@@ -99,16 +99,24 @@ export type PackEdgeRow = {
 };
 
 /**
- * List EVERY pack in the catalog with its theoretical EV computed in
- * the same pass. One round-trip — Prisma joins `pack_cards.cards` and
- * we do the SUM(weight × price) on the JS side because Decimal columns
- * coming through `db.$queryRaw` would need extra normalization that
- * Prisma's nested include already handles for us. The catalog size is
- * bounded (dozens of packs) so the per-card fan-out is fine.
+ * List every ACTIVE pack in the catalog with its theoretical EV
+ * computed in the same pass. One round-trip — Prisma joins
+ * `pack_cards.cards` and we do the SUM(weight × price) on the JS side
+ * because Decimal columns coming through `db.$queryRaw` would need
+ * extra normalization that Prisma's nested include already handles for
+ * us. The catalog size is bounded (dozens of packs) so the per-card
+ * fan-out is fine.
+ *
+ * Inactive packs (`packs.active = false`) are excluded entirely — they
+ * are not live for users, so their EV / RTP / house-edge math is noise
+ * on this surface. The filter sits at the query so every consumer (the
+ * Packs table, the catalog-level aggregate KPIs/edge, the Scenario and
+ * Bonus pack pickers, and the CSV export) drops them in one place.
  */
 export async function getPackEdgeRows(): Promise<PackEdgeRow[]> {
   const db = await getDb();
   const packs = await db.packs.findMany({
+    where: { active: true },
     select: {
       id: true,
       name: true,
