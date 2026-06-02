@@ -64,17 +64,16 @@ export function AdminUserTabs({ detail, auditStats, auditEvents, balanceLimits, 
       {isCurrentUserAdmin && detail.roles.includes("creator") && (
         <LinkMainUserCard detail={detail} />
       )}
-      {/* System-role editor (multi-select) + optional permission-preset +
-          per-user permission editor. Shown for any user that is NOT an admin
-          — admins bypass the page list entirely, so the editor is
-          meaningless for them. Uses the effective role set so a multi-role
-          user that merely INCLUDES admin still hides it. */}
+      {/* System-role editor (multi-select) + per-user permission editor.
+          Shown for any user that is NOT an admin — admins bypass the page
+          list entirely, so the editor is meaningless for them. Uses the
+          effective role set so a multi-role user that merely INCLUDES admin
+          still hides it. */}
       {isCurrentUserAdmin && !detail.roles.includes("admin") && (
         <>
           <RolesCard
             adminUserId={detail.id}
             currentRoles={detail.roles}
-            currentRoleId={detail.roleId}
             rolesColumnExists={rolesColumnExists}
           />
           <PermissionsSection detail={detail} />
