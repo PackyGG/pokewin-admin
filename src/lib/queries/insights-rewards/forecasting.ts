@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
+import { resolveRainHouseCost } from "@/lib/metrics";
 
 /**
  * Forecasting — per-category marketing spend trend over the last N
@@ -24,12 +25,21 @@ import { toNumber } from "@/lib/utils/decimal";
  * The forecast is intentionally simple — a 7-day moving average run-rate
  * scaled to 30 days. We're showing trend + ballpark, not a black-box ML
  * model. Admins can sanity-check it against the historical line.
+ *
+ * Cost basis matches the canonical reward model: rain is NETTED per day to
+ * its house slice (`max(0, rain_win_day − rain_tip_day)`), `creator_tip`
+ * is excluded (RESIDUAL pass-through, not a cost), and a category with NO
+ * spend across the whole history is hidden (no line to project).
  */
 
+// Canonical reward ledger types this forecast trends. `creator_tip` is
+// excluded (RESIDUAL, not a house cost). `rain_tip` is included so the
+// per-day rain house slice can be netted; it is never a category of its
+// own (it is the rain FUNDING leg).
 const ALL_REWARD_TYPES_SQL = `(
   'deposit_bonus','promo_code_redeemed','gift_card_redeemed',
   'rakeback_claim','affiliate_claim',
-  'rain_win','race_prize','balance_reward_claim','creator_tip',
+  'rain_win','rain_tip','race_prize','balance_reward_claim',
   'waitlist_prize'
 )`;
 
@@ -37,15 +47,16 @@ const HISTORY_DAYS = 60;
 const FORECAST_DAYS = 30;
 const TRAILING_AVG_DAYS = 7;
 
+type CategoryForecastKey =
+  | "bonuses"
+  | "rakeback"
+  | "affiliate"
+  | "rainRace"
+  | "signupPack"
+  | "waitlist";
+
 export type CategoryForecastRow = {
-  key:
-    | "bonuses"
-    | "rakeback"
-    | "affiliate"
-    | "rainRace"
-    | "signupPack"
-    | "creatorTip"
-    | "waitlist";
+  key: CategoryForecastKey;
   label: string;
   /** Zero-filled daily history series — last HISTORY_DAYS days. */
   dailyHistory: Array<{ date: string; total: number }>;
@@ -62,13 +73,12 @@ export type RewardsForecasting = {
   forecastDays: number;
 };
 
-const CATEGORY_LABELS: Record<CategoryForecastRow["key"], string> = {
+const CATEGORY_LABELS: Record<CategoryForecastKey, string> = {
   bonuses: "Bonuses & Promos",
   rakeback: "Rakeback",
   affiliate: "Affiliate Commissions",
   rainRace: "Rain / Race Prizes",
   signupPack: "Signup / Balance Rewards",
-  creatorTip: "Creator Tips",
   waitlist: "Waitlist Prizes",
 };
 
@@ -90,9 +100,13 @@ async function computeForecasting(
         WHEN lt.type IN ('deposit_bonus','promo_code_redeemed','gift_card_redeemed') THEN 'bonuses'
         WHEN lt.type = 'rakeback_claim' THEN 'rakeback'
         WHEN lt.type = 'affiliate_claim' THEN 'affiliate'
-        WHEN lt.type IN ('rain_win','race_prize') THEN 'rainRace'
+        WHEN lt.type = 'race_prize' THEN 'rainRace'
+        -- rain_win / rain_tip kept as separate per-day pseudo-buckets so
+        -- the day's rain house slice can be netted before folding into the
+        -- rainRace series (canonical per-day net-rain model).
+        WHEN lt.type = 'rain_win' THEN '__rain_win'
+        WHEN lt.type = 'rain_tip' THEN '__rain_tip'
         WHEN lt.type = 'balance_reward_claim' THEN 'signupPack'
-        WHEN lt.type = 'creator_tip' THEN 'creatorTip'
         WHEN lt.type = 'waitlist_prize' THEN 'waitlist'
       END AS category,
       COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total
@@ -105,19 +119,47 @@ async function computeForecasting(
     ORDER BY 1 ASC
   `);
 
-  // Bucket per category.
-  const seriesByCategory = new Map<
-    CategoryForecastRow["key"],
-    Map<string, number>
-  >();
+  // Bucket per category. rain_win / rain_tip land in a side map keyed by
+  // day so the rainRace series can fold in the netted house slice
+  // (`max(0, rain_win_day − rain_tip_day)`) on top of any race_prize.
+  const seriesByCategory = new Map<CategoryForecastKey, Map<string, number>>();
+  const rainByDay = new Map<string, { win: number; tip: number }>();
   for (const r of rows) {
-    const key = r.category as CategoryForecastRow["key"];
-    if (!(key in CATEGORY_LABELS)) continue;
     const day = new Date(r.date).toISOString().split("T")[0];
+    const total = toNumber(r.total);
+    if (r.category === "__rain_win") {
+      const e = rainByDay.get(day) ?? { win: 0, tip: 0 };
+      e.win += total;
+      rainByDay.set(day, e);
+      continue;
+    }
+    if (r.category === "__rain_tip") {
+      const e = rainByDay.get(day) ?? { win: 0, tip: 0 };
+      e.tip += total;
+      rainByDay.set(day, e);
+      continue;
+    }
+    const key = r.category as CategoryForecastKey;
+    if (!(key in CATEGORY_LABELS)) continue;
     if (!seriesByCategory.has(key)) {
       seriesByCategory.set(key, new Map());
     }
-    seriesByCategory.get(key)!.set(day, toNumber(r.total));
+    seriesByCategory.get(key)!.set(day, total);
+  }
+  // Fold per-day net rain into the rainRace series (alongside race_prize).
+  if (rainByDay.size > 0) {
+    const rainRace = seriesByCategory.get("rainRace") ?? new Map<string, number>();
+    for (const [day, legs] of rainByDay) {
+      const netRain = resolveRainHouseCost({
+        kind: "net",
+        rainWinTotal: legs.win,
+        rainTipTotal: legs.tip,
+      });
+      if (netRain > 0) {
+        rainRace.set(day, (rainRace.get(day) ?? 0) + netRain);
+      }
+    }
+    seriesByCategory.set("rainRace", rainRace);
   }
 
   // Zero-fill the date axis so the chart renders without gaps.
@@ -130,34 +172,41 @@ async function computeForecasting(
     dateAxis.push(d.toISOString().split("T")[0]);
   }
 
-  const orderedKeys: CategoryForecastRow["key"][] = [
+  const orderedKeys: CategoryForecastKey[] = [
     "bonuses",
     "rakeback",
     "affiliate",
     "rainRace",
     "signupPack",
-    "creatorTip",
     "waitlist",
   ];
-  const forecastRows: CategoryForecastRow[] = orderedKeys.map((key) => {
-    const map = seriesByCategory.get(key) ?? new Map();
-    const dailyHistory = dateAxis.map((date) => ({
-      date,
-      total: map.get(date) ?? 0,
-    }));
-    const trailing = dailyHistory.slice(-TRAILING_AVG_DAYS);
-    const trailingSevenAvg =
-      trailing.length > 0
-        ? trailing.reduce((a, b) => a + b.total, 0) / trailing.length
-        : 0;
-    return {
-      key,
-      label: CATEGORY_LABELS[key],
-      dailyHistory,
-      trailingSevenAvg,
-      projected30d: trailingSevenAvg * FORECAST_DAYS,
-    };
-  });
+  const forecastRows: CategoryForecastRow[] = orderedKeys
+    .map((key) => {
+      const map = seriesByCategory.get(key) ?? new Map();
+      const dailyHistory = dateAxis.map((date) => ({
+        date,
+        total: map.get(date) ?? 0,
+      }));
+      const trailing = dailyHistory.slice(-TRAILING_AVG_DAYS);
+      const trailingSevenAvg =
+        trailing.length > 0
+          ? trailing.reduce((a, b) => a + b.total, 0) / trailing.length
+          : 0;
+      return {
+        key,
+        label: CATEGORY_LABELS[key],
+        dailyHistory,
+        trailingSevenAvg,
+        projected30d: trailingSevenAvg * FORECAST_DAYS,
+      };
+    })
+    // Hide categories with NO spend across the whole history — there is no
+    // line to trend and nothing to project, so they would only clutter
+    // (e.g. Waitlist Prizes when nothing was ever paid). Categories that
+    // had spend earlier but are quiet in the trailing 7d still render (the
+    // tab dims them with a "Quiet" badge), so this only drops the
+    // genuinely-empty ones.
+    .filter((row) => row.dailyHistory.some((p) => p.total > 0));
 
   return {
     rows: forecastRows.sort((a, b) => b.projected30d - a.projected30d),

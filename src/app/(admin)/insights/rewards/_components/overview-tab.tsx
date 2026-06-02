@@ -557,6 +557,10 @@ function buildChartDailyPoints(
         waitlist: 0,
         total: 0,
       };
+      // `creatorTip` is no longer a category (it is a RESIDUAL
+      // pass-through, dropped from the breakdown), so the point keeps a
+      // `creatorTip: 0` field only to satisfy the shared
+      // `RewardsDailyPoint` shape the chart's prop type expects.
       switch (row.key) {
         case "bonuses":
           existing.bonuses += pt.total;
@@ -572,9 +576,6 @@ function buildChartDailyPoints(
           break;
         case "signupPack":
           existing.signupPack += pt.total;
-          break;
-        case "creatorTip":
-          existing.creatorTip += pt.total;
           break;
         case "waitlist":
           existing.waitlist += pt.total;

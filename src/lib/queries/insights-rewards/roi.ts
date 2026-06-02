@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
+import { resolveRainHouseCost } from "@/lib/metrics";
 import {
   daysForInsightsPeriod,
   cacheTtlForInsightsPeriod,
@@ -46,20 +47,32 @@ const WAGER_TYPES_SQL = `(
 
 const PAYOUT_TYPES_SQL = `('battle_refund','upgrader_payout')`;
 
-// Category-to-ledger-type map. Same key set as
+type RewardsRoiCategoryKey =
+  | "bonuses"
+  | "rakeback"
+  | "affiliate"
+  | "rainRace"
+  | "signupPack"
+  | "waitlist";
+
+// Category-to-ledger-type map. Mirrors the canonical reward categories in
 // `category-spend-breakdown.ts` so the page renders one ROI row per
-// category in the same order as the spend breakdown.
+// category in the same order as the spend breakdown. `creator_tip` is NOT
+// a category — it is a RESIDUAL user→user pass-through, not a house reward
+// cost. Rain is netted to its house slice (see `netRain` below).
 const CATEGORIES: Array<{
-  key:
-    | "bonuses"
-    | "rakeback"
-    | "affiliate"
-    | "rainRace"
-    | "signupPack"
-    | "creatorTip"
-    | "waitlist";
+  key: RewardsRoiCategoryKey;
   label: string;
+  /** Reward-recipient ledger types (drive cost + claimant + forward GGR). */
   types: string[];
+  /**
+   * When true the category's COST is netted by the rain funding leg:
+   * `cost = Σ|reward types| − Σ|rain_tip|`, floored at 0. Rain is
+   * system-automatic + mixed-funded, so only the house slice
+   * (`max(0, rain_win − rain_tip)`) is a real cost. Claimant + forward-GGR
+   * still key on the actual reward recipients (rain_win / race_prize).
+   */
+  netRain?: boolean;
 }> = [
   {
     key: "bonuses",
@@ -76,13 +89,13 @@ const CATEGORIES: Array<{
     key: "rainRace",
     label: "Rain / Race Prizes",
     types: ["rain_win", "race_prize"],
+    netRain: true,
   },
   {
     key: "signupPack",
     label: "Signup / Balance Rewards",
     types: ["balance_reward_claim"],
   },
-  { key: "creatorTip", label: "Creator Tips", types: ["creator_tip"] },
   { key: "waitlist", label: "Waitlist Prizes", types: ["waitlist_prize"] },
 ];
 
@@ -91,14 +104,7 @@ function typeListSql(types: readonly string[]): string {
 }
 
 export type RewardsRoiRow = {
-  key:
-    | "bonuses"
-    | "rakeback"
-    | "affiliate"
-    | "rainRace"
-    | "signupPack"
-    | "creatorTip"
-    | "waitlist";
+  key: RewardsRoiCategoryKey;
   label: string;
   /** Total reward $ paid to claimants in the cost window. */
   cost: number;
@@ -222,10 +228,42 @@ async function computeRoi(
         LEFT JOIN forward_payouts fp ON fp.user_id = cc.user_id
       `);
       const r = resultRows[0];
-      const cost = toNumber(r?.cost);
       const claimantCount = Number(r?.claimants ?? 0);
       const wager = toNumber(r?.wager);
       const payout = toNumber(r?.payout);
+
+      // COST. For most categories this is the gross sum from
+      // cost_claimants. For rain (netRain), the house slice is
+      // `race_prize + max(0, rain_win − rain_tip)`: rain is mixed-funded,
+      // so the user/founder tip contribution is netted out (the canonical
+      // model). race_prize is NOT netted (it is fully house-funded). The
+      // claimant + forward-GGR sweep above already keys on the real reward
+      // recipients (rain_win / race_prize).
+      let cost = toNumber(r?.cost);
+      if (cat.netRain) {
+        const rainRows = await db.$queryRawUnsafe<
+          { race_prize: string; rain_win: string; rain_tip: string }[]
+        >(`
+          SELECT
+            COALESCE(SUM(CASE WHEN lt.type = 'race_prize' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS race_prize,
+            COALESCE(SUM(CASE WHEN lt.type = 'rain_win' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_win,
+            COALESCE(SUM(CASE WHEN lt.type = 'rain_tip' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_tip
+          FROM ledger_transactions lt
+          JOIN "user" u ON u.id = lt.user_id
+          WHERE lt.status = 'completed'
+            AND lt.type IN ('race_prize','rain_win','rain_tip')
+            AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
+            ${costDateClause}
+        `);
+        const rr = rainRows[0];
+        const netRainCost = resolveRainHouseCost({
+          kind: "net",
+          rainWinTotal: toNumber(rr?.rain_win),
+          rainTipTotal: toNumber(rr?.rain_tip),
+        });
+        cost = toNumber(rr?.race_prize) + netRainCost;
+      }
+
       const subsequentGgr = wager - payout;
       const roi = cost > 0 ? subsequentGgr / cost : null;
       const avgGgrPerClaimant =
@@ -242,12 +280,23 @@ async function computeRoi(
     }),
   );
 
-  const totalCost = rows.reduce((a, r) => a + r.cost, 0);
-  const totalSubsequentGgr = rows.reduce((a, r) => a + r.subsequentGgr, 0);
+  // Hide any category with $0 cost in the window — an empty reward line
+  // never clutters the ROI table (general rule, consistent with the
+  // category-spend breakdown). Waitlist Prizes drop out here when nothing
+  // was paid.
+  const visibleRows = rows.filter((r) => r.cost > 0);
+
+  const totalCost = visibleRows.reduce((a, r) => a + r.cost, 0);
+  // Blended figures sum only the visible (cost-bearing) categories so the
+  // headline ROI denominator and the rendered rows describe the same set.
+  const totalSubsequentGgr = visibleRows.reduce(
+    (a, r) => a + r.subsequentGgr,
+    0,
+  );
   const blendedRoi = totalCost > 0 ? totalSubsequentGgr / totalCost : null;
 
   return {
-    rows: rows.sort((a, b) => b.cost - a.cost),
+    rows: visibleRows.sort((a, b) => b.cost - a.cost),
     totalCost,
     totalSubsequentGgr,
     blendedRoi,

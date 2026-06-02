@@ -4,6 +4,11 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import {
+  REWARD_PAYOUT_TYPES,
+  ledgerTypesToSqlList,
+  resolveRainHouseCost,
+} from "@/lib/metrics";
+import {
   daysForInsightsPeriod,
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
@@ -25,10 +30,22 @@ import { getDailyPacksTotalCost } from "./daily-packs";
  *   - Period-over-period deltas vs the prior equal window (only for
  *     finite windows — lifetime has no "prior" frame).
  *
- * Reward ledger types come from the same canonical list used in
- * `rewards-analytics.ts`. Vouchers are deliberately excluded — they
- * live in a separate view per the existing convention. Wager + payout
- * sides for GGR follow the dashboard breakdown:
+ * Reward ledger types come from the CANONICAL `REWARD_PAYOUT_TYPES`
+ * partition in `@/lib/metrics` — the single source of truth for what
+ * counts as a house-funded reward cost. This deliberately:
+ *   • NETS rain to its house slice `max(0, Σ|rain_win| − Σ|rain_tip|)`
+ *     (owner-confirmed model) instead of the gross `rain_win` magnitude —
+ *     rain is system-automatic and mixed-funded; the user/founder tips
+ *     that fed the pool were never the house's money, so gross rain_win
+ *     over-states the cost. See `formulas.ts` `resolveRainHouseCost`.
+ *   • EXCLUDES `creator_tip` — it is a verified user→user pass-through
+ *     (RESIDUAL), not a house reward cost.
+ *   • EXCLUDES `voucher_redeemed` (non-manual) — NEUTRAL (a voucher the
+ *     user already holds becoming balance), so it is not in the canonical
+ *     reward set and never counted as a cost here.
+ * Vouchers are otherwise deliberately excluded — they live in a separate
+ * view per the existing convention. Wager + payout sides for GGR follow
+ * the dashboard breakdown:
  *
  *   wagers   = pack_opening + battle_bet + battle_sponsorship + upgrader_bet
  *   payouts  = battle_refund + upgrader_payout
@@ -44,12 +61,19 @@ import { getDailyPacksTotalCost } from "./daily-packs";
  * indexes.
  */
 
-const REWARD_TYPES_SQL = `(
-  'deposit_bonus','promo_code_redeemed','gift_card_redeemed',
-  'rakeback_claim','affiliate_claim',
-  'rain_win','race_prize','balance_reward_claim','creator_tip',
-  'waitlist_prize'
-)`;
+// Canonical reward set (incl. rain_win) — used for the payout COUNT +
+// distinct-claimant figures, where a rain win is a genuine reward payout
+// event received by a user (the netting below is a COST-only adjustment).
+// `creator_tip` / `voucher_redeemed` are NOT in the canonical set, so they
+// never inflate the count.
+const REWARD_TYPES_SQL = ledgerTypesToSqlList(REWARD_PAYOUT_TYPES);
+
+// Canonical reward set EXCLUDING rain_win — the unambiguously house-funded
+// ($-for-$) reward cost. Rain is added back as its NET house slice
+// (`max(0, rain_win − rain_tip)`) so it is not double-counted gross.
+const REWARD_EXCL_RAIN_TYPES_SQL = ledgerTypesToSqlList(
+  REWARD_PAYOUT_TYPES.filter((t) => t !== "rain_win"),
+);
 
 const WAGER_TYPES_SQL = `(
   'pack_opening','battle_bet','battle_sponsorship','upgrader_bet'
@@ -131,11 +155,24 @@ async function computeCrossCategorySummary(
 
   // Single round-trip — rewards / wagers / payouts side by side via
   // FILTER on the same scan. The status + user-scope filter is
-  // identical across the three buckets so the row count stays bounded
-  // by the window.
+  // identical across the buckets so the row count stays bounded by the
+  // window.
+  //
+  // Reward COST is split into the house-funded base (canonical reward
+  // types EXCLUDING rain_win) plus the rain legs (rain_win / rain_tip)
+  // summed separately so the rain house slice can be NETTED below
+  // (`max(0, rain_win − rain_tip)`) rather than counted gross. The
+  // count + distinct-claimant figures use the full canonical reward set
+  // (rain wins are real reward payout events to users).
+  //
+  // `rain_tip` is the rain POOL FUNDING leg (user/founder contributions);
+  // it is summed ONLY to net the rain cost and is included in the scan's
+  // type filter for that reason — it is never added to the reward total.
   const currentRows = await db.$queryRawUnsafe<
     {
-      reward_total: string;
+      reward_excl_rain: string;
+      rain_win: string;
+      rain_tip: string;
       reward_count: string;
       reward_claimants: string;
       wager_total: string;
@@ -143,7 +180,9 @@ async function computeCrossCategorySummary(
     }[]
   >(`
     SELECT
-      COALESCE(SUM(CASE WHEN lt.type IN ${REWARD_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS reward_total,
+      COALESCE(SUM(CASE WHEN lt.type IN ${REWARD_EXCL_RAIN_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS reward_excl_rain,
+      COALESCE(SUM(CASE WHEN lt.type = 'rain_win' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_win,
+      COALESCE(SUM(CASE WHEN lt.type = 'rain_tip' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_tip,
       COUNT(*) FILTER (WHERE lt.type IN ${REWARD_TYPES_SQL})::text AS reward_count,
       COUNT(DISTINCT lt.user_id) FILTER (WHERE lt.type IN ${REWARD_TYPES_SQL})::text AS reward_claimants,
       COALESCE(SUM(CASE WHEN lt.type IN ${WAGER_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS wager_total,
@@ -151,12 +190,20 @@ async function computeCrossCategorySummary(
     FROM ledger_transactions lt
     ${buildScopeClause(
       currentDateClause,
-      `(${REWARD_TYPES_SQL.slice(1, -1)},${WAGER_TYPES_SQL.slice(1, -1)},${PAYOUT_TYPES_SQL.slice(1, -1)})`,
+      `(${REWARD_TYPES_SQL.slice(1, -1)},'rain_tip',${WAGER_TYPES_SQL.slice(1, -1)},${PAYOUT_TYPES_SQL.slice(1, -1)})`,
     )}
   `);
 
   const cur = currentRows[0];
-  const ledgerCost = toNumber(cur?.reward_total);
+  // Net rain house cost (owner-confirmed): the system-funded base only,
+  // user/founder tips netted out. Reused canonical helper — not a
+  // hand-rolled formula.
+  const rainHouseCost = resolveRainHouseCost({
+    kind: "net",
+    rainWinTotal: toNumber(cur?.rain_win),
+    rainTipTotal: toNumber(cur?.rain_tip),
+  });
+  const ledgerCost = toNumber(cur?.reward_excl_rain) + rainHouseCost;
   const ledgerCount = Number(cur?.reward_count ?? 0);
   const activeClaimants = Number(cur?.reward_claimants ?? 0);
   const totalWager = toNumber(cur?.wager_total);
@@ -183,26 +230,40 @@ async function computeCrossCategorySummary(
     totalWager > 0 ? (totalCost / totalWager) * 100 : null;
 
   // Prior window — only when the period is finite. Symmetric scope to
-  // current so the deltas are apples-to-apples.
+  // current so the deltas are apples-to-apples: the SAME canonical
+  // reward set, the SAME net-rain treatment (`max(0, rain_win −
+  // rain_tip)`), the SAME canonical-set count/claimant basis.
   let priorWindow: RewardsCrossCategorySummary["priorWindow"] = null;
   if (days !== null) {
     const priorDateClause = `AND lt.created_at >= NOW() - INTERVAL '${days * 2} days' AND lt.created_at < NOW() - INTERVAL '${days} days'`;
     const priorRows = await db.$queryRawUnsafe<
       {
-        reward_total: string;
+        reward_excl_rain: string;
+        rain_win: string;
+        rain_tip: string;
         reward_count: string;
         reward_claimants: string;
       }[]
     >(`
       SELECT
-        COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS reward_total,
-        COUNT(*)::text AS reward_count,
-        COUNT(DISTINCT lt.user_id)::text AS reward_claimants
+        COALESCE(SUM(CASE WHEN lt.type IN ${REWARD_EXCL_RAIN_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS reward_excl_rain,
+        COALESCE(SUM(CASE WHEN lt.type = 'rain_win' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_win,
+        COALESCE(SUM(CASE WHEN lt.type = 'rain_tip' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_tip,
+        COUNT(*) FILTER (WHERE lt.type IN ${REWARD_TYPES_SQL})::text AS reward_count,
+        COUNT(DISTINCT lt.user_id) FILTER (WHERE lt.type IN ${REWARD_TYPES_SQL})::text AS reward_claimants
       FROM ledger_transactions lt
-      ${buildScopeClause(priorDateClause, REWARD_TYPES_SQL)}
+      ${buildScopeClause(
+        priorDateClause,
+        `(${REWARD_TYPES_SQL.slice(1, -1)},'rain_tip')`,
+      )}
     `);
     const prev = priorRows[0];
-    const prevCost = toNumber(prev?.reward_total);
+    const prevRainCost = resolveRainHouseCost({
+      kind: "net",
+      rainWinTotal: toNumber(prev?.rain_win),
+      rainTipTotal: toNumber(prev?.rain_tip),
+    });
+    const prevCost = toNumber(prev?.reward_excl_rain) + prevRainCost;
     const prevCount = Number(prev?.reward_count ?? 0);
     const prevClaimants = Number(prev?.reward_claimants ?? 0);
     const delta = (now: number, prev: number): number | null =>

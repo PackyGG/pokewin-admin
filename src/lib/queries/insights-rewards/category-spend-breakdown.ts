@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
+import { resolveRainHouseCost } from "@/lib/metrics";
 import {
   daysForInsightsPeriod,
   cacheTtlForInsightsPeriod,
@@ -13,14 +14,26 @@ import { getDailyPacksGiveaway } from "./daily-packs";
 /**
  * Per-category spend breakdown for the Overview tab on /insights/rewards.
  *
- * Same category bucketing as `rewards-analytics.ts` so the per-category
- * tabs on this page reconcile with the Overview breakdown rows by
- * construction. Re-emits the breakdown at the wider /insights/rewards
- * period set (24h / 3d / 7d / 30d / 90d / all) so the page can show
- * 90d slice — which /rewards/analytics does not expose.
+ * Categories mirror the CANONICAL `REWARD_PAYOUT_TYPES` partition
+ * (`@/lib/metrics`) — only genuine house-funded reward COSTS appear, so
+ * the breakdown reconciles with the cross-category `totalCost` by
+ * construction. Specifically:
+ *   • Rain is NETTED to its house slice `max(0, Σ|rain_win| − Σ|rain_tip|)`
+ *     (owner-confirmed) inside the `rainRace` row, NOT counted gross —
+ *     rain is system-automatic and mixed-funded; user/founder tips that
+ *     fed the pool were never the house's money.
+ *   • `creator_tip` is NOT a category — it is a verified user→user
+ *     pass-through (RESIDUAL), not a house cost.
+ *   • `voucher_redeemed` (non-manual) is NEUTRAL and never appears.
+ *   • Any category that is $0 in the window is HIDDEN (general rule — an
+ *     empty reward line never clutters the breakdown).
+ *
+ * Re-emits the breakdown at the wider /insights/rewards period set
+ * (24h / 3d / 7d / 30d / 90d / all) so the page can show a 90d slice —
+ * which /rewards/analytics does not expose.
  *
  * Each row carries:
- *   - total       : USD spend for the period.
+ *   - total       : USD spend for the period (rain netted).
  *   - count       : ledger row count.
  *   - claimants   : distinct claimant count.
  *   - share       : % of total cost across all categories.
@@ -33,7 +46,6 @@ export type InsightsCategoryKey =
   | "affiliate"
   | "rainRace"
   | "signupPack"
-  | "creatorTip"
   | "waitlist"
   | "dailyPacks";
 
@@ -43,17 +55,20 @@ const CATEGORY_LABELS: Record<InsightsCategoryKey, string> = {
   affiliate: "Affiliate Commissions",
   rainRace: "Rain / Race Prizes",
   signupPack: "Signup / Balance Rewards",
-  creatorTip: "Creator Tips",
   waitlist: "Waitlist Prizes",
   dailyPacks: "Daily / Free Packs",
 };
 
-// Sentinel — every reward ledger type the platform tracks. Vouchers
-// deliberately omitted (separate view).
+// Canonical reward ledger types this breakdown buckets. Vouchers and
+// `creator_tip` are deliberately omitted: vouchers live in a separate
+// view, and `creator_tip` is a RESIDUAL user→user pass-through, not a
+// house reward cost. `rain_tip` is included so the rain house slice can
+// be netted (`max(0, rain_win − rain_tip)`); it is never a category of
+// its own (it is the rain FUNDING leg, not a payout).
 const ALL_REWARD_TYPES_SQL = `(
   'deposit_bonus','promo_code_redeemed','gift_card_redeemed',
   'rakeback_claim','affiliate_claim',
-  'rain_win','race_prize','balance_reward_claim','creator_tip',
+  'rain_win','rain_tip','race_prize','balance_reward_claim',
   'waitlist_prize'
 )`;
 
@@ -102,9 +117,13 @@ async function computeCategorySpendBreakdown(
           WHEN lt.type IN ('deposit_bonus','promo_code_redeemed','gift_card_redeemed') THEN 'bonuses'
           WHEN lt.type = 'rakeback_claim' THEN 'rakeback'
           WHEN lt.type = 'affiliate_claim' THEN 'affiliate'
-          WHEN lt.type IN ('rain_win','race_prize') THEN 'rainRace'
+          WHEN lt.type = 'race_prize' THEN 'rainRace'
+          -- rain_win / rain_tip kept as separate pseudo-buckets so the
+          -- house slice can be netted (max(0, rain_win − rain_tip)) in JS
+          -- before folding into the rainRace row.
+          WHEN lt.type = 'rain_win' THEN '__rain_win'
+          WHEN lt.type = 'rain_tip' THEN '__rain_tip'
           WHEN lt.type = 'balance_reward_claim' THEN 'signupPack'
-          WHEN lt.type = 'creator_tip' THEN 'creatorTip'
           WHEN lt.type = 'waitlist_prize' THEN 'waitlist'
         END AS category,
         COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total,
@@ -126,9 +145,14 @@ async function computeCategorySpendBreakdown(
           WHEN lt.type IN ('deposit_bonus','promo_code_redeemed','gift_card_redeemed') THEN 'bonuses'
           WHEN lt.type = 'rakeback_claim' THEN 'rakeback'
           WHEN lt.type = 'affiliate_claim' THEN 'affiliate'
-          WHEN lt.type IN ('rain_win','race_prize') THEN 'rainRace'
+          WHEN lt.type = 'race_prize' THEN 'rainRace'
+          -- rain_win / rain_tip emitted as separate per-day pseudo-buckets
+          -- so the day's rain house slice can be netted before folding
+          -- into the rainRace daily point (mirrors the canonical per-day
+          -- net-rain model in lib/metrics/queries.ts).
+          WHEN lt.type = 'rain_win' THEN '__rain_win'
+          WHEN lt.type = 'rain_tip' THEN '__rain_tip'
           WHEN lt.type = 'balance_reward_claim' THEN 'signupPack'
-          WHEN lt.type = 'creator_tip' THEN 'creatorTip'
           WHEN lt.type = 'waitlist_prize' THEN 'waitlist'
         END AS category,
         COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total
@@ -151,17 +175,45 @@ async function computeCategorySpendBreakdown(
     affiliate: { total: 0, count: 0, claimants: 0 },
     rainRace: { total: 0, count: 0, claimants: 0 },
     signupPack: { total: 0, count: 0, claimants: 0 },
-    creatorTip: { total: 0, count: 0, claimants: 0 },
     waitlist: { total: 0, count: 0, claimants: 0 },
     dailyPacks: { total: 0, count: 0, claimants: 0 },
   };
+  // Rain legs captured separately so the house slice can be netted
+  // (`max(0, rain_win − rain_tip)`) before folding into the rainRace row.
+  // The rainRace COUNT / CLAIMANTS reflect the real reward events
+  // (race_prize rows + rain_win rows) — the netting is a COST adjustment
+  // only, never a claim that rain wins did not happen.
+  let rainWinTotal = 0;
+  let rainTipTotal = 0;
+  let rainWinCount = 0;
+  let rainWinClaimants = 0;
   for (const r of rollupRows) {
+    if (r.category === "__rain_win") {
+      rainWinTotal = toNumber(r.total);
+      rainWinCount = Number(r.cnt);
+      rainWinClaimants = Number(r.claimants);
+      continue;
+    }
+    if (r.category === "__rain_tip") {
+      rainTipTotal = toNumber(r.total);
+      continue;
+    }
     const key = r.category as InsightsCategoryKey;
     if (!(key in baseTotals)) continue;
     baseTotals[key].total = toNumber(r.total);
     baseTotals[key].count = Number(r.cnt);
     baseTotals[key].claimants = Number(r.claimants);
   }
+  // Fold the netted rain house slice into rainRace alongside race_prize.
+  // `rainRace` already holds the race_prize totals from the loop above;
+  // add the net rain cost + the rain-win event count/claimants.
+  baseTotals.rainRace.total += resolveRainHouseCost({
+    kind: "net",
+    rainWinTotal,
+    rainTipTotal,
+  });
+  baseTotals.rainRace.count += rainWinCount;
+  baseTotals.rainRace.claimants += rainWinClaimants;
 
   // Daily / free packs are an inventory-based giveaway (no ledger row),
   // so they come from the dedicated `daily-packs` query rather than the
@@ -176,25 +228,67 @@ async function computeCategorySpendBreakdown(
   baseTotals.dailyPacks.claimants = dailyPacks.claimers;
 
   // Bucket the daily series per category. Empty days stay empty —
-  // the sparkline component handles gaps natively.
+  // the sparkline component handles gaps natively. Rain is netted PER DAY
+  // (`max(0, rain_win_day − rain_tip_day)`) before being added to the
+  // rainRace day point, mirroring the canonical per-day net-rain model.
   const dailyByCategory: Record<InsightsCategoryKey, Array<{ date: string; total: number }>> = {
     bonuses: [],
     rakeback: [],
     affiliate: [],
     rainRace: [],
     signupPack: [],
-    creatorTip: [],
     waitlist: [],
     dailyPacks: [],
   };
+  // Per-day rain legs (date → { win, tip }) accumulated separately, then
+  // netted into the rainRace daily series below.
+  const rainByDate = new Map<string, { win: number; tip: number }>();
+  // rainRace race_prize day points keyed by date so the netted rain can be
+  // merged into the SAME day's point (race_prize + net rain).
+  const rainRaceByDate = new Map<string, number>();
   for (const d of dailyRows) {
+    const date = new Date(d.date).toISOString().split("T")[0];
+    const total = toNumber(d.total);
+    if (d.category === "__rain_win") {
+      const e = rainByDate.get(date) ?? { win: 0, tip: 0 };
+      e.win += total;
+      rainByDate.set(date, e);
+      continue;
+    }
+    if (d.category === "__rain_tip") {
+      const e = rainByDate.get(date) ?? { win: 0, tip: 0 };
+      e.tip += total;
+      rainByDate.set(date, e);
+      continue;
+    }
     const key = d.category as InsightsCategoryKey;
     if (!(key in dailyByCategory)) continue;
-    dailyByCategory[key].push({
-      date: new Date(d.date).toISOString().split("T")[0],
-      total: toNumber(d.total),
-    });
+    if (key === "rainRace") {
+      // race_prize day point — staged so net rain for the same day can be
+      // added before the series is finalized.
+      rainRaceByDate.set(date, (rainRaceByDate.get(date) ?? 0) + total);
+      continue;
+    }
+    dailyByCategory[key].push({ date, total });
   }
+  // Merge race_prize + per-day net rain into the rainRace daily series.
+  // Union both date key spaces so a day with only race_prize, only rain,
+  // or both is represented exactly once.
+  const rainRaceDates = new Set<string>([
+    ...rainRaceByDate.keys(),
+    ...rainByDate.keys(),
+  ]);
+  dailyByCategory.rainRace = [...rainRaceDates]
+    .map((date) => {
+      const rain = rainByDate.get(date) ?? { win: 0, tip: 0 };
+      const netRain = resolveRainHouseCost({
+        kind: "net",
+        rainWinTotal: rain.win,
+        rainTipTotal: rain.tip,
+      });
+      return { date, total: (rainRaceByDate.get(date) ?? 0) + netRain };
+    })
+    .sort((a, b) => a.date.localeCompare(b.date));
   // Daily-pack giveaway series already comes back date-bucketed
   // (ascending) from the dedicated query.
   dailyByCategory.dailyPacks = dailyPacks.dailySeries;
@@ -210,7 +304,6 @@ async function computeCategorySpendBreakdown(
     "affiliate",
     "rainRace",
     "signupPack",
-    "creatorTip",
     "waitlist",
     "dailyPacks",
   ];
@@ -224,6 +317,11 @@ async function computeCategorySpendBreakdown(
       share: grandTotal > 0 ? (baseTotals[key].total / grandTotal) * 100 : 0,
       dailySeries: dailyByCategory[key],
     }))
+    // General rule: hide any category with $0 cost in the window so empty
+    // reward lines (e.g. Waitlist Prizes when nothing was paid) never
+    // clutter the breakdown. Not a special-case — every category is
+    // subject to it.
+    .filter((row) => row.total > 0)
     .sort((a, b) => b.total - a.total);
 
   return { rows, grandTotal };
