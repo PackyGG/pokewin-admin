@@ -10,9 +10,45 @@ import {
 import { FadeIn } from "@/components/fade-in";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { MIN_SAMPLE } from "@/lib/metrics/formulas";
 
 import type { PackEdgeRow } from "@/lib/queries/insights-edge-calc";
 import { formatPct } from "./math";
+
+/**
+ * Realized (empirical) house edge for a pack, sample-guarded.
+ *
+ *   Real Edge = 1 − Empirical RTP
+ *
+ * This is the house edge IMPLIED BY ACTUAL OPENS, not the catalog math.
+ * The row already carries `empiricalHouseEdge` (= 1 − empiricalRtp), but
+ * that field is computed unconditionally in the query — it has no
+ * sample-size gate. Empirical RTP runs hot on low open counts (variance),
+ * which would make Real Edge come out NEGATIVE / >100% RTP for a handful
+ * of opens (the M7/M8 audit finding). So we gate here on the SAME
+ * canonical `MIN_SAMPLE` (30) the upgrader tab uses: below the threshold
+ * we return `null` and the cell renders "—" with a low-sample tooltip,
+ * rather than a confident-but-meaningless negative edge.
+ *
+ * Returns `null` when the pack has never been opened (no empirical data
+ * at all) OR when it has been opened fewer than `MIN_SAMPLE` times.
+ */
+function realEdge(row: PackEdgeRow): number | null {
+  if (row.empiricalRtp === null) return null;
+  if (row.totalOpenings < MIN_SAMPLE) return null;
+  return 1 - row.empiricalRtp;
+}
+
+/** Low-sample tooltip copy for the Real Edge cell, shaped per-row. */
+function realEdgeTooltip(row: PackEdgeRow): string | undefined {
+  if (row.empiricalRtp === null) return "No opens yet — no empirical data.";
+  if (row.totalOpenings < MIN_SAMPLE) {
+    return `Low sample: ${formatNumber(row.totalOpenings)} open${
+      row.totalOpenings === 1 ? "" : "s"
+    } (< ${MIN_SAMPLE}). Empirical RTP is dominated by variance on small samples, so the realized edge isn't shown until the pack clears ${MIN_SAMPLE} opens.`;
+  }
+  return undefined;
+}
 
 /**
  * Packs tab — table of every pack with theoretical RTP (computed from
@@ -222,7 +258,10 @@ export function PacksTab({ rows }: { rows: PackEdgeRow[] }) {
                     Theoretical RTP
                   </th>
                   <th className="px-4 py-3 text-right font-semibold">
-                    Theoretical Edge
+                    Edge (theoretical)
+                  </th>
+                  <th className="px-4 py-3 text-right font-semibold">
+                    Real Edge (empirical)
                   </th>
                   <th className="px-4 py-3 text-right font-semibold">
                     Empirical RTP
@@ -235,7 +274,7 @@ export function PacksTab({ rows }: { rows: PackEdgeRow[] }) {
                 {rows.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={11}
+                      colSpan={12}
                       className="px-4 py-12 text-center text-sm text-muted-foreground"
                     >
                       No packs in the catalog yet.
@@ -250,6 +289,11 @@ export function PacksTab({ rows }: { rows: PackEdgeRow[] }) {
                       empRtp !== null && p.theoreticalRtp !== null
                         ? p.theoreticalRtp - empRtp
                         : null;
+                    // Realized house edge from actual opens (1 − empirical
+                    // RTP), gated on MIN_SAMPLE so a handful of opens can't
+                    // print a misleading negative edge (see `realEdge`).
+                    const rEdge = realEdge(p);
+                    const rEdgeTip = realEdgeTooltip(p);
                     return (
                       <tr key={p.id} className="hover:bg-muted/30">
                         <td className="px-4 py-3">
@@ -311,6 +355,23 @@ export function PacksTab({ rows }: { rows: PackEdgeRow[] }) {
                         >
                           {noPool ? "—" : formatPct(theoEdge)}
                         </td>
+                        <td
+                          className={cn(
+                            "px-4 py-3 text-right tabular-nums font-medium",
+                            // House-POV: realized edge positive = house
+                            // green, negative = house red. Below sample /
+                            // no opens → neutral muted "—" (no confident
+                            // sign on small samples).
+                            rEdge === null
+                              ? "text-muted-foreground"
+                              : rEdge >= 0
+                                ? "text-emerald-600 dark:text-emerald-400"
+                                : "text-rose-600 dark:text-rose-400",
+                          )}
+                          title={rEdgeTip}
+                        >
+                          {rEdge !== null ? formatPct(rEdge) : "—"}
+                        </td>
                         <td className="px-4 py-3 text-right tabular-nums">
                           {empRtp !== null ? formatPct(empRtp) : "—"}
                         </td>
@@ -357,6 +418,25 @@ export function PacksTab({ rows }: { rows: PackEdgeRow[] }) {
               <span className="font-medium text-foreground">E[V] per open</span>{" "}
               = E[V] per card × cards_per_open. Theoretical RTP = E[V] per open
               / sticker price.
+            </li>
+            <li>
+              <span className="font-medium text-foreground">
+                Edge (theoretical)
+              </span>{" "}
+              = 1 − theoretical RTP — the house edge the catalog math
+              implies. Exact (computed from the pool), so no sample gate.
+            </li>
+            <li>
+              <span className="font-medium text-foreground">
+                Real Edge (empirical)
+              </span>{" "}
+              = 1 − empirical RTP — the house edge implied by the pack&apos;s
+              actual opens. Gated at{" "}
+              <code className="rounded bg-muted px-1">{MIN_SAMPLE}</code> opens:
+              below that, empirical RTP is dominated by variance (it can run
+              over 100%, which would flip the edge negative), so the cell
+              shows &ldquo;—&rdquo; with a low-sample note instead of a
+              misleading figure.
             </li>
             <li>
               <span className="font-medium text-foreground">Drift</span> =
