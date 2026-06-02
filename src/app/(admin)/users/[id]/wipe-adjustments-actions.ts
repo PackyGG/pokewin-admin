@@ -18,13 +18,13 @@ import {
 
 // ---------------------------------------------------------------------------
 // "Wipe content balance adjustments" — remove ONLY admin balance-adjustment
-// ledger rows the admin explicitly selected, reduce the user's balance by
+// CREDIT rows the admin explicitly selected, reduce the user's balance by
 // the summed amount, and snapshot the deleted rows so the batch is
 // recoverable.
 //
-// WHY: the owner gives creators admin balance adjustments so they can make
-// content (open packs / stream). This cleans those out of a user's account
-// WITHOUT touching real financial or gaming history.
+// WHY: the owner gives creators admin balance adjustments (CREDITS) so they
+// can make content (open packs / stream). This claws those credits back out
+// of a user's account WITHOUT touching real financial or gaming history.
 //
 // The ledger type that backs admin adjustments AND manual withdrawals is
 // the SAME enum value: `admin_balance_adjustment` (verified against
@@ -35,11 +35,20 @@ import {
 //   - "Manual withdrawal: <reason> …"  ← an off-platform payout (NEVER wiped)
 //
 // So the wipeable set is: type === ADJ_TYPE AND description starts with
-// ADJ_DESC_PREFIX. Manual withdrawals, deposits, withdrawals, affiliate
-// claims, all gaming, and every creator/affiliate row are excluded — both
-// by the listing query AND by a hard server-side guard below that re-reads
-// every row before deletion and refuses anything that isn't a genuine
-// "Admin adjustment:" row owned by this user.
+// ADJ_DESC_PREFIX AND amount > 0 (CREDIT only — see SIGN RULE). Manual
+// withdrawals, deposits, withdrawals, affiliate claims, all gaming, and
+// every creator/affiliate row are excluded — both by the listing query AND
+// by a hard server-side guard below that re-reads every row before deletion
+// and refuses anything that isn't a genuine "Admin adjustment:" CREDIT owned
+// by this user.
+//
+// ORDERING (CRITICAL, snapshot-first): the recovery snapshot is written to
+// the admin DB and confirmed BEFORE the main-DB delete + balance reduction.
+// If the snapshot can't be written → abort before deleting (nothing
+// changes, no money-back surprise). Once the main-DB delete commits the
+// wipe is PERMANENT — there is no rollback path that re-adds money. (The
+// prior delete→snapshot→rollback design could re-credit a user when the
+// snapshot failed; that path is removed.)
 // ---------------------------------------------------------------------------
 
 /** The ledger enum value admin balance adjustments are written with. */
@@ -48,6 +57,28 @@ const ADJ_TYPE = "admin_balance_adjustment" as const;
 const ADJ_DESC_PREFIX = "Admin adjustment: ";
 /** Description prefix the manual-withdrawal flow uses — must NOT be wiped. */
 const MANUAL_WD_DESC_PREFIX = "Manual withdrawal:";
+
+// SIGN RULE — only CREDITS are wipeable (CRITICAL).
+//
+// An `admin_balance_adjustment` row stores the SIGNED balance delta that was
+// applied (`adjustBalance`: `newBalance = currentBalance + amount`, with
+// `amount` written verbatim — actions.ts:158,179). So:
+//   - amount > 0  → CREDIT: the house GAVE the user balance (content money).
+//   - amount < 0  → DEBIT:  the house TOOK balance back (a clawback /
+//                            correction / manual withdrawal).
+//
+// This feature exists to claw BACK house-granted content credits — it must
+// only ever REDUCE a user's balance, never raise it. Wiping a DEBIT reverses
+// a past deduction, which ADDS money back to the user. That was the prod
+// incident: a batch that included a large negative adjustment computed
+// `balanceAfter = balanceBefore − Σsigned` and, because Σsigned was
+// negative, the balance went UP — "it added the money back as balance and
+// is still there." So the wipeable set is hard-restricted to amount > 0:
+// a DEBIT (or zero) row is never listed, never accepted, and never deleted.
+// Enforced in THREE places — the listing filter, the in-tx per-row guard,
+// and the deleteMany predicate — so a debit id can never be wiped even if
+// it is injected directly. With this restriction `totalRemoved` is always
+// > 0 and the balance can only ever go down.
 
 /** Max rows we surface / accept in one wipe batch (sanity bound). */
 const MAX_BATCH = 500;
@@ -95,9 +126,10 @@ const userIdSchema = z.string().min(1, "User id is required");
  * the dialog when it opens (the dialog is a hidden component — per the
  * active-data rule we do NOT preload these on page render). Read-only.
  *
- * Filters to the genuine "Admin adjustment:" subset — manual withdrawals
- * (same ledger type, different prefix) are excluded so they can never be
- * selected for deletion.
+ * Filters to the genuine "Admin adjustment:" CREDIT subset — manual
+ * withdrawals (same ledger type, different prefix) AND debit adjustments
+ * (amount <= 0, see SIGN RULE) are excluded so they can never be selected
+ * for deletion (wiping a debit would re-credit the user).
  */
 export async function listWipeableAdjustments(
   userId: string,
@@ -110,16 +142,19 @@ export async function listWipeableAdjustments(
   }
 
   const db = await getDb();
-  // Filter to genuine admin adjustments only. `startsWith` on the
+  // Filter to genuine admin adjustment CREDITS only. `startsWith` on the
   // description excludes "Manual withdrawal:" rows (same type) and any
-  // other future prefix. status = completed mirrors how the rows are
-  // written (and how the insights surface counts them).
+  // other future prefix; `amount > 0` excludes debit adjustments (SIGN
+  // RULE — wiping a debit reverses a deduction and re-adds money). status =
+  // completed mirrors how the rows are written (and how the insights
+  // surface counts them).
   const rows = await db.ledger_transactions.findMany({
     where: {
       user_id: parsed.data,
       type: ADJ_TYPE,
       status: "completed",
       description: { startsWith: ADJ_DESC_PREFIX },
+      amount: { gt: 0 },
     },
     orderBy: { created_at: "desc" },
     take: MAX_BATCH,
@@ -200,35 +235,42 @@ const wipeSchema = z.object({
 });
 
 /**
- * Hard-delete the selected admin balance-adjustment ledger rows, reduce the
+ * Hard-delete the selected admin balance-adjustment CREDIT rows, reduce the
  * user's available_balance by their summed amount, and snapshot the deleted
  * rows into the admin DB so the batch is recoverable.
  *
  * SAFETY (defence in depth, all server-side):
  *   1. Gate: requireAdmin + __can_wipe_accounts + 2FA.
- *   2. Inside a single main-DB $transaction, RE-READ every selected id and
- *      refuse the whole batch unless EVERY row is:
+ *   2. Provision the recovery store (ensure-schema). If it can't be
+ *      provisioned → abort before touching the main DB.
+ *   3. READ + GUARD the selected rows (own read tx). Refuse the whole batch
+ *      unless EVERY row is:
  *        - owned by `userId`,
  *        - type === admin_balance_adjustment,
  *        - description starts with "Admin adjustment: " (NOT a manual
- *          withdrawal, NOT any other prefix).
- *      A single bad/foreign/tampered id aborts the entire wipe — so a
- *      deposit / withdrawal / affiliate_claim / gaming / creator row can
- *      NEVER be deleted even if its id is injected.
- *   3. Delete EXACTLY those ids (deleteMany scoped by id + user + type +
- *      prefix — never a broad delete).
- *   4. Reduce available_balance by the SUM of the deleted amounts
- *      (optimistic-locked on `version`, mirroring adjustBalance in
- *      reverse). available_balance is never driven negative.
- *   5. Snapshot the deleted rows into admin_balance_adjustment_wipes
- *      (admin DB) — committed AFTER the main-DB tx so a snapshot-write
- *      failure can't leave the rows deleted-but-unrecoverable: if the
- *      snapshot insert throws, we re-insert the rows back into the main DB
- *      and re-add the balance (rollback) and report failure.
+ *          withdrawal, NOT any other prefix),
+ *        - status === completed,
+ *        - amount > 0 (CREDIT only — SIGN RULE; a debit would re-credit).
+ *      A single bad/foreign/tampered/debit id aborts the entire wipe.
+ *   4. SNAPSHOT FIRST: write the recovery copy to
+ *      admin_balance_adjustment_wipes (admin DB) and get its id. If this
+ *      throws → abort. NOTHING has been deleted, the balance is untouched,
+ *      no money-back surprise.
+ *   5. DELETE + REDUCE in ONE main-DB $transaction: re-guard + deleteMany
+ *      EXACTLY those ids (scoped by id + user + type + prefix + amount > 0),
+ *      then reduce available_balance by the summed amount (optimistic-locked
+ *      on `version`). available_balance is never driven negative. Because
+ *      the snapshot already exists, the committed delete is PERMANENT — no
+ *      rollback re-adds money.
+ *   6. If the main-DB tx FAILS, delete the orphan snapshot row (the recovery
+ *      copy is unused because nothing was deleted) and report failure.
+ *
+ * The signed sum (`totalRemoved`) is always > 0 here because only credits
+ * are wipeable, so the balance can only ever go DOWN.
  *
  * CAVEAT (owner-accepted): hard-delete breaks balance_before/after
  * continuity on the user's REMAINING ledger rows. We correct the CURRENT
- * balance (step 4) but deliberately do NOT rewrite other rows' historical
+ * balance but deliberately do NOT rewrite other rows' historical
  * balance_before/after. Surfaced in the dialog copy + the audit event.
  */
 export async function wipeBalanceAdjustments(data: {
@@ -257,9 +299,9 @@ export async function wipeBalanceAdjustments(data: {
     return { success: false, error: err instanceof Error ? err.message : "2FA verification failed" };
   }
 
-  // Provision the snapshot table before we touch anything in the main DB —
-  // if the admin DB / schema is unreachable we must NOT delete rows we
-  // can't snapshot. A failure here aborts before any destructive write.
+  // STEP 2 — Provision the recovery store before we touch anything in the
+  // main DB. If the admin DB / schema is unreachable we must NOT delete rows
+  // we can't snapshot. A failure here aborts before any destructive write.
   try {
     await ensureBalanceAdjustmentWipesSchema();
   } catch (err) {
@@ -272,52 +314,133 @@ export async function wipeBalanceAdjustments(data: {
 
   const db = await getDb();
 
-  // Full deleted-row snapshots captured inside the tx so the post-commit
-  // admin-DB snapshot insert (and any rollback) has the exact rows.
-  let deletedRows: Array<Record<string, unknown>> = [];
+  // STEP 3 — READ + GUARD. Read the exact selected rows and verify EVERY one
+  // is this user's genuine admin-adjustment CREDIT. This read is in its own
+  // short tx; the authoritative re-guard also runs again inside the
+  // delete/reduce tx (STEP 5), so a row that changes in between can't slip
+  // through. Nothing is mutated here.
+  let guardedRows: Array<Record<string, unknown>>;
   let totalRemoved = 0;
-  let balanceBefore = 0;
-  let balanceAfter = 0;
+  try {
+    const rows = await db.ledger_transactions.findMany({
+      where: { id: { in: ids } },
+    });
 
+    if (rows.length !== ids.length) {
+      throw new Error("WIPE_GUARD: some selected adjustments no longer exist — refresh and retry");
+    }
+
+    for (const row of rows) {
+      if (row.user_id !== parsed.userId) {
+        throw new Error("WIPE_GUARD: a selected row does not belong to this user");
+      }
+      if (row.type !== ADJ_TYPE) {
+        throw new Error("WIPE_GUARD: a selected row is not a balance adjustment");
+      }
+      if (
+        !row.description.startsWith(ADJ_DESC_PREFIX) ||
+        row.description.startsWith(MANUAL_WD_DESC_PREFIX)
+      ) {
+        throw new Error("WIPE_GUARD: a selected row is not a genuine admin adjustment");
+      }
+      if (row.status !== "completed") {
+        throw new Error("WIPE_GUARD: a selected row is not a completed adjustment");
+      }
+      // SIGN RULE: only credits (amount > 0) are wipeable. A debit reverses
+      // a past deduction and would re-add money to the user — never allowed.
+      if (toNumber(row.amount) <= 0) {
+        throw new Error(
+          "WIPE_GUARD: a selected row is a debit (clawback/withdrawal) — only credit adjustments can be wiped",
+        );
+      }
+    }
+
+    guardedRows = rows as unknown as Array<Record<string, unknown>>;
+    // Sum of the signed amounts — guaranteed > 0 because every row is a
+    // credit. This is the magnitude we subtract from the balance.
+    totalRemoved = rows.reduce((acc, r) => acc + toNumber(r.amount), 0);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    if (message.startsWith("WIPE_GUARD:")) {
+      return { success: false, error: message.replace(/^WIPE_GUARD:\s*/, "") };
+    }
+    console.error("[wipeBalanceAdjustments] guard read failed:", err);
+    return { success: false, error: "Wipe failed — please try again (nothing was deleted)" };
+  }
+
+  // STEP 4 — SNAPSHOT FIRST. Write the recovery copy to the admin DB BEFORE
+  // any destructive main-DB write, and capture its id. If this throws the
+  // function returns here: nothing in the main DB has changed, the balance
+  // is untouched. There is no path where money is deleted/reduced without a
+  // recoverable snapshot already in place, and no rollback that re-adds
+  // money. balance_before/after are recorded from a fresh read so the
+  // snapshot row reflects the balance the wipe is about to act on.
+  const userMeta = await db.user
+    .findUnique({
+      where: { id: parsed.userId },
+      select: { username: true, email: true },
+    })
+    .catch(() => null);
+
+  const preBalanceRow = await db.balances
+    .findUnique({ where: { user_id: parsed.userId } })
+    .catch(() => null);
+  if (!preBalanceRow) {
+    return { success: false, error: "User balances not found" };
+  }
+  const balanceBefore = toNumber(preBalanceRow.available_balance);
+  // Version captured here is the one STEP 5 optimistic-locks on, so a
+  // successful commit is guaranteed to have acted on EXACTLY this balance —
+  // the snapshot's recorded balance_before/after can never disagree with the
+  // committed result (if the balance moved, STEP 5 aborts + cleans up).
+  const lockVersion = preBalanceRow.version;
+  const reducedBalance = balanceBefore - totalRemoved;
+  // Never drive spendable balance negative (a wager balance check elsewhere
+  // would misbehave). A clamp means the user had already spent some of the
+  // credited money; the shortfall is surfaced in the audit metadata.
+  const balanceAfter = reducedBalance < 0 ? 0 : reducedBalance;
+
+  const snapshot: BalanceAdjustmentWipeSnapshot = {
+    userId: parsed.userId,
+    rows: guardedRows,
+  };
+
+  let wipeId: string;
+  try {
+    const created = await adminDb.admin_balance_adjustment_wipes.create({
+      data: {
+        user_id: parsed.userId,
+        username: userMeta?.username ?? null,
+        email: userMeta?.email ?? null,
+        wiped_by: session.userId,
+        total_amount: totalRemoved,
+        balance_before: balanceBefore,
+        balance_after: balanceAfter,
+        adjustment_count: guardedRows.length,
+        snapshot: wipeSnapshotToJsonValue(snapshot) as Prisma.InputJsonValue,
+      },
+      select: { id: true },
+    });
+    wipeId = created.id;
+  } catch (snapErr) {
+    console.error(
+      "[wipeBalanceAdjustments] snapshot write failed — wipe aborted (nothing deleted):",
+      snapErr,
+    );
+    return {
+      success: false,
+      error: "Could not write the recovery snapshot — wipe aborted (nothing deleted)",
+    };
+  }
+
+  // STEP 5 — DELETE + REDUCE in one main-DB transaction. The snapshot now
+  // exists, so once this commits the wipe is PERMANENT and recoverable; if
+  // it FAILS we delete the orphan snapshot in STEP 6 (nothing was deleted,
+  // so the recovery copy is unused). The guard predicate is re-applied to
+  // the deleteMany so the DELETE can't touch anything outside the verified
+  // credit set even under a race.
   try {
     await db.$transaction(async (tx) => {
-      // 1. Re-read the exact selected rows under the tx. This is the
-      //    authoritative guard: we ONLY proceed on rows that are this
-      //    user's genuine admin adjustments. Anything else → abort.
-      const rows = await tx.ledger_transactions.findMany({
-        where: { id: { in: ids } },
-      });
-
-      if (rows.length !== ids.length) {
-        throw new Error("WIPE_GUARD: some selected adjustments no longer exist — refresh and retry");
-      }
-
-      for (const row of rows) {
-        if (row.user_id !== parsed.userId) {
-          throw new Error("WIPE_GUARD: a selected row does not belong to this user");
-        }
-        if (row.type !== ADJ_TYPE) {
-          throw new Error("WIPE_GUARD: a selected row is not a balance adjustment");
-        }
-        if (
-          !row.description.startsWith(ADJ_DESC_PREFIX) ||
-          row.description.startsWith(MANUAL_WD_DESC_PREFIX)
-        ) {
-          throw new Error("WIPE_GUARD: a selected row is not a genuine admin adjustment");
-        }
-        if (row.status !== "completed") {
-          throw new Error("WIPE_GUARD: a selected row is not a completed adjustment");
-        }
-      }
-
-      // Snapshot the full rows (Decimal/Date serialized later) + compute
-      // the signed sum to reverse off the balance.
-      deletedRows = rows as unknown as Array<Record<string, unknown>>;
-      totalRemoved = rows.reduce((acc, r) => acc + toNumber(r.amount), 0);
-
-      // 2. Delete EXACTLY these ids, re-scoped by the same guard predicate
-      //    so the DELETE itself can't touch anything outside the verified
-      //    set even under a race. deletedCount must equal ids.length.
       const del = await tx.ledger_transactions.deleteMany({
         where: {
           id: { in: ids },
@@ -325,28 +448,25 @@ export async function wipeBalanceAdjustments(data: {
           type: ADJ_TYPE,
           status: "completed",
           description: { startsWith: ADJ_DESC_PREFIX },
+          amount: { gt: 0 },
         },
       });
       if (del.count !== ids.length) {
-        // Predicate mismatch between the read and the delete → abort the
-        // whole tx so nothing is half-deleted.
+        // Predicate mismatch between the guard read and the delete (e.g. a
+        // row was restored/edited concurrently) → abort so nothing is
+        // half-deleted; the snapshot orphan is cleaned up below.
         throw new Error("WIPE_GUARD: delete count mismatch — refresh and retry");
       }
 
-      // 3. Reduce available_balance by the summed amount (reverse of how
-      //    adjustBalance adds it). Optimistic-locked on version. We clamp
-      //    at 0 — never drive the spendable balance negative (a wager
-      //    balance check elsewhere would misbehave). The clamp is recorded
-      //    so the audit event surfaces any shortfall.
-      const b = await tx.balances.findUnique({ where: { user_id: parsed.userId } });
-      if (!b) throw new Error("User balances not found");
-
-      balanceBefore = toNumber(b.available_balance);
-      const reduced = balanceBefore - totalRemoved;
-      balanceAfter = reduced < 0 ? 0 : reduced;
-
+      // Reduce available_balance by the summed credit amount (reverse of how
+      // adjustBalance added it). Optimistic-locked on the version captured
+      // when the snapshot was written (lockVersion) — if the balance changed
+      // in the meantime this updates 0 rows and the whole tx aborts, so the
+      // snapshot's recorded balance_before/after always matches the committed
+      // result. We write the precomputed `balanceAfter` (derived from
+      // `balanceBefore`, the value at lockVersion) for the same reason.
       const updated = await tx.balances.updateMany({
-        where: { user_id: parsed.userId, version: b.version },
+        where: { user_id: parsed.userId, version: lockVersion },
         data: {
           available_balance: balanceAfter,
           version: { increment: 1 },
@@ -357,116 +477,49 @@ export async function wipeBalanceAdjustments(data: {
       }
     });
   } catch (err) {
+    // STEP 6 — main-DB tx failed: the whole tx rolled back, so NOTHING was
+    // deleted and the balance is unchanged. Delete the now-orphan snapshot
+    // row so it can't surface as a phantom recoverable batch (its ledger
+    // rows still exist, so a later "restore" of it would re-credit money
+    // that was never removed). Best-effort: if this cleanup itself fails we
+    // log loudly with the id so it can be removed by hand — it must NOT be
+    // restored.
+    try {
+      await adminDb.admin_balance_adjustment_wipes.delete({ where: { id: wipeId } });
+    } catch (cleanupErr) {
+      console.error(
+        "[wipeBalanceAdjustments] CRITICAL: main-DB wipe failed AND orphan snapshot cleanup failed — snapshot",
+        wipeId,
+        "is orphaned (its ledger rows still exist; do NOT restore it):",
+        cleanupErr,
+      );
+    }
+
     const message = err instanceof Error ? err.message : "Unknown error";
     if (
       message.startsWith("WIPE_GUARD:") ||
       message === "User balances not found" ||
       message.includes("concurrently")
     ) {
-      // Surface the actionable guard message verbatim (prefix stripped).
       return { success: false, error: message.replace(/^WIPE_GUARD:\s*/, "") };
     }
-    console.error("[wipeBalanceAdjustments] transaction failed:", err);
+    console.error("[wipeBalanceAdjustments] delete/reduce transaction failed:", err);
     return { success: false, error: "Wipe failed — please try again (nothing was deleted)" };
   }
 
-  // 4. Persist the recovery snapshot. The main-DB tx is already committed,
-  //    so a snapshot failure here would leave the rows deleted but
-  //    unrecoverable — unacceptable. We compensate by re-inserting the
-  //    deleted rows + re-adding the balance (best-effort rollback) and
-  //    reporting failure. This window is tiny and only hit if the admin DB
-  //    dies between the two commits.
-  const userMeta = await db.user
-    .findUnique({
-      where: { id: parsed.userId },
-      select: { username: true, email: true },
-    })
-    .catch(() => null);
-
-  const snapshot: BalanceAdjustmentWipeSnapshot = {
-    userId: parsed.userId,
-    rows: deletedRows,
-  };
-
-  try {
-    await adminDb.admin_balance_adjustment_wipes.create({
-      data: {
-        user_id: parsed.userId,
-        username: userMeta?.username ?? null,
-        email: userMeta?.email ?? null,
-        wiped_by: session.userId,
-        total_amount: totalRemoved,
-        balance_before: balanceBefore,
-        balance_after: balanceAfter,
-        adjustment_count: deletedRows.length,
-        snapshot: wipeSnapshotToJsonValue(snapshot) as Prisma.InputJsonValue,
-      },
-    });
-  } catch (snapErr) {
-    console.error(
-      "[wipeBalanceAdjustments] snapshot insert failed — rolling back the main-DB delete:",
-      snapErr,
-    );
-    // Compensating re-insert + balance restore so the deletion isn't lost.
-    try {
-      await db.$transaction(async (tx) => {
-        await tx.ledger_transactions.createMany({
-          data: deletedRows as unknown as Prisma.ledger_transactionsCreateManyInput[],
-          skipDuplicates: true,
-        });
-        const b = await tx.balances.findUnique({ where: { user_id: parsed.userId } });
-        if (b) {
-          await tx.balances.updateMany({
-            where: { user_id: parsed.userId, version: b.version },
-            data: {
-              available_balance: toNumber(b.available_balance) + totalRemoved,
-              version: { increment: 1 },
-            },
-          });
-        }
-      });
-      return {
-        success: false,
-        error: "Recovery snapshot failed — the wipe was rolled back (no rows deleted)",
-      };
-    } catch (rollbackErr) {
-      console.error(
-        "[wipeBalanceAdjustments] CRITICAL: snapshot AND rollback both failed — rows deleted without snapshot:",
-        rollbackErr,
-      );
-      // We still audit-log the deletion below so the ids are recoverable
-      // from the audit event metadata even without the snapshot row.
-      await createAdminAuditEvent({
-        adminUserId: session.userId,
-        eventType: "balance_adjustments_wiped_snapshot_failed",
-        targetUserId: parsed.userId,
-        metadata: {
-          deletedIds: ids,
-          totalRemoved,
-          balanceBefore,
-          balanceAfter,
-          note: "snapshot + rollback both failed; ids preserved here for manual recovery",
-        },
-      });
-      return {
-        success: false,
-        error:
-          "Critical: rows were deleted but the recovery snapshot failed and rollback failed. The deleted ids are recorded in the audit log — contact engineering.",
-      };
-    }
-  }
-
-  // 5. Audit the successful wipe.
+  // STEP 7 — Audit the successful, now-permanent wipe.
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "balance_adjustments_wiped",
     targetUserId: parsed.userId,
     metadata: {
+      wipeId,
       deletedIds: ids,
-      deletedCount: deletedRows.length,
+      deletedCount: guardedRows.length,
       totalRemoved,
       balanceBefore,
       balanceAfter,
+      balanceClamped: reducedBalance < 0,
       recoverable: true,
       caveat:
         "hard-delete: remaining ledger rows' balance_before/after are not rewritten; current balance corrected",
@@ -476,7 +529,7 @@ export async function wipeBalanceAdjustments(data: {
   revalidatePath(`/users/${parsed.userId}`);
   return {
     success: true,
-    deletedCount: deletedRows.length,
+    deletedCount: guardedRows.length,
     totalRemoved,
     balanceBefore,
     balanceAfter,

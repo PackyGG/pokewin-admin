@@ -49,6 +49,12 @@ import {
 // user (amount > 0) is money the house gave them → the user gained → ROSE.
 // A debit (amount < 0, house took back) → the user lost → EMERALD. Wiping a
 // rose (positive) row REDUCES what we owe the user → good for the house.
+//
+// The wipe SELECT list only ever contains credits (positive) now — debits
+// are not wipeable (wiping one would re-add money). The negative branch is
+// still needed for the Recoverable-wipes strip, which can show historical
+// batches whose total_amount is negative (pre-fix wipes that included debit
+// rows).
 function houseAmountClass(amount: number): string {
   if (amount > 0) return "text-rose-500 dark:text-rose-400";
   if (amount < 0) return "text-emerald-500 dark:text-emerald-400";
@@ -242,11 +248,13 @@ function WipeAdjustmentsDialog({
                 <span className="font-medium text-foreground">
                   “Admin adjustment:”
                 </span>{" "}
-                ledger rows are listed — deposits, withdrawals, manual
-                withdrawals, gaming, and affiliate/creator history are never
-                touched. Selected rows are hard-deleted (snapshotted first, so
-                it’s recoverable) and the balance is reduced by the summed
-                amount.
+                <span className="font-medium text-foreground">credits</span>{" "}
+                (money the house gave the user) are listed — debits/clawbacks,
+                deposits, withdrawals, manual withdrawals, gaming, and
+                affiliate/creator history are never touched. Selected rows are
+                snapshotted first (so it’s recoverable), then hard-deleted and
+                the balance is reduced by the summed amount. A wipe can only
+                ever lower the balance.
               </>
             ) : (
               <>Review the batch below, then enter your 2FA code to confirm.</>
@@ -297,7 +305,7 @@ function WipeAdjustmentsDialog({
                 </div>
               ) : rows.length === 0 ? (
                 <div className="py-10 text-center text-sm text-muted-foreground">
-                  This user has no admin balance adjustments to wipe.
+                  This user has no admin balance-adjustment credits to wipe.
                 </div>
               ) : filtered.length === 0 ? (
                 <div className="py-10 text-center text-sm text-muted-foreground">
