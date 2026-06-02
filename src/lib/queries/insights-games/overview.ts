@@ -16,17 +16,29 @@ import {
   realCustomersScopeSql,
   BORROW_FILTER_CTES,
 } from "./_shared";
+import { REWARD_PACK_SESSIONS } from "@/lib/metrics/gaming-sql";
 import { ratioToPct } from "./_metrics";
 
 /**
  * Headline KPIs for /insights/games — aggregate across packs +
  * battles + upgrader for the selected period.
  *
- * Wager side:
- *   • pack_opening / battle_bet / battle_sponsorship → only rows
- *     from non-borrow plays count. Borrowed-cost portion is excluded
- *     because it never came out of the user's actual balance (it's
- *     house exposure, auto-resold back to the house).
+ * Wager side (CANONICAL gaming legs — agrees with @/lib/metrics):
+ *   • pack_opening → only NON-BORROW opens count, AND reward/daily packs
+ *     (`packs.pack_type='reward'`, ≈$0) are EXCLUDED — they are a house
+ *     giveaway tracked in /insights/rewards (daily-packs.ts), not gaming.
+ *     The reward-pack session set is the shared `REWARD_PACK_SESSIONS`
+ *     predicate from `@/lib/metrics/gaming-sql` (same join daily-packs.ts
+ *     uses) so this surface drops the exact same opens.
+ *   • battle_bet → borrow-gated by its game_session (borrowed battles
+ *     drop on both wager + payout sides).
+ *   • battle_sponsorship → counted DIRECTLY, with NO borrow gate. Its
+ *     ledger rows have `game_session_id = NULL`, so the
+ *     `game_session_id IN (non_borrow_battle_sessions)` gate silently
+ *     DROPPED every sponsorship row (NULL IN (...) → NULL → excluded) —
+ *     the bug that made the headline GGR omit sponsorship while the
+ *     dashboard "Total Wager" tile counted it. All sponsored battles are
+ *     `borrow_percentage = 0` (owner-confirmed), so no gate is needed.
  *   • upgrader → `upgrader_games.bet_amount`. Upgrader is NOT booked to
  *     the ledger (the canonical `UPGRADER_IN_LEDGER` switch is `false`):
  *     `upgrader_bet` / `upgrader_payout` ledger rows are not written by
@@ -172,6 +184,7 @@ export async function getGamesOverview(
              COALESCE(SUM(CASE
                WHEN lt.type = 'pack_opening'
                     AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%')
+                    AND (lt.game_session_id IS NULL OR lt.game_session_id NOT IN ${REWARD_PACK_SESSIONS})
                     AND NOT EXISTS (
                       SELECT 1 FROM session_windows sw
                       WHERE sw.uid = lt.user_id
@@ -180,8 +193,11 @@ export async function getGamesOverview(
                     )
                THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS pack_wager,
              COALESCE(SUM(CASE
-               WHEN lt.type IN ('battle_bet','battle_sponsorship')
-                    AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions)
+               WHEN (
+                      (lt.type = 'battle_bet'
+                       AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
+                      OR lt.type = 'battle_sponsorship'
+                    )
                     AND NOT EXISTS (
                       SELECT 1 FROM session_windows sw
                       WHERE sw.uid = lt.user_id
@@ -189,7 +205,10 @@ export async function getGamesOverview(
                         AND lt.created_at <  sw.win_end
                     )
                THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS battle_wager,
-             COALESCE(SUM(CASE WHEN lt.type = 'pack_opening' THEN 1 ELSE 0 END), 0)::text AS pack_plays,
+             COALESCE(SUM(CASE
+               WHEN lt.type = 'pack_opening'
+                    AND (lt.game_session_id IS NULL OR lt.game_session_id NOT IN ${REWARD_PACK_SESSIONS})
+               THEN 1 ELSE 0 END), 0)::text AS pack_plays,
              COALESCE(SUM(CASE WHEN lt.type IN ('battle_bet','battle_sponsorship') THEN 1 ELSE 0 END), 0)::text AS battle_plays
            FROM ledger_transactions lt
            WHERE lt.status = 'completed'
@@ -212,6 +231,10 @@ export async function getGamesOverview(
                FROM user_inventory ui
                WHERE ui.source_type = 'pack'
                  AND ui.source_id IN (SELECT game_session_id FROM non_borrow_pack_sessions)
+                 -- Drop reward/daily-pack won cards (Fix 2) so the giveaway
+                 -- is not counted as a gaming payout — keyed on source_id
+                 -- (the originating game_session_id).
+                 AND (ui.source_id IS NULL OR ui.source_id NOT IN ${REWARD_PACK_SESSIONS})
                  AND ui.user_id IN ${scope}
                  AND NOT EXISTS (
                    SELECT 1 FROM session_windows sw
@@ -226,6 +249,7 @@ export async function getGamesOverview(
                FROM user_inventory ui
                WHERE ui.source_type = 'battle'
                  AND ui.source_id IN (SELECT game_session_id FROM non_borrow_battle_sessions)
+                 AND (ui.source_id IS NULL OR ui.source_id NOT IN ${REWARD_PACK_SESSIONS})
                  AND ui.user_id IN ${scope}
                  AND NOT EXISTS (
                    SELECT 1 FROM session_windows sw
@@ -285,6 +309,12 @@ export async function getGamesOverview(
              FROM ledger_transactions lt
              WHERE lt.status = 'completed'
                AND lt.type IN ('pack_opening','battle_bet','battle_sponsorship')
+               -- Reward/daily-pack opens are not gaming (Fix 2) — a user
+               -- whose only activity is a reward pack is not a gaming
+               -- customer, so drop those pack_opening rows here too.
+               AND (lt.type <> 'pack_opening'
+                    OR lt.game_session_id IS NULL
+                    OR lt.game_session_id NOT IN ${REWARD_PACK_SESSIONS})
                AND lt.user_id IN ${scope}
                AND NOT EXISTS (
                  SELECT 1 FROM session_windows sw
@@ -319,8 +349,11 @@ export async function getGamesOverview(
                AND lt.type IN ('pack_opening','battle_bet','battle_sponsorship')
                AND lt.user_id IN ${scope}
                AND (
-                 (lt.type = 'pack_opening' AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%'))
-                 OR (lt.type IN ('battle_bet','battle_sponsorship') AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
+                 (lt.type = 'pack_opening'
+                  AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%')
+                  AND (lt.game_session_id IS NULL OR lt.game_session_id NOT IN ${REWARD_PACK_SESSIONS}))
+                 OR (lt.type = 'battle_bet' AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
+                 OR lt.type = 'battle_sponsorship'
                )
                AND NOT EXISTS (
                  SELECT 1 FROM session_windows sw
@@ -341,6 +374,7 @@ export async function getGamesOverview(
                  (ui.source_type = 'pack' AND ui.source_id IN (SELECT game_session_id FROM non_borrow_pack_sessions))
                  OR (ui.source_type = 'battle' AND ui.source_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
                )
+               AND (ui.source_id IS NULL OR ui.source_id NOT IN ${REWARD_PACK_SESSIONS})
                AND NOT EXISTS (
                  SELECT 1 FROM session_windows sw
                  WHERE sw.uid = ui.user_id
@@ -390,6 +424,8 @@ export async function getGamesOverview(
     // plus the upgrader play count from `upgrader_games`. Battle plays
     // count each participant's bet (not the battle as a single play)
     // which matches how packs/upgrader count (one wager = one play).
+    // Reward/daily-pack opens are NOT counted in pack_plays (Fix 2) so
+    // the RTP sample size matches the gaming wager population.
     const packWager = toNumber(wagerRow?.pack_wager);
     const battleWager = toNumber(wagerRow?.battle_wager);
     const upgraderWager = toNumber(payoutRow?.upgrader_wager);

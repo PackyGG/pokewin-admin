@@ -154,8 +154,16 @@ export async function getGamesTopUsers(
       );
     }
     if (includeOnBattles) {
+      // Fix 1 — battle_sponsorship is counted DIRECTLY (no borrow gate).
+      // Its ledger rows have game_session_id = NULL, so the
+      // `game_session_id IN (non_borrow_battle_sessions)` gate would drop
+      // every sponsorship row (NULL IN (...) → NULL → excluded). All
+      // sponsored battles are borrow_percentage=0 (owner-confirmed), so no
+      // gate is needed; battle_bet keeps the borrow gate. Mirrors the
+      // canonical WAGER_NON_BORROW_FILTER / gaming-sql WAGER_LEG_FILTER.
       wagerSrcPredicates.push(
-        "(lt.type IN ('battle_bet','battle_sponsorship') AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))",
+        "(lt.type = 'battle_bet' AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))",
+        "lt.type = 'battle_sponsorship'",
       );
     }
     const wagerOrPredicate = wagerSrcPredicates.length > 0

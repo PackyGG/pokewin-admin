@@ -13,6 +13,7 @@ import {
   hoursForPeriod,
   realCustomersScopeSql,
 } from "./_shared";
+import { REWARD_PACK_SESSIONS } from "@/lib/metrics/gaming-sql";
 import { ratioToPct } from "./_metrics";
 
 /**
@@ -419,6 +420,13 @@ export async function getBorrowAnalytics(
          per_user_wager AS (
            -- Pack/battle wager only — upgrader wager is sourced from
            -- upgrader_games below (it is NOT booked to the ledger).
+           -- Canonical gaming legs (matches overview.ts / @/lib/metrics):
+           --   • pack_opening: non-borrow AND not a reward/daily pack
+           --     (Fix 2 — REWARD_PACK_SESSIONS, NULL-guarded).
+           --   • battle_bet: borrow-gated by its game_session.
+           --   • battle_sponsorship: counted DIRECTLY (Fix 1) — its rows
+           --     have game_session_id = NULL so the IN-gate would drop
+           --     them; all sponsored battles are borrow_percentage=0.
            SELECT lt.user_id,
                   COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS wager,
                   COUNT(*) AS plays
@@ -427,8 +435,11 @@ export async function getBorrowAnalytics(
              AND lt.type IN ('pack_opening','battle_bet','battle_sponsorship')
              AND lt.user_id IN ${scope}
              AND (
-               (lt.type = 'pack_opening' AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%'))
-               OR (lt.type IN ('battle_bet','battle_sponsorship') AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
+               (lt.type = 'pack_opening'
+                AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%')
+                AND (lt.game_session_id IS NULL OR lt.game_session_id NOT IN ${REWARD_PACK_SESSIONS}))
+               OR (lt.type = 'battle_bet' AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
+               OR lt.type = 'battle_sponsorship'
              )
              AND NOT EXISTS (
                SELECT 1 FROM session_windows sw
@@ -449,6 +460,10 @@ export async function getBorrowAnalytics(
                (ui.source_type = 'pack' AND ui.source_id IN (SELECT game_session_id FROM non_borrow_pack_sessions))
                OR (ui.source_type = 'battle' AND ui.source_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
              )
+             -- Drop reward/daily-pack won cards (Fix 2), keyed on source_id
+             -- (the originating game_session_id) — symmetric with the wager
+             -- side so the cohort P&L matches the canonical gaming legs.
+             AND (ui.source_id IS NULL OR ui.source_id NOT IN ${REWARD_PACK_SESSIONS})
              AND NOT EXISTS (
                SELECT 1 FROM session_windows sw
                WHERE sw.uid = ui.user_id

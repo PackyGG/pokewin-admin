@@ -167,9 +167,16 @@ export async function getPackDrilldown(
 
     // Pack metadata — also serves as existence check; if NULL, the
     // ID is valid-shaped but doesn't correspond to a pack.
+    //
+    // Reward/daily packs (`pack_type = 'reward'`) are excluded (Fix 2):
+    // they are a $0-wager house giveaway tracked in /insights/rewards
+    // (daily-packs.ts), NOT gaming — the parent packs tab already drops
+    // them (`packs.ts` WHERE p.pack_type <> 'reward'), so they are never
+    // linkable here; the guard makes that structural (a reward pack id
+    // returns null rather than rendering giveaway data as gaming P&L).
     const packRows = await db.$queryRawUnsafe<PackRow[]>(
       `SELECT id::text AS id, name, image_url, price::text AS price
-       FROM packs WHERE id = '${packId}'::uuid LIMIT 1`,
+       FROM packs WHERE id = '${packId}'::uuid AND pack_type <> 'reward' LIMIT 1`,
     );
     if (packRows.length === 0) return null;
     const pack = packRows[0];
