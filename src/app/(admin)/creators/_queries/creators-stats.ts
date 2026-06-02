@@ -1,7 +1,7 @@
 import "server-only";
 
 import { creatorsApi } from "@/lib/backend-api";
-import { getDealCapInfoByUser } from "./deal-cap-by-user";
+import { getConvertedFromVouchersByDeal } from "./converted-from-vouchers-by-deal";
 import { getWithdrawnFromConvertedByDeal } from "./withdrawn-from-converted-by-deal";
 
 export type CreatorsGlobalStats = {
@@ -29,19 +29,25 @@ export type CreatorsGlobalStats = {
    */
   liveCount: number;
   /**
-   * Total "Converted" — combined withdraw-cap usage
-   * (`withdraw_cap_used_usd`) across every creator with an active or
-   * scheduled deal: how much stream earnings have been converted into
-   * payout vouchers (against the deals' withdraw caps). Best-effort —
-   * a creator whose deal fetch fails is skipped, so this can be a
-   * slight under-count rather than crash the tile.
+   * Total "Converted" — combined value of the end-of-session payout
+   * vouchers (`vouchers.origin = 'creator_fill_conversion'`) MINTED
+   * across every creator with an active or scheduled deal: how much
+   * stream earnings have actually been converted into payout vouchers
+   * (§2 of the creator model). Sourced from the Main-DB `vouchers`
+   * table — the SAME voucher set the withdrawn sub-line reads — NOT the
+   * backend deal's `withdraw_cap_used_usd` cap-consumption counter
+   * (which is admin-mutable and per deal-version, so it's the wrong
+   * source for a minted-voucher figure). Best-effort — a query failure
+   * leaves this at 0 rather than crashing the tile.
    */
   convertedTotal: number;
   /**
    * Of `convertedTotal` (payout vouchers minted from conversion), how
    * much has actually left the platform via a completed
    * card_withdrawal_requests row, summed across every active/
-   * scheduled deal in scope.
+   * scheduled deal in scope. Reads the SAME `creator_fill_conversion`
+   * voucher set as `convertedTotal`, so `withdrawn ≤ converted` holds
+   * by construction.
    */
   withdrawnFromConvertedTotal: number;
   /**
@@ -120,17 +126,28 @@ export async function getCreatorsGlobalStats(): Promise<CreatorsGlobalStats> {
   tallyPage(firstPage.data);
   for (const pg of remainingPages) tallyPage(pg.data);
 
-  // "Converted" — sum withdraw-cap usage across every active/scheduled
-  // deal. Bounded by activeDealCount (weekly deals — a small set), so
-  // the per-deal getDeal fan-out stays modest. Best-effort inside
-  // getDealCapInfoByUser: a failed fetch is skipped, not thrown.
+  // "Converted" — sum the MINTED `creator_fill_conversion` payout
+  // vouchers across every active/scheduled deal (§2 of the creator
+  // model). Single Main-DB round-trip grouped by deal. This is the real
+  // money converted into payout vouchers, NOT the backend deal's
+  // `withdraw_cap_used_usd` cap-consumption counter (admin-mutable, per
+  // deal-version — the wrong source for a minted-voucher figure). A
+  // failure leaves the total at 0 so the tile drops to "—" rather than
+  // showing a wrong number.
   //
-  // "Withdrawn from converted" runs in parallel — single DB round-trip
-  // against the admin's main DB (vouchers join card_withdrawal_requests),
-  // grouped by deal. A failure leaves the totals at 0 so the tile
-  // still shows the converted total and just drops the breakdown.
-  const [capInfoByUser, withdrawnByUser] = await Promise.all([
-    getDealCapInfoByUser(activeDeals),
+  // "Withdrawn from converted" runs in parallel — a second Main-DB
+  // round-trip over the SAME voucher set (vouchers join
+  // card_withdrawal_requests), grouped by deal. Sharing the source
+  // guarantees `withdrawn ≤ converted`. A failure leaves the breakdown
+  // at 0 so the tile still shows the converted total.
+  const [convertedByUser, withdrawnByUser] = await Promise.all([
+    getConvertedFromVouchersByDeal(activeDeals).catch((err) => {
+      console.error(
+        "[creators-stats] converted-from-vouchers query failed (tile renders 0):",
+        err,
+      );
+      return new Map<string, number>();
+    }),
     getWithdrawnFromConvertedByDeal(activeDeals).catch((err) => {
       console.error(
         "[creators-stats] withdrawn-from-converted query failed (sub-line hidden):",
@@ -143,7 +160,7 @@ export async function getCreatorsGlobalStats(): Promise<CreatorsGlobalStats> {
     }),
   ]);
   let convertedTotal = 0;
-  for (const info of capInfoByUser.values()) convertedTotal += info.usedUsd;
+  for (const value of convertedByUser.values()) convertedTotal += value;
   let withdrawnFromConvertedTotal = 0;
   let withdrawPendingFromConvertedTotal = 0;
   for (const row of withdrawnByUser.values()) {
