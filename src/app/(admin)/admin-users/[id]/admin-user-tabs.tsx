@@ -8,7 +8,7 @@ import { ProfileCard, Row, StatsCards } from "./profile-card";
 import { BalanceLimitsCard, LimitRow, type BalanceLimit } from "./balance-limits-card";
 import { ManagementActions } from "./management-actions";
 import { LinkMainUserCard } from "./link-main-user-card";
-import { AssignRoleCard } from "./assign-role-card";
+import { RolesCard } from "./assign-role-card";
 import { PermissionsSection } from "./permissions-section";
 import {
   AuditEventsTable,
@@ -23,9 +23,11 @@ type Props = {
   auditEvents: PaginatedResult<AdminAuditEventItem>;
   balanceLimits: BalanceLimit[];
   isCurrentUserAdmin: boolean;
+  /** Whether admin_users.roles is migrated — gates the multi-role notice. */
+  rolesColumnExists: boolean;
 };
 
-export function AdminUserTabs({ detail, auditStats, auditEvents, balanceLimits, isCurrentUserAdmin }: Props) {
+export function AdminUserTabs({ detail, auditStats, auditEvents, balanceLimits, isCurrentUserAdmin, rolesColumnExists }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [, startTransition] = useTransition();
@@ -62,15 +64,18 @@ export function AdminUserTabs({ detail, auditStats, auditEvents, balanceLimits, 
       {isCurrentUserAdmin && detail.roles.includes("creator") && (
         <LinkMainUserCard detail={detail} />
       )}
-      {/* Per-user role preset + permission editor. Shown for any user that
-          is NOT an admin — admins bypass the page list entirely, so the
-          editor is meaningless for them. Uses the effective role set so a
-          multi-role user that merely INCLUDES admin still hides it. */}
+      {/* System-role editor (multi-select) + optional permission-preset +
+          per-user permission editor. Shown for any user that is NOT an admin
+          — admins bypass the page list entirely, so the editor is
+          meaningless for them. Uses the effective role set so a multi-role
+          user that merely INCLUDES admin still hides it. */}
       {isCurrentUserAdmin && !detail.roles.includes("admin") && (
         <>
-          <AssignRoleCard
+          <RolesCard
             adminUserId={detail.id}
+            currentRoles={detail.roles}
             currentRoleId={detail.roleId}
+            rolesColumnExists={rolesColumnExists}
           />
           <PermissionsSection detail={detail} />
         </>
