@@ -64,6 +64,7 @@ export type Admin_usersCountAggregateOutputType = {
   username: number
   password_hash: number
   role: number
+  roles: number
   role_id: number
   totp_secret: number
   totp_enabled: number
@@ -120,6 +121,7 @@ export type Admin_usersCountAggregateInputType = {
   username?: true
   password_hash?: true
   role?: true
+  roles?: true
   role_id?: true
   totp_secret?: true
   totp_enabled?: true
@@ -213,6 +215,7 @@ export type Admin_usersGroupByOutputType = {
   username: string
   password_hash: string
   role: $Enums.admin_role
+  roles: $Enums.admin_role[]
   role_id: string | null
   totp_secret: string | null
   totp_enabled: boolean
@@ -254,6 +257,7 @@ export type admin_usersWhereInput = {
   username?: Prisma.StringFilter<"admin_users"> | string
   password_hash?: Prisma.StringFilter<"admin_users"> | string
   role?: Prisma.Enumadmin_roleFilter<"admin_users"> | $Enums.admin_role
+  roles?: Prisma.Enumadmin_roleNullableListFilter<"admin_users">
   role_id?: Prisma.UuidNullableFilter<"admin_users"> | string | null
   totp_secret?: Prisma.StringNullableFilter<"admin_users"> | string | null
   totp_enabled?: Prisma.BoolFilter<"admin_users"> | boolean
@@ -289,6 +293,7 @@ export type admin_usersOrderByWithRelationInput = {
   username?: Prisma.SortOrder
   password_hash?: Prisma.SortOrder
   role?: Prisma.SortOrder
+  roles?: Prisma.SortOrder
   role_id?: Prisma.SortOrderInput | Prisma.SortOrder
   totp_secret?: Prisma.SortOrderInput | Prisma.SortOrder
   totp_enabled?: Prisma.SortOrder
@@ -327,6 +332,7 @@ export type admin_usersWhereUniqueInput = Prisma.AtLeast<{
   NOT?: Prisma.admin_usersWhereInput | Prisma.admin_usersWhereInput[]
   password_hash?: Prisma.StringFilter<"admin_users"> | string
   role?: Prisma.Enumadmin_roleFilter<"admin_users"> | $Enums.admin_role
+  roles?: Prisma.Enumadmin_roleNullableListFilter<"admin_users">
   role_id?: Prisma.UuidNullableFilter<"admin_users"> | string | null
   totp_secret?: Prisma.StringNullableFilter<"admin_users"> | string | null
   totp_enabled?: Prisma.BoolFilter<"admin_users"> | boolean
@@ -362,6 +368,7 @@ export type admin_usersOrderByWithAggregationInput = {
   username?: Prisma.SortOrder
   password_hash?: Prisma.SortOrder
   role?: Prisma.SortOrder
+  roles?: Prisma.SortOrder
   role_id?: Prisma.SortOrderInput | Prisma.SortOrder
   totp_secret?: Prisma.SortOrderInput | Prisma.SortOrder
   totp_enabled?: Prisma.SortOrder
@@ -388,6 +395,7 @@ export type admin_usersScalarWhereWithAggregatesInput = {
   username?: Prisma.StringWithAggregatesFilter<"admin_users"> | string
   password_hash?: Prisma.StringWithAggregatesFilter<"admin_users"> | string
   role?: Prisma.Enumadmin_roleWithAggregatesFilter<"admin_users"> | $Enums.admin_role
+  roles?: Prisma.Enumadmin_roleNullableListFilter<"admin_users">
   role_id?: Prisma.UuidNullableWithAggregatesFilter<"admin_users"> | string | null
   totp_secret?: Prisma.StringNullableWithAggregatesFilter<"admin_users"> | string | null
   totp_enabled?: Prisma.BoolWithAggregatesFilter<"admin_users"> | boolean
@@ -408,6 +416,7 @@ export type admin_usersCreateInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -442,6 +451,7 @@ export type admin_usersUncheckedCreateInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
@@ -476,6 +486,7 @@ export type admin_usersUpdateInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -510,6 +521,7 @@ export type admin_usersUncheckedUpdateInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -544,6 +556,7 @@ export type admin_usersCreateManyInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
@@ -564,6 +577,7 @@ export type admin_usersUpdateManyMutationInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -583,6 +597,7 @@ export type admin_usersUncheckedUpdateManyInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -595,6 +610,14 @@ export type admin_usersUncheckedUpdateManyInput = {
   created_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updated_at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   allowed_pages?: Prisma.admin_usersUpdateallowed_pagesInput | string[]
+}
+
+export type Enumadmin_roleNullableListFilter<$PrismaModel = never> = {
+  equals?: $Enums.admin_role[] | Prisma.ListEnumadmin_roleFieldRefInput<$PrismaModel> | null
+  has?: $Enums.admin_role | Prisma.Enumadmin_roleFieldRefInput<$PrismaModel> | null
+  hasEvery?: $Enums.admin_role[] | Prisma.ListEnumadmin_roleFieldRefInput<$PrismaModel>
+  hasSome?: $Enums.admin_role[] | Prisma.ListEnumadmin_roleFieldRefInput<$PrismaModel>
+  isEmpty?: boolean
 }
 
 export type StringNullableListFilter<$PrismaModel = never> = {
@@ -611,6 +634,7 @@ export type admin_usersCountOrderByAggregateInput = {
   username?: Prisma.SortOrder
   password_hash?: Prisma.SortOrder
   role?: Prisma.SortOrder
+  roles?: Prisma.SortOrder
   role_id?: Prisma.SortOrder
   totp_secret?: Prisma.SortOrder
   totp_enabled?: Prisma.SortOrder
@@ -679,6 +703,10 @@ export type Admin_usersNullableScalarRelationFilter = {
   isNot?: Prisma.admin_usersWhereInput | null
 }
 
+export type admin_usersCreaterolesInput = {
+  set: $Enums.admin_role[]
+}
+
 export type admin_usersCreaterecovery_codesInput = {
   set: string[]
 }
@@ -693,6 +721,11 @@ export type StringFieldUpdateOperationsInput = {
 
 export type Enumadmin_roleFieldUpdateOperationsInput = {
   set?: $Enums.admin_role
+}
+
+export type admin_usersUpdaterolesInput = {
+  set?: $Enums.admin_role[]
+  push?: $Enums.admin_role | $Enums.admin_role[]
 }
 
 export type NullableStringFieldUpdateOperationsInput = {
@@ -967,6 +1000,7 @@ export type admin_usersCreateWithoutGiveaway_actionsInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -1000,6 +1034,7 @@ export type admin_usersUncheckedCreateWithoutGiveaway_actionsInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
@@ -1049,6 +1084,7 @@ export type admin_usersUpdateWithoutGiveaway_actionsInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -1082,6 +1118,7 @@ export type admin_usersUncheckedUpdateWithoutGiveaway_actionsInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -1115,6 +1152,7 @@ export type admin_usersCreateWithoutUser_tagsInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -1148,6 +1186,7 @@ export type admin_usersUncheckedCreateWithoutUser_tagsInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
@@ -1197,6 +1236,7 @@ export type admin_usersUpdateWithoutUser_tagsInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -1230,6 +1270,7 @@ export type admin_usersUncheckedUpdateWithoutUser_tagsInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -1263,6 +1304,7 @@ export type admin_usersCreateWithoutExcluded_usersInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -1296,6 +1338,7 @@ export type admin_usersUncheckedCreateWithoutExcluded_usersInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
@@ -1345,6 +1388,7 @@ export type admin_usersUpdateWithoutExcluded_usersInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -1378,6 +1422,7 @@ export type admin_usersUncheckedUpdateWithoutExcluded_usersInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -1411,6 +1456,7 @@ export type admin_usersCreateWithoutCustom_roleInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -1444,6 +1490,7 @@ export type admin_usersUncheckedCreateWithoutCustom_roleInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -1506,6 +1553,7 @@ export type admin_usersScalarWhereInput = {
   username?: Prisma.StringFilter<"admin_users"> | string
   password_hash?: Prisma.StringFilter<"admin_users"> | string
   role?: Prisma.Enumadmin_roleFilter<"admin_users"> | $Enums.admin_role
+  roles?: Prisma.Enumadmin_roleNullableListFilter<"admin_users">
   role_id?: Prisma.UuidNullableFilter<"admin_users"> | string | null
   totp_secret?: Prisma.StringNullableFilter<"admin_users"> | string | null
   totp_enabled?: Prisma.BoolFilter<"admin_users"> | boolean
@@ -1526,6 +1574,7 @@ export type admin_usersCreateWithoutSessionsInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -1559,6 +1608,7 @@ export type admin_usersUncheckedCreateWithoutSessionsInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
@@ -1608,6 +1658,7 @@ export type admin_usersUpdateWithoutSessionsInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -1641,6 +1692,7 @@ export type admin_usersUncheckedUpdateWithoutSessionsInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -1674,6 +1726,7 @@ export type admin_usersCreateWithoutNotesInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -1707,6 +1760,7 @@ export type admin_usersUncheckedCreateWithoutNotesInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
@@ -1756,6 +1810,7 @@ export type admin_usersUpdateWithoutNotesInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -1789,6 +1844,7 @@ export type admin_usersUncheckedUpdateWithoutNotesInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -1822,6 +1878,7 @@ export type admin_usersCreateWithoutAudit_eventsInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -1855,6 +1912,7 @@ export type admin_usersUncheckedCreateWithoutAudit_eventsInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
@@ -1904,6 +1962,7 @@ export type admin_usersUpdateWithoutAudit_eventsInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -1937,6 +1996,7 @@ export type admin_usersUncheckedUpdateWithoutAudit_eventsInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -1970,6 +2030,7 @@ export type admin_usersCreateWithoutGift_card_actionsInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -2003,6 +2064,7 @@ export type admin_usersUncheckedCreateWithoutGift_card_actionsInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
@@ -2052,6 +2114,7 @@ export type admin_usersUpdateWithoutGift_card_actionsInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -2085,6 +2148,7 @@ export type admin_usersUncheckedUpdateWithoutGift_card_actionsInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -2118,6 +2182,7 @@ export type admin_usersCreateWithoutVoucher_actionsInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -2151,6 +2216,7 @@ export type admin_usersUncheckedCreateWithoutVoucher_actionsInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
@@ -2200,6 +2266,7 @@ export type admin_usersUpdateWithoutVoucher_actionsInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -2233,6 +2300,7 @@ export type admin_usersUncheckedUpdateWithoutVoucher_actionsInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -2266,6 +2334,7 @@ export type admin_usersCreateWithoutExpensesInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -2299,6 +2368,7 @@ export type admin_usersUncheckedCreateWithoutExpensesInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
@@ -2348,6 +2418,7 @@ export type admin_usersUpdateWithoutExpensesInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -2381,6 +2452,7 @@ export type admin_usersUncheckedUpdateWithoutExpensesInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -2414,6 +2486,7 @@ export type admin_usersCreateWithoutRecurring_expensesInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -2447,6 +2520,7 @@ export type admin_usersUncheckedCreateWithoutRecurring_expensesInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
@@ -2496,6 +2570,7 @@ export type admin_usersUpdateWithoutRecurring_expensesInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -2529,6 +2604,7 @@ export type admin_usersUncheckedUpdateWithoutRecurring_expensesInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -2562,6 +2638,7 @@ export type admin_usersCreateWithoutShifts_createdInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -2595,6 +2672,7 @@ export type admin_usersUncheckedCreateWithoutShifts_createdInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
@@ -2644,6 +2722,7 @@ export type admin_usersUpdateWithoutShifts_createdInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -2677,6 +2756,7 @@ export type admin_usersUncheckedUpdateWithoutShifts_createdInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -2710,6 +2790,7 @@ export type admin_usersCreateWithoutShift_assignmentsInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -2743,6 +2824,7 @@ export type admin_usersUncheckedCreateWithoutShift_assignmentsInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
@@ -2792,6 +2874,7 @@ export type admin_usersUpdateWithoutShift_assignmentsInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -2825,6 +2908,7 @@ export type admin_usersUncheckedUpdateWithoutShift_assignmentsInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -2858,6 +2942,7 @@ export type admin_usersCreateWithoutSalary_employeesInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -2891,6 +2976,7 @@ export type admin_usersUncheckedCreateWithoutSalary_employeesInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
@@ -2940,6 +3026,7 @@ export type admin_usersUpdateWithoutSalary_employeesInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -2973,6 +3060,7 @@ export type admin_usersUncheckedUpdateWithoutSalary_employeesInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -3006,6 +3094,7 @@ export type admin_usersCreateWithoutSalary_payoutsInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -3039,6 +3128,7 @@ export type admin_usersUncheckedCreateWithoutSalary_payoutsInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   role_id?: string | null
   totp_secret?: string | null
   totp_enabled?: boolean
@@ -3088,6 +3178,7 @@ export type admin_usersUpdateWithoutSalary_payoutsInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -3121,6 +3212,7 @@ export type admin_usersUncheckedUpdateWithoutSalary_payoutsInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   role_id?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
@@ -3154,6 +3246,7 @@ export type admin_usersCreateManyCustom_roleInput = {
   username: string
   password_hash: string
   role?: $Enums.admin_role
+  roles?: Prisma.admin_usersCreaterolesInput | $Enums.admin_role[]
   totp_secret?: string | null
   totp_enabled?: boolean
   recovery_codes?: Prisma.admin_usersCreaterecovery_codesInput | string[]
@@ -3173,6 +3266,7 @@ export type admin_usersUpdateWithoutCustom_roleInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -3206,6 +3300,7 @@ export type admin_usersUncheckedUpdateWithoutCustom_roleInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -3239,6 +3334,7 @@ export type admin_usersUncheckedUpdateManyWithoutCustom_roleInput = {
   username?: Prisma.StringFieldUpdateOperationsInput | string
   password_hash?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.Enumadmin_roleFieldUpdateOperationsInput | $Enums.admin_role
+  roles?: Prisma.admin_usersUpdaterolesInput | $Enums.admin_role[]
   totp_secret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   totp_enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   recovery_codes?: Prisma.admin_usersUpdaterecovery_codesInput | string[]
@@ -3406,6 +3502,7 @@ export type admin_usersSelect<ExtArgs extends runtime.Types.Extensions.InternalA
   username?: boolean
   password_hash?: boolean
   role?: boolean
+  roles?: boolean
   role_id?: boolean
   totp_secret?: boolean
   totp_enabled?: boolean
@@ -3442,6 +3539,7 @@ export type admin_usersSelectCreateManyAndReturn<ExtArgs extends runtime.Types.E
   username?: boolean
   password_hash?: boolean
   role?: boolean
+  roles?: boolean
   role_id?: boolean
   totp_secret?: boolean
   totp_enabled?: boolean
@@ -3463,6 +3561,7 @@ export type admin_usersSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.E
   username?: boolean
   password_hash?: boolean
   role?: boolean
+  roles?: boolean
   role_id?: boolean
   totp_secret?: boolean
   totp_enabled?: boolean
@@ -3484,6 +3583,7 @@ export type admin_usersSelectScalar = {
   username?: boolean
   password_hash?: boolean
   role?: boolean
+  roles?: boolean
   role_id?: boolean
   totp_secret?: boolean
   totp_enabled?: boolean
@@ -3498,7 +3598,7 @@ export type admin_usersSelectScalar = {
   allowed_pages?: boolean
 }
 
-export type admin_usersOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "email" | "username" | "password_hash" | "role" | "role_id" | "totp_secret" | "totp_enabled" | "recovery_codes" | "is_active" | "display_username" | "profile_image" | "profile_image_mime" | "preferences" | "created_at" | "updated_at" | "allowed_pages", ExtArgs["result"]["admin_users"]>
+export type admin_usersOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "email" | "username" | "password_hash" | "role" | "roles" | "role_id" | "totp_secret" | "totp_enabled" | "recovery_codes" | "is_active" | "display_username" | "profile_image" | "profile_image_mime" | "preferences" | "created_at" | "updated_at" | "allowed_pages", ExtArgs["result"]["admin_users"]>
 export type admin_usersInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   custom_role?: boolean | Prisma.admin_users$custom_roleArgs<ExtArgs>
   audit_events?: boolean | Prisma.admin_users$audit_eventsArgs<ExtArgs>
@@ -3549,6 +3649,7 @@ export type $admin_usersPayload<ExtArgs extends runtime.Types.Extensions.Interna
     username: string
     password_hash: string
     role: $Enums.admin_role
+    roles: $Enums.admin_role[]
     role_id: string | null
     totp_secret: string | null
     totp_enabled: boolean
@@ -4004,6 +4105,7 @@ export interface admin_usersFieldRefs {
   readonly username: Prisma.FieldRef<"admin_users", 'String'>
   readonly password_hash: Prisma.FieldRef<"admin_users", 'String'>
   readonly role: Prisma.FieldRef<"admin_users", 'admin_role'>
+  readonly roles: Prisma.FieldRef<"admin_users", 'admin_role[]'>
   readonly role_id: Prisma.FieldRef<"admin_users", 'String'>
   readonly totp_secret: Prisma.FieldRef<"admin_users", 'String'>
   readonly totp_enabled: Prisma.FieldRef<"admin_users", 'Boolean'>

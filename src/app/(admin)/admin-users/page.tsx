@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Shield, CheckCircle2, XCircle, ShieldCheck, Wallet } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { adminDb } from "@/lib/admin-db";
+import { getEffectiveRoles } from "@/lib/admin-roles";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatDateTime } from "@/lib/utils/format";
@@ -35,6 +36,7 @@ export default async function AdminUsersPage() {
         email: true,
         username: true,
         role: true,
+        roles: true,
         totp_enabled: true,
         is_active: true,
         created_at: true,
@@ -170,9 +172,17 @@ export default async function AdminUsersPage() {
                     {user.email}
                   </td>
                   <td className="px-4 py-3">
-                    <Badge variant="outline" className="text-xs uppercase">
-                      {user.role}
-                    </Badge>
+                    <div className="flex flex-wrap gap-1">
+                      {getEffectiveRoles(user.role, user.roles).map((r) => (
+                        <Badge
+                          key={r}
+                          variant="outline"
+                          className="text-xs uppercase"
+                        >
+                          {r}
+                        </Badge>
+                      ))}
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     <Badge
@@ -260,9 +270,11 @@ export default async function AdminUsersPage() {
                   />
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  <Badge variant="outline" className="text-xs uppercase">
-                    {user.role}
-                  </Badge>
+                  {getEffectiveRoles(user.role, user.roles).map((r) => (
+                    <Badge key={r} variant="outline" className="text-xs uppercase">
+                      {r}
+                    </Badge>
+                  ))}
                   <Badge
                     variant="outline"
                     className={

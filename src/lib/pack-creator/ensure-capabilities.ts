@@ -93,10 +93,14 @@ export async function ensurePackCreatorCapabilities(): Promise<void> {
   if (ensured) return;
   try {
     for (const key of PACK_CREATOR_DEFAULT_PAGES) {
+      // Match BOTH legacy single-role rows (role = 'pack_creator') AND
+      // multi-role rows that merely INCLUDE pack_creator among `roles`
+      // (their primary `role` may be something else, e.g. support). The
+      // `::"admin_role"` cast keeps the array-membership test type-safe.
       await adminDb.$executeRaw`
         UPDATE "admin_users"
            SET "allowed_pages" = array_append("allowed_pages", ${key})
-         WHERE role = 'pack_creator'
+         WHERE (role = 'pack_creator' OR 'pack_creator'::"admin_role" = ANY("roles"))
            AND NOT (${key} = ANY("allowed_pages"))`;
     }
     ensured = true;

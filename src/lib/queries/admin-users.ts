@@ -1,5 +1,6 @@
 import { adminDb } from "@/lib/admin-db";
 import { getDb } from "@/lib/db";
+import { getEffectiveRoles } from "@/lib/admin-roles";
 import type { PaginatedResult } from "@/lib/types";
 
 export async function getAdminUserDetail(id: string) {
@@ -11,6 +12,7 @@ export async function getAdminUserDetail(id: string) {
       email: true,
       username: true,
       role: true,
+      roles: true,
       role_id: true,
       custom_role: { select: { id: true, name: true, capabilities: true } },
       totp_enabled: true,
@@ -37,7 +39,12 @@ export async function getAdminUserDetail(id: string) {
     id: user.id,
     email: user.email,
     username: user.username,
+    // Primary/canonical system role (highest-privilege of `roles`).
     role: user.role,
+    // Full effective system-role set. Legacy single-role users (empty
+    // `roles` column) collapse to `[role]` via getEffectiveRoles, so the
+    // UI always has a non-empty list to render + preselect.
+    roles: getEffectiveRoles(user.role, user.roles),
     // Assigned custom-role preset (admin_roles). null = no preset; the
     // user's allowed_pages are then purely per-user. roleName +
     // roleCapabilities are carried for display so the profile's

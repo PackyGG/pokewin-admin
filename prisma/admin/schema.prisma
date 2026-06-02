@@ -12,7 +12,21 @@ model admin_users {
   email          String               @unique
   username       String               @unique
   password_hash  String
+  // Primary / canonical system role. Kept as the single authoritative
+  // field for backward-compat: every legacy code path that reads a
+  // singular `role` keeps working. When `roles` (below) is non-empty the
+  // effective role set is `roles`; `role` is then the highest-privilege
+  // member of that set (admin first) so a multi-role user still has a
+  // sensible singular role for the places that need one (sidebar landing,
+  // creator-portal detection, the db-env admin gate).
   role           admin_role           @default(admin)
+  // Additive multi-role support. A user can hold several system roles at
+  // once (e.g. support + pack_creator). Effective permissions are the
+  // UNION across every role in this array PLUS the per-user adjustments in
+  // `allowed_pages`. Empty array = legacy single-role user → treated as
+  // `[role]` everywhere (see getEffectiveRoles in src/lib/admin-roles.ts).
+  // `role` is always kept in sync as the primary member of this set.
+  roles          admin_role[]         @default([])
   // Optional FK to admin_roles. Nullable so existing users keep working on
   // the hardcoded `role` enum during transition. Once a role_id is set it
   // takes precedence over the enum-based system-role defaults.

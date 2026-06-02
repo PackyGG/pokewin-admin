@@ -18,10 +18,14 @@ export function ProfileCard({ detail }: { detail: AdminUserDetail }) {
       <CardContent className="space-y-3 text-sm">
         <Row label="Email" value={detail.email} />
         <Row label="Username" value={detail.username} />
-        <Row label="Role">
-          <Badge variant="outline" className="text-xs uppercase">
-            {detail.role}
-          </Badge>
+        <Row label={detail.roles.length > 1 ? "Roles" : "Role"}>
+          <span className="flex flex-wrap justify-end gap-1">
+            {detail.roles.map((r) => (
+              <Badge key={r} variant="outline" className="text-xs uppercase">
+                {r}
+              </Badge>
+            ))}
+          </span>
         </Row>
         <Row label="2FA">
           <Badge

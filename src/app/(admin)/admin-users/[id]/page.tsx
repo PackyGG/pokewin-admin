@@ -68,9 +68,13 @@ export default async function AdminUserDetailPage({
           title={detail.username}
           titleClassName="truncate"
           badges={
-            <Badge variant="outline" className="text-xs uppercase">
-              {detail.role}
-            </Badge>
+            <div className="flex flex-wrap gap-1">
+              {detail.roles.map((r) => (
+                <Badge key={r} variant="outline" className="text-xs uppercase">
+                  {r}
+                </Badge>
+              ))}
+            </div>
           }
           subtitle={detail.email}
           subtitleClassName="truncate"

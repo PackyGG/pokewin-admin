@@ -80,6 +80,7 @@ export default async function AdminLayout({
         </Suspense>
         <AppSidebar
           role={session.role}
+          roles={session.roles ?? [session.role]}
           allowedPages={allowedPages}
           username={session.username}
           dbEnv={dbEnv}

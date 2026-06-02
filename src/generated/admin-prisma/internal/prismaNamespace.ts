@@ -2773,6 +2773,7 @@ export const Admin_usersScalarFieldEnum = {
   username: 'username',
   password_hash: 'password_hash',
   role: 'role',
+  roles: 'roles',
   role_id: 'role_id',
   totp_secret: 'totp_secret',
   totp_enabled: 'totp_enabled',

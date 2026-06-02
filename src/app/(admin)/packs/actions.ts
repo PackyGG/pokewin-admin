@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
-import { requirePageAccess } from "@/lib/dal";
+import { requirePageAccess, sessionHasRole } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { getPackGames } from "@/lib/queries/packs";
@@ -207,9 +207,14 @@ export async function updatePack(
   // changing card pool / price / house edge on an in-production
   // pack; without it the previous "demo-only" behaviour is kept.
   // Admin / support / marketing with __can_update_pack still edit
-  // anything as before — this gate is pack_creator-specific.
+  // anything as before — this gate is pack_creator-specific. Applies to
+  // ANY user holding the pack_creator role (primary OR secondary in a
+  // multi-role set) so the demo-only restriction can't be sidestepped by
+  // stacking pack_creator under a higher-priority primary role. A real
+  // admin short-circuits earlier in requireCapability, so this branch is
+  // never reached for admins.
   let editedLivePackUnderCapability = false;
-  if (session.role === "pack_creator") {
+  if (sessionHasRole(session, "pack_creator")) {
     const target = await db.packs.findUnique({
       where: { id },
       select: { active: true },

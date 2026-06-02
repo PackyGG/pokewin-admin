@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { BackButton } from "@/components/back-button";
 import { getPackDetail, getPackStats, getPackGames } from "@/lib/queries/packs";
-import { getUserPermissions, requirePageAccess } from "@/lib/dal";
+import { getUserPermissions, requirePageAccess, sessionHasRole } from "@/lib/dal";
 import { isUuid } from "@/lib/utils/ids";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { ensurePackCreatorCapabilities } from "@/lib/pack-creator/ensure-capabilities";
@@ -70,7 +70,7 @@ export default async function PackDetailPage({
   const showEditButton =
     canEdit &&
     (isAdmin ||
-      session.role !== "pack_creator" ||
+      !sessionHasRole(session, "pack_creator") ||
       !data.active ||
       canEditLive);
 

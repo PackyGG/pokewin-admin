@@ -3,7 +3,7 @@
 import crypto from "crypto";
 import { revalidatePath } from "next/cache";
 import { adminDb } from "@/lib/admin-db";
-import { verifySession } from "@/lib/dal";
+import { verifySession, sessionHasRole } from "@/lib/dal";
 import { fetchPublicStats } from "@/lib/socials-public";
 
 /**
@@ -22,7 +22,8 @@ import { getDb } from "@/lib/db";
 async function getCreatorTargetUserId(): Promise<string> {
   const db = await getDb();
   const session = await verifySession();
-  if (session.role !== "creator") throw new Error("Not a creator");
+  // Holds the creator role (primary OR secondary in a multi-role set).
+  if (!sessionHasRole(session, "creator")) throw new Error("Not a creator");
 
   // Look up the admin_user to get email, then find main user by email
   const adminUser = await adminDb.admin_users.findUnique({

@@ -9,7 +9,14 @@ const PENDING_COOKIE_NAME = "admin_2fa_pending";
 
 export type SessionPayload = {
   userId: string;
+  // Primary / canonical role (highest-privilege member of `roles`).
+  // Retained for the many call sites that read a singular role.
   role: string;
+  // Full effective role set. Always includes `role`. Cookies signed
+  // before multi-role shipped won't carry this field — `verifySession`
+  // re-derives it from the DB on every request, so this stored value is
+  // only a hint; consumers treat a missing/empty `roles` as `[role]`.
+  roles?: string[];
   email: string;
   username: string;
   expiresAt: Date;

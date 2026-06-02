@@ -43,17 +43,21 @@ export async function ensureSupportBaseline(): Promise<void> {
   try {
     // Single UPDATE per missing page key — both statements are
     // guarded by `NOT (… = ANY(allowed_pages))` so they no-op for
-    // users that already have access.
+    // users that already have access. Each matches BOTH legacy
+    // single-role rows (role = 'support') AND multi-role rows that
+    // merely INCLUDE support among `roles` (primary `role` may differ),
+    // so a support+pack_creator user still gets the /users + /dashboard
+    // baseline.
     await adminDb.$executeRawUnsafe(
       `UPDATE "admin_users"
           SET "allowed_pages" = array_append("allowed_pages", '/users')
-        WHERE role = 'support'
+        WHERE (role = 'support' OR 'support'::"admin_role" = ANY("roles"))
           AND NOT ('/users' = ANY("allowed_pages"))`,
     );
     await adminDb.$executeRawUnsafe(
       `UPDATE "admin_users"
           SET "allowed_pages" = array_append("allowed_pages", '/dashboard')
-        WHERE role = 'support'
+        WHERE (role = 'support' OR 'support'::"admin_role" = ANY("roles"))
           AND NOT ('/dashboard' = ANY("allowed_pages"))`,
     );
     ensured = true;

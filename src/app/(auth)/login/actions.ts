@@ -8,6 +8,7 @@ import { createSession, createPendingSession } from "@/lib/session";
 import { generateSecret } from "@/lib/totp";
 import { redirect } from "next/navigation";
 import { getDefaultRouteForUser } from "@/lib/dal";
+import { getEffectiveRoles, pickPrimaryRole } from "@/lib/admin-roles";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { MS_PER_MINUTE, MS_PER_HOUR } from "@/lib/utils/time";
 
@@ -66,6 +67,7 @@ export async function login(
       email: true,
       username: true,
       role: true,
+      roles: true,
       password_hash: true,
       totp_enabled: true,
       totp_secret: true,
@@ -120,9 +122,14 @@ export async function login(
   const ip = headersList.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
   const userAgent = headersList.get("user-agent") ?? null;
 
+  // Effective role set — `roles` when populated, else the legacy `[role]`.
+  // The cookie carries it as a hint; verifySession re-reads from the DB on
+  // every request so a role change mid-session takes effect immediately.
+  const effectiveRoles = getEffectiveRoles(adminUser.role, adminUser.roles);
   await createSession({
     userId: adminUser.id,
-    role: adminUser.role,
+    role: pickPrimaryRole(effectiveRoles),
+    roles: effectiveRoles,
     email: adminUser.email,
     username: adminUser.username,
   });

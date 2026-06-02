@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { getDefaultRouteForUser } from "@/lib/dal";
+import { getEffectiveRoles, pickPrimaryRole } from "@/lib/admin-roles";
 import { adminDb } from "@/lib/admin-db";
 import {
   getPendingSession,
@@ -78,6 +79,8 @@ export async function verify2FA(
     where: { id: pending.adminUserId },
     select: {
       id: true,
+      role: true,
+      roles: true,
       totp_secret: true,
       recovery_codes: true,
     },
@@ -123,10 +126,15 @@ export async function verify2FA(
   // held back by old failed attempts on subsequent logins.
   clearVerifyFailures(pending.adminUserId);
 
-  // Create real session
+  // Create real session. Carry the full effective role set from the DB
+  // (the pending cookie only held the login-time primary role) so the
+  // multi-role hint is correct from the first request; verifySession
+  // re-reads it anyway.
+  const effectiveRoles = getEffectiveRoles(adminUser.role, adminUser.roles);
   await createSession({
     userId: pending.adminUserId,
-    role: pending.role,
+    role: pickPrimaryRole(effectiveRoles),
+    roles: effectiveRoles,
     email: pending.email,
     username: pending.username,
   });

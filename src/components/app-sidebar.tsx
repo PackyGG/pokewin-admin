@@ -225,17 +225,25 @@ function useCollapsedGroups(activeGroupLabel: string | undefined) {
 
 export function AppSidebar({
   role,
+  roles,
   allowedPages,
   username,
   dbEnv,
 }: {
   role: string;
+  // Full effective role set (defaults to [role] for legacy single-role).
+  // Used for the admin bypass + the creator-only group so a multi-role
+  // user that merely INCLUDES admin/creator is treated correctly even
+  // when that isn't their highest-privilege primary role.
+  roles?: string[];
   allowedPages: string[];
   username: string;
   dbEnv: "prod" | "dev";
 }) {
   const pathname = usePathname();
-  const isAdmin = role === "admin";
+  const effectiveRoles = roles ?? [role];
+  const isAdmin = effectiveRoles.includes("admin");
+  const isCreator = effectiveRoles.includes("creator");
 
   const groupsWithVisibility = useMemo(() =>
     NAV_GROUPS
@@ -313,7 +321,7 @@ export function AppSidebar({
       </SidebarHeader>
       <SidebarContent>
         {groupsWithVisibility.map((group) => {
-          if (group.creatorOnly && role !== "creator") return null;
+          if (group.creatorOnly && !isCreator) return null;
           const { visibleItems } = group;
           if (visibleItems.length === 0) return null;
           const isOpen = openGroups[group.label] ?? false;

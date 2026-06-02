@@ -10,19 +10,41 @@ import { admin_role } from "@/generated/admin-prisma/client";
 import { require2FA } from "@/lib/require-2fa";
 import { ok, fail, type ServerActionResult } from "@/lib/errors/server-action-result";
 import { logError } from "@/lib/errors/logger";
-import { PACK_CREATOR_DEFAULT_PAGES } from "@/lib/pack-creator/ensure-capabilities";
+import { computeAllowedPagesForRoles } from "@/lib/role-baselines";
+import { isAdminRole, pickPrimaryRole } from "@/lib/admin-roles";
 
 /**
- * Create a new admin user with role-inherited allowed_pages. Returns
- * ServerActionResult — callers must check `result.success`. Permission
- * + validation failures surface a specific message; unexpected DB
- * crashes return a generic "couldn't create" message and log to Vercel.
+ * Normalize a caller-supplied role payload into a deduped, validated set
+ * of built-in roles. Accepts either the legacy single `role` string or
+ * the new `roles` array (or both — they're merged). Drops unknown values.
+ * Returns null when nothing valid was supplied so callers can reject.
+ */
+function normalizeRoles(input: {
+  role?: string;
+  roles?: string[];
+}): admin_role[] | null {
+  const set = new Set<admin_role>();
+  for (const r of [...(input.roles ?? []), ...(input.role ? [input.role] : [])]) {
+    if (isAdminRole(r)) set.add(r);
+  }
+  return set.size > 0 ? [...set] : null;
+}
+
+/**
+ * Create a new admin user with role-inherited allowed_pages. Accepts one
+ * OR several system roles (`roles`); the legacy single `role` field is
+ * still accepted for backward-compat. The new user's allowed_pages is the
+ * UNION of every assigned role's preset. Returns ServerActionResult —
+ * callers must check `result.success`. Permission + validation failures
+ * surface a specific message; unexpected DB crashes return a generic
+ * "couldn't create" message and log to Vercel.
  */
 export async function createAdminUser(data: {
   email: string;
   username: string;
   password: string;
-  role: string;
+  role?: string;
+  roles?: string[];
 }): Promise<ServerActionResult<{ id: string }>> {
   const session = await requireAdmin();
   try {
@@ -38,31 +60,19 @@ export async function createAdminUser(data: {
     );
   }
 
+  const roles = normalizeRoles(data);
+  if (!roles) {
+    return fail("Pick at least one valid role.", "VALIDATION");
+  }
+  // The canonical primary role (highest-privilege member, admin first).
+  const primary = pickPrimaryRole(roles);
+
   const passwordHash = await bcrypt.hash(data.password, 12);
 
-  // Inherit allowed_pages from existing users of the same role (the "role preset").
-  // If no users exist yet for this role, defaults to empty (admin can configure
-  // via /settings/roles after creation) — except for pack_creator, where the
-  // role's whole purpose is fixed and the chicken-and-egg of "no preset users
-  // exist yet" would otherwise leave a freshly-hired employee with zero access.
-  let allowedPages: string[] = [];
-  if (data.role !== "admin") {
-    const existingUser = await adminDb.admin_users.findFirst({
-      where: { role: data.role as admin_role },
-      select: { allowed_pages: true },
-    });
-    if (existingUser) {
-      allowedPages = existingUser.allowed_pages;
-    } else if (data.role === "pack_creator") {
-      // Out-of-the-box pack-creator can fully manage packs, cards, sets
-      // and the upgrader output pool: the four content pages plus every
-      // content capability. The exact key list is the shared
-      // PACK_CREATOR_DEFAULT_PAGES (same set the runtime self-heal
-      // back-fills onto existing rows). Admin can still adjust this
-      // role's permissions in /settings/roles → Pack Creator afterward.
-      allowedPages = [...PACK_CREATOR_DEFAULT_PAGES];
-    }
-  }
+  // Seed allowed_pages as the UNION of every assigned role's preset (each
+  // copied off an existing user of that role, else the role's fixed
+  // baseline). admin among the roles → [] (admin bypasses the page list).
+  const allowedPages = await computeAllowedPagesForRoles(roles);
 
   // Explicit select — Prisma's default create() RETURNS * which references
   // every column the generated client knows about. If a new column is
@@ -75,7 +85,9 @@ export async function createAdminUser(data: {
         email: data.email,
         username: data.username,
         password_hash: passwordHash,
-        role: data.role as admin_role,
+        // `role` stays the canonical primary; `roles` holds the full set.
+        role: primary,
+        roles,
         allowed_pages: allowedPages,
       },
       select: { id: true },
@@ -102,7 +114,7 @@ export async function createAdminUser(data: {
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "admin_user_created",
-    metadata: { email: data.email, username: data.username, role: data.role },
+    metadata: { email: data.email, username: data.username, roles },
   });
 
   revalidatePath("/admin-users");
@@ -165,29 +177,80 @@ export async function resetAdmin2FA(adminUserId: string, totpCode: string) {
   revalidatePath("/admin-users");
 }
 
-export async function changeAdminRole(adminUserId: string, newRole: string, totpCode: string) {
+/**
+ * Set the FULL system-role set for an admin user (multi-role). Replaces
+ * the user's `roles` with the supplied set and keeps the singular `role`
+ * column in sync as the highest-privilege primary. Gated on
+ * __can_change_admin_role + 2FA, exactly like the old single-role path.
+ *
+ * Permission handling is ADDITIVE: the baselines (page + capability keys)
+ * of every role in the new set are unioned ONTO the user's current
+ * allowed_pages. Existing per-user grants are never stripped — switching
+ * or adding a role only ever grants access, never silently revokes the
+ * manual adjustments an admin made. (To truly restrict a user, edit their
+ * permissions in the per-user editor below the role card.) If `admin` is
+ * among the new roles, allowed_pages is irrelevant — admin bypasses every
+ * page/capability gate.
+ *
+ * Note: every built-in role is accepted, INCLUDING `pack_creator`. The
+ * previous single-role `changeAdminRole` validated against a hardcoded
+ * ["admin","support","marketing","creator"] list that OMITTED
+ * pack_creator, so assigning pack_creator threw "Invalid admin role" and
+ * surfaced as a server error — that gap is closed here.
+ */
+export async function setAdminRoles(
+  adminUserId: string,
+  newRoles: string[],
+  totpCode: string,
+) {
   const session = await requireAdmin();
   await requireCapability(session, "__can_change_admin_role", "change admin roles");
 
   await require2FA(session.userId, totpCode);
 
-  if (!["admin", "support", "marketing", "creator"].includes(newRole)) {
-    throw new Error("Invalid admin role");
+  const roles = normalizeRoles({ roles: newRoles });
+  if (!roles) {
+    throw new Error("Pick at least one valid role");
   }
+  const primary = pickPrimaryRole(roles);
+
+  const target = await adminDb.admin_users.findUnique({
+    where: { id: adminUserId },
+    select: { allowed_pages: true },
+  });
+  if (!target) throw new Error("Admin user not found");
+
+  // Additive merge: current grants ∪ every new role's baseline. Never
+  // removes a manually-granted key. admin → empty list (bypass).
+  const baseline = await computeAllowedPagesForRoles(roles);
+  const mergedAllowed = roles.includes("admin")
+    ? []
+    : [...new Set([...target.allowed_pages, ...baseline])];
 
   await adminDb.admin_users.update({
     where: { id: adminUserId },
-    data: { role: newRole as admin_role },
+    data: { role: primary, roles, allowed_pages: mergedAllowed },
     select: { id: true },
   });
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "admin_role_changed",
-    metadata: { target_admin_id: adminUserId, new_role: newRole },
+    metadata: { target_admin_id: adminUserId, new_roles: roles },
   });
 
   revalidatePath("/admin-users");
+  revalidatePath(`/admin-users/${adminUserId}`);
+  revalidatePath("/", "layout");
+}
+
+/**
+ * Backward-compatible single-role setter — kept so any caller still
+ * passing one role keeps working. Delegates to setAdminRoles with a
+ * one-element set.
+ */
+export async function changeAdminRole(adminUserId: string, newRole: string, totpCode: string) {
+  return setAdminRoles(adminUserId, [newRole], totpCode);
 }
 
 export async function deleteAdminUser(

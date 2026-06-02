@@ -56,10 +56,14 @@ export function AdminUserTabs({ detail, auditStats, auditEvents, balanceLimits, 
         )}
       </div>
       <ManagementActions detail={detail} startTransition={startTransition} />
-      {isCurrentUserAdmin && detail.role === "creator" && (
+      {isCurrentUserAdmin && detail.roles.includes("creator") && (
         <LinkMainUserCard detail={detail} />
       )}
-      {isCurrentUserAdmin && detail.role !== "admin" && (
+      {/* Per-user role preset + permission editor. Shown for any user that
+          is NOT an admin — admins bypass the page list entirely, so the
+          editor is meaningless for them. Uses the effective role set so a
+          multi-role user that merely INCLUDES admin still hides it. */}
+      {isCurrentUserAdmin && !detail.roles.includes("admin") && (
         <>
           <AssignRoleCard
             adminUserId={detail.id}
