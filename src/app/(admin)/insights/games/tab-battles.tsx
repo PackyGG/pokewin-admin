@@ -11,6 +11,7 @@ import { labelForPeriod } from "@/lib/queries/insights-games/_shared";
 import { BattleDrilldownPopover } from "./battle-drilldown-popover";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
+import { formatPctOrNa, INSUFFICIENT_SAMPLE_SHORT } from "./_format-metrics";
 
 /**
  * Battles tab — total + per-mode breakdown + top hits table.
@@ -68,7 +69,7 @@ export async function BattlesTab({ period }: { period: GamesPeriod }) {
           <KpiTile
             label="P&L"
             value={formatCompactUsd(t.pnl)}
-            sub={`${t.marginPct.toFixed(2)}% margin`}
+            sub={`${formatPctOrNa(t.marginPct, 2, INSUFFICIENT_SAMPLE_SHORT)} margin`}
             icon={Trophy}
             accent={pnlAccent}
           />
@@ -117,9 +118,15 @@ export async function BattlesTab({ period }: { period: GamesPeriod }) {
                         {formatCompactUsd(m.pnl)}
                       </td>
                       <td
-                        className={`px-3 py-2 text-right tabular-nums ${m.marginPct >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}
+                        className={`px-3 py-2 text-right tabular-nums ${
+                          m.marginPct === null
+                            ? "text-muted-foreground"
+                            : m.marginPct >= 0
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : "text-rose-600 dark:text-rose-400"
+                        }`}
                       >
-                        {m.marginPct.toFixed(2)}%
+                        {formatPctOrNa(m.marginPct)}
                       </td>
                     </tr>
                   ))}

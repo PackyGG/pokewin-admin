@@ -24,6 +24,7 @@ import { labelForPeriod } from "@/lib/queries/insights-games/_shared";
 import { OverviewChart } from "./overview-chart";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
+import { formatPctOrNa, INSUFFICIENT_SAMPLE_SHORT } from "./_format-metrics";
 
 /**
  * Overview tab — headline KPIs + time series + per-product P&L
@@ -85,13 +86,13 @@ export async function OverviewTab({ period }: { period: GamesPeriod }) {
           <KpiTile
             label="House P&L"
             value={formatCompactUsd(k.housePnl)}
-            sub={`${k.housePnlMarginPct.toFixed(2)}% margin`}
+            sub={`${formatPctOrNa(k.housePnlMarginPct, 2, INSUFFICIENT_SAMPLE_SHORT)} margin`}
             icon={Activity}
             accent={pnlAccent}
           />
           <KpiTile
             label="RTP"
-            value={`${k.rtpPct.toFixed(2)}%`}
+            value={formatPctOrNa(k.rtpPct, 2, INSUFFICIENT_SAMPLE_SHORT)}
             sub="Payout ÷ wager"
             icon={Percent}
             accent="blue"
@@ -197,7 +198,7 @@ export async function OverviewTab({ period }: { period: GamesPeriod }) {
                   {formatCompactUsd(k.housePnl)}
                 </p>
                 <p className="text-[10px] text-muted-foreground">
-                  {k.housePnlMarginPct.toFixed(2)}% margin · RTP {k.rtpPct.toFixed(2)}%
+                  {formatPctOrNa(k.housePnlMarginPct, 2, INSUFFICIENT_SAMPLE_SHORT)} margin · RTP {formatPctOrNa(k.rtpPct, 2, INSUFFICIENT_SAMPLE_SHORT)}
                 </p>
               </div>
             </div>
@@ -234,11 +235,7 @@ export async function OverviewTab({ period }: { period: GamesPeriod }) {
               />
               <PanelRow
                 label="RTP"
-                value={
-                  k.packWager > 0
-                    ? `${((k.packPayout / k.packWager) * 100).toFixed(2)}%`
-                    : "—"
-                }
+                value={k.packWager > 0 ? formatPctOrNa(k.packRtpPct) : "—"}
               />
             </div>
           </StatPanel>
@@ -270,11 +267,7 @@ export async function OverviewTab({ period }: { period: GamesPeriod }) {
               />
               <PanelRow
                 label="RTP"
-                value={
-                  k.battleWager > 0
-                    ? `${((k.battlePayout / k.battleWager) * 100).toFixed(2)}%`
-                    : "—"
-                }
+                value={k.battleWager > 0 ? formatPctOrNa(k.battleRtpPct) : "—"}
               />
             </div>
           </StatPanel>
@@ -306,11 +299,7 @@ export async function OverviewTab({ period }: { period: GamesPeriod }) {
               />
               <PanelRow
                 label="RTP"
-                value={
-                  k.upgraderWager > 0
-                    ? `${((k.upgraderPayout / k.upgraderWager) * 100).toFixed(2)}%`
-                    : "—"
-                }
+                value={k.upgraderWager > 0 ? formatPctOrNa(k.upgraderRtpPct) : "—"}
               />
             </div>
           </StatPanel>

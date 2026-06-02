@@ -5,10 +5,15 @@ import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getCreatorSessionWindowsCte } from "../creator-session-windows";
 import {
+  ggr as ggrFormula,
+  empiricalRtp,
+} from "@/lib/metrics/formulas";
+import {
   type GamesPeriod,
   hoursForPeriod,
   realCustomersScopeSql,
 } from "./_shared";
+import { ratioToPct } from "./_metrics";
 
 /**
  * Per-pack drilldown for /insights/games packs tab. One pack id +
@@ -81,8 +86,10 @@ export type PackBorrowSplitRow = {
 
 export type PackRtpDrift = {
   theoreticalRtpPct: number;
-  realizedRtpPct: number;
-  driftPct: number;
+  /** Empirical realized RTP % — null below MIN_SAMPLE opens (insufficient sample). */
+  realizedRtpPct: number | null;
+  /** Realized − theoretical, in points. Null when realized is below sample. */
+  driftPct: number | null;
 };
 
 export type PackDrilldownData = {
@@ -153,7 +160,9 @@ export async function getPackDrilldown(
     };
     type RtpRow = {
       theoretical_rtp: string | null;
-      realized_rtp: string | null;
+      realized_wager: string | null;
+      realized_payout: string | null;
+      realized_opens: string | null;
     };
 
     // Pack metadata — also serves as existence check; if NULL, the
@@ -508,7 +517,8 @@ export async function getPackDrilldown(
            WHERE pc.pack_id = '${packId}'::uuid
          ),
          realized_wager AS (
-           SELECT COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS wager
+           SELECT COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS wager,
+                  COUNT(*) AS opens
            FROM ledger_transactions lt
            JOIN game_sessions gs ON gs.id = lt.game_session_id AND gs.game_type = 'pack'
            WHERE lt.type = 'pack_opening' AND lt.status = 'completed'
@@ -555,10 +565,9 @@ export async function getPackDrilldown(
                  / (SELECT pack_price FROM pack_meta) * 100
              )
            END::text AS theoretical_rtp,
-           CASE
-             WHEN (SELECT wager FROM realized_wager) > 0
-             THEN ((SELECT payout FROM realized_payout) / (SELECT wager FROM realized_wager)) * 100
-           END::text AS realized_rtp`,
+           (SELECT wager FROM realized_wager)::text AS realized_wager,
+           (SELECT payout FROM realized_payout)::text AS realized_payout,
+           (SELECT opens FROM realized_wager)::text AS realized_opens`,
       ),
     ]);
 
@@ -571,7 +580,7 @@ export async function getPackDrilldown(
         opens,
         wager,
         payout,
-        pnl: wager - payout,
+        pnl: ggrFormula({ wager, gamingPayout: payout }),
       };
     });
 
@@ -589,7 +598,10 @@ export async function getPackDrilldown(
         existing.opens += opens;
         existing.wager += wager;
         existing.payout += payout;
-        existing.pnl = existing.wager - existing.payout;
+        existing.pnl = ggrFormula({
+          wager: existing.wager,
+          gamingPayout: existing.payout,
+        });
       } else {
         userMap.set(r.user_id, {
           userId: r.user_id,
@@ -598,7 +610,7 @@ export async function getPackDrilldown(
           opens,
           wager,
           payout,
-          pnl: wager - payout,
+          pnl: ggrFormula({ wager, gamingPayout: payout }),
         });
       }
     }
@@ -642,9 +654,23 @@ export async function getPackDrilldown(
     const borrowSplit = [split["Non-borrow"], split.Borrow];
 
     const rtp = rtpRows[0];
-    const theoreticalRtpPct = rtp?.theoretical_rtp != null ? toNumber(rtp.theoretical_rtp) : 0;
-    const realizedRtpPct = rtp?.realized_rtp != null ? toNumber(rtp.realized_rtp) : 0;
-    const driftPct = realizedRtpPct - theoreticalRtpPct;
+    const theoreticalRtpPct =
+      rtp?.theoretical_rtp != null ? toNumber(rtp.theoretical_rtp) : 0;
+    // Realized RTP via the canonical sample-guarded helper — below
+    // MIN_SAMPLE opens it is null (insufficient sample) rather than a
+    // small-sample figure, and the drift is then undefined too.
+    const realizedWager = toNumber(rtp?.realized_wager);
+    const realizedPayout = toNumber(rtp?.realized_payout);
+    const realizedOpens = Number(rtp?.realized_opens ?? "0");
+    const realizedRtpPct = ratioToPct(
+      empiricalRtp({
+        gamingPayout: realizedPayout,
+        wager: realizedWager,
+        bets: realizedOpens,
+      }),
+    );
+    const driftPct =
+      realizedRtpPct === null ? null : realizedRtpPct - theoreticalRtpPct;
 
     return {
       packId: pack.id,

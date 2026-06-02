@@ -9,6 +9,12 @@ import { UpgraderHistogram } from "./upgrader-histogram";
 import { UpgraderBucketPopover } from "./upgrader-bucket-popover";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
+import {
+  ggr as ggrFormula,
+  empiricalRtp,
+  empiricalHouseEdge,
+} from "@/lib/metrics/formulas";
+import { formatPctOrNa, INSUFFICIENT_SAMPLE_SHORT } from "./_format-metrics";
 
 /**
  * Upgrader tab — totals + per-target-multiplier bucket breakdown.
@@ -59,17 +65,28 @@ export async function UpgraderTab({ period }: { period: GamesPeriod }) {
     acc.wager += b.totalWager;
     acc.payout += b.totalPayout;
   }
+  // Cohort GGR + sample-guarded empirical RTP / edge route through the
+  // canonical metric layer (`@/lib/metrics/formulas`) — no inline
+  // `payout / wager` arithmetic. `a.bets` is the cohort play count; a
+  // thin cohort renders the insufficient-sample sentinel (null) instead
+  // of a misleading RTP / margin.
   const cohortRows = cohortOrder.map((cohort) => {
     const a = cohortBuckets[cohort];
-    const pnl = a.wager - a.payout;
+    const pnl = ggrFormula({ wager: a.wager, gamingPayout: a.payout });
+    const rtp = empiricalRtp({
+      gamingPayout: a.payout,
+      wager: a.wager,
+      bets: a.bets,
+    });
+    const edge = empiricalHouseEdge({ wager: a.wager, ggr: pnl, bets: a.bets });
     return {
       cohort,
       bets: a.bets,
       wager: a.wager,
       payout: a.payout,
       pnl,
-      rtpPct: a.wager > 0 ? (a.payout / a.wager) * 100 : 0,
-      marginPct: a.wager > 0 ? (pnl / a.wager) * 100 : 0,
+      rtpPct: rtp === null ? null : rtp * 100,
+      marginPct: edge === null ? null : edge * 100,
     };
   });
 
@@ -114,7 +131,7 @@ export async function UpgraderTab({ period }: { period: GamesPeriod }) {
           <KpiTile
             label="P&L"
             value={formatCompactUsd(t.pnl)}
-            sub={`${t.marginPct.toFixed(2)}% margin · RTP ${t.rtpPct.toFixed(2)}%`}
+            sub={`${formatPctOrNa(t.marginPct, 2, INSUFFICIENT_SAMPLE_SHORT)} margin · RTP ${formatPctOrNa(t.rtpPct, 2, INSUFFICIENT_SAMPLE_SHORT)}`}
             icon={Percent}
             accent={pnlAccent}
           />
@@ -167,8 +184,8 @@ export async function UpgraderTab({ period }: { period: GamesPeriod }) {
                       {formatCompactUsd(c.pnl)}
                     </p>
                     <p className="text-[10px] text-muted-foreground">
-                      RTP {c.rtpPct.toFixed(2)}% · margin{" "}
-                      {c.marginPct.toFixed(2)}%
+                      RTP {formatPctOrNa(c.rtpPct, 2, INSUFFICIENT_SAMPLE_SHORT)} · margin{" "}
+                      {formatPctOrNa(c.marginPct, 2, INSUFFICIENT_SAMPLE_SHORT)}
                     </p>
                     <p className="mt-1 text-[10px] text-muted-foreground">
                       Wager{" "}
@@ -251,7 +268,7 @@ export async function UpgraderTab({ period }: { period: GamesPeriod }) {
                             {formatCompactUsd(b.pnl)}
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums">
-                            {b.rtpPct.toFixed(2)}%
+                            {formatPctOrNa(b.rtpPct)}
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums">
                             {b.hitRatePct.toFixed(2)}%

@@ -10,6 +10,7 @@ import { labelForPeriod } from "@/lib/queries/insights-games/_shared";
 import { PackDrilldownPopover } from "./pack-drilldown-popover";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
+import { formatPctOrNa } from "./_format-metrics";
 
 /**
  * Packs tab — per-pack profitability table for the selected period.
@@ -123,12 +124,18 @@ export async function PacksTab({ period }: { period: GamesPeriod }) {
                         {formatCompactUsd(p.pnl)}
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums">
-                        {p.rtpPct.toFixed(2)}%
+                        {formatPctOrNa(p.rtpPct)}
                       </td>
                       <td
-                        className={`px-3 py-2 text-right tabular-nums ${p.marginPct >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}
+                        className={`px-3 py-2 text-right tabular-nums ${
+                          p.marginPct === null
+                            ? "text-muted-foreground"
+                            : p.marginPct >= 0
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : "text-rose-600 dark:text-rose-400"
+                        }`}
                       >
-                        {p.marginPct.toFixed(2)}%
+                        {formatPctOrNa(p.marginPct)}
                       </td>
                       <td className="px-3 py-2 text-right">
                         <PackDrilldownPopover

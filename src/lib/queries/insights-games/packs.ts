@@ -5,10 +5,16 @@ import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getCreatorSessionWindowsCte } from "../creator-session-windows";
 import {
+  ggr as ggrFormula,
+  empiricalRtp,
+  empiricalHouseEdge,
+} from "@/lib/metrics/formulas";
+import {
   type GamesPeriod,
   hoursForPeriod,
   realCustomersScopeSql,
 } from "./_shared";
+import { ratioToPct } from "./_metrics";
 
 /**
  * Per-pack profitability for the selected period.
@@ -25,12 +31,15 @@ import {
  *     surfaces the "headline" exposure for the period).
  *   • payouts — sum of value_at_obtained for the cards delivered
  *     from non-borrow opens of this pack in the period.
- *   • pnl = borrowCorrectedWager − payouts.
- *   • rtpPct = payouts / borrowCorrectedWager × 100 (caps display
- *     at the natural value; can exceed 100% in lucky-streak
- *     periods).
- *   • marginPct = pnl / borrowCorrectedWager × 100 (house edge
- *     realised this period).
+ *   • pnl = borrowCorrectedWager − payouts (via the canonical
+ *     `@/lib/metrics` GGR helper — no inline arithmetic).
+ *   • rtpPct = empirical RTP × 100, and marginPct = empirical house
+ *     edge × 100, BOTH from the canonical sample-guarded helpers
+ *     (`empiricalRtp` / `empiricalHouseEdge`). A pack with fewer than
+ *     `MIN_SAMPLE` opens in the period reports `null` (the UI renders
+ *     "n/a — insufficient sample") instead of a small-sample
+ *     >100% RTP / negative-edge figure — those were variance, not a
+ *     formula bug. `opens` is the bet count fed to the guard.
  *
  * Battle pack opens count too: each battle_participant opens every
  * pack on `battles.pack_ids`. We join through battle_participants →
@@ -54,8 +63,10 @@ export type PackProfitRow = {
   stickerWager: number;
   payouts: number;
   pnl: number;
-  rtpPct: number;
-  marginPct: number;
+  /** Empirical RTP % — null below MIN_SAMPLE opens (insufficient sample). */
+  rtpPct: number | null;
+  /** Empirical house-edge margin % — null below MIN_SAMPLE opens. */
+  marginPct: number | null;
 };
 
 export type PacksProfitabilityData = {
@@ -246,11 +257,29 @@ export async function getPacksProfitability(
       const borrowCorrectedWager = toNumber(r.borrow_corrected_wager);
       const stickerWager = toNumber(r.sticker_wager);
       const payouts = toNumber(r.payouts);
-      const pnl = borrowCorrectedWager - payouts;
-      const rtpPct =
-        borrowCorrectedWager > 0 ? (payouts / borrowCorrectedWager) * 100 : 0;
-      const marginPct =
-        borrowCorrectedWager > 0 ? (pnl / borrowCorrectedWager) * 100 : 0;
+      // GGR + sample-guarded empirical RTP / edge from the canonical
+      // metric layer. `opens` is the per-pack bet count; below
+      // MIN_SAMPLE the helpers return null so a lucky/unlucky thin
+      // period renders the insufficient-sample sentinel, not a fake
+      // >100% RTP / negative edge.
+      const pnl = ggrFormula({
+        wager: borrowCorrectedWager,
+        gamingPayout: payouts,
+      });
+      const rtpPct = ratioToPct(
+        empiricalRtp({
+          gamingPayout: payouts,
+          wager: borrowCorrectedWager,
+          bets: opens,
+        }),
+      );
+      const marginPct = ratioToPct(
+        empiricalHouseEdge({
+          wager: borrowCorrectedWager,
+          ggr: pnl,
+          bets: opens,
+        }),
+      );
       return {
         packId: r.pack_id,
         name: r.name,

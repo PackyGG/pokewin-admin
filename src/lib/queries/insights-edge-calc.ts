@@ -1,5 +1,9 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
+import {
+  ggr as ggrFormula,
+  empiricalHouseEdge,
+} from "@/lib/metrics/formulas";
 
 /**
  * Edge Calc — theoretical EV / RTP / house-edge math for packs and the
@@ -311,15 +315,22 @@ export type UpgraderTargetRow = {
   payouts: number;
   /** Empirical win-rate: wins / bets. */
   hitRate: number;
-  /** Empirical house edge: (wager − payouts) / wager. Positive = house up. */
-  empiricalHouseEdge: number;
+  /**
+   * Empirical house edge: (wager − payouts) / wager, house POV. From the
+   * canonical sample-guarded `empiricalHouseEdge`: `null` below
+   * `MIN_SAMPLE` bets — a thin target bucket reports the insufficient-
+   * sample sentinel instead of a small-sample −14.92% / 114.92% figure
+   * (those were variance, not a formula bug).
+   */
+  empiricalHouseEdge: number | null;
   /**
    * Theoretical win-chance for a fair game at this multiplier with the
    * house edge derived from the same row: chance ≈ (1 − edge) / mult.
    * Surfaced next to the empirical hit-rate so an admin can spot
-   * targets where realized variance has drifted from the math.
+   * targets where realized variance has drifted from the math. `null`
+   * when the empirical edge is below sample (it is derived from it).
    */
-  theoreticalChance: number;
+  theoreticalChance: number | null;
 };
 
 /**
@@ -391,12 +402,22 @@ export async function getUpgraderEdgeByTarget(): Promise<UpgraderTargetRow[]> {
 
   return [...buckets.entries()]
     .map(([multiplier, b]) => {
-      const empiricalHouseEdge = b.wager > 0 ? (b.wager - b.payouts) / b.wager : 0;
-      // theoretical chance: (1 − edge) / mult. Use the empirical edge so
-      // the chance reflects the realized game; falls back to 0-edge when
-      // the bucket has no wager (impossible by construction but defensive).
+      // Empirical edge from the canonical sample-guarded helper: `null`
+      // below MIN_SAMPLE bets, so a thin target bucket renders the
+      // insufficient-sample sentinel rather than a small-sample
+      // −14.92% / 114.92% edge (M7/M8 were variance, not formula bugs).
+      const edge = empiricalHouseEdge({
+        wager: b.wager,
+        ggr: ggrFormula({ wager: b.wager, gamingPayout: b.payouts }),
+        bets: b.bets,
+      });
+      // Theoretical chance: (1 − edge) / mult. Only derivable when the
+      // edge cleared the sample guard — otherwise it would inherit the
+      // same small-sample noise, so it is null too.
       const theoreticalChance =
-        multiplier > 1 ? Math.min(1, (1 - empiricalHouseEdge) / multiplier) : 0;
+        edge !== null && multiplier > 1
+          ? Math.min(1, (1 - edge) / multiplier)
+          : null;
       return {
         multiplier,
         bets: b.bets,
@@ -404,7 +425,7 @@ export async function getUpgraderEdgeByTarget(): Promise<UpgraderTargetRow[]> {
         wager: b.wager,
         payouts: b.payouts,
         hitRate: b.bets > 0 ? b.wins / b.bets : 0,
-        empiricalHouseEdge,
+        empiricalHouseEdge: edge,
         theoreticalChance,
       };
     })

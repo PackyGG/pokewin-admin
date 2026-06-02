@@ -5,10 +5,16 @@ import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getCreatorSessionWindowsCte } from "../creator-session-windows";
 import {
+  ggr as ggrFormula,
+  empiricalRtp,
+  empiricalHouseEdge,
+} from "@/lib/metrics/formulas";
+import {
   type GamesPeriod,
   hoursForPeriod,
   realCustomersScopeSql,
 } from "./_shared";
+import { ratioToPct } from "./_metrics";
 
 /**
  * Upgrader profitability — total wager / payout / pnl, plus a
@@ -17,7 +23,16 @@ import {
  * Upgrader has no borrow concept (verified — no `borrow_percentage`
  * field on `upgrader_games`, no convention to read from the metadata
  * blob beyond pack-opening rows). Every upgrader game in the period
- * counts on both wager and payout sides.
+ * counts on both wager and payout sides. Wager / payout are sourced
+ * from `upgrader_games` (`bet_amount` / `won_amount`) — the canonical
+ * upgrader source of truth; upgrader is NOT booked to the ledger.
+ *
+ * GGR / RTP / house-edge route through the canonical `@/lib/metrics`
+ * helpers. The PER-BUCKET empirical RTP / margin carry the canonical
+ * `MIN_SAMPLE` guard: a thin target-multiplier bucket reports `null`
+ * (UI: "n/a — insufficient sample") rather than a small-sample
+ * −14.92% / 114.92% / >100% figure — those were variance, not formula
+ * bugs.
  *
  * Creator-on-stream rows are still excluded — same session_windows
  * CTE. The session_windows uses upgrader_games.created_at as the
@@ -48,9 +63,11 @@ export type UpgraderBucketRow = {
   totalWager: number;
   totalPayout: number;
   pnl: number;
-  marginPct: number;
+  /** Empirical house-edge margin % — null below MIN_SAMPLE bucket bets. */
+  marginPct: number | null;
   hitRatePct: number;
-  rtpPct: number;
+  /** Empirical RTP % — null below MIN_SAMPLE bucket bets. */
+  rtpPct: number | null;
 };
 
 export type UpgraderProfitabilityData = {
@@ -63,8 +80,10 @@ export type UpgraderProfitabilityData = {
     wager: number;
     payouts: number;
     pnl: number;
-    marginPct: number;
-    rtpPct: number;
+    /** Empirical house-edge margin % — null below MIN_SAMPLE bets. */
+    marginPct: number | null;
+    /** Empirical RTP % — null below MIN_SAMPLE bets. */
+    rtpPct: number | null;
     avgBet: number;
   };
   buckets: UpgraderBucketRow[];
@@ -203,9 +222,17 @@ export async function getUpgraderProfitability(
     const bucketRows: UpgraderBucketRow[] = [...TARGET_BUCKETS, { label: "Unknown" as const }].map(
       (b) => {
         const a = buckets[b.label];
-        const pnl = a.wager - a.payouts;
-        const marginPct = a.wager > 0 ? (pnl / a.wager) * 100 : 0;
-        const rtpPct = a.wager > 0 ? (a.payouts / a.wager) * 100 : 0;
+        // GGR + sample-guarded empirical RTP / edge from the canonical
+        // metric layer. `a.bets` is the per-bucket play count — below
+        // MIN_SAMPLE the helpers return null so a thin bucket renders the
+        // insufficient-sample sentinel, not a fake −14.92% / 114.92% edge.
+        const pnl = ggrFormula({ wager: a.wager, gamingPayout: a.payouts });
+        const marginPct = ratioToPct(
+          empiricalHouseEdge({ wager: a.wager, ggr: pnl, bets: a.bets }),
+        );
+        const rtpPct = ratioToPct(
+          empiricalRtp({ gamingPayout: a.payouts, wager: a.wager, bets: a.bets }),
+        );
         const hitRatePct = a.bets > 0 ? (a.wins / a.bets) * 100 : 0;
         return {
           label: b.label,
@@ -220,7 +247,7 @@ export async function getUpgraderProfitability(
       },
     );
 
-    const totalPnl = totalWager - totalPayout;
+    const totalPnl = ggrFormula({ wager: totalWager, gamingPayout: totalPayout });
     const losses = Math.max(0, totalBets - totalWins);
     // Cohort labels — group buckets into the operator-facing names
     // (low rollers / mid / risk takers / whales). The bucket label
@@ -248,8 +275,16 @@ export async function getUpgraderProfitability(
         wager: totalWager,
         payouts: totalPayout,
         pnl: totalPnl,
-        marginPct: totalWager > 0 ? (totalPnl / totalWager) * 100 : 0,
-        rtpPct: totalWager > 0 ? (totalPayout / totalWager) * 100 : 0,
+        marginPct: ratioToPct(
+          empiricalHouseEdge({ wager: totalWager, ggr: totalPnl, bets: totalBets }),
+        ),
+        rtpPct: ratioToPct(
+          empiricalRtp({
+            gamingPayout: totalPayout,
+            wager: totalWager,
+            bets: totalBets,
+          }),
+        ),
         avgBet: totalBets > 0 ? totalWager / totalBets : 0,
       },
       buckets: bucketRows,

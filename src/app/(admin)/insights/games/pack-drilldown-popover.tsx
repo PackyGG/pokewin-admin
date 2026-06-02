@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { formatCompactUsd, formatNumber } from "@/lib/utils/format";
 import type { PackDrilldownData } from "@/lib/queries/insights-games/pack-drilldown";
 import { fetchPackDrilldown } from "./drilldown-actions";
+import { formatPctOrNa } from "./_format-metrics";
 
 /**
  * Per-pack drilldown — clicking the trigger fetches and shows the
@@ -139,11 +140,16 @@ function DrilldownBody({ data }: { data: PackDrilldownData }) {
 
   // Drift > 0 means realized RTP > theoretical → users won more than
   // the pack is configured for → bad for house → rose. Drift < 0 →
-  // good for house → emerald.
-  const driftIsBadForHouse = rtpDrift.driftPct > 0;
-  const driftColor = driftIsBadForHouse
-    ? "text-rose-600 dark:text-rose-400"
-    : "text-emerald-600 dark:text-emerald-400";
+  // good for house → emerald. When the period had too few opens to be
+  // meaningful, realized RTP (and the drift) is the insufficient-sample
+  // sentinel (null) — rendered neutrally, never as a fake drift.
+  const hasDrift = rtpDrift.driftPct !== null;
+  const driftIsBadForHouse = hasDrift && rtpDrift.driftPct! > 0;
+  const driftColor = !hasDrift
+    ? "text-muted-foreground"
+    : driftIsBadForHouse
+      ? "text-rose-600 dark:text-rose-400"
+      : "text-emerald-600 dark:text-emerald-400";
 
   return (
     <div className="space-y-3">
@@ -162,7 +168,7 @@ function DrilldownBody({ data }: { data: PackDrilldownData }) {
             Realized RTP
           </p>
           <p className="font-semibold tabular-nums">
-            {rtpDrift.realizedRtpPct.toFixed(2)}%
+            {formatPctOrNa(rtpDrift.realizedRtpPct)}
           </p>
         </div>
         <div>
@@ -175,13 +181,19 @@ function DrilldownBody({ data }: { data: PackDrilldownData }) {
               driftColor,
             )}
           >
-            {driftIsBadForHouse ? (
-              <TrendingUp className="size-3" />
+            {!hasDrift ? (
+              formatPctOrNa(rtpDrift.driftPct)
             ) : (
-              <TrendingDown className="size-3" />
+              <>
+                {driftIsBadForHouse ? (
+                  <TrendingUp className="size-3" />
+                ) : (
+                  <TrendingDown className="size-3" />
+                )}
+                {rtpDrift.driftPct! >= 0 ? "+" : ""}
+                {rtpDrift.driftPct!.toFixed(2)}%
+              </>
             )}
-            {rtpDrift.driftPct >= 0 ? "+" : ""}
-            {rtpDrift.driftPct.toFixed(2)}%
           </p>
         </div>
       </div>

@@ -3,6 +3,7 @@ import "server-only";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
+import { ggr as ggrFormula } from "@/lib/metrics/formulas";
 
 /**
  * Per-battle drilldown for the Battles tab. Returns one battle's
@@ -180,7 +181,8 @@ export async function getBattleDrilldown(
         isWinner: winnerTeam != null && teamNumber === winnerTeam,
         betAmount,
         payout,
-        pnl: betAmount - payout,
+        // House-POV P&L per participant via the canonical GGR helper.
+        pnl: ggrFormula({ wager: betAmount, gamingPayout: payout }),
       };
     });
 
@@ -195,7 +197,8 @@ export async function getBattleDrilldown(
       betAmount,
       totalPot,
       totalPayout,
-      housePnl: totalPot - totalPayout,
+      // House-POV P&L via the canonical GGR helper (pot collected − cards paid).
+      housePnl: ggrFormula({ wager: totalPot, gamingPayout: totalPayout }),
       winnerTeam,
       borrowPercentage: Number(battle.borrow_percentage ?? "0"),
       sponsorshipPercentage: Number(battle.sponsorship_percentage ?? "0"),

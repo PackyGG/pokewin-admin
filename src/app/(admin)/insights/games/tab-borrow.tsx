@@ -9,6 +9,7 @@ import type { GamesPeriod } from "@/lib/queries/insights-games/_shared";
 import { labelForPeriod } from "@/lib/queries/insights-games/_shared";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
+import { formatPctOrNa } from "./_format-metrics";
 
 /**
  * Borrow tab — quantifies the borrow play that the other tabs DROP.
@@ -204,7 +205,7 @@ export async function BorrowTab({ period }: { period: GamesPeriod }) {
                       {formatCompactUsd(c.avgPnlPerUser)}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">
-                      {c.rtpPct.toFixed(2)}%
+                      {formatPctOrNa(c.rtpPct)}
                     </td>
                   </tr>
                 ))}

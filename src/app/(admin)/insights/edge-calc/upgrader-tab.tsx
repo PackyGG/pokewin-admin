@@ -10,11 +10,24 @@ import { FadeIn } from "@/components/fade-in";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
+import {
+  ggr as ggrFormula,
+  empiricalHouseEdge,
+} from "@/lib/metrics/formulas";
+
 import type {
   UpgraderTargetRow,
   UpgraderPoolStats,
 } from "@/lib/queries/insights-edge-calc";
 import { computeUpgraderEv, formatPct } from "./math";
+
+/** Sentinel for a per-target row below the canonical MIN_SAMPLE guard. */
+const INSUFFICIENT_SAMPLE = "n/a — insufficient sample";
+
+/** Format a fraction-or-null edge/chance: null → insufficient-sample sentinel. */
+function formatPctOrNa(value: number | null, decimals = 2): string {
+  return value === null ? INSUFFICIENT_SAMPLE : formatPct(value, decimals);
+}
 
 /**
  * Upgrader tab — two halves:
@@ -45,31 +58,40 @@ export function UpgraderTab({
   rows: UpgraderTargetRow[];
   pool: UpgraderPoolStats;
 }) {
-  // Volume-weighted edge across all empirical rows. Falls back to a
-  // textbook fair-game 0% edge when there's no data so the matrix
-  // still renders cleanly on a fresh install.
+  // Volume-weighted edge across ALL empirical rows — an aggregate over
+  // the whole sample (not a per-bucket figure), so it clears the sample
+  // guard in any real period. Routed through the canonical
+  // `empiricalHouseEdge` helper; `null` (no data / below sample) falls
+  // back to a textbook fair-game 0% edge so the EV matrix still renders
+  // cleanly on a fresh install.
   const totalWager = rows.reduce((sum, r) => sum + r.wager, 0);
   const totalPayout = rows.reduce((sum, r) => sum + r.payouts, 0);
-  const realizedEdge =
-    totalWager > 0 ? (totalWager - totalPayout) / totalWager : 0;
-
   const totalBets = rows.reduce((sum, r) => sum + r.bets, 0);
   const totalWins = rows.reduce((sum, r) => sum + r.wins, 0);
+  const realizedEdgeRatio = empiricalHouseEdge({
+    wager: totalWager,
+    ggr: ggrFormula({ wager: totalWager, gamingPayout: totalPayout }),
+    bets: totalBets,
+  });
+  const realizedEdge = realizedEdgeRatio ?? 0;
   const overallHitRate = totalBets > 0 ? totalWins / totalBets : 0;
 
-  // Find the highest and lowest realized edge buckets.
+  // Find the highest and lowest realized-edge buckets — only among
+  // buckets whose edge cleared the sample guard (a sub-MIN_SAMPLE
+  // bucket's edge is the insufficient-sample sentinel, not a real
+  // extreme, so it must not win "best"/"worst").
   let bestForHouse: UpgraderTargetRow | null = null;
   let worstForHouse: UpgraderTargetRow | null = null;
   for (const r of rows) {
-    if (r.bets === 0) continue;
+    if (r.bets === 0 || r.empiricalHouseEdge === null) continue;
     if (
       bestForHouse === null ||
-      r.empiricalHouseEdge > bestForHouse.empiricalHouseEdge
+      r.empiricalHouseEdge > bestForHouse.empiricalHouseEdge!
     )
       bestForHouse = r;
     if (
       worstForHouse === null ||
-      r.empiricalHouseEdge < worstForHouse.empiricalHouseEdge
+      r.empiricalHouseEdge < worstForHouse.empiricalHouseEdge!
     )
       worstForHouse = r;
   }
@@ -135,7 +157,7 @@ export function UpgraderTab({
                 <div className="mt-3 space-y-1">
                   <PanelRow
                     label="Realized edge"
-                    value={formatPct(bestForHouse.empiricalHouseEdge)}
+                    value={formatPctOrNa(bestForHouse.empiricalHouseEdge)}
                     valueClassName="text-emerald-600 dark:text-emerald-400"
                   />
                   <PanelRow
@@ -144,7 +166,7 @@ export function UpgraderTab({
                   />
                   <PanelRow
                     label="Theoretical chance"
-                    value={formatPct(bestForHouse.theoreticalChance)}
+                    value={formatPctOrNa(bestForHouse.theoreticalChance)}
                   />
                 </div>
               </StatPanel>
@@ -153,7 +175,7 @@ export function UpgraderTab({
               <StatPanel
                 title="Lowest Realized Edge"
                 icon={Sparkles}
-                accent={worstForHouse.empiricalHouseEdge >= 0 ? "amber" : "rose"}
+                accent={worstForHouse.empiricalHouseEdge! >= 0 ? "amber" : "rose"}
               >
                 <p className="text-xl font-bold tracking-tight tabular-nums">
                   {worstForHouse.multiplier}× target
@@ -165,9 +187,9 @@ export function UpgraderTab({
                 <div className="mt-3 space-y-1">
                   <PanelRow
                     label="Realized edge"
-                    value={formatPct(worstForHouse.empiricalHouseEdge)}
+                    value={formatPctOrNa(worstForHouse.empiricalHouseEdge)}
                     valueClassName={cn(
-                      worstForHouse.empiricalHouseEdge >= 0
+                      worstForHouse.empiricalHouseEdge! >= 0
                         ? "text-amber-600 dark:text-amber-400"
                         : "text-rose-600 dark:text-rose-400",
                     )}
@@ -178,7 +200,7 @@ export function UpgraderTab({
                   />
                   <PanelRow
                     label="Theoretical chance"
-                    value={formatPct(worstForHouse.theoreticalChance)}
+                    value={formatPctOrNa(worstForHouse.theoreticalChance)}
                   />
                 </div>
               </StatPanel>
@@ -229,7 +251,14 @@ export function UpgraderTab({
                   </tr>
                 ) : (
                   rows.map((r) => {
-                    const drift = r.hitRate - r.theoreticalChance;
+                    // Drift colouring only applies when the bucket cleared
+                    // the sample guard (theoretical chance non-null);
+                    // otherwise the hit-rate vs chance comparison would be
+                    // small-sample noise, so the cell stays neutral.
+                    const drift =
+                      r.theoreticalChance === null
+                        ? null
+                        : r.hitRate - r.theoreticalChance;
                     return (
                       <tr key={r.multiplier} className="hover:bg-muted/30">
                         <td className="px-4 py-3 font-medium tabular-nums">
@@ -247,17 +276,19 @@ export function UpgraderTab({
                             // House-POV: hit rate above theoretical chance
                             // = users winning more often → user favored
                             // → rose. Below = house favored → emerald.
-                            drift > 0.005
-                              ? "text-rose-600 dark:text-rose-400"
-                              : drift < -0.005
-                                ? "text-emerald-600 dark:text-emerald-400"
-                                : "",
+                            drift === null
+                              ? ""
+                              : drift > 0.005
+                                ? "text-rose-600 dark:text-rose-400"
+                                : drift < -0.005
+                                  ? "text-emerald-600 dark:text-emerald-400"
+                                  : "",
                           )}
                         >
                           {formatPct(r.hitRate)}
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
-                          {formatPct(r.theoreticalChance)}
+                          {formatPctOrNa(r.theoreticalChance)}
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums">
                           {formatCurrency(r.wager)}
@@ -268,12 +299,14 @@ export function UpgraderTab({
                         <td
                           className={cn(
                             "px-4 py-3 text-right font-medium tabular-nums",
-                            r.empiricalHouseEdge >= 0
-                              ? "text-emerald-600 dark:text-emerald-400"
-                              : "text-rose-600 dark:text-rose-400",
+                            r.empiricalHouseEdge === null
+                              ? "text-muted-foreground"
+                              : r.empiricalHouseEdge >= 0
+                                ? "text-emerald-600 dark:text-emerald-400"
+                                : "text-rose-600 dark:text-rose-400",
                           )}
                         >
-                          {formatPct(r.empiricalHouseEdge)}
+                          {formatPctOrNa(r.empiricalHouseEdge)}
                         </td>
                       </tr>
                     );

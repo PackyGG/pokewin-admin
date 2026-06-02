@@ -4,6 +4,7 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getCreatorSessionWindowsCte } from "../creator-session-windows";
+import { ggr as ggrFormula } from "@/lib/metrics/formulas";
 import {
   type GamesPeriod,
   hoursForPeriod,
@@ -152,7 +153,8 @@ export async function getUpgraderBucketTopUsers(
         bets: Number(r.bets),
         wager,
         payout,
-        pnl: wager - payout,
+        // House-POV P&L via the canonical GGR helper.
+        pnl: ggrFormula({ wager, gamingPayout: payout }),
       };
     });
   });

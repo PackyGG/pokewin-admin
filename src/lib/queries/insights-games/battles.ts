@@ -5,10 +5,15 @@ import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getCreatorSessionWindowsCte } from "../creator-session-windows";
 import {
+  ggr as ggrFormula,
+  empiricalHouseEdge,
+} from "@/lib/metrics/formulas";
+import {
   type GamesPeriod,
   hoursForPeriod,
   realCustomersScopeSql,
 } from "./_shared";
+import { ratioToPct } from "./_metrics";
 
 /**
  * Battles profitability — aggregate totals, per-mode breakdown, and
@@ -37,7 +42,8 @@ export type BattlesPerMode = {
   totalWager: number;
   totalPayout: number;
   pnl: number;
-  marginPct: number;
+  /** Empirical house-edge margin % — null below MIN_SAMPLE participant bets. */
+  marginPct: number | null;
 };
 
 export type BattleTopRow = {
@@ -59,7 +65,8 @@ export type BattlesProfitabilityData = {
     wager: number;
     payouts: number;
     pnl: number;
-    marginPct: number;
+    /** Empirical house-edge margin % — null below MIN_SAMPLE participant bets. */
+    marginPct: number | null;
     avgBetUsd: number;
   };
   byMode: BattlesPerMode[];
@@ -94,6 +101,7 @@ export async function getBattlesProfitability(
       wager: string;
       payouts: string;
       total_pot: string;
+      bets: string;
     };
     type TopRow = {
       battle_id: string;
@@ -131,7 +139,8 @@ export async function getBattlesProfitability(
          ),
          per_mode_wager AS (
            SELECT nb.mode,
-                  COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS wager
+                  COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS wager,
+                  COUNT(*) AS bets
            FROM ledger_transactions lt
            JOIN battle_participants bp ON bp.game_session_id = lt.game_session_id
            JOIN non_borrow_battles nb ON nb.id = bp.battle_id
@@ -175,7 +184,8 @@ export async function getBattlesProfitability(
            p.battles::text AS battles,
            COALESCE(w.wager, 0)::text AS wager,
            COALESCE(pay.payouts, 0)::text AS payouts,
-           p.total_pot::text AS total_pot
+           p.total_pot::text AS total_pot,
+           COALESCE(w.bets, 0)::text AS bets
          FROM per_mode_pot p
          LEFT JOIN per_mode_wager w ON w.mode = p.mode
          LEFT JOIN per_mode_payout pay ON pay.mode = p.mode
@@ -226,18 +236,25 @@ export async function getBattlesProfitability(
     let totalWager = 0;
     let totalPayout = 0;
     let totalPotSum = 0;
+    let totalBets = 0;
 
     const byMode: BattlesPerMode[] = modeRows.map((r) => {
       const battles = Number(r.battles);
       const wager = toNumber(r.wager);
       const payouts = toNumber(r.payouts);
       const totalPot = toNumber(r.total_pot);
+      const bets = Number(r.bets);
       totalBattles += battles;
       totalWager += wager;
       totalPayout += payouts;
       totalPotSum += totalPot;
-      const pnl = wager - payouts;
-      const marginPct = wager > 0 ? (pnl / wager) * 100 : 0;
+      totalBets += bets;
+      // GGR + sample-guarded empirical edge from the canonical metric
+      // layer; `bets` is the participant wager-row count for the mode.
+      const pnl = ggrFormula({ wager, gamingPayout: payouts });
+      const marginPct = ratioToPct(
+        empiricalHouseEdge({ wager, ggr: pnl, bets }),
+      );
       const avgPotUsd = battles > 0 ? totalPot / battles : 0;
       return {
         mode: r.mode,
@@ -274,8 +291,12 @@ export async function getBattlesProfitability(
       };
     });
 
-    const totalPnl = totalWager - totalPayout;
-    const marginPct = totalWager > 0 ? (totalPnl / totalWager) * 100 : 0;
+    // Totals GGR + sample-guarded empirical edge via the canonical
+    // helpers; total participant bet count drives the guard.
+    const totalPnl = ggrFormula({ wager: totalWager, gamingPayout: totalPayout });
+    const marginPct = ratioToPct(
+      empiricalHouseEdge({ wager: totalWager, ggr: totalPnl, bets: totalBets }),
+    );
     const avgBetUsd = totalBattles > 0 ? totalPotSum / totalBattles : 0;
 
     return {

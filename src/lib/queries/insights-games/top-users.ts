@@ -4,6 +4,7 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getCreatorSessionWindowsCte } from "../creator-session-windows";
+import { ggr as ggrFormula } from "@/lib/metrics/formulas";
 import {
   type GamesPeriod,
   hoursForPeriod,
@@ -134,13 +135,16 @@ export async function getGamesTopUsers(
     const includeOnBattles = filters.game === "all" || filters.game === "battles";
     const includeOnUpgrader = filters.game === "all" || filters.game === "upgrader";
 
+    // Ledger wager arm covers pack/battle ONLY — the upgrader wager is
+    // sourced from upgrader_games (canonical: upgrader is not on the
+    // ledger), folded in via `upgrader_src` below when the filter
+    // includes upgrader.
     const wagerTypes: string[] = [];
     if (includeOnPacks) wagerTypes.push("'pack_opening'");
     if (includeOnBattles) wagerTypes.push("'battle_bet'", "'battle_sponsorship'");
-    if (includeOnUpgrader) wagerTypes.push("'upgrader_bet'");
-    // Defensive: an empty types tuple is unreachable (filter parser
-    // forces one of the 4 valid values) but a one-char placeholder
-    // keeps SQL well-formed if a future caller bypasses the parser.
+    // Defensive: an empty types tuple is unreachable for the pack/battle
+    // filters but a one-char placeholder keeps SQL well-formed when the
+    // filter is upgrader-only (ledger wager arm contributes nothing then).
     const wagerTypeIn = wagerTypes.length > 0 ? wagerTypes.join(", ") : "''";
 
     const wagerSrcPredicates: string[] = [];
@@ -154,12 +158,9 @@ export async function getGamesTopUsers(
         "(lt.type IN ('battle_bet','battle_sponsorship') AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))",
       );
     }
-    if (includeOnUpgrader) {
-      wagerSrcPredicates.push("(lt.type = 'upgrader_bet')");
-    }
     const wagerOrPredicate = wagerSrcPredicates.length > 0
       ? `AND (${wagerSrcPredicates.join(" OR ")})`
-      : "";
+      : "AND false";
 
     // Inventory payout: include packs/battles arms only when their
     // wager side is also in.
@@ -243,11 +244,14 @@ export async function getGamesTopUsers(
              ${uiCutoff}
          )
          ${includeOnUpgrader ? `,
-         upgrader_payout_src AS (
+         upgrader_src AS (
+           -- Upgrader wager + payout from upgrader_games (canonical
+           -- source — both legs come from here, NOT the ledger). One row
+           -- per game = one play.
            SELECT ug.user_id,
-                  0::numeric AS wager,
+                  ug.bet_amount::numeric AS wager,
                   ug.won_amount::numeric AS payouts,
-                  0::int AS play
+                  1::int AS play
            FROM upgrader_games ug
            WHERE ug.user_id IN ${scope}
              AND NOT EXISTS (
@@ -270,7 +274,7 @@ export async function getGamesTopUsers(
            SELECT * FROM wager_src
            UNION ALL
            SELECT * FROM inv_payout_src
-           ${includeOnUpgrader ? "UNION ALL SELECT * FROM upgrader_payout_src" : ""}
+           ${includeOnUpgrader ? "UNION ALL SELECT * FROM upgrader_src" : ""}
          ) g
          JOIN "user" u ON u.id = g.user_id
          WHERE 1 = 1 ${countryFilter}
@@ -281,15 +285,28 @@ export async function getGamesTopUsers(
       // Distinct country codes seen in the unfiltered period scope —
       // populates the country filter dropdown. Tracks the period
       // window so the dropdown only shows countries with activity.
+      // Pack/battle ledger players UNION upgrader_games players (upgrader
+      // is not on the ledger, so it must be unioned in explicitly).
       db.$queryRawUnsafe<CountryRow[]>(
         `SELECT DISTINCT u.country_code AS country_code
-         FROM ledger_transactions lt
-         JOIN "user" u ON u.id = lt.user_id
-         WHERE lt.status = 'completed'
-           AND lt.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
-           AND lt.user_id IN ${scope}
-           AND u.country_code IS NOT NULL
-           ${ltCutoff}
+         FROM "user" u
+         WHERE u.country_code IS NOT NULL
+           AND (
+             u.id IN (
+               SELECT lt.user_id
+               FROM ledger_transactions lt
+               WHERE lt.status = 'completed'
+                 AND lt.type IN ('pack_opening','battle_bet','battle_sponsorship')
+                 AND lt.user_id IN ${scope}
+                 ${ltCutoff}
+             )
+             OR u.id IN (
+               SELECT ug.user_id
+               FROM upgrader_games ug
+               WHERE ug.user_id IN ${scope}
+                 ${ugCutoff}
+             )
+           )
          ORDER BY country_code`,
       ),
     ]);
@@ -304,7 +321,8 @@ export async function getGamesTopUsers(
         countryCode: r.country_code,
         wager,
         payouts,
-        pnl: wager - payouts,
+        // House-POV P&L via the canonical GGR helper (wager − payout).
+        pnl: ggrFormula({ wager, gamingPayout: payouts }),
         plays: Number(r.plays),
       };
     });

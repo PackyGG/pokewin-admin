@@ -5,10 +5,15 @@ import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getCreatorSessionWindowsCte } from "../creator-session-windows";
 import {
+  ggr as ggrFormula,
+  empiricalRtp,
+} from "@/lib/metrics/formulas";
+import {
   type GamesPeriod,
   hoursForPeriod,
   realCustomersScopeSql,
 } from "./_shared";
+import { ratioToPct } from "./_metrics";
 
 /**
  * Borrow-play analytics for the period — the SAME data the other
@@ -77,7 +82,8 @@ export type BorrowCohortRow = {
   avgWagerPerUser: number;
   avgPayoutPerUser: number;
   avgPnlPerUser: number;
-  rtpPct: number;
+  /** Empirical RTP % — null below MIN_SAMPLE plays in the cohort. */
+  rtpPct: number | null;
 };
 
 export type BorrowAnalyticsData = {
@@ -148,6 +154,7 @@ export async function getBorrowAnalytics(
       users: string;
       total_wager: string;
       total_payout: string;
+      total_plays: string;
     };
 
     // The per-row borrow % is read like the rest of the site:
@@ -410,16 +417,18 @@ export async function getBorrowAnalytics(
              )
          ),
          per_user_wager AS (
+           -- Pack/battle wager only — upgrader wager is sourced from
+           -- upgrader_games below (it is NOT booked to the ledger).
            SELECT lt.user_id,
-                  COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS wager
+                  COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS wager,
+                  COUNT(*) AS plays
            FROM ledger_transactions lt
            WHERE lt.status = 'completed'
-             AND lt.type IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
+             AND lt.type IN ('pack_opening','battle_bet','battle_sponsorship')
              AND lt.user_id IN ${scope}
              AND (
                (lt.type = 'pack_opening' AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%'))
                OR (lt.type IN ('battle_bet','battle_sponsorship') AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
-               OR (lt.type = 'upgrader_bet')
              )
              AND NOT EXISTS (
                SELECT 1 FROM session_windows sw
@@ -449,9 +458,13 @@ export async function getBorrowAnalytics(
              ${uiCutoffSql(hours)}
            GROUP BY ui.user_id
          ),
-         per_user_ug_payout AS (
+         per_user_ug AS (
+           -- Upgrader wager + payout + play count from upgrader_games
+           -- (the canonical upgrader source — both sides come from here).
            SELECT ug.user_id,
-                  COALESCE(SUM(ug.won_amount::numeric), 0) AS payout
+                  COALESCE(SUM(ug.bet_amount::numeric), 0) AS wager,
+                  COALESCE(SUM(ug.won_amount::numeric), 0) AS payout,
+                  COUNT(*) AS plays
            FROM upgrader_games ug
            WHERE ug.user_id IN ${scope}
              AND NOT EXISTS (
@@ -468,22 +481,24 @@ export async function getBorrowAnalytics(
            UNION
            SELECT user_id FROM per_user_inv_payout
            UNION
-           SELECT user_id FROM per_user_ug_payout
+           SELECT user_id FROM per_user_ug
          ),
          per_user_pnl AS (
            SELECT u.user_id,
-                  COALESCE(w.wager, 0) AS wager,
-                  COALESCE(p.payout, 0) + COALESCE(g.payout, 0) AS payout
+                  COALESCE(w.wager, 0) + COALESCE(g.wager, 0) AS wager,
+                  COALESCE(p.payout, 0) + COALESCE(g.payout, 0) AS payout,
+                  COALESCE(w.plays, 0) + COALESCE(g.plays, 0) AS plays
            FROM all_users u
            LEFT JOIN per_user_wager w ON w.user_id = u.user_id
            LEFT JOIN per_user_inv_payout p ON p.user_id = u.user_id
-           LEFT JOIN per_user_ug_payout g ON g.user_id = u.user_id
+           LEFT JOIN per_user_ug g ON g.user_id = u.user_id
          )
          SELECT
            CASE WHEN b.user_id IS NOT NULL THEN '1' ELSE '0' END AS is_borrower,
            COUNT(*)::text AS users,
            COALESCE(SUM(p.wager), 0)::text AS total_wager,
-           COALESCE(SUM(p.payout), 0)::text AS total_payout
+           COALESCE(SUM(p.payout), 0)::text AS total_payout,
+           COALESCE(SUM(p.plays), 0)::text AS total_plays
          FROM per_user_pnl p
          LEFT JOIN borrowers b ON b.user_id = p.user_id
          GROUP BY (b.user_id IS NOT NULL)`,
@@ -582,11 +597,24 @@ export async function getBorrowAnalytics(
       acc.users = Number(r.users);
       acc.totalWager = toNumber(r.total_wager);
       acc.totalPayout = toNumber(r.total_payout);
+      const plays = Number(r.total_plays);
       acc.avgWagerPerUser = acc.users > 0 ? acc.totalWager / acc.users : 0;
       acc.avgPayoutPerUser = acc.users > 0 ? acc.totalPayout / acc.users : 0;
-      acc.avgPnlPerUser = acc.avgWagerPerUser - acc.avgPayoutPerUser;
-      acc.rtpPct =
-        acc.totalWager > 0 ? (acc.totalPayout / acc.totalWager) * 100 : 0;
+      // Per-user P&L = avg wager − avg payout; expressed via the
+      // canonical GGR helper (house POV) so the sign convention matches
+      // the rest of the metric layer. RTP routes through the canonical
+      // sample-guarded helper (null below MIN_SAMPLE plays in the cohort).
+      acc.avgPnlPerUser = ggrFormula({
+        wager: acc.avgWagerPerUser,
+        gamingPayout: acc.avgPayoutPerUser,
+      });
+      acc.rtpPct = ratioToPct(
+        empiricalRtp({
+          gamingPayout: acc.totalPayout,
+          wager: acc.totalWager,
+          bets: plays,
+        }),
+      );
     }
     const cohorts: BorrowCohortRow[] = [cohortMap["1"], cohortMap["0"]];
 
