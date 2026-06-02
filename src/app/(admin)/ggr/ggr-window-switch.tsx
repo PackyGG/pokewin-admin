@@ -14,9 +14,9 @@ import { cn } from "@/lib/utils";
  * `/ggr` deep-link lands on it.
  *
  * Each tab swap is a real navigation so the server component re-runs
- * `getGgrBreakdown(window)` + `getGgrTopContributors(window, 10)` for the
- * new window — the cached server-side queries (60s revalidate) keep the
- * round-trip cheap when admins flip between windows.
+ * `getGgrPageData(window)` + `getGgrTopContributors(window, 10)` (from
+ * `@/lib/queries/ggr`) for the new window — the canonical metric reads
+ * keep the round-trip cheap when admins flip between windows.
  */
 
 const WINDOWS = [

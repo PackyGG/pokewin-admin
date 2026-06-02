@@ -7,6 +7,12 @@ import {
   ArrowUpFromLine,
   Coins,
   Users,
+  Gift,
+  Repeat,
+  Percent,
+  Activity,
+  Equal,
+  Minus,
 } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
@@ -24,15 +30,18 @@ import {
 } from "@/components/loading-skeletons";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { formatCurrency } from "@/lib/utils/format";
+import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import {
-  getGgrBreakdown,
-  getGgrTopContributors,
   DASHBOARD_PERIOD_LABELS,
   type DashboardPeriod,
-  type GgrBreakdownRow,
+} from "@/lib/queries/dashboard-period";
+import {
+  getGgrPageData,
+  getGgrTopContributors,
+  ggrWindowToMetricWindow,
+  type GgrLedgerTypeRow,
   type GgrTopContributorRow,
-} from "@/lib/queries/dashboard";
+} from "@/lib/queries/ggr";
 import { describeLedgerType } from "@/lib/queries/_wager-payout-descriptions";
 import { ExportButton } from "@/components/export-button";
 
@@ -55,25 +64,38 @@ function parseGgrWindow(value: string | undefined): GgrWindow {
     : DEFAULT_GGR_WINDOW;
 }
 
+/** Render an empirical 0..1 ratio as a percent, or "n/a" below sample. */
+function formatRatioPct(ratio: number | null): string {
+  if (ratio === null) return "n/a";
+  return `${(ratio * 100).toFixed(2)}%`;
+}
+
 /**
  * `/ggr` — full GGR breakdown page. Sits in the Overview sidebar group
  * as the deep-dive companion to the headline GGR card on /dashboard.
  *
- * The dashboard's GgrStatCard shipped a popover breakdown in
- * 2a21491 + 90d8f09 — this page is the long-form version of that
- * popover: every wager and payout ledger type rendered as a per-type
- * card with its own explanation, plus a per-period top-contributors
- * section. Reuses the cached `getGgrBreakdown` + `getGgrTopContributors`
- * query helpers so the page stays consistent with the headline GGR
- * number (same window, same filter, same numerics).
+ * Rebuilt on the canonical `@/lib/metrics` layer (the page's own data
+ * layer lives in `@/lib/queries/ggr`). The breakdown is organised into
+ * the THREE canonical groups the metric partition defines:
  *
- * Window state lives in `?window=` so the URL is shareable and reload
- * survives the active tab — same pattern as `/creators?tab=`. Default
- * is `24h` (matches `DEFAULT_DASHBOARD_PERIOD`).
+ *   1. Gaming payouts — the payout side of GGR (inventory pack/battle
+ *      wins + battle_refund + upgrader payout), shown against the wager
+ *      side so GGR = wager − gamingPayout is visible.
+ *   2. Neutral conversions — card_sale / voucher_redeemed / exchanges.
+ *      Disposals of value the user already owns; NOT house cost, NOT
+ *      losses — clearly labelled as such and excluded from GGR/NGR.
+ *   3. Reward giveback — deposit_bonus / rakeback / race prizes / rain /
+ *      etc. House-funded incentive spend that reduces NGR (not GGR).
  *
- * The body is wrapped in Suspense so flipping windows shows a skeleton
- * instead of freezing on stale numbers — the cached query (60s TTL)
- * keeps the swap fast for the common cases.
+ * GGR/NGR are upgrader-INCLUSIVE (from `upgrader_games`), matching the
+ * game-economics figure on /insights/games. Because the breakdown reads
+ * the central type SETS, the imminent voucher reclassification
+ * (voucher_redeemed → neutral, battle_excess_to_voucher → gaming)
+ * propagates here automatically.
+ *
+ * Window state lives in `?window=` so the URL is shareable. Default is
+ * `24h`. The body is wrapped in Suspense so flipping windows shows a
+ * skeleton instead of freezing on stale numbers.
  */
 export default async function GgrPage({
   searchParams,
@@ -92,7 +114,7 @@ export default async function GgrPage({
           icon={TrendingUp}
           accent="cyan"
           title="GGR Breakdown"
-          subtitle="Every wager and payout component driving Gross Gaming Revenue. Excludes creator on-stream sessions on both sides (same filter as Daily P&L)."
+          subtitle="Gaming margin decomposed into its canonical groups — gaming payouts, neutral conversions, and reward giveback. Upgrader included; creator on-stream sessions excluded on both sides (same scope as Daily P&L)."
           action={
             <>
               <GgrWindowSwitch />
@@ -109,14 +131,18 @@ export default async function GgrPage({
         key={ggrWindow}
         fallback={
           <div className="space-y-6">
-            <KpiStripSkeleton count={4} />
+            <KpiStripSkeleton count={6} />
             <div className="space-y-3">
               <SectionHeadingSkeleton titleWidth={180} />
-              <LedgerTypeGridSkeleton count={5} />
+              <LedgerTypeGridSkeleton count={3} />
+            </div>
+            <div className="space-y-3">
+              <SectionHeadingSkeleton titleWidth={200} />
+              <LedgerTypeGridSkeleton count={4} />
             </div>
             <div className="space-y-3">
               <SectionHeadingSkeleton titleWidth={180} />
-              <LedgerTypeGridSkeleton count={9} />
+              <LedgerTypeGridSkeleton count={6} />
             </div>
             <div className="space-y-3">
               <SectionHeadingSkeleton titleWidth={220} />
@@ -134,18 +160,9 @@ export default async function GgrPage({
 // ─── Body ────────────────────────────────────────────────────────────
 
 /**
- * Streaming body — fetches the per-type breakdown and the top-10
- * contributor list for the active window in parallel and renders the
- * KPI strip + per-type cards + contributor table.
- *
- * Top contributors are fetched eagerly here (unlike the dashboard
- * popover, where the per-user GROUP BY is hidden behind a click)
- * because this page IS the GGR deep-dive — admins land here to see the
- * top movers, so deferring them to a second click would be hostile.
- * The cached `getGgrBreakdown` is reused for the KPI numbers; the
- * top-contributors call is uncached at the query layer but the page
- * itself is server-rendered behind Suspense, so the per-page repeat
- * cost is bounded by how often admins hit /ggr.
+ * Streaming body — fetches the canonical page payload and the top-10
+ * contributor list for the active window in parallel, then renders the
+ * KPI strip + the three breakdown groups + the contributor table.
  */
 async function GgrBody({
   ggrWindow,
@@ -154,80 +171,44 @@ async function GgrBody({
   ggrWindow: GgrWindow;
   periodLabel: string;
 }) {
-  const [breakdown, contributors] = await Promise.all([
-    getGgrBreakdown(ggrWindow),
-    getGgrTopContributors(ggrWindow, 10),
+  const metricWindow = ggrWindowToMetricWindow(ggrWindow);
+  const [data, contributors] = await Promise.all([
+    getGgrPageData(metricWindow),
+    getGgrTopContributors(metricWindow, 10),
   ]);
-
-  // Hide zero-total rows on each side so quiet windows (e.g. last 24h
-  // with no upgrader plays or no race prizes) don't render dead cards.
-  // The headline KPI strip still reflects the full math.
-  const wagers = breakdown.wagers.filter((r) => r.total > 0);
-  const payouts = breakdown.payouts.filter((r) => r.total > 0);
 
   return (
     <FadeIn className="space-y-6">
-      {/* Hero KPI strip — 4 tiles. Wagers (neutral identity tint),
-          Payouts (rose — money out), GGR (house-POV: positive emerald,
-          negative rose), and a duplicate "Net for house" tile for
-          emphasis on positive windows. */}
-      <KpiStrip
-        wagersTotal={breakdown.wagersTotal}
-        payoutsTotal={breakdown.payoutsTotal}
-        ggr={breakdown.ggr}
-        periodLabel={periodLabel}
-      />
+      <KpiStrip data={data} periodLabel={periodLabel} />
 
-      {/* Wagers — every wager-side ledger type. Cards rendered in DESC
-          order by total (the SQL already orders that way). Each card
-          shows the type label, hero $ amount, and the canonical
-          description. */}
+      {/* ── Group 1 — Gaming payouts (the GGR engine) ───────────────── */}
       <section className="space-y-3">
         <SectionHeading
-          icon={ArrowDownToLine}
-          title={`Wagers · ${periodLabel}`}
+          icon={Coins}
+          title={`Gaming payouts · ${periodLabel}`}
         />
-        {wagers.length === 0 ? (
-          <EmptySection label="No wager activity in this window." />
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {wagers.map((row) => (
-              <LedgerTypeCard
-                key={row.type}
-                row={row}
-                side="wager"
-                bucketTotal={breakdown.wagersTotal}
-              />
-            ))}
-          </div>
-        )}
+        <GamingGroup data={data} />
       </section>
 
-      {/* Payouts — every payout-side ledger type. Rose tint (money out
-          → house loss). */}
+      {/* ── Group 2 — Neutral conversions (not house cost) ──────────── */}
       <section className="space-y-3">
         <SectionHeading
-          icon={ArrowUpFromLine}
-          title={`Payouts · ${periodLabel}`}
+          icon={Repeat}
+          title={`Neutral conversions · ${periodLabel}`}
         />
-        {payouts.length === 0 ? (
-          <EmptySection label="No payout activity in this window." />
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {payouts.map((row) => (
-              <LedgerTypeCard
-                key={row.type}
-                row={row}
-                side="payout"
-                bucketTotal={breakdown.payoutsTotal}
-              />
-            ))}
-          </div>
-        )}
+        <NeutralGroup rows={data.neutral.rows} total={data.neutral.total} />
       </section>
 
-      {/* Top 10 contributors for the active window — net is signed from
-          the house POV, so the column color flips per row. */}
+      {/* ── Group 3 — Reward giveback (reduces NGR) ─────────────────── */}
+      <section className="space-y-3">
+        <SectionHeading
+          icon={Gift}
+          title={`Reward giveback · ${periodLabel}`}
+        />
+        <RewardGroup data={data} />
+      </section>
+
+      {/* ── Top contributors ────────────────────────────────────────── */}
       <section className="space-y-3">
         <SectionHeading
           icon={Users}
@@ -241,97 +222,321 @@ async function GgrBody({
 
 // ─── KPI strip ───────────────────────────────────────────────────────
 
+/**
+ * 6-tile headline strip. Wager (purple — identity/flow tint), Gaming
+ * payout (rose — money out), GGR + NGR (house-POV: positive emerald,
+ * negative rose), House edge (blue — informational), Bets (amber).
+ */
 function KpiStrip({
-  wagersTotal,
-  payoutsTotal,
-  ggr,
+  data,
   periodLabel,
 }: {
-  wagersTotal: number;
-  payoutsTotal: number;
-  ggr: number;
+  data: Awaited<ReturnType<typeof getGgrPageData>>;
   periodLabel: string;
 }) {
-  const ggrIsHouseProfit = ggr >= 0;
+  const { headline } = data;
+  const ggrUp = headline.ggr >= 0;
+  const ngrUp = headline.ngr >= 0;
   return (
-    <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
+    <div className="grid gap-3 grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
       <KpiTile
-        label="Total Wagers"
-        value={formatCurrency(wagersTotal)}
-        sub={periodLabel}
+        label="Wager"
+        value={formatCurrency(headline.wager)}
+        sub={`Pack + battle + upgrader · ${periodLabel}`}
         icon={ArrowDownToLine}
         accent="purple"
       />
       <KpiTile
-        label="Total Payouts"
-        value={formatCurrency(payoutsTotal)}
-        sub={periodLabel}
+        label="Gaming Payout"
+        value={formatCurrency(headline.gamingPayout)}
+        sub="Cards + battle refund + upgrader"
         icon={ArrowUpFromLine}
-        // Payouts always shrink GGR — rose tint regardless of magnitude
-        // so the card reads house-POV consistently.
         accent="rose"
       />
       <KpiTile
-        label="GGR (Wagers − Payouts)"
-        value={`${ggrIsHouseProfit ? "+" : "−"}${formatCurrency(Math.abs(ggr))}`}
-        sub={periodLabel}
-        icon={ggrIsHouseProfit ? TrendingUp : TrendingDown}
-        // House-POV: positive GGR → emerald, negative GGR → rose.
-        accent={ggrIsHouseProfit ? "emerald" : "rose"}
+        label="GGR (Wager − Payout)"
+        value={`${ggrUp ? "+" : "−"}${formatCurrency(Math.abs(headline.ggr))}`}
+        sub={ggrUp ? "House profit" : "House loss"}
+        icon={ggrUp ? TrendingUp : TrendingDown}
+        accent={ggrUp ? "emerald" : "rose"}
       />
       <KpiTile
-        label="Net for House"
-        // Net for the house is the same number as GGR with the same
-        // sign convention — surfacing it twice so the "what does this
-        // mean for us" line is unmissable when admins scan the strip.
-        value={`${ggrIsHouseProfit ? "+" : "−"}${formatCurrency(Math.abs(ggr))}`}
-        sub={ggrIsHouseProfit ? "House profit" : "House loss"}
+        label="NGR (GGR − Rewards)"
+        value={`${ngrUp ? "+" : "−"}${formatCurrency(Math.abs(headline.ngr))}`}
+        sub="Net of reward giveback"
         icon={Coins}
-        accent={ggrIsHouseProfit ? "emerald" : "rose"}
+        accent={ngrUp ? "emerald" : "rose"}
+      />
+      <KpiTile
+        label="House Edge"
+        value={formatRatioPct(headline.houseEdge)}
+        sub="GGR ÷ wager"
+        icon={Percent}
+        accent="blue"
+      />
+      <KpiTile
+        label="Bets"
+        value={formatNumber(headline.bets)}
+        sub="Settled gaming plays"
+        icon={Activity}
+        accent="amber"
       />
     </div>
   );
 }
 
-// ─── Per-type card ───────────────────────────────────────────────────
+// ─── Group 1 — Gaming payouts ────────────────────────────────────────
 
 /**
- * Card for one ledger type — hero number on top, label + side badge,
- * canonical description, and a small footer with the type's raw name
- * and percentage of its bucket total.
+ * The GGR engine, shown as the identity wager − payout = GGR.
  *
- * Side colouring follows the dashboard popover:
- *   • wager  — neutral identity tint (foreground)
- *   • payout — rose (money out)
- * Per CLAUDE.md the headline GGR is already coloured house-POV up in
- * the KPI strip; the per-type cards are flow tiles, not P&L tiles, so
- * we tint by side rather than by sign.
+ * Wager is the house take from staking (emerald — house gain). Each
+ * payout leg is money returned to the user on the games (rose — house
+ * cost). The resulting GGR is house-POV (emerald up / rose down).
+ */
+function GamingGroup({
+  data,
+}: {
+  data: Awaited<ReturnType<typeof getGgrPageData>>;
+}) {
+  const { gaming } = data;
+  const ggrUp = gaming.ggr >= 0;
+  return (
+    <div className="grid gap-3 sm:grid-cols-3">
+      {/* Wager — house collected from staking → emerald */}
+      <GamingCell
+        label="Game wagers"
+        sub="Pack + battle + upgrader, borrow-corrected"
+        value={formatCurrency(gaming.wager)}
+        valueColor="text-emerald-600 dark:text-emerald-400"
+        accentBg="bg-emerald-500/5"
+        iconBg="bg-emerald-500/15"
+        icon={<Coins className="size-4 text-emerald-500" />}
+      />
+
+      {/* Payout legs — money out → rose */}
+      <div className="rounded-xl border bg-rose-500/5 p-4 sm:rounded-2xl sm:p-5">
+        <div className="flex items-center gap-2">
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-rose-500/15">
+            <Minus className="size-4 text-rose-500" />
+          </div>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Game payouts
+          </p>
+        </div>
+        <p className="mt-2 truncate text-lg font-bold tabular-nums text-rose-600 dark:text-rose-400">
+          −{formatCurrency(gaming.payoutTotal)}
+        </p>
+        <div className="mt-2 space-y-1 border-t border-border/60 pt-2">
+          {gaming.legs.map((leg) => (
+            <div
+              key={leg.label}
+              className="flex items-center justify-between gap-3 text-[11px] tabular-nums text-muted-foreground"
+            >
+              <span className="min-w-0 truncate">{leg.label}</span>
+              <span className="shrink-0">{formatCurrency(leg.total)}</span>
+            </div>
+          ))}
+          {!data.upgraderAvailable && (
+            <p className="pt-1 text-[10px] italic text-muted-foreground/60">
+              Upgrader unavailable on this database.
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* GGR — house-POV result */}
+      <GamingCell
+        label="Gross Gaming Revenue"
+        sub={ggrUp ? "House profit on games" : "House loss on games"}
+        value={`${ggrUp ? "+" : "−"}${formatCurrency(Math.abs(gaming.ggr))}`}
+        valueColor={
+          ggrUp
+            ? "text-emerald-600 dark:text-emerald-400"
+            : "text-rose-600 dark:text-rose-400"
+        }
+        accentBg={ggrUp ? "bg-emerald-500/5" : "bg-rose-500/5"}
+        iconBg={ggrUp ? "bg-emerald-500/15" : "bg-rose-500/15"}
+        icon={
+          ggrUp ? (
+            <Equal className="size-4 text-emerald-500" />
+          ) : (
+            <Equal className="size-4 text-rose-500" />
+          )
+        }
+      />
+    </div>
+  );
+}
+
+function GamingCell({
+  label,
+  sub,
+  value,
+  valueColor,
+  accentBg,
+  iconBg,
+  icon,
+}: {
+  label: string;
+  sub: string;
+  value: string;
+  valueColor: string;
+  accentBg: string;
+  iconBg: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <div className={cn("rounded-xl border p-4 sm:rounded-2xl sm:p-5", accentBg)}>
+      <div className="flex items-center gap-2">
+        <div
+          className={cn(
+            "flex size-8 shrink-0 items-center justify-center rounded-full",
+            iconBg,
+          )}
+        >
+          {icon}
+        </div>
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          {label}
+        </p>
+      </div>
+      <p className={cn("mt-2 truncate text-lg font-bold tabular-nums", valueColor)}>
+        {value}
+      </p>
+      <p className="mt-1 text-[10px] text-muted-foreground">{sub}</p>
+    </div>
+  );
+}
+
+// ─── Group 2 — Neutral conversions ───────────────────────────────────
+
+/**
+ * Inventory↔balance / voucher↔balance conversions of value the user
+ * ALREADY owns. These are net-NEUTRAL to GGR and NGR — they are NOT a
+ * house cost and NOT a loss. Tinted muted/blue (informational) so they
+ * never read as red giveback or green house gain.
+ */
+function NeutralGroup({
+  rows,
+  total,
+}: {
+  rows: GgrLedgerTypeRow[];
+  total: number;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="rounded-xl border border-dashed border-border/60 bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
+        These are user conversions, <span className="font-semibold">not house cost</span>.
+        Cards sold back, vouchers redeemed, and exchanges just change the
+        form value is held in — they are excluded from GGR and NGR.
+        {total > 0 && (
+          <span className="ml-1">
+            Total moved this window: {formatCurrency(total)}.
+          </span>
+        )}
+      </div>
+      {rows.length === 0 ? (
+        <EmptySection label="No conversions in this window." />
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {rows.map((row) => (
+            <LedgerTypeCard key={row.type} row={row} kind="neutral" bucketTotal={total} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Group 3 — Reward giveback ───────────────────────────────────────
+
+/**
+ * House-funded incentive spend (`REWARD_PAYOUT_TYPES`). The user receives
+ * value the house funded → user gain = house cost → rose. Reduces NGR
+ * (not GGR).
+ *
+ * Rain is shown at its GROSS magnitude (what users received), but only
+ * the NET house slice (`max(0, rain_win − rain_tip)`) reduces NGR — the
+ * footer surfaces the reconciliation so the gross rows and the NGR delta
+ * don't look inconsistent.
+ */
+function RewardGroup({
+  data,
+}: {
+  data: Awaited<ReturnType<typeof getGgrPageData>>;
+}) {
+  const { reward } = data;
+  const rainNetted = reward.rainWinTotal > 0 && reward.rainTipTotal > 0;
+  return (
+    <div className="space-y-3">
+      <div className="rounded-xl border border-rose-500/20 bg-rose-500/5 px-4 py-3 text-xs text-muted-foreground">
+        House-funded giveaways the user received — bonuses, rakeback, race
+        prizes, rain, and affiliate payouts. These reduce{" "}
+        <span className="font-semibold">NGR</span> (not GGR).{" "}
+        <span className="text-rose-600 dark:text-rose-400">
+          −{formatCurrency(reward.appliedToNgr)}
+        </span>{" "}
+        applied to NGR this window.
+        {rainNetted && (
+          <span className="ml-1">
+            Rain shown gross ({formatCurrency(reward.rainWinTotal)}); only the
+            net house slice {formatCurrency(reward.rainHouseCost)} (gross −{" "}
+            {formatCurrency(reward.rainTipTotal)} tips) reduced NGR.
+          </span>
+        )}
+      </div>
+      {reward.rows.length === 0 ? (
+        <EmptySection label="No reward giveback in this window." />
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {reward.rows.map((row) => (
+            <LedgerTypeCard
+              key={row.type}
+              row={row}
+              kind="reward"
+              bucketTotal={reward.total}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Per-type card (neutral / reward) ────────────────────────────────
+
+/**
+ * Card for one ledger type — hero number, label + kind badge, canonical
+ * description, and a footer with the raw type name + percentage of its
+ * bucket total.
+ *
+ * Colouring is house-POV:
+ *   • neutral — muted/blue (informational; not cost, not gain)
+ *   • reward  — rose (user received house-funded value = house cost)
  */
 function LedgerTypeCard({
   row,
-  side,
+  kind,
   bucketTotal,
 }: {
-  row: GgrBreakdownRow;
-  side: "wager" | "payout";
+  row: GgrLedgerTypeRow;
+  kind: "neutral" | "reward";
   bucketTotal: number;
 }) {
   const desc = describeLedgerType(row.type);
-  const pct =
-    bucketTotal > 0 ? Math.round((row.total / bucketTotal) * 100) : 0;
-  const valueColor =
-    side === "payout"
-      ? "text-rose-600 dark:text-rose-400"
-      : "text-foreground";
-  const sideLabel = side === "wager" ? "Wager" : "Payout";
-  const sideBadgeColor =
-    side === "wager"
-      ? "border-purple-500/20 bg-purple-500/10 text-purple-600 dark:text-purple-400"
-      : "border-rose-500/20 bg-rose-500/10 text-rose-600 dark:text-rose-400";
+  const pct = bucketTotal > 0 ? Math.round((row.total / bucketTotal) * 100) : 0;
+  const isReward = kind === "reward";
+  const valueColor = isReward
+    ? "text-rose-600 dark:text-rose-400"
+    : "text-blue-600 dark:text-blue-400";
+  const badgeLabel = isReward ? "Giveback" : "Neutral";
+  const badgeColor = isReward
+    ? "border-rose-500/20 bg-rose-500/10 text-rose-600 dark:text-rose-400"
+    : "border-blue-500/20 bg-blue-500/10 text-blue-600 dark:text-blue-400";
 
   return (
     <div className="surface-sheen surface-raise group relative overflow-hidden rounded-xl border bg-gradient-to-br from-card via-card to-card/70 p-4 sm:rounded-2xl sm:p-5">
-      {/* Hairline top highlight — same lift as StatPanel. */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"
@@ -349,20 +554,15 @@ function LedgerTypeCard({
         <span
           className={cn(
             "shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
-            sideBadgeColor,
+            badgeColor,
           )}
         >
-          {sideLabel}
+          {badgeLabel}
         </span>
       </div>
 
-      <p
-        className={cn(
-          "mt-3 truncate text-2xl font-bold tabular-nums",
-          valueColor,
-        )}
-      >
-        {side === "payout" ? "−" : "+"}
+      <p className={cn("mt-3 truncate text-2xl font-bold tabular-nums", valueColor)}>
+        {isReward ? "−" : ""}
         {formatCurrency(row.total)}
       </p>
 
@@ -371,15 +571,15 @@ function LedgerTypeCard({
           {desc.description}
         </p>
       ) : (
-        // Defensive: an unknown ledger type would land here. Render a
-        // muted placeholder so the card still has a description row.
         <p className="mt-2 text-xs italic leading-snug text-muted-foreground/60">
           No description on file for this ledger type.
         </p>
       )}
 
       <div className="mt-3 flex items-center justify-between gap-3 border-t border-border/60 pt-2 text-[11px] tabular-nums text-muted-foreground">
-        <span>{pct}% of {side === "wager" ? "wagers" : "payouts"}</span>
+        <span>
+          {pct}% of {isReward ? "giveback" : "conversions"}
+        </span>
         <span>{formatCurrency(row.total)}</span>
       </div>
     </div>
@@ -390,9 +590,8 @@ function LedgerTypeCard({
 
 /**
  * Skeleton mirror of the per-type card grid. Reproduces the same 1 / 2 /
- * 3-column responsive grid + the card's internal layout (label row,
- * hero number, description, footer) so the swap into real content
- * doesn't jank.
+ * 3-column responsive grid + the card's internal layout so the swap into
+ * real content doesn't jank.
  */
 function LedgerTypeGridSkeleton({ count }: { count: number }) {
   return (
@@ -436,11 +635,12 @@ function EmptySection({ label }: { label: string }) {
 
 /**
  * Top 10 users by ABS(net) for the active window. Net = wager − payout
- * with house-POV colouring: positive net = user lost = house profited
- * = emerald; negative = user won = house lost = rose.
+ * with house-POV colouring: positive net = user lost = house profited =
+ * emerald; negative = user won = house lost = rose. Upgrader is folded
+ * into both legs so contributors line up with the headline.
  *
- * Each row links to /users/<id> so admins can drill straight in. Users
- * with no username (deleted / pending) fall back to a truncated id.
+ * Each row links to /users/<id>. Users with no username (deleted /
+ * pending) fall back to a truncated id.
  */
 function TopContributorsTable({ rows }: { rows: GgrTopContributorRow[] }) {
   if (rows.length === 0) {
@@ -448,7 +648,6 @@ function TopContributorsTable({ rows }: { rows: GgrTopContributorRow[] }) {
   }
   return (
     <div className="overflow-hidden rounded-xl border bg-card">
-      {/* Header row */}
       <div className="grid grid-cols-[2rem_1fr_repeat(3,_minmax(0,_8rem))] gap-3 border-b border-border/60 bg-muted/30 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
         <span>#</span>
         <span>User</span>
@@ -507,4 +706,3 @@ function ContributorRow({
     </li>
   );
 }
-

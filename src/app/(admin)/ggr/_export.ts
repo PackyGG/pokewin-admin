@@ -1,12 +1,12 @@
 import "server-only";
 
 import type { ExportSection } from "@/lib/utils/export-csv";
+import { DASHBOARD_PERIOD_LABELS } from "@/lib/queries/dashboard-period";
 import {
-  getGgrBreakdown,
+  getGgrPageData,
   getGgrTopContributors,
-  DASHBOARD_PERIOD_LABELS,
-  type DashboardPeriod,
-} from "@/lib/queries/dashboard";
+  ggrWindowToMetricWindow,
+} from "@/lib/queries/ggr";
 import { describeLedgerType } from "@/lib/queries/_wager-payout-descriptions";
 import {
   settle,
@@ -17,7 +17,7 @@ import {
 const AREA = "insights.export.ggr";
 
 /** Windows the /ggr page exposes — same coercion as the page. */
-export type GgrWindow = Extract<DashboardPeriod, "24h" | "3d" | "7d">;
+export type GgrWindow = "24h" | "3d" | "7d";
 
 /** Supported `?window=` values for /ggr — mirrors the page's set. */
 export const GGR_EXPORT_WINDOWS = ["24h", "3d", "7d"] as const;
@@ -37,72 +37,93 @@ export function parseGgrExportWindow(value: string | undefined): GgrWindow {
 /**
  * Export gatherer for /ggr.
  *
- * Bundles the GGR rollup (wagers / payouts / GGR), the per-ledger-type
- * wager + payout breakdown (with the canonical type description), and
- * the top contributors for the active window into one CSV.
+ * Bundles the canonical GGR/NGR rollup (upgrader included), the gaming
+ * payout legs, the neutral-conversion and reward-giveback per-type
+ * breakdowns, and the top contributors for the active window into one
+ * CSV. Reuses the EXACT same `getGgrPageData` + `getGgrTopContributors`
+ * helpers the page renders, so the export reconciles with the headline
+ * numbers. The contributor list is pulled at 50 (the UI shows 10).
  *
- * Reuses the exact same cached `getGgrBreakdown` + `getGgrTopContributors`
- * helpers the page renders so the export reconciles with the headline
- * numbers. The contributor list is bounded at 50 (the query's internal
- * cap; the UI shows 10) — the export pulls the full 50. Read-only.
- * Server-only; auth is enforced by the route handler that calls this
- * (`/insights/export`), which gates on the same page-access key as the
- * page.
+ * Read-only; server-only; auth is enforced by the route handler that
+ * calls this (`/insights/export`), which gates on the same page-access
+ * key as the page (`/ggr`).
  */
 export async function gatherGgrExportSections(
   ggrWindow: GgrWindow,
 ): Promise<ExportSection[]> {
+  const metricWindow = ggrWindowToMetricWindow(ggrWindow);
+
   // Settle (not await-throw) so one failed query degrades only its own
   // section(s) instead of crashing the gatherer → BOM-only download.
-  const [breakdownR, contributorsR] = await settle([
-    getGgrBreakdown(ggrWindow),
-    getGgrTopContributors(ggrWindow, 50),
+  const [dataR, contributorsR] = await settle([
+    getGgrPageData(metricWindow),
+    getGgrTopContributors(metricWindow, 50),
   ]);
-  const breakdown = () => unwrap(breakdownR);
+  const data = () => unwrap(dataR);
   const contributors = () => unwrap(contributorsR);
 
   const periodLabel = DASHBOARD_PERIOD_LABELS[ggrWindow];
 
   return [
-    // ── GGR rollup ────────────────────────────────────────────────
+    // ── Headline rollup (upgrader included) ───────────────────────
     buildSection(AREA, `GGR Summary (${periodLabel})`, ["Metric", "Value"], () => {
-      const b = breakdown();
+      const d = data();
       return [
         ["Window", periodLabel],
-        ["Total wagers (USD)", b.wagersTotal],
-        ["Total payouts (USD)", b.payoutsTotal],
-        ["GGR / wagers − payouts (USD)", b.ggr],
+        ["Total wager (USD)", d.headline.wager],
+        ["Gaming payout (USD)", d.headline.gamingPayout],
+        ["GGR / wager − payout (USD)", d.headline.ggr],
+        ["NGR / GGR − reward giveback (USD)", d.headline.ngr],
+        ["House edge %", d.headline.houseEdge === null ? "n/a" : d.headline.houseEdge * 100],
+        ["RTP %", d.headline.rtp === null ? "n/a" : d.headline.rtp * 100],
+        ["Bets", d.headline.bets],
+        ["Upgrader available", d.upgraderAvailable ? "yes" : "no"],
       ];
     }),
 
-    // ── Wager-side breakdown by ledger type ───────────────────────
+    // ── Gaming payout legs ────────────────────────────────────────
     buildSection(
       AREA,
-      "Wagers by Ledger Type",
-      ["Type", "Label", "Total (USD)", "Share of wagers %"],
+      "Gaming Payout Legs",
+      ["Leg", "Total (USD)", "Share of payouts %"],
       () => {
-        const b = breakdown();
-        return b.wagers.map((r) => [
-          r.type,
-          describeLedgerType(r.type).label,
-          r.total,
-          b.wagersTotal > 0 ? (r.total / b.wagersTotal) * 100 : 0,
+        const d = data();
+        return d.gaming.legs.map((leg) => [
+          leg.label,
+          leg.total,
+          d.gaming.payoutTotal > 0 ? (leg.total / d.gaming.payoutTotal) * 100 : 0,
         ]);
       },
     ),
 
-    // ── Payout-side breakdown by ledger type ──────────────────────
+    // ── Neutral conversions (NOT house cost) ──────────────────────
     buildSection(
       AREA,
-      "Payouts by Ledger Type",
-      ["Type", "Label", "Total (USD)", "Share of payouts %"],
+      "Neutral Conversions (user disposals, not house cost)",
+      ["Type", "Label", "Total (USD)", "Share of conversions %"],
       () => {
-        const b = breakdown();
-        return b.payouts.map((r) => [
+        const d = data();
+        return d.neutral.rows.map((r) => [
           r.type,
           describeLedgerType(r.type).label,
           r.total,
-          b.payoutsTotal > 0 ? (r.total / b.payoutsTotal) * 100 : 0,
+          d.neutral.total > 0 ? (r.total / d.neutral.total) * 100 : 0,
+        ]);
+      },
+    ),
+
+    // ── Reward giveback (reduces NGR) ─────────────────────────────
+    buildSection(
+      AREA,
+      "Reward Giveback (reduces NGR)",
+      ["Type", "Label", "Total gross (USD)", "Share of giveback %"],
+      () => {
+        const d = data();
+        return d.reward.rows.map((r) => [
+          r.type,
+          describeLedgerType(r.type).label,
+          r.total,
+          d.reward.total > 0 ? (r.total / d.reward.total) * 100 : 0,
         ]);
       },
     ),
