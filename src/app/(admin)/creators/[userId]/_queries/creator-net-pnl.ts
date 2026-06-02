@@ -452,3 +452,26 @@ export async function getCreatorNetPnl(
     totalCost,
   };
 }
+
+/**
+ * Windowed Code-User GGR ONLY for one creator over the active `?period=`,
+ * without the (lifetime) cost round-trip.
+ *
+ * The surface renders the headline Net P&L on the LIFETIME window
+ * (lifetime GGR − lifetime cost, an apples-to-apples net) and uses a
+ * `?period=` chip to drive a SECONDARY "Code-User GGR trend" view. Since
+ * `totalCost` is lifetime regardless of the chip, re-fetching it on every
+ * period switch (via `getCreatorNetPnl`) would be wasted work — this
+ * exposes just the windowed GGR term so the trend tile costs a single
+ * cohort GGR read. Same canonical attribution + scope as
+ * `getCreatorNetPnl`'s GGR side (it calls the identical internal reader).
+ *
+ * Active-timeframe-only: pass the active `?period=`; nothing else is read.
+ */
+export async function getCreatorCodeUserGgrForPeriod(
+  creatorUserId: string,
+  period: DashboardPeriod,
+): Promise<CreatorCodeUserGgr> {
+  const since = period === "all" ? null : periodToCutoff(period, new Date());
+  return getCreatorCodeUserGgr(creatorUserId, since);
+}

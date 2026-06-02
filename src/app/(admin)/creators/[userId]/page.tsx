@@ -5,15 +5,11 @@ import {
   Activity,
   ArrowLeft,
   ArrowRight,
-  BadgeDollarSign,
-  Flame,
   HandCoins,
   Info,
-  MousePointerClick,
   Star,
-  UserPlus,
+  TrendingUp,
   Users,
-  Wallet,
 } from "lucide-react";
 
 import {
@@ -25,20 +21,19 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PageHero, KpiTile } from "@/components/modern-panels";
+import { PageHero, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
-import { formatCurrency, formatNumber } from "@/lib/utils/format";
 
 import { MaskedEmail } from "./masked-email";
 import { HeaderSocials } from "./header-socials";
 import { RoleSelect } from "./role-select";
 import { AcquisitionChart } from "./acquisition-chart";
 import { FunnelTable } from "./funnel-table";
-import { FinancialsCard } from "./financials-card";
+import { WagerBreakdownCard } from "./wager-breakdown-card";
+import { AffiliatePayoutsCard } from "./affiliate-payouts-card";
 import { CountryBreakdown } from "./country-breakdown";
 import { LeaderboardsCard } from "./leaderboards-card";
-import { CreatorPnlPanel } from "./creator-pnl-panel";
-import { CreatorDealCostPanel } from "./creator-deal-cost-panel";
+import { CreatorNetPnlPanel } from "./creator-net-pnl-panel";
 
 import { parseCreatorDetailSearchParams } from "./_lib/search-params";
 import { getCreatorDealData } from "./_queries/get-creator-deal-data";
@@ -181,65 +176,36 @@ export default async function CreatorDetailPage({
         </div>
       )}
 
-      {/* KPI strip — house-POV financial colors:
-          - Total Earned: money paid TO creator → rose (house loss)
-          - Wager Volume: money flowing FROM users TO us → emerald
-          - Clicks / Signups / FTDs: funnel events → blue family
-          - Active affi: currently-engaged referrals → amber
-          Phone: 2 cols, tablet: 3 cols, desktop: 6 cols (1 row). */}
-      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <KpiTile
-          label="Clicks"
-          value={formatNumber(profile.clicks.total)}
-          icon={MousePointerClick}
-          accent="blue"
-        />
-        <KpiTile
-          label="Signups"
-          value={formatNumber(profile.signups.total)}
-          icon={UserPlus}
-          accent="cyan"
-        />
-        {/* FTDs — distinct referrals who actually deposited (gates on
-            both an affiliate_code_usages 'deposit' row for this code
-            AND a balances row with total_deposited > 0). All-time
-            count across this creator's primary code. */}
-        <KpiTile
-          label="FTDs"
-          value={formatNumber(profile.ftdCount)}
-          icon={BadgeDollarSign}
-          accent="purple"
-        />
-        {/* Active affi — distinct referrals with any deposit /
-            wager activity. Headline value is the 7-day count (the
-            window the affiliate system uses to count them as
-            "active"); subtitle layers in the 24h count so the admin
-            can see momentum at a glance — e.g. "12 active 7d, 3
-            still going today" reads in one beat. Amber to read as
-            "currently warm". */}
-        <KpiTile
-          label="Active affi"
-          value={formatNumber(profile.activeReferrals7d)}
-          sub={`${formatNumber(profile.activeReferrals24h)} in 24h · 7d window`}
-          icon={Flame}
-          accent="amber"
-        />
-        <KpiTile
-          label="Wager Volume"
-          value={formatCurrency(profile.totalWagerVolumeUsd)}
-          icon={Wallet}
-          accent="emerald"
-        />
-        <KpiTile
-          label="Total Earned"
-          value={formatCurrency(profile.totalEarnedUsd)}
-          sub={`Paid out: ${formatCurrency(profile.totalPaidOutUsd)}`}
-          icon={HandCoins}
-          accent="rose"
-        />
-      </div>
+      {/* The financial KPI strip (Net Creator PnL · Code-User GGR ·
+          Creator Cost · FTDs · Active code-users · Wager Volume) now
+          leads the streamed Net Creator P&L band below — those three
+          financial headline values require the canonical foundation
+          fetch (getCreatorNetPnl), so the whole strip streams in with
+          the rest of the financial story rather than splitting the
+          funnel KPIs off into a second top strip. Clicks / Signups live
+          in the Acquisition funnel section. */}
 
       <FadeIn className="space-y-4 sm:space-y-6">
+        {/* ── Net Creator P&L — the single coherent financial story:
+            KPI strip + two-sided net hero + complete cost breakdown
+            (commission as a separate line + net-incl-commission) +
+            windowed Code-User GGR trend + code-hopper risk. Replaces the
+            three previously-disconnected panels. Streamed via Suspense so
+            its canonical GGR + cost round-trips don't extend the rest of
+            the page's TTFB; re-keyed on `period` so a chip switch
+            re-streams only the windowed GGR slice. ──────────────────── */}
+        <Suspense key={`netpnl-${sp.period}`} fallback={<CreatorNetPnlSkeleton />}>
+          <CreatorNetPnlPanel
+            userId={profile.userId}
+            period={sp.period}
+            code={profile.code}
+            ftdCount={profile.ftdCount}
+            activeReferrals7d={profile.activeReferrals7d}
+            activeReferrals24h={profile.activeReferrals24h}
+            wagerVolumeUsd={profile.totalWagerVolumeUsd}
+          />
+        </Suspense>
+
         {/* Per-code activity entry points. Each is its own dedicated
             page (full-width tables, breadcrumb back, pill-tab nav to
             flip between the two views). Lives above the deal
@@ -342,49 +308,52 @@ export default async function CreatorDetailPage({
           <LeaderboardsCard userId={profile.userId} />
         </Suspense>
 
-        {/* Affiliates PnL — 5 mini-tiles for 1d / 3d / 7d / 2w / 1m
-            showing GGR (wagers − payouts) from this creator's
-            referrals in the window. House POV: positive emerald,
-            negative rose. Streamed via Suspense so the heavier
-            ledger scan doesn't extend the rest of the page's TTFB. */}
-        <Suspense fallback={<CreatorPnlSkeleton />}>
-          <CreatorPnlPanel userId={profile.userId} />
-        </Suspense>
+        {/* The former "Affiliates PnL" (gross deposits − cardWD) and the
+            separate "Deal Costs" panel are retired — their story is now
+            the one coherent Net Creator P&L band above. The creator's
+            commission / paid-out / bonus account state moved into the
+            modern AffiliatePayoutsCard below (alongside the cost), and
+            the per-game wager breakdown moved into the Acquisition
+            section. */}
 
-        {/* House deal-cost panel — the money the house spends ON this
-            creator's promo programs: approved-leaderboard prizes (net of
-            the creation/refund escrow, sponsored-% weighted), multiplier
-            payout vouchers, and net multiplier fill. The leaderboard
-            prize cost was previously invisible on the creator view; this
-            surfaces it alongside the multiplier costs. Streamed via its
-            own Suspense so the two backend round-trips it makes don't
-            block the rest of the page. */}
-        <Suspense fallback={<CreatorDealCostSkeleton />}>
-          <CreatorDealCostPanel userId={profile.userId} />
-        </Suspense>
+        {/* ── Acquisition — clicks → signups → FTDs funnel + the per-game
+            wager-volume breakdown + geographic split. Tables stay
+            @tanstack/react-table (FunnelTable) / list (CountryBreakdown)
+            inside their cards, under a modern SectionHeading; the wager
+            breakdown is a modern StatPanel. ─────────────────────────── */}
+        <div className="space-y-3">
+          <SectionHeading icon={TrendingUp} title="Acquisition" />
+          <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <FunnelTable
+              clicks={profile.clicks}
+              signups={profile.signups}
+              ftdByPeriod={profile.ftdByPeriod}
+            />
+            <WagerBreakdownCard
+              wagerVolumeUsd={profile.totalWagerVolumeUsd}
+              // Per-game-type breakdown of the wager volume — packs +
+              // battles + upgrader sum to it exactly.
+              wagerBreakdown={profile.wagerBreakdown}
+            />
+            <CountryBreakdown rows={profile.countryBreakdown} />
+          </div>
+        </div>
 
-        {/* Bottom band: three equal-width analytics cards. On phone they
-            stack full-width; tablet shows two-up wherever possible. */}
-        <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <FunnelTable
-            clicks={profile.clicks}
-            signups={profile.signups}
-            ftdByPeriod={profile.ftdByPeriod}
-          />
-          <FinancialsCard
-            wagerVolumeUsd={profile.totalWagerVolumeUsd}
-            // Per-game-type breakdown of the wager volume above —
-            // populated from affiliate_code_usages joined to
-            // game_sessions on this creator's referrals. Sums to
-            // wagerVolumeUsd exactly, so it reads as a verifiable
-            // "where did the wager come from" sub-strip.
-            wagerBreakdown={profile.wagerBreakdown}
-            earnedUsd={profile.totalEarnedUsd}
-            availableUsd={profile.availableUsd}
-            paidOutUsd={profile.totalPaidOutUsd}
-            bonusDistributedUsd={profile.totalBonusDistributedUsd}
-          />
-          <CountryBreakdown rows={profile.countryBreakdown} />
+        {/* ── Affiliate payouts — the creator's commission account state
+            (earned / available / paid-out / bonus), migrated out of the
+            old plain-Card Financials into a modern panel beside the cost
+            story. "Paid out" is the same source as the Net's separate
+            commission line — shown here for the full account picture. ── */}
+        <div className="space-y-3">
+          <SectionHeading icon={HandCoins} title="Affiliate payouts" />
+          <div className="grid gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <AffiliatePayoutsCard
+              earnedUsd={profile.totalEarnedUsd}
+              availableUsd={profile.availableUsd}
+              paidOutUsd={profile.totalPaidOutUsd}
+              bonusDistributedUsd={profile.totalBonusDistributedUsd}
+            />
+          </div>
         </div>
       </FadeIn>
     </div>
@@ -414,46 +383,37 @@ function LeaderboardsSkeleton() {
   );
 }
 
-// Single StatPanel placeholder matching the CreatorDealCostPanel shape
-// (heading + one hero panel with a few breakdown rows) so the page
-// doesn't reflow when the real content lands.
-function CreatorDealCostSkeleton() {
+// Placeholder matching the CreatorNetPnlPanel shape — a 6-tile KPI strip
+// plus two large StatPanels (the net hero + the cost breakdown) — so the
+// page doesn't reflow when the real financial band streams in.
+function CreatorNetPnlSkeleton() {
   return (
-    <div className="space-y-3">
-      <Skeleton className="h-5 w-36" />
-      <Card size="sm" className="space-y-3 p-4 sm:p-5">
-        <Skeleton className="h-4 w-44" />
-        <Skeleton className="h-9 w-32" />
-        <Skeleton className="h-3 w-56" />
-        <div className="space-y-1.5 pt-2">
-          <Skeleton className="h-3 w-full" />
-          <Skeleton className="h-3 w-full" />
-          <Skeleton className="h-3 w-full" />
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-// 5-tile grid placeholder matching the CreatorPnlPanel shape so the
-// page doesn't reflow when the real content lands.
-function CreatorPnlSkeleton() {
-  return (
-    <div className="space-y-3">
-      <Skeleton className="h-5 w-36" />
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        {[0, 1, 2, 3, 4].map((i) => (
+    <div className="space-y-4 sm:space-y-5">
+      <div className="flex items-center justify-between">
+        <Skeleton className="h-6 w-44" />
+        <Skeleton className="h-8 w-48" />
+      </div>
+      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        {[0, 1, 2, 3, 4, 5].map((i) => (
           <Card key={i} size="sm" className="space-y-2 p-4">
-            <Skeleton className="h-4 w-10" />
-            <Skeleton className="h-7 w-24" />
-            <Skeleton className="h-3 w-20" />
-            <div className="space-y-1.5 pt-1">
-              <Skeleton className="h-3 w-full" />
-              <Skeleton className="h-3 w-full" />
-            </div>
+            <Skeleton className="h-3 w-16" />
+            <Skeleton className="h-6 w-20" />
+            <Skeleton className="h-2.5 w-14" />
           </Card>
         ))}
       </div>
+      {[0, 1].map((i) => (
+        <Card key={i} size="sm" className="space-y-3 p-4 sm:p-5">
+          <Skeleton className="h-4 w-44" />
+          <Skeleton className="h-9 w-32" />
+          <Skeleton className="h-3 w-56" />
+          <div className="space-y-1.5 pt-2">
+            <Skeleton className="h-3 w-full" />
+            <Skeleton className="h-3 w-full" />
+            <Skeleton className="h-3 w-full" />
+          </div>
+        </Card>
+      ))}
     </div>
   );
 }
