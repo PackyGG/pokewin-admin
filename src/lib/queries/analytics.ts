@@ -2,27 +2,31 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { blacklistNotInClause, escapeBlacklistIds } from "./_blacklist";
+import { blacklistNotInClause } from "./_blacklist";
 import {
   getDailyGamingMetrics,
   upgraderMetrics,
   type MetricWindow,
 } from "@/lib/metrics/queries";
+import { getMetricsScope } from "@/lib/metrics/scope";
 
-// SQL fragment builder for user_id filtering — drops staff (admin /
-// support) AND the creator role, matching the canonical real-customer
-// scope in `@/lib/metrics/queries` (`realCustomersScope`). Creators were
-// previously KEPT in analytics, which put analytics GGR/NGR on a different
-// population than dashboard / /ggr / money-flow / cost-breakdown (all of
-// which drop creators) — the M4 scope-drift bug. Aligning here makes "one
-// GGR = one population" hold site-wide. Also appends the admin-managed
-// blacklist from `excluded_users` so manually-excluded accounts drop out
-// of every analytics aggregate. IDs inlined as quoted literals — they're
-// packy.gg user_ids (alphanum), single quotes doubled defensively.
-function buildExclStaffFrag(excluded: string[]): string {
-  const tail =
-    excluded.length > 0 ? ` AND id NOT IN (${escapeBlacklistIds(excluded)})` : "";
-  return `AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin','support','creator')${tail})`;
+// SQL fragment builder for user_id filtering on the secondary
+// `ledger_transactions` display aggregates (pack/battle wager tiles,
+// unique-depositor count, daily reward breakdown). SWEPT onto the central
+// canonical scope (`@/lib/metrics/scope` `getMetricsScope`): it drops
+// staff (admin/support) + the admin-managed blacklist AND — via an inline
+// session-window predicate — creator-on-session rows, while KEEPING
+// creators' off-session play. Previously this did a BLUNT role drop
+// (`role NOT IN ('admin','support','creator')`), excluding all creator
+// activity; the central session-window scope is the verified model and
+// keeps analytics on the SAME population as the headline GGR/NGR (which
+// come from `getDailyGamingMetrics`, also on the central scope). The
+// fragment assumes the aggregate's columns are `user_id` / `created_at`
+// (the shape of every aggregate this is appended to). Async because the
+// session windows are fetched (5-min cached) — see scope.ts.
+async function buildExclStaffFrag(): Promise<string> {
+  const scope = await getMetricsScope();
+  return scope.exclStaffSessionFrag();
 }
 
 type Period = "today" | "7d" | "30d" | "90d" | "all";
@@ -133,9 +137,10 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
   const dateFilter = periodToDateFilter(period);
   // Per-request blacklist (cached via React cache) → build the staff
   // + blacklist SQL fragment once and re-use across every sub-query
-  // below. Same trick `dashboard.ts` uses.
+  // below. Same trick `dashboard.ts` uses. EXCL_STAFF_FRAG now comes from
+  // the central session-window scope (creators kept, on-session dropped).
   const excluded = await getExcludedUserIds();
-  const EXCL_STAFF_FRAG = buildExclStaffFrag(excluded);
+  const EXCL_STAFF_FRAG = await buildExclStaffFrag();
   // Inline `AND id NOT IN (...)` for queries that filter directly on
   // the user table (rather than on `user_id IN (subquery)`). Empty
   // string when nothing is blacklisted.

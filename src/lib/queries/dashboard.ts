@@ -29,6 +29,11 @@ import {
   upgraderMetrics,
   type MetricWindow,
 } from "@/lib/metrics/queries";
+// Central canonical scope (staff + blacklist drop, creators kept,
+// creator-on-session rows excluded via session windows). getGgrTopContributors
+// is swept onto this so per-user GGR uses the SAME population as the
+// headline — "one scope, fixed once".
+import { getMetricsScope } from "@/lib/metrics/scope";
 import {
   DASHBOARD_PERIOD_LABELS,
   DEFAULT_DASHBOARD_PERIOD,
@@ -1492,6 +1497,19 @@ export async function getGgrTopContributors(
   const db = await getDb();
   const excluded = await getExcludedUserIds();
   const blacklistIdNotIn = blacklistNotInClause("u.id", excluded);
+  // Central canonical scope — staff + blacklist dropped, creators KEPT,
+  // creator-on-session rows excluded via the session-window predicate.
+  // Swept onto `@/lib/metrics/scope` so per-user GGR here uses the SAME
+  // population as the headline `getWindowMetrics` (no more wholesale
+  // creator drop; "one scope, fixed once").
+  const scope = await getMetricsScope();
+  const sessionWindowsCte = Prisma.raw(scope.sessionWindowsCte);
+  const notInSessionLedger = Prisma.raw(
+    scope.notInCreatorSession("lt.user_id", "lt.created_at"),
+  );
+  const notInSessionInv = Prisma.raw(
+    scope.notInCreatorSession("ui.user_id", "ui.obtained_at"),
+  );
   const cutoff = periodToCutoff(period, new Date());
   // `null` since = lifetime; mirror the canonical `sinceClause` by
   // dropping the lower bound entirely for the "all" chip.
@@ -1514,6 +1532,8 @@ export async function getGgrTopContributors(
   // payout_total = inventory wins + battle_refund; net = wager − payout.
   // Borrow-exclusion subqueries mirror the canonical layer (drop
   // pack opens tagged "borrow" + battle plays on borrow_percentage>0).
+  // Creator-on-session rows are dropped on BOTH legs via the central
+  // session-window predicate (symmetric, keyed on created_at / obtained_at).
   const rows = await db.$queryRaw<
     {
       user_id: string;
@@ -1523,10 +1543,14 @@ export async function getGgrTopContributors(
       net: string;
     }[]
   >`
-    WITH real_users AS (
+    WITH ${sessionWindowsCte},
+    real_users AS (
+      -- Staff (admin/support) + blacklist dropped; creators KEPT (their
+      -- on-session rows are removed per-row in the legs below). Role list
+      -- matches @/lib/metrics/scope STAFF_ROLES.
       SELECT u.id, u.username
       FROM "user" u
-      WHERE u.role NOT IN ('admin', 'support', 'creator') ${Prisma.raw(blacklistIdNotIn)}
+      WHERE u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
     ),
     non_borrow_pack_sessions AS (
       SELECT game_session_id FROM ledger_transactions
@@ -1549,6 +1573,7 @@ export async function getGgrTopContributors(
       FROM ledger_transactions lt
       JOIN real_users ru ON ru.id = lt.user_id
       WHERE lt.status = 'completed'
+        AND ${notInSessionLedger}
         ${sinceLedger}
         AND (
           lt.type NOT IN ('pack_opening','battle_bet','battle_sponsorship')
@@ -1564,6 +1589,7 @@ export async function getGgrTopContributors(
       FROM user_inventory ui
       JOIN real_users ru ON ru.id = ui.user_id
       WHERE ui.source_type IN ('pack','battle')
+        AND ${notInSessionInv}
         ${sinceInv}
         AND (
           (ui.source_type = 'pack' AND ui.source_id IN (SELECT game_session_id FROM non_borrow_pack_sessions))
