@@ -13,6 +13,8 @@ import {
   Activity,
   Equal,
   Minus,
+  Package,
+  Swords,
 } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
@@ -131,7 +133,10 @@ export default async function GgrPage({
         key={ggrWindow}
         fallback={
           <div className="space-y-6">
-            <KpiStripSkeleton count={6} />
+            <div className="space-y-3">
+              <KpiStripSkeleton count={6} />
+              <KpiStripSkeleton count={3} />
+            </div>
             <div className="space-y-3">
               <SectionHeadingSkeleton titleWidth={180} />
               <LedgerTypeGridSkeleton count={3} />
@@ -179,7 +184,14 @@ async function GgrBody({
 
   return (
     <FadeIn className="space-y-6">
-      <KpiStrip data={data} periodLabel={periodLabel} />
+      <div className="space-y-3">
+        <KpiStrip data={data} periodLabel={periodLabel} />
+        {/* Per-category wager split — sits directly below the headline
+            strip. Volume metric (not P&L) → neutral/blue accents. The
+            three reconcile with the headline Wager tile by construction
+            (packs + battles + upgrader = total gaming wager). */}
+        <CategoryWagerStrip data={data} periodLabel={periodLabel} />
+      </div>
 
       {/* ── Group 1 — Gaming payouts (the GGR engine) ───────────────── */}
       <section className="space-y-3">
@@ -280,6 +292,60 @@ function KpiStrip({
         sub="Settled gaming plays"
         icon={Activity}
         accent="amber"
+      />
+    </div>
+  );
+}
+
+// ─── Per-category wager strip ────────────────────────────────────────
+
+/**
+ * Second strip of 3 tiles directly under the headline — the per-category
+ * gaming WAGER (Packs / Battles / Upgrader) for the active window. Same
+ * `KpiTile` component and sizing as the headline strip.
+ *
+ * Wager is a VOLUME metric, not P&L, so these use neutral/informational
+ * accents (purple / cyan / blue — the page's flow/identity tints), never
+ * emerald/rose, so they never read as house profit/loss. The three sum to
+ * the headline Wager tile by construction (packs + battles + upgrader =
+ * total gaming wager). Upgrader degrades to $0 when `upgrader_games` is
+ * absent on the connected DB.
+ */
+function CategoryWagerStrip({
+  data,
+  periodLabel,
+}: {
+  data: Awaited<ReturnType<typeof getGgrPageData>>;
+  periodLabel: string;
+}) {
+  const { packs, battles, upgrader } = data.categoryWager;
+  const playSub = (count: number) => `${formatNumber(count)} plays · ${periodLabel}`;
+  return (
+    <div className="grid gap-3 grid-cols-1 sm:grid-cols-3">
+      <KpiTile
+        label="Packs wager"
+        value={formatCurrency(packs.wager)}
+        sub={playSub(packs.count)}
+        icon={Package}
+        accent="purple"
+      />
+      <KpiTile
+        label="Battles wager"
+        value={formatCurrency(battles.wager)}
+        sub={playSub(battles.count)}
+        icon={Swords}
+        accent="cyan"
+      />
+      <KpiTile
+        label="Upgrader wager"
+        value={data.upgraderAvailable ? formatCurrency(upgrader.wager) : "—"}
+        sub={
+          data.upgraderAvailable
+            ? playSub(upgrader.count)
+            : "Unavailable on this database"
+        }
+        icon={TrendingUp}
+        accent="blue"
       />
     </div>
   );

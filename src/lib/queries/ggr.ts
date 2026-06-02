@@ -151,6 +151,31 @@ export type GgrPageData = {
   };
 
   /**
+   * Per-category split of the SAME canonical gaming wager the headline
+   * uses, so the three sum to `headline.wager` by construction
+   * (packs + battles + upgrader = total gaming wager).
+   *
+   *  • `packs`    — Σ |pack_opening| (non-borrow), the pack_opening slice
+   *                 of the ledger wager leg `getGamingLegs` sums.
+   *  • `battles`  — Σ |battle_bet| + Σ |battle_sponsorship| (non-borrow),
+   *                 the remaining slice of that SAME ledger wager leg.
+   *                 Sponsorship IS customer wager; it is derived from the
+   *                 identical leg/filter the headline uses (NOT a divergent
+   *                 hand-rolled sum), so it picks up the borrow-filter
+   *                 sponsorship fix automatically when that lands.
+   *  • `upgrader` — upgrader `bet_amount` from the canonical
+   *                 `upgraderMetrics` (the SAME `upg.wager` folded into the
+   *                 headline). 0 when `upgrader_games` is absent.
+   *
+   * Each carries the play `count` (settled wager rows / upgrader plays).
+   */
+  categoryWager: {
+    packs: { wager: number; count: number };
+    battles: { wager: number; count: number };
+    upgrader: { wager: number; count: number };
+  };
+
+  /**
    * Group 2 — neutral conversions (`NEUTRAL_TYPES`). NOT house cost; they
    * move value the user already owns. `total` is informational only and
    * does NOT enter GGR or NGR.
@@ -264,6 +289,94 @@ async function getNeutralAndRewardRows(
   });
 }
 
+// ─── Per-category gaming wager split (packs vs battles) ──────────────
+//
+// Splits the SAME ledger wager leg `getGamingLegs` sums (WAGER_TYPES,
+// completed, real customers, borrow-corrected) into its pack_opening
+// slice and its battle_bet + battle_sponsorship slice. Because the WHERE
+// clause (scope + borrow filter) is byte-for-byte the same as
+// `getGamingLegs`, the two slices partition the identical row set, so
+// `packs + battles === legs.wager` (the ledger component of the headline
+// wager) by construction. Upgrader is added in `getGgrPageData` from the
+// SAME `upg.wager` the headline folds in, so packs + battles + upgrader
+// === headline.wager.
+//
+// TODO: switch to central scope helper — same note as
+// `getNeutralAndRewardRows` / `getGgrTopContributors`: `@/lib/metrics`
+// exposes no per-CATEGORY wager builder, and the real-customer +
+// borrow-exclusion predicate is mirrored inline (identical to
+// `getGamingLegs` in `@/lib/metrics/queries`) until the consolidation
+// exports a reusable per-category helper.
+
+async function getCategoryLedgerWager(
+  window: MetricWindow,
+): Promise<{
+  packs: { wager: number; count: number };
+  battles: { wager: number; count: number };
+}> {
+  return withTiming("ggr.categoryWager", async () => {
+    const db = await getDb();
+    const excluded = await getExcludedUserIds();
+    const blacklist = blacklistNotInClause("u.id", excluded);
+    const since = window.since;
+    const sinceClause =
+      since === null
+        ? ""
+        : `AND lt.created_at >= '${since.toISOString()}'::timestamptz`;
+
+    type Row = {
+      packs_wager: string;
+      packs_count: string;
+      battles_wager: string;
+      battles_count: string;
+    };
+    // The borrow filter is the SAME predicate as `getGamingLegs`'
+    // ledger leg: pack_opening dropped when tagged "borrow" in its
+    // description; battle_bet / battle_sponsorship dropped when their
+    // battle has borrow_percentage > 0. The category CASE splits only
+    // the WAGER_TYPES rows that pass that filter, so the two slices sum
+    // back to the headline's ledger wager leg.
+    const rows = await db.$queryRawUnsafe<Row[]>(
+      `WITH real_users AS (
+         SELECT u.id FROM "user" u
+         WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklist}
+       ),
+       non_borrow_battle_sessions AS (
+         SELECT bp.game_session_id FROM battle_participants bp
+         JOIN battles b ON b.id = bp.battle_id
+         WHERE COALESCE(b.borrow_percentage, 0) = 0
+       )
+       SELECT
+         COALESCE(SUM(CASE WHEN lt.type = 'pack_opening'
+                           THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS packs_wager,
+         COALESCE(SUM(CASE WHEN lt.type = 'pack_opening'
+                           THEN 1 ELSE 0 END), 0)::text AS packs_count,
+         COALESCE(SUM(CASE WHEN lt.type IN ('battle_bet','battle_sponsorship')
+                           THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS battles_wager,
+         COALESCE(SUM(CASE WHEN lt.type IN ('battle_bet','battle_sponsorship')
+                           THEN 1 ELSE 0 END), 0)::text AS battles_count
+       FROM ledger_transactions lt
+       JOIN real_users ru ON ru.id = lt.user_id
+       WHERE lt.status = 'completed'
+         AND lt.type IN ${WAGER_TYPES_SQL}
+         ${sinceClause}
+         AND (
+           (lt.type = 'pack_opening' AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%'))
+           OR (lt.type IN ('battle_bet','battle_sponsorship') AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
+         )`,
+    );
+
+    const r = rows[0];
+    return {
+      packs: { wager: toNumber(r?.packs_wager), count: toNumber(r?.packs_count) },
+      battles: {
+        wager: toNumber(r?.battles_wager),
+        count: toNumber(r?.battles_count),
+      },
+    };
+  });
+}
+
 // ─── Page data ───────────────────────────────────────────────────────
 
 /**
@@ -281,14 +394,16 @@ async function getNeutralAndRewardRows(
 export async function getGgrPageData(
   window: MetricWindow,
 ): Promise<GgrPageData> {
-  const [metrics, upg, legs, reward, neutralTotal, detail] = await Promise.all([
-    getWindowMetrics({ window }),
-    upgraderMetrics(window),
-    getGamingLegs(window),
-    getRewardCost(window),
-    sumLedgerTypes({ types: NEUTRAL_TYPES, window }),
-    getNeutralAndRewardRows(window),
-  ]);
+  const [metrics, upg, legs, reward, neutralTotal, detail, categoryLedger] =
+    await Promise.all([
+      getWindowMetrics({ window }),
+      upgraderMetrics(window),
+      getGamingLegs(window),
+      getRewardCost(window),
+      sumLedgerTypes({ types: NEUTRAL_TYPES, window }),
+      getNeutralAndRewardRows(window),
+      getCategoryLedgerWager(window),
+    ]);
 
   // Upgrader contribution — `getWindowMetrics` excludes it while
   // `UPGRADER_IN_LEDGER` is false, so fold it in for the headline.
@@ -333,6 +448,14 @@ export async function getGgrPageData(
       legs: gamingLegs,
       payoutTotal: gamingPayout,
       ggr,
+    },
+    // Per-category wager split. packs + battles = the ledger wager leg
+    // (`legs.wager` = `metrics.wager`); + upgrader (the SAME `upg.wager`
+    // folded into the headline) = `headline.wager` by construction.
+    categoryWager: {
+      packs: categoryLedger.packs,
+      battles: categoryLedger.battles,
+      upgrader: { wager: upgraderWager, count: upgraderBets },
     },
     neutral: {
       rows: detail.neutral,
