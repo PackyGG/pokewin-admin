@@ -17,6 +17,7 @@ import {
   InsightsRewardsCompactTabSkeleton,
 } from "./_components/tab-skeleton";
 import { OverviewTab } from "./_components/overview-tab";
+import { DailyPacksTab } from "./_components/daily-packs-tab";
 import { CategoriesTab } from "./_components/categories-tab";
 import { RoiTab } from "./_components/roi-tab";
 import { RetentionTab } from "./_components/retention-tab";
@@ -30,6 +31,7 @@ export const metadata = { title: "Rewards Insights" };
 
 type Tab =
   | "overview"
+  | "daily-packs"
   | "categories"
   | "roi"
   | "retention"
@@ -41,6 +43,7 @@ type Tab =
 
 function parseTab(value: string | undefined): Tab {
   switch (value) {
+    case "daily-packs":
     case "categories":
     case "roi":
     case "retention":
@@ -67,16 +70,19 @@ function parseTab(value: string | undefined): Tab {
  * and adds the cross-category layer:
  *
  *   1. Overview     — total spend, ROI vs platform GGR, period delta.
- *   2. Categories   — per-category deep stats reusing the existing
+ *   2. Daily Packs  — free / daily reward-pack (pack_type='reward')
+ *                     giveaway cost: value of cards handed out for ~$0
+ *                     wager, a house cost no other reward surface counts.
+ *   3. Categories   — per-category deep stats reusing the existing
  *                     `rewards-category-analytics` + `rewards-category-extras`
  *                     helpers + the shared CategoryDeepStatsPanel.
- *   3. ROI          — cost in window vs claimants' subsequent GGR.
- *   4. Retention    — claimants vs non-claimants 7d / 30d retention.
- *   5. Stacking     — multi-category claimants + LTV lift.
- *   6. Cohort       — signup cohort × reward usage × LTV.
- *   7. Top spenders — top 25 reward recipients across categories.
- *   8. Forecast     — 60d historical + 30d run-rate projection.
- *   9. Geo / Source — reward distribution by country / signup source.
+ *   4. ROI          — cost in window vs claimants' subsequent GGR.
+ *   5. Retention    — claimants vs non-claimants 7d / 30d retention.
+ *   6. Stacking     — multi-category claimants + LTV lift.
+ *   7. Cohort       — signup cohort × reward usage × LTV.
+ *   8. Top spenders — top 25 reward recipients across categories.
+ *   9. Forecast     — 60d historical + 30d run-rate projection.
+ *  10. Geo / Source — reward distribution by country / signup source.
  *
  * Period selector exposes 24h / 3d / 7d / 30d / 90d / lifetime —
  * wider than /rewards/analytics so admins can sanity-check shorter
@@ -142,6 +148,8 @@ async function TabContent({
   switch (tab) {
     case "overview":
       return <OverviewTab period={period} />;
+    case "daily-packs":
+      return <DailyPacksTab period={period} />;
     case "categories":
       return <CategoriesTab period={period} />;
     case "roi":

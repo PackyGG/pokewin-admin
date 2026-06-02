@@ -8,6 +8,7 @@ import {
 import { getRewardsCrossCategorySummary } from "@/lib/queries/insights-rewards/cross-category-summary";
 import { getRewardsCategorySpendBreakdown } from "@/lib/queries/insights-rewards/category-spend-breakdown";
 import { getCreatorWithdrawalsSummary } from "@/lib/queries/insights-rewards/creator-withdrawals";
+import { getDailyPacksGiveaway } from "@/lib/queries/insights-rewards/daily-packs";
 import { settle, unwrap, buildSection } from "../_export-section";
 
 const AREA = "insights.export.rewards";
@@ -31,14 +32,16 @@ export async function gatherRewardsOverviewExportSections(
 ): Promise<ExportSection[]> {
   // Settle (not await-throw) so one failed query degrades only its own
   // section(s) instead of crashing the gatherer → BOM-only download.
-  const [summaryR, spendR, creatorWdR] = await settle([
+  const [summaryR, spendR, creatorWdR, dailyPacksR] = await settle([
     getRewardsCrossCategorySummary(period),
     getRewardsCategorySpendBreakdown(period),
     getCreatorWithdrawalsSummary(period),
+    getDailyPacksGiveaway(period),
   ]);
   const summary = () => unwrap(summaryR);
   const spend = () => unwrap(spendR);
   const creatorWd = () => unwrap(creatorWdR);
+  const dailyPacks = () => unwrap(dailyPacksR);
 
   const periodLabel = insightsRewardsPeriodLabel(period);
 
@@ -106,6 +109,42 @@ export async function gatherRewardsOverviewExportSections(
         );
         return dailyRows;
       },
+    ),
+
+    // ── Daily / free pack giveaway — KPIs ─────────────────────────
+    buildSection(
+      AREA,
+      `Daily / Free Pack Giveaway (${periodLabel})`,
+      ["Metric", "Value"],
+      () => {
+        const d = dailyPacks();
+        return [
+          ["Period", periodLabel],
+          ["Giveaway cost — cards given away (USD)", d.giveawayPayout],
+          ["Wager collected on opens (USD)", d.wager],
+          ["Net cost after wager (USD)", d.netCost],
+          ["Daily packs opened", d.opens],
+          ["Distinct claimers", d.claimers],
+          ["Cards handed out", d.cards],
+          ["Avg cost per pack (USD)", d.avgCostPerPack],
+        ];
+      },
+    ),
+
+    // ── Daily / free pack giveaway — per pack ─────────────────────
+    buildSection(
+      AREA,
+      "Daily / Free Pack Giveaway by Pack",
+      ["Pack", "Opens", "Claimers", "Giveaway cost (USD)", "Wager (USD)", "Net cost (USD)"],
+      () =>
+        dailyPacks().packs.map((p) => [
+          p.name,
+          p.opens,
+          p.claimers,
+          p.giveawayPayout,
+          p.wager,
+          p.netCost,
+        ]),
     ),
   ];
 }

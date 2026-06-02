@@ -8,6 +8,7 @@ import {
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "./_period";
+import { getDailyPacksTotalCost } from "./daily-packs";
 
 /**
  * Cross-category rollup powering the Overview tab of /insights/rewards.
@@ -57,9 +58,16 @@ const WAGER_TYPES_SQL = `(
 const PAYOUT_TYPES_SQL = `('battle_refund','upgrader_payout')`;
 
 export type RewardsCrossCategorySummary = {
-  /** Sum of ABS(amount) across every reward ledger type in the window. */
+  /**
+   * Total marketing cost in the window: ABS(amount) across every reward
+   * ledger type PLUS the daily / free pack giveaway cost (value of cards
+   * handed out from `pack_type='reward'` opens, which book no ledger row).
+   */
   totalCost: number;
-  /** Row count of reward ledger transactions in the window. */
+  /**
+   * Payout count in the window: reward ledger row count PLUS daily/free
+   * pack opens (each open is one giveaway payout event).
+   */
   totalCount: number;
   /** Distinct users with at least one reward row in the window. */
   activeClaimants: number;
@@ -148,12 +156,27 @@ async function computeCrossCategorySummary(
   `);
 
   const cur = currentRows[0];
-  const totalCost = toNumber(cur?.reward_total);
-  const totalCount = Number(cur?.reward_count ?? 0);
+  const ledgerCost = toNumber(cur?.reward_total);
+  const ledgerCount = Number(cur?.reward_count ?? 0);
   const activeClaimants = Number(cur?.reward_claimants ?? 0);
   const totalWager = toNumber(cur?.wager_total);
   const totalPayouts = toNumber(cur?.payout_total);
   const ggr = totalWager - totalPayouts;
+
+  // Fold in the daily / free pack giveaway cost. Daily packs
+  // (`packs.pack_type='reward'`) are a ~$0-wager giveaway of real cards
+  // that never books a reward LEDGER row, so the ledger-only sweep above
+  // under-counts the true marketing cost. The giveaway cost is the value
+  // of cards handed out (NOT net of the near-zero wager — that wager
+  // already lives on the GGR side via pack_opening). Each open is its own
+  // payout event, so `count` is additive. `activeClaimants` stays the
+  // ledger-distinct figure: daily-pack claimers overlap the ledger set in
+  // an unknown way, and naively summing the two distinct counts would
+  // double-count — keeping it ledger-only avoids inflating it.
+  const dailyPacks = await getDailyPacksTotalCost(period);
+  const totalCost = ledgerCost + dailyPacks.cost;
+  const totalCount = ledgerCount + dailyPacks.count;
+
   const marketingPctOfGgr =
     ggr > 0 ? (totalCost / ggr) * 100 : null;
   const marketingPctOfWager =
@@ -184,12 +207,17 @@ async function computeCrossCategorySummary(
     const prevClaimants = Number(prev?.reward_claimants ?? 0);
     const delta = (now: number, prev: number): number | null =>
       prev > 0 ? (now - prev) / prev : null;
+    // Deltas compare ledger-only current vs ledger-only prior so the
+    // period-over-period frame stays apples-to-apples (the prior-window
+    // sweep is ledger-only; daily packs aren't re-queried for an
+    // arbitrary prior window). The headline totals above DO include daily
+    // packs — only the delta basis is ledger-only.
     priorWindow = {
       totalCost: prevCost,
       totalCount: prevCount,
       activeClaimants: prevClaimants,
-      costDelta: delta(totalCost, prevCost),
-      countDelta: delta(totalCount, prevCount),
+      costDelta: delta(ledgerCost, prevCost),
+      countDelta: delta(ledgerCount, prevCount),
       claimantDelta: delta(activeClaimants, prevClaimants),
     };
   }

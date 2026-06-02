@@ -8,6 +8,7 @@ import {
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "./_period";
+import { getDailyPacksGiveaway } from "./daily-packs";
 
 /**
  * Per-category spend breakdown for the Overview tab on /insights/rewards.
@@ -33,7 +34,8 @@ export type InsightsCategoryKey =
   | "rainRace"
   | "signupPack"
   | "creatorTip"
-  | "waitlist";
+  | "waitlist"
+  | "dailyPacks";
 
 const CATEGORY_LABELS: Record<InsightsCategoryKey, string> = {
   bonuses: "Bonuses & Promos",
@@ -43,6 +45,7 @@ const CATEGORY_LABELS: Record<InsightsCategoryKey, string> = {
   signupPack: "Signup / Balance Rewards",
   creatorTip: "Creator Tips",
   waitlist: "Waitlist Prizes",
+  dailyPacks: "Daily / Free Packs",
 };
 
 // Sentinel — every reward ledger type the platform tracks. Vouchers
@@ -150,6 +153,7 @@ async function computeCategorySpendBreakdown(
     signupPack: { total: 0, count: 0, claimants: 0 },
     creatorTip: { total: 0, count: 0, claimants: 0 },
     waitlist: { total: 0, count: 0, claimants: 0 },
+    dailyPacks: { total: 0, count: 0, claimants: 0 },
   };
   for (const r of rollupRows) {
     const key = r.category as InsightsCategoryKey;
@@ -158,6 +162,18 @@ async function computeCategorySpendBreakdown(
     baseTotals[key].count = Number(r.cnt);
     baseTotals[key].claimants = Number(r.claimants);
   }
+
+  // Daily / free packs are an inventory-based giveaway (no ledger row),
+  // so they come from the dedicated `daily-packs` query rather than the
+  // ledger sweep above. `total` is the value of cards handed out (the
+  // giveaway cost — same basis the cross-category summary folds into
+  // `totalCost`, so `grandTotal` here stays equal to it); `count` is the
+  // number of opens (one giveaway payout event each); `claimants` is the
+  // distinct daily-pack openers.
+  const dailyPacks = await getDailyPacksGiveaway(period);
+  baseTotals.dailyPacks.total = dailyPacks.giveawayPayout;
+  baseTotals.dailyPacks.count = dailyPacks.opens;
+  baseTotals.dailyPacks.claimants = dailyPacks.claimers;
 
   // Bucket the daily series per category. Empty days stay empty —
   // the sparkline component handles gaps natively.
@@ -169,6 +185,7 @@ async function computeCategorySpendBreakdown(
     signupPack: [],
     creatorTip: [],
     waitlist: [],
+    dailyPacks: [],
   };
   for (const d of dailyRows) {
     const key = d.category as InsightsCategoryKey;
@@ -178,6 +195,9 @@ async function computeCategorySpendBreakdown(
       total: toNumber(d.total),
     });
   }
+  // Daily-pack giveaway series already comes back date-bucketed
+  // (ascending) from the dedicated query.
+  dailyByCategory.dailyPacks = dailyPacks.dailySeries;
 
   const grandTotal = Object.values(baseTotals).reduce(
     (a, b) => a + b.total,
@@ -192,6 +212,7 @@ async function computeCategorySpendBreakdown(
     "signupPack",
     "creatorTip",
     "waitlist",
+    "dailyPacks",
   ];
   const rows: CategorySpendRow[] = orderedKeys
     .map((key) => ({

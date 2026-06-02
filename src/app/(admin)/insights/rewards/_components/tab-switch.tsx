@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
   Sparkles,
+  Gift,
   Layers,
   TrendingUp,
   Users,
@@ -16,18 +17,19 @@ import {
 import { cn } from "@/lib/utils";
 
 /**
- * URL-driven tab switcher for /insights/rewards. Nine tabs covering the
+ * URL-driven tab switcher for /insights/rewards. Ten tabs covering the
  * full cross-reward analysis spec:
  *
  *   1. Overview                — total marketing cost, ROI, period delta
- *   2. Per-category deep dive  — every category's deep stats panel
- *   3. ROI analysis            — cost vs subsequent GGR per category
- *   4. Retention lift          — claimants vs non-claimants retention
- *   5. Stacking analysis       — multi-category claimants + LTV
- *   6. Cohort comparison       — signup cohort × usage × LTV
- *   7. Top spenders            — top 25 reward recipients
- *   8. Forecasting             — projected marketing spend per category
- *   9. Geo / Source            — reward distribution by country / source
+ *   2. Daily Packs             — free / daily reward-pack giveaway cost
+ *   3. Per-category deep dive  — every category's deep stats panel
+ *   4. ROI analysis            — cost vs subsequent GGR per category
+ *   5. Retention lift          — claimants vs non-claimants retention
+ *   6. Stacking analysis       — multi-category claimants + LTV
+ *   7. Cohort comparison       — signup cohort × usage × LTV
+ *   8. Top spenders            — top 25 reward recipients
+ *   9. Forecasting             — projected marketing spend per category
+ *  10. Geo / Source            — reward distribution by country / source
  *
  * Active tab lives in `?tab=`. Period param survives every switch.
  * Empty `?tab` lands on Overview so a bare `/insights/rewards` is
@@ -37,6 +39,7 @@ import { cn } from "@/lib/utils";
 
 const TABS = [
   { value: "overview", label: "Overview", Icon: Sparkles },
+  { value: "daily-packs", label: "Daily Packs", Icon: Gift },
   { value: "categories", label: "Categories", Icon: Layers },
   { value: "roi", label: "ROI", Icon: TrendingUp },
   { value: "retention", label: "Retention", Icon: Activity },
