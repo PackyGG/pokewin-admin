@@ -2,6 +2,7 @@ import { HandCoins, Info } from "lucide-react";
 
 import { StatPanel, PanelRow } from "@/components/modern-panels";
 import { formatCurrency } from "@/lib/utils/format";
+import { InfoHint } from "../_components/info-hint";
 
 /**
  * Affiliate-account payout state for this creator — the commission
@@ -46,6 +47,12 @@ export function AffiliatePayoutsCard({
       title="Affiliate payouts · lifetime"
       icon={HandCoins}
       accent={anySpend ? "rose" : "blue"}
+      action={
+        <InfoHint
+          text="This creator's referral-commission account (lifetime): earned, still-unpaid (available), already paid out, and promo bonus distributed to their cohort. 'Paid out' is the same figure as the net's separate commission line — shown here for the full picture, not double-counted."
+          side="left"
+        />
+      }
     >
       <div className="space-y-1">
         <div

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/empty-state";
 import { formatDateTime } from "@/lib/utils/format";
 
+import { InfoHint } from "../_components/info-hint";
 import { CreateDialog } from "../leaderboards/_components/create-dialog";
 import { CancelLeaderboardButton } from "../leaderboards/_components/cancel-leaderboard-button";
 import { InlineSponsoredPercentage } from "../leaderboards/_components/inline-sponsored-percentage";
@@ -112,6 +113,10 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
                             {total}
                         </Badge>
                     )}
+                    <InfoHint
+                        text="Wager-race leaderboards this creator runs for their cohort. The total prize is shown per board; the editable Sponsored % sets the house-funded share that feeds the /creators Leaderboard Cost."
+                        iconClassName="size-3"
+                    />
                 </CardTitle>
                 <div className="flex items-center gap-2 self-start sm:self-auto">
                     <CreateDialog
@@ -192,8 +197,12 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
                                     saves a trip to the leaderboards page. */}
                                 <div className="flex items-center gap-2 pr-2">
                                     <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-                                        <span className="hidden sm:inline">
+                                        <span className="hidden items-center gap-1 sm:inline-flex">
                                             Sponsored
+                                            <InfoHint
+                                                text="The house-funded share of this leaderboard's prize pool. Editing it here changes how much of the prize counts as house cost in the Leaderboard Cost figures (defaults to 100%)."
+                                                iconClassName="size-2.5"
+                                            />
                                         </span>
                                         <InlineSponsoredPercentage
                                             leaderboardId={r.id}

@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/table";
 import { formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { InfoHint } from "../_components/info-hint";
 
 type ClicksShape = {
   total: number;
@@ -87,7 +88,15 @@ const columns: ColumnDef<FunnelRow>[] = [
   },
   {
     id: "cvr",
-    header: () => <div className={rightCell}>CVR</div>,
+    header: () => (
+      <div className={cn(rightCell, "flex items-center justify-end gap-1")}>
+        CVR
+        <InfoHint
+          text="Conversion rate — first-time depositors ÷ clicks for the period. Shows what share of the traffic this code drove actually converted into a depositor."
+          iconClassName="size-2.5"
+        />
+      </div>
+    ),
     cell: ({ row }) => (
       <div className={cn(rightCell, "text-muted-foreground")}>
         {formatCvr(row.original)}
@@ -158,7 +167,13 @@ export function FunnelTable({ clicks, signups, ftdByPeriod }: Props) {
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-card-title">Acquisition funnel</CardTitle>
+        <CardTitle className="text-card-title flex items-center gap-1.5">
+          Acquisition funnel
+          <InfoHint
+            text="How traffic on this creator's code converts down the funnel, per time window: link Clicks → Signups → first-time Depositors (FTDs), with the conversion rate (CVR) on the right."
+            iconClassName="size-3"
+          />
+        </CardTitle>
         <p className="mt-0.5 text-xs text-muted-foreground">
           Clicks → Signups → Depositors
         </p>

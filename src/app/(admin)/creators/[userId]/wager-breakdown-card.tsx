@@ -2,6 +2,7 @@ import { Coins, TrendingUp } from "lucide-react";
 
 import { StatPanel, PanelRow } from "@/components/modern-panels";
 import { formatCurrency } from "@/lib/utils/format";
+import { InfoHint } from "../_components/info-hint";
 
 /**
  * Wager-volume breakdown for the creator's code cohort — the per-game
@@ -23,7 +24,17 @@ export function WagerBreakdownCard({
   const emerald = "text-emerald-600 dark:text-emerald-400";
 
   return (
-    <StatPanel title="Wager Volume · lifetime" icon={Coins} accent="emerald">
+    <StatPanel
+      title="Wager Volume · lifetime"
+      icon={Coins}
+      accent="emerald"
+      action={
+        <InfoHint
+          text="All-time wager volume from this creator's code cohort, split by game type. Packs + Battles + Upgrader sum exactly to the total. Money players risked = house income (emerald)."
+          side="left"
+        />
+      }
+    >
       <div className="space-y-1">
         <div
           className={`text-2xl font-bold tabular-nums leading-none sm:text-3xl ${

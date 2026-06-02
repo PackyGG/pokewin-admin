@@ -34,6 +34,7 @@ import {
 } from "./_queries/creator-net-pnl";
 import { getCodeHopperSummary } from "./_queries/code-hopper-summary";
 import { NetPnlPeriodSelector } from "./_components/net-pnl-period-selector";
+import { InfoHint } from "../_components/info-hint";
 
 /**
  * The single coherent financial story for /creators/[userId] — replaces
@@ -157,6 +158,12 @@ export async function CreatorNetPnlPanel({
           sub={`Lifetime${partial ? " · cost partial" : ""}`}
           icon={netWin ? TrendingUp : netLoss ? TrendingDown : LineChart}
           accent={netAccent}
+          action={
+            <InfoHint
+              text="Lifetime code-user GGR minus everything we paid this creator (fill payouts + funded tips/sponsors + leaderboard share + commission). House POV — emerald = house up, rose = house down."
+              side="bottom"
+            />
+          }
         />
         <KpiTile
           label="Code-User GGR"
@@ -164,6 +171,12 @@ export async function CreatorNetPnlPanel({
           sub="Lifetime · wager − payout"
           icon={Coins}
           accent="emerald"
+          action={
+            <InfoHint
+              text="Gross gaming revenue (wager − payout) from players who used this creator's code, counted only during the 7-day attribution windows their code was active. Lifetime here; the trend panel below is windowed."
+              side="bottom"
+            />
+          }
         />
         <KpiTile
           label="Creator Cost"
@@ -175,6 +188,12 @@ export async function CreatorNetPnlPanel({
           sub={`Lifetime${partial ? " · lower bound" : ""}`}
           icon={HandCoins}
           accent="rose"
+          action={
+            <InfoHint
+              text="Total the house paid this creator (lifetime): fill-voucher payouts + net fill + leaderboard sponsor share. Referral commission is shown separately in the breakdown below, not in this total."
+              side="bottom"
+            />
+          }
         />
         {/* FTDs — distinct referrals on this code who actually deposited.
             All-time. Neutral funnel milestone → purple. */}
@@ -184,6 +203,12 @@ export async function CreatorNetPnlPanel({
           sub="All-time depositors"
           icon={BadgeDollarSign}
           accent="purple"
+          action={
+            <InfoHint
+              text="First-time depositors — distinct players who used this creator's code and deposited at least once (all-time)."
+              side="bottom"
+            />
+          }
         />
         {/* Active code-users — distinct referrals with deposit/wager
             activity in the 7d affiliate window; 24h momentum in the sub.
@@ -194,6 +219,12 @@ export async function CreatorNetPnlPanel({
           sub={`${formatNumber(activeReferrals24h)} in 24h · 7d window`}
           icon={Flame}
           accent="amber"
+          action={
+            <InfoHint
+              text="Distinct players on this creator's code with deposit or wager activity in the last 7 days. The sub-line shows the 24-hour count for momentum."
+              side="bottom"
+            />
+          }
         />
         {/* Wager Volume — real-customer wager booked on this code,
             all-time. Money users risked → emerald (house POV). */}
@@ -203,6 +234,12 @@ export async function CreatorNetPnlPanel({
           sub="All-time on this code"
           icon={Wallet}
           accent="emerald"
+          action={
+            <InfoHint
+              text="All-time wager volume booked by real players on this creator's code (staff excluded). Money players risked = house income (emerald)."
+              side="bottom"
+            />
+          }
         />
       </div>
 
@@ -213,6 +250,12 @@ export async function CreatorNetPnlPanel({
         title="Net Creator P&L · lifetime"
         icon={netWin ? TrendingUp : netLoss ? TrendingDown : LineChart}
         accent={netAccent}
+        action={
+          <InfoHint
+            text="The headline net is lifetime: lifetime code-user GGR minus lifetime creator cost. The cost side is always lifetime (there's no per-window cost), so a windowed GGR is never netted against it — the period chip only drives the GGR trend panel below."
+            side="left"
+          />
+        }
       >
         <div className="space-y-1">
           <div
@@ -341,6 +384,12 @@ export async function CreatorNetPnlPanel({
         title="Creator Cost breakdown · lifetime"
         icon={Coins}
         accent={hasCost ? "rose" : "blue"}
+        action={
+          <InfoHint
+            text="Every house outflow tied to this creator, lifetime (rose): fill payouts, net fill (incl. funded tips/sponsors), and leaderboard sponsor share. Referral commission sits below the total as a separate line — the owner decides whether it counts as creator cost."
+            side="left"
+          />
+        }
       >
         <div className="space-y-1">
           <div
@@ -472,6 +521,12 @@ export async function CreatorNetPnlPanel({
         title={`Code-User GGR · ${windowLabel}`}
         icon={Coins}
         accent={windowedGgr.ggr > 0 ? "emerald" : windowedGgr.ggr < 0 ? "rose" : "blue"}
+        action={
+          <InfoHint
+            text="Windowed code-user GGR (wager − payout) for this creator's cohort over the period chip above — a trend signal only. It is NOT netted against the lifetime Creator Cost, so don't read it as a windowed Net PnL."
+            side="left"
+          />
+        }
       >
         <div className="space-y-1">
           <div

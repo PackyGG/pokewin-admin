@@ -78,6 +78,7 @@ import {
   CreatorsPeriodControl,
 } from "./_components/creators-sort-control";
 import { GlobalPnlByCreatorPopover } from "./_components/global-pnl-by-creator-popover";
+import { InfoHint } from "./_components/info-hint";
 import { getAllCreatorsLifetimePnl } from "./_queries/all-creators-lifetime-pnl";
 import { getAllCreatorsNetGgr } from "./_queries/all-creators-net-pnl";
 import { DASHBOARD_PERIOD_LABELS } from "@/lib/queries/dashboard-period";
@@ -241,6 +242,9 @@ async function CreatorsKpiStrip({
           sub="Canceled / role-removed ex-creators"
           icon={UserX}
           accent="purple"
+          action={
+            <InfoHint text="Users who once held the creator role but no longer do — deal cancelled or role removed. Their full historical economics live on each creator's detail page." />
+          }
         />
       </div>
     );
@@ -290,12 +294,14 @@ async function CreatorsKpiStrip({
           icon: Zap,
           accent: "purple" as const,
           sub: "Creators with a multiplier deal",
+          info: "Count of creators on a MULTIPLIER deal (their wagering is boosted by a payout multiplier). Switch the tab to see fill-deal creators instead.",
         }
       : {
           label: "Fill Creators",
           icon: Coins,
           accent: "pink" as const,
           sub: "Creators with a fill deal",
+          info: "Count of creators on a FILL deal (we give them system/fake balance to gamble with on stream). Switch the tab to see multiplier-deal creators instead.",
         };
 
   return (
@@ -310,6 +316,7 @@ async function CreatorsKpiStrip({
         sub={tabTile.sub}
         icon={tabTile.icon}
         accent={tabTile.accent}
+        action={<InfoHint text={tabTile.info} />}
       />
       {/* Net Code-User GGR — roster-wide windowed code-user GGR summed
           across every attributed creator (`getAllCreatorsNetGgr.totalGgr`)
@@ -360,6 +367,9 @@ async function CreatorsKpiStrip({
         }
         icon={Wallet}
         accent="blue"
+        action={
+          <InfoHint text="Stream earnings minted into payout vouchers across all active/scheduled deals (withdraw-cap usage). The sub-line shows how much of that has actually been withdrawn off-platform vs still in flight." />
+        }
       />
       {/* Leaderboard Cost — combined prize pool of every approved
           creator leaderboard, net of refunds, each weighted by its
@@ -375,6 +385,9 @@ async function CreatorsKpiStrip({
         sub="Approved leaderboard prizes × house share %"
         icon={Trophy}
         accent="rose"
+        action={
+          <InfoHint text="The house's share of every approved creator-leaderboard prize pool — net of refunds and weighted by each board's house-funded %. Money paid to players = house cost (rose)." />
+        }
       />
       {/* Active Deals — click to filter the list to creators
           whose current deal is `active`. */}
@@ -400,6 +413,9 @@ async function CreatorsKpiStrip({
           }
           icon={CalendarCheck}
           accent="emerald"
+          action={
+            <InfoHint text="Creators whose deal is active or scheduled this week. Click the tile to filter the list to just these creators." />
+          }
         />
       </Link>
       {/* Live Now — click to filter the list to creators with a
@@ -428,6 +444,9 @@ async function CreatorsKpiStrip({
           // Rose to read "active broadcasting in progress" — matches the
           // Live badge color elsewhere on the page.
           accent="rose"
+          action={
+            <InfoHint text="Creators currently streaming (an open stream session). Click the tile to filter the list to just the live creators." />
+          }
         />
       </Link>
     </div>
@@ -855,20 +874,34 @@ function networkErrorDetail(err: BackendNetworkError): string {
 //
 // Tab-scoped: the aggregate is filtered to creators in the active tab
 // (Fill / Multiplier) so the figure matches the swap-tile count on the
-// same row. The label flips with the tab — "Fill Creator PnL" vs
-// "Multiplier Creator PnL" — so the scope reads at a glance.
+// same row. The label flips with the tab — "Fill-Segment Net" vs
+// "Multiplier-Segment Net" — so the scope reads at a glance.
+//
+// NOTE: this is the combined DEPOSITS − CASH-OUT figure across the
+// segment's code cohorts (House POV) — a different lens than the
+// per-creator "Net Creator PnL" (GGR − creator cost) on /creators/[id].
+// The label + the InfoHint below spell that out so the two never get
+// conflated (the owner explicitly couldn't tell what "Fill creator PnL"
+// meant).
 //
 // Best-effort: a query failure renders the tile in its empty state
 // rather than crashing the page.
 
 function pnlTileLabel(tab: CreatorsTab): string {
-  return tab === "multiplier" ? "Multiplier Creator PnL" : "Fill Creator PnL";
+  return tab === "multiplier"
+    ? "Multiplier-Segment Net"
+    : "Fill-Segment Net";
 }
 
 function pnlTileSub(tab: CreatorsTab): string {
   return tab === "multiplier"
-    ? "Multiplier creators' affiliates combined, lifetime"
-    : "Fill creators' affiliates combined, lifetime";
+    ? "Multiplier creators · deposits − cash-out · lifetime"
+    : "Fill creators · deposits − cash-out · lifetime";
+}
+
+function pnlTileInfo(tab: CreatorsTab): string {
+  const segment = tab === "multiplier" ? "multiplier-deal" : "fill-deal";
+  return `Combined lifetime House P&L across every ${segment} creator's code cohort: total deposits from their referred players minus what those players cashed out (physical cards + session vouchers). House POV — emerald = up, rose = down. This is the deposits-vs-cash-out lens, NOT the GGR-minus-cost "Net Creator PnL" on a creator's detail page.`;
 }
 
 async function GlobalPnlTile({ tab }: { tab: CreatorsTab }) {
@@ -897,9 +930,12 @@ async function GlobalPnlTile({ tab }: { tab: CreatorsTab }) {
       icon={LineChart}
       accent={accent}
       action={
-        byCreator.length > 0 ? (
-          <GlobalPnlByCreatorPopover creators={byCreator} />
-        ) : undefined
+        <div className="flex items-center gap-1.5">
+          <InfoHint text={pnlTileInfo(tab)} side="bottom" />
+          {byCreator.length > 0 && (
+            <GlobalPnlByCreatorPopover creators={byCreator} />
+          )}
+        </div>
       }
     />
   );
@@ -961,6 +997,12 @@ async function NetGgrTile({
       sub={`All creators · ${DASHBOARD_PERIOD_LABELS[period].toLowerCase()}`}
       icon={Sparkles}
       accent={accent}
+      action={
+        <InfoHint
+          text="Gross gaming revenue (wager − payout) from every creator's code cohort, summed over the selected window. Counted only while each code was active (its 7-day attribution windows). House POV — emerald = players net-lost to us, rose = we net-paid them out."
+          side="bottom"
+        />
+      }
     />
   );
 }

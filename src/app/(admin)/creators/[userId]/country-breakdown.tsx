@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatNumber } from "@/lib/utils/format";
 import { EmptyState } from "@/components/empty-state";
 import { cn } from "@/lib/utils";
+import { InfoHint } from "../_components/info-hint";
 
 // Register once per module load. Safe to call repeatedly — the lib dedupes.
 countries.registerLocale(enLocale);
@@ -28,7 +29,13 @@ export function CountryBreakdown({ rows }: { rows: CountryRow[] }) {
     return (
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-card-title">Top countries</CardTitle>
+          <CardTitle className="text-card-title flex items-center gap-1.5">
+            Top countries
+            <InfoHint
+              text="Where this creator's clicks and signups come from, by country (top 10). The bar splits each country's clicks vs signups."
+              iconClassName="size-3"
+            />
+          </CardTitle>
           <p className="mt-0.5 text-xs text-muted-foreground">
             Clicks + signups by country
           </p>

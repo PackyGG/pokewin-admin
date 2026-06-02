@@ -24,7 +24,27 @@ import type {
 } from "@/lib/backend-api";
 
 import { CreatorRowActions } from "./creator-row-actions";
+import { InfoHint } from "./info-hint";
 import type { CreatorSocialSummary } from "../_queries/socials-by-user";
+
+// Plain-English one-liners for each per-creator stat box — shared by the
+// card-grid `Stat` cells and the compact list-view column headers so both
+// views explain the same number the same way. Surfaced via a small "ⓘ"
+// InfoHint next to each label (reuses the repo's shadcn Tooltip pattern).
+const STAT_HINTS = {
+  code: "The creator's affiliate code — players enter it to be attributed to this creator.",
+  wagerVolume:
+    "All-time wager volume from players referred by this creator's code (staff excluded). Money players risked = house income (emerald).",
+  ggr: "Gross gaming revenue (wager − payout) from this creator's code cohort over the selected window — counted only while the code was active. House POV: emerald = house win, rose = house loss.",
+  signups: "Players who signed up using this creator's code (all-time).",
+  ftds: "First-time depositors — referred players who deposited at least once. The trailing % is FTDs ÷ signups.",
+  capUsed:
+    "How much of the deal's withdrawal cap has been converted into payout vouchers — usage of their cash-out cap, NOT money paid out. The sub-line shows how much actually left the platform.",
+  dealCost:
+    "Worst-case house spend on this creator's active deal over the next 14 days — the deal's total withdrawal cap. Money the house could pay out (rose).",
+  leaderboardCost:
+    "Worst-case house spend on this creator's affiliate leaderboards over the next 14 days — the house-funded share of those prize pools (rose).",
+} as const;
 
 const DEAL_STATUS_STYLE: Record<CreatorDealStatus, string> = {
   scheduled:
@@ -456,12 +476,30 @@ export function CreatorListView({
       <div className="hidden border-b border-border/60 bg-muted/30 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground lg:grid lg:grid-cols-[minmax(0,2fr)_minmax(0,1.5fr)_minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.7fr)_minmax(0,0.7fr)_minmax(0,1fr)_2.25rem] lg:items-center lg:gap-3">
         <span>Creator</span>
         <span>Deal</span>
-        <span>Code</span>
-        <span className="text-right">Wager Volume</span>
-        <span className="text-right">GGR</span>
-        <span className="text-right">Signups</span>
-        <span className="text-right">FTDs</span>
-        <span className="text-right">Cap used</span>
+        <span className="flex items-center gap-1">
+          Code
+          <InfoHint text={STAT_HINTS.code} iconClassName="size-2.5" />
+        </span>
+        <span className="flex items-center justify-end gap-1">
+          Wager Volume
+          <InfoHint text={STAT_HINTS.wagerVolume} iconClassName="size-2.5" />
+        </span>
+        <span className="flex items-center justify-end gap-1">
+          GGR
+          <InfoHint text={STAT_HINTS.ggr} iconClassName="size-2.5" />
+        </span>
+        <span className="flex items-center justify-end gap-1">
+          Signups
+          <InfoHint text={STAT_HINTS.signups} iconClassName="size-2.5" />
+        </span>
+        <span className="flex items-center justify-end gap-1">
+          FTDs
+          <InfoHint text={STAT_HINTS.ftds} iconClassName="size-2.5" />
+        </span>
+        <span className="flex items-center justify-end gap-1">
+          Cap used
+          <InfoHint text={STAT_HINTS.capUsed} iconClassName="size-2.5" />
+        </span>
         <span className="sr-only">Actions</span>
       </div>
       <div className="divide-y divide-border/60">
@@ -800,7 +838,7 @@ function StatsStrip({
     signups > 0 ? Math.min(100, (ftds / signups) * 100).toFixed(0) : null;
   return (
     <div className="grid grid-cols-2 gap-x-3 gap-y-3 sm:grid-cols-6 sm:divide-x sm:divide-border/60">
-      <Stat label="Code">
+      <Stat label="Code" hint={STAT_HINTS.code}>
         {code ? (
           <span
             className="block truncate font-mono text-sm font-semibold"
@@ -812,7 +850,7 @@ function StatsStrip({
           <span className="block text-sm text-muted-foreground/60">—</span>
         )}
       </Stat>
-      <Stat label="Wager Volume">
+      <Stat label="Wager Volume" hint={STAT_HINTS.wagerVolume}>
         <span
           className="block truncate text-sm font-semibold tabular-nums text-emerald-600 dark:text-emerald-400"
           title={`${wagerVolumeUsd} USD — wagers from referred users`}
@@ -823,18 +861,19 @@ function StatsStrip({
       {/* Code-User GGR — windowed canonical gaming margin for this
           creator's cohort (House-POV: emerald = house win, rose =
           house loss). GGR-side only; full Net PnL on /creators/[id]. */}
-      <Stat label="GGR">
+      <Stat label="GGR" hint={STAT_HINTS.ggr}>
         <span className="block truncate text-sm font-semibold">
           <GgrValue usd={windowedGgrUsd} />
         </span>
       </Stat>
-      <Stat label="Signups">
+      <Stat label="Signups" hint={STAT_HINTS.signups}>
         <span className="block truncate text-sm font-semibold tabular-nums">
           {signups > 0 ? formatNumber(signups) : "—"}
         </span>
       </Stat>
       <Stat
         label="FTDs"
+        hint={STAT_HINTS.ftds}
         trailing={
           conv !== null ? (
             <span className="font-mono normal-case text-[10px] text-muted-foreground/70">
@@ -858,7 +897,7 @@ function StatsStrip({
           in flight (pending/processing/shipped). Hidden when there's no
           withdraw activity for this deal so dormant creators stay
           visually quiet. */}
-      <Stat label="Cap used">
+      <Stat label="Cap used" hint={STAT_HINTS.capUsed}>
         <span
           className="block truncate text-sm font-semibold tabular-nums"
           title={
@@ -901,15 +940,21 @@ function Stat({
   label,
   children,
   trailing,
+  hint,
 }: {
   label: string;
   children: React.ReactNode;
   trailing?: React.ReactNode;
+  /** Optional one-line explanation, surfaced as a muted "ⓘ" tooltip. */
+  hint?: string;
 }) {
   return (
     <div className="min-w-0 sm:px-3 sm:first:pl-0 sm:last:pr-0">
       <div className="flex items-center justify-between gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        <span>{label}</span>
+        <span className="flex items-center gap-1">
+          {label}
+          {hint && <InfoHint text={hint} iconClassName="size-2.5" />}
+        </span>
         {trailing}
       </div>
       <div className="mt-0.5">{children}</div>
@@ -1059,8 +1104,12 @@ function MomentumRow({
   }
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
-      <span className="font-semibold uppercase tracking-wider text-muted-foreground">
+      <span className="flex items-center gap-1 font-semibold uppercase tracking-wider text-muted-foreground">
         Last 3d
+        <InfoHint
+          text="Deposits + wagers from this creator's referred players over the last 72 hours — a quick momentum read on who's producing right now."
+          iconClassName="size-2.5"
+        />
       </span>
       <span className="text-muted-foreground">
         Deposits{" "}
@@ -1096,22 +1145,31 @@ function TwoWeekCostRow({
   if (!hasAny) return null;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
-      <span className="font-semibold uppercase tracking-wider text-muted-foreground">
+      <span className="flex items-center gap-1 font-semibold uppercase tracking-wider text-muted-foreground">
         2-Week Max Cost
+        <InfoHint
+          text="Worst-case house spend on this creator over the next 14 days — the deal's full withdrawal cap plus the house-funded share of their upcoming leaderboard prizes. A ceiling, not money already paid (rose)."
+          iconClassName="size-2.5"
+        />
       </span>
-      <span className="text-muted-foreground">
+      <span className="flex items-center gap-1 text-muted-foreground">
         Deal{" "}
         <span className="font-semibold tabular-nums text-rose-600 dark:text-rose-400">
           {dealUsd != null && dealUsd > 0 ? formatCurrency(dealUsd) : "—"}
         </span>
+        <InfoHint text={STAT_HINTS.dealCost} iconClassName="size-2.5" />
       </span>
-      <span className="text-muted-foreground">
+      <span className="flex items-center gap-1 text-muted-foreground">
         Leaderboard{" "}
         <span className="font-semibold tabular-nums text-rose-600 dark:text-rose-400">
           {leaderboardUsd != null && leaderboardUsd > 0
             ? formatCurrency(leaderboardUsd)
             : "—"}
         </span>
+        <InfoHint
+          text={STAT_HINTS.leaderboardCost}
+          iconClassName="size-2.5"
+        />
       </span>
     </div>
   );
