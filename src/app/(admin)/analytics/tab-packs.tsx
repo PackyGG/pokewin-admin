@@ -116,10 +116,11 @@ export async function PacksBattlesTab({
           <div className="text-sm">
             <h3 className="font-semibold">Pack &amp; battle profitability</h3>
             <p className="text-muted-foreground">
-              Per-pack revenue, payouts (card sales from obtained inventory),
-              gross margin (revenue − payouts), and margin %. Battles view
-              treats each pack as a line-item in the battles that included
-              it. Click a column to re-sort.
+              Per-pack revenue (wager paid), payouts (value of cards won from
+              the pack), gross margin (revenue − payouts, house POV), and
+              margin %. Battles view splits each battle&apos;s stake and won
+              value evenly across its packs. Real customers only; borrow plays
+              excluded. Click a column to re-sort.
             </p>
           </div>
         </div>

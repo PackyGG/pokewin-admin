@@ -2,6 +2,7 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "./_blacklist";
+import { WAGER_TYPES_SQL } from "@/lib/metrics/ledger-sets";
 
 export type TopPack24hRow = {
   id: string;
@@ -105,21 +106,57 @@ export async function getTopOpenedPacks24h(
 /**
  * Pack + battle profitability deep-dive.
  *
- * Per-pack stats (from `packs` + ledger_transactions):
- *   • opens — count of completed pack_opening transactions
- *   • revenue — sum of wager amounts
- *   • payouts — sum of card_sale + reward_card_sale + card_exchange
- *     amounts from game_sessions tied to this pack
+ * Payout model is the VERIFIED inventory-delta one (CLAUDE.md / pnl.ts
+ * `getPackBattlePurePnl` / insights-games `packs.ts`): a pack/battle open
+ * writes ONE ledger row = the gross stake (`pack_opening` / `battle_bet` /
+ * `battle_sponsorship`); the WIN is NOT a ledger row — it lands ONLY in
+ * `user_inventory.value_at_obtained` (`source_type IN ('pack','battle')`,
+ * keyed by `obtained_at`). So a pack's payout = the inventory value of what
+ * was won from it, NOT a `card_sale` ledger sum. Card sales / exchanges are
+ * NEUTRAL disposals of value the user already owns (see
+ * `@/lib/metrics/ledger-sets` NEUTRAL_TYPES) and must never sit on the
+ * payout side — folding them in is what the old query did, double-counting
+ * the auto-resale leg.
+ *
+ * Type sets come from the canonical `@/lib/metrics/ledger-sets`
+ * (`WAGER_TYPES_SQL` = pack_opening / battle_bet / battle_sponsorship) — no
+ * inline type list. The
+ * scope (real customers: admin/support/creator dropped + excluded-users
+ * blacklist) and the borrow exclusion (symmetric on wager AND payout) match
+ * the canonical migration in `analytics-cohorts.ts` and the verified
+ * `getPackBattlePurePnl` / insights-games scope. Creators are now dropped
+ * here too (they were not before) so this surface reports REAL customer
+ * gaming economics, consistent with every other gaming-margin surface.
+ *
+ * Per-pack stats (solo opens — `packs` + ledger + user_inventory):
+ *   • opens — count of completed non-borrow pack_opening transactions
+ *   • revenue — Σ |amount| of those non-borrow pack_opening rows (the
+ *     user's actual cash stake; the borrowed leg never lands on the ledger)
+ *   • payouts — Σ `user_inventory.value_at_obtained` for cards obtained
+ *     from this pack's non-borrow solo opens (source_type='pack',
+ *     source_id = the originating game_session, joined to packs via
+ *     game_sessions.game_id)
  *   • gross_margin — revenue − payouts (house POV)
  *   • margin_pct — gross_margin / revenue (house edge realized)
  *
  * Per-battle-pack stats (from battles → pack_ids):
- *   • battles_played — count of battles that included this pack
- *   • revenue — sum of bet_amount across those battles
- *   • payouts — sum of card_sale tied to the battle's game_sessions
+ *   • battles_played — count of non-borrow battles that included this pack
+ *   • revenue — Σ |battle_bet|+|battle_sponsorship| stake, split EVENLY
+ *     across the packs on each battle (a 2-pack battle = half the stake per
+ *     pack) so a pack's slice isn't double-counted on multi-pack battles
+ *   • payouts — Σ `user_inventory.value_at_obtained` for cards won in those
+ *     battles (source_type='battle', source_id = participant's
+ *     game_session), split evenly across the battle's packs on the SAME
+ *     basis as revenue. No more hardcoded `'0'`. The `battle_refund` cash
+ *     winner leg (the only ledger-resident gaming payout per
+ *     `@/lib/metrics` GAMING_PAYOUT_TYPES) is NOT attributed here: it
+ *     carries no verified per-pack linkage, and the two authoritative
+ *     per-pack references (`getPackBattlePurePnl`, insights-games
+ *     `packs.ts`) both compute battle-pack payout from the inventory delta
+ *     ALONE for exactly this reason.
  *   • gross_margin — revenue − payouts
  *
- * Period-scoped. Staff excluded (joined through the user role filter).
+ * Period-scoped. Borrow plays excluded entirely (both sides).
  */
 
 export type PacksPeriod = "7d" | "30d" | "90d" | "all";
@@ -170,8 +207,33 @@ export async function getPackProfitability(
   const days = daysForPeriod(period);
   const ltWhere =
     days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";
+  // Inventory rows are bucketed by `obtained_at` (when the card landed),
+  // not the ledger `created_at`, so the payout side gets its own cutoff —
+  // same split the canonical inventory-payout queries use.
+  const uiWhere =
+    days !== null ? `AND ui.obtained_at >= NOW() - INTERVAL '${days} days'` : "";
   const excluded = await getExcludedUserIds();
   const blacklistIdNotIn = blacklistNotInClause("id", excluded);
+  // Canonical real-customers scope (matches getPackBattlePurePnl /
+  // insights-games / analytics-cohorts): drop admin + support + creator and
+  // the admin-managed excluded-users blacklist. Creator stream play is
+  // house-funded promo, never a real customer's economics, so it does not
+  // belong in a gaming-margin surface. Inlined here as a subquery because
+  // the per-pack attribution joins are row-level (the aggregate
+  // `@/lib/metrics/queries` scope helper can't be reused for per-row joins).
+  const realCustomers = `(SELECT id FROM "user" WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn})`;
+  // Non-borrow solo-pack sessions (same fragment as analytics-cohorts.ts /
+  // insights-games _shared.ts), applied SYMMETRICALLY on the solo wager +
+  // payout so borrow plays drop out of both (canonical GGR excludes borrow
+  // entirely). Only the solo payout CTE needs it as a subquery — its CTE
+  // does not join battles; the battle CTEs join `battles b` directly and
+  // check `b.borrow_percentage = 0` inline.
+  const nonBorrowPackSessions = `(
+    SELECT game_session_id FROM ledger_transactions
+    WHERE type = 'pack_opening' AND status = 'completed'
+      AND game_session_id IS NOT NULL
+      AND (description IS NULL OR description NOT ILIKE '%borrow%')
+  )`;
 
   const [packRows, battleRows] = await Promise.all([
     db.$queryRawUnsafe<
@@ -184,6 +246,10 @@ export async function getPackProfitability(
       }[]
     >(`
       WITH pack_opens AS (
+        -- Solo wager: completed, non-borrow pack_opening rows. The ledger
+        -- amount is the user's ACTUAL paid stake (the borrowed leg never
+        -- bills through the ledger). WAGER_TYPES_SQL is the canonical
+        -- @/lib/metrics set; pack_opening is its solo member.
         SELECT
           gs.game_id AS pack_id,
           COUNT(*)::text AS opens,
@@ -191,26 +257,27 @@ export async function getPackProfitability(
         FROM ledger_transactions lt
         JOIN game_sessions gs ON gs.id = lt.game_session_id AND gs.game_type = 'pack'
         WHERE lt.type = 'pack_opening' AND lt.status = 'completed'
-          AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})
+          AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%')
+          AND lt.user_id IN ${realCustomers}
           ${ltWhere}
         GROUP BY gs.game_id
       ),
       pack_payouts AS (
-        -- Payouts = card sales + exchanges from inventory items whose
-        -- originating game_session is a pack opening. user_inventory.source_id
-        -- holds the game_session_id when source_type = 'pack'; from there we
-        -- look up packs via game_sessions.game_id.
+        -- Payout = the inventory value of the cards the user KEPT from this
+        -- pack's non-borrow solo opens (the verified inventory-delta model;
+        -- card_sale / card_exchange are NEUTRAL disposals, deliberately NOT
+        -- counted here). user_inventory.source_id holds the originating
+        -- game_session_id when source_type = 'pack'; join to game_sessions
+        -- to map to the pack. Borrow plays excluded to match the wager side.
         SELECT
           gs.game_id AS pack_id,
-          COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS payouts
-        FROM ledger_transactions lt
-        JOIN user_inventory ui ON ui.id = (lt.metadata->>'inventory_item_id')::uuid
-          AND ui.source_type = 'pack'
+          COALESCE(SUM(ui.value_at_obtained::numeric), 0)::text AS payouts
+        FROM user_inventory ui
         JOIN game_sessions gs ON gs.id = ui.source_id AND gs.game_type = 'pack'
-        WHERE lt.type IN ('card_sale','reward_card_sale','card_exchange','exchange_excess_credit')
-          AND lt.status = 'completed'
-          AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})
-          ${ltWhere}
+        WHERE ui.source_type = 'pack'
+          AND ui.user_id IN ${realCustomers}
+          AND ui.source_id IN ${nonBorrowPackSessions}
+          ${uiWhere}
         GROUP BY gs.game_id
       )
       SELECT
@@ -222,6 +289,7 @@ export async function getPackProfitability(
       FROM packs p
       LEFT JOIN pack_opens po ON po.pack_id = p.id
       LEFT JOIN pack_payouts pp ON pp.pack_id = p.id
+      WHERE po.pack_id IS NOT NULL
       ORDER BY COALESCE(po.revenue::numeric, 0) DESC
       LIMIT 20
     `),
@@ -234,35 +302,69 @@ export async function getPackProfitability(
         payouts: string;
       }[]
     >(`
-      WITH battle_packs AS (
+      WITH battle_wager AS (
+        -- Battle wager per pack: each participant's battle_bet /
+        -- battle_sponsorship ledger row (their ACTUAL cash stake across all
+        -- real participants, NOT just the creator's bet_amount), joined to
+        -- its battle via battle_participants.game_session_id, then split
+        -- EVENLY across the packs on that battle (a 2-pack battle = half the
+        -- stake per pack) so multi-pack battles don't double-count a pack's
+        -- slice. WAGER_TYPES_SQL is the canonical @/lib/metrics set; the
+        -- battle_participants join restricts it to the battle members
+        -- (pack_opening rows never match a participant session). Non-borrow
+        -- battles only.
         SELECT
           pid::uuid AS pack_id,
-          b.id AS battle_id,
-          b.bet_amount,
-          b.created_at
-        FROM battles b
+          bp.battle_id,
+          ABS(lt.amount::numeric) / GREATEST(array_length(b.pack_ids, 1), 1) AS wager
+        FROM ledger_transactions lt
+        JOIN battle_participants bp ON bp.game_session_id = lt.game_session_id
+        JOIN battles b ON b.id = bp.battle_id
         CROSS JOIN LATERAL UNNEST(b.pack_ids::uuid[]) AS pid
-        WHERE b.status = 'completed'
-          AND b.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})
-          ${days !== null ? `AND b.created_at >= NOW() - INTERVAL '${days} days'` : ""}
+        WHERE lt.type IN ${WAGER_TYPES_SQL} AND lt.status = 'completed'
+          AND COALESCE(b.borrow_percentage, 0) = 0
+          AND lt.user_id IN ${realCustomers}
+          ${ltWhere}
       ),
-      battle_agg AS (
+      battle_wager_agg AS (
         SELECT
           pack_id,
           COUNT(DISTINCT battle_id)::text AS battles_played,
-          COALESCE(SUM(bet_amount::numeric), 0)::text AS revenue
-        FROM battle_packs
+          COALESCE(SUM(wager), 0)::text AS revenue
+        FROM battle_wager
         GROUP BY pack_id
+      ),
+      battle_payouts AS (
+        -- Battle payout per pack: the inventory value of cards won from
+        -- battle plays (source_type='battle', source_id = the participant's
+        -- game_session_id), mapped to the battle via battle_participants,
+        -- then split EVENLY across the battle's packs on the SAME basis as
+        -- the wager. This is the verified inventory-delta payout (the only
+        -- pack/battle win record); card_sale / card_exchange are NEUTRAL and
+        -- not counted. Non-borrow battles only, real customers only.
+        SELECT
+          pid::uuid AS pack_id,
+          COALESCE(SUM(ui.value_at_obtained::numeric / GREATEST(array_length(b.pack_ids, 1), 1)), 0)::text AS payouts
+        FROM user_inventory ui
+        JOIN battle_participants bp ON bp.game_session_id = ui.source_id
+        JOIN battles b ON b.id = bp.battle_id
+        CROSS JOIN LATERAL UNNEST(b.pack_ids::uuid[]) AS pid
+        WHERE ui.source_type = 'battle'
+          AND COALESCE(b.borrow_percentage, 0) = 0
+          AND ui.user_id IN ${realCustomers}
+          ${uiWhere}
+        GROUP BY pid
       )
       SELECT
         p.id::text AS id,
         p.name,
         COALESCE(ba.battles_played, '0') AS battles_played,
         COALESCE(ba.revenue, '0') AS revenue,
-        '0' AS payouts
+        COALESCE(bpay.payouts, '0') AS payouts
       FROM packs p
-      LEFT JOIN battle_agg ba ON ba.pack_id = p.id
-      WHERE ba.battles_played IS NOT NULL
+      LEFT JOIN battle_wager_agg ba ON ba.pack_id = p.id
+      LEFT JOIN battle_payouts bpay ON bpay.pack_id = p.id
+      WHERE ba.pack_id IS NOT NULL
       ORDER BY COALESCE(ba.revenue::numeric, 0) DESC
       LIMIT 20
     `),
