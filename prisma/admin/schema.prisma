@@ -729,6 +729,72 @@ model admin_deleted_users {
   @@index([deleted_at(sort: Desc)], map: "admin_deleted_users_deleted_at_idx")
 }
 
+// Recoverable snapshot of "content" balance-adjustment ledger rows that an
+// admin wiped off a user's account via the /users/[id] "Wipe content
+// balance adjustments" flow. The owner hands creators admin balance
+// adjustments so they can make content (open packs / stream); this lets
+// those be cleaned out of a user's account WITHOUT touching real financial
+// or gaming history. Hard-delete is the chosen mechanism, so the deleted
+// rows are snapshotted here first to keep the operation recoverable.
+//
+//   • id is the wipe-BATCH id (one row per wipe action, may cover several
+//     deleted ledger rows). gen_random_uuid() like every other admin table.
+//   • user_id is the main-DB packy.gg user id (better-auth nanoid, text).
+//     NOT a Prisma relation — main DB vs admin DB live on separate Postgres
+//     clusters, so cross-DB FKs aren't possible. user_id / wiped_by /
+//     restored_by are plain text/UUID columns that match the respective
+//     ids in their own DBs.
+//   • snapshot is the JSONB blob: { userId, rows: ledger_transactions[] }
+//     where each row is the full deleted ledger_transactions row with
+//     Decimal/Date values serialized to canonical strings — see
+//     src/lib/balance-adjustment-wipes/snapshot.ts. Restore re-inserts the
+//     rows verbatim and re-adds the summed amount back to the balance.
+//   • total_amount is the SUM of the deleted rows' amounts (signed). The
+//     wipe REDUCES balances.available_balance by exactly this, so restore
+//     ADDS it back. balance_before / balance_after capture the user's
+//     available_balance immediately around the wipe for the audit trail.
+//   • restored_at is null until restoreBalanceAdjustmentWipe runs. Once
+//     set the batch can't be restored again (re-restoring would
+//     double-insert + double-credit). Restored batches stay listed with
+//     the restore status visible.
+//
+// Provisioned at runtime via the IF-NOT-EXISTS ensure-schema fallback
+// (src/lib/balance-adjustment-wipes/ensure-schema.ts) — NOT a Prisma
+// migration, because the admin DB has a drifted migration history. This
+// model only mirrors the table so typed queries via
+// `adminDb.admin_balance_adjustment_wipes.*` work; keep the two in sync.
+model admin_balance_adjustment_wipes {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Main-DB user the adjustments were wiped from (better-auth nanoid).
+  user_id          String    @db.VarChar(36)
+  // Captured at wipe time so the listing UI doesn't have to crack the JSONB.
+  username         String?   @db.VarChar(255)
+  email            String?   @db.VarChar(255)
+  wiped_at         DateTime  @default(now()) @db.Timestamp(6)
+  // admin_users.id of whoever ran the wipe. Plain UUID column — no Prisma
+  // relation so adding this table doesn't touch admin_users.
+  wiped_by         String    @db.VarChar(36)
+  // SUM of the deleted rows' signed amounts. The wipe subtracts this from
+  // available_balance; restore adds it back. Decimal(20,2) matches the
+  // ledger / balance precision.
+  total_amount     Decimal   @db.Decimal(20, 2)
+  // User's available_balance immediately before / after the wipe.
+  balance_before   Decimal   @db.Decimal(20, 2)
+  balance_after    Decimal   @db.Decimal(20, 2)
+  // How many ledger rows this batch deleted.
+  adjustment_count Int
+  // JSONB blob — { userId, rows: ledger_transactions[] }. Each row is the
+  // full deleted ledger_transactions row, Decimal/Date → canonical string.
+  snapshot         Json      @db.JsonB
+  // Null until restoreBalanceAdjustmentWipe runs. Once set the batch is
+  // immutable + cannot be re-restored.
+  restored_at      DateTime? @db.Timestamp(6)
+  restored_by      String?   @db.VarChar(36)
+
+  @@index([user_id], map: "admin_balance_adjustment_wipes_user_id_idx")
+  @@index([wiped_at(sort: Desc)], map: "admin_balance_adjustment_wipes_wiped_at_idx")
+}
+
 // Admin-side "sponsored %" annotation on a creator (affiliate)
 // leaderboard. Purely a cost-accounting input — it does NOT touch the
 // backend leaderboard in any way. The /creators "Leaderboard Cost" KPI

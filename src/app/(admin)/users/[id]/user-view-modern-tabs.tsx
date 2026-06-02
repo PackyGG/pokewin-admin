@@ -75,6 +75,7 @@ import {
   FINANCIAL_TX_TYPES,
 } from "./user-tabs";
 import { UserBattleLimitsCard } from "./user-battle-limits-card";
+import { RecoverableWipesStrip } from "./wipe-adjustments-dialog";
 import type {
   PaginatedInventory,
   TipEntry,
@@ -952,7 +953,6 @@ export function AccountTab({
   isAdmin: boolean;
 }) {
   const { user, balances, shippingAddress, vault, depositAddresses, featureLocks, battleLimits, mutes, capabilities } = data;
-  void isAdmin; // currently only consumed by downstream components
   return (
     <div className="space-y-6">
       <SectionHeading icon={Dices} title="Wagering Stats" />
@@ -994,8 +994,14 @@ export function AccountTab({
       />
       <SectionHeading icon={ShieldCheck} title="Moderation" />
       <Card>
-        <CardContent className="pt-6">
+        <CardContent className="pt-6 space-y-4">
           <ModerationSection user={user} mutes={mutes} />
+          {/* Recoverable "content" balance-adjustment wipes for this user.
+              Self-fetching + only renders when batches exist. Same gate as
+              the wipe action (admin or __can_wipe_accounts). */}
+          {(isAdmin || capabilities.canWipeAccounts) && (
+            <RecoverableWipesStrip userId={user.id} />
+          )}
         </CardContent>
       </Card>
       <SectionHeading icon={FileText} title="Admin Notes" />
