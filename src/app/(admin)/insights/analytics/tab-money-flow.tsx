@@ -122,7 +122,7 @@ export async function MoneyFlowInsightsTab({
           <section className="space-y-3">
             <SectionHeading
               icon={Gift}
-              title={`Bonuses paid (already inside GGR) · ${periodLabel}`}
+              title={`Reward cost — the GGR → NGR step · ${periodLabel}`}
             />
             <BonusesByTypePanel
               rows={data.bonusesByType}
@@ -177,17 +177,20 @@ function Intro({
           </p>
           <p className="text-xs text-muted-foreground">
             GGR is{" "}
-            <span className="font-mono">wagers − payouts</span> (cash that
-            crossed the ledger). P&L is the balance-sheet identity{" "}
+            <span className="font-mono">wager − gaming payout</span>{" "}
+            (gaming-only; the payout is the inventory-delta of cards kept +
+            battle refunds, card conversions neutral). P&L is the
+            balance-sheet identity{" "}
             <span className="font-mono">
               deposits − withdrawals − Δbalance − Δinventory − Δvouchers
             </span>
-            . Algebraically the gap is{" "}
+            . The gap is{" "}
             <span className="font-mono">
-              card_wd + inventoryΔ + voucherΔ + residual
+              reward cost + card_wd + inventoryΔ + voucherΔ + residual
             </span>{" "}
-            — money that left GGR&apos;s ledger but is still our liability
-            (cards shipped, cards held in inventory, vouchers held unclaimed).
+            — house-funded rewards plus value that left GGR but is still our
+            liability (cards shipped, cards held in inventory, vouchers held
+            unclaimed).
           </p>
         </div>
       </div>
@@ -214,7 +217,7 @@ function HeadlineKpis({
       <KpiTile
         label="GGR"
         value={`${ggrPositive ? "+" : "−"}${formatCurrency(Math.abs(ggr))}`}
-        sub={`${periodLabel} · wagers − payouts`}
+        sub={`${periodLabel} · wager − gaming payout`}
         icon={ggrPositive ? TrendingUp : TrendingDown}
         accent={ggrPositive ? "emerald" : "rose"}
       />
@@ -259,6 +262,7 @@ function WaterfallPanel({
   // render some visible bar.
   const maxMag = Math.max(
     Math.abs(data.ggr),
+    Math.abs(data.bonusesTotal),
     Math.abs(data.cardWithdrawals),
     Math.abs(data.inventoryDelta),
     Math.abs(data.voucherDelta),
@@ -271,17 +275,32 @@ function WaterfallPanel({
     <Card>
       <CardContent className="space-y-1 p-4 sm:p-5">
         <MoneyFlowRow
-          label="GGR (wagers − payouts)"
+          label="GGR (wager − gaming payout)"
           value={data.ggr}
           sign="+"
           maxMag={maxMag}
           accent={data.ggr >= 0 ? "emerald" : "rose"}
           iconNode={<MFIcon accent={data.ggr >= 0 ? "emerald" : "rose"} variant="trend-up" />}
-          why="What the ledger said we made gross — every wager debit minus every payout credit (battle refunds, card sales, bonuses, rakeback, race prizes, all 20 payout types) for real customers in the window. Bonuses are already inside this number."
+          why="Gross gaming revenue, gaming-only: customer wager minus the gaming payout. The gaming payout is the verified inventory-delta model — the value of cards users won and kept (user_inventory) plus battle cash refunds. Card sales/exchanges are NEUTRAL conversions and are NOT subtracted here. Reward/marketing spend is NOT inside GGR — it's the next line (GGR → NGR)."
           subRows={[
-            { label: "Wagers", value: data.wagers, sign: "+" },
-            { label: "Payouts", value: data.payouts, sign: "−" },
+            { label: "Wager", value: data.wagers, sign: "+" },
+            {
+              label: "Gaming payout (inventory wins + battle refund)",
+              value: data.payouts,
+              sign: "−",
+            },
           ]}
+        />
+
+        <MoneyFlowRow
+          label="Reward cost (GGR → NGR)"
+          value={data.bonusesTotal}
+          sign="−"
+          maxMag={maxMag}
+          accent="rose"
+          iconNode={<MFIcon accent="rose" variant="trend-down" />}
+          why="House-funded reward / marketing / retention spend — deposit bonuses, rakeback, promo & gift redemptions, affiliate claims, race & waitlist prizes, and the NET house slice of rain (max(0, rain_win − rain_tip)). This is the GGR → NGR step; the per-type breakdown is the 'Bonuses paid' panel below. creator_tip is a pass-through (not counted)."
+          deltaTooltip="reward cost = GGR − NGR (canonical). Rain counted at its net house slice, not gross."
         />
 
         <MoneyFlowRow
@@ -320,7 +339,10 @@ function WaterfallPanel({
         <MoneyFlowRow
           label={residualNoteworthy ? "Unexplained residual" : "Residual"}
           value={data.residual}
-          sign={data.residual >= 0 ? "−" : "+"}
+          // residual = P&L − explainedFromNGR: a POSITIVE residual is an
+          // unexplained inflow that lifts P&L (+), a negative one is a leak
+          // (−). Sign reflects the effect on the running total down to P&L.
+          sign={data.residual >= 0 ? "+" : "−"}
           maxMag={maxMag}
           accent={residualNoteworthy ? "amber" : "blue"}
           iconNode={
@@ -331,10 +353,10 @@ function WaterfallPanel({
           }
           why={
             residualNoteworthy
-              ? "The identity doesn't close to $0 — this is what's missing. The biggest contributor is usually creator on-stream GGR (filtered out of headline GGR but the balance still moved). Other causes: admin balance adjustments not tagged 'Manual withdrawal:', fee types outside withdrawal_shipping_fee, off-window timing (a card sold the moment after a pack open spans the cutoff). Investigate if it's a large share of GGR."
-              : "Mostly creator on-stream GGR (filtered out of headline GGR but moved through balance) plus small approximations: inventory valuation drift, balance-change rounding, off-period redemption windows. Small relative to GGR — within expected noise."
+              ? "The NGR → P&L identity doesn't close to $0 — this is what's missing after every named term (reward cost, the three balance-sheet liabilities, and the RESIDUAL_TYPES ledger flows) is itemized. Usual causes: neutral card-conversion ↔ inventory-delta edge cases, off-window timing (a card sold the moment after a pack open spans the cutoff), and rounding. Investigate if it's a large share of GGR."
+              : "What the named terms don't account for after reward cost, the three balance-sheet liabilities, and the RESIDUAL_TYPES ledger flows are itemized — neutral-conversion timing edges and rounding. Small relative to GGR — within expected noise. Shown honestly, not fudged to zero."
           }
-          deltaTooltip="residual = GGR − card_withdrawals − inventoryΔ − voucherΔ − P&L"
+          deltaTooltip="residual = P&L − (NGR − inventoryΔ − cardWd − voucherΔ + Σ residual-type flows). Same identity as /insights/cost-breakdown."
         />
 
         <div className="my-3 border-t" />
@@ -413,10 +435,10 @@ function BonusesByTypePanel({
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-xs font-medium">
-          Bonuses & marketing payouts — per ledger type
+          Reward & marketing cost — per category
         </CardTitle>
         <p className="text-[11px] text-muted-foreground">
-          {formatCurrency(total)} total. Already deducted inside GGR — this list shows the marketing-cost mix, not extra spend.
+          {formatCurrency(total)} total — this is the GGR → NGR step (sums to GGR − NGR). Rain is counted at its net house slice. Shows the reward-cost mix.
         </p>
       </CardHeader>
       <CardContent>

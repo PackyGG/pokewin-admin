@@ -7,6 +7,8 @@ import {
   TrendingUp,
   UserPlus,
   BarChart3,
+  Sparkles,
+  Megaphone,
 } from "lucide-react";
 import { FadeIn } from "@/components/fade-in";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -105,9 +107,43 @@ export async function OverviewInsightsTab({ period }: { period: InsightsPeriod }
             houseFavorable="up"
           />
           <BigKpi
+            label="Organic Wager"
+            value={formatCurrency(current.wagerOrganic)}
+            sub={
+              current.wager > 0
+                ? `${((current.wagerOrganic / current.wager) * 100).toFixed(0)}% of customer wager · no creator code`
+                : "Customer wager · no creator code"
+            }
+            icon={Sparkles}
+            accent="emerald"
+            delta={previous?.wagerOrganic ?? null}
+            currentRaw={current.wagerOrganic}
+            spark={spark("wagerOrganic")}
+            sparkAccent="emerald"
+            // Organic wager is customer stake placed (house-positive on
+            // entry) → emerald, up = good for house.
+            houseFavorable="up"
+          />
+          <BigKpi
+            label="Creator-Coded Wager"
+            value={formatCurrency(current.wagerCreatorCoded)}
+            sub={
+              current.wager > 0
+                ? `${((current.wagerCreatorCoded / current.wager) * 100).toFixed(0)}% of customer wager · joined under a creator`
+                : "Customer wager · joined under a creator"
+            }
+            icon={Megaphone}
+            accent="amber"
+            delta={previous?.wagerCreatorCoded ?? null}
+            currentRaw={current.wagerCreatorCoded}
+            spark={spark("wagerCreatorCoded")}
+            sparkAccent="amber"
+            houseFavorable="up"
+          />
+          <BigKpi
             label="GGR"
             value={formatCurrency(current.ggr)}
-            sub="Gross gaming revenue (wagers − payouts)"
+            sub="Gross gaming revenue — wager − gaming payout (inventory-delta)"
             icon={DollarSign}
             // GGR is the headline house-POV number. positive = emerald,
             // negative would render rose via the value-tint below.
@@ -121,7 +157,7 @@ export async function OverviewInsightsTab({ period }: { period: InsightsPeriod }
           <BigKpi
             label="NGR"
             value={formatCurrency(current.ngr)}
-            sub="Net gaming revenue (GGR − bonuses)"
+            sub="Net gaming revenue — GGR − reward cost (net rain)"
             icon={TrendingUp}
             accent={current.ngr >= 0 ? "emerald" : "rose"}
             delta={previous?.ngr ?? null}
@@ -182,14 +218,16 @@ export async function OverviewInsightsTab({ period }: { period: InsightsPeriod }
           <Card className="mt-3">
             <CardHeader>
               <CardTitle className="text-sm font-medium">
-                Deposits, withdrawals, wager & GGR per day
+                Deposits, withdrawals, revenue & wager attribution per day
               </CardTitle>
               <p className="text-xs text-muted-foreground">
                 Series uses house-POV colors: deposits + wager + GGR are
                 emerald (house-positive on entry), withdrawals are rose
-                (money flowing back out). Sparklines above are scoped to
-                the period; this chart shows the full daily series so
-                period spikes are visible against trend.
+                (money flowing back out); the attribution chart splits
+                customer wager into organic (emerald) vs creator-coded
+                (amber). Sparklines above are scoped to the period; these
+                charts show the full daily series so period spikes are
+                visible against trend.
               </p>
             </CardHeader>
             <CardContent>
@@ -212,9 +250,13 @@ function Intro({ period }: { period: InsightsPeriod }) {
         <h3 className="font-semibold">Period overview</h3>
         <p className="text-muted-foreground">
           Top-line KPIs for {INSIGHTS_PERIOD_LABELS[period].toLowerCase()}, with
-          a delta chip comparing against the previous comparable window. House
-          point-of-view: emerald = house up, rose = house down. Excludes staff,
-          blacklisted users, and creator on-stream sponsored play.
+          a delta chip comparing against the previous comparable window. GGR /
+          NGR use the canonical inventory-delta model (card conversions
+          neutral, net-rain NGR) so they reconcile with /ggr and the dashboard.
+          &quot;Organic&quot; wager is from customers who did not join under a
+          creator code; the rest is creator-coded. House point-of-view: emerald
+          = house up, rose = house down. Excludes staff, blacklisted users, and
+          creator on-stream sponsored play.
         </p>
       </div>
     </div>

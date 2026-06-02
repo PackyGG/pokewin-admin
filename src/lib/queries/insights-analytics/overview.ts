@@ -7,10 +7,22 @@ import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { getCreatorSessionWindowsCte } from "@/lib/queries/creator-session-windows";
+// Canonical metric layer — single source of truth for wager / GGR / NGR.
+// The previous inline `wager − Σ payout(19)` GGR (which folded the
+// NEUTRAL card/voucher conversions and a phantom ledger `upgrader_payout`
+// into the payout side, plus a bonus list double-subtracted on top for
+// NGR) is gone. GGR/NGR now come from `getWindowMetrics` (headline) and
+// `getDailyGamingMetrics` (per-day + the previous-window delta) — the
+// inventory-delta model, net-rain NGR, real-customer + borrow-corrected
+// scope. They reconcile with /ggr, /dashboard and /insights/cost-breakdown
+// by construction. The wager DISPLAY leg below uses the SAME canonical
+// WAGER_TYPES set so the Wager tile reconciles with the GGR wager leg.
+import { WAGER_TYPES_SQL as METRICS_WAGER_TYPES_SQL } from "@/lib/metrics";
 import {
-  WAGER_TYPES_SQL,
-  PAYOUT_TYPES_SQL,
-} from "@/lib/queries/_wager-payout-types";
+  getWindowMetrics,
+  getDailyGamingMetrics,
+  type MetricWindow,
+} from "@/lib/metrics/queries";
 import {
   periodToCutoff,
   previousPeriodCutoff,
@@ -22,13 +34,20 @@ import {
  * previous comparable period (for the up/down delta chips), plus a daily
  * series for the sparklines.
  *
- * Mirrors the GGR fix landed in 7390363: creator on-stream sessions are
- * dropped from BOTH the wager AND payout side of GGR via the same
- * session_windows CTE pnl.ts / dashboard.ts use, so the headline figures
- * match those pages by construction.
+ * GGR / NGR are the CANONICAL `@/lib/metrics` figures (inventory-delta
+ * gaming payout, card conversions neutral, net-rain NGR, real-customer +
+ * borrow-corrected scope). They reconcile with /ggr, /dashboard and
+ * /insights/cost-breakdown by construction. The deposits / withdrawals /
+ * wager / organic-wager / signups / active aggregates are computed by the
+ * window query below (creator on-stream sessions dropped via the same
+ * session_windows CTE pnl.ts / dashboard.ts use; staff + manual blacklist
+ * excluded everywhere).
  *
- * Staff (admin / support) and the manual blacklist are excluded
- * everywhere, including the sparkline series.
+ * "Organic wager" = customer gameplay wager from users who did NOT join
+ * under an official creator code — replicated from dashboard.ts's
+ * `wager_organic` (the `under_creator` flag: referred_by points to a user
+ * with role 'creator'; NULL referrer = organic). Creator-coded wager is
+ * the complement (`wagerCreatorCoded`).
  */
 
 export type OverviewKpis = {
@@ -42,6 +61,10 @@ export type OverviewWindow = {
   depositCount: number;
   withdrawals: number;
   wager: number;
+  /** Customer wager from users NOT under a creator code (organic). */
+  wagerOrganic: number;
+  /** Customer wager from users who joined under a creator code. */
+  wagerCreatorCoded: number;
   ggr: number;
   ngr: number;
   newSignups: number;
@@ -53,6 +76,10 @@ export type OverviewDay = {
   deposits: number;
   withdrawals: number;
   wager: number;
+  /** Organic (non-creator-coded) wager booked on the day. */
+  wagerOrganic: number;
+  /** Creator-coded wager booked on the day. */
+  wagerCreatorCoded: number;
   ggr: number;
   ngr: number;
   signups: number;
@@ -75,7 +102,31 @@ export async function getInsightsOverview(
   const blacklistIdNotIn = blacklistNotInClause("id", excluded);
   const sessionWindowsCte = await getCreatorSessionWindowsCte();
 
-  const [windows, daily] = await Promise.all([
+  // Canonical metric window for the CURRENT period — the EXACT same cutoff
+  // the wager tile uses. Lifetime → no lower bound. The headline GGR/NGR
+  // is the canonical `getWindowMetrics` figure (not a daily re-sum), so the
+  // headline reconciles with /ggr, /dashboard and /insights/cost-breakdown
+  // to the cent.
+  const currentWindow: MetricWindow = {
+    since: period === "lifetime" ? null : cutoff,
+  };
+
+  // Canonical daily GGR/NGR series — drives the sparkline merge AND the
+  // PREVIOUS-window GGR/NGR delta chip (summed over the prior date range;
+  // daily GGR sums to window GGR by construction, the metric layer's own
+  // invariant). Lifetime has no previous window so the series only needs
+  // the sparkline horizon; windowed periods widen it back to `previous.start`
+  // so the entire prior window is in range. The current-window headline does
+  // NOT come from this sum — it comes from `getWindowMetrics` above, exact.
+  const metricsSince = (() => {
+    const sparkSince = sparkSinceForPeriod(period, now);
+    // Ensure the daily series reaches back far enough to cover the entire
+    // previous window (previous.start can predate the sparkline horizon for
+    // the longer periods, e.g. 90d → previous starts 180d ago).
+    return previous && previous.start < sparkSince ? previous.start : sparkSince;
+  })();
+
+  const [windows, daily, currentMetrics, dailyMetrics] = await Promise.all([
     runWindowQuery({
       currentCutoff: cutoff,
       previousStart: previous?.start ?? null,
@@ -84,28 +135,77 @@ export async function getInsightsOverview(
       sessionWindowsCte,
     }),
     cachedDailyOverview(
-      // sparkline horizon = lifetime caps at 180d, otherwise we want the
-      // full period plus one mirror window so the chart can visually
-      // separate "this period" from "last period" later if needed.
+      // sparkline horizon = lifetime caps at 180d, otherwise the full
+      // period plus one mirror window so the chart can visually separate
+      // "this period" from "last period".
       sparkSinceForPeriod(period, now).toISOString(),
       blacklistIdNotIn,
       sessionWindowsCte,
     ),
+    getWindowMetrics({ window: currentWindow }),
+    getDailyGamingMetrics({ since: metricsSince }),
   ]);
 
+  // Daily GGR/NGR keyed by date for both the sparkline merge and the
+  // previous-window sum below.
+  const ggrByDate = new Map<string, { ggr: number; ngr: number }>();
+  for (const p of dailyMetrics) {
+    ggrByDate.set(p.date, { ggr: p.ggr, ngr: p.ngr });
+  }
+
+  // Sum the canonical daily GGR/NGR over a [start, end) date range — used
+  // only for the previous-window delta chip (approximate by day boundary,
+  // which is fine for a trend chip; the headline current figure is exact).
+  const sumGgrNgr = (
+    start: Date,
+    end: Date,
+  ): { ggr: number; ngr: number } => {
+    let ggr = 0;
+    let ngr = 0;
+    for (const p of dailyMetrics) {
+      const d = new Date(`${p.date}T00:00:00.000Z`);
+      if (d >= start && d < end) {
+        ggr += p.ggr;
+        ngr += p.ngr;
+      }
+    }
+    return { ggr, ngr };
+  };
+
+  // Current-window GGR/NGR: the exact canonical headline figure.
+  const currentGgrNgr = { ggr: currentMetrics.ggr, ngr: currentMetrics.ngr };
+
+  // Previous-window GGR/NGR: only for windowed periods (lifetime has no
+  // comparable prior window).
+  const previousGgrNgr = previous
+    ? sumGgrNgr(previous.start, previous.end)
+    : null;
+
   return {
-    current: parseWindow(windows.current),
-    previous: previous ? parseWindow(windows.previous) : null,
-    daily: daily.map((d) => ({
-      date: new Date(d.date).toISOString().slice(0, 10),
-      deposits: toNumber(d.deposits),
-      withdrawals: toNumber(d.withdrawals),
-      wager: toNumber(d.wager),
-      ggr: toNumber(d.ggr),
-      ngr: toNumber(d.ngr),
-      signups: Number(d.signups),
-      active: Number(d.active),
-    })),
+    current: parseWindow(windows.current, currentGgrNgr.ggr, currentGgrNgr.ngr),
+    previous: previous
+      ? parseWindow(
+          windows.previous,
+          previousGgrNgr?.ggr ?? 0,
+          previousGgrNgr?.ngr ?? 0,
+        )
+      : null,
+    daily: daily.map((d) => {
+      const date = new Date(d.date).toISOString().slice(0, 10);
+      const m = ggrByDate.get(date);
+      return {
+        date,
+        deposits: toNumber(d.deposits),
+        withdrawals: toNumber(d.withdrawals),
+        wager: toNumber(d.wager),
+        wagerOrganic: toNumber(d.wager_organic),
+        wagerCreatorCoded: toNumber(d.wager_creator_coded),
+        ggr: m?.ggr ?? 0,
+        ngr: m?.ngr ?? 0,
+        signups: Number(d.signups),
+        active: Number(d.active),
+      };
+    }),
   };
 }
 
@@ -134,24 +234,14 @@ function sparkSinceForPeriod(period: InsightsPeriod, now: Date): Date {
 }
 
 type RawWindowRow = {
-  // Current window aggregates
   deposits: string;
   deposit_count: string;
   withdrawals: string;
   wager: string;
-  ggr: string;
-  ngr: string;
+  wager_organic: string;
+  wager_creator_coded: string;
   signups: string;
   active: string;
-  // Previous window aggregates (null when no previous window)
-  prev_deposits: string;
-  prev_deposit_count: string;
-  prev_withdrawals: string;
-  prev_wager: string;
-  prev_ggr: string;
-  prev_ngr: string;
-  prev_signups: string;
-  prev_active: string;
 };
 
 async function runWindowQuery(args: {
@@ -177,14 +267,10 @@ async function runWindowQuery(args: {
   const prevStart = previousStart ?? new Date(0);
   const prevEnd = previousEnd ?? new Date(0);
 
-  const ggrWagerIn = Prisma.raw(WAGER_TYPES_SQL);
-  const ggrPayoutIn = Prisma.raw(PAYOUT_TYPES_SQL);
-  // NGR = GGR − bonus payouts. Use the canonical bonus type list — same
-  // bucket the legacy analytics.ts pulls for `reward_*` series. Distinct
-  // from the GGR payout list so the columns stay independent.
-  const bonusTypesSql = Prisma.raw(
-    `('deposit_bonus','promo_code_redeemed','gift_card_redeemed','rakeback_claim','affiliate_claim','rain_win','race_prize','creator_tip','waitlist_prize','voucher_redeemed','voucher_exchange','exchange_excess_credit','exchange_excess_to_voucher','battle_excess_to_voucher')`,
-  );
+  // Canonical WAGER_TYPES set (packs + battles; no phantom upgrader_bet,
+  // no withdrawal_shipping_fee) — the SAME set the headline GGR wager leg
+  // uses, so this displayed wager reconciles with the GGR card.
+  const wagerIn = Prisma.raw(METRICS_WAGER_TYPES_SQL);
 
   const rows = await db.$queryRaw<
     {
@@ -193,14 +279,22 @@ async function runWindowQuery(args: {
       deposit_count: string;
       withdrawals: string;
       wager: string;
-      ggr: string;
-      ngr: string;
+      wager_organic: string;
+      wager_creator_coded: string;
       signups: string;
       active: string;
     }[]
   >`
     WITH real_users AS (
-      SELECT u.id, u.role, u.created_at AS signup_at
+      SELECT u.id, u.role, u.created_at AS signup_at,
+             -- under_creator flags users who joined under an official
+             -- creator code: referred_by points to a user with role
+             -- 'creator'. NULL referred_by (organic signup) is false.
+             -- Replicated from dashboard.ts's organic-wager attribution.
+             EXISTS (
+               SELECT 1 FROM "user" ref
+               WHERE ref.id = u.referred_by AND ref.role = 'creator'
+             ) AS under_creator
       FROM "user" u
       WHERE u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
     ),
@@ -208,10 +302,12 @@ async function runWindowQuery(args: {
     base AS (
       -- Same in_session pattern dashboard.ts uses: a creator wager
       -- placed while live on a deal/stream is house-funded sponsored
-      -- play, not a real customer bet — dropped from BOTH the wager
-      -- and payout side of GGR/NGR so the figures match the GGR card
-      -- on the dashboard by construction.
+      -- play, not a real customer bet — dropped from the wager figure
+      -- (NOT in_session) so it matches the GGR card on the dashboard.
+      -- under_creator carries forward whether the wagering user joined
+      -- under an official creator code (drives the organic split).
       SELECT lt.user_id, lt.type, lt.amount::numeric AS amount, lt.created_at,
+             ru.under_creator,
              CASE WHEN ru.role = 'creator'
                   THEN EXISTS (
                     SELECT 1 FROM session_windows sw
@@ -237,16 +333,12 @@ async function runWindowQuery(args: {
       COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${currentCutoff} THEN amount ELSE 0 END), 0)::text AS deposits,
       COUNT(CASE WHEN type = 'deposit' AND created_at >= ${currentCutoff} THEN 1 END)::text AS deposit_count,
       COALESCE((SELECT SUM(CASE WHEN effective_at >= ${currentCutoff} THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawals,
-      COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND NOT in_session AND created_at >= ${currentCutoff} THEN ABS(amount) ELSE 0 END), 0)::text AS wager,
-      (
-        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND NOT in_session AND created_at >= ${currentCutoff} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND NOT in_session AND created_at >= ${currentCutoff} THEN ABS(amount) ELSE 0 END), 0)
-      )::text AS ggr,
-      (
-        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND NOT in_session AND created_at >= ${currentCutoff} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND NOT in_session AND created_at >= ${currentCutoff} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN ${bonusTypesSql} AND created_at >= ${currentCutoff} THEN ABS(amount) ELSE 0 END), 0)
-      )::text AS ngr,
+      COALESCE(SUM(CASE WHEN type IN ${wagerIn} AND NOT in_session AND created_at >= ${currentCutoff} THEN ABS(amount) ELSE 0 END), 0)::text AS wager,
+      -- Organic wager — customers NOT under a creator code (NOT
+      -- under_creator), excluding creator on-stream play (NOT in_session).
+      COALESCE(SUM(CASE WHEN type IN ${wagerIn} AND NOT in_session AND NOT under_creator AND created_at >= ${currentCutoff} THEN ABS(amount) ELSE 0 END), 0)::text AS wager_organic,
+      -- Creator-coded wager — customers who joined under a creator code.
+      COALESCE(SUM(CASE WHEN type IN ${wagerIn} AND NOT in_session AND under_creator AND created_at >= ${currentCutoff} THEN ABS(amount) ELSE 0 END), 0)::text AS wager_creator_coded,
       (SELECT COUNT(*)::text FROM real_users WHERE signup_at >= ${currentCutoff}) AS signups,
       COUNT(DISTINCT CASE WHEN created_at >= ${currentCutoff} THEN user_id END)::text AS active
     FROM base
@@ -256,16 +348,9 @@ async function runWindowQuery(args: {
       COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN amount ELSE 0 END), 0)::text AS deposits,
       COUNT(CASE WHEN type = 'deposit' AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN 1 END)::text AS deposit_count,
       COALESCE((SELECT SUM(CASE WHEN effective_at >= ${prevStart} AND effective_at < ${prevEnd} THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawals,
-      COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND NOT in_session AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN ABS(amount) ELSE 0 END), 0)::text AS wager,
-      (
-        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND NOT in_session AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND NOT in_session AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN ABS(amount) ELSE 0 END), 0)
-      )::text AS ggr,
-      (
-        COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND NOT in_session AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND NOT in_session AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN ABS(amount) ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN type IN ${bonusTypesSql} AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN ABS(amount) ELSE 0 END), 0)
-      )::text AS ngr,
+      COALESCE(SUM(CASE WHEN type IN ${wagerIn} AND NOT in_session AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN ABS(amount) ELSE 0 END), 0)::text AS wager,
+      COALESCE(SUM(CASE WHEN type IN ${wagerIn} AND NOT in_session AND NOT under_creator AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN ABS(amount) ELSE 0 END), 0)::text AS wager_organic,
+      COALESCE(SUM(CASE WHEN type IN ${wagerIn} AND NOT in_session AND under_creator AND created_at >= ${prevStart} AND created_at < ${prevEnd} THEN ABS(amount) ELSE 0 END), 0)::text AS wager_creator_coded,
       (SELECT COUNT(*)::text FROM real_users WHERE signup_at >= ${prevStart} AND signup_at < ${prevEnd}) AS signups,
       COUNT(DISTINCT CASE WHEN created_at >= ${prevStart} AND created_at < ${prevEnd} THEN user_id END)::text AS active
     FROM base
@@ -282,49 +367,38 @@ async function runWindowQuery(args: {
       deposit_count: current.deposit_count,
       withdrawals: current.withdrawals,
       wager: current.wager,
-      ggr: current.ggr,
-      ngr: current.ngr,
+      wager_organic: current.wager_organic,
+      wager_creator_coded: current.wager_creator_coded,
       signups: current.signups,
       active: current.active,
-      // Previous values placeholder — not consumed in this row.
-      prev_deposits: "0",
-      prev_deposit_count: "0",
-      prev_withdrawals: "0",
-      prev_wager: "0",
-      prev_ggr: "0",
-      prev_ngr: "0",
-      prev_signups: "0",
-      prev_active: "0",
     },
     previous: {
       deposits: prev.deposits,
       deposit_count: prev.deposit_count,
       withdrawals: prev.withdrawals,
       wager: prev.wager,
-      ggr: prev.ggr,
-      ngr: prev.ngr,
+      wager_organic: prev.wager_organic,
+      wager_creator_coded: prev.wager_creator_coded,
       signups: prev.signups,
       active: prev.active,
-      prev_deposits: "0",
-      prev_deposit_count: "0",
-      prev_withdrawals: "0",
-      prev_wager: "0",
-      prev_ggr: "0",
-      prev_ngr: "0",
-      prev_signups: "0",
-      prev_active: "0",
     },
   };
 }
 
-function parseWindow(r: RawWindowRow): OverviewWindow {
+function parseWindow(
+  r: RawWindowRow,
+  ggr: number,
+  ngr: number,
+): OverviewWindow {
   return {
     deposits: toNumber(r.deposits),
     depositCount: Number(r.deposit_count),
     withdrawals: toNumber(r.withdrawals),
     wager: toNumber(r.wager),
-    ggr: toNumber(r.ggr),
-    ngr: toNumber(r.ngr),
+    wagerOrganic: toNumber(r.wager_organic),
+    wagerCreatorCoded: toNumber(r.wager_creator_coded),
+    ggr,
+    ngr,
     newSignups: Number(r.signups),
     uniqueActive: Number(r.active),
   };
@@ -335,35 +409,43 @@ function parseWindow(r: RawWindowRow): OverviewWindow {
  * because the chart anchor is whole days — moves on day boundaries, not
  * seconds. Cache key includes the `since` ISO so each period's sparkline
  * has its own slot. Tagged so admin-managed exclusions invalidate it.
+ *
+ * Produces the deposits / withdrawals / wager / organic-wager / signups /
+ * active daily series. GGR/NGR are NOT computed here — they come from the
+ * canonical `getDailyGamingMetrics` and are merged in by
+ * `getInsightsOverview` so the daily GGR/NGR reconciles with the headline
+ * by construction.
  */
 const cachedDailyOverview = unstable_cache(
   async (sinceIso: string, blacklistIdNotIn: string, sessionWindowsCte: string) => {
     const db = await getDb();
     const since = new Date(sinceIso);
-    const ggrWagerIn = Prisma.raw(WAGER_TYPES_SQL);
-    const ggrPayoutIn = Prisma.raw(PAYOUT_TYPES_SQL);
-    const bonusTypesSql = Prisma.raw(
-      `('deposit_bonus','promo_code_redeemed','gift_card_redeemed','rakeback_claim','affiliate_claim','rain_win','race_prize','creator_tip','waitlist_prize','voucher_redeemed','voucher_exchange','exchange_excess_credit','exchange_excess_to_voucher','battle_excess_to_voucher')`,
-    );
+    const wagerIn = Prisma.raw(METRICS_WAGER_TYPES_SQL);
     return db.$queryRaw<
       {
         date: Date;
         deposits: string;
         withdrawals: string;
         wager: string;
-        ggr: string;
-        ngr: string;
+        wager_organic: string;
+        wager_creator_coded: string;
         signups: string;
         active: string;
       }[]
     >`
       WITH real_users AS (
-        SELECT u.id, u.role, u.created_at AS signup_at FROM "user" u
+        SELECT u.id, u.role, u.created_at AS signup_at,
+               EXISTS (
+                 SELECT 1 FROM "user" ref
+                 WHERE ref.id = u.referred_by AND ref.role = 'creator'
+               ) AS under_creator
+        FROM "user" u
         WHERE u.role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
       ),
       ${Prisma.raw(sessionWindowsCte)},
       base AS (
         SELECT lt.user_id, lt.type, lt.amount::numeric AS amount, DATE(lt.created_at) AS d,
+               ru.under_creator,
                CASE WHEN ru.role = 'creator'
                     THEN EXISTS (
                       SELECT 1 FROM session_windows sw
@@ -395,16 +477,9 @@ const cachedDailyOverview = unstable_cache(
         SELECT
           d,
           COALESCE(SUM(CASE WHEN type = 'deposit' THEN amount ELSE 0 END), 0)::text AS deposits,
-          COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND NOT in_session THEN ABS(amount) ELSE 0 END), 0)::text AS wager,
-          (
-            COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND NOT in_session THEN ABS(amount) ELSE 0 END), 0)
-            - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND NOT in_session THEN ABS(amount) ELSE 0 END), 0)
-          )::text AS ggr,
-          (
-            COALESCE(SUM(CASE WHEN type IN ${ggrWagerIn} AND NOT in_session THEN ABS(amount) ELSE 0 END), 0)
-            - COALESCE(SUM(CASE WHEN type IN ${ggrPayoutIn} AND NOT in_session THEN ABS(amount) ELSE 0 END), 0)
-            - COALESCE(SUM(CASE WHEN type IN ${bonusTypesSql} THEN ABS(amount) ELSE 0 END), 0)
-          )::text AS ngr,
+          COALESCE(SUM(CASE WHEN type IN ${wagerIn} AND NOT in_session THEN ABS(amount) ELSE 0 END), 0)::text AS wager,
+          COALESCE(SUM(CASE WHEN type IN ${wagerIn} AND NOT in_session AND NOT under_creator THEN ABS(amount) ELSE 0 END), 0)::text AS wager_organic,
+          COALESCE(SUM(CASE WHEN type IN ${wagerIn} AND NOT in_session AND under_creator THEN ABS(amount) ELSE 0 END), 0)::text AS wager_creator_coded,
           COUNT(DISTINCT user_id)::text AS active
         FROM base
         GROUP BY d
@@ -414,8 +489,8 @@ const cachedDailyOverview = unstable_cache(
         db.deposits,
         COALESCE(dw.amount, '0') AS withdrawals,
         db.wager,
-        db.ggr,
-        db.ngr,
+        db.wager_organic,
+        db.wager_creator_coded,
         COALESCE(ds.signups, '0') AS signups,
         db.active
       FROM daily_base db
@@ -424,6 +499,6 @@ const cachedDailyOverview = unstable_cache(
       ORDER BY db.d
     `;
   },
-  ["insights-analytics-overview-daily-v1"],
+  ["insights-analytics-overview-daily-v2"],
   { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
 );
