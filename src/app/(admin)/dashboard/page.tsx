@@ -385,14 +385,14 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
           icon={Gauge}
           color="emerald"
         />
-        {/* Creator personal cash-outs — count of period withdrawals from
-            users with role = 'creator' (their OWN balance cash-out, incl.
-            self-deposited money), dollar total in subtitle. NOT a
-            creator-deal payout/cost — deliberately distinct from the
-            /creators "Converted / withdrawn" tile (fill-conversion
-            vouchers only), which is why the two figures differ a lot. The
-            card's Info tooltip explains the scope. Lives in this secondary
-            row as the "creator slice" companion to Deposits / Hour. */}
+        {/* Creator Deal Payouts (withdrawn) — dollar value of creator
+            deal-payout vouchers (creator_fill_conversion +
+            creator_multiplier_payout) that left the house via a completed/
+            shipped withdrawal request in the period, with the count of such
+            requests on the sub-line. A REAL house creator cost (deal payouts
+            the creator actually cashed out), NOT a creator's personal
+            balance cash-out. House POV → rose. Lives in this secondary row
+            next to Deposits / Hour. */}
         <CreatorWithdrawalsStatCard
           count={stats.creatorWithdrawalsCount}
           amount={stats.creatorWithdrawals}

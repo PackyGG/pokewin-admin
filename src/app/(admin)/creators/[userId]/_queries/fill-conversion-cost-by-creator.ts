@@ -24,10 +24,10 @@ import { withTiming } from "@/lib/observability/query-timings";
  * fill-conversion payout.
  *
  * This reads the SAME canonical source the /creators "Converted" KPI uses
- * (`getConvertedFromVouchersByDeal`), just scoped to ONE creator across
- * ALL their deals (lifetime) rather than per active/scheduled deal. So the
- * detail-page cost line and the list KPI agree on what a fill-deal payout
- * is.
+ * (`getConvertedFromVouchersTotal` — lifetime, all creators), just scoped
+ * to ONE creator across ALL their deals (also `creator_fill_conversion`,
+ * no deal filter). So the detail-page cost line and the list KPI agree on
+ * what a fill-deal payout is.
  *
  * ─── NO DOUBLE-COUNT ─────────────────────────────────────────────────
  *

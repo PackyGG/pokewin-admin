@@ -177,12 +177,17 @@ function getPeriodAggregates(
       // alongside the card-withdrawal value already captured in
       // `withdrawal`.
       manual_wd: string;
-      // Creator-funded slice of the period withdrawal volume — sum +
-      // count of card_withdrawal_requests where the requesting user
-      // holds role = 'creator' (their personal cash-out, not affiliate
-      // payouts). Drives the "Creator Withdrawals" KPI tile so admins
-      // can see how much of the period's withdrawal flow is creators
-      // pulling their own balance vs ordinary customer cash-outs.
+      // Creator DEAL-PAYOUT cash-outs for the period — the Σ
+      // `vouchers.value` of creator deal-payout vouchers
+      // (`origin IN ('creator_fill_conversion','creator_multiplier_payout')`)
+      // that are attached (`vouchers.id = ANY(cwr.voucher_ids)`) to a
+      // completed/shipped `card_withdrawal_requests`, scoped by the
+      // request's effective_at. This is the house's REAL creator cost —
+      // deal payouts the creator has actually cashed out — NOT a creator's
+      // personal balance cash-out. `creator_wd_count` is the COUNT of
+      // distinct such withdrawal requests (≥1 deal-payout voucher) so the
+      // KPI tile can read "$X across N deal-payout withdrawals". Disjoint
+      // voucher origins → no double-count between the two payout types.
       creator_wd_amount: string;
       creator_wd_count: string;
     }[]
@@ -238,16 +243,44 @@ function getPeriodAggregates(
         -- Use shipped_at as the "money out" timestamp when completed_at is
         -- not yet set (status='shipped'). For status='completed' both
         -- timestamps are usually populated; completed_at wins.
-        COALESCE(cwr.completed_at, cwr.shipped_at) AS effective_at,
-        -- Role of the user who requested the withdrawal — drives the
-        -- creator_wd_* aggregates below. JOIN replaces the previous
-        -- "user_id IN (SELECT id FROM real_users)" predicate so the
-        -- role is carried through to the outer aggregates in a single
-        -- scan rather than needing a second sub-query.
-        ru.role AS user_role
+        COALESCE(cwr.completed_at, cwr.shipped_at) AS effective_at
+      -- JOIN to real_users keeps the staff + blacklist exclusion on the
+      -- withdrawals total (same population the rest of the aggregate uses).
       FROM card_withdrawal_requests cwr
       JOIN real_users ru ON ru.id = cwr.user_id
       WHERE cwr.status IN ('completed', 'shipped')
+    ),
+    -- Creator DEAL-PAYOUT cash-outs — the house's REAL creator cost that
+    -- has actually walked out the door. Joins completed/shipped
+    -- card_withdrawal_requests to the deal-payout vouchers they cashed out
+    -- (vouchers.id ∈ cwr.voucher_ids) and keeps ONLY the two creator
+    -- deal-payout voucher origins:
+    --   • creator_fill_conversion   — the WEEKLY FILL program's end-of-
+    --     session payout voucher (§2 of the creator model; the source the
+    --     /creators "Converted" KPI reads).
+    --   • creator_multiplier_payout — the MULTIPLIER deal's settled
+    --     withdrawable payout voucher.
+    -- These two origins are disjoint, so summing both never double-counts a
+    -- voucher. The amount column is the VOUCHER value (vouchers.value), NOT
+    -- the request's total_value_usd -- a single request can also carry the
+    -- creator's personal (non-deal) vouchers / inventory, and only the
+    -- deal-payout slice is a creator cost. effective_at is the request's
+    -- money-out timestamp (completed_at, else shipped_at) so the period
+    -- cutoff below filters on when the payout actually left, matching the
+    -- ordinary withdrawals CTE. DISTINCT on (request, voucher) so a
+    -- voucher listed twice in one request's array can't be summed twice;
+    -- the request id is carried so the outer COUNT(DISTINCT) reports the
+    -- number of withdrawal requests that cashed out >=1 deal-payout voucher.
+    creator_deal_payouts AS (
+      SELECT DISTINCT
+        cwr.id AS request_id,
+        v.id   AS voucher_id,
+        v.value::numeric AS amount,
+        COALESCE(cwr.completed_at, cwr.shipped_at) AS effective_at
+      FROM card_withdrawal_requests cwr
+      JOIN vouchers v ON v.id = ANY(cwr.voucher_ids)
+      WHERE cwr.status IN ('completed', 'shipped')
+        AND v.origin IN ('creator_fill_conversion', 'creator_multiplier_payout')
     )
     SELECT
       COALESCE(SUM(CASE WHEN type = 'deposit' AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS revenue,
@@ -260,13 +293,17 @@ function getPeriodAggregates(
       -- consistent (no separate roundtrip / no source-of-truth split).
       (SELECT COUNT(*) FROM withdrawals WHERE effective_at >= ${cutoff})::text AS withdrawal_count,
 
-      -- Creator-funded slice of the period withdrawal volume — only
-      -- card_withdrawal_requests where the requesting user holds
-      -- role = 'creator' at query time. Both the sum and the count are
-      -- pulled from the same "withdrawals" CTE so the JOIN to "user" /
-      -- real_users runs once per period scan.
-      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${cutoff} AND user_role = 'creator' THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS creator_wd_amount,
-      (SELECT COUNT(*) FROM withdrawals WHERE effective_at >= ${cutoff} AND user_role = 'creator')::text AS creator_wd_count,
+      -- Creator DEAL-PAYOUT cash-outs for the period — Σ voucher value of
+      -- creator deal-payout vouchers (creator_fill_conversion +
+      -- creator_multiplier_payout) attached to a completed/shipped
+      -- withdrawal request, scoped by the request's effective_at. This is a
+      -- REAL house creator cost (deal payouts the creator cashed out), NOT
+      -- a creator's personal balance cash-out. Read from the
+      -- creator_deal_payouts CTE (request × deal-payout voucher).
+      COALESCE((SELECT SUM(CASE WHEN effective_at >= ${cutoff} THEN amount ELSE 0 END) FROM creator_deal_payouts), 0)::text AS creator_wd_amount,
+      -- Count of DISTINCT withdrawal requests that cashed out ≥1 deal-payout
+      -- voucher in the period (one request can bundle several vouchers).
+      (SELECT COUNT(DISTINCT request_id) FROM creator_deal_payouts WHERE effective_at >= ${cutoff})::text AS creator_wd_count,
 
       COALESCE(SUM(CASE WHEN type IN ${wagerTypesIn} AND created_at >= ${cutoff} THEN amount ELSE 0 END), 0)::text AS wager,
 
@@ -1190,11 +1227,14 @@ async function dashboardStatsInner(period: DashboardPeriod) {
     // pairs with `withdrawals` so the Withdrawals KPI card title can
     // show "Withdrawals · N" without a second roundtrip.
     withdrawalCountPeriod: num(pa.withdrawal_count),
-    // Creator-funded slice of the same withdrawals figure — the count
-    // + dollar amount of card_withdrawal_requests where the requesting
-    // user's role is 'creator'. Subset of `withdrawals` above, so the
-    // "Creator Withdrawals" tile on the dashboard tracks (count, $) of
-    // creator personal cash-outs during the SELECTED period.
+    // Creator DEAL-PAYOUT cash-outs for the period — the dollar value of
+    // creator deal-payout vouchers (creator_fill_conversion +
+    // creator_multiplier_payout) that left the house via a completed/
+    // shipped withdrawal request, plus the count of distinct such requests.
+    // This is the house's REAL creator cost (deal payouts the creator
+    // actually cashed out), NOT a creator's personal balance cash-out — so
+    // the "Creator Deal Payouts (withdrawn)" tile reads as a true creator
+    // cost. House POV: paying a creator = house outflow → rose.
     creatorWithdrawals: Math.abs(num(pa.creator_wd_amount)),
     creatorWithdrawalsCount: num(pa.creator_wd_count),
     // Customer wager — the dashboard's "Total Wager" card. Ledger

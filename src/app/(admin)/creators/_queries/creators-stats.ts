@@ -1,8 +1,8 @@
 import "server-only";
 
 import { creatorsApi } from "@/lib/backend-api";
-import { getConvertedFromVouchersByDeal } from "./converted-from-vouchers-by-deal";
-import { getWithdrawnFromConvertedByDeal } from "./withdrawn-from-converted-by-deal";
+import { getConvertedFromVouchersTotal } from "./converted-from-vouchers-total";
+import { getWithdrawnFromConvertedTotal } from "./withdrawn-from-converted-total";
 
 export type CreatorsGlobalStats = {
   /** Total creator accounts on the platform. */
@@ -31,29 +31,29 @@ export type CreatorsGlobalStats = {
   /**
    * Total "Converted" — combined value of the end-of-session payout
    * vouchers (`vouchers.origin = 'creator_fill_conversion'`) MINTED
-   * across every creator with an active or scheduled deal: how much
-   * stream earnings have actually been converted into payout vouchers
-   * (§2 of the creator model). Sourced from the Main-DB `vouchers`
-   * table — the SAME voucher set the withdrawn sub-line reads — NOT the
-   * backend deal's `withdraw_cap_used_usd` cap-consumption counter
-   * (which is admin-mutable and per deal-version, so it's the wrong
-   * source for a minted-voucher figure). Best-effort — a query failure
-   * leaves this at 0 rather than crashing the tile.
+   * across EVERY creator ever (LIFETIME, no active/scheduled-deal
+   * filter): how much stream earnings have ever been converted into
+   * payout vouchers (§2 of the creator model). Sourced from the Main-DB
+   * `vouchers` table — the SAME voucher set the withdrawn sub-line reads
+   * — NOT the backend deal's `withdraw_cap_used_usd` cap-consumption
+   * counter (admin-mutable and per deal-version, the wrong source for a
+   * minted-voucher figure). Best-effort — a query failure leaves this at
+   * 0 rather than crashing the tile.
    */
   convertedTotal: number;
   /**
    * Of `convertedTotal` (payout vouchers minted from conversion), how
    * much has actually left the platform via a completed
-   * card_withdrawal_requests row, summed across every active/
-   * scheduled deal in scope. Reads the SAME `creator_fill_conversion`
-   * voucher set as `convertedTotal`, so `withdrawn ≤ converted` holds
-   * by construction.
+   * card_withdrawal_requests row — LIFETIME, across every creator (same
+   * unscoped lens as `convertedTotal`). Reads the SAME
+   * `creator_fill_conversion` voucher set as `convertedTotal`, so
+   * `withdrawn ≤ converted` holds by construction.
    */
   withdrawnFromConvertedTotal: number;
   /**
-   * Same scope as `withdrawnFromConvertedTotal`, but for in-flight
-   * withdraw requests (pending / processing / shipped) — i.e.
-   * already requested but not yet terminal.
+   * Same scope as `withdrawnFromConvertedTotal` (lifetime / all
+   * creators), but for in-flight withdraw requests (pending / processing
+   * / shipped) — i.e. already requested but not yet terminal.
    */
   withdrawPendingFromConvertedTotal: number;
 };
@@ -97,15 +97,16 @@ export async function getCreatorsGlobalStats(): Promise<CreatorsGlobalStats> {
   }
   const remainingPages = await Promise.all(remainingPagePromises);
 
-  // Count predicates across every page we fetched. `activeDeals`
-  // collects the (creator, deal) id pairs whose deal is active or
-  // scheduled — the set we resolve withdraw-cap usage for below.
+  // Count predicates across every page we fetched. The "Converted /
+  // withdrawn" totals no longer need a per-deal id set — they're now
+  // lifetime, all-creators aggregates over the `creator_fill_conversion`
+  // voucher origin (owner scope decision), so the active/scheduled-deal
+  // walk below only feeds the `activeDealCount` tile.
   let activeDealCount = 0;
   let liveCount = 0;
   // Creators with ≥1 fill (weekly) deal — total_deals_count is the
   // backend's lifetime fill-deal count for the creator.
   let fillCreatorCount = 0;
-  const activeDeals: { userId: string; dealId: string }[] = [];
   const tallyPage = (rows: typeof firstPage.data) => {
     for (const c of rows) {
       if (
@@ -113,7 +114,6 @@ export async function getCreatorsGlobalStats(): Promise<CreatorsGlobalStats> {
         c.current_deal?.status === "scheduled"
       ) {
         activeDealCount += 1;
-        activeDeals.push({ userId: c.id, dealId: c.current_deal.id });
       }
       if (c.active_session_id !== null) {
         liveCount += 1;
@@ -127,8 +127,9 @@ export async function getCreatorsGlobalStats(): Promise<CreatorsGlobalStats> {
   for (const pg of remainingPages) tallyPage(pg.data);
 
   // "Converted" — sum the MINTED `creator_fill_conversion` payout
-  // vouchers across every active/scheduled deal (§2 of the creator
-  // model). Single Main-DB round-trip grouped by deal. This is the real
+  // vouchers across EVERY creator ever (LIFETIME, no active/scheduled-
+  // deal filter — owner scope decision; §2 of the creator model). Single
+  // Main-DB whole-table aggregate over the fixed origin. This is the real
   // money converted into payout vouchers, NOT the backend deal's
   // `withdraw_cap_used_usd` cap-consumption counter (admin-mutable, per
   // deal-version — the wrong source for a minted-voucher figure). A
@@ -137,36 +138,29 @@ export async function getCreatorsGlobalStats(): Promise<CreatorsGlobalStats> {
   //
   // "Withdrawn from converted" runs in parallel — a second Main-DB
   // round-trip over the SAME voucher set (vouchers join
-  // card_withdrawal_requests), grouped by deal. Sharing the source
-  // guarantees `withdrawn ≤ converted`. A failure leaves the breakdown
-  // at 0 so the tile still shows the converted total.
-  const [convertedByUser, withdrawnByUser] = await Promise.all([
-    getConvertedFromVouchersByDeal(activeDeals).catch((err) => {
+  // card_withdrawal_requests), same lifetime/all-creators scope. Sharing
+  // the source guarantees `withdrawn ≤ converted`. A failure leaves the
+  // breakdown at 0 so the tile still shows the converted total.
+  const [convertedTotalResult, withdrawnTotalResult] = await Promise.all([
+    getConvertedFromVouchersTotal().catch((err) => {
       console.error(
-        "[creators-stats] converted-from-vouchers query failed (tile renders 0):",
+        "[creators-stats] converted-from-vouchers total query failed (tile renders 0):",
         err,
       );
-      return new Map<string, number>();
+      return 0;
     }),
-    getWithdrawnFromConvertedByDeal(activeDeals).catch((err) => {
+    getWithdrawnFromConvertedTotal().catch((err) => {
       console.error(
-        "[creators-stats] withdrawn-from-converted query failed (sub-line hidden):",
+        "[creators-stats] withdrawn-from-converted total query failed (sub-line hidden):",
         err,
       );
-      return new Map<
-        string,
-        { withdrawnUsd: number; withdrawPendingUsd: number }
-      >();
+      return { withdrawnUsd: 0, withdrawPendingUsd: 0 };
     }),
   ]);
-  let convertedTotal = 0;
-  for (const value of convertedByUser.values()) convertedTotal += value;
-  let withdrawnFromConvertedTotal = 0;
-  let withdrawPendingFromConvertedTotal = 0;
-  for (const row of withdrawnByUser.values()) {
-    withdrawnFromConvertedTotal += row.withdrawnUsd;
-    withdrawPendingFromConvertedTotal += row.withdrawPendingUsd;
-  }
+  const convertedTotal = convertedTotalResult;
+  const withdrawnFromConvertedTotal = withdrawnTotalResult.withdrawnUsd;
+  const withdrawPendingFromConvertedTotal =
+    withdrawnTotalResult.withdrawPendingUsd;
 
   return {
     // `total` from the backend is the absolute count (not affected

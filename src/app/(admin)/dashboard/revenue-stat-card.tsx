@@ -710,27 +710,23 @@ export function WithdrawalsStatCard({
 }
 
 /**
- * Creator-only slice of the period withdrawal volume — how many of the
- * `Withdrawals` card's transactions came from users with role =
- * 'creator', summing their `card_withdrawal_requests`.
+ * Creator DEAL-PAYOUT cash-outs for the period — the dollar value of
+ * creator deal-payout vouchers that have actually left the house via a
+ * completed/shipped withdrawal request, plus the count of such requests.
  *
- * IMPORTANT (scope): this is a creator's PERSONAL cash-out of their own
- * balance — every completed/shipped withdrawal by any creator-role user,
- * including money they deposited themselves. It is NOT the creator-DEAL
- * payout/cost. Per the creator model a creator's personal withdrawal is
- * not a house "creator cost". This is deliberately a DIFFERENT figure
- * from the /creators page's "Converted / withdrawn" tile, which counts
- * ONLY the fill-conversion payout vouchers (`creator_fill_conversion`)
- * tied to a deal — hence the two can differ by a large multiple. The
- * Info tooltip on the title spells this out so the gap isn't mysterious.
+ * SCOPE: sums `vouchers.value` for the two creator deal-payout voucher
+ * origins — `creator_fill_conversion` (the weekly-fill end-of-session
+ * payout) and `creator_multiplier_payout` (the multiplier-deal settled
+ * payout) — joined to the completed/shipped `card_withdrawal_requests`
+ * they were cashed out in. This is a REAL house creator cost: deal payouts
+ * the house funded that the creator has actually withdrawn. It is NOT a
+ * creator's personal balance cash-out (their own deposited money), which
+ * the previous version of this tile counted.
  *
- * Hero number is the COUNT (the user explicitly asked for "how many"),
- * sub-line carries the dollar amount + period label so the card stays
- * proportionate to its siblings.
+ * The dollar VALUE is the hero (it's a cost figure now), with the count
+ * of distinct withdrawal requests on the sub-line + the period label.
  *
- * Purple identity so it doesn't read like a competing total to the
- * neighbouring Withdrawals card (pink) — purple matches the Depositors
- * snapshot tile's "people behind the money" framing.
+ * House POV (per CLAUDE.md): paying a creator out = house outflow → rose.
  */
 export function CreatorWithdrawalsStatCard({
   count,
@@ -742,11 +738,11 @@ export function CreatorWithdrawalsStatCard({
   periodLabel: string;
 }) {
   return (
-    <Card className="bg-purple-500/10">
+    <Card className="bg-rose-500/10">
       <CardHeader className="flex flex-col gap-2 pb-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-baseline gap-x-2">
           <CardTitle className="text-card-title text-muted-foreground inline-flex items-center gap-1">
-            Creator personal cash-outs
+            Creator Deal Payouts (withdrawn)
             <Popover>
               <PopoverTrigger
                 render={
@@ -754,7 +750,7 @@ export function CreatorWithdrawalsStatCard({
                     type="button"
                     aria-label="What this counts"
                     title="What this counts"
-                    className="rounded text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500/40"
+                    className="rounded text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/40"
                   />
                 }
               >
@@ -763,21 +759,24 @@ export function CreatorWithdrawalsStatCard({
               <PopoverContent
                 align="start"
                 sideOffset={6}
-                className="w-[300px] max-w-[calc(100vw-2rem)] p-3 text-[11px] leading-snug text-muted-foreground"
+                className="w-[320px] max-w-[calc(100vw-2rem)] p-3 text-[11px] leading-snug text-muted-foreground"
               >
                 <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-foreground">
-                  Creator personal cash-outs
+                  Creator deal payouts (withdrawn)
                 </p>
                 <p>
-                  Completed/shipped withdrawals by any user whose role is{" "}
-                  <code className="font-mono">creator</code> — their own
-                  cash-out (incl. money they deposited themselves).
+                  Dollar value of creator <strong>deal-payout vouchers</strong>{" "}
+                  (<code className="font-mono">creator_fill_conversion</code> +{" "}
+                  <code className="font-mono">creator_multiplier_payout</code>)
+                  that have left the house via a completed/shipped withdrawal
+                  request — deal money the house funded that the creator
+                  actually cashed out.
                 </p>
                 <p className="mt-1.5">
-                  This is <strong>not</strong> a creator-deal payout/cost. The
-                  /creators page&apos;s &ldquo;Converted / withdrawn&rdquo; tile
-                  counts only fill-conversion payout vouchers tied to a deal, so
-                  it is a much smaller, different figure.
+                  This is a real <strong>house creator cost</strong>, not a
+                  creator&apos;s personal balance cash-out (their own deposited
+                  money). The count is the number of withdrawal requests that
+                  cashed out at least one deal-payout voucher in this period.
                 </p>
               </PopoverContent>
             </Popover>
@@ -786,12 +785,12 @@ export function CreatorWithdrawalsStatCard({
         </div>
       </CardHeader>
       <CardContent>
-        <div className="text-stat-value truncate">
-          <AnimatedNumber value={count} format="number" />
+        <div className="text-stat-value truncate text-rose-400">
+          <AnimatedNumber value={amount} format="currency" />
         </div>
         <p className="text-stat-label mt-0.5">
-          <AnimatedNumber value={amount} format="currency" /> total · personal
-          cash-outs
+          <AnimatedNumber value={count} format="number" />{" "}
+          {count === 1 ? "withdrawal" : "withdrawals"} · deal payouts cashed out
         </p>
       </CardContent>
     </Card>

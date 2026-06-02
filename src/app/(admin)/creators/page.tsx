@@ -345,19 +345,19 @@ async function CreatorsKpiStrip({
         <GlobalPnlTile tab={tab} />
       </Suspense>
       {/* Converted — combined value of the end-of-session payout
-          vouchers (`creator_fill_conversion`) MINTED across every
-          active/scheduled deal: how much stream earnings have actually
-          been converted into payout vouchers. Sourced from the Main-DB
-          vouchers table (the real minted amount), NOT the backend deal's
-          withdraw-cap counter. Neutral (blue) accent — it's a deal-
-          throughput figure, not a house-POV gain/loss direction.
+          vouchers (`creator_fill_conversion`) MINTED across EVERY creator
+          ever (LIFETIME, no active/scheduled-deal filter): how much stream
+          earnings have ever been converted into payout vouchers. Sourced
+          from the Main-DB vouchers table (the real minted amount), NOT the
+          backend deal's withdraw-cap counter. Neutral (blue) accent — it's
+          a throughput figure, not a house-POV gain/loss direction.
 
           Sub-line shows of that converted total, how much has actually
           walked out via a completed withdraw request (+ in-flight
           pending/processing/shipped when non-zero) — the SAME voucher
-          set, so withdrawn ≤ converted. Falls back to the static
-          "Converted to payout vouchers" label when stats failed to
-          load. */}
+          set + same lifetime/all-creators scope, so withdrawn ≤ converted.
+          Falls back to the static "Converted to payout vouchers" label
+          when stats failed to load. */}
       <KpiTile
         label="Converted"
         value={stats ? formatCurrency(stats.convertedTotal) : "—"}
@@ -372,7 +372,7 @@ async function CreatorsKpiStrip({
         icon={Wallet}
         accent="blue"
         action={
-          <InfoHint text="Stream earnings minted into end-of-session payout vouchers (creator_fill_conversion) across all active/scheduled deals. The sub-line shows how much of that has actually been withdrawn off-platform vs still in flight." />
+          <InfoHint text="Lifetime stream earnings minted into end-of-session payout vouchers (creator_fill_conversion) across ALL creators — not just live-deal creators. The sub-line shows how much of that has actually been withdrawn off-platform vs still in flight." />
         }
       />
       {/* Leaderboard Cost — combined prize pool of every approved
