@@ -10,6 +10,7 @@ import {
   Sparkles,
   Trophy,
   Users,
+  UserX,
   Wallet,
   Zap,
 } from "lucide-react";
@@ -38,6 +39,10 @@ import {
 import { type CreatorsListPage } from "./_queries/list-creators";
 import { listCreatorsFiltered } from "./_queries/list-creators-filtered";
 import { getCreatorsListForTab } from "./_queries/list-creators-by-tab";
+import {
+  getExCreatorsList,
+  getExCreatorCount,
+} from "./_queries/list-ex-creators";
 import {
   getApprovedSocialsByUser,
   type CreatorSocialSummary,
@@ -121,18 +126,20 @@ export default async function CreatorsPage({
       </Suspense>
 
       <div className="space-y-3">
-        {/* When a KPI-tile filter is active, the heading reflects the
-            filter so the page reads as "Live Creators" / "Creators
-            with Active Deals" and the Fill / Multiplier tab switch
-            hides (the filter overrides those views). */}
+        {/* The heading reflects the active view: a KPI-tile filter
+            ("Live Creators" / "Creators with Active Deals", which also
+            hides the tab switch), the Past Creators tab ("Canceled /
+            Past Creators"), or the default ("Creators"). */}
         <SectionHeading
-          icon={Users}
+          icon={params.tab === "past" ? UserX : Users}
           title={
             params.filter === "live"
               ? "Live Creators"
               : params.filter === "active-deals"
                 ? "Creators with Active Deals"
-                : "Creators"
+                : params.tab === "past"
+                  ? "Canceled / Past Creators"
+                  : "Creators"
           }
         />
         {/* The Grid / List view is pure client state (CreatorsViewProvider)
@@ -156,8 +163,12 @@ export default async function CreatorsPage({
               {/* Period chips scope the windowed code-user GGR on each
                   row (+ the roster-wide Net GGR tile); the sort dropdown
                   re-orders the page by GGR / FTDs. Both drive URL params
-                  and live alongside the Grid / List view toggle. */}
-              <CreatorsPeriodControl />
+                  and live alongside the Grid / List view toggle. The
+                  period chips are hidden on the Past Creators tab — GGR
+                  is creator-gated there (ex-creators always render "—"),
+                  so scoping a window has no effect. The sort dropdown
+                  stays (its FTD / recent modes still work page-locally). */}
+              {params.tab !== "past" && <CreatorsPeriodControl />}
               <CreatorsSortControl />
               <CreatorsViewToggle />
             </DataTableToolbar>
@@ -207,8 +218,36 @@ async function CreatorsKpiStrip({
   search: string | undefined;
   period: CreatorsSearchParams["period"];
 }) {
+  // Past Creators tab — every other tile in the strip (Net GGR, Global
+  // PnL, Converted, Leaderboard Cost, Active Deals, Live Now) is an
+  // ACTIVE-roster figure that would be misleading next to a list of
+  // canceled creators, and the GGR/PnL aggregates are creator-gated
+  // (ex-creators don't appear in them). So the Past tab renders a single
+  // honest tile — the ex-creator count — instead of the full strip, and
+  // skips the active-roster fan-outs entirely (active-timeframe rule).
+  if (tab === "past") {
+    const pastCount = await getExCreatorCount().catch((e) => {
+      console.error(
+        "[creators] ex-creator count fetch failed (tile renders '—'):",
+        e,
+      );
+      return null;
+    });
+    return (
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-7">
+        <KpiTile
+          label="Past Creators"
+          value={pastCount != null ? formatNumber(pastCount) : "—"}
+          sub="Canceled / role-removed ex-creators"
+          icon={UserX}
+          accent="purple"
+        />
+      </div>
+    );
+  }
+
   // Per-tab count for the swap tile — only the active tab's count is
-  // needed each render. Each helper is its own 5-min cached fan-out so
+  // needed each render. Each helper is its own cached fan-out so
   // bouncing between tabs doesn't re-fetch the whole creator pool.
   const tabCountPromise =
     tab === "multiplier"
@@ -242,7 +281,8 @@ async function CreatorsKpiStrip({
   // Tab-aware tile contents — flips label, icon, and accent based on
   // which tab program the user is viewing. Matches the icon set used
   // by <CreatorsTabSwitch /> (Coins for Fill, Zap for Multiplier) so
-  // the strip + the tab pills read as one cohesive control.
+  // the strip + the tab pills read as one cohesive control. The Past
+  // tab is handled by the early return above.
   const tabTile =
     tab === "multiplier"
       ? {
@@ -418,14 +458,26 @@ async function CreatorsGridSection({
   // failure leaves the map empty and the rows render GGR as "—".
   let ggrByUser = new Map<string, number>();
   let loadError: { title: string; detail: string } | null = null;
+  // Past Creators tab — canceled / ex-creators. This pool comes from the
+  // DB (`getExCreatorsList`), NOT the live backend roster (which only
+  // returns current creators). The windowed code-user GGR is
+  // creator-gated (`getAllCreatorsNetGgr` resolves only `role='creator'`
+  // ids), so it's deliberately NOT fetched here — fetching a heavy ledger
+  // scan that drops every ex-creator would be pure waste AND violate the
+  // active-timeframe rule. Ex-creators render GGR as "—"; their full
+  // historical Net PnL lives on the detail page /creators/[id]. All the
+  // OTHER columns (code, lifetime wager volume, signups, FTDs, momentum)
+  // come from `getCodeAndWagerByUser`, which is role-agnostic, so the
+  // owner still sees the complete historical economics on the row.
+  const isPast = params.tab === "past";
+
   try {
-    // Wave 1 — socials + the roster-wide windowed GGR (one cached pass
-    // for EVERY creator over the active window). Fetched first because
-    // the GGR map feeds BOTH the per-row merge below AND the global
-    // `ggr_*` ordering of the list (so page 1 carries the genuine
-    // top/bottom creators by GGR, not just a re-shuffle of the current
-    // page). `getAllCreatorsNetGgr` is `cache()`d, so the strip's GGR
-    // tile and this consult resolve to a single ledger pass per window.
+    // Wave 1 — socials + (active tabs only) the roster-wide windowed GGR
+    // (one cached pass for EVERY creator over the active window). The GGR
+    // map feeds BOTH the per-row merge below AND the global `ggr_*`
+    // ordering of the list. `getAllCreatorsNetGgr` is `cache()`d, so the
+    // strip's GGR tile and this consult resolve to a single ledger pass
+    // per window. On the Past tab the GGR pass is skipped (see above).
     const [socials, ggr] = await Promise.all([
       getApprovedSocialsByUser().catch((e) => {
         console.error(
@@ -434,13 +486,15 @@ async function CreatorsGridSection({
         );
         return new Map<string, CreatorSocialSummary[]>();
       }),
-      getAllCreatorsNetGgr(params.period).catch((e) => {
-        console.error(
-          "[creators] windowed GGR fetch failed (rows render '—'):",
-          e,
-        );
-        return null;
-      }),
+      isPast
+        ? Promise.resolve(null)
+        : getAllCreatorsNetGgr(params.period).catch((e) => {
+            console.error(
+              "[creators] windowed GGR fetch failed (rows render '—'):",
+              e,
+            );
+            return null;
+          }),
     ]);
     socialsByUser = socials;
     if (ggr) {
@@ -450,17 +504,21 @@ async function CreatorsGridSection({
     }
 
     // The list fetch diverges by mode:
-    //   1. KPI-tile filter is active (?filter=live / ?filter=active-
+    //   1. Past tab → DB-sourced ex-creator set (`getExCreatorsList`),
+    //      paginated in memory. Search is applied inside the query.
+    //   2. KPI-tile filter is active (?filter=live / ?filter=active-
     //      deals) → walk the whole creator pool and narrow in memory
     //      via `listCreatorsFiltered`. Pagination collapses in this
     //      mode (the filtered set fits on one screen), so the page's
     //      in-memory `.sort()` orders the whole filtered set by GGR/FTD.
-    //   2. No filter → tab-aware fetch (`getCreatorsListForTab`). The
+    //   3. No filter → tab-aware fetch (`getCreatorsListForTab`). The
     //      GGR map is passed through so the `ggr_*` sorts order the
     //      WHOLE tab pool before pagination.
-    result = params.filter
-      ? await listCreatorsFiltered(params.filter, params.search)
-      : await getCreatorsListForTab(params, params.tab, ggrByUser);
+    result = isPast
+      ? await getExCreatorsList(params)
+      : params.filter
+        ? await listCreatorsFiltered(params.filter, params.search)
+        : await getCreatorsListForTab(params, params.tab, ggrByUser);
 
     codeAndWagerByUser = await getCodeAndWagerByUser(
       result.data.map((c) => c.id),
@@ -508,7 +566,12 @@ async function CreatorsGridSection({
   let dealCapByUser = new Map<string, DealCapInfo>();
   let withdrawnFromConvertedByUser = new Map<string, WithdrawnFromConverted>();
   let leaderboard2wkByUser = new Map<string, Lb2wkInfo>();
-  if (result) {
+  // Skipped on the Past tab: ex-creators have no active/scheduled deal
+  // (so the cap + withdrawn fan-outs would resolve to nothing) and the
+  // forward-looking 2-week leaderboard projection is an active-creator
+  // figure. Leaving the maps empty renders the deal-cost chips/rows as
+  // "—", which is correct for a canceled creator.
+  if (result && !isPast) {
     const pageActiveDeals = result.data
       .filter(
         (c) =>
@@ -589,8 +652,13 @@ async function CreatorsGridSection({
         leaderboardSponsoredPct:
           leaderboard2wkByUser.get(c.id)?.effectivePct ?? null,
         // null when the creator has no attributed activity in the window
-        // (absent from the batch GGR result) → the row shows "—".
+        // (absent from the batch GGR result) → the row shows "—". Always
+        // null on the Past tab (GGR is creator-gated; the ggrByUser map is
+        // empty there).
         windowedGgrUsd: ggrByUser.has(c.id) ? ggrByUser.get(c.id)! : null,
+        // Marks the row as a canceled / ex-creator → renders the purple
+        // "Ex-creator" badge. Only set on the Past Creators tab.
+        isPastCreator: isPast,
       };
     })
     .sort((a, b) => {

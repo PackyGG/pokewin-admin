@@ -2,17 +2,22 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Coins, Zap } from "lucide-react";
+import { Coins, UserX, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const TABS = [
   { value: "fill", label: "Fill Creators", Icon: Coins },
   { value: "multiplier", label: "Multiplier Creators", Icon: Zap },
+  // Canceled / ex-creators — users whose creator role was removed but
+  // who were creators before. Sourced from the DB (see
+  // _queries/list-ex-creators.ts), not the live backend roster.
+  { value: "past", label: "Past Creators", Icon: UserX },
 ] as const;
 
 /**
- * URL-driven Fill / Multiplier tab switcher for /creators. Each tab
- * shows only creators of that deal program. `fill` is the default and
+ * URL-driven Fill / Multiplier / Past tab switcher for /creators. Each
+ * tab shows a different creator population (active fill deals, active
+ * multiplier deals, or canceled ex-creators). `fill` is the default and
  * carries no `?tab` param.
  *
  * Plain `<Link>` (not router.replace) so the active tab survives
@@ -21,13 +26,14 @@ const TABS = [
  * withdrawals split on /transactions/deposits.
  *
  * Switching tabs deliberately drops `search`, `sortBy`, and `page` —
- * the two tabs surface different pools and their default-relevant
+ * the tabs surface different pools and their default-relevant
  * ordering can diverge, so carrying those params across feels broken.
  */
 export function CreatorsTabSwitch() {
   const searchParams = useSearchParams();
+  const raw = searchParams.get("tab");
   const current =
-    searchParams.get("tab") === "multiplier" ? "multiplier" : "fill";
+    raw === "multiplier" ? "multiplier" : raw === "past" ? "past" : "fill";
 
   return (
     <div
@@ -38,7 +44,7 @@ export function CreatorsTabSwitch() {
       {TABS.map(({ value, label, Icon }) => {
         const active = current === value;
         const href =
-          value === "fill" ? "/creators" : "/creators?tab=multiplier";
+          value === "fill" ? "/creators" : `/creators?tab=${value}`;
         return (
           <Link
             key={value}

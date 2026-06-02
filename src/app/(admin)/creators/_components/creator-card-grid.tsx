@@ -163,6 +163,15 @@ export type CreatorWithSocials = CreatorListItem & {
    * batch GGR fetch failed → the row shows "—".
    */
   windowedGgrUsd: number | null;
+  /**
+   * True on the "Past Creators" tab — this user was a creator (owned an
+   * affiliate code, or has an admin audit role-change → creator) but no
+   * longer holds the creator role (deal cancelled, role removed). Drives
+   * the subtle "Ex-creator" badge on the row. Same signal + styling the
+   * user-detail page's ex-creator badge uses. Defaults to false/absent on
+   * the active Fill / Multiplier tabs.
+   */
+  isPastCreator?: boolean;
 };
 
 
@@ -276,6 +285,20 @@ function CreatorCard({ creator }: { creator: CreatorWithSocials }) {
               >
                 {display}
               </Link>
+              {/* "Ex-creator" / canceled indicator — purple outline,
+                  same styling + copy as the user-detail page's
+                  ex-creator badge. Shown only on the Past Creators tab.
+                  Marks a user who was a creator but whose role was
+                  removed (deal cancelled / retired). */}
+              {creator.isPastCreator && (
+                <Badge
+                  variant="outline"
+                  className="h-5 border-purple-500/40 bg-purple-500/10 py-0 text-[10px] font-medium text-purple-600 dark:text-purple-400"
+                  title="Previously had the creator role — creator role since removed (deal cancelled / retired)"
+                >
+                  Ex-creator
+                </Badge>
+              )}
               {/* "Active" deal indicator — steady emerald dot. Renders
                   whenever the creator has a deal currently in the
                   active state (this week's deal is running). Visually
@@ -487,6 +510,18 @@ function CreatorListRow({ creator }: { creator: CreatorWithSocials }) {
             >
               {display}
             </Link>
+            {/* Ex-creator / canceled indicator — same purple badge + copy
+                as the card view + the user-detail page. Past Creators tab
+                only. */}
+            {creator.isPastCreator && (
+              <Badge
+                variant="outline"
+                className="h-5 border-purple-500/40 bg-purple-500/10 py-0 text-[10px] font-medium text-purple-600 dark:text-purple-400"
+                title="Previously had the creator role — creator role since removed (deal cancelled / retired)"
+              >
+                Ex-creator
+              </Badge>
+            )}
             {hasActiveDeal && (
               <span
                 className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"

@@ -35,12 +35,19 @@ export type CreatorsSortMode = z.infer<typeof CreatorsSortMode>;
 
 /**
  * Which creator-deal program the list is filtered to — the page's
- * Fill / Multiplier tabs.
+ * Fill / Multiplier / Past-creators tabs.
  *   • fill       — creators with at least one fill (weekly) deal.
  *   • multiplier — creators with at least one multiplier deal.
- * Default `fill`. A creator with neither deal type appears on no tab.
+ *   • past       — CANCELED / ex-creators: users whose creator role was
+ *                  removed but who were creators before (own an affiliate
+ *                  code, or have an admin audit role-change → creator).
+ *                  Sourced from the DB, not the live backend creator list
+ *                  (which only returns current creators). See
+ *                  `_queries/list-ex-creators.ts`.
+ * Default `fill`. An active creator with neither deal type appears on
+ * neither the fill nor multiplier tab.
  */
-export const CreatorsTab = z.enum(["fill", "multiplier"]);
+export const CreatorsTab = z.enum(["fill", "multiplier", "past"]);
 export type CreatorsTab = z.infer<typeof CreatorsTab>;
 
 // NOTE: the Grid / List render mode is NOT a search param. It's pure
