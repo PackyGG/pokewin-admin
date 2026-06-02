@@ -1,11 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -17,65 +19,134 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { MoreHorizontal } from "lucide-react";
-import { toggleAdminActive, resetAdmin2FA, changeAdminRole, deleteAdminUser } from "./actions";
+import { Checkbox } from "@/components/ui/checkbox";
+import { MoreHorizontal, ShieldCheck, UserCog, Power, Trash2 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import type { AdminRole } from "@/lib/dal";
+import { ALL_ADMIN_ROLES } from "@/lib/admin-roles";
+import {
+  toggleAdminActive,
+  resetAdmin2FA,
+  setAdminRoles,
+  deleteAdminUser,
+} from "./actions";
 import { toast } from "sonner";
 
-// Mode discriminator for the shared TOTP confirmation dialog. Each
-// privileged action (toggle, reset 2fa, delete, change role) reuses the
-// same dialog so admins can copy/paste the 6-digit code into one place
-// per action — keeps the UX consistent with /users/[id] dialogs.
-type TotpAction = "toggle" | "reset2fa" | "delete" | "changeRole";
+// Mode discriminator for the active dialog. Each privileged action shares
+// the same TOTP-gated confirm dialog so the UX matches /users/[id].
+//   - editRoles : multi-role checkbox group → setAdminRoles
+//   - toggle    : activate / deactivate
+//   - reset2fa  : wipe TOTP secret
+//   - delete    : permanent delete
+type DialogMode = "editRoles" | "toggle" | "reset2fa" | "delete";
 
+const ROLE_LABELS: Record<AdminRole, string> = {
+  admin: "Admin",
+  support: "Support",
+  marketing: "Marketing",
+  creator: "Creator",
+  pack_creator: "Pack Creator",
+};
+
+const ROLE_DESCRIPTIONS: Record<AdminRole, string> = {
+  admin: "Full access — bypasses every page & capability gate.",
+  support: "User support workflow (lands on /users).",
+  marketing: "Marketing surfaces (lands on /analytics).",
+  creator: "Creator self-service portal.",
+  pack_creator: "Content management — packs, cards, sets, upgrader.",
+};
+
+/**
+ * Row-level action menu for an admin user. Supports the FULL multi-role
+ * assignment (any combination of the 5 system roles) via setAdminRoles —
+ * the same additive, 2FA-gated, audited action the detail page uses —
+ * plus activate/deactivate, reset 2FA, a link to the full detail page
+ * (where page-access / permissions can be edited), and delete.
+ *
+ * Every mutating action is gated server-side (requireAdmin +
+ * requireCapability + require2FA) and writes an admin_audit_event; the
+ * dialog merely collects the operator's TOTP code. Clicks inside the menu
+ * / dialog stopPropagation so they never trigger the row's navigate-to-
+ * detail handler.
+ */
 export function AdminUserActions({
   userId,
+  username,
   isActive,
   totpEnabled,
-  role,
+  roles,
+  isSelf,
 }: {
   userId: string;
+  username: string;
   isActive: boolean;
   totpEnabled: boolean;
-  role: string;
+  roles: AdminRole[];
+  /** True when this row is the signed-in admin — blocks self-deactivate/delete. */
+  isSelf: boolean;
 }) {
-  const [dialogAction, setDialogAction] = useState<TotpAction | null>(null);
+  const [mode, setMode] = useState<DialogMode | null>(null);
   const [totpCode, setTotpCode] = useState("");
   const [isPending, setIsPending] = useState(false);
+  // Working copy of the role set for the editRoles dialog. Seeded from the
+  // user's current effective roles each time the dialog opens.
+  const [selectedRoles, setSelectedRoles] = useState<Set<AdminRole>>(
+    () => new Set(roles),
+  );
 
-  const newRole = role === "admin" ? "support" : "admin";
-
-  function openDialog(action: TotpAction) {
-    setDialogAction(action);
+  function openDialog(next: DialogMode) {
+    setMode(next);
     setTotpCode("");
+    if (next === "editRoles") setSelectedRoles(new Set(roles));
   }
 
   function closeDialog() {
-    setDialogAction(null);
+    setMode(null);
     setTotpCode("");
     setIsPending(false);
   }
 
+  function toggleRole(role: AdminRole) {
+    setSelectedRoles((prev) => {
+      const next = new Set(prev);
+      if (next.has(role)) next.delete(role);
+      else next.add(role);
+      return next;
+    });
+  }
+
+  const currentRoleKey = [...roles].sort().join(",");
+  const pickedRoleKey = [...selectedRoles].sort().join(",");
+  const rolesDirty = currentRoleKey !== pickedRoleKey;
+  const rolesEmpty = selectedRoles.size === 0;
+
   async function handleConfirm() {
-    if (!totpCode.trim() || !dialogAction) return;
+    if (!mode) return;
+    const code = totpCode.trim();
+    if (!code) return;
     setIsPending(true);
     try {
-      if (dialogAction === "toggle") {
-        await toggleAdminActive(userId, !isActive, totpCode.trim());
+      if (mode === "editRoles") {
+        if (!rolesDirty || rolesEmpty) {
+          setIsPending(false);
+          return;
+        }
+        await setAdminRoles(userId, [...selectedRoles], code);
+        toast.success("Roles updated");
+      } else if (mode === "toggle") {
+        await toggleAdminActive(userId, !isActive, code);
         toast.success(isActive ? "Admin deactivated" : "Admin activated");
-      } else if (dialogAction === "reset2fa") {
-        await resetAdmin2FA(userId, totpCode.trim());
+      } else if (mode === "reset2fa") {
+        await resetAdmin2FA(userId, code);
         toast.success("2FA reset");
-      } else if (dialogAction === "delete") {
-        const result = await deleteAdminUser(userId, totpCode.trim());
+      } else if (mode === "delete") {
+        const result = await deleteAdminUser(userId, code);
         if (!result.success) {
           toast.error(result.error);
           setIsPending(false);
           return;
         }
         toast.success("Admin user deleted");
-      } else if (dialogAction === "changeRole") {
-        await changeAdminRole(userId, newRole, totpCode.trim());
-        toast.success(`Role changed to ${newRole}`);
       }
       closeDialog();
     } catch (e) {
@@ -84,65 +155,151 @@ export function AdminUserActions({
     }
   }
 
-  const dialogConfig: Record<TotpAction, { title: string; description: string; confirmLabel: string }> = {
+  const headerConfig: Record<DialogMode, { title: string; description: string; confirmLabel: string }> = {
+    editRoles: {
+      title: `Edit roles for ${username}`,
+      description:
+        "Select one or more roles — a user can hold several at once and gets the combined access of all of them. Adding a role only ever grants access; manual per-user grants are kept.",
+      confirmLabel: "Save roles",
+    },
     toggle: {
-      title: isActive ? "Deactivate Admin" : "Activate Admin",
+      title: isActive ? `Deactivate ${username}` : `Activate ${username}`,
       description: isActive
         ? "This will prevent the admin from logging in. Enter your 2FA code to confirm."
         : "This will allow the admin to log in again. Enter your 2FA code to confirm.",
       confirmLabel: isActive ? "Deactivate" : "Activate",
     },
     reset2fa: {
-      title: "Reset 2FA",
+      title: `Reset 2FA for ${username}`,
       description:
         "Wipes the admin's TOTP secret. They will need to set up 2FA again on next login. Enter your 2FA code to confirm.",
       confirmLabel: "Reset 2FA",
     },
     delete: {
-      title: "Delete Admin User",
+      title: `Delete ${username}`,
       description:
-        "Permanently deletes this admin user. Their audit logs will be preserved but they lose all access. Enter your 2FA code to confirm.",
+        "Permanently deletes this admin user. Their audit logs are preserved but they lose all access. Enter your 2FA code to confirm.",
       confirmLabel: "Delete",
     },
-    changeRole: {
-      title: "Confirm Role Change",
-      description: `Change role to ${newRole}. Enter your 2FA code to confirm.`,
-      confirmLabel: "Confirm",
-    },
   };
+
+  const confirmDisabled =
+    isPending ||
+    !totpCode.trim() ||
+    (mode === "editRoles" && (!rolesDirty || rolesEmpty));
 
   return (
     <>
       <DropdownMenu>
-        <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="size-8" />}>
+        <DropdownMenuTrigger
+          render={<Button variant="ghost" size="icon" className="size-8" />}
+        >
           <MoreHorizontal className="size-4" />
+          <span className="sr-only">Open actions for {username}</span>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem onClick={() => openDialog("toggle")}>
+          {/* `render={<Link/>}` composes the menu item onto a Link; the
+              icon + label are children base-ui merges into it. Matches the
+              creator-row-actions pattern. The detail page is where the
+              per-user page-access / permissions editor lives, so this is
+              also the entry point for editing page access. */}
+          <DropdownMenuItem render={<Link href={`/admin-users/${userId}`} />}>
+            <UserCog className="mr-2 size-4" />
+            Manage (detail / page access)
+          </DropdownMenuItem>
+          {/* onSelect (not onClick) so the dropdown closes its portal FIRST,
+              then the dialog opens — keeping the dropdown open traps focus
+              above the dialog and makes clicks feel dead. See the comment in
+              creators/_components/creator-row-actions.tsx. */}
+          <DropdownMenuItem onSelect={() => openDialog("editRoles")}>
+            <ShieldCheck className="mr-2 size-4" />
+            Edit roles
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onSelect={() => {
+              if (!(isSelf && isActive)) openDialog("toggle");
+            }}
+            disabled={isSelf && isActive}
+          >
+            <Power className="mr-2 size-4" />
             {isActive ? "Deactivate" : "Activate"}
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => openDialog("changeRole")}>
-            Change to {role === "admin" ? "Support" : "Admin"}
-          </DropdownMenuItem>
           {totpEnabled && (
-            <DropdownMenuItem onClick={() => openDialog("reset2fa")} className="text-destructive">
+            <DropdownMenuItem
+              onSelect={() => openDialog("reset2fa")}
+              variant="destructive"
+            >
+              <ShieldCheck className="mr-2 size-4" />
               Reset 2FA
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem onClick={() => openDialog("delete")} className="text-destructive">
+          <DropdownMenuItem
+            onSelect={() => {
+              if (!isSelf) openDialog("delete");
+            }}
+            variant="destructive"
+            disabled={isSelf}
+          >
+            <Trash2 className="mr-2 size-4" />
             Delete
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <Dialog open={dialogAction !== null} onOpenChange={(v) => { if (!v) closeDialog(); }}>
-        <DialogContent className="sm:max-w-sm">
+
+      <Dialog
+        open={mode !== null}
+        onOpenChange={(v) => {
+          if (!v) closeDialog();
+        }}
+      >
+        <DialogContent
+          className={mode === "editRoles" ? "sm:max-w-md" : "sm:max-w-sm"}
+        >
           <DialogHeader>
-            <DialogTitle>{dialogAction ? dialogConfig[dialogAction].title : ""}</DialogTitle>
+            <DialogTitle>{mode ? headerConfig[mode].title : ""}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3 py-2">
             <p className="text-sm text-muted-foreground">
-              {dialogAction ? dialogConfig[dialogAction].description : ""}
+              {mode ? headerConfig[mode].description : ""}
             </p>
+
+            {mode === "editRoles" && (
+              <div className="space-y-2">
+                {ALL_ADMIN_ROLES.map((r) => {
+                  const checked = selectedRoles.has(r);
+                  return (
+                    <label
+                      key={r}
+                      className={cn(
+                        "flex cursor-pointer items-start gap-3 rounded-md border p-2.5 transition-colors",
+                        checked
+                          ? "border-primary/40 bg-primary/5"
+                          : "border-input hover:bg-accent/40",
+                      )}
+                    >
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={() => toggleRole(r)}
+                        className="mt-0.5"
+                      />
+                      <span className="space-y-0.5">
+                        <span className="block text-sm font-medium">
+                          {ROLE_LABELS[r]}
+                        </span>
+                        <span className="block text-xs text-muted-foreground">
+                          {ROLE_DESCRIPTIONS[r]}
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })}
+                {rolesEmpty && (
+                  <p className="text-xs text-rose-500">Pick at least one role.</p>
+                )}
+              </div>
+            )}
+
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">2FA Code</Label>
               <Input
@@ -153,17 +310,23 @@ export function AdminUserActions({
                 onChange={(e) => setTotpCode(e.target.value)}
                 maxLength={6}
                 autoComplete="one-time-code"
+                autoFocus={mode !== "editRoles"}
               />
             </div>
           </div>
           <DialogFooter>
             <Button
               size="sm"
+              variant={mode === "delete" || mode === "reset2fa" ? "destructive" : "default"}
               className="w-full sm:w-auto"
-              disabled={isPending || !totpCode.trim()}
+              disabled={confirmDisabled}
               onClick={handleConfirm}
             >
-              {isPending ? "Updating..." : dialogAction ? dialogConfig[dialogAction].confirmLabel : ""}
+              {isPending
+                ? "Working..."
+                : mode
+                  ? headerConfig[mode].confirmLabel
+                  : ""}
             </Button>
           </DialogFooter>
         </DialogContent>

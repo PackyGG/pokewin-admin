@@ -1,13 +1,11 @@
+import { Shield, CheckCircle2, XCircle, ShieldCheck, Wallet, UserCog } from "lucide-react";
 import Link from "next/link";
-import { Shield, CheckCircle2, XCircle, ShieldCheck, Wallet } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { adminDb } from "@/lib/admin-db";
-import { getEffectiveRoles } from "@/lib/admin-roles";
+import { getEffectiveRoles, ALL_ADMIN_ROLES } from "@/lib/admin-roles";
 import { readAdminUsersWithRoles } from "@/lib/admin-user-roles";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { formatDateTime } from "@/lib/utils/format";
-import { AdminUserActions } from "./admin-user-actions";
+import { AdminUsersTable, type AdminUserRow } from "./admin-users-table";
 import { CreateAdminDialog } from "./create-dialog";
 import {
   PageHero,
@@ -31,6 +29,9 @@ export default async function AdminUsersPage() {
   // with P2022 before anything renders. `readAdminUsersWithRoles` degrades
   // each row to `roles: []` (→ effective `[role]`) when the additive
   // `roles` column hasn't been migrated yet.
+  //
+  // SECURITY: only safe, non-secret columns are selected. Never
+  // password_hash, totp_secret, or recovery_codes — those stay server-side.
   const [users, balanceLimits] = await Promise.all([
     readAdminUsersWithRoles(
       () =>
@@ -40,10 +41,12 @@ export default async function AdminUsersPage() {
             id: true,
             email: true,
             username: true,
+            display_username: true,
             role: true,
             roles: true,
             totp_enabled: true,
             is_active: true,
+            allowed_pages: true,
             created_at: true,
           },
         }),
@@ -54,9 +57,11 @@ export default async function AdminUsersPage() {
             id: true,
             email: true,
             username: true,
+            display_username: true,
             role: true,
             totp_enabled: true,
             is_active: true,
+            allowed_pages: true,
             created_at: true,
           },
         }),
@@ -68,6 +73,35 @@ export default async function AdminUsersPage() {
       : Promise.resolve([]),
   ]);
 
+  // Session-derived activity per admin. One groupBy each (not N queries):
+  //   • lastLogin  — max(logged_in_at) per user → "Last login" column.
+  //   • activeNow  — count of sessions that are NOT logged out and not
+  //                  expired → "active sessions" indicator. Mirrors the
+  //                  isActive derivation in getAdminUserSessions.
+  const now = new Date();
+  const [lastLoginRows, activeSessionRows] = await Promise.all([
+    adminDb.admin_sessions.groupBy({
+      by: ["admin_user_id"],
+      _max: { logged_in_at: true },
+    }),
+    adminDb.admin_sessions.groupBy({
+      by: ["admin_user_id"],
+      where: { logged_out_at: null, expires_at: { gt: now } },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const lastLoginByAdmin = new Map<string, string>();
+  for (const r of lastLoginRows) {
+    if (r._max.logged_in_at) {
+      lastLoginByAdmin.set(r.admin_user_id, r._max.logged_in_at.toISOString());
+    }
+  }
+  const activeSessionsByAdmin = new Map<string, number>();
+  for (const r of activeSessionRows) {
+    activeSessionsByAdmin.set(r.admin_user_id, r._count._all);
+  }
+
   // Build a map of admin id → number of active limit rows. Used to
   // render a "Limits: N" badge so admins can spot users with limits
   // at a glance without drilling into each profile.
@@ -77,9 +111,48 @@ export default async function AdminUsersPage() {
   }
   const adminsWithLimits = limitsByAdmin.size;
 
+  // Shape rows for the client table. Dates are pre-serialized to ISO
+  // strings (no Date objects across the RSC boundary) and roles are
+  // resolved to the effective set here so the client never re-derives it.
+  const rows: AdminUserRow[] = users.map((u) => {
+    const roles = getEffectiveRoles(u.role, u.roles);
+    const pageKeys = u.allowed_pages.filter((p) => !p.startsWith("__can_"));
+    const capabilityKeys = u.allowed_pages.filter((p) => p.startsWith("__can_"));
+    return {
+      id: u.id,
+      username: u.username,
+      displayUsername: u.display_username,
+      email: u.email,
+      roles,
+      isActive: u.is_active,
+      totpEnabled: u.totp_enabled,
+      createdAt: u.created_at.toISOString(),
+      lastLoginAt: lastLoginByAdmin.get(u.id) ?? null,
+      activeSessions: activeSessionsByAdmin.get(u.id) ?? 0,
+      // admins bypass the page list entirely — surface that explicitly
+      // instead of showing "0 pages".
+      isAdmin: roles.includes("admin"),
+      pageAccessCount: pageKeys.length,
+      capabilityCount: capabilityKeys.length,
+      balanceLimitCount: limitsByAdmin.get(u.id) ?? 0,
+    };
+  });
+
   const activeCount = users.filter((u) => u.is_active).length;
   const totpCount = users.filter((u) => u.totp_enabled).length;
   const inactiveCount = users.length - activeCount;
+
+  // Per-role tally for the by-role KPI sub. Counts each role a user holds,
+  // so a multi-role user contributes to every role they have.
+  const roleCounts = new Map<string, number>();
+  for (const r of rows) {
+    for (const role of r.roles) {
+      roleCounts.set(role, (roleCounts.get(role) ?? 0) + 1);
+    }
+  }
+  const byRoleSub = ALL_ADMIN_ROLES.map((role) => `${roleCounts.get(role) ?? 0} ${role}`)
+    .filter((s) => !s.startsWith("0 "))
+    .join(" · ");
 
   return (
     <div className="space-y-6">
@@ -87,7 +160,7 @@ export default async function AdminUsersPage() {
         <PageHeroIdentity
           icon={Shield}
           title="Users"
-          subtitle="Staff accounts — roles, 2FA status, and activation state."
+          subtitle="Staff accounts — roles, 2FA status, sessions, and activation state."
           action={
             <>
               {isCurrentUserAdmin && (
@@ -118,6 +191,7 @@ export default async function AdminUsersPage() {
         <KpiTile
           label="Total Admins"
           value={String(users.length)}
+          sub={byRoleSub || undefined}
           icon={Shield}
           accent="blue"
         />
@@ -136,6 +210,7 @@ export default async function AdminUsersPage() {
         <KpiTile
           label="2FA Enabled"
           value={String(totpCount)}
+          sub={`${users.length - totpCount} without 2FA`}
           icon={ShieldCheck}
           accent="purple"
         />
@@ -156,185 +231,13 @@ export default async function AdminUsersPage() {
       </div>
 
       <div className="space-y-3">
-        <SectionHeading icon={Shield} title="All Admins" />
-        <FadeIn className="space-y-2">
-          {/* Desktop table (>=md). Horizontal scroll guard so the
-              8 columns never blow up the layout on tablet widths. */}
-          <div className="hidden rounded-md border overflow-x-auto md:block">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b bg-muted/50">
-                <th className="px-4 py-3 text-left text-sm font-medium">Username</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">Email</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">Role</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">2FA</th>
-                <th className="px-4 py-3 text-left text-sm font-medium">Status</th>
-                {isCurrentUserAdmin && (
-                  <th className="px-4 py-3 text-left text-sm font-medium">Limits</th>
-                )}
-                <th className="px-4 py-3 text-left text-sm font-medium">Created</th>
-                <th className="px-4 py-3 text-right text-sm font-medium">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((user) => (
-                <tr key={user.id} className="border-b last:border-b-0">
-                  <td className="px-4 py-3 text-sm font-medium">
-                    <Link
-                      href={`/admin-users/${user.id}`}
-                      className="text-blue-400 hover:underline"
-                    >
-                      {user.username}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3 text-sm text-muted-foreground">
-                    {user.email}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-1">
-                      {getEffectiveRoles(user.role, user.roles).map((r) => (
-                        <Badge
-                          key={r}
-                          variant="outline"
-                          className="text-xs uppercase"
-                        >
-                          {r}
-                        </Badge>
-                      ))}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge
-                      variant="outline"
-                      className={
-                        user.totp_enabled
-                          ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
-                          : "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30"
-                      }
-                    >
-                      {user.totp_enabled ? "Enabled" : "Not set up"}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge
-                      variant="outline"
-                      className={
-                        user.is_active
-                          ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
-                          : "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30"
-                      }
-                    >
-                      {user.is_active ? "Active" : "Inactive"}
-                    </Badge>
-                  </td>
-                  {isCurrentUserAdmin && (
-                    <td className="px-4 py-3">
-                      {limitsByAdmin.has(user.id) ? (
-                        <Link
-                          href={`/admin-users/${user.id}#balance-limits`}
-                          className="inline-block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded-md"
-                        >
-                          <Badge
-                            variant="outline"
-                            className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30 cursor-pointer hover:bg-amber-500/25"
-                          >
-                            {limitsByAdmin.get(user.id)} cap
-                            {limitsByAdmin.get(user.id) === 1 ? "" : "s"}
-                          </Badge>
-                        </Link>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                    </td>
-                  )}
-                  <td className="px-4 py-3 text-sm text-muted-foreground">
-                    {formatDateTime(user.created_at.toISOString())}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <AdminUserActions
-                      userId={user.id}
-                      isActive={user.is_active}
-                      totpEnabled={user.totp_enabled}
-                      role={user.role}
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          </div>
-
-          {/* Mobile card list (<md) — the 8-col table overflows badly
-              at 360px, so each admin renders as a stacked card. */}
-          <div className="space-y-2 md:hidden">
-            {users.map((user) => (
-              <div key={user.id} className="rounded-lg border bg-card p-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <Link
-                      href={`/admin-users/${user.id}`}
-                      className="font-medium text-blue-400 hover:underline"
-                    >
-                      {user.username}
-                    </Link>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {user.email}
-                    </p>
-                  </div>
-                  <AdminUserActions
-                    userId={user.id}
-                    isActive={user.is_active}
-                    totpEnabled={user.totp_enabled}
-                    role={user.role}
-                  />
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  {getEffectiveRoles(user.role, user.roles).map((r) => (
-                    <Badge key={r} variant="outline" className="text-xs uppercase">
-                      {r}
-                    </Badge>
-                  ))}
-                  <Badge
-                    variant="outline"
-                    className={
-                      user.is_active
-                        ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
-                        : "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30"
-                    }
-                  >
-                    {user.is_active ? "Active" : "Inactive"}
-                  </Badge>
-                  <Badge
-                    variant="outline"
-                    className={
-                      user.totp_enabled
-                        ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
-                        : "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30"
-                    }
-                  >
-                    {user.totp_enabled ? "2FA on" : "2FA off"}
-                  </Badge>
-                  {isCurrentUserAdmin && limitsByAdmin.has(user.id) && (
-                    <Link
-                      href={`/admin-users/${user.id}#balance-limits`}
-                      className="inline-block rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-                    >
-                      <Badge
-                        variant="outline"
-                        className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30 cursor-pointer hover:bg-amber-500/25"
-                      >
-                        {limitsByAdmin.get(user.id)} cap
-                        {limitsByAdmin.get(user.id) === 1 ? "" : "s"}
-                      </Badge>
-                    </Link>
-                  )}
-                </div>
-                <p className="mt-2 text-[11px] text-muted-foreground">
-                  Created {formatDateTime(user.created_at.toISOString())}
-                </p>
-              </div>
-            ))}
-          </div>
+        <SectionHeading icon={UserCog} title="All Admins" />
+        <FadeIn>
+          <AdminUsersTable
+            rows={rows}
+            isCurrentUserAdmin={isCurrentUserAdmin}
+            currentUserId={session.userId}
+          />
         </FadeIn>
       </div>
     </div>
