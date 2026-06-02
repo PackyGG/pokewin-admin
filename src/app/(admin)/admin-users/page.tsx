@@ -3,7 +3,10 @@ import Link from "next/link";
 import { requirePageAccess } from "@/lib/dal";
 import { adminDb } from "@/lib/admin-db";
 import { getEffectiveRoles, ALL_ADMIN_ROLES } from "@/lib/admin-roles";
-import { readAdminUsersWithRoles } from "@/lib/admin-user-roles";
+import {
+  readAdminUsersWithRoles,
+  adminRolesColumnExists,
+} from "@/lib/admin-user-roles";
 import { Button } from "@/components/ui/button";
 import { AdminUsersTable, type AdminUserRow } from "./admin-users-table";
 import { CreateAdminDialog } from "./create-dialog";
@@ -32,7 +35,7 @@ export default async function AdminUsersPage() {
   //
   // SECURITY: only safe, non-secret columns are selected. Never
   // password_hash, totp_secret, or recovery_codes — those stay server-side.
-  const [users, balanceLimits] = await Promise.all([
+  const [users, balanceLimits, rolesColumnExists] = await Promise.all([
     readAdminUsersWithRoles(
       () =>
         adminDb.admin_users.findMany({
@@ -71,6 +74,9 @@ export default async function AdminUsersPage() {
           select: { admin_user_id: true, period_type: true },
         })
       : Promise.resolve([]),
+    // Whether the additive `roles` column is migrated. Drives the honest
+    // "multi-role needs a migration" notice in the per-row role editor.
+    adminRolesColumnExists(),
   ]);
 
   // Session-derived activity per admin. One groupBy each (not N queries):
@@ -237,6 +243,7 @@ export default async function AdminUsersPage() {
             rows={rows}
             isCurrentUserAdmin={isCurrentUserAdmin}
             currentUserId={session.userId}
+            rolesColumnExists={rolesColumnExists}
           />
         </FadeIn>
       </div>

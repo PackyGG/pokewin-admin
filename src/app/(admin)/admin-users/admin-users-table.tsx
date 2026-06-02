@@ -135,10 +135,13 @@ export function AdminUsersTable({
   rows,
   isCurrentUserAdmin,
   currentUserId,
+  rolesColumnExists,
 }: {
   rows: AdminUserRow[];
   isCurrentUserAdmin: boolean;
   currentUserId: string;
+  /** Whether admin_users.roles is migrated — gates the multi-role notice. */
+  rolesColumnExists: boolean;
 }) {
   const router = useRouter();
 
@@ -270,6 +273,7 @@ export function AdminUsersTable({
                       totpEnabled={row.totpEnabled}
                       roles={row.roles}
                       isSelf={row.id === currentUserId}
+                      rolesColumnExists={rolesColumnExists}
                     />
                     <ChevronRight
                       aria-hidden
@@ -326,6 +330,7 @@ export function AdminUsersTable({
                   totpEnabled={row.totpEnabled}
                   roles={row.roles}
                   isSelf={row.id === currentUserId}
+                  rolesColumnExists={rolesColumnExists}
                 />
               </span>
             </div>

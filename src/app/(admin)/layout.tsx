@@ -93,6 +93,7 @@ export default async function AdminLayout({
             displayUsername={profile.displayUsername}
             hasAvatar={profile.hasAvatar}
             role={session.role}
+            roles={session.roles ?? [session.role]}
             dbEnv={dbEnv}
             canSwitchDbEnv={canSwitchDbEnv}
           />

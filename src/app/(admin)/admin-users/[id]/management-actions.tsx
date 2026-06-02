@@ -18,10 +18,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Checkbox } from "@/components/ui/checkbox";
-import { cn } from "@/lib/utils";
 import type { AdminRole } from "@/lib/dal";
-import { ALL_ADMIN_ROLES } from "@/lib/admin-roles";
+import { RolesEditor } from "../_components/roles-editor";
 import {
   toggleAdminActive,
   setAdminRoles,
@@ -34,9 +32,12 @@ import type { AdminUserDetail } from "@/lib/queries/admin-users";
 export function ManagementActions({
   detail,
   startTransition,
+  rolesColumnExists,
 }: {
   detail: AdminUserDetail;
   startTransition: React.TransitionStartFunction;
+  /** Whether admin_users.roles is migrated — gates the multi-role notice. */
+  rolesColumnExists: boolean;
 }) {
   const router = useRouter();
 
@@ -60,7 +61,11 @@ export function ManagementActions({
       <CardContent className="flex flex-wrap gap-2">
         <ToggleActiveDialog detail={detail} handleAction={handleAction} />
 
-        <ChangeRoleDialog detail={detail} handleAction={handleAction} />
+        <ChangeRoleDialog
+          detail={detail}
+          handleAction={handleAction}
+          rolesColumnExists={rolesColumnExists}
+        />
 
         {detail.totpEnabled && (
           <Reset2FADialog detail={detail} handleAction={handleAction} />
@@ -238,35 +243,23 @@ function Reset2FADialog({
   );
 }
 
-const ROLE_LABELS: Record<AdminRole, string> = {
-  admin: "Admin",
-  support: "Support",
-  marketing: "Marketing",
-  creator: "Creator",
-  pack_creator: "Pack Creator",
-};
-
-const ROLE_DESCRIPTIONS: Record<AdminRole, string> = {
-  admin: "Full access — bypasses every page & capability gate.",
-  support: "User support workflow (lands on /users).",
-  marketing: "Marketing surfaces (lands on /analytics).",
-  creator: "Creator self-service portal.",
-  pack_creator: "Content management — packs, cards, sets, upgrader.",
-};
-
 /**
  * Multi-role editor. An admin can grant several system roles to one user
  * at once (e.g. Support + Pack Creator). Preselected to the user's current
- * effective roles; saving replaces the set. Permissions are merged
+ * effective roles; the RolesEditor shows them as removable chips with an
+ * add-picker for the rest. Saving replaces the set. Permissions are merged
  * additively server-side (setAdminRoles) so adding a role only grants
  * access. 2FA-gated, exactly like the old single-role change.
  */
 export function ChangeRoleDialog({
   detail,
   handleAction,
+  rolesColumnExists,
 }: {
   detail: AdminUserDetail;
   handleAction: (action: () => Promise<void>, label: string) => void;
+  /** Whether admin_users.roles is migrated — gates the multi-role notice. */
+  rolesColumnExists: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<Set<AdminRole>>(
@@ -277,15 +270,6 @@ export function ChangeRoleDialog({
   function reset() {
     setSelected(new Set(detail.roles as AdminRole[]));
     setTotpCode("");
-  }
-
-  function toggle(role: AdminRole) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(role)) next.delete(role);
-      else next.add(role);
-      return next;
-    });
   }
 
   const current = [...detail.roles].sort().join(",");
@@ -308,47 +292,15 @@ export function ChangeRoleDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Edit roles for {detail.username}</AlertDialogTitle>
           <AlertDialogDescription>
-            Current:{" "}
-            <span className="font-medium uppercase">
-              {detail.roles.join(", ")}
-            </span>
-            . Select one or more roles — a user can hold several at once and
-            gets the combined access of all of them.
+            A user can hold several roles at once and gets the combined access
+            of all of them.
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <div className="space-y-2">
-          {ALL_ADMIN_ROLES.map((r) => {
-            const checked = selected.has(r);
-            return (
-              <label
-                key={r}
-                className={cn(
-                  "flex cursor-pointer items-start gap-3 rounded-md border p-2.5 transition-colors",
-                  checked
-                    ? "border-primary/40 bg-primary/5"
-                    : "border-input hover:bg-accent/40",
-                )}
-              >
-                <Checkbox
-                  checked={checked}
-                  onCheckedChange={() => toggle(r)}
-                  className="mt-0.5"
-                />
-                <span className="space-y-0.5">
-                  <span className="block text-sm font-medium">
-                    {ROLE_LABELS[r]}
-                  </span>
-                  <span className="block text-xs text-muted-foreground">
-                    {ROLE_DESCRIPTIONS[r]}
-                  </span>
-                </span>
-              </label>
-            );
-          })}
-          {empty && (
-            <p className="text-xs text-rose-500">Pick at least one role.</p>
-          )}
-        </div>
+        <RolesEditor
+          selected={selected}
+          onChange={setSelected}
+          rolesColumnExists={rolesColumnExists}
+        />
         <div className="space-y-1">
           <Label className="text-xs text-muted-foreground">2FA Code</Label>
           <Input

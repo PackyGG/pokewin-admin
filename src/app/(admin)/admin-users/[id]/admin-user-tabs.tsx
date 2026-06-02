@@ -23,9 +23,11 @@ type Props = {
   auditEvents: PaginatedResult<AdminAuditEventItem>;
   balanceLimits: BalanceLimit[];
   isCurrentUserAdmin: boolean;
+  /** Whether admin_users.roles is migrated — gates the multi-role notice. */
+  rolesColumnExists: boolean;
 };
 
-export function AdminUserTabs({ detail, auditStats, auditEvents, balanceLimits, isCurrentUserAdmin }: Props) {
+export function AdminUserTabs({ detail, auditStats, auditEvents, balanceLimits, isCurrentUserAdmin, rolesColumnExists }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [, startTransition] = useTransition();
@@ -55,7 +57,11 @@ export function AdminUserTabs({ detail, auditStats, auditEvents, balanceLimits, 
           <BalanceLimitsCard adminUserId={detail.id} initialLimits={balanceLimits} />
         )}
       </div>
-      <ManagementActions detail={detail} startTransition={startTransition} />
+      <ManagementActions
+        detail={detail}
+        startTransition={startTransition}
+        rolesColumnExists={rolesColumnExists}
+      />
       {isCurrentUserAdmin && detail.roles.includes("creator") && (
         <LinkMainUserCard detail={detail} />
       )}

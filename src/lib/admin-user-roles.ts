@@ -123,3 +123,51 @@ export async function writeAdminUserWithRoles<T>(
     return await withoutRoles();
   }
 }
+
+/**
+ * Process-level memo for {@link adminRolesColumnExists}. Only `true` is
+ * cached permanently: once the migration is applied the column never goes
+ * away, so re-probing would be wasted work. A `false`/unknown result is
+ * NOT cached, so the very next request after the owner runs
+ * `npm run admin:migrate` immediately reflects the new column without a
+ * server restart.
+ */
+let rolesColumnPresent: boolean | null = null;
+
+/**
+ * Whether the additive `admin_users.roles` column physically exists on the
+ * connected Admin DB. Drives the honest "multi-role needs a migration"
+ * notice in the role editor: when this is `false`, assigning MORE THAN ONE
+ * role would be silently collapsed to the primary role by
+ * {@link writeAdminUserWithRoles}, so the UI must warn instead of pretending
+ * it worked.
+ *
+ * Implemented as a metadata probe against `information_schema.columns` —
+ * never selects the column itself, so it can't throw P2022. Any unexpected
+ * error degrades to `false` (treat as "not migrated") rather than throwing:
+ * a failed probe must never crash the page, and the conservative answer is
+ * the one that shows the warning instead of hiding it. The Admin DB client
+ * is imported lazily so this module stays importable from the edge/client
+ * graph without pulling `pg` in.
+ */
+export async function adminRolesColumnExists(): Promise<boolean> {
+  if (rolesColumnPresent === true) return true;
+  try {
+    const { adminDb } = await import("@/lib/admin-db");
+    const rows = await adminDb.$queryRaw<{ exists: boolean }[]>`
+      SELECT EXISTS (
+        SELECT 1
+          FROM information_schema.columns
+         WHERE table_name = 'admin_users'
+           AND column_name = 'roles'
+      ) AS exists
+    `;
+    const present = rows[0]?.exists === true;
+    if (present) rolesColumnPresent = true;
+    return present;
+  } catch {
+    // Conservative: a failed probe shows the warning (safe) rather than
+    // hiding it. Not memoized so a transient failure self-heals next call.
+    return false;
+  }
+}

@@ -19,11 +19,9 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import { MoreHorizontal, ShieldCheck, UserCog, Power, Trash2 } from "lucide-react";
-import { cn } from "@/lib/utils";
 import type { AdminRole } from "@/lib/dal";
-import { ALL_ADMIN_ROLES } from "@/lib/admin-roles";
+import { RolesEditor } from "./_components/roles-editor";
 import {
   toggleAdminActive,
   resetAdmin2FA,
@@ -39,22 +37,6 @@ import { toast } from "sonner";
 //   - reset2fa  : wipe TOTP secret
 //   - delete    : permanent delete
 type DialogMode = "editRoles" | "toggle" | "reset2fa" | "delete";
-
-const ROLE_LABELS: Record<AdminRole, string> = {
-  admin: "Admin",
-  support: "Support",
-  marketing: "Marketing",
-  creator: "Creator",
-  pack_creator: "Pack Creator",
-};
-
-const ROLE_DESCRIPTIONS: Record<AdminRole, string> = {
-  admin: "Full access — bypasses every page & capability gate.",
-  support: "User support workflow (lands on /users).",
-  marketing: "Marketing surfaces (lands on /analytics).",
-  creator: "Creator self-service portal.",
-  pack_creator: "Content management — packs, cards, sets, upgrader.",
-};
 
 /**
  * Row-level action menu for an admin user. Supports the FULL multi-role
@@ -76,6 +58,7 @@ export function AdminUserActions({
   totpEnabled,
   roles,
   isSelf,
+  rolesColumnExists,
 }: {
   userId: string;
   username: string;
@@ -84,6 +67,8 @@ export function AdminUserActions({
   roles: AdminRole[];
   /** True when this row is the signed-in admin — blocks self-deactivate/delete. */
   isSelf: boolean;
+  /** Whether admin_users.roles is migrated — gates the multi-role notice. */
+  rolesColumnExists: boolean;
 }) {
   const [mode, setMode] = useState<DialogMode | null>(null);
   const [totpCode, setTotpCode] = useState("");
@@ -104,15 +89,6 @@ export function AdminUserActions({
     setMode(null);
     setTotpCode("");
     setIsPending(false);
-  }
-
-  function toggleRole(role: AdminRole) {
-    setSelectedRoles((prev) => {
-      const next = new Set(prev);
-      if (next.has(role)) next.delete(role);
-      else next.add(role);
-      return next;
-    });
   }
 
   const currentRoleKey = [...roles].sort().join(",");
@@ -159,7 +135,7 @@ export function AdminUserActions({
     editRoles: {
       title: `Edit roles for ${username}`,
       description:
-        "Select one or more roles — a user can hold several at once and gets the combined access of all of them. Adding a role only ever grants access; manual per-user grants are kept.",
+        "A user can hold several roles at once and gets the combined access of all of them. Adding a role only ever grants access; manual per-user grants are kept.",
       confirmLabel: "Save roles",
     },
     toggle: {
@@ -265,39 +241,12 @@ export function AdminUserActions({
             </p>
 
             {mode === "editRoles" && (
-              <div className="space-y-2">
-                {ALL_ADMIN_ROLES.map((r) => {
-                  const checked = selectedRoles.has(r);
-                  return (
-                    <label
-                      key={r}
-                      className={cn(
-                        "flex cursor-pointer items-start gap-3 rounded-md border p-2.5 transition-colors",
-                        checked
-                          ? "border-primary/40 bg-primary/5"
-                          : "border-input hover:bg-accent/40",
-                      )}
-                    >
-                      <Checkbox
-                        checked={checked}
-                        onCheckedChange={() => toggleRole(r)}
-                        className="mt-0.5"
-                      />
-                      <span className="space-y-0.5">
-                        <span className="block text-sm font-medium">
-                          {ROLE_LABELS[r]}
-                        </span>
-                        <span className="block text-xs text-muted-foreground">
-                          {ROLE_DESCRIPTIONS[r]}
-                        </span>
-                      </span>
-                    </label>
-                  );
-                })}
-                {rolesEmpty && (
-                  <p className="text-xs text-rose-500">Pick at least one role.</p>
-                )}
-              </div>
+              <RolesEditor
+                selected={selectedRoles}
+                onChange={setSelectedRoles}
+                rolesColumnExists={rolesColumnExists}
+                disabled={isPending}
+              />
             )}
 
             <div className="space-y-1">

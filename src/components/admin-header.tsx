@@ -243,6 +243,7 @@ export function AdminHeader({
   displayUsername,
   hasAvatar,
   role,
+  roles,
   dbEnv,
   canSwitchDbEnv,
 }: {
@@ -251,6 +252,12 @@ export function AdminHeader({
   displayUsername: string | null;
   hasAvatar: boolean;
   role: string;
+  /**
+   * Full effective system-role set for this admin (always non-empty, always
+   * includes `role`). A user can hold several roles at once, so the header
+   * shows every one of them — not just the primary.
+   */
+  roles: string[];
   dbEnv: DbEnv;
   canSwitchDbEnv: boolean;
 }) {
@@ -263,6 +270,10 @@ export function AdminHeader({
   const logoutFormRef = React.useRef<HTMLFormElement>(null);
 
   const label = displayUsername ?? username;
+  // Defensive: always render at least the primary role. Dedupe in case a
+  // caller passed a list that already includes `role`.
+  const roleList =
+    roles && roles.length > 0 ? [...new Set(roles)] : [role];
 
   return (
     <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-1.5 border-b border-border bg-background/95 px-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:gap-3 sm:px-4">
@@ -351,10 +362,23 @@ export function AdminHeader({
           <DropdownMenuContent align="end" className="min-w-[220px]">
             <DropdownMenuGroup>
               <DropdownMenuLabel className="font-normal">
-                <div className="flex flex-col">
+                <div className="flex flex-col gap-1">
                   <span className="text-sm font-medium">{label}</span>
                   <span className="truncate text-xs text-muted-foreground">
                     @{username}
+                  </span>
+                  {/* Roles live here so they're visible on phones too (the
+                      standalone badge cluster is hidden below sm). */}
+                  <span className="mt-0.5 flex flex-wrap gap-1">
+                    {roleList.map((r) => (
+                      <Badge
+                        key={r}
+                        variant="outline"
+                        className={cn("text-[10px] uppercase", ROLE_COLORS[r])}
+                      >
+                        {r.replace("_", " ")}
+                      </Badge>
+                    ))}
                   </span>
                 </div>
               </DropdownMenuLabel>
@@ -379,16 +403,18 @@ export function AdminHeader({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        {/* Role badge sits next to the avatar at sm+. On phones the role
-            already lives inside the dropdown menu (and the badge would
-            push the avatar off-screen on a 360px viewport), so we hide
-            it here. */}
-        <Badge
-          variant="outline"
-          className={cn("hidden sm:inline-flex", ROLE_COLORS[role])}
-        >
-          {role}
-        </Badge>
+        {/* Role badges sit next to the avatar at sm+. A user can hold
+            several roles, so every one is shown. On phones the roles
+            already live inside the dropdown menu (and the badges would
+            push the avatar off-screen on a 360px viewport), so they're
+            hidden here. */}
+        <span className="hidden items-center gap-1 sm:inline-flex">
+          {roleList.map((r) => (
+            <Badge key={r} variant="outline" className={cn(ROLE_COLORS[r])}>
+              {r.replace("_", " ")}
+            </Badge>
+          ))}
+        </span>
         {/* Hidden form so the menu item above can trigger the server
             action — the old iconified button is replaced by the
             dropdown's Log out entry, but the form is still needed to
