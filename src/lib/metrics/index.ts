@@ -1,12 +1,13 @@
 /**
  * @/lib/metrics — the single-source-of-truth metric layer for the admin.
  *
- * Phase-1 foundation. UNWIRED: nothing in the live app imports this yet.
- * New files only → zero behaviour change → zero live risk. A later,
- * build-verified migration swaps each page/query onto these exports and
- * deletes the inline type lists / formulas. Until then,
- * `src/lib/queries/_wager-payout-types.ts` and the inline definitions
- * remain the live source of truth — do NOT edit them from here.
+ * WIRED & CANONICAL. This is the live, canonical metric layer — the single
+ * source of truth for GGR / NGR / wager / gaming-payout / reward-cost /
+ * scope across the admin. It is imported by the dashboard, `/ggr`, the
+ * analytics surfaces (`analytics*.ts`), insights-analytics (cost-breakdown,
+ * money-flow, overview), insights-games, insights-rewards, and the upgrader
+ * panels. Any change to a type set, scope predicate, or formula here
+ * propagates to every one of those surfaces — change with care.
  *
  * Layout:
  *   • ledger-sets.ts   — the disjoint partition of all 42

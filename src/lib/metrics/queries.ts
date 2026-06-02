@@ -31,13 +31,16 @@ import {
 } from "./gaming-sql";
 
 /**
- * queries.ts — documented CANONICAL query builders for the metric layer.
+ * queries.ts — the CANONICAL, WIRED DB-read builders for the metric layer.
  *
- * Phase-1 foundation, UNWIRED. These read the Main DB (game data) and
- * return primitives. They are the DB-read companions to the pure
- * `formulas.ts` helpers: each one bakes in the canonical scope (real
- * customers, borrow-corrected, blacklist-dropped) so a migrated page
- * never re-derives a type list or a scope predicate.
+ * These are LIVE: `getWindowMetrics` / `getGamingLegs` / `getRewardCost` /
+ * `getDailyGamingMetrics` / `upgraderMetrics` / `sumLedgerTypes` are the
+ * canonical GGR/NGR/wager/payout source imported by the dashboard, `/ggr`,
+ * the analytics surfaces, insights-analytics and insights-games. They read
+ * the Main DB (game data) and return primitives. They are the DB-read
+ * companions to the pure `formulas.ts` helpers: each one bakes in the
+ * canonical scope (real customers, borrow-corrected, blacklist-dropped) so
+ * a consuming page never re-derives a type list or a scope predicate.
  *
  * The wager/payout shape deliberately matches
  * `src/lib/queries/pnl.ts` `getPackBattlePurePnl` (pnl.ts:749-945):

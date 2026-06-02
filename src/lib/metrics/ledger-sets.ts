@@ -2,12 +2,13 @@
  * ledger-sets.ts — the SINGLE canonical partition of every
  * `ledger_transaction_type` enum member into exactly one metric bucket.
  *
- * This is Phase-1 foundation. It is intentionally **UNWIRED** — nothing
- * in the live app imports it yet. Creating it changes no behaviour. The
- * existing canonical sets in `src/lib/queries/_wager-payout-types.ts`
- * stay the source of truth for live pages until a later, build-verified
- * migration step swaps each call site over. Do NOT edit
- * `_wager-payout-types.ts` from here.
+ * This is the WIRED, canonical partition — the live source of truth for
+ * which ledger types are wager / fee / gaming-payout / neutral / reward /
+ * residual. The SQL list helpers (`WAGER_TYPES_SQL`, `GAMING_PAYOUT_TYPES_SQL`,
+ * `REWARD_PAYOUT_TYPES_SQL`, …) and the type sets are imported directly by
+ * the dashboard, `/ggr`, the analytics surfaces, insights-analytics and
+ * insights-games. Changing a member's bucket here changes GGR/NGR
+ * everywhere — verify against the booking model below before editing.
  *
  * ─── THE VERIFIED BOOKING MODEL (ground truth) ──────────────────────
  *
@@ -194,12 +195,15 @@ export const GAMING_PAYOUT_TYPES = [
  * in (a card becomes balance, a voucher becomes cards, rounding excess
  * becomes a voucher, etc.).
  *
- * These must be EXCLUDED from the payout side of GGR. Live code
- * (`_wager-payout-types.ts`) currently subtracts most of them inside GGR
- * (the biggest single divergence — `card_sale` alone is hundreds of
- * thousands of rows); this partition reclassifies them as neutral per the
- * verified model. They still appear in realized PnL via the balance /
- * inventory / voucher deltas — that is correct and intentional.
+ * These are EXCLUDED from the payout side of GGR — this partition is the
+ * live canonical GGR's treatment of them (neutral). The legacy
+ * dashboard-only set in `src/lib/queries/_wager-payout-types.ts`
+ * (`WAGER_PAYOUT_PAYOUT_TYPES`) still folds most of them into ITS payout
+ * side, but that is a separate, non-canonical "GGR" definition (closer to
+ * NGR) — keeping `card_sale` (alone hundreds of thousands of rows) out of
+ * the canonical payout side was the biggest single divergence the
+ * canonical model fixed. They still appear in realized PnL via the
+ * balance / inventory / voucher deltas — that is correct and intentional.
  *
  * `voucher_redeemed` is NEUTRAL (reclassified from REWARD_PAYOUT) — WITH A
  * PER-ROW CARVE-OUT. Redeeming a voucher just turns a voucher the user

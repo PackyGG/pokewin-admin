@@ -1,7 +1,10 @@
 /**
  * formulas.ts — pure, side-effect-free metric arithmetic.
  *
- * Phase-1 foundation, UNWIRED. Mirrors the dep-free style of
+ * WIRED & CANONICAL — these are the live, canonical GGR / NGR / gaming-
+ * payout / empirical-RTP / house-edge formulas, imported across the admin
+ * (the `@/lib/metrics/queries` builders, the insights-games surfaces, the
+ * upgrader panels, etc.). Mirrors the dep-free style of
  * `src/app/(admin)/insights/edge-calc/math.ts`: every input and output is
  * a primitive number, no Decimal objects cross this boundary, nothing
  * here touches the DB. Everything is unit-testable in isolation (see
