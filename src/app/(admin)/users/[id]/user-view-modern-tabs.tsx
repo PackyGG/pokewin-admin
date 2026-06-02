@@ -75,7 +75,7 @@ import {
   FINANCIAL_TX_TYPES,
 } from "./user-tabs";
 import { UserBattleLimitsCard } from "./user-battle-limits-card";
-import { RecoverableWipesStrip } from "./wipe-adjustments-dialog";
+import { WipeAuditLog } from "./wipe-audit-log";
 import type {
   PaginatedInventory,
   TipEntry,
@@ -996,11 +996,13 @@ export function AccountTab({
       <Card>
         <CardContent className="pt-6 space-y-4">
           <ModerationSection user={user} mutes={mutes} />
-          {/* Recoverable "content" balance-adjustment wipes for this user.
-              Self-fetching + only renders when batches exist. Same gate as
-              the wipe action (admin or __can_wipe_accounts). */}
+          {/* Unified wipe audit log for this user — every wipe done on this
+              account (adjustments / balance / vault / inventory): what was
+              removed, who/when, restored-or-not, with a 2FA-gated Restore.
+              Self-fetching + only renders when wipe history exists. Same gate
+              as the wipe actions (admin or __can_wipe_accounts). */}
           {(isAdmin || capabilities.canWipeAccounts) && (
-            <RecoverableWipesStrip userId={user.id} />
+            <WipeAuditLog userId={user.id} />
           )}
         </CardContent>
       </Card>

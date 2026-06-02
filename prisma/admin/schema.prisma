@@ -795,6 +795,51 @@ model admin_balance_adjustment_wipes {
   @@index([wiped_at(sort: Desc)], map: "admin_balance_adjustment_wipes_wiped_at_idx")
 }
 
+// Generalized recovery store for the three NEW account-wipe targets —
+// "balance" (zero available_balance), "vault" (zero locked_balance +
+// unlock_at), "inventory" (delete user_inventory rows). One table keyed by
+// `wipe_type`; the type-specific recovery payload lives in `snapshot`.
+//
+// Snapshot-FIRST + recoverable, mirroring commit f4bfca0 (the adjustments
+// wipe above): the snapshot is written here BEFORE the destructive main-DB
+// write, so a wipe is always restorable; once the destructive tx commits it
+// is permanent. Restore re-applies the snapshot (re-credit balance /
+// re-credit vault / re-insert inventory) and marks restored_at.
+//
+// Provisioned at runtime via the IF-NOT-EXISTS ensure-schema fallback
+// (src/lib/account-wipes/ensure-schema.ts) — NOT a Prisma migration,
+// because the admin DB has a drifted migration history. This model only
+// mirrors the table so typed queries via `adminDb.admin_account_wipes.*`
+// work; keep the two in sync.
+model admin_account_wipes {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // 'balance' | 'vault' | 'inventory' (AccountWipeType).
+  wipe_type   String    @db.VarChar(32)
+  // Main-DB user the wipe acted on (better-auth nanoid).
+  user_id     String    @db.VarChar(36)
+  // Captured at wipe time so the listing UI doesn't have to crack the JSONB.
+  username    String?   @db.VarChar(255)
+  email       String?   @db.VarChar(255)
+  wiped_at    DateTime  @default(now()) @db.Timestamp(6)
+  // admin_users.id of whoever ran the wipe. Plain column — no Prisma
+  // relation so adding this table doesn't touch admin_users.
+  wiped_by    String    @db.VarChar(36)
+  // Money removed (balance/vault wipes). 0 for an inventory wipe.
+  amount      Decimal   @default(0) @db.Decimal(20, 2)
+  // Rows removed (inventory wipe). 0 for a balance/vault wipe.
+  item_count  Int       @default(0)
+  // JSONB recovery payload — shape depends on wipe_type (see
+  // src/lib/account-wipes/snapshot.ts). Decimal/Date → canonical string.
+  snapshot    Json      @db.JsonB
+  // Null until the matching restore runs. Once set the wipe is immutable +
+  // cannot be re-restored.
+  restored_at DateTime? @db.Timestamp(6)
+  restored_by String?   @db.VarChar(36)
+
+  @@index([user_id], map: "admin_account_wipes_user_id_idx")
+  @@index([wiped_at(sort: Desc)], map: "admin_account_wipes_wiped_at_idx")
+}
+
 // Admin-side "sponsored %" annotation on a creator (affiliate)
 // leaderboard. Purely a cost-accounting input — it does NOT touch the
 // backend leaderboard in any way. The /creators "Leaderboard Cost" KPI

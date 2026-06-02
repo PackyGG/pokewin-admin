@@ -42,6 +42,11 @@ import { banUser, unbanUser, lockUser, unlockUser } from "../actions";
 import { moveBalanceToVault } from "./actions";
 import { DeleteUserDialog, WipeAccountButton, EditIdentityButton } from "./user-tabs-dialogs";
 import { WipeAdjustmentsButton } from "./wipe-adjustments-dialog";
+import {
+  WipeBalanceButton,
+  WipeVaultButton,
+  WipeInventoryButton,
+} from "./wipe-targets-dialog";
 
 /**
  * Moderation toolbar — the action buttons that used to live at the top of
@@ -110,10 +115,15 @@ export function UserAdminActions({
           unlockAt={unlockAt ?? null}
         />
       )}
-      {/* Wipe ONLY admin "content" balance adjustments (recoverable). Same
-          gate as the full account wipe — it hard-deletes money rows + moves
-          the balance, so it's grouped with the destructive actions. */}
+      {/* Targeted, snapshot-first RECOVERABLE wipes. Same gate as the full
+          account wipe (admin / __can_wipe_accounts) — each one hard-deletes
+          money rows / items, so they're grouped with the destructive actions.
+          Every one snapshots to the admin DB first and is restorable from the
+          Moderation-tab wipe audit log. */}
       {canWipe && <WipeAdjustmentsButton userId={user.id} />}
+      {canWipe && <WipeBalanceButton userId={user.id} />}
+      {canWipe && <WipeVaultButton userId={user.id} />}
+      {canWipe && <WipeInventoryButton userId={user.id} />}
       {canDelete && <DeleteUserDialog user={user} isPending={false} />}
       {canWipe && (
         <WipeAccountButton
