@@ -158,11 +158,21 @@ console.log("[metrics checks] specific membership (the booking model)");
 
 check("WAGER = pack_opening/battle_bet/battle_sponsorship only", arrEq(WAGER_TYPES, ["pack_opening", "battle_bet", "battle_sponsorship"]));
 check("withdrawal_shipping_fee is a FEE, not WAGER", FEE_TYPES.includes("withdrawal_shipping_fee") && !(WAGER_TYPES as readonly string[]).includes("withdrawal_shipping_fee"));
-check("battle_refund is the only ledger GAMING_PAYOUT (upgrader isolated)", arrEq(GAMING_PAYOUT_TYPES, ["battle_refund"]));
+// GAMING_PAYOUT = battle_refund + battle_excess_to_voucher (both ledger
+// battle-win settlement legs; upgrader stays isolated). battle_excess_to_
+// voucher was reclassified from NEUTRAL — it COMPLETES a battle win the
+// inventory card under-counts.
+check("GAMING_PAYOUT = battle_refund + battle_excess_to_voucher (upgrader isolated)", arrEq(GAMING_PAYOUT_TYPES, ["battle_refund", "battle_excess_to_voucher"]));
+check("battle_excess_to_voucher is a GAMING_PAYOUT (reclassified from NEUTRAL)", classifyLedgerType("battle_excess_to_voucher") === "GAMING_PAYOUT" && !(NEUTRAL_TYPES as readonly string[]).includes("battle_excess_to_voucher"));
 check("card_sale is NEUTRAL (not a payout)", NEUTRAL_TYPES.includes("card_sale") && classifyLedgerType("card_sale") === "NEUTRAL");
 check("card_exchange is NEUTRAL", classifyLedgerType("card_exchange") === "NEUTRAL");
 check("reward_card_sale is NEUTRAL", classifyLedgerType("reward_card_sale") === "NEUTRAL");
 check("voucher_exchange is NEUTRAL", classifyLedgerType("voucher_exchange") === "NEUTRAL");
+// voucher_redeemed reclassified REWARD_PAYOUT → NEUTRAL (its base bucket).
+// The admin manual carve-out (metadata->>'origin'='manual') is a per-row
+// SQL split in queries.ts, NOT a type bucket — so the partition has it as
+// NEUTRAL and it must NOT be in REWARD_PAYOUT_TYPES.
+check("voucher_redeemed is NEUTRAL (reclassified from REWARD; manual carve-out is SQL-level)", classifyLedgerType("voucher_redeemed") === "NEUTRAL" && !(REWARD_PAYOUT_TYPES as readonly string[]).includes("voucher_redeemed"));
 check("affiliate_leaderboard_prize is a REWARD (gap-fix)", classifyLedgerType("affiliate_leaderboard_prize") === "REWARD_PAYOUT");
 check("creator_tip is RESIDUAL, NOT a reward cost", classifyLedgerType("creator_tip") === "RESIDUAL" && !(REWARD_PAYOUT_TYPES as readonly string[]).includes("creator_tip"));
 check("rain_win is a REWARD (mixed-funding handled in NGR hook)", classifyLedgerType("rain_win") === "REWARD_PAYOUT");
@@ -179,16 +189,32 @@ check("ledgerTypesToSqlList quotes each member", ledgerTypesToSqlList(["deposit"
 // ─── 3. GGR: wager − inventory-delta − battle_refund (NOT card_sale) ──
 console.log("[metrics checks] GGR / NGR / RTP / edge arithmetic");
 
-// Scenario: $1000 wager, $700 of cards kept (inventory), $50 battle_refund
-// cash leg. card_sale of $400 happened but is NEUTRAL → must NOT enter GGR.
+// Scenario: $1000 wager, $700 of cards kept (inventory), $50 ledger
+// gaming-payout legs (battle_refund + battle_excess_to_voucher, summed
+// via GAMING_PAYOUT_TYPES — passed through the `battleRefund` input).
+// card_sale of $400 happened but is NEUTRAL → must NOT enter GGR.
 const gp = gamingPayoutTotal({ inventoryPayout: 700, battleRefund: 50 });
-check("gamingPayout = inventory + battle_refund", approx(gp, 750));
+check("gamingPayout = inventory + ledger gaming-payout legs", approx(gp, 750));
 const g = ggr({ wager: 1000, gamingPayout: gp });
 check("GGR = wager − gamingPayout = 250", approx(g, 250));
 check("ggrFromLegs matches (card_sale absent → unchanged)", approx(ggrFromLegs({ wager: 1000, inventoryPayout: 700, battleRefund: 50 }), 250));
 // A card_sale conversion does NOT move GGR: GGR is the same whether or
 // not a neutral conversion occurred (it isn't an input to the formula).
 check("card conversions are neutral to GGR (no input path)", approx(ggrFromLegs({ wager: 1000, inventoryPayout: 700, battleRefund: 50 }), g));
+
+// Upgrader fold (headline GGR = pack + battle + upgrader). At the DB layer
+// getGamingLegs/getWindowMetrics/getDailyGamingMetrics source upgrader from
+// upgrader_games and add bet_amount → wager and won_amount → the payout
+// side (the `battleRefund`/`upgraderPayout` inputs). The pure formula must
+// reflect that addition. Scenario: pack/battle wager 1000 + upgrader wager
+// 200 = 1200; inventory 700 + ledger legs 50 + upgrader payout 180 = 930;
+// GGR = 1200 − 930 = 270 (= base 250 + upgrader's own 200−180 = 20).
+const gpUpg = gamingPayoutTotal({ inventoryPayout: 700, battleRefund: 50, upgraderPayout: 180 });
+check("gamingPayout includes upgrader payout", approx(gpUpg, 930));
+const gUpg = ggr({ wager: 1000 + 200, gamingPayout: gpUpg });
+check("headline GGR = pack + battle + upgrader (1200 − 930 = 270)", approx(gUpg, 270));
+check("upgrader-folded GGR = base GGR + upgrader GGR (250 + 20)", approx(gUpg, g + (200 - 180)));
+check("ggrFromLegs folds upgrader payout too", approx(ggrFromLegs({ wager: 1200, inventoryPayout: 700, battleRefund: 50, upgraderPayout: 180 }), 270));
 
 // ─── 4. Reward types reduce NGR, not GGR ─────────────────────────────
 // $250 GGR, then $40 deposit_bonus + $10 rakeback reward cost (excl rain).

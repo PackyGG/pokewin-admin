@@ -45,8 +45,13 @@ export type GamingPayoutInput = {
    */
   inventoryPayout: number;
   /**
-   * Σ `|battle_refund|` inside the window — the only cash gaming-payout
-   * leg on the ledger (battle winner cash).
+   * Σ |amount| over GAMING_PAYOUT_TYPES inside the window — the LEDGER
+   * cash gaming-payout legs: `battle_refund` (battle winner cash) AND
+   * `battle_excess_to_voucher` (the voucher remainder of a battle win the
+   * inventory card under-counts, booked at settlement). Field name kept as
+   * `battleRefund` for call-site stability; it carries both legs. The
+   * later `voucher_redeemed` redemption of the excess voucher is NEUTRAL,
+   * so the win is counted exactly once (at settlement).
    */
   battleRefund: number;
   /**
@@ -63,12 +68,13 @@ export type GamingPayoutInput = {
  * model:
  *
  *   gamingPayout = inventoryPayout (pack+battle cards kept)
- *                + |battle_refund|
+ *                + ledger gaming-payout legs
+ *                  (|battle_refund| + |battle_excess_to_voucher|)
  *                + upgraderPayout
  *
- * NEUTRAL conversions (card_sale, card_exchange, …) are intentionally
- * NOT part of this — they are disposals of value the user already owns,
- * not game payouts (see `ledger-sets.ts` NEUTRAL_TYPES).
+ * NEUTRAL conversions (card_sale, card_exchange, voucher_redeemed, …) are
+ * intentionally NOT part of this — they are disposals of value the user
+ * already owns, not game payouts (see `ledger-sets.ts` NEUTRAL_TYPES).
  */
 export function gamingPayoutTotal(input: GamingPayoutInput): number {
   return (

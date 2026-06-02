@@ -23,13 +23,18 @@
  *    excess-credit / voucher-exchange variants) are NEUTRAL
  *    inventory↔balance / voucher↔balance disposals — they move value the
  *    user already owns; they are NOT gaming payouts and must never be
- *    folded into the payout side of GGR.
+ *    folded into the payout side of GGR. `voucher_redeemed` is likewise
+ *    NEUTRAL (a voucher the user holds becomes balance), EXCEPT the
+ *    per-row `metadata->>'origin'='manual'` carve-out (admin house-granted
+ *    vouchers) which is REWARD_PAYOUT — see NEUTRAL_TYPES / REWARD_PAYOUT.
  *  • The DOMINANT pack/battle payout is the inventory delta, NOT a
- *    ledger type. The only LEDGER-resident gaming payout is
- *    `battle_refund` (a small separate CASH winner leg on battles), plus
- *    `upgrader_payout` IF AND ONLY IF prod writes it to the ledger
- *    (see UPGRADER note below — it is NOT in GAMING_PAYOUT_TYPES by
- *    default).
+ *    ledger type. The LEDGER-resident gaming payouts are `battle_refund`
+ *    (a separate CASH winner leg on battles) and
+ *    `battle_excess_to_voucher` (the voucher remainder of a battle win
+ *    the inventory card under-counts — booked at settlement, completes
+ *    the win), plus `upgrader_payout` IF AND ONLY IF prod writes it to
+ *    the ledger (see UPGRADER note below — it is NOT in
+ *    GAMING_PAYOUT_TYPES by default).
  *
  * This mirrors exactly what `src/lib/queries/pnl.ts` `getPackBattlePurePnl`
  * already implements (pnl.ts:749-945): wager from the ledger, payout from
@@ -146,25 +151,38 @@ export const FEE_TYPES = [
  * IMPORTANT: this set is small ON PURPOSE. Per the verified booking
  * model the DOMINANT pack/battle payout is NOT a ledger type — it is the
  * `user_inventory.value_at_obtained` delta (`source_type IN
- * ('pack','battle')`). The only cash gaming-payout leg on the ledger is
+ * ('pack','battle')`). The cash gaming-payout legs on the ledger are
  * `battle_refund` (the winner's cash leg on a battle; pack/battle wins
- * are otherwise cards).
+ * are otherwise cards) and `battle_excess_to_voucher` (see below).
+ *
+ * `battle_excess_to_voucher` is a GAMING_PAYOUT (reclassified from
+ * NEUTRAL). It is the slice of a battle win the inventory card
+ * UNDER-counts: a battle win's `expected_value = card_value +
+ * voucher_value`, but the inventory row's `value_at_obtained` records
+ * ONLY the card. The voucher remainder is booked at battle settlement as
+ * `battle_excess_to_voucher`, so it COMPLETES the win and belongs on the
+ * gaming payout side. It is counted ONCE here (at settlement); the later
+ * `voucher_redeemed` redemption of that same voucher is therefore NEUTRAL
+ * (see NEUTRAL_TYPES) — settlement and redemption are never both counted.
  *
  * Therefore the canonical gaming payout used by GGR is:
  *
  *   gamingPayout = Σ inventory.value_at_obtained[source='pack'|'battle']
  *                + Σ |battle_refund|
+ *                + Σ |battle_excess_to_voucher|
  *                (+ upgrader payout, per the UPGRADER note)
  *
  * see `formulas.ts` `gamingPayoutTotal` and `queries.ts`
- * `gamingPayoutQuery`. Do NOT add card_sale / card_exchange here — those
- * are NEUTRAL_TYPES (the M-series "card_sale is 328k rows inside the
- * payout side" divergence is resolved by keeping them neutral).
+ * `getGamingLegs` / `getDailyGamingMetrics`. Do NOT add card_sale /
+ * card_exchange here — those are NEUTRAL_TYPES (the M-series "card_sale
+ * is 328k rows inside the payout side" divergence is resolved by keeping
+ * them neutral).
  *
  * `upgrader_payout` is NOT here by default — see UPGRADER section.
  */
 export const GAMING_PAYOUT_TYPES = [
   "battle_refund",
+  "battle_excess_to_voucher",
 ] as const satisfies readonly LedgerTransactionType[];
 
 // ─── NEUTRAL ─────────────────────────────────────────────────────────
@@ -182,6 +200,28 @@ export const GAMING_PAYOUT_TYPES = [
  * thousands of rows); this partition reclassifies them as neutral per the
  * verified model. They still appear in realized PnL via the balance /
  * inventory / voucher deltas — that is correct and intentional.
+ *
+ * `voucher_redeemed` is NEUTRAL (reclassified from REWARD_PAYOUT) — WITH A
+ * PER-ROW CARVE-OUT. Redeeming a voucher just turns a voucher the user
+ * already holds into balance; for vouchers PRODUCED BY GAMEPLAY (a battle
+ * win's `battle_excess_to_voucher` remainder, a borrow remainder's
+ * `pack_borrow_to_voucher`) the value was ALREADY booked when the voucher
+ * was created — counting the redemption too would double-count. So
+ * redemption is neutral.
+ *
+ * THE CARVE-OUT (implemented in SQL, NOT in this type partition, because
+ * it is a per-ROW split, not a whole-type bucket): a `voucher_redeemed`
+ * row whose `metadata->>'origin' = 'manual'` is an ADMIN HOUSE-GRANTED
+ * voucher. Its ONLY ledger touchpoint is the redemption (there is no
+ * earlier "grant" ledger row to book the cost against), so for those rows
+ * the redemption IS the house cost and must be counted as REWARD_PAYOUT.
+ * `queries.ts` `getRewardCost` / `getDailyGamingMetrics` add a
+ * `type = 'voucher_redeemed' AND metadata->>'origin' = 'manual'` branch to
+ * the reward-cost leg. Every OTHER `voucher_redeemed` row stays neutral
+ * simply by NOT being summed into any gaming or reward leg (no explicit
+ * complementary predicate is needed — neutrality is the default). The base
+ * type bucket here is NEUTRAL (the common case); only the manual slice is
+ * lifted into reward cost at the query layer.
  */
 export const NEUTRAL_TYPES = [
   "card_sale",
@@ -190,7 +230,7 @@ export const NEUTRAL_TYPES = [
   "exchange_excess_credit",
   "voucher_exchange",
   "exchange_excess_to_voucher",
-  "battle_excess_to_voucher",
+  "voucher_redeemed",
 ] as const satisfies readonly LedgerTransactionType[];
 
 // ─── REWARD PAYOUT ───────────────────────────────────────────────────
@@ -202,6 +242,13 @@ export const NEUTRAL_TYPES = [
  * `affiliate_leaderboard_prize` is INCLUDED here — it was previously in
  * NO set anywhere in `src/lib/queries` (invisible to GGR/NGR/cost
  * breakdown); this is the documented gap-fix.
+ *
+ * `voucher_redeemed` is NOT in this base set anymore — it is NEUTRAL (see
+ * NEUTRAL_TYPES), EXCEPT for the per-row `metadata->>'origin'='manual'`
+ * carve-out (admin house-granted vouchers, whose only ledger touchpoint
+ * is redemption). That manual slice is lifted back into reward cost at
+ * the QUERY layer (`queries.ts` `getRewardCost` / `getDailyGamingMetrics`),
+ * not via this whole-type bucket — it is a per-row split.
  *
  * `creator_tip` is NOT here — it is a verified pure user→user
  * pass-through (both legs cancel to $0 net house cost) and lives in
@@ -222,7 +269,6 @@ export const NEUTRAL_TYPES = [
 export const REWARD_PAYOUT_TYPES = [
   "deposit_bonus",
   "rakeback_claim",
-  "voucher_redeemed",
   "gift_card_redeemed",
   "promo_code_redeemed",
   "race_prize",

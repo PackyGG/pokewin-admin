@@ -822,15 +822,19 @@ export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
 // where wager_in is the ledger amount on pack_opening / battle_bet /
 // battle_sponsorship rows in the window, and cards_out is the value
 // of inventory items the user obtained from those plays (source_type
-// IN ('pack','battle') with obtained_at in the same window). Card
-// values are taken at obtained_at — what they were worth the moment
+// IN ('pack','battle') with obtained_at in the same window) PLUS the
+// battle_excess_to_voucher ledger remainder (the slice of a battle win
+// the inventory card under-counts — see src/lib/metrics/ledger-sets.ts).
+// Card values are taken at obtained_at — what they were worth the moment
 // they entered the user's inventory.
 //
 // EXCLUDED on purpose: upgrader, bonuses, rakeback, affiliate
 // commissions, rain prizes, race prizes, creator tips, gift / promo
-// redemptions, voucher redemptions, balance rewards. This is the
-// gambling outcome alone — every reward / discount surface is
-// elsewhere.
+// redemptions, voucher redemptions, balance rewards. (battle_excess_to_
+// voucher is NOT a reward — it is part of the battle WIN payout, so it
+// is included on the battle payout side; its later voucher_redeemed
+// redemption stays neutral so the win is counted once.) This is the
+// gambling outcome alone — every reward / discount surface is elsewhere.
 
 export type PackBattlePnlRow = {
   // Wager + payout per game type. Wager comes from the ledger
@@ -897,6 +901,13 @@ export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
     type LedgerRow = {
       pack_wager_h24: string; pack_wager_d3: string; pack_wager_d7: string; pack_wager_all: string;
       battle_wager_h24: string; battle_wager_d3: string; battle_wager_d7: string; battle_wager_all: string;
+      // battle_excess_to_voucher — the voucher remainder of a battle win
+      // the inventory card under-counts (see canonical metric layer
+      // src/lib/metrics/ledger-sets.ts GAMING_PAYOUT_TYPES). Booked on the
+      // ledger at battle settlement, so bucketed by created_at like the
+      // wager legs. Added to the BATTLE payout side so this pure-PnL
+      // captures the full win and reconciles with getGamingLegs.
+      battle_excess_h24: string; battle_excess_d3: string; battle_excess_d7: string; battle_excess_all: string;
     };
     type InvRow = {
       pack_payout_h24: string; pack_payout_d3: string; pack_payout_d7: string; pack_payout_all: string;
@@ -923,17 +934,29 @@ export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
            COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND created_at >= $1 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_h24,
            COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND created_at >= $2 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_d3,
            COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship') AND created_at >= $3 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_d7,
-           COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship')                                    THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_all
+           COALESCE(SUM(CASE WHEN type IN ('battle_bet','battle_sponsorship')                                    THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_all,
+           -- battle_excess_to_voucher payout legs (battle-win remainder).
+           -- Bucketed by created_at (settlement time). Summed
+           -- unconditionally — like battle_refund in the canonical metric
+           -- layer, it is a battle-settlement leg with no borrow flag of
+           -- its own; the WHERE's borrow branch below passes it through.
+           COALESCE(SUM(CASE WHEN type = 'battle_excess_to_voucher' AND created_at >= $1 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_excess_h24,
+           COALESCE(SUM(CASE WHEN type = 'battle_excess_to_voucher' AND created_at >= $2 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_excess_d3,
+           COALESCE(SUM(CASE WHEN type = 'battle_excess_to_voucher' AND created_at >= $3 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_excess_d7,
+           COALESCE(SUM(CASE WHEN type = 'battle_excess_to_voucher'                                    THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_excess_all
          FROM ledger_transactions
          WHERE status = 'completed'
-           AND type IN ('pack_opening','battle_bet','battle_sponsorship')
+           AND type IN ('pack_opening','battle_bet','battle_sponsorship','battle_excess_to_voucher')
            AND ${scope}
            -- Borrow mode exclusion: drop pack opens tagged "borrow"
            -- in their description, and drop battle wagers whose
            -- linked battle has any borrow_percentage > 0.
+           -- battle_excess_to_voucher passes through unconditionally (it is
+           -- a battle-win settlement remainder, not a wager row).
            AND (
              (type = 'pack_opening' AND (description IS NULL OR description NOT ILIKE '%borrow%'))
              OR (type IN ('battle_bet','battle_sponsorship') AND game_session_id IN ${nonBorrowBattleSessions})
+             OR type = 'battle_excess_to_voucher'
            )`,
         h24, d3, d7,
       ),
@@ -964,6 +987,7 @@ export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
     const l = ledger[0] ?? {
       pack_wager_h24: "0", pack_wager_d3: "0", pack_wager_d7: "0", pack_wager_all: "0",
       battle_wager_h24: "0", battle_wager_d3: "0", battle_wager_d7: "0", battle_wager_all: "0",
+      battle_excess_h24: "0", battle_excess_d3: "0", battle_excess_d7: "0", battle_excess_all: "0",
     };
     const i = inv[0] ?? {
       pack_payout_h24: "0", pack_payout_d3: "0", pack_payout_d7: "0", pack_payout_all: "0",
@@ -975,6 +999,7 @@ export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
       battleWagerKey: keyof LedgerRow,
       packPayoutKey: keyof InvRow,
       battlePayoutKey: keyof InvRow,
+      battleExcessKey: keyof LedgerRow,
     ): PackBattlePnlRow => {
       const packWager = toNumber(l[packWagerKey]);
       const battleWager = toNumber(l[battleWagerKey]);
@@ -982,10 +1007,19 @@ export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
       // play the borrowed portion is auto-resold to the house before
       // the inventory row materializes, so value_at_obtained on the
       // surviving rows already reflects user-net-keep (not the gross
-      // pull). Counting voucher / excess credit on top of this would
-      // double-count the auto-resale leg.
+      // pull).
+      //
+      // BATTLE payout additionally includes battle_excess_to_voucher: a
+      // battle win's expected_value = card_value + voucher_value, but the
+      // inventory row's value_at_obtained records ONLY the card. The
+      // voucher remainder is booked at settlement as
+      // battle_excess_to_voucher and COMPLETES the win — adding it here is
+      // NOT a double-count (the inventory under-counts by exactly this
+      // slice). Its later voucher_redeemed redemption is NEUTRAL (see
+      // src/lib/metrics/ledger-sets.ts), so the win is counted once. This
+      // makes battlePayouts reconcile with getGamingLegs.
       const packPayouts = toNumber(i[packPayoutKey]);
-      const battlePayouts = toNumber(i[battlePayoutKey]);
+      const battlePayouts = toNumber(i[battlePayoutKey]) + toNumber(l[battleExcessKey]);
       const packPnl = packWager - packPayouts;
       const battlePnl = battleWager - battlePayouts;
       return {
@@ -1002,10 +1036,10 @@ export async function getPackBattlePurePnl(): Promise<PackBattlePnlWindows> {
     };
 
     return {
-      h24: buildRow("pack_wager_h24", "battle_wager_h24", "pack_payout_h24", "battle_payout_h24"),
-      d3:  buildRow("pack_wager_d3",  "battle_wager_d3",  "pack_payout_d3",  "battle_payout_d3"),
-      d7:  buildRow("pack_wager_d7",  "battle_wager_d7",  "pack_payout_d7",  "battle_payout_d7"),
-      all: buildRow("pack_wager_all", "battle_wager_all", "pack_payout_all", "battle_payout_all"),
+      h24: buildRow("pack_wager_h24", "battle_wager_h24", "pack_payout_h24", "battle_payout_h24", "battle_excess_h24"),
+      d3:  buildRow("pack_wager_d3",  "battle_wager_d3",  "pack_payout_d3",  "battle_payout_d3",  "battle_excess_d3"),
+      d7:  buildRow("pack_wager_d7",  "battle_wager_d7",  "pack_payout_d7",  "battle_payout_d7",  "battle_excess_d7"),
+      all: buildRow("pack_wager_all", "battle_wager_all", "pack_payout_all", "battle_payout_all", "battle_excess_all"),
     };
   });
 }
