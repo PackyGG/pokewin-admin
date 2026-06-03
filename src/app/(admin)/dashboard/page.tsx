@@ -20,6 +20,7 @@ import { DashboardPeriodSelector } from "./dashboard-period-selector";
 import { getUpgraderStats } from "@/lib/queries/dashboard-upgrader";
 import { getDailyPnl } from "@/lib/queries/pnl";
 import { getTodayPnl } from "@/lib/queries/dashboard-today-pnl";
+import { getRewardCostsToday } from "@/lib/queries/dashboard-reward-costs-today";
 import { requirePageAccess } from "@/lib/dal";
 import { formatCurrency } from "@/lib/utils/format";
 import { LoadTimeIndicator } from "./load-time-indicator";
@@ -35,6 +36,7 @@ import {
   CreatorWithdrawalsStatCard,
 } from "./revenue-stat-card";
 import { TodayPnlStatCard } from "./today-pnl-stat-card";
+import { RewardCostsTodayCard } from "./reward-costs-today-card";
 import { AutoRefresh } from "./auto-refresh";
 import {
   WagerChart,
@@ -156,18 +158,25 @@ export default async function DashboardPage({
         <DashboardStatStrips period={period} />
       </Suspense>
 
-      {/* P&L Today — house P&L for the CURRENT CALENDAR DAY since 00:00
-          UTC (NOT a rolling past-24h window). Streams behind its OWN
-          Suspense + safeQuery so its today-window scan never blocks the
-          period KPI strips above and degrades to a tile fallback if it's
-          slow. Period-independent (always "today"), so it doesn't re-key
-          on the global period selector. Placed full-width-on-mobile, 4-up
-          at lg so it sits as its own compact KPI under the primary strip. */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Today-since-00:00 tiles — P&L Today + Reward Costs Today. Both are
+          house figures for the CURRENT CALENDAR DAY since 00:00 UTC (NOT a
+          rolling past-24h window) and share the same UTC-midnight boundary,
+          so they reconcile. Each streams behind its OWN Suspense + safeQuery
+          so its today-window scan never blocks the period KPI strips above
+          and degrades to a tile fallback if it's slow. Period-independent
+          (always "today"), so neither re-keys on the global period selector.
+          Full-width-on-mobile, 2-up at sm so they sit as their own compact
+          KPI row under the primary strip. */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
         <Suspense
           fallback={<Skeleton className="h-[148px] w-full rounded-xl" />}
         >
           <DashboardTodayPnl />
+        </Suspense>
+        <Suspense
+          fallback={<Skeleton className="h-[148px] w-full rounded-xl" />}
+        >
+          <DashboardRewardCostsToday />
         </Suspense>
       </div>
 
@@ -510,6 +519,44 @@ async function DashboardTodayPnl() {
       inventoryChange={data.inventoryChange}
       voucherChange={data.voucherChange}
       dayLabel={dayLabel}
+    />
+  );
+}
+
+/**
+ * Reward Costs Today tile — house reward/retention spend for the current
+ * calendar day since 00:00 UTC (NOT a rolling past-24h window). Its own
+ * standalone query (getRewardCostsToday, cached 60s + keyed on the UTC day
+ * boundary), wrapped in safeQuery so a slow today-window scan degrades to a
+ * tile fallback instead of crashing the dashboard. Reuses the canonical
+ * reward-cost definitions (REWARD_PAYOUT_TYPES + the manual-voucher /
+ * counted-adjustment carve-outs + the daily-pack giveaway), with rain as
+ * the owner-confirmed flat $2/hr model and affiliate commissions excluded.
+ */
+async function DashboardRewardCostsToday() {
+  const { data, error } = await safeQuery(
+    () => getRewardCostsToday(),
+    null,
+    "dashboard.rewardCostsToday",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Reward Costs"
+        hint="The today-window reward-cost scan timed out — refresh to retry."
+        size="compact"
+      />
+    );
+  }
+  // dayStartIso is "YYYY-MM-DDT00:00:00.000Z"; the YYYY-MM-DD slice is the
+  // UTC calendar day this cost covers (matches the window boundary exactly).
+  const dayLabel = data.dayStartIso.slice(0, 10);
+  return (
+    <RewardCostsTodayCard
+      total={data.total}
+      lines={data.lines}
+      dayLabel={dayLabel}
+      hoursElapsed={data.hoursElapsed}
     />
   );
 }

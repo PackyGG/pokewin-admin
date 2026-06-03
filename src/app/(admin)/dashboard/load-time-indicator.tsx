@@ -47,7 +47,12 @@ export function LoadTimeIndicator({
       <span aria-hidden className="text-muted-foreground/50">
         ·
       </span>
-      <span>updated {relative}</span>
+      {/* `relative` is derived from a wall-clock diff (formatRelative), so
+          the server-rendered string and the first client render can differ
+          by a tick — a latent React #418 hydration mismatch. suppressHydration
+          Warning lets the client reconcile the relative-time text without a
+          warning; the 30s tick + per-generatedAt re-sync keep it honest. */}
+      <span suppressHydrationWarning>updated {relative}</span>
     </span>
   );
 }
