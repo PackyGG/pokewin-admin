@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { LinkPendingShell } from "@/components/ux";
 
 const PERIODS = [
   { label: "Today", value: "today" },
@@ -32,7 +33,12 @@ export function PeriodFilter() {
               : "text-muted-foreground hover:text-foreground"
           )}
         >
-          {label}
+          {/* Pending feedback: switching the period re-runs the page's
+              server analytics fetch with no commit-time UI, so a slow
+              window felt like a dead click. LinkPendingShell dims the
+              label + appends a spinner only while THIS link's navigation
+              is in flight (useLinkStatus). Motion-safe / no-op otherwise. */}
+          <LinkPendingShell spinnerSize={12}>{label}</LinkPendingShell>
         </Link>
       ))}
     </div>

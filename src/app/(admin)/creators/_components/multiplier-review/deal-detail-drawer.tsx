@@ -19,6 +19,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { FadeIn } from "@/components/fade-in";
 import type { MultiplierDealResponse } from "@/lib/backend-api";
 import { formatDateTime, formatRelative } from "@/lib/utils/format";
 
@@ -487,9 +488,11 @@ function TosSection({ deal }: { deal: MultiplierDealResponse }) {
           {expanded ? "Hide" : "Show"} terms text
         </button>
         {expanded && (
-          <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-2 text-[11px]">
-            {deal.terms_text}
-          </pre>
+          <FadeIn speed="fast">
+            <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-2 text-[11px]">
+              {deal.terms_text}
+            </pre>
+          </FadeIn>
         )}
       </div>
     </Section>

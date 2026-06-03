@@ -69,10 +69,17 @@ export default async function AffiliateLeaderboardDetailPage({
     const [creators, rankings, sponsorshipMap] = await Promise.all([
         // Hydrate the primary creator plus every co-creator in one query so we
         // can render names alongside each id on the definition card.
-        db.user.findMany({
-            where: { id: { in: participatingCreatorIds } },
-            select: { id: true, username: true, email: true },
-        }),
+        // Best-effort — a failure just renders the raw ids (names omitted)
+        // instead of throwing the whole page via the Promise.all reject.
+        db.user
+            .findMany({
+                where: { id: { in: participatingCreatorIds } },
+                select: { id: true, username: true, email: true },
+            })
+            .catch((err) => {
+                console.error("[leaderboard] creator hydration query failed", err);
+                return [] as { id: string; username: string | null; email: string | null }[];
+            }),
         // Live standings — computed against the main DB (this
         // backend doesn't expose a /rankings endpoint yet).
         // Wraps in a try/catch so a query error never breaks the
