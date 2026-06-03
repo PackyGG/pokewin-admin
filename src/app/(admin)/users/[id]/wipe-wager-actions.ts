@@ -164,12 +164,14 @@ import {
 
 // `WagerWipeWindowHours`, `WAGER_WIPE_WINDOW_OPTIONS`, `normalizeWindowHours`
 // and `resolveWindowCutoff` now live in the client-safe `wager-window.ts`
-// (imported above). They are NOT defined or re-exported as runtime VALUES from
-// this "use server" module on purpose: a runtime const exported here is turned
-// into a server-action reference on the client, which crashed the dialog (see
-// wager-window.ts). Re-export ONLY the TYPE (build-erased → safe) so existing
-// importers of the type from this action path keep working.
-export type { WagerWipeWindowHours };
+// (imported above and used in this file's signatures). This "use server" module
+// deliberately exports NOTHING for them — not the runtime const (it becomes a
+// server-action reference on the client and crashed the dialog), and not even a
+// `export type { ... }` re-export: Turbopack's server-module transform turns a
+// re-exported (imported) type into a runtime export binding, which has no value
+// and throws `ReferenceError: WagerWipeWindowHours is not defined` at module
+// evaluation. The type's single source of truth is `wager-window.ts`; every
+// consumer (the dialog, this action) imports it from there directly.
 
 /**
  * The exact ledger types the wager wipe deletes — the canonical wager + payout
