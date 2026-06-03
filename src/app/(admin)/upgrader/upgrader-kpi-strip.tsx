@@ -1,18 +1,20 @@
-"use client";
-
 /**
  * Upgrader KPI strip — the headline numbers an operator reads first.
  *
- * Built as a thin client wrapper around the shared modern aesthetic so the
- * values can ramp via <AnimatedNumber> (the shared <KpiTile> only accepts a
- * pre-formatted string, and is owned by another phase — we mirror its look
- * here rather than editing it). Visual language matches modern-panels.tsx:
- * left accent bar, glassy diagonal sheen, surface-sheen lifted edge, and
- * the same TILE_COLORS accents.
+ * Server-iso (NO "use client"). The strip is presentational only: it renders
+ * tiles whose hero value is a <AnimatedNumber> (itself a Client Component, but
+ * embedded as a child inside the server tree, which is fine — children cross
+ * the RSC boundary normally). Keeping the strip server-side means the LucideIcon
+ * components handed in from the server page do NOT cross an RSC boundary as a
+ * prop — passing a server-imported Lucide icon as a function-prop to a Client
+ * Component is the exact pattern that white-screened the dashboard with prod
+ * digest 1137743576 (89bd799, reverted in 13191cb). This file used to carry
+ * `"use client"` for the same reason, so it had the same latent crash. Removing
+ * the directive makes the tile a Server Component end-to-end and the icon prop
+ * stays inside server code.
  *
- * Props are fully serializable (numbers + a string format kind + a string
- * accent), so this component is safe to render directly from the server
- * page — no function props cross the RSC boundary.
+ * Visual language matches modern-panels.tsx: left accent bar, glassy diagonal
+ * sheen, surface-sheen lifted edge, and the same TILE_COLORS accents.
  *
  * House-POV coloring (CLAUDE.md, strict): the upgrader output pool is the
  * set of cards a player can *win*, so its monetary size is payout liability
