@@ -131,15 +131,21 @@ export async function RewardsTabContent({ userId }: { userId: string }) {
 // ───────────────────────────────────────────────────────────────────
 
 export async function InventoryTabContent({ data }: { data: UserDetail }) {
-  const [inventory, disposedInventory] = await Promise.all([
-    getUserInventory(data.user.id, 1, 24, { status: "owned" }),
-    getUserInventory(data.user.id, 1, 24, { status: "disposed" }),
-  ]);
+  // Owned inventory is awaited (critical — drives the grid + values);
+  // the disposed page is handed to InventoryTab as an in-flight promise so
+  // its "Sold & Exchanged" table streams behind the tab's inner Suspense
+  // rather than blocking the owned grid. Mirrors page.tsx's split.
+  const inventory = await getUserInventory(data.user.id, 1, 24, {
+    status: "owned",
+  });
+  const disposedInventoryPromise = getUserInventory(data.user.id, 1, 24, {
+    status: "disposed",
+  });
   return (
     <InventoryTab
       data={data}
       inventory={inventory}
-      disposedInventory={disposedInventory}
+      disposedInventoryPromise={disposedInventoryPromise}
     />
   );
 }

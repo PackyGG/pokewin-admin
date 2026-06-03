@@ -20,7 +20,7 @@
  */
 
 import * as React from "react";
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, use, Suspense } from "react";
 import Link from "next/link";
 import {
   Wallet,
@@ -70,6 +70,8 @@ import {
 } from "./user-view-modern-tabs";
 import { TrustTab } from "./user-tabs-trust";
 import { FadeIn } from "@/components/fade-in";
+import { DURATION, SkeletonTable, SkeletonCard } from "@/components/ux";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   ChangeRoleDialog,
   EditIdentityButton,
@@ -142,10 +144,10 @@ export function UserViewModern({
   notes,
   pnlBreakdown,
   inventory,
-  disposedInventory,
+  disposedInventoryPromise,
   riskBreakdown,
-  sharedIps,
-  sharedFingerprints,
+  sharedIpsPromise,
+  sharedFingerprintsPromise,
   initialTab,
 }: {
   data: UserDetail;
@@ -155,10 +157,17 @@ export function UserViewModern({
   notes: AdminNote[];
   pnlBreakdown: PnlBreakdown;
   inventory: PaginatedInventory;
-  disposedInventory: PaginatedInventory;
+  // Tab-gated, non-critical reads streamed in as in-flight promises from
+  // page.tsx so the hero + Overview tab paint without blocking on them.
+  // They resolve to the exact same shapes the eager props used to carry;
+  // each is `use()`d inside a Suspense scoped to just the tab that needs it
+  // (disposed inventory → Inventory tab; shared IPs/fingerprints → Trust
+  // tab), so opening that tab shows a brief skeleton instead of the whole
+  // body having waited for the network/identity fan-out up front.
+  disposedInventoryPromise: Promise<PaginatedInventory>;
   riskBreakdown: RiskScoreBreakdown;
-  sharedIps: SharedIdentityUser[];
-  sharedFingerprints: SharedIdentityUser[];
+  sharedIpsPromise: Promise<SharedIdentityUser[]>;
+  sharedFingerprintsPromise: Promise<SharedIdentityUser[]>;
   // Initial tab seeded from the ?tab= URL param so deep-links (e.g.
   // the hero risk badges that linked to ?tab=trust, or external
   // bookmarks) still land on the correct tab. After mount the tab
@@ -440,10 +449,12 @@ export function UserViewModern({
                 stays compact. Wagering metrics (Wager Loss + total
                 Wagered/Won) live on the Account tab instead of cluttering
                 the hero. Phone: 2 cols (3 cols was too tight at 375px),
-                tablet: 4 cols, desktop: 7 cols. The Total Depo tile sits
+                tablet: 4 cols, md: 6 cols (smooths the 4→7 jump on
+                laptops so the last tile wraps cleanly instead of the row
+                snapping width), desktop: 7 cols. The Total Depo tile sits
                 directly next to P&L so the operator can read "$X
                 deposited → $Y P&L" left-to-right. */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 shrink-0">
+            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-7 gap-2 shrink-0">
               <KpiTile
                 label="Total Value"
                 value={formatCurrency(totalValue)}
@@ -541,20 +552,28 @@ export function UserViewModern({
         )}
 
         {activeTab === "inventory" && (
+          // Owned inventory (critical `inventory` prop) paints immediately;
+          // InventoryTab streams ONLY its disposed "Sold & Exchanged" table
+          // behind an inner Suspense scoped to disposedInventoryPromise.
           <InventoryTab
             data={data}
             inventory={inventory}
-            disposedInventory={disposedInventory}
+            disposedInventoryPromise={disposedInventoryPromise}
           />
         )}
 
         {activeTab === "trust" && (
-          <TrustTab
-            userId={user.id}
-            breakdown={riskBreakdown}
-            sharedIps={sharedIps}
-            sharedFingerprints={sharedFingerprints}
-          />
+          // The whole Trust tab depends on the shared-identity fan-out, so
+          // it streams as a unit behind its own Suspense; the risk score
+          // itself is already resolved (critical — the hero badges read it).
+          <Suspense fallback={<TrustTabFallback />}>
+            <TrustTabStreamed
+              userId={user.id}
+              breakdown={riskBreakdown}
+              sharedIpsPromise={sharedIpsPromise}
+              sharedFingerprintsPromise={sharedFingerprintsPromise}
+            />
+          </Suspense>
         )}
 
         {activeTab === "affiliate" && <AffiliateTab data={data} />}
@@ -587,9 +606,21 @@ function ScrollableTabBar({
 }) {
   const scrollerRef = React.useRef<HTMLDivElement | null>(null);
   const tabRefs = React.useRef<Map<TabKey, HTMLButtonElement>>(new Map());
+  // Brief highlight on the freshly-activated pill so the silent auto-scroll
+  // (below) gets visible feedback — the tab that just moved into view reads
+  // as "this is the one you landed on". Holds the active key for one
+  // DURATION.base tick, then clears so the ring fades back out. Purely
+  // cosmetic + fully `motion-safe:` gated at the render site, so
+  // reduced-motion users never see the ring appear or tween.
+  const [pulseKey, setPulseKey] = useState<TabKey | null>(null);
+  // Skip the pulse on first mount — the initial tab is already in view, so a
+  // pulse there would fire on every page load rather than on an actual
+  // tab change. Only pulse once the user (or a deep-link badge) switches.
+  const mountedRef = React.useRef(false);
 
   // Scroll active pill into view on phone — keeps the user oriented when
-  // they tap a tab that was previously off-screen.
+  // they tap a tab that was previously off-screen — then pulse it so the
+  // landing is noticeable.
   useEffect(() => {
     const el = tabRefs.current.get(activeTab);
     if (!el) return;
@@ -598,10 +629,17 @@ function ScrollableTabBar({
       block: "nearest",
       inline: "center",
     });
+    if (!mountedRef.current) {
+      mountedRef.current = true;
+      return;
+    }
+    setPulseKey(activeTab);
+    const t = window.setTimeout(() => setPulseKey(null), DURATION.base);
+    return () => window.clearTimeout(t);
   }, [activeTab]);
 
   return (
-    <div className="sticky top-2 z-20 rounded-xl border bg-card/80 p-1 backdrop-blur-md">
+    <div className="sticky top-0 z-20 rounded-xl border bg-card/80 p-1 backdrop-blur-md">
       <div className="relative">
         {/* Edge fade hints — only visible while scrollable, but cheaper to
             always render than to compute scroll position with a ResizeObserver. */}
@@ -620,6 +658,7 @@ function ScrollableTabBar({
           {visibleTabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.key;
+            const isPulsing = pulseKey === tab.key;
             return (
               <button
                 key={tab.key}
@@ -633,6 +672,12 @@ function ScrollableTabBar({
                   isActive
                     ? "bg-primary text-primary-foreground shadow-sm"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  // One-shot landing pulse: a contrasting ring that appears
+                  // for DURATION.base then fades via the button's existing
+                  // `transition-all`. `motion-safe:` gates the ring entirely
+                  // so reduced-motion users see no transient highlight.
+                  isPulsing &&
+                    "motion-safe:ring-2 motion-safe:ring-primary-foreground/50 motion-safe:ring-offset-0",
                 )}
               >
                 <Icon className="size-4" />
@@ -641,6 +686,61 @@ function ScrollableTabBar({
             );
           })}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  TRUST TAB — streamed wrapper + fallback
+//
+//  The Trust tab's shared-IP / shared-fingerprint lists come from a
+//  network/identity fan-out that page.tsx now kicks off OFF the critical
+//  path (see UserDetailBody). This thin client wrapper `use()`s those
+//  in-flight promises and renders the unchanged <TrustTab> with the
+//  resolved arrays, so the heavy read no longer blocks the hero / Overview.
+//  Only mounted when the Trust tab is active, inside a <Suspense>.
+// ───────────────────────────────────────────────────────────────────
+
+function TrustTabStreamed({
+  userId,
+  breakdown,
+  sharedIpsPromise,
+  sharedFingerprintsPromise,
+}: {
+  userId: string;
+  breakdown: RiskScoreBreakdown;
+  sharedIpsPromise: Promise<SharedIdentityUser[]>;
+  sharedFingerprintsPromise: Promise<SharedIdentityUser[]>;
+}) {
+  const sharedIps = use(sharedIpsPromise);
+  const sharedFingerprints = use(sharedFingerprintsPromise);
+  return (
+    <TrustTab
+      userId={userId}
+      breakdown={breakdown}
+      sharedIps={sharedIps}
+      sharedFingerprints={sharedFingerprints}
+    />
+  );
+}
+
+// Skeleton shaped to the Trust tab while its identity fan-out streams in:
+// a stat-style header line + the shared-IP / shared-fingerprint tables.
+function TrustTabFallback() {
+  return (
+    <div className="space-y-6" aria-busy="true">
+      <div className="flex items-center gap-2">
+        <Skeleton className="size-7 shrink-0 rounded-md" />
+        <Skeleton className="h-5 w-40" />
+      </div>
+      <SkeletonCard lines={3} />
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Skeleton className="size-7 shrink-0 rounded-md" />
+          <Skeleton className="h-5 w-32" />
+        </div>
+        <SkeletonTable rows={4} columns={4} />
       </div>
     </div>
   );

@@ -316,10 +316,27 @@ async function UserDetailBody({
     wiped14d: false,
   };
 
+  // ── CRITICAL BODY GROUP ────────────────────────────────────────────
+  //
+  // Everything the identity hero + the default Overview tab need to paint:
+  // the heavy detail aggregate, the P&L breakdown, owned inventory, the
+  // gaming + financial tx pages, notes, rewards, creator history, and the
+  // risk score (the hero badges read riskBreakdown.score / .tier /
+  // .sharedIpCount, so it MUST resolve before first paint). This group
+  // gates the body Suspense.
+  //
+  // The three NON-CRITICAL reads — disposed inventory, shared-IP users and
+  // shared-fingerprint users — are NOT awaited here. They only feed the
+  // Inventory tab's "Sold & Exchanged" table and the Trust tab, neither of
+  // which renders until the operator clicks that tab. Awaiting them in this
+  // Promise.all used to make the WHOLE body (including Overview) wait on
+  // their network/identity fan-out. They're kicked off below as their own
+  // in-flight promises and streamed into those tabs behind a second,
+  // non-blocking Suspense — same queries, same args, same return shapes,
+  // just no longer on the first-paint critical path. See UserViewModern.
   const [
     detailResult,
     inventoryResult,
-    disposedInventoryResult,
     pnlResult,
     notesResult,
     gamingTxResult,
@@ -327,8 +344,6 @@ async function UserDetailBody({
     rewardsResult,
     creatorHistoryResult,
     riskResult,
-    sharedIpsResult,
-    sharedFingerprintsResult,
   ] = await Promise.all([
     // getUserDetail is THE heavy aggregate (~19 Main-DB round-trips + the
     // canonical calculateUserPnl helper). Previously it ran un-wrapped in
@@ -342,19 +357,13 @@ async function UserDetailBody({
       "users.detail.detail",
       USER_DETAIL_QUERY_TIMEOUT_MS,
     ),
-    // Owned + disposed inventory pages. Both were un-wrapped before, so a
-    // slow user_inventory scan blanked the page. Degrade to an empty
-    // inventory page.
+    // Owned inventory page (critical — backs the Inventory tab's current
+    // grid + drives the hero inventory value). Was un-wrapped before, so a
+    // slow user_inventory scan blanked the page. Degrade to an empty page.
     safeQuery(
       () => getUserInventory(id, 1, 24, { status: "owned" }),
       EMPTY_INVENTORY_PAGE,
       "users.detail.inventory",
-      USER_DETAIL_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => getUserInventory(id, 1, 24, { status: "disposed" }),
-      EMPTY_INVENTORY_PAGE,
-      "users.detail.disposedInventory",
       USER_DETAIL_QUERY_TIMEOUT_MS,
     ),
     // Platform-P&L breakdown — multiple ledger aggregates + the 5-window
@@ -435,16 +444,37 @@ async function UserDetailBody({
       "users.detail.riskScore",
       USER_DETAIL_QUERY_TIMEOUT_MS,
     ),
-    // Fingerprints table may be absent in fresh/dev environments —
-    // degrade gracefully to an empty list rather than crashing the
-    // user detail page.
-    safeQuery(() => getSharedIpUsers(id), [], "users.detail.sharedIps"),
-    safeQuery(
-      () => getSharedFingerprintUsers(id),
-      [],
-      "users.detail.sharedFingerprints",
-    ),
   ]);
+
+  // ── NON-CRITICAL STREAMED GROUP ────────────────────────────────────
+  //
+  // Kicked off here but deliberately NOT awaited — these feed only the
+  // tab-gated Inventory "Sold & Exchanged" table + the Trust tab, which
+  // don't render until the operator opens that tab. Each promise resolves
+  // to the SAME bare data shape the critical reads above produce (the
+  // safeQuery result, unwrapped via `.data`), so the downstream
+  // components are unchanged — only WHEN the value is awaited moves off
+  // the first-paint path. UserViewModern `use()`s these inside a second
+  // Suspense boundary scoped to just those two tabs.
+  const disposedInventoryPromise = safeQuery(
+    () => getUserInventory(id, 1, 24, { status: "disposed" }),
+    EMPTY_INVENTORY_PAGE,
+    "users.detail.disposedInventory",
+    USER_DETAIL_QUERY_TIMEOUT_MS,
+  ).then((r) => r.data);
+  // Fingerprints / shared-IP tables may be absent in fresh/dev
+  // environments — degrade gracefully to an empty list rather than
+  // crashing the user detail page.
+  const sharedIpsPromise = safeQuery(
+    () => getSharedIpUsers(id),
+    [],
+    "users.detail.sharedIps",
+  ).then((r) => r.data);
+  const sharedFingerprintsPromise = safeQuery(
+    () => getSharedFingerprintUsers(id),
+    [],
+    "users.detail.sharedFingerprints",
+  ).then((r) => r.data);
 
   const data = detailResult.data;
 
@@ -472,10 +502,7 @@ async function UserDetailBody({
 
   const creatorHistory = creatorHistoryResult.data;
   const riskBreakdown = riskResult.data;
-  const sharedIps = sharedIpsResult.data;
-  const sharedFingerprints = sharedFingerprintsResult.data;
   const inventory = inventoryResult.data;
-  const disposedInventory = disposedInventoryResult.data;
   const pnlBreakdown = pnlResult.data;
   const notes = notesResult.data;
   const rewards = rewardsResult.data;
@@ -538,10 +565,14 @@ async function UserDetailBody({
       notes={notes}
       pnlBreakdown={pnlBreakdown}
       inventory={inventory}
-      disposedInventory={disposedInventory}
+      // Non-critical, tab-gated reads passed as in-flight promises so the
+      // hero + Overview paint without waiting on them; UserViewModern
+      // streams them into the Inventory + Trust tabs behind a second
+      // Suspense. Same query results, just resolved off the critical path.
+      disposedInventoryPromise={disposedInventoryPromise}
       riskBreakdown={riskBreakdown}
-      sharedIps={sharedIps}
-      sharedFingerprints={sharedFingerprints}
+      sharedIpsPromise={sharedIpsPromise}
+      sharedFingerprintsPromise={sharedFingerprintsPromise}
       initialTab={initialTab}
     />
   );
@@ -555,10 +586,12 @@ async function UserDetailBody({
 function UserDetailBodySkeleton() {
   return (
     <div className="space-y-6">
-      {/* Modern user view: identity hero with avatar + status pills + KPIs. */}
+      {/* Modern user view: identity hero with avatar + status pills + KPIs.
+          7 KPI tiles + 8 tabs — counts mirror UserViewModern's hero strip
+          and tab bar so the streamed body swaps in without a layout jump. */}
       <Skeleton className="h-32 rounded-2xl" />
       <KpiStripSkeleton count={7} />
-      <TabBarSkeleton count={7} />
+      <TabBarSkeleton count={8} />
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <Skeleton className="h-48 rounded-2xl" />
         <Skeleton className="h-48 rounded-2xl" />

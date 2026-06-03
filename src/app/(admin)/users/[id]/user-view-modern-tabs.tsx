@@ -11,7 +11,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition, use, Suspense } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,6 +56,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/empty-state";
+import { SkeletonTable } from "@/components/ux";
 import { cn } from "@/lib/utils";
 import {
   formatCurrency,
@@ -123,8 +124,10 @@ export function OverviewTab({
     <div className="space-y-4 sm:space-y-6">
       {/* Modern stat panels — purpose-built to match the hero aesthetic:
           rounded-2xl, subtle colored corner glow, color-accented icon
-          chip + hero number + breakdown rows below. */}
-      <div className="grid gap-3 sm:gap-4 grid-cols-1 md:grid-cols-3">
+          chip + hero number + breakdown rows below. items-start so each
+          panel keeps its natural height instead of stretching to match the
+          tallest column (the panels carry different row counts). */}
+      <div className="grid items-start gap-3 sm:gap-4 grid-cols-1 md:grid-cols-3">
         <ModernBalancePanel
           balances={balances}
           userId={user.id}
@@ -464,11 +467,16 @@ export function GamingTab({
 export function InventoryTab({
   data,
   inventory,
-  disposedInventory,
+  disposedInventoryPromise,
 }: {
   data: UserDetail;
   inventory: PaginatedInventory;
-  disposedInventory: PaginatedInventory;
+  // Disposed inventory is non-critical (it backs only the "Sold &
+  // Exchanged" table below) so page.tsx streams it in as an in-flight
+  // promise. The OWNED grid above renders immediately from the eager
+  // `inventory` prop; only the disposed table waits behind a scoped
+  // Suspense, so opening this tab never blocks on the disposed read.
+  disposedInventoryPromise: Promise<PaginatedInventory>;
 }) {
   const { user, balances } = data;
   return (
@@ -482,11 +490,30 @@ export function InventoryTab({
         statusFilter="owned"
       />
       <SectionHeading icon={Trophy} title="Sold & Exchanged" />
-      <DisposedCardsTable
-        userId={user.id}
-        initialInventory={disposedInventory}
-      />
+      <Suspense fallback={<SkeletonTable rows={5} columns={5} />}>
+        <DisposedCardsStreamed
+          userId={user.id}
+          disposedInventoryPromise={disposedInventoryPromise}
+        />
+      </Suspense>
     </div>
+  );
+}
+
+// Thin wrapper that `use()`s the streamed disposed-inventory promise and
+// renders the unchanged <DisposedCardsTable> with the resolved page. Keeps
+// DisposedCardsTable's own prop shape (a resolved PaginatedInventory)
+// intact — only the await point moved off the critical path.
+function DisposedCardsStreamed({
+  userId,
+  disposedInventoryPromise,
+}: {
+  userId: string;
+  disposedInventoryPromise: Promise<PaginatedInventory>;
+}) {
+  const disposedInventory = use(disposedInventoryPromise);
+  return (
+    <DisposedCardsTable userId={userId} initialInventory={disposedInventory} />
   );
 }
 
