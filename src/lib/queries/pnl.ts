@@ -406,6 +406,17 @@ export type DailyPnlPoint = {
   deposits: number;
   /** Gross withdrawals that day — |manual| + card (context for hover). */
   withdrawals: number;
+  /**
+   * Per-day windowed-delta components — the same terms `pnl` is built
+   * from, surfaced so the chart hover can show WHERE each day's money
+   * went (deposits − withdrawals − balanceΔ − inventoryΔ − voucherΔ = pnl).
+   * Net change in user available + locked balance for the day.
+   */
+  balanceChange: number;
+  /** Cards obtained minus cards sold/exchanged that day (signed). */
+  inventoryChange: number;
+  /** Vouchers issued minus vouchers claimed that day (signed). */
+  voucherChange: number;
 };
 
 /**
@@ -556,6 +567,14 @@ export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
         // Gross money-out for the hover (clean positive regardless of how
         // the manual-withdrawal sign is stored).
         withdrawals: Math.abs(a.manualWd) + a.cardWd,
+        // Already-derived windowed-delta components for the hover breakdown
+        // — surfaced (not recomputed) so the tooltip can show where each
+        // day's net deposit inflow actually went (balance / inventory /
+        // voucher liability growth). These four terms + deposits −
+        // withdrawals reconcile to `pnl` above by construction.
+        balanceChange: a.balanceChange,
+        inventoryChange: a.inventoryChange,
+        voucherChange: a.voucherChange,
       }))
       .sort((x, y) => x.date.localeCompare(y.date));
   });

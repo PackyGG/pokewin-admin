@@ -2,6 +2,14 @@
 
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis, Cell } from "recharts";
 import {
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  Wallet,
+  Box,
+  Ticket,
+  type LucideIcon,
+} from "lucide-react";
+import {
   Card,
   CardContent,
   CardDescription,
@@ -15,6 +23,7 @@ import {
   ChartTooltipContent,
 } from "@/components/ui/chart";
 import { formatCompactUsd, formatCurrency } from "@/lib/utils/format";
+import { cn } from "@/lib/utils";
 
 const wagerConfig = {
   packs: {
@@ -457,9 +466,52 @@ export function FtdsChart({
   );
 }
 
+/** One breakdown row inside the daily-P&L tooltip — an icon chip, the
+ *  component label, and its SIGNED contribution to house P&L colored
+ *  House-POV (a positive contribution / shrinking liability reads emerald,
+ *  a negative one rose). Mirrors the "P&L Today" tile's popover rows
+ *  (today-pnl-stat-card.tsx) so the two surfaces read identically. */
+function PnlBreakdownTooltipRow({
+  label,
+  contribution,
+  icon: Icon,
+}: {
+  label: string;
+  contribution: number;
+  icon: LucideIcon;
+}) {
+  const positive = contribution >= 0;
+  const amountColor = positive
+    ? "text-emerald-600 dark:text-emerald-400"
+    : "text-rose-600 dark:text-rose-400";
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="flex items-center gap-1.5 text-muted-foreground">
+        <Icon className="size-3 shrink-0" />
+        {label}
+      </span>
+      <span className={cn("font-mono font-medium tabular-nums", amountColor)}>
+        {positive ? "+" : "−"}
+        {formatCurrency(Math.abs(contribution))}
+      </span>
+    </div>
+  );
+}
+
 /**
- * Hover for the daily P&L chart — the day's P&L (colored House-POV) plus
- * the gross deposits/withdrawals that drove it.
+ * Hover for the daily P&L chart — full House-POV breakdown of where the
+ * day's money went. The day's net deposit inflow (deposits − withdrawals)
+ * mostly flows into GROWTH of user balance + inventory + voucher liability
+ * (things we owe users), so a big "752 in / 233 out" day can still net only
+ * a small realized P&L — these rows show exactly that.
+ *
+ * Each row carries its SIGNED contribution to house P&L per the canonical
+ * formula  pnl = deposits − withdrawals − balanceΔ − inventoryΔ − voucherΔ:
+ * deposits add; withdrawals and the three liability deltas subtract (a
+ * SHRINKING liability is a negative delta → a positive contribution → reads
+ * emerald). The five contributions sum to the P&L on the bottom line, so the
+ * tooltip reconciles by construction with the bar height. Same component
+ * set + coloring as the "P&L Today" tile.
  */
 function PnlTooltip({
   active,
@@ -472,32 +524,64 @@ function PnlTooltip({
       pnl: number;
       deposits: number;
       withdrawals: number;
+      balanceChange: number;
+      inventoryChange: number;
+      voucherChange: number;
     };
   }>;
 }) {
   if (!active || !payload?.length) return null;
   const p = payload[0].payload;
   const up = p.pnl >= 0;
+  // Signed contribution to house P&L. Deposits add; every other term
+  // subtracts (so a positive liability delta — a liability that GREW —
+  // becomes a negative contribution, and a shrinking liability a positive
+  // one). These five sum to `pnl`.
+  const rows: Array<{ label: string; contribution: number; icon: LucideIcon }> =
+    [
+      { label: "Deposits", contribution: p.deposits, icon: ArrowDownToLine },
+      {
+        label: "Withdrawals",
+        contribution: -p.withdrawals,
+        icon: ArrowUpFromLine,
+      },
+      {
+        label: "User Balance Δ",
+        contribution: -p.balanceChange,
+        icon: Wallet,
+      },
+      { label: "Inventory Δ", contribution: -p.inventoryChange, icon: Box },
+      { label: "Voucher Δ", contribution: -p.voucherChange, icon: Ticket },
+    ];
   return (
-    <div className="grid min-w-40 gap-0.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
+    <div className="grid min-w-52 gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-2 text-xs shadow-xl">
       <span className="font-medium text-foreground">{p.date}</span>
-      <span
-        className={
-          "font-semibold " +
-          (up
-            ? "text-emerald-600 dark:text-emerald-400"
-            : "text-rose-600 dark:text-rose-400")
-        }
-      >
-        P&amp;L {up ? "+" : ""}
-        {formatCurrency(p.pnl)}
-      </span>
-      <span className="text-muted-foreground">
-        Deposits {formatCurrency(p.deposits)}
-      </span>
-      <span className="text-muted-foreground">
-        Withdrawals {formatCurrency(p.withdrawals)}
-      </span>
+      <div className="grid gap-1">
+        {rows.map((r) => (
+          <PnlBreakdownTooltipRow
+            key={r.label}
+            label={r.label}
+            contribution={r.contribution}
+            icon={r.icon}
+          />
+        ))}
+      </div>
+      {/* Bottom line: the five contributions above sum to this P&L —
+          House-POV colored (house up → emerald, house down → rose). */}
+      <div className="mt-0.5 flex items-center justify-between gap-3 border-t border-border/50 pt-1.5">
+        <span className="font-semibold text-foreground">P&amp;L</span>
+        <span
+          className={cn(
+            "font-mono font-bold tabular-nums",
+            up
+              ? "text-emerald-600 dark:text-emerald-400"
+              : "text-rose-600 dark:text-rose-400",
+          )}
+        >
+          {up ? "+" : "−"}
+          {formatCurrency(Math.abs(p.pnl))}
+        </span>
+      </div>
     </div>
   );
 }
@@ -700,7 +784,15 @@ export function WagerAttributionChart({
 export function PnlChart({
   data,
 }: {
-  data: { date: string; pnl: number; deposits: number; withdrawals: number }[];
+  data: {
+    date: string;
+    pnl: number;
+    deposits: number;
+    withdrawals: number;
+    balanceChange: number;
+    inventoryChange: number;
+    voucherChange: number;
+  }[];
 }) {
   return (
     <Card>
