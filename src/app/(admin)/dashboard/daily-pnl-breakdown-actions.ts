@@ -21,8 +21,8 @@ import {
  *
  * Read-only (no mutation, no audit). Auth-gated with the SAME
  * `requirePageAccess("/dashboard")` DAL guard the sibling dashboard server
- * reads (`fetchGgrTopContributors`, `fetchLeaderboardPrizeClaimantsToday`)
- * use, so only admins permitted on the dashboard can drill a day.
+ * read (`fetchGgrTopContributors`) uses, so only admins permitted on the
+ * dashboard can drill a day.
  *
  * `dayUtc` is a free string from the client; the query helper strictly
  * validates it as `YYYY-MM-DD` and throws on anything else, so a tampered

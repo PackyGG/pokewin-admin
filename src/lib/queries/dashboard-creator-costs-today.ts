@@ -4,7 +4,11 @@ import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
-import { getLeaderboardSponsorshipMap } from "@/app/(admin)/creators/_queries/leaderboard-sponsorship";
+import {
+  getLeaderboardSponsorshipMap,
+  splitLeaderboardPrizesBySponsorship,
+  type LeaderboardPrizeBucket,
+} from "@/app/(admin)/creators/_queries/leaderboard-sponsorship";
 
 /**
  * "Creators Costs (today)" dashboard box — what CREATORS cost the house for
@@ -205,21 +209,23 @@ const cachedCreatorCostsToday = unstable_cache(
          GROUP BY metadata->>'leaderboard_id'`,
       );
 
-      const leaderboardFull = boardRows.reduce(
-        (sum: number, r: BoardRow) => sum + toNumber(r.prize),
-        0,
-      );
+      // Prize buckets (one per leaderboard id, '(none)' folded to null) for
+      // the shared sponsored-% split helper.
+      const buckets: LeaderboardPrizeBucket[] = boardRows.map((r: BoardRow) => ({
+        leaderboardId:
+          typeof r.leaderboard_id === "string" && r.leaderboard_id.length > 0
+            ? r.leaderboard_id
+            : null,
+        prize: toNumber(r.prize),
+      }));
 
       // Sponsored % for just today's distinct leaderboard ids (admin DB).
       // Resilient: if the admin-DB lookup blips, treat every board as 100%
       // (our-cut collapses to the full pool) rather than blanking the line —
       // same fallback posture as leaderboard-cost.ts.
-      const ids = boardRows
-        .map((r: BoardRow) => r.leaderboard_id)
-        .filter(
-          (id: string | null): id is string =>
-            typeof id === "string" && id.length > 0,
-        );
+      const ids = buckets
+        .map((b) => b.leaderboardId)
+        .filter((id): id is string => id != null);
       let sponsorship: Map<string, number>;
       try {
         sponsorship = await getLeaderboardSponsorshipMap(ids);
@@ -232,16 +238,11 @@ const cachedCreatorCostsToday = unstable_cache(
       }
 
       // OUR-CUT = Σ rowPrize × (pct / 100), pct defaulting to 100 when the
-      // board is un-annotated or the row has no leaderboard id — identical
-      // weighting + default to leaderboard-cost.ts's houseCoveredUsd.
-      const leaderboardOurCut = boardRows.reduce((sum: number, r: BoardRow) => {
-        const prize = toNumber(r.prize);
-        const pct =
-          r.leaderboard_id != null
-            ? Math.min(100, Math.max(0, sponsorship.get(r.leaderboard_id) ?? 100))
-            : 100;
-        return sum + prize * (pct / 100);
-      }, 0);
+      // board is un-annotated or the row has no leaderboard id — the SAME
+      // shared sponsored-% split the Reward Costs box uses for its on-site
+      // remainder, so the two boxes reconcile (ourCut + onSite === full).
+      const { full: leaderboardFull, ourCut: leaderboardOurCut } =
+        splitLeaderboardPrizesBySponsorship(buckets, sponsorship);
 
       return { creatorWithdrawals, tips, leaderboardFull, leaderboardOurCut };
     });

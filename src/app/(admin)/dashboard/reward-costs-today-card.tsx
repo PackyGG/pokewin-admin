@@ -1,15 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import Link from "next/link";
-import {
-  Info,
-  Gift,
-  CloudRain,
-  Trophy,
-  ChevronDown,
-  Loader2,
-} from "lucide-react";
+import { Info, Gift, CloudRain, Trophy } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Popover,
@@ -19,8 +10,6 @@ import {
 import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
-import { fetchLeaderboardPrizeClaimantsToday } from "./reward-cost-actions";
-import type { LeaderboardPrizeClaimantRow } from "@/lib/queries/dashboard-reward-cost-leaderboard-claimants";
 
 /**
  * "Reward Costs (today)" dashboard tile — what the house SPENT on rewards
@@ -33,12 +22,16 @@ import type { LeaderboardPrizeClaimantRow } from "@/lib/queries/dashboard-reward
  * chips; the Info popover (styled exactly like the P&L Today / GGR
  * breakdown popover) spells out every line so the owner sees where it went
  * — deposit bonuses, daily/free packs, signup/balance rewards, rakeback,
- * promo/gift cards, race prizes, leaderboard prizes, manual vouchers,
- * promo balance credits, and the flat rain line ($2/hr).
+ * promo/gift cards, race prizes, on-site leaderboard prizes, manual
+ * vouchers, promo balance credits, and the flat rain line ($2/hr).
  *
  * Rain is the OWNER-CONFIRMED flat model: $2 × hours elapsed since UTC
  * midnight ("we don't pay anything else for it") — NOT the summed rain
- * payouts. Affiliate commissions are EXCLUDED entirely.
+ * payouts. Affiliate commissions are EXCLUDED entirely. Leaderboard prizes
+ * appear here at their ON-SITE (un-sponsored) slice only — the creator
+ * (sponsored-% "our cut") share of every leaderboard prize is counted in
+ * the sibling Creators Costs box, so the two boxes never double-count the
+ * same prize.
  *
  * All props are serializable primitives — no function props cross the RSC
  * boundary (`AnimatedNumber` takes the `format` string-enum, not a
@@ -133,10 +126,12 @@ function RewardCostChip({ label, value }: { label: string; value: number }) {
  * with the rain line annotated as the flat $2/hr model and the total at the
  * bottom (the lines sum to the total).
  *
- * The Leaderboard-prizes row hosts a lazy "Show claimants" expander
- * (mirrors the GGR breakdown's top-contributors expander): the per-user
- * claimant list is fetched via a server action ONLY on click, so the
- * dashboard's initial render never loads it.
+ * The Leaderboard-prizes row carries the ON-SITE (un-sponsored) slice of
+ * today's leaderboard prizes only — the creator (sponsored-% "our cut")
+ * share is counted in the sibling Creators Costs box. Because the line is a
+ * derived sponsored-% remainder (not a sum of per-user prizes), it has no
+ * per-user claimant drilldown: a gross "who won" list would not reconcile
+ * to this slice. The full per-claimant view lives on the creator surfaces.
  */
 function RewardCostsInfoPopover({
   total,
@@ -182,10 +177,9 @@ function RewardCostsInfoPopover({
           </p>
         </div>
 
-        {/* Line rows — each shows its magnitude, all rose (house cost).
-            The Leaderboard-prizes row carries a click-to-load drilldown
-            (lazy server action) listing the real customers who claimed
-            leaderboard prizes today; its amounts reconcile to this line. */}
+        {/* Line rows — each shows its magnitude, all rose (house cost). The
+            Leaderboard-prizes row is the on-site (un-sponsored) slice only;
+            the creator (our-cut) share is in the Creators Costs box. */}
         <ul className="space-y-0.5">
           {lines.map((l) => (
             <RewardCostRow
@@ -218,11 +212,9 @@ function RewardCostsInfoPopover({
  * One line row inside the reward-cost popover. The icon chip is a neutral
  * muted tint (informational); the amount carries the rose House-POV cost
  * color. The rain line gets a distinct icon + the $2/hr annotation so it's
- * clear it's the flat model, not summed rain payouts.
- *
- * The Leaderboard-prizes line (`isLeaderboard`) renders a click-to-load
- * drilldown beneath itself when it has a non-zero amount — see
- * `LeaderboardClaimantsExpander`.
+ * clear it's the flat model, not summed rain payouts. The leaderboard line
+ * gets the Trophy icon + a sub-note that it's the on-site slice only (the
+ * creator share is in the Creators Costs box).
  */
 function RewardCostRow({
   label,
@@ -252,6 +244,11 @@ function RewardCostRow({
                 Flat $2 per hour
               </span>
             )}
+            {isLeaderboard && (
+              <span className="block truncate text-[10px] text-muted-foreground">
+                On-site slice · creator share in Creators Costs
+              </span>
+            )}
           </span>
         </span>
         <span
@@ -265,135 +262,6 @@ function RewardCostRow({
           −{formatCurrency(amount)}
         </span>
       </div>
-      {/* Leaderboard-prize drilldown — only when there's actually spend to
-          break down. Lazy: the claimant list is fetched on click only. */}
-      {isLeaderboard && amount > 0 && <LeaderboardClaimantsExpander />}
     </li>
-  );
-}
-
-/**
- * Click-to-load drilldown for the **Leaderboard prizes** line. Mirrors the
- * GGR breakdown's top-contributors expander mechanism EXACTLY: a toggle
- * button that fires a server action (`fetchLeaderboardPrizeClaimantsToday`)
- * the FIRST time it is opened, caches the rows in local state, and reuses
- * them on subsequent toggles (no re-fetch on close→open within the same
- * popover instance). The dashboard's initial render never loads this — it
- * only runs on the admin's click (CLAUDE.md active-timeframe / lazy rule).
- *
- * The listed claimants' amounts reconcile to the line total because the
- * query mirrors the same `affiliate_leaderboard_prize` / status='completed'
- * / canonical-scope / since-00:00-UTC-today definition the line itself
- * uses. Each amount is a house COST (a prize to a user is a user gain →
- * rose, House-POV).
- */
-function LeaderboardClaimantsExpander() {
-  const [state, setState] = useState<{
-    open: boolean;
-    rows: LeaderboardPrizeClaimantRow[] | null;
-    error: string | null;
-  }>({ open: false, rows: null, error: null });
-  const [isPending, startTransition] = useTransition();
-
-  const handleToggle = () => {
-    if (state.open) {
-      setState((s) => ({ ...s, open: false }));
-      return;
-    }
-    // Reuse already-loaded rows on re-open; only the first open hits the DB.
-    if (state.rows) {
-      setState((s) => ({ ...s, open: true }));
-      return;
-    }
-    startTransition(async () => {
-      try {
-        const rows = await fetchLeaderboardPrizeClaimantsToday(100);
-        setState({ open: true, rows, error: null });
-      } catch (err) {
-        setState({
-          open: true,
-          rows: null,
-          error:
-            err instanceof Error ? err.message : "Failed to load claimants",
-        });
-      }
-    });
-  };
-
-  return (
-    <div className="ml-[26px] mt-0.5">
-      <button
-        type="button"
-        onClick={handleToggle}
-        disabled={isPending}
-        aria-expanded={state.open}
-        className="flex w-full items-center justify-between rounded-md px-1.5 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground disabled:opacity-60"
-      >
-        <span>{state.open ? "Hide" : "Show"} claimants</span>
-        {isPending ? (
-          <Loader2 className="size-3 motion-safe:animate-spin" />
-        ) : (
-          <ChevronDown
-            className={cn(
-              "size-3 transition-transform",
-              state.open && "rotate-180",
-            )}
-          />
-        )}
-      </button>
-      {state.open && (
-        <div className="mt-1">
-          {state.error ? (
-            <p className="px-1.5 py-2 text-[10px] text-rose-400">
-              {state.error}
-            </p>
-          ) : state.rows && state.rows.length > 0 ? (
-            <LeaderboardClaimantList rows={state.rows} />
-          ) : (
-            <p className="px-1.5 py-2 text-[10px] text-muted-foreground">
-              No leaderboard-prize claimants today.
-            </p>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/**
- * The per-user claimant list inside the leaderboard-prize drilldown. Each
- * row links to /users/<id> and shows the prize magnitude — rose, because a
- * leaderboard prize is money the house paid the user (a user gain → a
- * house cost) per CLAUDE.md's House-POV rule.
- */
-function LeaderboardClaimantList({
-  rows,
-}: {
-  rows: LeaderboardPrizeClaimantRow[];
-}) {
-  return (
-    <ul className="space-y-0.5">
-      {rows.map((r, idx) => {
-        const username = r.username ?? `${r.userId.slice(0, 6)}…`;
-        return (
-          <li key={r.userId}>
-            <Link
-              href={`/users/${r.userId}`}
-              className="flex items-center justify-between gap-2 rounded px-1.5 py-1 text-[10px] transition-colors hover:bg-muted/60"
-            >
-              <span className="flex min-w-0 items-center gap-1.5">
-                <span className="w-4 shrink-0 text-right text-muted-foreground/60 tabular-nums">
-                  {idx + 1}.
-                </span>
-                <span className="truncate font-medium">{username}</span>
-              </span>
-              <span className="shrink-0 font-semibold tabular-nums text-rose-600 dark:text-rose-400">
-                −{formatCurrency(r.amount)}
-              </span>
-            </Link>
-          </li>
-        );
-      })}
-    </ul>
   );
 }

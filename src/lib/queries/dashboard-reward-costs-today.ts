@@ -9,6 +9,11 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { getCreatorSessionWindowsCte } from "@/lib/queries/creator-session-windows";
 import { realCustomersScopeSql } from "@/lib/queries/insights-games/_shared";
 import { countedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
+import {
+  getLeaderboardSponsorshipMap,
+  splitLeaderboardPrizesBySponsorship,
+  type LeaderboardPrizeBucket,
+} from "@/app/(admin)/creators/_queries/leaderboard-sponsorship";
 
 /**
  * "Reward Costs (today)" dashboard box — what the house spent on REWARDS
@@ -56,9 +61,20 @@ import { countedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categori
  *   • AFFILIATE COSTS are EXCLUDED entirely. `affiliate_claim` (affiliate
  *     commissions) is in `REWARD_PAYOUT_TYPES` but is deliberately dropped
  *     from this box's total — this box is reward/retention spend, not
- *     affiliate program cost. `affiliate_leaderboard_prize` (on-site /
- *     platform leaderboard PRIZE payouts) IS kept as the "leaderboards"
- *     line — it is a house-funded prize, not an affiliate commission.
+ *     affiliate program cost.
+ *   • LEADERBOARD prizes are split, not counted gross. Every
+ *     `affiliate_leaderboard_prize` is a CREATOR-run leaderboard payout
+ *     (see `creators-leaderboards.ts`: "affiliate leaderboards are
+ *     creator-run events"). The house-funded share of each board (the
+ *     sponsored-% "our cut") is a CREATOR cost and is counted ONLY in the
+ *     dashboard "Creators Costs" box; this box keeps ONLY the on-site /
+ *     un-sponsored remainder (`gross − ourCut`). The two boxes therefore no
+ *     longer double-count the same prize: Reward Costs gets the on-site
+ *     slice, Creators Costs gets the creator (our-cut) slice, and within
+ *     this box's scope `onSite + ourCut === gross`. The split uses the SAME
+ *     shared sponsored-% weighting (`splitLeaderboardPrizesBySponsorship`)
+ *     the Creators Costs box uses, computed over THIS box's metric scope so
+ *     the subtraction is internally consistent (same rows, never negative).
  *
  * House-POV per CLAUDE.md: every line is money the house PAID OUT to users
  * → a house cost → rose in the UI. Read-only against the Main DB.
@@ -109,7 +125,10 @@ const RAIN_USD_PER_HOUR = 2;
  *   promo_gift               → gift_card_redeemed, promo_code_redeemed
  *   race                     → race_prize
  *   signup_balance           → balance_reward_claim, waitlist_prize
- *   leaderboards             → affiliate_leaderboard_prize
+ *   leaderboards             → affiliate_leaderboard_prize, ON-SITE SLICE
+ *                              ONLY (gross − sponsored-% "our cut"); the
+ *                              our-cut house share is a CREATOR cost counted
+ *                              in the Creators Costs box, not here.
  *   manual_voucher           → voucher_redeemed (origin='manual' carve-out)
  *   counted_adjustments      → admin_balance_adjustment (counted credits)
  *
@@ -162,7 +181,6 @@ const cachedLedgerAndPacks = unstable_cache(
         promo_gift: string;
         race: string;
         signup_balance: string;
-        leaderboards: string;
         manual_voucher: string;
         counted_adjustments: string;
       };
@@ -174,7 +192,6 @@ const cachedLedgerAndPacks = unstable_cache(
            COALESCE(SUM(CASE WHEN type::text IN ('gift_card_redeemed','promo_code_redeemed') THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS promo_gift,
            COALESCE(SUM(CASE WHEN type::text = 'race_prize' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS race,
            COALESCE(SUM(CASE WHEN type::text IN ('balance_reward_claim','waitlist_prize') THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS signup_balance,
-           COALESCE(SUM(CASE WHEN type::text = 'affiliate_leaderboard_prize' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS leaderboards,
            COALESCE(SUM(CASE WHEN type::text = 'voucher_redeemed' AND metadata->>'origin' = 'manual' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS manual_voucher,
            COALESCE(SUM(CASE WHEN (${countedAdj}) THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS counted_adjustments
          FROM ledger_transactions
@@ -184,6 +201,65 @@ const cachedLedgerAndPacks = unstable_cache(
            AND created_at >= ${since}`,
       );
       const lr = ledgerRows[0];
+
+      // ── Leaderboard prizes today, split per leaderboard (on-site slice) ──
+      // Every affiliate_leaderboard_prize is a CREATOR-run leaderboard
+      // payout. The house-funded "our cut" (sponsored-% share) is a CREATOR
+      // cost counted in the Creators Costs box; THIS box keeps only the
+      // on-site / un-sponsored remainder so the same prize is never counted
+      // twice. Grouped per leaderboard id (NULL/missing → '(none)') over the
+      // SAME scope + window as the legs above, then split by the shared
+      // sponsored-% helper — `onSite + ourCut === gross` within this scope,
+      // so the subtraction is internally consistent and never negative.
+      type LeaderboardBoardRow = { leaderboard_id: string | null; prize: string };
+      const leaderboardBoardRows =
+        await db.$queryRawUnsafe<LeaderboardBoardRow[]>(
+          `WITH ${scope.sessionWindowsCte}
+           SELECT
+             metadata->>'leaderboard_id' AS leaderboard_id,
+             COALESCE(SUM(ABS(amount::numeric)), 0)::text AS prize
+           FROM ledger_transactions
+           WHERE status = 'completed'
+             AND type::text = 'affiliate_leaderboard_prize'
+             AND user_id IN ${scope.userScopeSql}
+             AND ${scope.notInCreatorSession("user_id", "created_at")}
+             AND created_at >= ${since}
+           GROUP BY metadata->>'leaderboard_id'`,
+        );
+
+      const leaderboardBuckets: LeaderboardPrizeBucket[] =
+        leaderboardBoardRows.map((r) => ({
+          leaderboardId:
+            typeof r.leaderboard_id === "string" && r.leaderboard_id.length > 0
+              ? r.leaderboard_id
+              : null,
+          prize: toNumber(r.prize),
+        }));
+
+      // Sponsored % for just today's distinct leaderboard ids (admin DB).
+      // Resilient: if the admin-DB lookup blips, treat every board as 100%
+      // (our-cut == full → on-site remainder collapses to $0) — same
+      // fallback posture as the Creators Costs box + leaderboard-cost.ts.
+      const leaderboardIds = leaderboardBuckets
+        .map((b) => b.leaderboardId)
+        .filter((id): id is string => id != null);
+      let leaderboardSponsorship: Map<string, number>;
+      try {
+        leaderboardSponsorship =
+          await getLeaderboardSponsorshipMap(leaderboardIds);
+      } catch (e) {
+        console.error(
+          "[reward-costs-today] leaderboard sponsorship lookup failed (treating all as 100% → $0 on-site):",
+          e,
+        );
+        leaderboardSponsorship = new Map();
+      }
+      // On-site slice = gross − our-cut (the un-sponsored remainder). The
+      // our-cut house share is counted in the Creators Costs box, not here.
+      const { onSite: leaderboardOnSite } = splitLeaderboardPrizesBySponsorship(
+        leaderboardBuckets,
+        leaderboardSponsorship,
+      );
 
       // ── Daily / free pack giveaway (today) ───────────────────────────
       // Reward packs (packs.pack_type='reward') book no ledger row — the
@@ -250,8 +326,10 @@ const cachedLedgerAndPacks = unstable_cache(
         },
         {
           key: "leaderboards",
-          label: "Leaderboard prizes",
-          amount: toNumber(lr?.leaderboards),
+          // On-site (un-sponsored) slice only — the creator (our-cut) share
+          // of every leaderboard prize lives in the Creators Costs box.
+          label: "Leaderboard prizes (on-site)",
+          amount: leaderboardOnSite,
         },
         {
           key: "manual_voucher",
