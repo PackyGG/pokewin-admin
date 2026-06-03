@@ -698,20 +698,6 @@ export const CAPABILITIES: CapabilityDef[] = [
     group: "Employees",
   },
 
-  // ── Changelogs ──────────────────────────────────────────────────────
-  // Publish / edit / delete admin-internal release notes on /changelogs.
-  // Reading the page itself is gated by /changelogs page access (see
-  // ADMIN_PAGES); this capability is the writer gate. Admin-only by
-  // default — explicitly grant to any non-admin role that needs to
-  // publish (e.g. an "editor" preset).
-  {
-    key: "__can_manage_changelog",
-    label: "Manage Changelog",
-    description:
-      "Publish, edit, or delete entries on /changelogs. Read-only access is granted via the /changelogs page key.",
-    group: "Changelogs",
-  },
-
   // ── Bots ────────────────────────────────────────────────────────────
   {
     key: "__can_create_bot",

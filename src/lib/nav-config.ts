@@ -165,18 +165,6 @@ export const NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
-    // Changelogs — sidebar-only (not in the palette today).
-    id: "nav.changelogs",
-    group: "Overview",
-    label: "Changelogs",
-    href: "/changelogs",
-    pageKey: "/changelogs",
-    icon: "ScrollText",
-    isNew: true,
-    inSidebar: true,
-    inPalette: false,
-  },
-  {
     id: "nav.users",
     group: "Overview",
     label: "Users",
