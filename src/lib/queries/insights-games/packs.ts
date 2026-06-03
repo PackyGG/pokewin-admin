@@ -11,7 +11,7 @@ import {
 } from "@/lib/metrics/formulas";
 import {
   type GamesPeriod,
-  hoursForPeriod,
+  periodCutoffSqlCapped,
   realCustomersScopeSql,
 } from "./_shared";
 import { ratioToPct } from "./_metrics";
@@ -81,16 +81,12 @@ export async function getPacksProfitability(
     const db = await getDb();
     const scope = await realCustomersScopeSql();
     const sessionWindowsCte = await getCreatorSessionWindowsCte();
-    const hours = hoursForPeriod(period);
 
-    const ltCutoff =
-      hours !== null
-        ? `AND lt.created_at >= NOW() - INTERVAL '${hours} hours'`
-        : "";
-    const uiCutoff =
-      hours !== null
-        ? `AND ui.obtained_at >= NOW() - INTERVAL '${hours} hours'`
-        : "";
+    // Lifetime (`all`) capped to 365d via periodCutoffSqlCapped so the
+    // per-pack ledger + inventory scan never runs unbounded (CLAUDE.md
+    // "Performance & Daten-Laden"). Finite windows are unchanged.
+    const ltCutoff = periodCutoffSqlCapped("lt.created_at", period);
+    const uiCutoff = periodCutoffSqlCapped("ui.obtained_at", period);
 
     type Row = {
       pack_id: string;

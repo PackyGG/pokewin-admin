@@ -12,7 +12,7 @@ import {
 } from "@/lib/metrics/formulas";
 import {
   type GamesPeriod,
-  hoursForPeriod,
+  periodCutoffSqlCapped,
   realCustomersScopeSql,
   BORROW_FILTER_CTES,
 } from "./_shared";
@@ -116,24 +116,20 @@ export async function getGamesOverview(
     const db = await getDb();
     const scope = await realCustomersScopeSql();
     const sessionWindowsCte = await getCreatorSessionWindowsCte();
-    const hours = hoursForPeriod(period);
     const bucketByHour = period === "24h";
 
     // Time predicates — applied both to filter the window and to
     // bucket the series. Held in variables so the four parallel
     // queries below stay in sync.
-    const ltCutoff =
-      hours !== null
-        ? `AND lt.created_at >= NOW() - INTERVAL '${hours} hours'`
-        : "";
-    const uiCutoff =
-      hours !== null
-        ? `AND ui.obtained_at >= NOW() - INTERVAL '${hours} hours'`
-        : "";
-    const ugCutoff =
-      hours !== null
-        ? `AND ug.created_at >= NOW() - INTERVAL '${hours} hours'`
-        : "";
+    //
+    // Lifetime (`all`) is CAPPED to GAMES_LIFETIME_LOOKBACK_HOURS (365d)
+    // via periodCutoffSqlCapped so the heavy ledger / inventory /
+    // upgrader scans never run unbounded (CLAUDE.md "Performance &
+    // Daten-Laden" — Lifetime-Fenster bounden). Finite windows are
+    // unchanged.
+    const ltCutoff = periodCutoffSqlCapped("lt.created_at", period);
+    const uiCutoff = periodCutoffSqlCapped("ui.obtained_at", period);
+    const ugCutoff = periodCutoffSqlCapped("ug.created_at", period);
 
     // Series buckets — hour granularity for 24h so the chart shows
     // a real 24-point hourly curve; date granularity for everything

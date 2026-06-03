@@ -10,7 +10,7 @@ import {
 } from "@/lib/metrics/formulas";
 import {
   type GamesPeriod,
-  hoursForPeriod,
+  periodCutoffSqlCapped,
   realCustomersScopeSql,
 } from "./_shared";
 import { ratioToPct } from "./_metrics";
@@ -80,20 +80,13 @@ export async function getBattlesProfitability(
     const db = await getDb();
     const scope = await realCustomersScopeSql();
     const sessionWindowsCte = await getCreatorSessionWindowsCte();
-    const hours = hoursForPeriod(period);
 
-    const ltCutoff =
-      hours !== null
-        ? `AND lt.created_at >= NOW() - INTERVAL '${hours} hours'`
-        : "";
-    const uiCutoff =
-      hours !== null
-        ? `AND ui.obtained_at >= NOW() - INTERVAL '${hours} hours'`
-        : "";
-    const bCutoff =
-      hours !== null
-        ? `AND b.created_at >= NOW() - INTERVAL '${hours} hours'`
-        : "";
+    // Lifetime (`all`) capped to 365d via periodCutoffSqlCapped so the
+    // battle ledger + inventory + battles scans never run unbounded
+    // (CLAUDE.md "Performance & Daten-Laden"). Finite windows unchanged.
+    const ltCutoff = periodCutoffSqlCapped("lt.created_at", period);
+    const uiCutoff = periodCutoffSqlCapped("ui.obtained_at", period);
+    const bCutoff = periodCutoffSqlCapped("b.created_at", period);
 
     type ModeRow = {
       mode: string;

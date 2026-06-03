@@ -11,7 +11,7 @@ import {
 } from "@/lib/metrics/formulas";
 import {
   type GamesPeriod,
-  hoursForPeriod,
+  periodCutoffSqlCapped,
   realCustomersScopeSql,
 } from "./_shared";
 import { ratioToPct } from "./_metrics";
@@ -106,12 +106,11 @@ export async function getUpgraderProfitability(
     const db = await getDb();
     const scope = await realCustomersScopeSql();
     const sessionWindowsCte = await getCreatorSessionWindowsCte();
-    const hours = hoursForPeriod(period);
 
-    const ugCutoff =
-      hours !== null
-        ? `AND ug.created_at >= NOW() - INTERVAL '${hours} hours'`
-        : "";
+    // Lifetime (`all`) capped to 365d via periodCutoffSqlCapped so the
+    // upgrader_games scan never runs unbounded (CLAUDE.md "Performance &
+    // Daten-Laden"). Finite windows are unchanged.
+    const ugCutoff = periodCutoffSqlCapped("ug.created_at", period);
 
     // Read target multiplier off the linked PF result's metadata.
     // The blob shape isn't pinned by the backend, so we try the

@@ -9,7 +9,7 @@ import { getBattlesProfitability } from "@/lib/queries/insights-games/battles";
 import type { GamesPeriod } from "@/lib/queries/insights-games/_shared";
 import { labelForPeriod } from "@/lib/queries/insights-games/_shared";
 import { BattleDrilldownPopover } from "./battle-drilldown-popover";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { formatPctOrNa, INSUFFICIENT_SAMPLE_SHORT } from "./_format-metrics";
 
@@ -28,6 +28,7 @@ export async function BattlesTab({ period }: { period: GamesPeriod }) {
     () => getBattlesProfitability(period),
     null,
     "insights-games.battles",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (

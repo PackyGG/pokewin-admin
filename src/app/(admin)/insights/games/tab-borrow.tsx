@@ -7,7 +7,7 @@ import { formatCompactUsd, formatDateTime, formatNumber } from "@/lib/utils/form
 import { getBorrowAnalytics } from "@/lib/queries/insights-games/borrow";
 import type { GamesPeriod } from "@/lib/queries/insights-games/_shared";
 import { labelForPeriod } from "@/lib/queries/insights-games/_shared";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { formatPctOrNa } from "./_format-metrics";
 
@@ -31,6 +31,7 @@ export async function BorrowTab({ period }: { period: GamesPeriod }) {
     () => getBorrowAnalytics(period),
     null,
     "insights-games.borrow",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (

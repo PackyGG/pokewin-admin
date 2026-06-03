@@ -7,7 +7,7 @@ import type { GamesPeriod } from "@/lib/queries/insights-games/_shared";
 import { labelForPeriod } from "@/lib/queries/insights-games/_shared";
 import { UpgraderHistogram } from "./upgrader-histogram";
 import { UpgraderBucketPopover } from "./upgrader-bucket-popover";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import {
   ggr as ggrFormula,
@@ -32,6 +32,7 @@ export async function UpgraderTab({ period }: { period: GamesPeriod }) {
     () => getUpgraderProfitability(period),
     null,
     "insights-games.upgrader",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (

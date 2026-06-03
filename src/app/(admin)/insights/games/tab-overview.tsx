@@ -22,7 +22,7 @@ import { getGamesOverview } from "@/lib/queries/insights-games/overview";
 import type { GamesPeriod } from "@/lib/queries/insights-games/_shared";
 import { labelForPeriod } from "@/lib/queries/insights-games/_shared";
 import { OverviewChart } from "./overview-chart";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { formatPctOrNa, INSUFFICIENT_SAMPLE_SHORT } from "./_format-metrics";
 
@@ -49,6 +49,7 @@ export async function OverviewTab({ period }: { period: GamesPeriod }) {
     () => getGamesOverview(period),
     null,
     "insights-games.overview",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (

@@ -8,7 +8,7 @@ import { getPacksProfitability } from "@/lib/queries/insights-games/packs";
 import type { GamesPeriod } from "@/lib/queries/insights-games/_shared";
 import { labelForPeriod } from "@/lib/queries/insights-games/_shared";
 import { PackDrilldownPopover } from "./pack-drilldown-popover";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { formatPctOrNa } from "./_format-metrics";
 
@@ -28,6 +28,7 @@ export async function PacksTab({ period }: { period: GamesPeriod }) {
     () => getPacksProfitability(period),
     null,
     "insights-games.packs",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (

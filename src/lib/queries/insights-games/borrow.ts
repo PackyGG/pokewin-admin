@@ -10,7 +10,7 @@ import {
 } from "@/lib/metrics/formulas";
 import {
   type GamesPeriod,
-  hoursForPeriod,
+  periodCutoffSqlCapped,
   realCustomersScopeSql,
 } from "./_shared";
 import { REWARD_PACK_SESSIONS } from "@/lib/metrics/gaming-sql";
@@ -110,18 +110,12 @@ export async function getBorrowAnalytics(
     const db = await getDb();
     const scope = await realCustomersScopeSql();
     const sessionWindowsCte = await getCreatorSessionWindowsCte();
-    const hours = hoursForPeriod(period);
-    const ltCutoff =
-      hours !== null
-        ? `AND lt.created_at >= NOW() - INTERVAL '${hours} hours'`
-        : "";
-
-    // Inline cutoff fragments for the cohort sub-CTEs below — kept as
-    // typed helpers so the SQL string stays readable.
-    const uiCutoffSql = (h: number | null) =>
-      h !== null ? `AND ui.obtained_at >= NOW() - INTERVAL '${h} hours'` : "";
-    const ugCutoffSql = (h: number | null) =>
-      h !== null ? `AND ug.created_at >= NOW() - INTERVAL '${h} hours'` : "";
+    // Lifetime (`all`) capped to 365d via periodCutoffSqlCapped so the
+    // borrow ledger / inventory / upgrader scans never run unbounded
+    // (CLAUDE.md "Performance & Daten-Laden"). Finite windows unchanged.
+    const ltCutoff = periodCutoffSqlCapped("lt.created_at", period);
+    const uiCutoff = periodCutoffSqlCapped("ui.obtained_at", period);
+    const ugCutoff = periodCutoffSqlCapped("ug.created_at", period);
 
     type TotalRow = {
       borrow_plays: string;
@@ -470,7 +464,7 @@ export async function getBorrowAnalytics(
                  AND ui.obtained_at >= sw.win_start
                  AND ui.obtained_at <  sw.win_end
              )
-             ${uiCutoffSql(hours)}
+             ${uiCutoff}
            GROUP BY ui.user_id
          ),
          per_user_ug AS (
@@ -488,7 +482,7 @@ export async function getBorrowAnalytics(
                  AND ug.created_at >= sw.win_start
                  AND ug.created_at <  sw.win_end
              )
-             ${ugCutoffSql(hours)}
+             ${ugCutoff}
            GROUP BY ug.user_id
          ),
          all_users AS (

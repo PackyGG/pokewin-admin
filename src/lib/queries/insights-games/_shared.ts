@@ -95,6 +95,39 @@ export function periodCutoffSql(
 }
 
 /**
+ * Lifetime lookback cap (hours) for the heavy game aggregates on
+ * /insights/games. On the `all` window {@link periodCutoffSql} returns no
+ * lower bound, which makes the headline aggregates (overview / packs /
+ * battles / borrow / upgrader / top-users) scan the ENTIRE
+ * `ledger_transactions` + `user_inventory` + `upgrader_games` history —
+ * the unbounded-lifetime pattern CLAUDE.md ("Performance & Daten-Laden")
+ * forbids. Cap the `all` window to one year so the lifetime view stays
+ * tractable while still covering effectively all currently-relevant
+ * gaming activity. Mirrors `deposit-bonus/_shared.ts`
+ * `LIFETIME_PAIRING_LOOKBACK_DAYS` (365d).
+ */
+export const GAMES_LIFETIME_LOOKBACK_HOURS = 365 * 24;
+
+/**
+ * Like {@link periodCutoffSql}, but on the lifetime (`all`) window the
+ * filter is bounded to {@link GAMES_LIFETIME_LOOKBACK_HOURS} instead of
+ * being unbounded. Use this for the heavy game aggregates so a lifetime
+ * view doesn't trigger a full-history table scan. Finite windows behave
+ * identically to `periodCutoffSql`.
+ *
+ * `column` is inlined verbatim — pass only trusted, hardcoded identifiers
+ * (`lt.created_at`, `ui.obtained_at`, `ug.created_at`). The interval value
+ * is a hardcoded number, never user-supplied.
+ */
+export function periodCutoffSqlCapped(
+  column: string,
+  period: GamesPeriod,
+): string {
+  const hours = hoursForPeriod(period) ?? GAMES_LIFETIME_LOOKBACK_HOURS;
+  return `AND ${column} >= NOW() - INTERVAL '${hours} hours'`;
+}
+
+/**
  * Pretty label for the selected period — used in UI captions and
  * tooltips so the figures always read with their scope attached.
  */
