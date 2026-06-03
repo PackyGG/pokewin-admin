@@ -3,13 +3,16 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { AlertTriangle, ArrowLeft } from "lucide-react";
 import {
-  getUserDetail,
-  getUserHeader,
   getUserTransactions,
   getUserInventory,
-  getUserPnlBreakdown,
   getUserRewards,
 } from "@/lib/queries/users";
+import {
+  getUserDetailCached,
+  getUserPnlBreakdownCached,
+  getRiskScoreCached,
+  getUserHeaderCritical,
+} from "@/lib/queries/users-detail-cache";
 import { getNotesForUser } from "@/lib/queries/admin-notes";
 import { getUserTags } from "@/lib/queries/user-tags";
 import { getUserCreatorHistory } from "@/lib/queries/user-role-history";
@@ -18,7 +21,6 @@ import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { ensureSupportBaseline } from "@/lib/support-baseline";
 import { UserTagsPanel } from "./user-tags-panel";
 import { AutoRefresh } from "../../dashboard/auto-refresh";
-import { computeRiskScore } from "@/lib/fraud/score";
 import {
   getSharedIpUsers,
   getSharedFingerprintUsers,
@@ -110,11 +112,20 @@ export default async function UserDetailPage({
   // then stream the heavy body in its own Suspense boundary.
   //
   // getUserHeader is two indexed identity reads — username/email for the
-  // back-link header. A null here is the ONLY 404 path (genuinely unknown
-  // id); once it resolves, a downstream failure degrades the streamed body
-  // instead of crashing the page.
-  const header = await getUserHeader(id);
-  if (!header) notFound();
+  // back-link header. This is the page's ONE un-streamed critical-path
+  // read, so historically it was also the LAST way the page could hard-
+  // crash to the segment error boundary: if the Postgres pool was
+  // momentarily starved by a couple of runaway per-user scans (the
+  // failure db.ts documents), even this cheap read could block until the
+  // platform tore the request down → "Couldn't load this user" (digest
+  // 497656675). getUserHeaderCritical bounds it with a short wall-clock
+  // budget and degrades instead of throwing: a clean null is still the
+  // ONLY 404 path (genuinely unknown id), but a timeout/failure yields an
+  // id-only placeholder header so the shell renders and the streamed body
+  // (its own timeout-wrapped getUserDetail) fills in the real identity.
+  const headerResult = await getUserHeaderCritical(id);
+  if (!headerResult.found) notFound();
+  const header = headerResult.header;
 
   // Permissions for the union-capability checks. For admins this is a
   // constant (no query); for non-admins it's a single cache()'d admin-DB
@@ -160,9 +171,17 @@ export default async function UserDetailPage({
           </Link>
           <div className="min-w-0">
             <h1 className="text-2xl font-bold leading-tight">
-              {header.username ?? header.email}
+              {/* On a degraded (timed-out) identity read username + email
+                  are both null — show a short id so the header still reads
+                  as a real user; the streamed body resolves the full
+                  identity in its own hero. */}
+              {header.username ?? header.email ?? `User ${header.id.slice(0, 8)}`}
             </h1>
-            <p className="text-sm text-muted-foreground">{header.email}</p>
+            <p className="text-sm text-muted-foreground">
+              {header.email ?? (
+                <span className="font-mono">{header.id.slice(0, 12)}…</span>
+              )}
+            </p>
           </div>
         </div>
         {/* VIP tag manager — dedicated dashed-border row so admins
@@ -302,8 +321,10 @@ async function UserDetailBody({
     // the page's Promise.all, so any failure/timeout in it crashed the
     // whole page. Now it's timeout-bounded and null-on-failure → the body
     // renders a compact degraded banner (the header already painted).
+    // Cached cross-request (60s) so the AutoRefresh tick + "Try again"
+    // resolve from the warmed entry instead of re-paying the full scan.
     safeQueryOrNull(
-      () => getUserDetail(id),
+      () => getUserDetailCached(id),
       "users.detail.detail",
       USER_DETAIL_QUERY_TIMEOUT_MS,
     ),
@@ -322,10 +343,12 @@ async function UserDetailBody({
       "users.detail.disposedInventory",
       USER_DETAIL_QUERY_TIMEOUT_MS,
     ),
-    // Platform-P&L breakdown — multiple ledger aggregates + the windowed
-    // rolling-P&L scans. Un-wrapped before; degrade to the all-zero shape.
+    // Platform-P&L breakdown — multiple ledger aggregates + the 5-window
+    // rolling-P&L scan (the heaviest read on the page on an unindexed DB).
+    // Un-wrapped before; degrade to the all-zero shape. Cached
+    // cross-request (60s) so refresh/retry skip the rescan.
     safeQuery(
-      () => getUserPnlBreakdown(id),
+      () => getUserPnlBreakdownCached(id),
       EMPTY_PNL,
       "users.detail.pnl",
       USER_DETAIL_QUERY_TIMEOUT_MS,
@@ -372,12 +395,15 @@ async function UserDetailBody({
       "users.detail.creatorHistory",
     ),
     // Fraud / trust assessment for the hero badges + Trust tab.
-    // Heaviest query on the page (cross-table aggregate). Failure →
+    // Heavy cross-table aggregate + network/timeline fan-out. Failure →
     // the hero falls back to the same neutral "low / 0 / no signals"
     // shape the query itself emits for unknown users, so the risk
     // badge renders unobtrusively instead of blanking the whole view.
+    // Cached cross-request (60s) on top of the score module's own
+    // in-process memo so a cold function instance / "Try again" skips
+    // the rescan.
     safeQuery(
-      () => computeRiskScore(id),
+      () => getRiskScoreCached(id),
       {
         score: 0,
         tier: "low" as const,
