@@ -94,6 +94,23 @@ import {
 //  balance-update the `upgrader_payout` ledger leg — if present — already
 //  represents), so only the payout LEDGER legs move the balance here.
 //
+// ─── LIFETIME WAGERING COUNTERS (total_wagered / total_won — owner mandate) ──
+//
+//  The production-maintained lifetime counters `balances.total_wagered` /
+//  `balances.total_won` back /users/[id] AND the cost-breakdown "Who drove the
+//  gaming margin" contributors. Deleting the gameplay rows does NOT touch them,
+//  so a wiped user still shows in the contributors. This wipe therefore also
+//  decrements them by exactly what it DELETED (the production composition of
+//  these counters isn't derivable from this panel — APPROXIMATION, documented
+//  on WagerWipeSnapshot):
+//   • total_wagered −= Σ deleted wager-leg magnitudes.
+//   • total_won     −= Σ deleted payout-leg magnitudes + Σ deleted won-inventory
+//                       value_at_obtained.
+//  Both CLAMPED ≥ 0 (never negative); the clamped reduction is snapshotted and
+//  Restore re-adds EXACTLY that (symmetric). A full wager wipe removes
+//  effectively all gameplay, so both land at ~0 — the user drops off the
+//  contributors, which is the goal.
+//
 // ORDERING (CRITICAL, snapshot-first): the full recovery snapshot (ledger legs
 // + inventory + PF children + upgrader_games + the exact balance reduction) is
 // written to the admin DB and confirmed BEFORE the destructive main-DB tx. If
@@ -501,6 +518,32 @@ export async function wipeWager(data: {
   const balanceAfter = reduced < 0 ? 0 : reduced;
   const balanceReduction = balanceBefore - balanceAfter; // == clamped payout clawback, ≥ 0
 
+  // ── LIFETIME WAGERING COUNTERS (total_wagered / total_won) ──
+  // These are production-maintained lifetime counters this panel only reads —
+  // they back /users/[id] (Total Wagered / Total Won / Wager Loss) AND the
+  // cost-breakdown "Who drove the gaming margin" contributors. The wipe deletes
+  // the gameplay rows but the counters retain the old values, so a wiped user
+  // still shows in the contributors. We decrement each by exactly what was
+  // DELETED (the production composition isn't derivable here — see the COUNTER
+  // NOTE on WagerWipeSnapshot for the documented approximation):
+  //   • total_wagered −= Σ wager-leg magnitudes (the stake removed).
+  //   • total_won     −= Σ payout-leg magnitudes + Σ won-inventory
+  //                       value_at_obtained (the gaming-payout legs that DON'T
+  //                       move the balance — battle cash payouts + the won
+  //                       pack/battle cards' obtained value).
+  // Both CLAMPED ≥0 (never drive a counter negative). The clamped reduction is
+  // what we subtract AND what Restore re-adds (stored in the snapshot), so
+  // wipe/restore are symmetric even when a counter held less than the deleted
+  // sum. A full wager wipe removes effectively all gameplay → both land at ~0
+  // (the goal: the user drops off the contributors).
+  const totalWageredBefore = toNumber(balanceRow.total_wagered);
+  const totalWonBefore = toNumber(balanceRow.total_won);
+  const wonDeleted = payoutMagnitude + inventoryValue;
+  const totalWageredReduction = Math.min(wagerMagnitude, totalWageredBefore);
+  const totalWonReduction = Math.min(wonDeleted, totalWonBefore);
+  const totalWageredClamped = wagerMagnitude > totalWageredBefore;
+  const totalWonClamped = wonDeleted > totalWonBefore;
+
   const userMeta = await db.user
     .findUnique({ where: { id: parsed.userId }, select: { username: true, email: true } })
     .catch(() => null);
@@ -515,6 +558,8 @@ export async function wipeWager(data: {
     provablyFairRows: provablyFairRows as unknown as Array<Record<string, unknown>>,
     upgraderGameRows,
     balanceReduction: balanceReduction.toFixed(2),
+    totalWageredReduction: totalWageredReduction.toFixed(2),
+    totalWonReduction: totalWonReduction.toFixed(2),
   } satisfies { type: "wager" } & WagerWipeSnapshot;
 
   let wipeId: string;
@@ -622,12 +667,24 @@ export async function wipeWager(data: {
         upgraderGamesDeleted = typeof deleted === "number" ? deleted : upgraderGameRows.length;
       }
 
-      // (7) Reduce available_balance by the clamped PAYOUT clawback only,
-      // optimistic-locked. Wager (debit) legs leave the balance unchanged.
-      if (balanceReduction > 0) {
+      // (7) One optimistic-locked balances write covering all three reductions
+      // (same version lock, single bump):
+      //   • available_balance −= the clamped PAYOUT clawback (balanceAfter).
+      //     Wager (debit) legs leave the balance unchanged (BALANCE RULE).
+      //   • total_wagered −= the clamped Σ wager-leg magnitudes.
+      //   • total_won     −= the clamped Σ payout-leg + won-inventory value.
+      // Fired whenever ANY of the three has something to subtract — a pure-
+      // wager wipe (no payout legs) moves no balance but MUST still drop
+      // total_wagered, so this is NOT gated on balanceReduction alone.
+      if (balanceReduction > 0 || totalWageredReduction > 0 || totalWonReduction > 0) {
         const updated = await tx.balances.updateMany({
           where: { user_id: parsed.userId, version: lockVersion },
-          data: { available_balance: balanceAfter, version: { increment: 1 } },
+          data: {
+            available_balance: balanceAfter,
+            total_wagered: totalWageredBefore - totalWageredReduction,
+            total_won: totalWonBefore - totalWonReduction,
+            version: { increment: 1 },
+          },
         });
         if (updated.count !== 1) {
           throw new Error("Balance changed concurrently — please retry");
@@ -672,8 +729,14 @@ export async function wipeWager(data: {
         balanceAfter,
         balanceReduced: balanceReduction,
         balanceClamped: reduced < 0,
+        totalWageredBefore,
+        totalWageredReduced: totalWageredReduction,
+        totalWageredClamped,
+        totalWonBefore,
+        totalWonReduced: totalWonReduction,
+        totalWonClamped,
         recoverable: true,
-        note: "Deleted the user's wager+payout ledger legs (pack/battle/upgrader) + won pack/battle inventory (+ their provably_fair_results) + upgrader_games. Balance reduced ONLY by the payout (credit) legs' clawback (clamped ≥0); wager (debit) legs left the balance unchanged (never inflate). game_sessions/battles shells LEFT intact (battle delete would cascade other participants); session bet pointer + balances.last_transaction_id nulled to break the FK cycle (self-heal). Withdrawal-locked won cards SKIPPED (back an in-flight withdrawal). Remaining ledger rows' balance_before/after not rewritten.",
+        note: "Deleted the user's wager+payout ledger legs (pack/battle/upgrader) + won pack/battle inventory (+ their provably_fair_results) + upgrader_games. Balance reduced ONLY by the payout (credit) legs' clawback (clamped ≥0); wager (debit) legs left the balance unchanged (never inflate). Lifetime balances.total_wagered reduced by Σ wager-leg magnitudes; balances.total_won reduced by Σ payout-leg magnitudes + won-inventory value_at_obtained (the production composition isn't derivable here, so this decrements by what was DELETED — both clamped ≥0); restore re-adds EXACTLY these. A full wager wipe lands both at ~0 so the user drops off the 'who drove the gaming margin' contributors. game_sessions/battles shells LEFT intact (battle delete would cascade other participants); session bet pointer + balances.last_transaction_id nulled to break the FK cycle (self-heal). Withdrawal-locked won cards SKIPPED (back an in-flight withdrawal). Remaining ledger rows' balance_before/after not rewritten.",
       },
     },
   });

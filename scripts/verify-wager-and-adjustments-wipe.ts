@@ -13,7 +13,11 @@
  *            is reduced ONLY by the PAYOUT (credit) legs' magnitude (clamped),
  *            never by the wager (debit) legs. game_sessions/battles SHELLS are
  *            left intact; the ledger↔session FK cycle is broken by nulling the
- *            session bet pointer + balances.last_transaction_id.
+ *            session bet pointer + balances.last_transaction_id. The lifetime
+ *            `balances.total_wagered` / `total_won` counters are also reduced
+ *            (by Σ wager-leg magnitudes / Σ payout-leg + won-inventory value,
+ *            each clamped ≥0) so a wiped user drops off the cost-breakdown
+ *            contributors; restore re-adds EXACTLY those reductions.
  *
  * Two layers:
  *   1. PURE (no DB) — always runs: the balance-rule arithmetic + the ledger
@@ -79,6 +83,34 @@ function adjBalanceReduction(
   return balanceBefore - after;
 }
 
+/**
+ * The wager-wipe lifetime-counter reductions (mirrors wipe-wager-actions.ts):
+ *   • total_wagered −= Σ wager-leg magnitudes,                clamped ≥0.
+ *   • total_won     −= Σ payout-leg magnitudes + Σ inventory, clamped ≥0.
+ * The clamped reduction (== what is subtracted AND what Restore re-adds) is
+ * returned for each counter. Symmetric by construction: re-adding the returned
+ * value to (before − reduction) lands back on `before` when nothing else moved.
+ */
+function wagerCounterReductions(
+  legs: Array<{ type: string; amount: number }>,
+  inventoryValue: number,
+  totalWageredBefore: number,
+  totalWonBefore: number,
+): { totalWageredReduction: number; totalWonReduction: number } {
+  const wagerMagnitude = legs.reduce(
+    (acc, l) => (PAYOUT_SET.has(l.type) ? acc : acc + Math.abs(l.amount)),
+    0,
+  );
+  const payoutMagnitude = legs.reduce(
+    (acc, l) => (PAYOUT_SET.has(l.type) ? acc + Math.abs(l.amount) : acc),
+    0,
+  );
+  return {
+    totalWageredReduction: Math.min(wagerMagnitude, totalWageredBefore),
+    totalWonReduction: Math.min(payoutMagnitude + inventoryValue, totalWonBefore),
+  };
+}
+
 async function pureChecks() {
   console.log("── PURE: ledger partition the wager wipe deletes ──");
   check(
@@ -136,6 +168,62 @@ async function pureChecks() {
     "wager wipe: clawback clamps at the available balance (never negative)",
     wagerBalanceReduction([{ type: "upgrader_payout", amount: 500 }], 140.67) === 140.67,
   );
+
+  console.log("\n── PURE: lifetime counters (total_wagered / total_won) ──");
+  // total_wagered drops by the wager-leg sum; total_won drops by the payout-leg
+  // sum + won-inventory value. Here: wagers 50+30+20=100, payout 120,
+  // inventory 75 → won-delta = 195.
+  {
+    const r = wagerCounterReductions(
+      [
+        { type: "pack_opening", amount: 50 },
+        { type: "battle_bet", amount: 30 },
+        { type: "upgrader_bet", amount: 20 },
+        { type: "battle_refund", amount: 120 },
+      ],
+      75, // won-inventory value_at_obtained
+      10_000, // total_wagered before (plenty)
+      10_000, // total_won before (plenty)
+    );
+    check("total_wagered reduction = Σ wager legs (100)", r.totalWageredReduction === 100);
+    check("total_won reduction = payout (120) + inventory (75) = 195", r.totalWonReduction === 195);
+  }
+  // Clamp: counters never go negative — a user whose counter holds less than the
+  // deleted sum reduces only down to 0.
+  {
+    const r = wagerCounterReductions(
+      [{ type: "pack_opening", amount: 500 }, { type: "battle_refund", amount: 800 }],
+      400,
+      120, // total_wagered before < 500 wager sum
+      90, // total_won before < 800+400 won sum
+    );
+    check("total_wagered reduction clamps at the counter (120, not 500)", r.totalWageredReduction === 120);
+    check("total_won reduction clamps at the counter (90, not 1200)", r.totalWonReduction === 90);
+  }
+  // Pure-wager wipe (no payout legs, no inventory): total_wagered drops, total_won
+  // does NOT move — and the balance does NOT move either (debits left in place).
+  {
+    const legs = [{ type: "pack_opening", amount: 60 }, { type: "battle_bet", amount: 40 }];
+    const r = wagerCounterReductions(legs, 0, 5_000, 5_000);
+    check("pure-wager: total_wagered reduction = 100", r.totalWageredReduction === 100);
+    check("pure-wager: total_won reduction = 0 (no payout/inventory)", r.totalWonReduction === 0);
+    check("pure-wager: balance reduction = 0 (debits never inflate)", wagerBalanceReduction(legs, 140.67) === 0);
+  }
+  // Restore symmetry: re-adding the clamped reduction to (before − reduction)
+  // restores the original counter exactly (when nothing else moved).
+  {
+    const before = 3210.55;
+    const r = wagerCounterReductions(
+      [{ type: "pack_opening", amount: 100 }],
+      40,
+      before,
+      before,
+    );
+    const wageredAfter = before - r.totalWageredReduction;
+    const wonAfter = before - r.totalWonReduction;
+    check("total_wagered restore re-adds exactly before − after", wageredAfter + r.totalWageredReduction === before);
+    check("total_won restore re-adds exactly before − after", wonAfter + r.totalWonReduction === before);
+  }
 
   // Adjustments wipe: the owner's two stuck DEBITS scenario.
   check(
@@ -230,7 +318,9 @@ async function dbChecks(db: PrismaClient) {
   try {
     await db.$transaction(async (tx) => {
       await tx.user.create({ data: { id: wUser, email: `${wUser}@x.invalid`, username: wUser, role: "user" } });
-      await tx.balances.create({ data: { user_id: wUser, available_balance: 200 } });
+      // Lifetime counters seeded ABOVE the deleted sums so the wipe reduces them
+      // without clamping (wager legs sum 50, payout 120 + inventory 75 = 195).
+      await tx.balances.create({ data: { user_id: wUser, available_balance: 200, total_wagered: 1000, total_won: 1000 } });
 
       // A pack/battle game_session + a wager bet leg that references it (the FK
       // cycle: leg.game_session_id → session, session.bet_ledger_tx_id → leg).
@@ -278,10 +368,24 @@ async function dbChecks(db: PrismaClient) {
       const reduction = wagerBalanceReduction(legRows.map((r) => ({ type: String(r.type), amount: Number(r.amount) })), balBefore);
       const balAfter = balBefore - reduction;
 
+      // Lifetime-counter reductions: the SAME composition the action uses.
+      const invValue = invRows.reduce((a, r) => a + Number(r.value_at_obtained), 0);
+      const balPre = (await tx.balances.findUnique({ where: { user_id: wUser } }))!;
+      const wageredBefore = Number(balPre.total_wagered);
+      const wonBefore = Number(balPre.total_won);
+      const { totalWageredReduction, totalWonReduction } = wagerCounterReductions(
+        legRows.map((r) => ({ type: String(r.type), amount: Number(r.amount) })),
+        invValue,
+        wageredBefore,
+        wonBefore,
+      );
+
       check("collected 2 wager+payout legs (pack_opening + battle_refund)", legRows.length === 2);
       check("collected 1 won pack inventory item", invRows.length === 1);
       check("collected 1 provably_fair_results child", pfRows.length === 1);
       check("wager-wipe balance reduction = 120 (payout leg only; wager leg kept)", reduction === 120);
+      check("total_wagered reduction = 50 (the one pack_opening wager leg)", totalWageredReduction === 50);
+      check("total_won reduction = 195 (battle_refund 120 + won card 75)", totalWonReduction === 195);
 
       // FK-safe delete: null cross pointers, delete PF, legs, inventory.
       await tx.game_sessions.updateMany({ where: { bet_ledger_tx_id: { in: legIds } }, data: { bet_ledger_tx_id: null } });
@@ -289,7 +393,16 @@ async function dbChecks(db: PrismaClient) {
       await tx.provably_fair_results.deleteMany({ where: { inventory_item_id: { in: invIds } } });
       const legDel = await tx.ledger_transactions.deleteMany({ where: { id: { in: legIds }, user_id: wUser, type: { in: WAGER_WIPE_LEDGER_TYPES as never } } });
       const invDel = await tx.user_inventory.deleteMany({ where: { id: { in: invIds }, user_id: wUser, source_type: { in: ["pack", "battle"] as never }, withdrawal_locked_at: null } });
-      await tx.balances.updateMany({ where: { user_id: wUser }, data: { available_balance: balAfter } });
+      // One balances write: clamped clawback + both counter decrements (mirrors
+      // the action's single optimistic-locked update).
+      await tx.balances.updateMany({
+        where: { user_id: wUser },
+        data: {
+          available_balance: balAfter,
+          total_wagered: wageredBefore - totalWageredReduction,
+          total_won: wonBefore - totalWonReduction,
+        },
+      });
 
       check("deleted exactly 2 ledger legs", legDel.count === 2);
       check("deleted exactly 1 inventory row", invDel.count === 1);
@@ -299,19 +412,38 @@ async function dbChecks(db: PrismaClient) {
       check("after delete: the game_session SHELL survived (bet pointer nulled)", (await tx.game_sessions.findUnique({ where: { id: packSession.id } })) != null);
       check("after delete: session.bet_ledger_tx_id is null", (await tx.game_sessions.findUnique({ where: { id: packSession.id } }))!.bet_ledger_tx_id === null);
       check("after delete: balance = 80 (only payout clawed back)", Number((await tx.balances.findUnique({ where: { user_id: wUser } }))!.available_balance) === 80);
+      {
+        const bDel = (await tx.balances.findUnique({ where: { user_id: wUser } }))!;
+        check("after delete: total_wagered = 950 (1000 − 50)", Number(bDel.total_wagered) === 950);
+        check("after delete: total_won = 805 (1000 − 195)", Number(bDel.total_won) === 805);
+      }
 
-      // ── RESTORE: re-insert legs, inventory, PF (after inv), re-add balance. ──
+      // ── RESTORE: re-insert legs, inventory, PF (after inv), re-add balance +
+      // both lifetime counters (additively to the live values — mirrors the
+      // action's single optimistic-locked re-add). ──
       const strip = (r: Record<string, unknown>) => { const c: Record<string, unknown> = {}; for (const [k, v] of Object.entries(r)) if (v !== undefined) c[k] = v; return c; };
       await tx.ledger_transactions.createMany({ data: legRows.map(strip) as never, skipDuplicates: true });
       await tx.user_inventory.createMany({ data: invRows.map(strip) as never, skipDuplicates: true });
       await tx.provably_fair_results.createMany({ data: pfRows.map(strip) as never, skipDuplicates: true });
       const bNow = await tx.balances.findUnique({ where: { user_id: wUser } });
-      await tx.balances.updateMany({ where: { user_id: wUser }, data: { available_balance: Number(bNow!.available_balance) + reduction } });
+      await tx.balances.updateMany({
+        where: { user_id: wUser },
+        data: {
+          available_balance: Number(bNow!.available_balance) + reduction,
+          total_wagered: Number(bNow!.total_wagered) + totalWageredReduction,
+          total_won: Number(bNow!.total_won) + totalWonReduction,
+        },
+      });
 
       check("after restore: 2 wager/payout legs back", (await tx.ledger_transactions.count({ where: { user_id: wUser, type: { in: WAGER_WIPE_LEDGER_TYPES as never } } })) === 2);
       check("after restore: 1 won pack inventory back", (await tx.user_inventory.count({ where: { user_id: wUser, source_type: { in: ["pack", "battle"] as never } } })) === 1);
       check("after restore: 1 provably_fair_results back", (await tx.provably_fair_results.findUnique({ where: { id: pf.id } })) != null);
       check("after restore: balance back to 200", Number((await tx.balances.findUnique({ where: { user_id: wUser } }))!.available_balance) === 200);
+      {
+        const bRes = (await tx.balances.findUnique({ where: { user_id: wUser } }))!;
+        check("after restore: total_wagered back to 1000", Number(bRes.total_wagered) === 1000);
+        check("after restore: total_won back to 1000", Number(bRes.total_won) === 1000);
+      }
 
       throw new Error(ROLLBACK);
     });

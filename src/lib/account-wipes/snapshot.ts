@@ -146,6 +146,31 @@ export type DepositsWipeSnapshot = {
  *                           (wager) legs are NOT restored to the balance — they
  *                           moved it DOWN and deleting them must not re-add the
  *                           wagered money (BALANCE RULE — never inflate).
+ *   - `totalWageredReduction` — the EXACT amount subtracted from the lifetime
+ *                           `balances.total_wagered` counter = Σ deleted
+ *                           wager-leg magnitudes, clamped so the counter never
+ *                           went below 0. Restore re-adds EXACTLY this.
+ *   - `totalWonReduction` — the EXACT amount subtracted from the lifetime
+ *                           `balances.total_won` counter = Σ deleted payout-leg
+ *                           magnitudes + Σ deleted won-inventory
+ *                           `value_at_obtained`, clamped so the counter never
+ *                           went below 0. Restore re-adds EXACTLY this.
+ *
+ * COUNTER NOTE (the `total_wagered` / `total_won` decrement is an
+ * APPROXIMATION of the production composition, mandated by the owner):
+ * `balances.total_wagered` / `total_won` are lifetime counters MAINTAINED BY
+ * THE PRODUCTION SITE (this admin panel only reads them — they back the
+ * /users/[id] Total Wagered / Total Won / Wager Loss tiles AND the cost-
+ * breakdown "Who drove the gaming margin" contributors). The exact rows the
+ * site increments each counter by are NOT derivable from this codebase, so
+ * the wipe decrements by what it DELETED: `total_wagered` by the wager
+ * (debit) legs' summed magnitude, and `total_won` by the payout (credit)
+ * legs' summed magnitude PLUS the won pack/battle inventory `value_at_obtained`
+ * (the gaming-payout legs that DON'T move the balance). Both are clamped ≥0
+ * (the stored reduction is the clamped amount actually subtracted, so wipe and
+ * restore are symmetric even when a counter held less than the deleted sum).
+ * A full wager wipe removes effectively all of a user's gameplay, so both
+ * counters land at ~0 — which is the goal (the user drops off the contributors).
  *
  * BALANCE RULE detail (mirrors the adjustments wipe): a payout leg (battle_refund
  * / battle_excess_to_voucher / upgrader_payout) is a CREDIT — it raised the
@@ -163,6 +188,10 @@ export type WagerWipeSnapshot = {
   upgraderGameRows: Array<Record<string, unknown>>;
   /** Exact amount removed from available_balance (decimal string; ≥ 0). */
   balanceReduction: string;
+  /** Exact amount subtracted from balances.total_wagered (clamped ≥0; decimal string). */
+  totalWageredReduction: string;
+  /** Exact amount subtracted from balances.total_won (clamped ≥0; decimal string). */
+  totalWonReduction: string;
 };
 
 export type AccountWipeSnapshot =

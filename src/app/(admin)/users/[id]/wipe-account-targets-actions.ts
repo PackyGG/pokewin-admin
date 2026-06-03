@@ -1060,10 +1060,13 @@ const restoreSchema = z.object({
  *                 inventory rows, their provably_fair_results (AFTER the
  *                 inventory — PF FK-references it), and the upgrader_games rows
  *                 (raw SQL); re-add EXACTLY the recorded balance reduction
- *                 (the payout clawback) to available_balance. Wager (debit)
- *                 legs are NOT re-subtracted (they were deleted without giving
- *                 the stake back; re-inserting the row + not touching the
- *                 balance is the symmetric reverse).
+ *                 (the payout clawback) to available_balance AND the recorded
+ *                 lifetime-counter reductions to balances.total_wagered /
+ *                 total_won (so the user re-appears in the cost-breakdown
+ *                 contributors). Wager (debit) legs are NOT re-subtracted from
+ *                 the balance (they were deleted without giving the stake back;
+ *                 re-inserting the row + not touching the balance is the
+ *                 symmetric reverse).
  *
  * Idempotent-guarded: a record already marked restored_at cannot be restored
  * again (double-credit / double-insert). Balance/vault/deposit/wager counter
@@ -1239,6 +1242,14 @@ export async function restoreAccountWipe(
       const pfForInsert = snapshot.provablyFairRows.map(stripUndef);
       const upgraderForInsert = snapshot.upgraderGameRows.map(stripUndef);
       const addBackBalance = toNumber(snapshot.balanceReduction);
+      // The EXACT clamped lifetime-counter reductions the wipe subtracted
+      // (Σ wager-leg magnitudes / Σ payout-leg + won-inventory value). Re-added
+      // additively to the LIVE counters so a restore fully reverses the drop.
+      // Back-compat: pre-this-change snapshots lack these keys → toNumber()
+      // yields 0, so an older wager wipe restores exactly as before (no counter
+      // re-add — it didn't decrement them either).
+      const addBackTotalWagered = toNumber(snapshot.totalWageredReduction);
+      const addBackTotalWon = toNumber(snapshot.totalWonReduction);
 
       await db.$transaction(async (tx) => {
         // (1) Ledger legs back first (skipDuplicates → retry-safe). Their
@@ -1288,14 +1299,23 @@ export async function restoreAccountWipe(
             }
           }
         }
-        // (5) Re-add EXACTLY the recorded balance clawback (payout legs only).
-        if (addBackBalance > 0) {
+        // (5) Re-add EXACTLY the recorded reductions, additively to the LIVE
+        // values, under one optimistic version lock:
+        //   • available_balance += the payout clawback (payout legs only).
+        //   • total_wagered     += the wager-leg reduction.
+        //   • total_won         += the payout-leg + won-inventory reduction.
+        // Fired when ANY is > 0 (a pure-wager wipe re-adds total_wagered with no
+        // balance change). All re-adds are additive to whatever the value is now,
+        // so the restore is correct even if the user kept playing after the wipe.
+        if (addBackBalance > 0 || addBackTotalWagered > 0 || addBackTotalWon > 0) {
           const b = await tx.balances.findUnique({ where: { user_id: snapshot.userId } });
           if (!b) throw new Error("User balances not found");
           const updated = await tx.balances.updateMany({
             where: { user_id: snapshot.userId, version: b.version },
             data: {
               available_balance: toNumber(b.available_balance) + addBackBalance,
+              total_wagered: toNumber(b.total_wagered) + addBackTotalWagered,
+              total_won: toNumber(b.total_won) + addBackTotalWon,
               version: { increment: 1 },
             },
           });
