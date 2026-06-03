@@ -247,7 +247,20 @@ export function CreateCardForm({
 
   // OnePiece-specific fields. Empty strings keep the inputs controlled
   // without forcing a default value the operator didn't pick.
-  const [cost, setCost] = useState("");
+  //
+  // `opLife` is OnePiece's "Life" stat. There is no dedicated `life`
+  // column on the cards table (see prisma/schema.prisma — only hp / cost
+  // / power exist), so Life persists into the existing `hp` Int column.
+  // Pokemon still write their own `hp` from the `hp` state above; the two
+  // never overlap because the variant branch picks exactly one.
+  //
+  // `power` is a free-typed input (matches the requested "string" field
+  // UX) but the `cards.power` column is `Int?`, so it's parsed to an int
+  // on submit. Non-numeric values would need a schema migration.
+  //
+  // `cost` was removed from the OnePiece create form per product request —
+  // the column stays in the DB but new OnePiece cards leave it null.
+  const [opLife, setOpLife] = useState("");
   const [power, setPower] = useState("");
   const [opRarity, setOpRarity] = useState<string>("C");
   const [opType, setOpType] = useState<string>("Character");
@@ -293,7 +306,7 @@ export function CreateCardForm({
     setPokemonRarity("Common");
     setPokemonType("card");
 
-    setCost("");
+    setOpLife("");
     setPower("");
     setOpRarity("C");
     setOpType("Character");
@@ -336,8 +349,12 @@ export function CreateCardForm({
         } else {
           payloadRarity = opRarity;
           payloadType = opType;
-          payloadHp = 0;
-          payloadCost = cost.trim() === "" ? null : parseInt(cost);
+          // OnePiece "Life" persists into the `hp` column (no dedicated
+          // `life` column exists). Cost is intentionally not written for
+          // OnePiece cards anymore (field removed); leave it null. Power
+          // is a free-typed field parsed to the `power` Int column.
+          payloadHp = parseInt(opLife) || 0;
+          payloadCost = null;
           payloadPower = power.trim() === "" ? null : parseInt(power);
         }
 
@@ -553,14 +570,13 @@ export function CreateCardForm({
                   </Select>
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="create-card-cost">Cost</Label>
+                  <Label htmlFor="create-card-life">Life</Label>
                   <Input
-                    id="create-card-cost"
+                    id="create-card-life"
                     type="number"
-                    value={cost}
-                    onChange={(e) => setCost(e.target.value)}
+                    value={opLife}
+                    onChange={(e) => setOpLife(e.target.value)}
                     min="0"
-                    max="20"
                     placeholder="Optional"
                   />
                 </div>
@@ -568,11 +584,8 @@ export function CreateCardForm({
                   <Label htmlFor="create-card-power">Power</Label>
                   <Input
                     id="create-card-power"
-                    type="number"
                     value={power}
                     onChange={(e) => setPower(e.target.value)}
-                    min="0"
-                    max="20000"
                     placeholder="Optional"
                   />
                 </div>

@@ -38,6 +38,7 @@ import { EditCardButton } from "./edit-card-button";
 import { DeleteCardButton } from "./delete-card-button";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { InlineError } from "@/components/entity-surface";
+import { isOnePieceSetName } from "../_constants/onepiece";
 
 export const metadata = { title: "Card Detail" };
 
@@ -98,12 +99,13 @@ export default async function CardDetailPage({
   }
   if (!data) notFound();
 
-  // OnePiece game-design stats. `cost` / `power` are only meaningful for
-  // OnePiece cards (Pokemon store them null) and may be absent on a DB
-  // that hasn't run the cost/power migration — getCardDetail returns null
-  // in both cases. Render the Game Stats column only when at least one is
-  // present so Pokemon cards don't show two empty rows.
-  const hasGameStats = data.cost != null || data.power != null;
+  // Game-stat presentation forks on the card's set. OnePiece cards use a
+  // "Life" stat (stored in the `hp` column — there is no dedicated `life`
+  // column) and a "Power" stat; they have no Pokemon-style "HP" and we no
+  // longer surface "Cost" for them. Pokemon cards keep their "HP" tile and
+  // never show the OnePiece stats. `setName` is the single source of truth
+  // (same rule the create dialog uses via isOnePieceSetName).
+  const isOnePiece = isOnePieceSetName(data.setName);
   const dash = "—";
 
   return (
@@ -149,19 +151,15 @@ export default async function CardDetailPage({
           icon={DollarSign}
           accent="emerald"
         />
-        <KpiTile
-          label="HP"
-          value={data.hp != null ? String(data.hp) : dash}
-          icon={Heart}
-          accent="rose"
-        />
-        {hasGameStats && (
+        {isOnePiece ? (
           <>
+            {/* OnePiece: Life (sourced from the `hp` column) + Power. No
+                Pokemon-style "HP" tile and no "Cost" tile. */}
             <KpiTile
-              label="Cost"
-              value={data.cost != null ? String(data.cost) : dash}
-              icon={Coins}
-              accent="amber"
+              label="Life"
+              value={data.hp != null ? String(data.hp) : dash}
+              icon={Heart}
+              accent="rose"
             />
             <KpiTile
               label="Power"
@@ -170,6 +168,13 @@ export default async function CardDetailPage({
               accent="purple"
             />
           </>
+        ) : (
+          <KpiTile
+            label="HP"
+            value={data.hp != null ? String(data.hp) : dash}
+            icon={Heart}
+            accent="rose"
+          />
         )}
         <KpiTile
           label="In Packs"
@@ -227,18 +232,25 @@ export default async function CardDetailPage({
               </StatPanel>
 
               <StatPanel title="Game stats" icon={Gauge} accent="rose">
-                <PanelRow
-                  label="HP"
-                  value={data.hp != null ? formatNumber(data.hp) : dash}
-                />
-                <PanelRow
-                  label="Cost"
-                  value={data.cost != null ? formatNumber(data.cost) : dash}
-                />
-                <PanelRow
-                  label="Power"
-                  value={data.power != null ? formatNumber(data.power) : dash}
-                />
+                {isOnePiece ? (
+                  <>
+                    {/* OnePiece stats: Life (from the `hp` column) + Power.
+                        No "HP" or "Cost" rows for OnePiece cards. */}
+                    <PanelRow
+                      label="Life"
+                      value={data.hp != null ? formatNumber(data.hp) : dash}
+                    />
+                    <PanelRow
+                      label="Power"
+                      value={data.power != null ? formatNumber(data.power) : dash}
+                    />
+                  </>
+                ) : (
+                  <PanelRow
+                    label="HP"
+                    value={data.hp != null ? formatNumber(data.hp) : dash}
+                  />
+                )}
               </StatPanel>
 
               <StatPanel title="Economy" icon={Coins} accent="emerald">
