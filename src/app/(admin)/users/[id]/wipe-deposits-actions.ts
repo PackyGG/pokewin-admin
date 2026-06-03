@@ -7,11 +7,16 @@ import { adminDb } from "@/lib/admin-db";
 import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { require2FA } from "@/lib/require-2fa";
-import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { toNumber } from "@/lib/utils/decimal";
 import type { Prisma } from "@/generated/prisma/client";
 import { ensureAccountWipesSchema } from "@/lib/account-wipes/ensure-schema";
 import { invalidateMetricCaches } from "@/lib/account-wipes/invalidate-metric-caches";
+import {
+  WIPE_STATUS,
+  finalizeWipeSuccess,
+  markWipeFailed,
+  resolveRequestIp,
+} from "@/lib/account-wipes/finalize";
 import {
   accountWipeSnapshotToJsonValue,
   type AccountWipeSnapshot,
@@ -294,6 +299,9 @@ export async function wipeDeposits(data: {
         wiped_by: session.userId,
         amount: totalAmount,
         item_count: rows.length,
+        // 'pending' until the destructive main-DB tx commits AND the
+        // status→completed + audit row are written atomically below.
+        status: WIPE_STATUS.PENDING,
         snapshot: accountWipeSnapshotToJsonValue(snapshot) as Prisma.InputJsonValue,
       },
       select: { id: true },
@@ -347,14 +355,11 @@ export async function wipeDeposits(data: {
       }
     });
   } catch (err) {
-    await adminDb.admin_account_wipes.delete({ where: { id: wipeId } }).catch((cleanupErr) => {
-      console.error(
-        "[wipeDeposits] CRITICAL: main-DB wipe failed AND orphan snapshot cleanup failed — snapshot",
-        wipeId,
-        "is orphaned (deposits not deleted; do NOT restore it):",
-        cleanupErr,
-      );
-    });
+    // Main-DB tx failed → nothing deleted. Mark the snapshot 'failed' (a
+    // terminal, detectable state restore refuses) rather than deleting it, so
+    // it can't surface as a phantom restorable AND there's a reconcilable
+    // record that this delete did not happen.
+    await markWipeFailed("account", wipeId);
     const message = err instanceof Error ? err.message : "Unknown error";
     if (message.startsWith("DEP_GUARD:")) {
       return { success: false, error: message.replace(/^DEP_GUARD:\s*/, "") };
@@ -364,21 +369,38 @@ export async function wipeDeposits(data: {
     return { success: false, error: "Wipe failed — please try again (nothing deleted)" };
   }
 
-  await createAdminAuditEvent({
-    adminUserId: session.userId,
-    eventType: "user_deposits_wiped",
-    targetUserId: parsed.userId,
-    metadata: {
-      wipeId,
-      deletedCount: rows.length,
-      totalAmount,
-      totalDepositedBefore,
-      counterReduced: counterReduction,
-      counterClamped,
-      recoverable: true,
-      note: "deposit ledger rows deleted + balances.total_deposited reduced by the clamped sum (restore re-inserts rows + re-adds the counter). available_balance intentionally NOT touched. balances.last_transaction_id nulled if it pointed at a wiped row (self-heals, not restored). Remaining ledger rows' balance_before/after not rewritten (same fidelity tradeoff as the adjustments wipe).",
+  // Destructive delete COMMITTED → atomically (one admin-DB tx) flip the
+  // snapshot status → 'completed' AND write the audit event, so a committed
+  // wipe can never be left without an audit row. If finalize fails after all
+  // retries the snapshot is left 'pending' (detectable) + logged CRITICAL.
+  const finalized = await finalizeWipeSuccess({
+    store: "account",
+    wipeId,
+    audit: {
+      adminUserId: session.userId,
+      eventType: "user_deposits_wiped",
+      targetUserId: parsed.userId,
+      ip: await resolveRequestIp(),
+      metadata: {
+        wipeId,
+        deletedCount: rows.length,
+        totalAmount,
+        totalDepositedBefore,
+        counterReduced: counterReduction,
+        counterClamped,
+        recoverable: true,
+        note: "deposit ledger rows deleted + balances.total_deposited reduced by the clamped sum (restore re-inserts rows + re-adds the counter). available_balance intentionally NOT touched. balances.last_transaction_id nulled if it pointed at a wiped row (self-heals, not restored). Remaining ledger rows' balance_before/after not rewritten (same fidelity tradeoff as the adjustments wipe).",
+      },
     },
   });
+  if (!finalized.ok) {
+    invalidateMetricCaches(parsed.userId);
+    return {
+      success: false,
+      error:
+        "Deposits were wiped (recoverable), but the audit record could not be finalized — the wipe is logged as 'pending' for reconciliation. Please notify an administrator.",
+    };
+  }
 
   // Bust the user page + global metric caches — deposits feed the P&L
   // `deposits` term and dashboard SUM(total_deposited); restore reverses it.

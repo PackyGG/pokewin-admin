@@ -22,6 +22,13 @@ import {
 } from "@/lib/account-wipes/protected";
 import { getCreatorProtectionStatus } from "@/lib/account-wipes/creator-protection";
 import { invalidateMetricCaches } from "@/lib/account-wipes/invalidate-metric-caches";
+import {
+  WIPE_STATUS,
+  finalizeWipeSuccess,
+  markWipeFailed,
+  resolveRequestIp,
+  type WipeStatus,
+} from "@/lib/account-wipes/finalize";
 
 // ---------------------------------------------------------------------------
 // "Wipe content balance adjustments" — remove ONLY admin balance-adjustment
@@ -112,6 +119,14 @@ export type RecoverableWipe = {
   balanceBefore: number;
   balanceAfter: number;
   adjustmentCount: number;
+  /**
+   * Lifecycle status. 'completed' is the normal restorable state (and the
+   * back-compat value for rows predating the column). 'pending' = the
+   * committed wipe's audit-finalize is incomplete (restore refused until
+   * reconciled). 'failed' batches (the delete never happened) are filtered
+   * OUT of this listing.
+   */
+  status: WipeStatus;
   restoredAt: string | null;
   restoredByLabel: string | null;
 };
@@ -232,7 +247,11 @@ export async function listBalanceAdjustmentWipes(
   await ensureBalanceAdjustmentWipesSchema();
 
   const wipes = await adminDb.admin_balance_adjustment_wipes.findMany({
-    where: { user_id: parsed.data },
+    // Exclude 'failed' batches: those deletes never happened (the main-DB tx
+    // rolled back), so they are not real wipe history and must never appear
+    // as restorable. 'completed' (incl. back-compat legacy rows) + 'pending'
+    // (committed but audit-unfinalized) are shown.
+    where: { user_id: parsed.data, status: { not: WIPE_STATUS.FAILED } },
     orderBy: { wiped_at: "desc" },
     take: 50,
   });
@@ -262,6 +281,7 @@ export async function listBalanceAdjustmentWipes(
     balanceBefore: toNumber(w.balance_before),
     balanceAfter: toNumber(w.balance_after),
     adjustmentCount: w.adjustment_count,
+    status: (w.status as WipeStatus),
     restoredAt: w.restored_at?.toISOString() ?? null,
     restoredByLabel: w.restored_by
       ? labels.get(w.restored_by) ?? w.restored_by
@@ -500,6 +520,9 @@ export async function wipeBalanceAdjustments(data: {
         balance_before: balanceBefore,
         balance_after: balanceAfter,
         adjustment_count: guardedRows.length,
+        // 'pending' until the destructive main-DB tx commits AND the
+        // status→completed + audit row are written atomically below.
+        status: WIPE_STATUS.PENDING,
         snapshot: wipeSnapshotToJsonValue(snapshot) as Prisma.InputJsonValue,
       },
       select: { id: true },
@@ -596,22 +619,12 @@ export async function wipeBalanceAdjustments(data: {
     });
   } catch (err) {
     // STEP 6 — main-DB tx failed: the whole tx rolled back, so NOTHING was
-    // deleted and the balance is unchanged. Delete the now-orphan snapshot
-    // row so it can't surface as a phantom recoverable batch (its ledger
-    // rows still exist, so a later "restore" of it would re-credit money
-    // that was never removed). Best-effort: if this cleanup itself fails we
-    // log loudly with the id so it can be removed by hand — it must NOT be
-    // restored.
-    try {
-      await adminDb.admin_balance_adjustment_wipes.delete({ where: { id: wipeId } });
-    } catch (cleanupErr) {
-      console.error(
-        "[wipeBalanceAdjustments] CRITICAL: main-DB wipe failed AND orphan snapshot cleanup failed — snapshot",
-        wipeId,
-        "is orphaned (its ledger rows still exist; do NOT restore it):",
-        cleanupErr,
-      );
-    }
+    // deleted and the balance is unchanged. Mark the snapshot 'failed' (a
+    // terminal, detectable state restore refuses) instead of deleting it, so
+    // it can't surface as a phantom recoverable batch (its ledger rows still
+    // exist, so a later "restore" would re-credit money that was never
+    // removed) AND there's a reconcilable record the delete did not happen.
+    await markWipeFailed("adjustments", wipeId);
 
     const message = err instanceof Error ? err.message : "Unknown error";
     if (
@@ -625,24 +638,42 @@ export async function wipeBalanceAdjustments(data: {
     return { success: false, error: "Wipe failed — please try again (nothing was deleted)" };
   }
 
-  // STEP 7 — Audit the successful, now-permanent wipe.
-  await createAdminAuditEvent({
-    adminUserId: session.userId,
-    eventType: "balance_adjustments_wiped",
-    targetUserId: parsed.userId,
-    metadata: {
-      wipeId,
-      deletedIds: ids,
-      deletedCount: guardedRows.length,
-      totalRemoved,
-      balanceBefore,
-      balanceAfter,
-      balanceClamped: reducedBalance < 0,
-      recoverable: true,
-      caveat:
-        "hard-delete: remaining ledger rows' balance_before/after are not rewritten; current balance corrected",
+  // STEP 7 — the delete + balance reduction COMMITTED. Atomically (one
+  // admin-DB tx) flip the snapshot status → 'completed' AND write the audit
+  // event, so this now-permanent wipe can never be left without an audit row.
+  // If finalize fails after all retries the snapshot is left 'pending'
+  // (detectable) + logged CRITICAL; we surface that while keeping the wipe
+  // recoverable.
+  const finalized = await finalizeWipeSuccess({
+    store: "adjustments",
+    wipeId,
+    audit: {
+      adminUserId: session.userId,
+      eventType: "balance_adjustments_wiped",
+      targetUserId: parsed.userId,
+      ip: await resolveRequestIp(),
+      metadata: {
+        wipeId,
+        deletedIds: ids,
+        deletedCount: guardedRows.length,
+        totalRemoved,
+        balanceBefore,
+        balanceAfter,
+        balanceClamped: reducedBalance < 0,
+        recoverable: true,
+        caveat:
+          "hard-delete: remaining ledger rows' balance_before/after are not rewritten; current balance corrected",
+      },
     },
   });
+  if (!finalized.ok) {
+    invalidateMetricCaches(parsed.userId);
+    return {
+      success: false,
+      error:
+        "Adjustments were wiped (recoverable), but the audit record could not be finalized — the wipe is logged as 'pending' for reconciliation. Please notify an administrator.",
+    };
+  }
 
   // Refresh the user page AND bust the global metric caches. Deleting the
   // admin_balance_adjustment rows + reducing available_balance changes the
@@ -695,6 +726,20 @@ export async function restoreBalanceAdjustmentWipe(
   if (!wipe) return { success: false, error: "Wipe batch not found" };
   if (wipe.restored_at) {
     return { success: false, error: "This wipe has already been restored" };
+  }
+  // STATUS GUARD — only a 'completed' batch is safely restorable. A 'failed'
+  // row's delete never happened (its ledger rows still exist, so restoring
+  // would re-credit money that was never removed); a 'pending' row's audit-
+  // finalize is incomplete and needs reconciliation first. 'completed' is the
+  // back-compat value for legacy rows, so existing batches restore as before.
+  if (wipe.status !== WIPE_STATUS.COMPLETED) {
+    return {
+      success: false,
+      error:
+        wipe.status === WIPE_STATUS.FAILED
+          ? "This wipe did not complete (the deletion never happened) and cannot be restored."
+          : "This wipe is still being finalized (pending) and cannot be restored yet — please reconcile it first.",
+    };
   }
 
   const snapshot = wipe.snapshot as unknown as BalanceAdjustmentWipeSnapshot;

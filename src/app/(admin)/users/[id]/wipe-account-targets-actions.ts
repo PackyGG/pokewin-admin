@@ -13,6 +13,13 @@ import type { Prisma } from "@/generated/prisma/client";
 import { ensureAccountWipesSchema } from "@/lib/account-wipes/ensure-schema";
 import { invalidateMetricCaches } from "@/lib/account-wipes/invalidate-metric-caches";
 import {
+  WIPE_STATUS,
+  finalizeWipeSuccess,
+  markWipeFailed,
+  resolveRequestIp,
+  type WipeStatus,
+} from "@/lib/account-wipes/finalize";
+import {
   accountWipeSnapshotToJsonValue,
   type AccountWipeType,
   type AccountWipeSnapshot,
@@ -501,6 +508,9 @@ export async function wipeBalance(data: {
         wiped_by: session.userId,
         amount: balanceBefore,
         item_count: 0,
+        // 'pending' until the destructive main-DB tx commits AND the
+        // status→completed + audit row are written atomically below.
+        status: WIPE_STATUS.PENDING,
         snapshot: accountWipeSnapshotToJsonValue(snapshot) as Prisma.InputJsonValue,
       },
       select: { id: true },
@@ -526,36 +536,49 @@ export async function wipeBalance(data: {
       }
     });
   } catch (err) {
-    // Main-DB tx failed → nothing changed. Delete the orphan snapshot so it
-    // can't surface as a phantom restorable (restoring it would credit money
-    // that was never removed). Best-effort; log loudly if cleanup fails.
-    await adminDb.admin_account_wipes.delete({ where: { id: wipeId } }).catch((cleanupErr) => {
-      console.error(
-        "[wipeBalance] CRITICAL: main-DB wipe failed AND orphan snapshot cleanup failed — snapshot",
-        wipeId,
-        "is orphaned (balance never zeroed; do NOT restore it):",
-        cleanupErr,
-      );
-    });
+    // Main-DB tx failed → nothing changed. Mark the snapshot 'failed' (a
+    // terminal, detectable state restore refuses) instead of deleting it, so
+    // it can't surface as a phantom restorable (restoring it would credit
+    // money that was never removed) AND there's a reconcilable record that
+    // this delete did not happen.
+    await markWipeFailed("account", wipeId);
     const message = err instanceof Error ? err.message : "Unknown error";
     if (message.includes("concurrently")) return { success: false, error: message };
     console.error("[wipeBalance] zero-balance transaction failed:", err);
     return { success: false, error: "Wipe failed — please try again (nothing changed)" };
   }
 
-  await createAdminAuditEvent({
-    adminUserId: session.userId,
-    eventType: "user_balance_wiped",
-    targetUserId: parsed.userId,
-    metadata: {
-      wipeId,
-      amountRemoved: balanceBefore,
-      balanceBefore,
-      balanceAfter: 0,
-      recoverable: true,
-      note: "snapshot+reset (no ledger row); remaining ledger balance_before/after not rewritten",
+  // The destructive delete has COMMITTED. Atomically (one admin-DB tx) flip
+  // the snapshot status → 'completed' AND write the audit event, so a
+  // committed wipe can never be left without an audit row. If finalize fails
+  // after all retries the snapshot is left 'pending' (detectable) + logged
+  // CRITICAL; we surface that to the admin while keeping the wipe recoverable.
+  const finalized = await finalizeWipeSuccess({
+    store: "account",
+    wipeId,
+    audit: {
+      adminUserId: session.userId,
+      eventType: "user_balance_wiped",
+      targetUserId: parsed.userId,
+      ip: await resolveRequestIp(),
+      metadata: {
+        wipeId,
+        amountRemoved: balanceBefore,
+        balanceBefore,
+        balanceAfter: 0,
+        recoverable: true,
+        note: "snapshot+reset (no ledger row); remaining ledger balance_before/after not rewritten",
+      },
     },
   });
+  if (!finalized.ok) {
+    invalidateMetricCaches(parsed.userId);
+    return {
+      success: false,
+      error:
+        "Balance was wiped (recoverable), but the audit record could not be finalized — the wipe is logged as 'pending' for reconciliation. Please notify an administrator.",
+    };
+  }
 
   // Refresh the user page AND bust the global metric caches so the now-zeroed
   // balance drops out of the cached dashboard / P&L / analytics figures
@@ -652,6 +675,9 @@ export async function wipeVault(data: {
         wiped_by: session.userId,
         amount: lockedBefore,
         item_count: 0,
+        // 'pending' until the destructive main-DB tx commits AND the
+        // status→completed + audit row are written atomically below.
+        status: WIPE_STATUS.PENDING,
         snapshot: accountWipeSnapshotToJsonValue(snapshot) as Prisma.InputJsonValue,
       },
       select: { id: true },
@@ -676,33 +702,43 @@ export async function wipeVault(data: {
       }
     });
   } catch (err) {
-    await adminDb.admin_account_wipes.delete({ where: { id: wipeId } }).catch((cleanupErr) => {
-      console.error(
-        "[wipeVault] CRITICAL: main-DB wipe failed AND orphan snapshot cleanup failed — snapshot",
-        wipeId,
-        "is orphaned (vault never zeroed; do NOT restore it):",
-        cleanupErr,
-      );
-    });
+    // Main-DB tx failed → nothing changed. Mark 'failed' (terminal, restore
+    // refuses it) rather than deleting the snapshot, for a reconcilable record.
+    await markWipeFailed("account", wipeId);
     const message = err instanceof Error ? err.message : "Unknown error";
     if (message.includes("concurrently")) return { success: false, error: message };
     console.error("[wipeVault] zero-vault transaction failed:", err);
     return { success: false, error: "Wipe failed — please try again (nothing changed)" };
   }
 
-  await createAdminAuditEvent({
-    adminUserId: session.userId,
-    eventType: "user_vault_wiped",
-    targetUserId: parsed.userId,
-    metadata: {
-      wipeId,
-      amountRemoved: lockedBefore,
-      lockedBefore,
-      unlockAtBefore,
-      recoverable: true,
-      note: "snapshot+reset (no ledger row); locked_balance zeroed + unlock_at cleared",
+  // Destructive delete COMMITTED → atomically flip status→completed + write
+  // the audit event (one admin-DB tx). See wipeBalance for the full rationale.
+  const finalized = await finalizeWipeSuccess({
+    store: "account",
+    wipeId,
+    audit: {
+      adminUserId: session.userId,
+      eventType: "user_vault_wiped",
+      targetUserId: parsed.userId,
+      ip: await resolveRequestIp(),
+      metadata: {
+        wipeId,
+        amountRemoved: lockedBefore,
+        lockedBefore,
+        unlockAtBefore,
+        recoverable: true,
+        note: "snapshot+reset (no ledger row); locked_balance zeroed + unlock_at cleared",
+      },
     },
   });
+  if (!finalized.ok) {
+    invalidateMetricCaches(parsed.userId);
+    return {
+      success: false,
+      error:
+        "Vault was wiped (recoverable), but the audit record could not be finalized — the wipe is logged as 'pending' for reconciliation. Please notify an administrator.",
+    };
+  }
 
   // Refresh the user page AND bust the global metric caches so the zeroed
   // vault (locked_balance) drops out of the cached dashboard / P&L / analytics
@@ -838,6 +874,9 @@ export async function wipeInventory(data: {
         wiped_by: session.userId,
         amount: 0,
         item_count: rows.length,
+        // 'pending' until the destructive main-DB tx commits AND the
+        // status→completed + audit row are written atomically below.
+        status: WIPE_STATUS.PENDING,
         snapshot: accountWipeSnapshotToJsonValue(snapshot) as Prisma.InputJsonValue,
       },
       select: { id: true },
@@ -876,14 +915,9 @@ export async function wipeInventory(data: {
       }
     });
   } catch (err) {
-    await adminDb.admin_account_wipes.delete({ where: { id: wipeId } }).catch((cleanupErr) => {
-      console.error(
-        "[wipeInventory] CRITICAL: main-DB wipe failed AND orphan snapshot cleanup failed — snapshot",
-        wipeId,
-        "is orphaned (inventory not deleted; do NOT restore it):",
-        cleanupErr,
-      );
-    });
+    // Main-DB tx failed → nothing deleted. Mark 'failed' (terminal, restore
+    // refuses it) rather than deleting the snapshot, for a reconcilable record.
+    await markWipeFailed("account", wipeId);
     const message = err instanceof Error ? err.message : "Unknown error";
     if (message.startsWith("INV_GUARD:")) {
       return { success: false, error: message.replace(/^INV_GUARD:\s*/, "") };
@@ -892,20 +926,35 @@ export async function wipeInventory(data: {
     return { success: false, error: "Wipe failed — please try again (nothing deleted)" };
   }
 
-  await createAdminAuditEvent({
-    adminUserId: session.userId,
-    eventType: "user_inventory_wiped",
-    targetUserId: parsed.userId,
-    metadata: {
-      wipeId,
-      deletedCount: rows.length,
-      totalValue,
-      countBySource,
-      recoverable: true,
-      heldOnly: true,
-      note: "CURRENTLY-HELD user_inventory rows deleted (sold_at null + exchanged_at null + withdrawal_locked_at null — matches the Balances 'Inventory' value/count; sold/exchanged/withdrawal-locked history left untouched). Their provably_fair_results cascade-delete and are NOT re-created on restore — historical PF leaf data, same tradeoff as deleted-user restore; value_at_obtained feeds GGR inv-leg (restorable). Inventory has no creator-deal source — deal payouts are vouchers, not inventory, and are untouched.",
+  // Destructive delete COMMITTED → atomically flip status→completed + write
+  // the audit event (one admin-DB tx). See wipeBalance for the full rationale.
+  const finalized = await finalizeWipeSuccess({
+    store: "account",
+    wipeId,
+    audit: {
+      adminUserId: session.userId,
+      eventType: "user_inventory_wiped",
+      targetUserId: parsed.userId,
+      ip: await resolveRequestIp(),
+      metadata: {
+        wipeId,
+        deletedCount: rows.length,
+        totalValue,
+        countBySource,
+        recoverable: true,
+        heldOnly: true,
+        note: "CURRENTLY-HELD user_inventory rows deleted (sold_at null + exchanged_at null + withdrawal_locked_at null — matches the Balances 'Inventory' value/count; sold/exchanged/withdrawal-locked history left untouched). Their provably_fair_results cascade-delete and are NOT re-created on restore — historical PF leaf data, same tradeoff as deleted-user restore; value_at_obtained feeds GGR inv-leg (restorable). Inventory has no creator-deal source — deal payouts are vouchers, not inventory, and are untouched.",
+      },
     },
   });
+  if (!finalized.ok) {
+    invalidateMetricCaches(parsed.userId);
+    return {
+      success: false,
+      error:
+        "Inventory was wiped (recoverable), but the audit record could not be finalized — the wipe is logged as 'pending' for reconciliation. Please notify an administrator.",
+    };
+  }
 
   // Refresh the user page AND bust the global metric caches. The deleted
   // rows' `value_at_obtained` feeds the canonical GGR inventory-payout leg
@@ -930,6 +979,14 @@ export type AccountWipeRecord = {
   amount: number;
   /** Rows removed (inventory). 0 for balance/vault. */
   itemCount: number;
+  /**
+   * Lifecycle status of the wipe snapshot. 'completed' is the normal, fully-
+   * finalized + restorable state (and the back-compat value for rows that
+   * predate the column). 'pending' means the committed wipe's audit-finalize
+   * did not complete (restore is refused until reconciled). 'failed' rows
+   * (the delete never happened) are filtered OUT of this listing entirely.
+   */
+  status: WipeStatus;
   restoredAt: string | null;
   restoredByLabel: string | null;
 };
@@ -949,7 +1006,11 @@ export async function listAccountWipes(userId: string): Promise<AccountWipeRecor
   await ensureAccountWipesSchema();
 
   const wipes = await adminDb.admin_account_wipes.findMany({
-    where: { user_id: parsed.data },
+    // Exclude 'failed' rows: those are deletes that DID NOT happen (the
+    // main-DB tx rolled back), so they are not real wipe history and must
+    // never appear as a restorable entry. 'completed' (incl. back-compat
+    // legacy rows) + 'pending' (committed but audit-unfinalized) are shown.
+    where: { user_id: parsed.data, status: { not: WIPE_STATUS.FAILED } },
     orderBy: { wiped_at: "desc" },
     take: 50,
   });
@@ -975,6 +1036,7 @@ export async function listAccountWipes(userId: string): Promise<AccountWipeRecor
     wipedByLabel: labels.get(w.wiped_by) ?? w.wiped_by,
     amount: toNumber(w.amount),
     itemCount: w.item_count,
+    status: (w.status as WipeStatus),
     restoredAt: w.restored_at?.toISOString() ?? null,
     restoredByLabel: w.restored_by ? labels.get(w.restored_by) ?? w.restored_by : null,
   }));
@@ -1023,6 +1085,21 @@ export async function restoreAccountWipe(
   });
   if (!wipe) return { success: false, error: "Wipe record not found" };
   if (wipe.restored_at) return { success: false, error: "This wipe has already been restored" };
+  // STATUS GUARD — only a 'completed' wipe is safely restorable. A 'failed'
+  // row's delete never happened (restoring it would credit money/items that
+  // were never removed); a 'pending' row's audit-finalize is incomplete (the
+  // wipe itself committed, but it needs reconciliation before it's restored).
+  // 'completed' is also the back-compat value for legacy rows predating the
+  // column, so existing wipes restore exactly as before.
+  if (wipe.status !== WIPE_STATUS.COMPLETED) {
+    return {
+      success: false,
+      error:
+        wipe.status === WIPE_STATUS.FAILED
+          ? "This wipe did not complete (the deletion never happened) and cannot be restored."
+          : "This wipe is still being finalized (pending) and cannot be restored yet — please reconcile it first.",
+    };
+  }
 
   const snapshot = wipe.snapshot as unknown as AccountWipeSnapshot;
   if (!snapshot || !snapshot.type || !snapshot.userId) {
