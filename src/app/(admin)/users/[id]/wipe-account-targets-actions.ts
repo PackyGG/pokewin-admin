@@ -1030,7 +1030,11 @@ export async function listAccountWipes(userId: string): Promise<AccountWipeRecor
     : [];
   const labels = new Map(admins.map((a) => [a.id, a.display_username ?? a.username]));
 
-  return wipes.map((w) => ({
+  // Explicit element type: the `Promise<…[]>` return annotation + this
+  // `.map` form a circular inference TS otherwise resolves to `any` (the
+  // `for…of` above is outside the cycle and infers fine). Referencing the
+  // source array's element type breaks the cycle.
+  return wipes.map((w: (typeof wipes)[number]) => ({
     id: w.id,
     wipeType: (w.wipe_type as AccountWipeType),
     wipedAt: w.wiped_at.toISOString(),

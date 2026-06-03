@@ -288,7 +288,12 @@ export async function listBalanceAdjustmentWipes(
     admins.map((a) => [a.id, a.display_username ?? a.username]),
   );
 
-  return wipes.map((w) => ({
+  // Annotate the element type explicitly: the function's
+  // `Promise<RecoverableWipe[]>` return annotation + this `.map` form a
+  // circular inference TS otherwise breaks by falling back to `any` (the
+  // `for…of` above infers fine because it isn't in the cycle). Referencing
+  // the source array's element type breaks the cycle cleanly.
+  return wipes.map((w: (typeof wipes)[number]) => ({
     id: w.id,
     wipedAt: w.wiped_at.toISOString(),
     wipedByLabel: labels.get(w.wiped_by) ?? w.wiped_by,
