@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Trash2, X, Wallet } from "lucide-react";
+import { Spinner } from "@/components/ux";
 import { setAdminLimit, deleteAdminLimit } from "../limits-actions";
 import type { limit_period_type } from "@/generated/admin-prisma/client";
 
@@ -207,6 +208,7 @@ export function LimitRow({
           disabled={disabled || !value || parseFloat(value) <= 0}
           onClick={() => { onSet(value); setEditing(false); }}
         >
+          {disabled && <Spinner size={12} className="text-current" />}
           Save
         </Button>
         <Button

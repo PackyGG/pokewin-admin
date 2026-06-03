@@ -16,6 +16,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Spinner } from "@/components/ux";
 
 import { deleteChangelogEntry } from "./actions";
 
@@ -76,6 +77,7 @@ export function DeleteChangelogButton({
             disabled={pending}
             className="bg-rose-500 hover:bg-rose-600 focus:ring-rose-500"
           >
+            {pending && <Spinner size={14} className="text-current" />}
             {pending ? "Deleting…" : "Delete"}
           </AlertDialogAction>
         </AlertDialogFooter>

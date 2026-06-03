@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { LinkIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ux";
 import { searchMainSiteUsers, linkCreatorToMainUser } from "./actions";
 import type { AdminUserDetail } from "@/lib/queries/admin-users";
 
@@ -70,7 +71,12 @@ export function LinkMainUserCard({ detail }: { detail: AdminUserDetail }) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        {isSearching && <p className="text-sm text-muted-foreground">Searching...</p>}
+        {isSearching && (
+          <p className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Spinner size={14} />
+            Searching...
+          </p>
+        )}
         {results.length > 0 && (
           <div className="rounded-md border divide-y">
             {results.map((user) => (

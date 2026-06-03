@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { Spinner } from "@/components/ux";
 import {
   createCreatorWebhook,
   updateCreatorWebhook,
@@ -179,6 +180,7 @@ export function CreatorWebhooksCard({ webhooks }: { webhooks: Webhook[] }) {
             />
             <div className="flex gap-2">
               <Button size="sm" onClick={handleAdd} disabled={isPending}>
+                {isPending && <Spinner size={14} className="text-current" />}
                 {isPending ? "Creating..." : "Create"}
               </Button>
               <Button variant="ghost" size="sm" onClick={() => { setAdding(false); setNewUrl(""); }} disabled={isPending}>

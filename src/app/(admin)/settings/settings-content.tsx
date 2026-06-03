@@ -20,6 +20,7 @@ import { Pencil, Trash2, X, Check, ChevronDown, Globe, Timer, Plus } from "lucid
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SectionHeading } from "@/components/modern-panels";
 import { EmptyState } from "@/components/empty-state";
+import { Spinner } from "@/components/ux";
 
 type SettingsData = {
   vaultLockTimes: {
@@ -454,7 +455,11 @@ function VaultLockTimesCard({
             />
           </div>
           <Button onClick={handleAdd} disabled={isPending}>
-            <Plus className="size-4" />
+            {isPending && newLabel.trim() && newHours.trim() ? (
+              <Spinner size={16} className="text-current" />
+            ) : (
+              <Plus className="size-4" />
+            )}
             Add
           </Button>
         </div>

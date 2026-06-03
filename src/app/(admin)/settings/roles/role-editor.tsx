@@ -22,6 +22,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
+import { Spinner } from "@/components/ux";
 import { ALL_PERMISSION_KEYS } from "@/app/(admin)/settings/roles/permissions-utils";
 import { PermissionPicker } from "@/app/(admin)/admin-users/_components/permission-picker";
 import { updateRole, deleteRole, type RoleRow } from "./custom-roles-actions";
@@ -177,7 +178,11 @@ export function RoleEditor({ role }: { role: RoleRow }) {
             onClick={handleSave}
             disabled={!dirty || isPending || !name.trim()}
           >
-            <Save className="size-4" />
+            {isPending ? (
+              <Spinner size={16} className="text-current" />
+            ) : (
+              <Save className="size-4" />
+            )}
             {isPending ? "Saving..." : "Save changes"}
           </Button>
         </div>

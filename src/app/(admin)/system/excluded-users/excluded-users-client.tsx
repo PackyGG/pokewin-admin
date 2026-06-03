@@ -30,6 +30,7 @@ import {
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/empty-state";
+import { Spinner } from "@/components/ux";
 
 import type { ExcludedUserRow } from "@/lib/excluded-users/fetch";
 
@@ -129,7 +130,11 @@ export function ExcludedUsersClient({
             />
           </div>
           <Button onClick={handleAdd} disabled={isPending} size="sm">
-            <Plus className="size-4" />
+            {isPending ? (
+              <Spinner size={16} className="text-current" />
+            ) : (
+              <Plus className="size-4" />
+            )}
             {isPending ? "Adding…" : "Add"}
           </Button>
         </div>
@@ -291,6 +296,7 @@ function RemoveButton({
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
           <AlertDialogAction onClick={handleRemove} disabled={isPending}>
+            {isPending && <Spinner size={14} className="text-current" />}
             {isPending ? "Removing…" : "Remove"}
           </AlertDialogAction>
         </AlertDialogFooter>

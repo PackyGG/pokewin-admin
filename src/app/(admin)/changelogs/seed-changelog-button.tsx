@@ -17,6 +17,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { RECENT_WORK_ENTRIES } from "@/lib/changelog/recent-work";
+import { Spinner } from "@/components/ux";
 
 import { seedChangelogFromRecentWork } from "./actions";
 
@@ -90,6 +91,7 @@ export function SeedChangelogButton() {
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
           <AlertDialogAction onClick={handleSeed} disabled={pending}>
+            {pending && <Spinner size={14} className="text-current" />}
             {pending ? "Seeding…" : "Populate"}
           </AlertDialogAction>
         </AlertDialogFooter>

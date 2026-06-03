@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MoreHorizontal, ShieldCheck, UserCog, Power, Trash2 } from "lucide-react";
 import type { AdminRole } from "@/lib/dal";
+import { Spinner } from "@/components/ux";
 import { RolesEditor } from "./_components/roles-editor";
 import {
   toggleAdminActive,
@@ -271,6 +272,7 @@ export function AdminUserActions({
               disabled={confirmDisabled}
               onClick={handleConfirm}
             >
+              {isPending && <Spinner size={14} className="text-current" />}
               {isPending
                 ? "Working..."
                 : mode

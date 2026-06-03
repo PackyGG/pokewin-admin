@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { AdminRole } from "@/lib/dal";
+import { Spinner } from "@/components/ux";
 import { RolesEditor } from "../_components/roles-editor";
 import { setAdminRoles } from "../actions";
 
@@ -111,6 +112,7 @@ export function RolesCard({
               onClick={handleSaveRoles}
               disabled={saveRolesDisabled}
             >
+              {savingRoles && <Spinner size={14} className="text-current" />}
               {savingRoles ? "Saving..." : "Save roles"}
             </Button>
           </div>

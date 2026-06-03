@@ -18,6 +18,7 @@ import { ALL_ADMIN_ROLES, type AdminRole } from "@/lib/admin-roles";
 import { createAdminUser } from "./actions";
 import { toast } from "sonner";
 import { Plus } from "lucide-react";
+import { Spinner, transition } from "@/components/ux";
 
 const ROLE_LABELS: Record<AdminRole, string> = {
   admin: "Admin",
@@ -124,7 +125,8 @@ export function CreateAdminDialog() {
                   <label
                     key={r}
                     className={cn(
-                      "flex cursor-pointer items-center gap-3 rounded-md border p-2.5 transition-colors",
+                      "flex cursor-pointer items-center gap-3 rounded-md border p-2.5",
+                      transition("colors", "fast"),
                       checked
                         ? "border-primary/40 bg-primary/5"
                         : "border-input hover:bg-accent/40",
@@ -148,6 +150,7 @@ export function CreateAdminDialog() {
             disabled={loading || roles.size === 0}
             className="w-full sm:w-auto"
           >
+            {loading && <Spinner size={14} className="text-current" />}
             {loading ? "Creating..." : "Create"}
           </Button>
         </DialogFooter>

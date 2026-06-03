@@ -11,6 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Info } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Spinner, transition } from "@/components/ux";
 import { updateRolePermissions, type RoleConfig } from "./actions";
 import {
   type CapabilityState,
@@ -223,7 +224,8 @@ export function RolePermissionsEditor({
             key={role}
             onClick={() => setActiveRole(role)}
             className={cn(
-              "rounded-md px-4 py-2 text-sm font-medium transition-colors capitalize relative",
+              "rounded-md px-4 py-2 text-sm font-medium capitalize relative",
+              transition("colors", "fast"),
               activeRole === role
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground",
@@ -371,7 +373,8 @@ export function RolePermissionsEditor({
                         />
                         <span
                           className={cn(
-                            "text-sm transition-colors",
+                            "text-sm",
+                            transition("colors", "fast"),
                             isChecked
                               ? "text-foreground"
                               : "text-muted-foreground group-hover:text-foreground",
@@ -416,6 +419,7 @@ export function RolePermissionsEditor({
               Discard
             </Button>
             <Button size="sm" onClick={handleSave} disabled={isPending}>
+              {isPending && <Spinner size={14} className="text-current" />}
               {isPending ? "Saving..." : "Save Changes"}
             </Button>
           </div>

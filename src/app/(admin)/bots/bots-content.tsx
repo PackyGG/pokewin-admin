@@ -28,6 +28,8 @@ import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { toggleBotActive, createBot, updateBot } from "./actions";
 import { uploadImageClient } from "@/lib/upload-image-client";
 import { EmptyState } from "@/components/empty-state";
+import { Spinner, transition } from "@/components/ux";
+import { cn } from "@/lib/utils";
 import type { BotListItem } from "@/lib/queries/bots";
 
 function ImageDropzone({
@@ -78,9 +80,13 @@ function ImageDropzone({
         const file = e.dataTransfer.files[0];
         if (file) handleFile(file);
       }}
-      className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 transition-colors ${
-        dragging ? "border-primary bg-primary/5" : "border-muted-foreground/25 hover:border-muted-foreground/50"
-      }`}
+      className={cn(
+        "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6",
+        transition("colors", "fast"),
+        dragging
+          ? "border-primary bg-primary/5"
+          : "border-muted-foreground/25 hover:border-muted-foreground/50",
+      )}
     >
       <Upload className="size-6 text-muted-foreground" />
       <p className="text-sm text-muted-foreground">
@@ -170,6 +176,7 @@ function EditBotButton({ bot }: { bot: BotListItem }) {
         </div>
         <DialogFooter>
           <Button onClick={handleSubmit} disabled={isPending || !username.trim()}>
+            {isPending && <Spinner size={14} className="text-current" />}
             {isPending ? "Saving..." : "Save Changes"}
           </Button>
         </DialogFooter>
@@ -246,6 +253,7 @@ export function BotsContent({ data }: { data: BotListItem[] }) {
               <Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="BotName" />
             </div>
             <Button onClick={handleCreate} disabled={isPending} className="w-full">
+              {isPending && <Spinner size={14} className="text-current" />}
               {isPending ? "Creating..." : "Create"}
             </Button>
           </div>

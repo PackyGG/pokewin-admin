@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { updateUserPermissions } from "./actions";
 import { PermissionPicker } from "../_components/permission-picker";
+import { Spinner } from "@/components/ux";
 import type { AdminUserDetail } from "@/lib/queries/admin-users";
 
 /* ── Permissions Section ──
@@ -173,6 +174,7 @@ export function PermissionsSection({ detail }: { detail: AdminUserDetail }) {
               onClick={save}
               disabled={isPending || !totpCode.trim()}
             >
+              {isPending && <Spinner size={14} className="text-current" />}
               {isPending ? "Saving..." : "Save"}
             </Button>
           </DialogFooter>

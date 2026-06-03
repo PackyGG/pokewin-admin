@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { ROLE_COLORS } from "@/lib/constants";
+import { Spinner } from "@/components/ux";
 import { updateProfile, uploadAvatar } from "./actions";
 
 const MAX_AVATAR_BYTES = 500 * 1024;
@@ -257,7 +258,11 @@ export function ProfileForm({
             disabled={uploading || removing || disabledDueToMigration}
             onClick={() => fileInputRef.current?.click()}
           >
-            <Upload className="mr-2 size-4" />
+            {uploading ? (
+              <Spinner size={16} className="mr-2 text-current" />
+            ) : (
+              <Upload className="mr-2 size-4" />
+            )}
             {uploading ? "Uploading..." : "Upload image"}
           </Button>
           {hasAvatarLocal && (
@@ -268,7 +273,11 @@ export function ProfileForm({
               disabled={uploading || removing || disabledDueToMigration}
               onClick={handleRemove}
             >
-              <Trash2 className="mr-2 size-4" />
+              {removing ? (
+                <Spinner size={16} className="mr-2 text-current" />
+              ) : (
+                <Trash2 className="mr-2 size-4" />
+              )}
               {removing ? "Removing..." : "Remove"}
             </Button>
           )}
@@ -299,6 +308,7 @@ export function ProfileForm({
           size="sm"
           disabled={savingName || disabledDueToMigration || displayName.trim() === (displayUsername ?? "")}
         >
+          {savingName && <Spinner size={14} className="text-current" />}
           {savingName ? "Saving..." : "Save display name"}
         </Button>
       </form>

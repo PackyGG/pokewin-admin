@@ -44,6 +44,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { Spinner } from "@/components/ux";
 import {
   createWorkspace,
   renameWorkspace,
@@ -902,7 +903,11 @@ export function EmployeeBoard({
               onClick={handleCreateWorkspace}
               disabled={creating}
             >
-              <Plus className="size-4" />
+              {creating ? (
+                <Spinner size={16} className="text-current" />
+              ) : (
+                <Plus className="size-4" />
+              )}
               Add workspace
             </Button>
           </div>
@@ -928,7 +933,11 @@ export function EmployeeBoard({
               disabled={creatingDiscord}
               className="border-indigo-500/40 bg-indigo-500/[0.04] text-indigo-600 hover:bg-indigo-500/10 dark:text-indigo-300"
             >
-              <Hash className="size-4" />
+              {creatingDiscord ? (
+                <Spinner size={16} className="text-current" />
+              ) : (
+                <Hash className="size-4" />
+              )}
               Add discord server
             </Button>
           </div>

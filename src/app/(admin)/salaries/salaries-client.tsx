@@ -43,6 +43,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/empty-state";
+import { Spinner } from "@/components/ux";
 import {
   addSalaryEmployee,
   addSalaryPayment,
@@ -569,11 +570,15 @@ function AddressQrDialog({
                 alt={`QR for ${employee.ethAddress}`}
                 width={280}
                 height={280}
-                className="rounded-lg border bg-white p-2"
+                className="rounded-lg border bg-white p-2 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300"
                 unoptimized
               />
             ) : (
-              <div className="size-[280px] animate-pulse rounded-lg bg-muted" />
+              // Dimension-matched placeholder so the dialog body keeps a
+              // stable height while the QR encodes (no jump on swap-in).
+              <div className="flex size-[280px] items-center justify-center rounded-lg border bg-muted/50">
+                <Spinner size={22} label="Generating QR code…" />
+              </div>
             )}
           </div>
           <div className="space-y-1">
@@ -845,6 +850,7 @@ function EmployeeFormDialog({
             Cancel
           </Button>
           <Button onClick={handleSubmit} disabled={pending}>
+            {pending && <Spinner size={14} className="text-current" />}
             {pending ? "Saving…" : isEdit ? "Save" : "Add"}
           </Button>
         </DialogFooter>
@@ -908,6 +914,7 @@ function DeleteEmployeeButton({
             disabled={pending}
             className="bg-rose-500 hover:bg-rose-500/90"
           >
+            {pending && <Spinner size={14} className="text-current" />}
             {pending ? "Removing…" : "Remove"}
           </AlertDialogAction>
         </AlertDialogFooter>
@@ -1120,6 +1127,7 @@ function DeletePaymentButton({
             disabled={pending}
             className="bg-rose-500 hover:bg-rose-500/90"
           >
+            {pending && <Spinner size={14} className="text-current" />}
             {pending ? "Removing…" : "Remove"}
           </AlertDialogAction>
         </AlertDialogFooter>
@@ -1242,6 +1250,7 @@ function TrackPaymentDialog({
             disabled={pending}
             className="bg-emerald-500 hover:bg-emerald-500/90"
           >
+            {pending && <Spinner size={14} className="text-current" />}
             {pending ? "Saving…" : "Save payment"}
           </Button>
         </DialogFooter>

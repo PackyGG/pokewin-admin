@@ -42,6 +42,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { ROLE_COLORS } from "@/lib/constants";
+import { Spinner } from "@/components/ux";
 import { useTimezone } from "@/components/timezone-provider";
 import { timezoneLabel } from "@/lib/timezones";
 import { copyDay, copyWeek, deleteShift, upsertShift } from "./actions";
@@ -1005,6 +1006,7 @@ function ShiftEditDialog({
                 Cancel
               </Button>
               <Button type="button" onClick={submit} disabled={saving}>
+                {saving && <Spinner size={14} className="text-current" />}
                 {saving
                   ? "Saving…"
                   : existing
@@ -1034,6 +1036,7 @@ function ShiftEditDialog({
               disabled={saving}
               className="bg-rose-500 text-white hover:bg-rose-500/90"
             >
+              {saving && <Spinner size={14} className="text-current" />}
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>

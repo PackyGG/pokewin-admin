@@ -26,7 +26,7 @@ export function RefreshButton() {
       aria-label="Refresh stats"
     >
       <RefreshCw
-        className={cn("size-3.5", pending && "animate-spin")}
+        className={cn("size-3.5", pending && "motion-safe:animate-spin")}
         aria-hidden
       />
       <span>Refresh</span>

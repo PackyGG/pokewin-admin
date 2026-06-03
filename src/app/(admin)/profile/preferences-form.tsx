@@ -29,6 +29,7 @@ import {
 } from "@/lib/timezones";
 import { useTimezoneContext } from "@/components/timezone-provider";
 import { formatWithPattern } from "@/lib/utils/format";
+import { Spinner, transition } from "@/components/ux";
 import { updatePreferences } from "./preferences-actions";
 
 // ---------------------------------------------------------------------------
@@ -74,7 +75,8 @@ function ThemeRadio({
       type="button"
       onClick={() => onSelect(value)}
       className={cn(
-        "group flex flex-col gap-2 rounded-lg border px-4 py-3 text-left transition-colors",
+        "group flex flex-col gap-2 rounded-lg border px-4 py-3 text-left",
+        transition("colors", "fast"),
         "hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         selected
           ? "border-primary/60 bg-primary/5 ring-1 ring-primary/30"
@@ -348,7 +350,8 @@ export function PreferencesForm({
               key={v}
               onClick={() => setDateFormatLocal(v)}
               className={cn(
-                "flex flex-col gap-1 rounded-lg border px-4 py-3 text-left transition-colors",
+                "flex flex-col gap-1 rounded-lg border px-4 py-3 text-left",
+                transition("colors", "fast"),
                 "hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 dateFormat === v
                   ? "border-primary/60 bg-primary/5 ring-1 ring-primary/30"
@@ -379,6 +382,7 @@ export function PreferencesForm({
           size="sm"
           disabled={saving || !dirty || !profileFieldsAvailable}
         >
+          {saving && <Spinner size={14} className="text-current" />}
           {saving ? "Saving..." : "Save preferences"}
         </Button>
       </div>
