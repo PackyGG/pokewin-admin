@@ -42,7 +42,23 @@ import {
 //    surfaces the per-source breakdown so the admin can see exactly that.
 //
 //  • The ADJUSTMENTS wipe (separate file) is the only mode that deletes
-//    ledger rows; its protected-type + creator-deal guards live there.
+//    ledger rows; its protected-type + creator-deal + affiliate guards live
+//    there.
+//
+//  • AFFILIATE TABLES ARE NEVER TOUCHED (owner mandate — no affiliate info of
+//    any kind is ever wiped). The three modes in THIS file write only
+//    `balances` (available/locked) and `user_inventory` (+ its
+//    `provably_fair_results` children); the adjustments mode writes only
+//    `ledger_transactions`. NONE of `affiliate_accounts`,
+//    `affiliate_code_usages`, `affiliate_codes`, `affiliate_payouts`,
+//    `affiliate_clicks`, or `affiliate_code_queue` is read or written by any
+//    wipe. So affiliate accounts (earned / available / paid-out totals),
+//    every code-usage attribution row (commissions owed + referral linkage),
+//    the affiliate code itself, and the payout history are STRUCTURALLY
+//    untouched. Deleting from those tables is OUT OF SCOPE and must never be
+//    added here. See WIPE_NEVER_TOUCHES_AFFILIATE_TABLES in
+//    src/lib/account-wipes/protected.ts and the rolled-back proof in
+//    scripts/verify-affiliate-wipe-protection.ts.
 // ───────────────────────────────────────────────────────────────────────────
 
 // ---------------------------------------------------------------------------

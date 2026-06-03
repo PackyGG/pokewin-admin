@@ -10,6 +10,12 @@
  * creator-economy records:
  *   • deposits / withdrawals                — real cash in / out
  *   • affiliate_claim                        — paid creator/affiliate earnings
+ *   • ALL affiliate info of any kind         — commissions, payouts, codes,
+ *                                              attribution (no affiliate data
+ *                                              is EVER wiped — see
+ *                                              isAffiliateRelatedAdjustment()
+ *                                              + WIPE_NEVER_TOUCHES_AFFILIATE_
+ *                                              TABLES below)
  *   • every creator-DEAL ledger flow         — grant / activate / spend /
  *                                              refund / convert / forfeit,
  *                                              plus the affiliate-leaderboard
@@ -36,13 +42,17 @@
  *     `admin_balance_adjustment`, so the adjustments wipe already can't
  *     reach them by TYPE — these constants make that exclusion explicit and
  *     fail-closed.
- *  3. A creator-deal credit CAN, however, be entered by hand through the
- *     Adjust-Balance dialog (free-text reason) — e.g. the real prod row
- *     `Admin adjustment: weekly deal`. Those land as a genuine
- *     `admin_balance_adjustment` CREDIT and WOULD otherwise be wipeable.
- *     `isCreatorRelatedAdjustment()` below is the defensive description /
- *     metadata guard that carves them out so a deal-related credit can
- *     never be wiped even though it is technically an admin adjustment.
+ *  3. A creator-deal OR affiliate credit CAN, however, be entered by hand
+ *     through the Adjust-Balance dialog (free-text reason) — e.g. the real
+ *     prod row `Admin adjustment: weekly deal`, or `Admin adjustment:
+ *     affiliate commission`. Those land as a genuine `admin_balance_
+ *     adjustment` CREDIT and WOULD otherwise be wipeable.
+ *     `isCreatorRelatedAdjustment()` and `isAffiliateRelatedAdjustment()`
+ *     below are the defensive description / metadata guards that carve them
+ *     out so a deal- or affiliate-related credit can never be wiped even
+ *     though it is technically an admin adjustment. Both guards run in all
+ *     three wipe-action guard spots (listing filter, per-row pre-check, and
+ *     the in-tx re-guard before deleteMany), fail-closed.
  *  4. `user_inventory.source_type` is the enum
  *     `{ pack, reward, battle, exchange, raffle, upgrader }` — there is NO
  *     creator-deal source. Creator-deal payouts materialize as VOUCHERS
@@ -195,9 +205,123 @@ export function isCreatorRelatedAdjustment(
 }
 
 /**
+ * Case-insensitive substrings that, when present in an
+ * `admin_balance_adjustment` CREDIT's reason (or its metadata), mark it as
+ * AFFILIATE info of any kind — an affiliate/referral commission, an affiliate
+ * payout / bonus, a downstream-referral earning, etc. — and therefore
+ * PROTECTED from the adjustments wipe even though it is technically an admin
+ * adjustment.
+ *
+ * WHY THIS EXISTS (owner mandate): no affiliate info of ANY kind may ever be
+ * wiped. The dedicated affiliate ledger flows (`affiliate_claim`, the
+ * `affiliate_leaderboard_*` legs) are already blocked by
+ * PROTECTED_LEDGER_TYPES — and the admin-panel affiliate/creator payout writes
+ * `affiliate_claim` "Creator payout" (type-protected, verified in
+ * src/app/(admin)/creators/actions.ts). The ONLY way affiliate value can land
+ * as a wipeable `admin_balance_adjustment` CREDIT is when an admin types it by
+ * hand through the free-text Adjust-Balance dialog (e.g. "Admin adjustment:
+ * affiliate commission" / "referral payout"). This keyword guard carves those
+ * out so an affiliate-tagged credit can never be wiped.
+ *
+ * The list deliberately overlaps with CREATOR_DEAL_ADJUSTMENT_KEYWORDS on
+ * "affiliate" / "payout" — that is intentional defence in depth (a row caught
+ * by EITHER guard is protected). Keep it broad on the side of caution: a false
+ * positive merely makes a credit non-wipeable (safe); a false negative could
+ * wipe protected affiliate money (unsafe). NOTE: short tokens like "ref" are
+ * excluded on purpose — they would substring-match innocuous words ("reFUND",
+ * "REFerence") and over-protect unrelated rows; the affiliate concepts are
+ * spelled out in full instead.
+ */
+export const AFFILIATE_ADJUSTMENT_KEYWORDS = [
+  "affiliate",
+  "commission",
+  "referral",
+  "referrer",
+  "referred",
+  "payout",
+] as const;
+
+/**
+ * True if an `admin_balance_adjustment` row looks like AFFILIATE info (a
+ * commission / referral / affiliate payout or bonus) and must therefore be
+ * excluded from the adjustments wipe. Mirrors `isCreatorRelatedAdjustment`
+ * exactly: it scans BOTH the free-text reason AND any string keys/values
+ * inside the row's `metadata` JSON (so a structured affiliate tag is caught
+ * even when the reason text is innocuous).
+ *
+ * `description` is the FULL ledger description (we match anywhere in the
+ * string). `metadata` is the raw `ledger_transactions.metadata` jsonb value
+ * (may be null / object / array).
+ */
+export function isAffiliateRelatedAdjustment(
+  description: string | null | undefined,
+  metadata?: unknown,
+): boolean {
+  const haystacks: string[] = [];
+  if (typeof description === "string") haystacks.push(description.toLowerCase());
+
+  // Same shallow+nested flatten as isCreatorRelatedAdjustment: pull every
+  // string key and value out of metadata so an affiliate reference stored
+  // structurally (e.g. { reason: "affiliate commission" } or
+  // { affiliate_code_usage_id: "…" }) is also caught.
+  if (metadata != null && typeof metadata === "object") {
+    const stack: unknown[] = [metadata];
+    let guard = 0;
+    while (stack.length && guard < 1000) {
+      guard++;
+      const cur = stack.pop();
+      if (cur == null) continue;
+      if (typeof cur === "string") {
+        haystacks.push(cur.toLowerCase());
+      } else if (Array.isArray(cur)) {
+        for (const v of cur) stack.push(v);
+      } else if (typeof cur === "object") {
+        for (const [k, v] of Object.entries(cur)) {
+          haystacks.push(k.toLowerCase());
+          stack.push(v);
+        }
+      }
+    }
+  }
+
+  if (haystacks.length === 0) return false;
+  const blob = haystacks.join(" ");
+  return AFFILIATE_ADJUSTMENT_KEYWORDS.some((kw) => blob.includes(kw));
+}
+
+/**
+ * The wipe NEVER touches any affiliate TABLE — asserted here for the record.
+ *
+ * The four wipe modes only ever read/write THREE main-DB surfaces:
+ *   • `ledger_transactions` (the adjustments wipe — and ONLY `admin_balance_
+ *     adjustment` CREDIT rows within it, after the protected-type + creator +
+ *     affiliate carve-outs above),
+ *   • `balances` (the balance / vault wipes — `available_balance` /
+ *     `locked_balance`),
+ *   • `user_inventory` (+ its `provably_fair_results` children — the inventory
+ *     wipe).
+ *
+ * NONE of `affiliate_accounts`, `affiliate_code_usages`, `affiliate_codes`,
+ * `affiliate_payouts`, `affiliate_clicks`, or `affiliate_code_queue` is in
+ * that set. So an affiliate account's earned/available/paid-out totals, every
+ * code-usage attribution row (commissions owed + referral linkage), the
+ * affiliate code itself, and the payout history are STRUCTURALLY untouched by
+ * any wipe — there is nothing to carve out there because the wipe never
+ * reaches those tables in the first place. Deleting from them is explicitly
+ * OUT OF SCOPE and must never be added to a wipe mode. The rolled-back proof
+ * (scripts/verify-affiliate-wipe-protection.ts) demonstrates that a wipe
+ * leaves the user's `affiliate_accounts` / `affiliate_code_usages` rows
+ * intact.
+ */
+export const WIPE_NEVER_TOUCHES_AFFILIATE_TABLES = true as const;
+
+/**
  * The canonical "what is preserved" reassurance line shown in every wipe
  * mode's confirm step (before the 2FA field). Single source of truth so all
  * four dialogs make the exact same promise the server-side guards enforce.
+ *
+ * Spells out the affiliate + creator coverage explicitly (owner mandate: no
+ * affiliate info of any kind, and no creator-deal data, is ever wiped).
  */
 export const WIPE_PRESERVED_SUMMARY =
-  "Deposits, withdrawals, affiliate claims, gaming history, and all creator deal / fill / payout data are preserved.";
+  "Deposits, withdrawals, all affiliate data (claims, commissions, codes, attribution), gaming history, and all creator deal / fill / payout data are preserved.";

@@ -18,6 +18,7 @@ import {
 import {
   isProtectedLedgerType,
   isCreatorRelatedAdjustment,
+  isAffiliateRelatedAdjustment,
 } from "@/lib/account-wipes/protected";
 import { invalidateMetricCaches } from "@/lib/account-wipes/invalidate-metric-caches";
 
@@ -45,7 +46,11 @@ import { invalidateMetricCaches } from "@/lib/account-wipes/invalidate-metric-ca
 // every creator/affiliate row are excluded — both by the listing query AND
 // by a hard server-side guard below that re-reads every row before deletion
 // and refuses anything that isn't a genuine "Admin adjustment:" CREDIT owned
-// by this user.
+// by this user. On top of the type filter, two keyword carve-outs
+// (isCreatorRelatedAdjustment + isAffiliateRelatedAdjustment) drop any credit
+// whose reason / metadata ties it to a creator deal OR to ANY affiliate info
+// (commission / referral / affiliate payout), so neither creator-deal money
+// nor affiliate info entered by hand via Adjust-Balance can ever be wiped.
 //
 // ORDERING (CRITICAL, snapshot-first): the recovery snapshot is written to
 // the admin DB and confirmed BEFORE the main-DB delete + balance reduction.
@@ -136,10 +141,13 @@ const userIdSchema = z.string().min(1, "User id is required");
  * (amount <= 0, see SIGN RULE) are excluded so they can never be selected
  * for deletion (wiping a debit would re-credit the user). On top of that,
  * any credit whose reason / metadata ties it to a CREATOR DEAL / payout
- * (e.g. the real prod row "Admin adjustment: weekly deal") is also excluded
- * via `isCreatorRelatedAdjustment` so deal money entered by hand through the
- * Adjust-Balance dialog can never be wiped (the wipe protects all
- * creator-deal data — see src/lib/account-wipes/protected.ts).
+ * (e.g. the real prod row "Admin adjustment: weekly deal") is excluded via
+ * `isCreatorRelatedAdjustment`, AND any credit tied to ANY affiliate info
+ * (commission / referral / affiliate payout — e.g. "Admin adjustment:
+ * affiliate commission") is excluded via `isAffiliateRelatedAdjustment`, so
+ * neither deal money nor affiliate info entered by hand through the
+ * Adjust-Balance dialog can ever be wiped (the wipe protects all creator-deal
+ * AND all affiliate data — see src/lib/account-wipes/protected.ts).
  */
 export async function listWipeableAdjustments(
   userId: string,
@@ -175,11 +183,17 @@ export async function listWipeableAdjustments(
   return {
     success: true,
     rows: rows
-      // CREATOR-DEAL CARVE-OUT: never list a credit tied to a creator deal /
-      // payout. The user-facing wipe protects all creator-deal data, so a
-      // deal credit entered via Adjust-Balance is filtered out here AND
-      // hard-rejected by the in-tx guard below if its id is injected.
-      .filter((r) => !isCreatorRelatedAdjustment(r.description, r.metadata))
+      // CREATOR-DEAL + AFFILIATE CARVE-OUT: never list a credit tied to a
+      // creator deal / payout OR to any affiliate info (commission / referral
+      // / affiliate payout). The user-facing wipe protects ALL creator-deal
+      // AND ALL affiliate data, so such a credit entered via Adjust-Balance is
+      // filtered out here AND hard-rejected by the in-tx guard below if its id
+      // is injected.
+      .filter(
+        (r) =>
+          !isCreatorRelatedAdjustment(r.description, r.metadata) &&
+          !isAffiliateRelatedAdjustment(r.description, r.metadata),
+      )
       .map((r) => ({
         id: r.id,
         amount: toNumber(r.amount),
@@ -389,6 +403,17 @@ export async function wipeBalanceAdjustments(data: {
           "WIPE_GUARD: a selected adjustment is tied to a creator deal / payout and is protected — it cannot be wiped",
         );
       }
+      // AFFILIATE CARVE-OUT (fail-closed): an admin adjustment whose reason /
+      // metadata ties it to ANY affiliate info (commission / referral /
+      // affiliate payout — e.g. "Admin adjustment: affiliate commission") is
+      // protected even though it is an admin_balance_adjustment credit. No
+      // affiliate info of any kind is ever wiped. A single such id aborts the
+      // batch.
+      if (isAffiliateRelatedAdjustment(row.description, row.metadata)) {
+        throw new Error(
+          "WIPE_GUARD: a selected adjustment is affiliate info (commission / referral / payout) and is protected — it cannot be wiped",
+        );
+      }
     }
 
     guardedRows = rows as unknown as Array<Record<string, unknown>>;
@@ -479,13 +504,14 @@ export async function wipeBalanceAdjustments(data: {
     await db.$transaction(async (tx) => {
       // RE-GUARD INSIDE THE TX (authoritative): re-read the exact rows and
       // re-run the full per-row guard — protected-type + genuine-credit +
-      // SIGN RULE + creator-deal carve-out — on the live data before
-      // deleting. The deleteMany predicate below can encode type/prefix/sign
-      // in SQL but NOT the keyword-based creator-deal carve-out, so this
-      // in-tx re-check is what makes that carve-out fail-closed against a
-      // concurrent edit (e.g. a reason changed to "weekly deal" between the
-      // STEP 3 read and now). Any violation aborts the whole tx → nothing
-      // deleted, orphan snapshot cleaned up in STEP 6.
+      // SIGN RULE + creator-deal carve-out + affiliate carve-out — on the
+      // live data before deleting. The deleteMany predicate below can encode
+      // type/prefix/sign in SQL but NOT the keyword-based creator/affiliate
+      // carve-outs, so this in-tx re-check is what makes those carve-outs
+      // fail-closed against a concurrent edit (e.g. a reason changed to
+      // "weekly deal" or "affiliate commission" between the STEP 3 read and
+      // now). Any violation aborts the whole tx → nothing deleted, orphan
+      // snapshot cleaned up in STEP 6.
       const live = await tx.ledger_transactions.findMany({
         where: { id: { in: ids } },
         select: { id: true, user_id: true, type: true, status: true, description: true, amount: true, metadata: true },
@@ -502,7 +528,8 @@ export async function wipeBalanceAdjustments(data: {
           !row.description.startsWith(ADJ_DESC_PREFIX) ||
           row.description.startsWith(MANUAL_WD_DESC_PREFIX) ||
           toNumber(row.amount) <= 0 ||
-          isCreatorRelatedAdjustment(row.description, row.metadata)
+          isCreatorRelatedAdjustment(row.description, row.metadata) ||
+          isAffiliateRelatedAdjustment(row.description, row.metadata)
         ) {
           throw new Error("WIPE_GUARD: a selected row is protected and cannot be wiped — refresh and retry");
         }
