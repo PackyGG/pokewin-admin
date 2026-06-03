@@ -17,6 +17,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
+import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency } from "@/lib/utils/format";
 import { searchItems, type SearchItem } from "./actions";
 
@@ -105,6 +106,28 @@ export function PrizePicker({
             />
           </div>
           <CommandList>
+            {/* Loading rows — dimension-matched to the real result rows
+                (8px square thumb + name/price lines) so the list doesn't
+                flash empty then jump when results stream in. Only show
+                while a search is in flight AND we have nothing to show yet;
+                once we have prior results we keep them visible (soft
+                refresh) instead of blanking the list. */}
+            {isPending && items.length === 0 && (
+              <div className="space-y-1 p-1" aria-hidden>
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div
+                    key={i}
+                    className="flex items-center gap-2 rounded-sm px-2 py-1.5"
+                  >
+                    <Skeleton className="size-8 shrink-0 rounded" />
+                    <div className="flex-1 space-y-1.5">
+                      <Skeleton className="h-3.5 w-2/3 rounded" />
+                      <Skeleton className="h-3 w-16 rounded" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
             {!isPending && items.length === 0 && (
               <CommandEmpty>No {type}s found.</CommandEmpty>
             )}

@@ -18,6 +18,7 @@ import { RAIN_CONFIG_KEYS } from "./config-keys";
 import { RainConfigCard } from "./rain-config-card";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { LinkPending } from "@/components/ux";
 
 export const metadata = { title: "Rain" };
 
@@ -56,13 +57,14 @@ export default async function RainPage({
               key={t.value}
               href={`/rain?tab=${t.value}`}
               className={cn(
-                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                "inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
                 tab === t.value
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
               )}
             >
               {t.label}
+              <LinkPending size={13} />
             </Link>
           ))}
         </div>

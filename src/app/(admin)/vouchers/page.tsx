@@ -10,6 +10,10 @@ import { requirePageAccess } from "@/lib/dal";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  TableSkeleton,
+  PaginationSkeleton,
+} from "@/components/loading-skeletons";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { ValueRangeFilter } from "./value-range-filter";
@@ -21,6 +25,7 @@ import {
   KpiTile,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { LinkPending } from "@/components/ux";
 
 export const metadata = { title: "Vouchers" };
 
@@ -31,25 +36,15 @@ export default async function VouchersPage({
 }) {
   await requirePageAccess("/vouchers");
   const params = await searchParams;
-  const page = Number(params.page) || 1;
-  const perPage = Number(params.perPage) || 20;
   const tab = params.tab || "unclaimed";
 
-  const claimed = tab === "claimed";
-
-  // Stats are tab-independent: both halves (unclaimed + claimed) come
-  // back from one query so flipping the tab doesn't re-fetch them and
-  // the strip stays a fixed 4-tile read-out of the voucher pool.
-  const [result, creators, stats] = await Promise.all([
-    getVouchers({
-      page,
-      perPage,
-      claimed,
-      search: params.search,
-      minValue: params.minValue ? Number(params.minValue) : undefined,
-      maxValue: params.maxValue ? Number(params.maxValue) : undefined,
-      createdBy: params.createdBy,
-    }),
+  // Stats + creator filter options are tab-independent: one query each,
+  // awaited up-front so the KPI strip + the toolbar's Created-By filter
+  // render immediately and don't re-fetch on every tab/filter flip. The
+  // voucher LIST itself is fetched inside a keyed <Suspense> below so a
+  // tab/filter change shows a table skeleton instead of blocking the
+  // whole page on the previous content.
+  const [creators, stats] = await Promise.all([
     getVoucherCreators(),
     getVouchersListStats(),
   ]);
@@ -112,18 +107,19 @@ export default async function VouchersPage({
               key={t.value}
               href={`/vouchers?tab=${t.value}`}
               className={cn(
-                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                "inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
                 tab === t.value
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground",
               )}
             >
               {t.label}
+              <LinkPending size={13} />
             </Link>
           ))}
         </div>
 
-        <FadeIn className="space-y-4">
+        <div className="space-y-4">
           <Suspense fallback={<Skeleton className="h-10 w-full" />}>
             <DataTableToolbar
               searchPlaceholder="Search by username or email..."
@@ -139,16 +135,59 @@ export default async function VouchersPage({
             </DataTableToolbar>
           </Suspense>
 
-          <VouchersTable data={result.data} claimed={claimed} />
-
-          <DataTablePagination
-            page={result.page}
-            totalPages={result.totalPages}
-            total={result.total}
-            perPage={result.perPage}
-          />
-        </FadeIn>
+          {/* Keyed on every query input so a tab/search/filter/page change
+              re-shows the table skeleton instead of blocking the whole page
+              on the previous render — matches the rain / rewards pattern. */}
+          <Suspense
+            key={`${tab}|${params.page ?? "1"}|${params.perPage ?? "20"}|${params.search ?? ""}|${params.createdBy ?? ""}|${params.minValue ?? ""}|${params.maxValue ?? ""}`}
+            fallback={
+              <>
+                <TableSkeleton rows={12} columns={6} />
+                <PaginationSkeleton />
+              </>
+            }
+          >
+            <VouchersListAsync params={params} tab={tab} />
+          </Suspense>
+        </div>
       </div>
     </div>
+  );
+}
+
+async function VouchersListAsync({
+  params,
+  tab,
+}: {
+  params: Record<string, string | undefined>;
+  tab: string;
+}) {
+  const page = Number(params.page) || 1;
+  const perPage = Number(params.perPage) || 20;
+  const claimed = tab === "claimed";
+
+  const result = await getVouchers({
+    page,
+    perPage,
+    claimed,
+    search: params.search,
+    minValue: params.minValue ? Number(params.minValue) : undefined,
+    maxValue: params.maxValue ? Number(params.maxValue) : undefined,
+    createdBy: params.createdBy,
+  });
+
+  return (
+    <>
+      <FadeIn>
+        <VouchersTable data={result.data} claimed={claimed} />
+      </FadeIn>
+
+      <DataTablePagination
+        page={result.page}
+        totalPages={result.totalPages}
+        total={result.total}
+        perPage={result.perPage}
+      />
+    </>
   );
 }

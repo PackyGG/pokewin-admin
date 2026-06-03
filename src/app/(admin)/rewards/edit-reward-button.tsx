@@ -22,6 +22,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Spinner } from "@/components/ux";
 import { updateReward } from "./actions";
 import { PrizePicker } from "./raffles/prize-picker";
 import type { SearchItem } from "./raffles/actions";
@@ -194,6 +195,7 @@ export function EditRewardButton({ reward }: { reward: RewardItem }) {
         </div>
         <DialogFooter>
           <Button onClick={handleSubmit} disabled={isPending} className="w-full sm:w-auto">
+            {isPending && <Spinner size={15} className="text-current" />}
             {isPending ? "Saving..." : "Save Changes"}
           </Button>
         </DialogFooter>

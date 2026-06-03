@@ -15,6 +15,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Spinner } from "@/components/ux";
 import { createVoucher, searchUsers } from "./actions";
 
 type UserResult = { id: string; username: string | null; email: string | null };
@@ -74,7 +75,15 @@ function UserSearchInput({
         }}
         onFocus={() => results.length > 0 && setShowResults(true)}
         placeholder="Search by username or email..."
+        className={searching ? "pr-9" : undefined}
       />
+      {/* Inline busy cue while the debounced search is in flight, so the
+          gap between typing and results never reads as a dead input. */}
+      {searching && (
+        <span className="pointer-events-none absolute inset-y-0 right-2.5 flex items-center">
+          <Spinner size={15} label="Searching users…" />
+        </span>
+      )}
       {value && (
         <p className="mt-1 text-xs text-muted-foreground">
           Selected: <span className="text-foreground">{value}</span>
@@ -188,6 +197,7 @@ export function CreateVoucherDialog() {
         </div>
         <DialogFooter>
           <Button onClick={handleCreate} disabled={isPending} className="w-full sm:w-auto">
+            {isPending && <Spinner size={15} className="text-current" />}
             {isPending ? "Creating..." : "Create"}
           </Button>
         </DialogFooter>

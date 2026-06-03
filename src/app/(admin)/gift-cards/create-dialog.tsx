@@ -14,6 +14,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Spinner } from "@/components/ux";
 import { createGiftCard } from "./actions";
 
 export function CreateGiftCardDialog() {
@@ -88,6 +89,7 @@ export function CreateGiftCardDialog() {
         </div>
         <DialogFooter>
           <Button onClick={handleCreate} disabled={isPending} className="w-full sm:w-auto">
+            {isPending && <Spinner size={15} className="text-current" />}
             {isPending ? "Creating..." : "Create"}
           </Button>
         </DialogFooter>

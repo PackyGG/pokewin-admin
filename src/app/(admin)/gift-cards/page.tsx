@@ -5,6 +5,10 @@ import { requirePageAccess } from "@/lib/dal";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  TableSkeleton,
+  PaginationSkeleton,
+} from "@/components/loading-skeletons";
 import { GiftCardsContent } from "./gift-cards-content";
 import { CreateGiftCardDialog } from "./create-dialog";
 import {
@@ -25,23 +29,13 @@ export default async function GiftCardsPage({
 }) {
   await requirePageAccess("/gift-cards");
   const params = await searchParams;
-  const page = Number(params.page) || 1;
-  const perPage = Number(params.perPage) || 20;
 
-  // Table + global stats in parallel; stats stay stable across the
-  // status / region / search filter so the strip is a fixed read-out
-  // of the gift-card pool rather than a window into the current
-  // 20-row slice.
-  const [result, stats] = await Promise.all([
-    getGiftCards({
-      page,
-      perPage,
-      status: params.status,
-      region: params.region,
-      search: params.search,
-    }),
-    getGiftCardsListStats(),
-  ]);
+  // Global stats stay stable across the status / region / search filter,
+  // so the strip is a fixed read-out of the gift-card pool rather than a
+  // window into the current 20-row slice. Awaited up-front; the table
+  // itself streams in behind a keyed <Suspense> so a filter / search /
+  // page change shows a table skeleton instead of blocking the page.
+  const stats = await getGiftCardsListStats();
 
   return (
     <div className="space-y-6">
@@ -83,7 +77,7 @@ export default async function GiftCardsPage({
 
       <div className="space-y-3">
         <SectionHeading icon={Gift} title="All Gift Cards" />
-        <FadeIn className="space-y-4">
+        <div className="space-y-4">
           <Suspense fallback={<Skeleton className="h-10 w-full" />}>
             <DataTableToolbar
               searchPlaceholder="Search by code..."
@@ -102,16 +96,54 @@ export default async function GiftCardsPage({
             />
           </Suspense>
 
-          <GiftCardsContent data={result.data} />
-
-          <DataTablePagination
-            page={result.page}
-            totalPages={result.totalPages}
-            total={result.total}
-            perPage={result.perPage}
-          />
-        </FadeIn>
+          {/* Keyed on the table inputs so a filter / search / page change
+              re-shows the table skeleton instead of blocking on the
+              previous render — matches the rain / rewards pattern. */}
+          <Suspense
+            key={`${params.status ?? ""}|${params.region ?? ""}|${params.search ?? ""}|${params.page ?? "1"}|${params.perPage ?? "20"}`}
+            fallback={
+              <>
+                <TableSkeleton rows={12} columns={7} />
+                <PaginationSkeleton />
+              </>
+            }
+          >
+            <GiftCardsListAsync params={params} />
+          </Suspense>
+        </div>
       </div>
     </div>
+  );
+}
+
+async function GiftCardsListAsync({
+  params,
+}: {
+  params: Record<string, string | undefined>;
+}) {
+  const page = Number(params.page) || 1;
+  const perPage = Number(params.perPage) || 20;
+
+  const result = await getGiftCards({
+    page,
+    perPage,
+    status: params.status,
+    region: params.region,
+    search: params.search,
+  });
+
+  return (
+    <>
+      <FadeIn>
+        <GiftCardsContent data={result.data} />
+      </FadeIn>
+
+      <DataTablePagination
+        page={result.page}
+        totalPages={result.totalPages}
+        total={result.total}
+        perPage={result.perPage}
+      />
+    </>
   );
 }

@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
+import { transition } from "@/components/ux";
 
 function RangeInput({
   label,
@@ -15,7 +17,7 @@ function RangeInput({
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [, startTransition] = useTransition();
+  const [isPending, startTransition] = useTransition();
   const [min, setMin] = useState(searchParams.get(minKey) ?? "");
   const [max, setMax] = useState(searchParams.get(maxKey) ?? "");
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
@@ -43,7 +45,14 @@ function RangeInput({
   }, []);
 
   return (
-    <div className="flex items-center gap-1.5">
+    <div
+      className={cn(
+        "flex items-center gap-1.5",
+        transition("opacity", "fast"),
+        isPending && "opacity-60",
+      )}
+      aria-busy={isPending || undefined}
+    >
       <span className="text-xs text-muted-foreground whitespace-nowrap">{label}</span>
       <Input
         type="number"

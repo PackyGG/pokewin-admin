@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { LinkPending } from "@/components/ux";
 
 /**
  * Period selector for the rewards analytics page. Mirrors the
@@ -37,13 +38,14 @@ export function RewardsPeriodFilter() {
           replace
           prefetch={false}
           className={cn(
-            "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+            "inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
             current === value
               ? "bg-background text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground",
           )}
         >
           {label}
+          <LinkPending size={13} />
         </Link>
       ))}
     </div>

@@ -22,6 +22,7 @@ import { HistoryTable } from "./history-table";
 import { PeriodsTable } from "./periods-table";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { LinkPending } from "@/components/ux";
 
 export const metadata = { title: "Leaderboards" };
 
@@ -89,13 +90,14 @@ export default async function LeaderboardsPage({
               key={t.value}
               href={`/rewards/leaderboards?tab=${t.value}`}
               className={cn(
-                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                "inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
                 tab === t.value
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
               )}
             >
               {t.label}
+              <LinkPending size={13} />
             </Link>
           ))}
         </div>
@@ -176,13 +178,14 @@ async function StandingsTab({
                   : ""
               }`}
               className={cn(
-                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors capitalize",
+                "inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors capitalize",
                 raceType === type
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
               )}
             >
               {type}
+              <LinkPending size={13} />
             </Link>
           ))}
         </div>
@@ -233,13 +236,14 @@ async function HistoryTab({
             key={type}
             href={`/rewards/leaderboards?tab=history&raceType=${type}`}
             className={cn(
-              "rounded-md px-3 py-1.5 text-sm font-medium transition-colors capitalize",
+              "inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors capitalize",
               (raceType || "all") === type
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground"
             )}
           >
             {type}
+            <LinkPending size={13} />
           </Link>
         ))}
       </div>

@@ -3,11 +3,13 @@
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
+import { transition } from "@/components/ux";
 
 export function ValueRangeFilter() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [, startTransition] = useTransition();
+  const [isPending, startTransition] = useTransition();
   const [min, setMin] = useState(searchParams.get("minValue") ?? "");
   const [max, setMax] = useState(searchParams.get("maxValue") ?? "");
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
@@ -40,8 +42,18 @@ export function ValueRangeFilter() {
     };
   }, []);
 
+  // Subtle pending cue while the debounced ?minValue/?maxValue navigation
+  // round-trips: dim the inputs so the admin sees the filter registered.
+  // Doesn't touch the table render — the page's keyed Suspense owns that.
   return (
-    <div className="flex items-center gap-1.5">
+    <div
+      className={cn(
+        "flex items-center gap-1.5",
+        transition("opacity", "fast"),
+        isPending && "opacity-60",
+      )}
+      aria-busy={isPending || undefined}
+    >
       <Input
         type="number"
         placeholder="Min $"

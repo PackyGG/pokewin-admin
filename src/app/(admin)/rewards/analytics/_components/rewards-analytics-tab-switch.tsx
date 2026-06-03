@@ -11,6 +11,7 @@ import {
   UserPlus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { LinkPending } from "@/components/ux";
 
 /**
  * URL-driven category tab switcher for /rewards/analytics — Overview /
@@ -90,6 +91,10 @@ export function RewardsAnalyticsTabSwitch() {
           >
             <Icon className="size-3.5" />
             {label}
+            {/* Inline pending cue for THIS tab's navigation (each tab is
+                its own server fetch). Shows only while the click is in
+                flight, so a slow category swap never reads as a dead tap. */}
+            <LinkPending size={13} className="ml-0" />
           </Link>
         );
       })}

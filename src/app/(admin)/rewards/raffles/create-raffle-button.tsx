@@ -22,6 +22,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Spinner } from "@/components/ux";
 import { createRaffle, type SearchItem } from "./actions";
 import { PrizePicker } from "./prize-picker";
 
@@ -240,6 +241,7 @@ export function CreateRaffleButton() {
         </div>
         <DialogFooter>
           <Button onClick={handleSubmit} disabled={isPending} className="w-full sm:w-auto">
+            {isPending && <Spinner size={15} className="text-current" />}
             {isPending ? "Creating..." : "Create"}
           </Button>
         </DialogFooter>

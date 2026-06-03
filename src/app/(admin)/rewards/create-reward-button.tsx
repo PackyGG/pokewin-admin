@@ -22,6 +22,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Spinner } from "@/components/ux";
 import { createReward } from "./actions";
 import { PrizePicker } from "./raffles/prize-picker";
 import type { SearchItem } from "./raffles/actions";
@@ -182,6 +183,7 @@ export function CreateRewardButton({ defaultType }: { defaultType?: "one_time" |
         </div>
         <DialogFooter>
           <Button onClick={handleSubmit} disabled={isPending} className="w-full sm:w-auto">
+            {isPending && <Spinner size={15} className="text-current" />}
             {isPending ? "Creating..." : "Create"}
           </Button>
         </DialogFooter>

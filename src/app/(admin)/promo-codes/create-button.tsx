@@ -21,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Spinner } from "@/components/ux";
 import { createPromoCode } from "./actions";
 
 export function CreatePromoCodeButton() {
@@ -314,6 +315,7 @@ export function CreatePromoCodeButton() {
         </div>
         <DialogFooter>
           <Button onClick={handleSubmit} disabled={isPending} className="w-full sm:w-auto">
+            {isPending && <Spinner size={15} className="text-current" />}
             {isPending ? "Creating..." : "Create"}
           </Button>
         </DialogFooter>

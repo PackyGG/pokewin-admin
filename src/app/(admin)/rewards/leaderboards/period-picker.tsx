@@ -1,9 +1,12 @@
 "use client";
 
+import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
+import { transition } from "@/components/ux";
 
 export function PeriodPicker({
   raceType,
@@ -13,9 +16,17 @@ export function PeriodPicker({
   periodStart: string;
 }) {
   const router = useRouter();
+  const [isPending, startTransition] = useTransition();
 
   function navigate(date: string) {
-    router.push(`/rewards/leaderboards?raceType=${raceType}&periodStart=${date}`);
+    // Wrap in a transition so the picker can show a pending cue the instant
+    // the admin steps the period, before the keyed Suspense swaps the table
+    // skeleton in. Same destination + behavior, just immediate feedback.
+    startTransition(() => {
+      router.push(
+        `/rewards/leaderboards?raceType=${raceType}&periodStart=${date}`,
+      );
+    });
   }
 
   function shift(direction: -1 | 1) {
@@ -34,8 +45,21 @@ export function PeriodPicker({
   }
 
   return (
-    <div className="flex items-center gap-1">
-      <Button variant="outline" size="icon" className="size-8" onClick={() => shift(-1)}>
+    <div
+      className={cn(
+        "flex items-center gap-1",
+        transition("opacity", "fast"),
+        isPending && "opacity-60",
+      )}
+      aria-busy={isPending || undefined}
+    >
+      <Button
+        variant="outline"
+        size="icon"
+        className="size-8"
+        onClick={() => shift(-1)}
+        disabled={isPending}
+      >
         <ChevronLeft className="size-4" />
       </Button>
       <Input
@@ -43,8 +67,15 @@ export function PeriodPicker({
         value={periodStart}
         onChange={(e) => e.target.value && navigate(e.target.value)}
         className="h-8 w-40"
+        disabled={isPending}
       />
-      <Button variant="outline" size="icon" className="size-8" onClick={() => shift(1)}>
+      <Button
+        variant="outline"
+        size="icon"
+        className="size-8"
+        onClick={() => shift(1)}
+        disabled={isPending}
+      >
         <ChevronRight className="size-4" />
       </Button>
     </div>

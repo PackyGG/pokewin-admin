@@ -13,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ux";
 import { updateRainConfig } from "./actions";
 
 /**
@@ -244,6 +245,7 @@ export function RainConfigCard({
 
         <div className="flex items-center gap-2">
           <Button onClick={handleSave} disabled={!dirty || isPending}>
+            {isPending && <Spinner size={15} className="text-current" />}
             {isPending ? "Saving..." : "Save changes"}
           </Button>
           {!dirty && (

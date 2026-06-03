@@ -13,6 +13,7 @@ import { RakebackConfigTable } from "./rakeback-config-table";
 import { RakebackClaimsTable } from "./rakeback-claims-table";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { LinkPending } from "@/components/ux";
 
 export const metadata = { title: "Rakeback" };
 
@@ -49,13 +50,14 @@ export default async function RakebackPage({
               key={t.value}
               href={`/rewards/rakeback?tab=${t.value}`}
               className={cn(
-                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                "inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
                 tab === t.value
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
               )}
             >
               {t.label}
+              <LinkPending size={13} />
             </Link>
           ))}
         </div>
@@ -114,13 +116,14 @@ async function ClaimsTab({ page, perPage, type, search }: { page: number; perPag
             key={t}
             href={`/rewards/rakeback?tab=claims&type=${t}`}
             className={cn(
-              "rounded-md px-3 py-1.5 text-sm font-medium transition-colors capitalize",
+              "inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors capitalize",
               (type || "all") === t
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground"
             )}
           >
             {t}
+            <LinkPending size={13} />
           </Link>
         ))}
       </div>

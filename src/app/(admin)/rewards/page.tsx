@@ -15,6 +15,7 @@ import { CreateRewardButton } from "./create-reward-button";
 import { RewardsTable } from "./rewards-table";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { LinkPending } from "@/components/ux";
 
 export const metadata = { title: "Rewards" };
 
@@ -96,13 +97,14 @@ export default async function RewardsPage({
                 key={t}
                 href={`/rewards?type=${t}`}
                 className={cn(
-                  "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                  "inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
                   (type || "all") === t
                     ? "bg-background text-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground"
                 )}
               >
                 {t === "one_time" ? "One Time" : t === "all" ? "All" : t.charAt(0).toUpperCase() + t.slice(1)}
+                <LinkPending size={13} />
               </Link>
             ))}
           </div>
