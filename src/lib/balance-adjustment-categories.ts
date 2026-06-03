@@ -200,7 +200,7 @@ export function countedAdjustmentSqlPredicate(opts?: {
   const list = COUNTED_ADJUSTMENT_CATEGORY_KEYS.map(
     (k) => `'${k.replace(/'/g, "''")}'`,
   ).join(",");
-  return `${typeCol} = 'admin_balance_adjustment' AND ${amountCol}::numeric > 0 AND ${metaCol}->>'adjustment_category' IN (${list})`;
+  return `${typeCol}::text = 'admin_balance_adjustment' AND ${amountCol}::numeric > 0 AND ${metaCol}->>'adjustment_category' IN (${list})`;
 }
 
 /**
@@ -216,5 +216,5 @@ export function adjustmentCategorySqlPredicate(
   const metaCol = opts?.metadataColumn ?? "metadata";
   const amountCol = opts?.amountColumn ?? "amount";
   const key = `'${category.replace(/'/g, "''")}'`;
-  return `${typeCol} = 'admin_balance_adjustment' AND ${amountCol}::numeric > 0 AND ${metaCol}->>'adjustment_category' = ${key}`;
+  return `${typeCol}::text = 'admin_balance_adjustment' AND ${amountCol}::numeric > 0 AND ${metaCol}->>'adjustment_category' = ${key}`;
 }
