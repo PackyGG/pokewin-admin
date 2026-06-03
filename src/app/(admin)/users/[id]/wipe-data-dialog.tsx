@@ -33,7 +33,6 @@ import {
   Users,
   UserCog,
   Lock,
-  BarChart3,
   Skull,
   AlertTriangle,
 } from "lucide-react";
@@ -61,7 +60,6 @@ import {
   type WipeCategoryIcon,
   type WipeCategoryGroup,
 } from "@/lib/account-wipes/categories";
-import { excludeUserFromAllStats } from "./wipe-exclude-actions";
 import {
   previewBalanceWipe,
   previewVaultWipe,
@@ -78,6 +76,11 @@ import {
   wipeDeposits,
 } from "./wipe-deposits-actions";
 import {
+  previewWagerWipe,
+  wipeWager,
+  type WagerWipePreview,
+} from "./wipe-wager-actions";
+import {
   listWipeableAdjustments,
   wipeBalanceAdjustments,
   type WipeableAdjustment,
@@ -89,6 +92,9 @@ import {
 // value (reduces what we owe → good for the house), so every removed magnitude
 // is rendered in rose, matching the per-mode dialogs this consolidates.
 const ROSE = "text-rose-500 dark:text-rose-400";
+// House-POV emerald: the user LOST value (a debit adjustment = the house took
+// balance). Used for the debit rows in the adjustments list.
+const EMERALD = "text-emerald-600 dark:text-emerald-400";
 
 // Map the icon NAME from the categories module to a lucide component (keeps
 // that module icon-lib-free + client-safe).
@@ -131,6 +137,8 @@ type DepositsPreview = {
   totalDeposited: number;
   recent: Array<{ id: string; amount: number; createdAt: string; description: string }>;
 };
+// The wager preview is exactly the server action's payload.
+type WagerPreview = WagerWipePreview;
 
 type LoadState<T> =
   | { status: "loading" }
@@ -141,12 +149,14 @@ type LoadState<T> =
 // Disabled (coming-soon) categories are rendered greyed-out and are never
 // loaded or executed. Adjustments is row-selectable; the rest are all-or-
 // nothing. Deposits is creator-protected (disabled for an ever-creator).
+// Wager (gameplay) is all-or-nothing + not creator-protected.
 type SelectableCategory =
   | "adjustments"
   | "balance"
   | "vault"
   | "inventory"
-  | "deposits";
+  | "deposits"
+  | "wager";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Entry button — the SINGLE "Wipe data" button that replaces the four separate
@@ -199,16 +209,16 @@ type Phase = "select" | "confirm" | "running";
 
 // Per-step execution outcome surfaced in the running/results phase so a
 // partial run is fully legible (which succeeded, which failed, which were
-// skipped because an earlier one aborted the sequence).
-//
-// A run step is EITHER a wipe category OR the special "exclude from all stats"
-// step (a non-destructive blacklist add that runs as the FINAL step). The
-// `kind` discriminator lets the RunningPhase render the right label/icon for
-// the stat-exclusion row, which has no WipeCategory.
+// skipped because an earlier one aborted the sequence). Every run step is a
+// wipe category — the wipe flow is purely destructive (real deletions only);
+// there is NO stat-exclusion step (the owner rejected excluding users
+// entirely — "excluding users is no option").
 type RunStatus = "pending" | "running" | "success" | "failed" | "skipped";
-type RunResult =
-  | { kind: "category"; category: SelectableCategory; status: RunStatus; message: string }
-  | { kind: "exclude"; status: RunStatus; message: string };
+type RunResult = {
+  category: SelectableCategory;
+  status: RunStatus;
+  message: string;
+};
 
 function WipeDataDialog({
   userId,
@@ -235,18 +245,11 @@ function WipeDataDialog({
     vault: false,
     inventory: false,
     deposits: false,
+    wager: false,
   });
 
-  // "Also remove from all stats" — when ON, the user is added to the
-  // excluded-users blacklist after the wipes so they vanish from every metric
-  // surface (dashboard / GGR / analytics / insights / P&L). Default ON per the
-  // owner's ask. Non-destructive (deletes nothing — just filters them out of
-  // aggregates), so it is safe even for creators. WIPE ALL forces this ON
-  // regardless of this toggle.
-  const [excludeFromStats, setExcludeFromStats] = useState(true);
-
   // True only while a WIPE ALL run is executing — drives the running-phase
-  // banner copy + forces the stat-exclusion step on.
+  // banner copy.
   const [isWipeAllRun, setIsWipeAllRun] = useState(false);
 
   // Lazily-loaded previews — one per category, only fetched when that category
@@ -259,6 +262,7 @@ function WipeDataDialog({
   const [deposits, setDeposits] = useState<LoadState<DepositsPreview> | null>(
     null,
   );
+  const [wager, setWager] = useState<LoadState<WagerPreview> | null>(null);
 
   // Adjustments are row-selectable (not all-or-nothing): load the wipeable
   // credit rows, let the admin pick a subset.
@@ -281,16 +285,17 @@ function WipeDataDialog({
       vault: false,
       inventory: false,
       deposits: false,
+      wager: false,
     });
     setBalance(null);
     setVault(null);
     setInventory(null);
     setDeposits(null);
+    setWager(null);
     setAdjState(null);
     setAdjSelected(new Set());
     setAdjSearch("");
     setResults([]);
-    setExcludeFromStats(true);
     setIsWipeAllRun(false);
   }, [open]);
 
@@ -410,6 +415,24 @@ function WipeDataDialog({
       );
   }, [userId]);
 
+  const loadWager = useCallback(() => {
+    setWager({ status: "loading" });
+    previewWagerWipe(userId)
+      .then((res) =>
+        setWager(
+          res.success
+            ? { status: "ready", data: res.preview }
+            : { status: "error", error: res.error },
+        ),
+      )
+      .catch((e) =>
+        setWager({
+          status: "error",
+          error: e instanceof Error ? e.message : "Failed to load",
+        }),
+      );
+  }, [userId]);
+
   const loadAdjustments = useCallback(() => {
     setAdjState({ status: "loading" });
     listWipeableAdjustments(userId)
@@ -437,6 +460,7 @@ function WipeDataDialog({
     if (cat === "vault" && vault === null) loadVault();
     if (cat === "inventory" && inventory === null) loadInventory();
     if (cat === "deposits" && deposits === null) loadDeposits();
+    if (cat === "wager" && wager === null) loadWager();
     if (cat === "adjustments" && adjState === null) loadAdjustments();
   }
 
@@ -455,8 +479,21 @@ function WipeDataDialog({
     () => adjRows.filter((r) => adjSelected.has(r.id)),
     [adjRows, adjSelected],
   );
-  const adjTotal = useMemo(
+  // Signed sum of the selected adjustments (credits + debits) — informational.
+  const adjSignedTotal = useMemo(
     () => adjSelectedRows.reduce((acc, r) => acc + r.amount, 0),
+    [adjSelectedRows],
+  );
+  // The amount actually removed from the balance = Σ positive (credit) amounts
+  // only. Deleting a debit leaves the balance unchanged (BALANCE RULE), so it
+  // contributes 0 here. This is what feeds the cash grand-total.
+  const adjCreditClawback = useMemo(
+    () => adjSelectedRows.reduce((acc, r) => (r.amount > 0 ? acc + r.amount : acc), 0),
+    [adjSelectedRows],
+  );
+  // How many selected rows are debits (records deleted, balance untouched).
+  const adjDebitCount = useMemo(
+    () => adjSelectedRows.reduce((acc, r) => (r.amount < 0 ? acc + 1 : acc), 0),
     [adjSelectedRows],
   );
   const adjFilteredAllSelected =
@@ -492,16 +529,25 @@ function WipeDataDialog({
     checked.balance && balance?.status === "ready" ? balance.data.amount : 0;
   const vaultAmt =
     checked.vault && vault?.status === "ready" ? vault.data.amount : 0;
-  const adjAmt = checked.adjustments ? adjTotal : 0;
+  // The adjustments' contribution to the cash grand-total is the CREDIT
+  // clawback (what actually leaves the balance) — NOT the signed sum, since
+  // deleting a debit removes no money.
+  const adjAmt = checked.adjustments ? adjCreditClawback : 0;
   const depositsAmt =
     checked.deposits && deposits?.status === "ready"
       ? deposits.data.totalAmount
       : 0;
+  // The wager category's cash contribution = the PAYOUT clawback (what leaves
+  // the balance). The won-inventory value is a GGR-value estimate surfaced
+  // separately (different unit, not folded into cash) alongside the inventory.
+  const wagerData =
+    checked.wager && wager?.status === "ready" ? wager.data : null;
+  const wagerPayoutAmt = wagerData ? wagerData.payoutTotal : 0;
   // The money grand-total across the selected MONEY categories (balance, vault,
-  // selected adjustments, deposits). Inventory value is a card-value estimate
-  // (different unit) and is surfaced alongside, not folded into this cash
-  // figure.
-  const moneyTotal = balanceAmt + vaultAmt + adjAmt + depositsAmt;
+  // selected adjustments [credit clawback], deposits, wager payout clawback).
+  // Inventory + won-card value are card-value estimates (different unit) and
+  // are surfaced alongside, not folded into this cash figure.
+  const moneyTotal = balanceAmt + vaultAmt + adjAmt + depositsAmt + wagerPayoutAmt;
   const invValue =
     checked.inventory && inventory?.status === "ready"
       ? inventory.data.value
@@ -527,15 +573,22 @@ function WipeDataDialog({
           return inventory?.status === "ready" && inventory.data.count > 0;
         case "deposits":
           return deposits?.status === "ready" && deposits.data.count > 0;
+        case "wager":
+          return (
+            wager?.status === "ready" &&
+            (wager.data.ledgerLegCount > 0 ||
+              wager.data.inventoryCount > 0 ||
+              wager.data.upgraderGameCount > 0)
+          );
         case "adjustments":
           return adjSelected.size > 0;
       }
     },
-    [balance, vault, inventory, deposits, adjSelected],
+    [balance, vault, inventory, deposits, wager, adjSelected],
   );
 
   const SELECTABLE_ORDER: readonly SelectableCategory[] = useMemo(
-    () => ["adjustments", "balance", "vault", "inventory", "deposits"],
+    () => ["adjustments", "balance", "vault", "inventory", "deposits", "wager"],
     [],
   );
 
@@ -557,6 +610,7 @@ function WipeDataDialog({
     if (c === "vault") return !vault || vault.status === "loading";
     if (c === "inventory") return !inventory || inventory.status === "loading";
     if (c === "deposits") return !deposits || deposits.status === "loading";
+    if (c === "wager") return !wager || wager.status === "loading";
     if (c === "adjustments") return !adjState || adjState.status === "loading";
     return false;
   });
@@ -568,6 +622,7 @@ function WipeDataDialog({
     if (c === "vault") return vault?.status === "error";
     if (c === "inventory") return inventory?.status === "error";
     if (c === "deposits") return deposits?.status === "error";
+    if (c === "wager") return wager?.status === "error";
     if (c === "adjustments") return adjState?.status === "error";
     return false;
   });
@@ -591,43 +646,40 @@ function WipeDataDialog({
     [SELECTABLE_ORDER, isCategoryLocked],
   );
 
-  // ── Sequential multi-execute. One 2FA code, applied to each step's EXISTING
-  // action in turn. Each wipe action is independently snapshot-first +
-  // recoverable, so a partial run is safe + individually restorable from the
-  // wipe audit log. The OPTIONAL final step is the non-destructive
-  // "exclude from all stats" blacklist add.
+  // ── Sequential multi-execute. One 2FA code, applied to each category's
+  // EXISTING wipe action in turn. Each wipe action is independently
+  // snapshot-first + recoverable, so a partial run is safe + individually
+  // restorable from the wipe audit log. The flow is purely destructive — real
+  // deletions only, with NO stat-exclusion step (the owner rejected excluding
+  // users entirely).
   //
   //   • `seq`            — the ordered categories to wipe.
   //   • `adjIds`         — the adjustment ledger ids to wipe (for the
   //                        adjustments category). Empty for WIPE ALL when no
   //                        adjustments exist.
-  //   • `alsoExclude`    — append the stat-exclusion step at the end.
   //   • `softSkipEmpty`  — WIPE ALL mode: treat a category's "nothing to wipe"
   //                        / "already $0" empty-result as a SKIP rather than an
   //                        aborting failure (so an empty vault doesn't stop the
   //                        balance/inventory wipes). A REAL failure still
-  //                        aborts the remaining wipes. The stat-exclusion step
-  //                        always runs (it doesn't depend on the wipes).
+  //                        aborts the remaining wipes.
   //   • `wipeAll`        — drives the running-phase banner copy.
   //
-  // SINGLE 2FA GATE PRESERVED: one code drives every wipe action AND the
-  // exclusion action; each server action independently re-verifies it
-  // (require2FA is stateless, no replay lock), exactly as the existing
-  // multi-category run already does.
+  // SINGLE 2FA GATE PRESERVED: one code drives every wipe action; each server
+  // action independently re-verifies it (require2FA is stateless, no replay
+  // lock), exactly as the existing multi-category run already does.
   const runSequence = useCallback(
     (opts: {
       seq: readonly SelectableCategory[];
       adjIds: string[];
-      alsoExclude: boolean;
       softSkipEmpty: boolean;
       wipeAll: boolean;
     }) => {
-      const { seq, adjIds, alsoExclude, softSkipEmpty, wipeAll } = opts;
+      const { seq, adjIds, softSkipEmpty, wipeAll } = opts;
       if (!totpCode.trim()) {
         toast.error("Enter your 2FA code");
         return;
       }
-      if (seq.length === 0 && !alsoExclude) {
+      if (seq.length === 0) {
         toast.error("Nothing selected to wipe");
         return;
       }
@@ -636,17 +688,13 @@ function WipeDataDialog({
       setIsWipeAllRun(wipeAll);
       setPhase("running");
 
-      // Build the run plan: a step per category, plus the optional final
-      // stat-exclusion step. Seeded all-pending so the UI shows the full plan.
+      // Build the run plan: a step per category. Seeded all-pending so the UI
+      // shows the full plan.
       const plan: RunResult[] = seq.map((category) => ({
-        kind: "category" as const,
         category,
         status: "pending" as RunStatus,
         message: "",
       }));
-      if (alsoExclude) {
-        plan.push({ kind: "exclude", status: "pending", message: "" });
-      }
       setResults(plan.map((r) => ({ ...r })));
 
       startTransition(async () => {
@@ -657,53 +705,15 @@ function WipeDataDialog({
         // was empty" as a soft-skip in WIPE ALL mode (an empty category is a
         // no-op, not a failure that should abort the rest).
         const isEmptyErr = (msg: string): boolean =>
-          /nothing to wipe|already \$0|no inventory|no deposits|at least one adjustment/i.test(
+          /nothing to wipe|already \$0|no inventory|no deposits|no wager|at least one adjustment/i.test(
             msg,
           );
 
         let aborted = false;
         for (let i = 0; i < finalResults.length; i++) {
-          const step = finalResults[i];
-
-          if (step.kind === "exclude") {
-            // The stat-exclusion step ALWAYS runs (it doesn't depend on the
-            // wipes succeeding) — it's non-destructive and is the whole point
-            // of "gone everywhere", so an earlier wipe failure must not skip
-            // it. It runs LAST so the metric-cache bust reflects the wipes too.
-            finalResults[i] = { kind: "exclude", status: "running", message: "" };
-            commit();
-            try {
-              const res = await excludeUserFromAllStats({
-                userId,
-                totpCode: code,
-                reason: wipeAll
-                  ? "Auto-excluded on WIPE ALL"
-                  : "Auto-excluded on account wipe",
-              });
-              finalResults[i] = res.success
-                ? {
-                    kind: "exclude",
-                    status: "success",
-                    message: res.inserted
-                      ? "Removed from all stats (dashboard / GGR / analytics / insights)"
-                      : "Already excluded from all stats — no change",
-                  }
-                : { kind: "exclude", status: "failed", message: res.error };
-            } catch (e) {
-              finalResults[i] = {
-                kind: "exclude",
-                status: "failed",
-                message: e instanceof Error ? e.message : "Unexpected error",
-              };
-            }
-            commit();
-            continue;
-          }
-
-          const category = step.category;
+          const { category } = finalResults[i];
           if (aborted) {
             finalResults[i] = {
-              kind: "category",
               category,
               status: "skipped",
               message: "Skipped — an earlier wipe failed",
@@ -711,14 +721,13 @@ function WipeDataDialog({
             commit();
             continue;
           }
-          finalResults[i] = { kind: "category", category, status: "running", message: "" };
+          finalResults[i] = { category, status: "running", message: "" };
           commit();
 
           try {
             const outcome = await runCategory(category, userId, code, adjIds);
             if (outcome.success) {
               finalResults[i] = {
-                kind: "category",
                 category,
                 status: "success",
                 message: outcome.message,
@@ -726,14 +735,12 @@ function WipeDataDialog({
             } else if (softSkipEmpty && isEmptyErr(outcome.error)) {
               // Empty category under WIPE ALL → skip, don't abort the rest.
               finalResults[i] = {
-                kind: "category",
                 category,
                 status: "skipped",
                 message: "Nothing to wipe — empty, skipped",
               };
             } else {
               finalResults[i] = {
-                kind: "category",
                 category,
                 status: "failed",
                 message: outcome.error,
@@ -742,7 +749,6 @@ function WipeDataDialog({
             }
           } catch (e) {
             finalResults[i] = {
-              kind: "category",
               category,
               status: "failed",
               message: e instanceof Error ? e.message : "Unexpected error",
@@ -780,41 +786,34 @@ function WipeDataDialog({
     [totpCode, userId, router],
   );
 
-  // Normal "Wipe selected" path: run the ticked, non-empty categories, with the
-  // stat-exclusion appended only when the "Also remove from all stats" toggle
-  // is ON. Empty categories can't reach here (runnableCategories excludes them),
-  // so softSkipEmpty is off.
+  // Normal "Wipe selected" path: run the ticked, non-empty categories. Empty
+  // categories can't reach here (runnableCategories excludes them), so
+  // softSkipEmpty is off.
   function handleRun() {
     runSequence({
       seq: runnableCategories,
       adjIds: Array.from(adjSelected),
-      alsoExclude: excludeFromStats,
       softSkipEmpty: false,
       wipeAll: false,
     });
   }
 
-  // WIPE ALL: run EVERY enabled, non-locked category (empties soft-skipped) and
-  // ALWAYS add the stat-exclusion. Loads the full adjustment list first (its
-  // ids are needed by the adjustments action) — the only preview WIPE ALL
-  // depends on; balance/vault/inventory/deposits re-read server-side. The
-  // single 2FA gate is unchanged (the code already entered in the confirm step
-  // drives every action).
+  // WIPE ALL: run EVERY enabled, non-locked category (empties soft-skipped).
+  // Loads the full adjustment list first (its ids are needed by the
+  // adjustments action) — the only preview WIPE ALL depends on;
+  // balance/vault/inventory/deposits/wager re-read server-side. The single 2FA
+  // gate is unchanged (the code already entered in the confirm step drives
+  // every action). NO stat-exclusion runs — WIPE ALL is purely the real
+  // deletions (the owner rejected excluding users entirely).
   const handleWipeAll = useCallback(() => {
     if (!totpCode.trim()) {
       toast.error("Enter your 2FA code");
       return;
     }
     if (allEnabledCategories.length === 0) {
-      // No destructive category is available (e.g. fully creator-protected),
-      // but the non-destructive stat-exclusion still applies → run it alone.
-      runSequence({
-        seq: [],
-        adjIds: [],
-        alsoExclude: true,
-        softSkipEmpty: true,
-        wipeAll: true,
-      });
+      // No destructive category is available (e.g. fully creator-protected) —
+      // there is nothing to do (exclusion is no longer part of the flow).
+      toast.error("No wipeable category is available for this user");
       return;
     }
 
@@ -822,7 +821,6 @@ function WipeDataDialog({
       runSequence({
         seq: allEnabledCategories,
         adjIds,
-        alsoExclude: true,
         softSkipEmpty: true,
         wipeAll: true,
       });
@@ -899,6 +897,7 @@ function WipeDataDialog({
             vault={vault}
             inventory={inventory}
             deposits={deposits}
+            wager={wager}
             adjState={adjState}
             adjFiltered={adjFiltered}
             adjSelected={adjSelected}
@@ -909,7 +908,9 @@ function WipeDataDialog({
             toggleAdjOne={toggleAdjOne}
             toggleAdjAllFiltered={toggleAdjAllFiltered}
             adjSelectedCount={adjSelected.size}
-            adjTotal={adjTotal}
+            adjSignedTotal={adjSignedTotal}
+            adjCreditClawback={adjCreditClawback}
+            adjDebitCount={adjDebitCount}
             tickedLoadError={tickedLoadError}
           />
         )}
@@ -925,13 +926,13 @@ function WipeDataDialog({
             depositsAmt={depositsAmt}
             depositsCount={depositsCount}
             adjSelectedRows={adjSelectedRows}
+            adjDebitCount={adjDebitCount}
+            wagerData={wagerData}
             moneyTotal={moneyTotal}
             invCount={invCount}
             invValue={invValue}
             totpCode={totpCode}
             setTotpCode={setTotpCode}
-            excludeFromStats={excludeFromStats}
-            setExcludeFromStats={setExcludeFromStats}
             allEnabledCategories={allEnabledCategories}
             onWipeAll={handleWipeAll}
             isPending={isPending}
@@ -1029,9 +1030,13 @@ async function runCategory(
       totpCode,
     });
     if (!res.success) return { success: false, error: res.error };
+    // Report what actually LEFT the balance (the credit clawback =
+    // balanceBefore − balanceAfter), not the signed sum — a debit-only batch
+    // removes records without changing the balance, so this reads $0 there.
+    const removedFromBalance = res.balanceBefore - res.balanceAfter;
     return {
       success: true,
-      message: `Removed ${res.deletedCount} adjustment${res.deletedCount === 1 ? "" : "s"} · ${formatCurrency(res.totalRemoved)}`,
+      message: `Deleted ${res.deletedCount} adjustment${res.deletedCount === 1 ? "" : "s"} · ${formatCurrency(removedFromBalance)} clawed back from balance`,
     };
   }
   if (category === "balance") {
@@ -1056,6 +1061,25 @@ async function runCategory(
     return {
       success: true,
       message: `Deleted ${res.deletedCount} deposit${res.deletedCount === 1 ? "" : "s"} (${formatCurrency(res.totalAmount)}) · counter −${formatCurrency(res.counterReduced)}`,
+    };
+  }
+  if (category === "wager") {
+    const res = await wipeWager({ userId, totpCode });
+    if (!res.success) return { success: false, error: res.error };
+    const parts: string[] = [];
+    if (res.ledgerLegsDeleted > 0)
+      parts.push(`${res.ledgerLegsDeleted} ledger leg${res.ledgerLegsDeleted === 1 ? "" : "s"}`);
+    if (res.inventoryDeleted > 0)
+      parts.push(`${res.inventoryDeleted} won item${res.inventoryDeleted === 1 ? "" : "s"}`);
+    if (res.upgraderGamesDeleted > 0)
+      parts.push(`${res.upgraderGamesDeleted} upgrader game${res.upgraderGamesDeleted === 1 ? "" : "s"}`);
+    const skipped =
+      res.withdrawalLockedSkipped > 0
+        ? ` · ${res.withdrawalLockedSkipped} withdrawal-locked card${res.withdrawalLockedSkipped === 1 ? "" : "s"} skipped`
+        : "";
+    return {
+      success: true,
+      message: `Deleted ${parts.join(" · ") || "nothing"} · ${formatCurrency(res.balanceReduced)} clawed back from balance${skipped}`,
     };
   }
   // inventory
@@ -1083,6 +1107,7 @@ function SelectPhase({
   vault,
   inventory,
   deposits,
+  wager,
   adjState,
   adjFiltered,
   adjSelected,
@@ -1093,7 +1118,9 @@ function SelectPhase({
   toggleAdjOne,
   toggleAdjAllFiltered,
   adjSelectedCount,
-  adjTotal,
+  adjSignedTotal,
+  adjCreditClawback,
+  adjDebitCount,
   tickedLoadError,
 }: {
   checked: Record<SelectableCategory, boolean>;
@@ -1105,6 +1132,7 @@ function SelectPhase({
   vault: LoadState<VaultPreview> | null;
   inventory: LoadState<InventoryPreview> | null;
   deposits: LoadState<DepositsPreview> | null;
+  wager: LoadState<WagerPreview> | null;
   adjState: LoadState<WipeableAdjustment[]> | null;
   adjFiltered: WipeableAdjustment[];
   adjSelected: Set<string>;
@@ -1115,7 +1143,9 @@ function SelectPhase({
   toggleAdjOne: (id: string, v: boolean) => void;
   toggleAdjAllFiltered: (v: boolean) => void;
   adjSelectedCount: number;
-  adjTotal: number;
+  adjSignedTotal: number;
+  adjCreditClawback: number;
+  adjDebitCount: number;
   tickedLoadError: SelectableCategory | undefined;
 }) {
   // Group the canonical category list by group, preserving order.
@@ -1155,7 +1185,8 @@ function SelectPhase({
                   key === "balance" ||
                   key === "vault" ||
                   key === "inventory" ||
-                  key === "deposits";
+                  key === "deposits" ||
+                  key === "wager";
                 return (
                   <CategoryRow
                     key={key}
@@ -1183,6 +1214,9 @@ function SelectPhase({
                     {key === "deposits" && checked.deposits && (
                       <DepositsInline state={deposits} />
                     )}
+                    {key === "wager" && checked.wager && (
+                      <WagerInline state={wager} />
+                    )}
                     {key === "adjustments" && checked.adjustments && (
                       <AdjustmentsInline
                         state={adjState}
@@ -1195,7 +1229,9 @@ function SelectPhase({
                         toggleOne={toggleAdjOne}
                         toggleAllFiltered={toggleAdjAllFiltered}
                         selectedCount={adjSelectedCount}
-                        total={adjTotal}
+                        signedTotal={adjSignedTotal}
+                        creditClawback={adjCreditClawback}
+                        debitCount={adjDebitCount}
                       />
                     )}
                   </CategoryRow>
@@ -1454,6 +1490,104 @@ function DepositsInline({ state }: { state: LoadState<DepositsPreview> | null })
   );
 }
 
+function WagerInline({ state }: { state: LoadState<WagerPreview> | null }) {
+  return (
+    <InlineWrapper state={state}>
+      {state?.status === "ready" && (
+        <div className="space-y-2 text-sm">
+          {state.data.ledgerLegCount === 0 &&
+          state.data.inventoryCount === 0 &&
+          state.data.upgraderGameCount === 0 ? (
+            <EmptyNote what="wager / gameplay data" />
+          ) : (
+            <>
+              {/* Ledger legs (wager vs payout). */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">
+                    {state.data.ledgerLegCount.toLocaleString()} wager + payout
+                    ledger leg{state.data.ledgerLegCount === 1 ? "" : "s"}
+                  </span>
+                </div>
+                <div className="divide-y rounded border bg-background/50">
+                  <div className="flex items-center justify-between px-2.5 py-1.5 text-xs">
+                    <span className="text-muted-foreground">
+                      Wager placed (pack / battle / upgrader bets)
+                    </span>
+                    {/* House-POV: user staked money = house gain = emerald. */}
+                    <span className={cn("tabular-nums font-medium", EMERALD)}>
+                      {formatCurrency(state.data.wagerTotal)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between px-2.5 py-1.5 text-xs">
+                    <span className="text-muted-foreground">
+                      Payout legs (clawed back from balance)
+                    </span>
+                    {/* House-POV: user won money = house loss = rose. */}
+                    <span className={cn("tabular-nums font-medium", ROSE)}>
+                      {formatCurrency(state.data.payoutTotal)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Won pack/battle inventory. */}
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">
+                  {state.data.inventoryCount.toLocaleString()} won pack/battle
+                  item{state.data.inventoryCount === 1 ? "" : "s"} · GGR value
+                </span>
+                <span className={cn("font-semibold tabular-nums", ROSE)}>
+                  {formatCurrency(state.data.inventoryValue)}
+                </span>
+              </div>
+
+              {/* Upgrader games. */}
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">
+                  {state.data.upgraderTablePresent
+                    ? `${state.data.upgraderGameCount.toLocaleString()} upgrader game${state.data.upgraderGameCount === 1 ? "" : "s"}`
+                    : "Upgrader games (table not on this DB)"}
+                </span>
+                {state.data.upgraderTablePresent && (
+                  <span className="text-foreground/80 tabular-nums">
+                    bet {formatCurrency(state.data.upgraderBet)} · won{" "}
+                    {formatCurrency(state.data.upgraderWon)}
+                  </span>
+                )}
+              </div>
+
+              {/* Balance clawback summary (payout legs only). */}
+              <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-1.5 text-xs">
+                <span className="text-muted-foreground">
+                  Removed from balance (payout legs only)
+                </span>
+                <span className={cn("font-semibold tabular-nums", ROSE)}>
+                  {formatCurrency(state.data.payoutTotal)}
+                </span>
+              </div>
+
+              {state.data.withdrawalLockedSkipped > 0 && (
+                <p className="flex items-start gap-1.5 rounded border border-amber-500/30 bg-amber-500/[0.06] px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-400">
+                  <Info className="mt-0.5 size-3.5 shrink-0" />
+                  <span>
+                    {state.data.withdrawalLockedSkipped} won card
+                    {state.data.withdrawalLockedSkipped === 1 ? "" : "s"} will be
+                    SKIPPED — they back an in-flight withdrawal and can&apos;t be
+                    safely deleted here.
+                  </span>
+                </p>
+              )}
+
+              <DangerWarning kind="wager" />
+            </>
+          )}
+        </div>
+      )}
+    </InlineWrapper>
+  );
+}
+
 /** Human label for a user_inventory.source_type value. */
 function sourceLabel(source: string): string {
   switch (source) {
@@ -1591,7 +1725,9 @@ function AdjustmentsInline({
   toggleOne,
   toggleAllFiltered,
   selectedCount,
-  total,
+  signedTotal,
+  creditClawback,
+  debitCount,
 }: {
   state: LoadState<WipeableAdjustment[]> | null;
   filtered: WipeableAdjustment[];
@@ -1603,7 +1739,12 @@ function AdjustmentsInline({
   toggleOne: (id: string, v: boolean) => void;
   toggleAllFiltered: (v: boolean) => void;
   selectedCount: number;
-  total: number;
+  /** Signed sum of the selected rows (credits + debits) — informational. */
+  signedTotal: number;
+  /** Amount actually removed from the balance (Σ credit amounts only). */
+  creditClawback: number;
+  /** How many selected rows are debits (records deleted, balance untouched). */
+  debitCount: number;
 }) {
   return (
     <InlineWrapper state={state}>
@@ -1611,13 +1752,16 @@ function AdjustmentsInline({
         <div className="space-y-2">
           {state.data.length === 0 ? (
             <div className="py-2 text-xs text-muted-foreground">
-              This user has no admin balance-adjustment credits to wipe.
+              This user has no admin balance adjustments to delete.
             </div>
           ) : (
             <>
               <p className="text-xs text-muted-foreground">
-                Pick the admin-granted credits to remove. Debits/clawbacks,
-                deposits, withdrawals and gaming rows are never listed.
+                Pick the admin adjustments to delete — credits AND debits.
+                Deleting a credit claws its amount back out of the balance;
+                deleting a debit removes the record but leaves the balance
+                unchanged (it never adds money back). Manual withdrawals,
+                deposits and gaming rows are never listed.
               </p>
               {/* Search / filter by reason */}
               <div className="relative">
@@ -1671,35 +1815,59 @@ function AdjustmentsInline({
                           <div className="text-[11px] text-muted-foreground">
                             {formatDateTime(r.createdAt)} ·{" "}
                             {formatRelative(r.createdAt)}
+                            {r.amount < 0 ? " · debit (balance kept)" : ""}
                           </div>
                         </div>
+                        {/* House-POV: a CREDIT (user got money) renders rose;
+                            a DEBIT (user lost money) renders emerald. The sign
+                            shows the original direction of the adjustment. */}
                         <div
                           className={cn(
                             "shrink-0 font-semibold tabular-nums",
-                            ROSE,
+                            r.amount < 0 ? EMERALD : ROSE,
                           )}
                         >
-                          +{formatCurrency(r.amount)}
+                          {r.amount < 0 ? "−" : "+"}
+                          {formatCurrency(Math.abs(r.amount))}
                         </div>
                       </label>
                     );
                   })
                 )}
               </div>
-              {/* Running total */}
-              <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-1.5 text-xs">
-                <span className="text-muted-foreground">
-                  <span className="font-semibold tabular-nums text-foreground">
-                    {selectedCount}
-                  </span>{" "}
-                  selected
-                </span>
-                <span className="text-muted-foreground">
-                  To remove:{" "}
-                  <span className={cn("font-semibold tabular-nums", ROSE)}>
-                    {formatCurrency(total)}
+              {/* Running total — "removed from balance" is the CREDIT clawback
+                  only (debits delete but keep the balance). */}
+              <div className="space-y-0.5 rounded-md border bg-muted/30 px-3 py-1.5 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">
+                    <span className="font-semibold tabular-nums text-foreground">
+                      {selectedCount}
+                    </span>{" "}
+                    selected
+                    {debitCount > 0 ? (
+                      <span className="text-muted-foreground">
+                        {" "}
+                        ({debitCount} debit{debitCount === 1 ? "" : "s"})
+                      </span>
+                    ) : (
+                      ""
+                    )}
                   </span>
-                </span>
+                  <span className="text-muted-foreground">
+                    Removed from balance:{" "}
+                    <span className={cn("font-semibold tabular-nums", ROSE)}>
+                      {formatCurrency(creditClawback)}
+                    </span>
+                  </span>
+                </div>
+                {debitCount > 0 && (
+                  <p className="text-[11px] text-muted-foreground/80">
+                    Net adjustment value {formatCurrency(signedTotal)} · deleting
+                    the {debitCount} debit{debitCount === 1 ? "" : "s"} removes
+                    the record{debitCount === 1 ? "" : "s"} but does not add money
+                    back.
+                  </p>
+                )}
               </div>
             </>
           )}
@@ -1724,13 +1892,13 @@ function ConfirmPhase({
   depositsAmt,
   depositsCount,
   adjSelectedRows,
+  adjDebitCount,
+  wagerData,
   moneyTotal,
   invCount,
   invValue,
   totpCode,
   setTotpCode,
-  excludeFromStats,
-  setExcludeFromStats,
   allEnabledCategories,
   onWipeAll,
   isPending,
@@ -1740,21 +1908,23 @@ function ConfirmPhase({
   anyLiveFinancialSelected: boolean;
   balanceAmt: number;
   vaultAmt: number;
+  /** Adjustments' cash contribution = the CREDIT clawback (what leaves the balance). */
   adjAmt: number;
   depositsAmt: number;
   depositsCount: number;
   adjSelectedRows: WipeableAdjustment[];
+  /** How many selected adjustments are debits (records deleted, balance untouched). */
+  adjDebitCount: number;
+  /** The wager preview when the category is ticked + ready, else null. */
+  wagerData: WagerPreview | null;
   moneyTotal: number;
   invCount: number;
   invValue: number;
   totpCode: string;
   setTotpCode: (v: string) => void;
-  /** "Also remove from all stats" toggle (default ON; controls the partial-wipe exclusion). */
-  excludeFromStats: boolean;
-  setExcludeFromStats: (v: boolean) => void;
   /** Every enabled, non-locked category — what WIPE ALL will hit. */
   allEnabledCategories: readonly SelectableCategory[];
-  /** Fire the nuke-everything WIPE ALL run (all enabled categories + exclusion). */
+  /** Fire the nuke-everything WIPE ALL run (every enabled category). */
   onWipeAll: () => void;
   isPending: boolean;
 }) {
@@ -1763,6 +1933,7 @@ function ConfirmPhase({
   const wantsVault = runnableCategories.includes("vault");
   const wantsInventory = runnableCategories.includes("inventory");
   const wantsDeposits = runnableCategories.includes("deposits");
+  const wantsWager = runnableCategories.includes("wager") && wagerData !== null;
 
   return (
     <div className="space-y-3">
@@ -1791,14 +1962,22 @@ function ConfirmPhase({
                   <span
                     className={cn(
                       "ml-2 shrink-0 font-semibold tabular-nums",
-                      ROSE,
+                      r.amount < 0 ? EMERALD : ROSE,
                     )}
                   >
-                    +{formatCurrency(r.amount)}
+                    {r.amount < 0 ? "−" : "+"}
+                    {formatCurrency(Math.abs(r.amount))}
                   </span>
                 </div>
               ))}
             </div>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {formatCurrency(adjAmt)} clawed back from balance
+              {adjDebitCount > 0
+                ? ` · ${adjDebitCount} debit${adjDebitCount === 1 ? "" : "s"} deleted with no balance change (never adds money back)`
+                : ""}
+              .
+            </p>
           </SummaryBlock>
         )}
 
@@ -1855,23 +2034,50 @@ function ConfirmPhase({
           </SummaryBlock>
         )}
 
-        {/* Grand total. Money pools (balance + vault + adjustments + deposits)
-            sum to one cash figure; inventory value is a card-value estimate
-            shown alongside (different unit, not folded into the cash
-            headline). */}
+        {wantsWager && wagerData && (
+          <SummaryBlock
+            icon={Gamepad2}
+            label={`Wager / gameplay (${wagerData.ledgerLegCount.toLocaleString()} leg${wagerData.ledgerLegCount === 1 ? "" : "s"})`}
+            amount={wagerData.payoutTotal}
+            danger="Deletes real gaming history (GGR / margin / P&L) — recoverable (best-effort) via snapshot"
+          >
+            <p className="text-xs text-muted-foreground">
+              {wagerData.ledgerLegCount.toLocaleString()} wager + payout leg
+              {wagerData.ledgerLegCount === 1 ? "" : "s"} ·{" "}
+              {wagerData.inventoryCount.toLocaleString()} won item
+              {wagerData.inventoryCount === 1 ? "" : "s"} (
+              {formatCurrency(wagerData.inventoryValue)})
+              {wagerData.upgraderTablePresent
+                ? ` · ${wagerData.upgraderGameCount.toLocaleString()} upgrader game${wagerData.upgraderGameCount === 1 ? "" : "s"}`
+                : ""}
+              {" · "}
+              {formatCurrency(wagerData.payoutTotal)} clawed back from balance
+              {wagerData.withdrawalLockedSkipped > 0
+                ? ` · ${wagerData.withdrawalLockedSkipped} withdrawal-locked card${wagerData.withdrawalLockedSkipped === 1 ? "" : "s"} skipped`
+                : ""}
+              .
+            </p>
+          </SummaryBlock>
+        )}
+
+        {/* Grand total. Money pools (balance + vault + adjustments + deposits +
+            wager payout clawback) sum to one cash figure; inventory + won-card
+            value are card-value estimates shown alongside (different unit, not
+            folded into the cash headline). */}
         <div className="border-t border-rose-500/20 pt-2.5">
           <div className="flex items-center justify-between">
             <span className="text-sm font-semibold text-foreground">
               Grand total
             </span>
             <span className={cn("text-base font-bold tabular-nums", ROSE)}>
-              {formatCurrency(moneyTotal + invValue)}
+              {formatCurrency(moneyTotal + invValue + (wagerData?.inventoryValue ?? 0))}
             </span>
           </div>
-          {wantsInventory && moneyTotal > 0 && (
+          {(wantsInventory || wantsWager) && moneyTotal > 0 && (
             <p className="mt-1 text-right text-[11px] text-muted-foreground">
               {formatCurrency(moneyTotal)} balance / finance +{" "}
-              {formatCurrency(invValue)} inventory value
+              {formatCurrency(invValue + (wagerData?.inventoryValue ?? 0))}{" "}
+              inventory / won-card value
             </p>
           )}
         </div>
@@ -1903,32 +2109,6 @@ function ConfirmPhase({
         </p>
       </div>
 
-      {/* Also remove from all stats — non-destructive blacklist add (default
-          ON). Adds the user to the excluded-users list so they vanish from
-          every metric surface (dashboard / GGR / analytics / insights / P&L).
-          Deletes nothing, so it is safe even for creators. WIPE ALL always
-          does this regardless of this toggle. */}
-      <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-border bg-muted/20 p-3 text-sm">
-        <Checkbox
-          checked={excludeFromStats}
-          onCheckedChange={(v) => setExcludeFromStats(Boolean(v))}
-          className="mt-0.5"
-          aria-label="Also remove from all stats"
-        />
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-1.5 font-medium text-foreground">
-            <BarChart3 className="size-3.5 text-muted-foreground" />
-            Also remove from all stats
-          </span>
-          <span className="mt-0.5 block text-xs text-muted-foreground">
-            Adds this user to the excluded-users list so they disappear from
-            every metric surface — dashboard, GGR, analytics, insights and P&L.
-            Non-destructive (deletes nothing, just filters them out) and
-            reversible from the excluded-users page.
-          </span>
-        </span>
-      </label>
-
       <div className="space-y-1">
         <Label className="text-xs text-muted-foreground">2FA Code</Label>
         <Input
@@ -1942,15 +2122,14 @@ function ConfirmPhase({
           autoFocus
         />
         <p className="text-[11px] text-muted-foreground">
-          One code runs all selected wipes{excludeFromStats ? " + the stat removal" : ""} in
-          sequence.
+          One code runs all selected wipes in sequence.
         </p>
       </div>
 
       {/* ───────────────────────────────────────────────────────────────────
           WIPE ALL — bottom-left nuke-everything control. Selects every
-          currently-ENABLED category, runs them through the SAME single 2FA
-          gate (the code above), and ALWAYS removes the user from all stats.
+          currently-ENABLED category and runs them through the SAME single 2FA
+          gate (the code above). Purely the real deletions — no stat-exclusion.
           Disabled ("coming soon") + creator-protected categories are NOT
           touched. Deliberately loud + unmistakably destructive. */}
       <WipeAllPanel
@@ -1968,9 +2147,10 @@ function ConfirmPhase({
 // WIPE ALL panel — the bottom-left destructive "nuke everything wipeable for
 // this user" control inside the confirm step. Big red warning, explicit list
 // of what it hits + the role-aware WILL-NOT-TOUCH note, and a button that runs
-// every enabled category + the stat-exclusion through the existing single 2FA
-// gate. It NEVER enables a disabled category and NEVER bypasses creator-
-// protection (the locked categories are excluded from `allEnabledCategories`).
+// every enabled category through the existing single 2FA gate. It NEVER
+// enables a disabled category and NEVER bypasses creator-protection (the
+// locked categories are excluded from `allEnabledCategories`), and it does NOT
+// exclude the user from stats (the owner rejected exclusion entirely).
 // ───────────────────────────────────────────────────────────────────────────
 function WipeAllPanel({
   everCreator,
@@ -2002,8 +2182,8 @@ function WipeAllPanel({
             </p>
             <p className="mt-1 text-xs text-rose-600/90 dark:text-rose-300/90">
               Nukes <span className="font-semibold">everything wipeable</span>{" "}
-              for this user in one go and removes them from all stats. Each part
-              is snapshotted + individually restorable, but{" "}
+              for this user in one go. Each part is snapshotted + individually
+              restorable, but{" "}
               <span className="font-semibold">
                 this cannot be easily undone
               </span>{" "}
@@ -2019,10 +2199,6 @@ function WipeAllPanel({
               </p>
               <p className="mt-0.5 text-muted-foreground">
                 {hitLabels.join(" · ")}
-                {" · "}
-                <span className="font-medium text-rose-600 dark:text-rose-400">
-                  remove from all stats
-                </span>
               </p>
               <p className="mt-1 text-[11px] text-muted-foreground/80">
                 Empty categories are skipped. Disabled “coming soon” categories
@@ -2032,8 +2208,8 @@ function WipeAllPanel({
           ) : (
             <div className="rounded border border-rose-600/30 bg-background/40 px-2.5 py-2 text-xs text-muted-foreground">
               No wipeable category is available for this user
-              {everCreator ? " (creator-protected)" : ""} — WIPE ALL will only
-              remove them from all stats.
+              {everCreator ? " (creator-protected)" : ""} — there is nothing for
+              WIPE ALL to do.
             </div>
           )}
 
@@ -2060,7 +2236,7 @@ function WipeAllPanel({
             ) : (
               <Skull className="mr-1.5 size-3.5" />
             )}
-            {isPending ? "Wiping…" : "WIPE ALL + remove from stats"}
+            {isPending ? "Wiping…" : "WIPE ALL"}
           </Button>
           {!totpReady && (
             <p className="text-[11px] text-rose-600/80 dark:text-rose-400/80">
@@ -2109,9 +2285,9 @@ function SummaryBlock({
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// RUNNING PHASE — per-step execution status so a partial run is legible. Each
-// step is a wipe category OR the final non-destructive "remove from all stats"
-// step (rendered with its own label/icon).
+// RUNNING PHASE — per-step execution status so a partial run is legible. Every
+// step is a wipe category (the flow is purely destructive — no stat-exclusion
+// step).
 // ───────────────────────────────────────────────────────────────────────────
 function RunningPhase({
   results,
@@ -2126,22 +2302,17 @@ function RunningPhase({
         <div className="rounded-md border border-rose-600/40 bg-rose-600/[0.07] px-3 py-2 text-xs font-medium text-rose-600 dark:text-rose-400">
           <span className="flex items-center gap-1.5">
             <Skull className="size-3.5" />
-            WIPE ALL in progress — running every enabled category + removing from
-            all stats.
+            WIPE ALL in progress — running every enabled category.
           </span>
         </div>
       )}
       <div className="divide-y rounded-md border">
-        {results.map((r, i) => {
-          const label =
-            r.kind === "exclude"
-              ? "Remove from all stats"
-              : wipeCategoryMeta(r.category).label;
-          const Icon = r.kind === "exclude" ? BarChart3 : categoryIcon(r.category);
-          const key = r.kind === "exclude" ? `exclude-${i}` : r.category;
+        {results.map((r) => {
+          const label = wipeCategoryMeta(r.category).label;
+          const Icon = categoryIcon(r.category);
           return (
             <div
-              key={key}
+              key={r.category}
               className="flex items-center gap-3 px-3 py-2.5 text-sm"
             >
               <Icon className="size-4 shrink-0 text-muted-foreground" />
@@ -2167,8 +2338,7 @@ function RunningPhase({
       </div>
       <p className="text-[11px] text-muted-foreground">
         Every successful wipe above is its own recoverable snapshot — restore any
-        of them from the wipe history. Removing from all stats is reversible from
-        the excluded-users page.
+        of them from the wipe history.
       </p>
     </div>
   );
@@ -2216,11 +2386,13 @@ function RunStatusBadge({ status }: { status: RunStatus }) {
 // ───────────────────────────────────────────────────────────────────────────
 
 /** Per-category live-financial danger warning shown inline in the preview. */
-function DangerWarning({ kind }: { kind: "deposits" }) {
+function DangerWarning({ kind }: { kind: "deposits" | "wager" }) {
   const copy =
     kind === "deposits"
       ? "Deletes real deposit history and reduces the lifetime deposited counter. Recoverable via snapshot, but this is real financial data — not house-granted content value."
-      : "Deletes real financial/transaction history — recoverable via snapshot.";
+      : kind === "wager"
+        ? "Deletes the user's wager + payout ledger legs, won pack/battle inventory and upgrader games — real gaming history that drives GGR / the gaming margin / P&L. Recoverable (best-effort) via snapshot. The balance is reduced only by the payout legs (never inflated); game_sessions/battles shells are left intact."
+        : "Deletes real financial/transaction history — recoverable via snapshot.";
   return (
     <p className="flex items-start gap-1.5 rounded border border-rose-500/40 bg-rose-500/[0.07] px-2.5 py-1.5 text-xs text-rose-500">
       <ShieldAlert className="mt-0.5 size-3.5 shrink-0" />

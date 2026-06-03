@@ -1,0 +1,702 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { z } from "zod";
+import { getDb } from "@/lib/db";
+import { adminDb } from "@/lib/admin-db";
+import { requireAdmin } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
+import { require2FA } from "@/lib/require-2fa";
+import { toNumber } from "@/lib/utils/decimal";
+import type { Prisma } from "@/generated/prisma/client";
+import { ensureAccountWipesSchema } from "@/lib/account-wipes/ensure-schema";
+import { invalidateMetricCaches } from "@/lib/account-wipes/invalidate-metric-caches";
+import {
+  WIPE_STATUS,
+  finalizeWipeSuccess,
+  markWipeFailed,
+  resolveRequestIp,
+} from "@/lib/account-wipes/finalize";
+import {
+  accountWipeSnapshotToJsonValue,
+  type AccountWipeSnapshot,
+  type WagerWipeSnapshot,
+} from "@/lib/account-wipes/snapshot";
+import {
+  WAGER_TYPES,
+  GAMING_PAYOUT_TYPES,
+  UPGRADER_LEDGER_TYPES,
+  type LedgerTransactionType,
+} from "@/lib/metrics/ledger-sets";
+
+// ---------------------------------------------------------------------------
+// WIPE WAGER / GAMEPLAY — the SIXTH recoverable, targeted wipe, alongside the
+// adjustments / balance / vault / inventory / deposits set. It DELETES the
+// rows that make a user's wager + the resulting wager-loss exist in the
+// metrics, so they stop driving GGR / the gaming margin ("Who drove the gaming
+// margin") / P&L and stop showing in the transaction list:
+//
+//   1. The wager + payout LEDGER legs for the user — types:
+//        pack_opening, battle_bet, battle_sponsorship            (WAGER_TYPES)
+//        battle_refund, battle_excess_to_voucher          (GAMING_PAYOUT_TYPES)
+//        upgrader_bet, upgrader_payout                  (UPGRADER_LEDGER_TYPES)
+//      (the exact canonical set from src/lib/metrics/ledger-sets.ts — the same
+//      legs GGR/wager/P&L sum). These feed the ledger side of GGR and show in
+//      the user's /transactions list.
+//   2. The won pack/battle `user_inventory` rows (source_type IN
+//      ('pack','battle')) — GGR's DOMINANT gaming-payout leg is the
+//      `value_at_obtained` delta of exactly these rows (ggr.ts inv_leg +
+//      contributor inv_payout). Their `provably_fair_results` children are
+//      deleted first (FK).
+//   3. The `upgrader_games` rows for the user — the canonical GGR folds
+//      upgrader in from `upgrader_games` (NOT the ledger — see ledger-sets.ts
+//      UPGRADER note + ggr.ts contributor probe), so the upgrader margin only
+//      stops once these rows are gone. The table is NOT in the Prisma schema
+//      (the backend owns it; the stale worktree snapshot lacks it), so it is
+//      read/snapshotted/deleted via RAW SQL, guarded by a `to_regclass` probe
+//      exactly like the GGR contributor query — a DB without the table simply
+//      contributes 0 upgrader rows.
+//
+// ─── WHAT IS DELIBERATELY NOT DELETED (FK-safety, flagged) ──────────────────
+//
+//  • `game_sessions` / `battles` SHELLS are LEFT INTACT. The ledger↔session FK
+//    cycle (ledger_transactions.game_session_id ↔ game_sessions.bet_ledger_tx_id)
+//    is broken by NULLING the session→ledger pointer (and balances.
+//    last_transaction_id) so the ledger legs delete cleanly; the sessions stay
+//    as orphan-free shells (their bet pointer self-heals on the next tx). We do
+//    NOT delete `battles` because `battle_participants` cascade-delete from a
+//    battle delete — that would remove OTHER users' participation rows + their
+//    game_sessions. The session/battle shells do NOT feed the gaming margin
+//    (GGR reads the ledger legs + inventory + upgrader_games, never the
+//    session shells), so leaving them is correct for the margin and strictly
+//    safer for referential integrity. (The disabled "Gaming logs" category is
+//    the placeholder for a future shell-delete.)
+//  • A withdrawal-locked won card (withdrawal_locked_at set) is SKIPPED + the
+//    count is surfaced: its id is bundled into a pending card_withdrawal_requests
+//    (a soft `inventory_item_ids` string[] reference), and deleting it would
+//    corrupt an in-flight physical/crypto withdrawal. The owner handles those
+//    via the withdrawal flow. (Almost never applies to a margin-cleanup user.)
+//
+// ─── BALANCE RULE (never inflate — owner mandate, mirrors the adjustments
+//     wipe) ──────────────────────────────────────────────────────────────────
+//
+//  Each deleted ledger leg moved the balance. Deleting must NOT add money back:
+//   • A PAYOUT leg (battle_refund / battle_excess_to_voucher / upgrader_payout)
+//     is a CREDIT — it raised the balance — so deleting it claws that back
+//     (balance −= magnitude). Net reduction is clamped so the balance never
+//     goes below 0.
+//   • A WAGER leg (pack_opening / battle_bet / battle_sponsorship /
+//     upgrader_bet) is a DEBIT — it lowered the balance — so deleting it
+//     leaves the balance UNCHANGED (we do NOT give the stake back).
+//  So the balance reduction = Σ payout magnitudes, clamped ≥ 0; it can only
+//  ever go DOWN or stay put. Inventory + upgrader_games carry no balance leg
+//  (the inventory win was booked as inventory value, the upgrader payout via a
+//  balance-update the `upgrader_payout` ledger leg — if present — already
+//  represents), so only the payout LEDGER legs move the balance here.
+//
+// ORDERING (CRITICAL, snapshot-first): the full recovery snapshot (ledger legs
+// + inventory + PF children + upgrader_games + the exact balance reduction) is
+// written to the admin DB and confirmed BEFORE the destructive main-DB tx. If
+// the snapshot can't be written → abort (nothing changed). Recoverability of
+// the gameplay graph is BEST-EFFORT via that snapshot (the owner prioritizes
+// real deletion over a perfect-undo guarantee); restore re-inserts everything
+// it captured + re-adds the exact balance delta removed.
+//
+// DUAL-DB (strict): destructive reads/writes on the main `db`; snapshot on
+// `adminDb` (admin_account_wipes). No cross-DB joins.
+//
+// GATING: requireAdmin + __can_wipe_accounts + 2FA, preview+confirm upstream,
+// hard ownership + type re-check on every row. NOT creator-protected (gameplay
+// is the user's own activity), so it is wipeable for any user.
+// ---------------------------------------------------------------------------
+
+/**
+ * The exact ledger types the wager wipe deletes — the canonical wager + payout
+ * + upgrader set from ledger-sets.ts, unioned. Pinned as a literal so the SQL
+ * IN-list is structurally injection-proof.
+ */
+const WAGER_WIPE_LEDGER_TYPES: readonly LedgerTransactionType[] = [
+  ...WAGER_TYPES,
+  ...GAMING_PAYOUT_TYPES,
+  ...UPGRADER_LEDGER_TYPES,
+];
+
+/** O(1) membership test for the deletable ledger set. */
+const WAGER_WIPE_TYPE_SET: ReadonlySet<string> = new Set(WAGER_WIPE_LEDGER_TYPES);
+
+/**
+ * The PAYOUT (credit) legs within the set — deleting these claws money back
+ * out of the balance. Everything else in the set is a WAGER (debit) leg whose
+ * balance effect is left in place (BALANCE RULE).
+ *
+ * NOTE: `UPGRADER_LEDGER_TYPES` is BOTH `upgrader_bet` (a WAGER/debit) AND
+ * `upgrader_payout` (the credit) — only `upgrader_payout` belongs here. Putting
+ * the whole upgrader set in the payout bucket would wrongly claw back the
+ * upgrader STAKE too (inflating-in-reverse). So the payout set is the battle
+ * cash legs + `upgrader_payout` only.
+ */
+const WAGER_WIPE_PAYOUT_TYPE_SET: ReadonlySet<string> = new Set<string>([
+  ...GAMING_PAYOUT_TYPES,
+  "upgrader_payout",
+]);
+
+/** Won-inventory sources the wipe deletes (the GGR-valued gameplay wins). */
+const WON_INVENTORY_SOURCES = ["pack", "battle"] as const;
+
+/**
+ * Sanity ceiling on rows we snapshot in one wipe (per collection). A
+ * pathological gameplay history must not produce a multi-hundred-MB JSONB
+ * blob; over the cap we refuse rather than truncate (a truncated snapshot is
+ * not recoverable). Generous because gameplay rows are small + a single
+ * heavy user can legitimately have many.
+ */
+const MAX_WAGER_ROWS = 100_000;
+
+async function gateWipe() {
+  const session = await requireAdmin();
+  await requireCapability(session, "__can_wipe_accounts", "wipe wager / gameplay");
+  return session;
+}
+
+const userIdSchema = z.string().min(1, "User id is required");
+
+// ───────────────────────────────────────────────────────────────────────────
+// Preview — lazy, called when the Wager category is ticked. Read-only.
+// ───────────────────────────────────────────────────────────────────────────
+
+export type WagerWipePreview = {
+  /** Count of wager + payout ledger legs to delete. */
+  ledgerLegCount: number;
+  /** Σ |wager legs| (stake placed) — informational. */
+  wagerTotal: number;
+  /** Σ |payout legs| (the credit clawback that will leave the balance). */
+  payoutTotal: number;
+  /** Count of won pack/battle inventory rows to delete (excludes withdrawal-locked). */
+  inventoryCount: number;
+  /** Σ value_at_obtained of those inventory rows (the GGR inv-payout removed). */
+  inventoryValue: number;
+  /** Won pack/battle cards SKIPPED because they back an in-flight withdrawal. */
+  withdrawalLockedSkipped: number;
+  /** Count of upgrader_games rows to delete (0 when the DB lacks the table). */
+  upgraderGameCount: number;
+  /** Σ bet_amount of those upgrader games — informational. */
+  upgraderBet: number;
+  /** Σ won_amount of those upgrader games — informational. */
+  upgraderWon: number;
+  /** True when the connected DB carries `upgrader_games` (prod). */
+  upgraderTablePresent: boolean;
+};
+
+/** Shape of a raw `to_regclass` probe row. */
+type RegclassRow = { exists: string | null };
+/** Shape of the raw upgrader aggregate row. */
+type UpgraderAggRow = { cnt: bigint | number | null; bet: string | null; won: string | null };
+
+/**
+ * Does the connected DB carry the `upgrader_games` table? The table is not in
+ * the Prisma schema (backend-owned; the stale worktree snapshot lacks it), so
+ * every upgrader touch is guarded by this probe — identical to the GGR
+ * contributor query (`to_regclass('public.upgrader_games')`).
+ */
+async function upgraderGamesPresent(db: Awaited<ReturnType<typeof getDb>>): Promise<boolean> {
+  try {
+    const rows = await db.$queryRawUnsafe<RegclassRow[]>(
+      `SELECT to_regclass('public.upgrader_games')::text AS exists`,
+    );
+    return Boolean(rows?.[0]?.exists);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Count + value of everything the wager wipe would delete for this user, plus
+ * the withdrawal-locked won-card count it will skip + whether upgrader_games
+ * exists. Read-only, scoped to this user.
+ */
+export async function previewWagerWipe(
+  userId: string,
+): Promise<{ success: true; preview: WagerWipePreview } | { success: false; error: string }> {
+  await gateWipe();
+  const parsed = userIdSchema.safeParse(userId);
+  if (!parsed.success) {
+    return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid user id" };
+  }
+  const db = await getDb();
+
+  // Ledger legs split into wager (debit) vs payout (credit) by groupBy type.
+  const ledgerGrouped = await db.ledger_transactions.groupBy({
+    by: ["type"],
+    where: {
+      user_id: parsed.data,
+      type: { in: WAGER_WIPE_LEDGER_TYPES as unknown as LedgerTransactionType[] },
+    },
+    _count: { _all: true },
+    _sum: { amount: true },
+  });
+
+  let ledgerLegCount = 0;
+  let wagerTotal = 0;
+  let payoutTotal = 0;
+  for (const g of ledgerGrouped) {
+    const count = g._count._all;
+    const magnitude = Math.abs(toNumber(g._sum.amount));
+    ledgerLegCount += count;
+    if (WAGER_WIPE_PAYOUT_TYPE_SET.has(String(g.type))) payoutTotal += magnitude;
+    else wagerTotal += magnitude;
+  }
+
+  // Won pack/battle inventory — deletable (NOT withdrawal-locked) vs the
+  // withdrawal-locked subset we skip.
+  const [invAgg, lockedAgg] = await Promise.all([
+    db.user_inventory.aggregate({
+      where: {
+        user_id: parsed.data,
+        source_type: { in: WON_INVENTORY_SOURCES as unknown as ("pack" | "battle")[] },
+        withdrawal_locked_at: null,
+      },
+      _count: { _all: true },
+      _sum: { value_at_obtained: true },
+    }),
+    db.user_inventory.count({
+      where: {
+        user_id: parsed.data,
+        source_type: { in: WON_INVENTORY_SOURCES as unknown as ("pack" | "battle")[] },
+        withdrawal_locked_at: { not: null },
+      },
+    }),
+  ]);
+
+  // upgrader_games — probe first, then a raw aggregate (the table is not in the
+  // Prisma client). Scoped to the user; injection-proof (no interpolation of
+  // user input into the SQL string — the id is a bound parameter).
+  let upgraderGameCount = 0;
+  let upgraderBet = 0;
+  let upgraderWon = 0;
+  const upgraderTablePresent = await upgraderGamesPresent(db);
+  if (upgraderTablePresent) {
+    try {
+      const rows = await db.$queryRawUnsafe<UpgraderAggRow[]>(
+        `SELECT COUNT(*)::text AS cnt,
+                COALESCE(SUM(bet_amount), 0)::text AS bet,
+                COALESCE(SUM(won_amount), 0)::text AS won
+         FROM upgrader_games WHERE user_id = $1`,
+        parsed.data,
+      );
+      const r = rows?.[0];
+      upgraderGameCount = r ? Number(r.cnt ?? 0) : 0;
+      upgraderBet = r ? toNumber(r.bet) : 0;
+      upgraderWon = r ? toNumber(r.won) : 0;
+    } catch (err) {
+      // Probe said present but the read failed — treat as absent (0) rather
+      // than blocking the preview; the wipe re-checks before deleting.
+      console.error("[previewWagerWipe] upgrader_games read failed:", err);
+    }
+  }
+
+  return {
+    success: true,
+    preview: {
+      ledgerLegCount,
+      wagerTotal,
+      payoutTotal,
+      inventoryCount: invAgg._count._all,
+      inventoryValue: toNumber(invAgg._sum.value_at_obtained),
+      withdrawalLockedSkipped: lockedAgg,
+      upgraderGameCount,
+      upgraderBet,
+      upgraderWon,
+      upgraderTablePresent,
+    },
+  };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// WIPE — snapshot everything, delete FK-safe, claw payout legs out of balance.
+// ───────────────────────────────────────────────────────────────────────────
+
+const wipeWagerSchema = z.object({
+  userId: z.string().min(1, "User id is required"),
+  totpCode: z.string().min(1, "2FA code is required"),
+});
+
+export async function wipeWager(data: {
+  userId: string;
+  totpCode: string;
+}): Promise<
+  | {
+      success: true;
+      ledgerLegsDeleted: number;
+      inventoryDeleted: number;
+      provablyFairDeleted: number;
+      upgraderGamesDeleted: number;
+      withdrawalLockedSkipped: number;
+      balanceReduced: number;
+    }
+  | { success: false; error: string }
+> {
+  const session = await gateWipe();
+
+  const parseResult = wipeWagerSchema.safeParse(data);
+  if (!parseResult.success) {
+    return { success: false, error: parseResult.error.issues[0]?.message ?? "Invalid input" };
+  }
+  const parsed = parseResult.data;
+
+  try {
+    await require2FA(session.userId, parsed.totpCode);
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : "2FA verification failed" };
+  }
+
+  try {
+    await ensureAccountWipesSchema();
+  } catch (err) {
+    console.error("[wipeWager] ensure-schema failed:", err);
+    return {
+      success: false,
+      error: "Could not prepare the recovery store — wipe aborted (nothing deleted)",
+    };
+  }
+
+  const db = await getDb();
+
+  // ── READ everything up front (full rows) so the snapshot is exact. All
+  // scoped strictly to this user. Bounded by MAX_WAGER_ROWS+1 per collection
+  // so an over-cap history is detected without an unbounded scan. ──
+  const ledgerRows = await db.ledger_transactions.findMany({
+    where: {
+      user_id: parsed.userId,
+      type: { in: WAGER_WIPE_LEDGER_TYPES as unknown as LedgerTransactionType[] },
+    },
+    take: MAX_WAGER_ROWS + 1,
+  });
+  // Won pack/battle inventory, EXCLUDING withdrawal-locked (those back an
+  // in-flight withdrawal — skipped + flagged).
+  const inventoryRows = await db.user_inventory.findMany({
+    where: {
+      user_id: parsed.userId,
+      source_type: { in: WON_INVENTORY_SOURCES as unknown as ("pack" | "battle")[] },
+      withdrawal_locked_at: null,
+    },
+    take: MAX_WAGER_ROWS + 1,
+  });
+  const withdrawalLockedSkipped = await db.user_inventory.count({
+    where: {
+      user_id: parsed.userId,
+      source_type: { in: WON_INVENTORY_SOURCES as unknown as ("pack" | "battle")[] },
+      withdrawal_locked_at: { not: null },
+    },
+  });
+
+  if (ledgerRows.length > MAX_WAGER_ROWS || inventoryRows.length > MAX_WAGER_ROWS) {
+    return {
+      success: false,
+      error: `Gameplay history too large to snapshot safely (> ${MAX_WAGER_ROWS.toLocaleString()} rows) — wipe aborted`,
+    };
+  }
+
+  // HARD RE-GUARD every row (defence in depth): every ledger leg is this
+  // user's + an allowed type; every inventory row is this user's + a won
+  // pack/battle source + not withdrawal-locked. A foreign/mistyped row aborts
+  // the whole wipe (nothing deleted).
+  for (const row of ledgerRows) {
+    if (row.user_id !== parsed.userId || !WAGER_WIPE_TYPE_SET.has(String(row.type))) {
+      return {
+        success: false,
+        error: "A selected gameplay ledger row failed the ownership/type check — wipe aborted (nothing deleted)",
+      };
+    }
+  }
+  for (const row of inventoryRows) {
+    if (
+      row.user_id !== parsed.userId ||
+      !(WON_INVENTORY_SOURCES as readonly string[]).includes(String(row.source_type)) ||
+      row.withdrawal_locked_at !== null
+    ) {
+      return {
+        success: false,
+        error: "A selected inventory row failed the ownership/source check — wipe aborted (nothing deleted)",
+      };
+    }
+  }
+
+  const ledgerIds = ledgerRows.map((r) => r.id);
+  const inventoryIds = inventoryRows.map((r) => r.id);
+
+  // provably_fair_results children of the inventory being deleted (snapshot so
+  // a restore can re-insert them after the inventory; they FK to user_inventory
+  // with onDelete Cascade, so the delete would otherwise drop them silently).
+  const provablyFairRows =
+    inventoryIds.length > 0
+      ? await db.provably_fair_results.findMany({
+          where: { inventory_item_id: { in: inventoryIds } },
+          take: MAX_WAGER_ROWS + 1,
+        })
+      : [];
+  if (provablyFairRows.length > MAX_WAGER_ROWS) {
+    return {
+      success: false,
+      error: `Gameplay provably-fair history too large to snapshot safely — wipe aborted`,
+    };
+  }
+
+  // upgrader_games for the user — raw read (table not in the Prisma client),
+  // guarded by the regclass probe. Full rows captured as generic records so
+  // restore can re-insert them via raw SQL.
+  const upgraderTablePresent = await upgraderGamesPresent(db);
+  let upgraderGameRows: Array<Record<string, unknown>> = [];
+  if (upgraderTablePresent) {
+    try {
+      upgraderGameRows = await db.$queryRawUnsafe<Array<Record<string, unknown>>>(
+        `SELECT * FROM upgrader_games WHERE user_id = $1 LIMIT ${MAX_WAGER_ROWS + 1}`,
+        parsed.userId,
+      );
+    } catch (err) {
+      console.error("[wipeWager] upgrader_games read failed — aborting (nothing deleted):", err);
+      return {
+        success: false,
+        error: "Could not read the user's upgrader games — wipe aborted (nothing deleted)",
+      };
+    }
+    if (upgraderGameRows.length > MAX_WAGER_ROWS) {
+      return {
+        success: false,
+        error: `Upgrader history too large to snapshot safely — wipe aborted`,
+      };
+    }
+  }
+
+  // Nothing to delete at all?
+  if (ledgerRows.length === 0 && inventoryRows.length === 0 && upgraderGameRows.length === 0) {
+    return { success: false, error: "This user has no wager / gameplay data to wipe" };
+  }
+
+  // ── BALANCE RULE: reduce ONLY by the PAYOUT (credit) legs' summed magnitude.
+  // Wager (debit) legs delete without changing the balance. Clamp ≥ 0. ──
+  const payoutMagnitude = ledgerRows.reduce((acc, r) => {
+    if (WAGER_WIPE_PAYOUT_TYPE_SET.has(String(r.type))) {
+      return acc + Math.abs(toNumber(r.amount));
+    }
+    return acc;
+  }, 0);
+
+  // Sum the stake (wager legs) for the audit trail only.
+  const wagerMagnitude = ledgerRows.reduce((acc, r) => {
+    if (!WAGER_WIPE_PAYOUT_TYPE_SET.has(String(r.type))) {
+      return acc + Math.abs(toNumber(r.amount));
+    }
+    return acc;
+  }, 0);
+  const inventoryValue = inventoryRows.reduce((acc, r) => acc + toNumber(r.value_at_obtained), 0);
+
+  // Read balance + version for the optimistic-locked reduction.
+  const balanceRow = await db.balances
+    .findUnique({ where: { user_id: parsed.userId } })
+    .catch(() => null);
+  if (!balanceRow) return { success: false, error: "User balances not found" };
+  const balanceBefore = toNumber(balanceRow.available_balance);
+  const lockVersion = balanceRow.version;
+  const reduced = balanceBefore - payoutMagnitude;
+  const balanceAfter = reduced < 0 ? 0 : reduced;
+  const balanceReduction = balanceBefore - balanceAfter; // == clamped payout clawback, ≥ 0
+
+  const userMeta = await db.user
+    .findUnique({ where: { id: parsed.userId }, select: { username: true, email: true } })
+    .catch(() => null);
+
+  // ── SNAPSHOT FIRST — write every captured row + the exact balance reduction.
+  // Abort on failure (nothing deleted). ──
+  const snapshot: AccountWipeSnapshot = {
+    type: "wager",
+    userId: parsed.userId,
+    ledgerRows: ledgerRows as unknown as Array<Record<string, unknown>>,
+    inventoryRows: inventoryRows as unknown as Array<Record<string, unknown>>,
+    provablyFairRows: provablyFairRows as unknown as Array<Record<string, unknown>>,
+    upgraderGameRows,
+    balanceReduction: balanceReduction.toFixed(2),
+  } satisfies { type: "wager" } & WagerWipeSnapshot;
+
+  let wipeId: string;
+  try {
+    const created = await adminDb.admin_account_wipes.create({
+      data: {
+        wipe_type: "wager",
+        user_id: parsed.userId,
+        username: userMeta?.username ?? null,
+        email: userMeta?.email ?? null,
+        wiped_by: session.userId,
+        // `amount` = the balance clawback (what left the balance); `item_count`
+        // = the total rows removed across all collections (legs + inventory +
+        // PF + upgrader games).
+        amount: balanceReduction,
+        item_count:
+          ledgerRows.length +
+          inventoryRows.length +
+          provablyFairRows.length +
+          upgraderGameRows.length,
+        status: WIPE_STATUS.PENDING,
+        snapshot: accountWipeSnapshotToJsonValue(snapshot) as Prisma.InputJsonValue,
+      },
+      select: { id: true },
+    });
+    wipeId = created.id;
+  } catch (snapErr) {
+    console.error("[wipeWager] snapshot write failed — wipe aborted (nothing deleted):", snapErr);
+    return {
+      success: false,
+      error: "Could not write the recovery snapshot — wipe aborted (nothing deleted)",
+    };
+  }
+
+  // ── DESTRUCTIVE — one main-DB tx, children-first, FK-safe. ──
+  let provablyFairDeleted = 0;
+  let upgraderGamesDeleted = 0;
+  try {
+    await db.$transaction(async (tx) => {
+      // (1) Break the ledger↔session FK cycle: null any game_sessions pointer
+      // to a ledger leg we're about to delete (RESTRICT would otherwise block
+      // the delete). The session shell stays; the bet pointer self-heals.
+      if (ledgerIds.length > 0) {
+        await tx.game_sessions.updateMany({
+          where: { bet_ledger_tx_id: { in: ledgerIds } },
+          data: { bet_ledger_tx_id: null },
+        });
+        // (2) Null the denorm balances.last_transaction_id if it points at a
+        // leg we're deleting (FK is RESTRICT; self-heals on the next tx).
+        await tx.balances.updateMany({
+          where: { user_id: parsed.userId, last_transaction_id: { in: ledgerIds } },
+          data: { last_transaction_id: null },
+        });
+      }
+
+      // (3) Delete the provably_fair_results children of the inventory being
+      // deleted (snapshotted above). Scoped to exactly those inventory ids so
+      // PF rows of surviving inventory are untouched.
+      if (inventoryIds.length > 0) {
+        const pfDel = await tx.provably_fair_results.deleteMany({
+          where: { inventory_item_id: { in: inventoryIds } },
+        });
+        provablyFairDeleted = pfDel.count;
+      }
+
+      // (4) Delete the wager + payout ledger legs (re-scoped by user + type so
+      // a race can't widen the blast radius; count verified). Their outbound
+      // game_session_id FK is fine — the session they point at remains.
+      if (ledgerIds.length > 0) {
+        const legDel = await tx.ledger_transactions.deleteMany({
+          where: {
+            id: { in: ledgerIds },
+            user_id: parsed.userId,
+            type: { in: WAGER_WIPE_LEDGER_TYPES as unknown as LedgerTransactionType[] },
+          },
+        });
+        if (legDel.count !== ledgerIds.length) {
+          throw new Error("WAGER_GUARD: gameplay ledger legs changed concurrently — refresh and retry");
+        }
+      }
+
+      // (5) Delete the won pack/battle inventory rows (re-scoped + held-from-
+      // withdrawal; PF children already gone). Count verified.
+      if (inventoryIds.length > 0) {
+        const invDel = await tx.user_inventory.deleteMany({
+          where: {
+            id: { in: inventoryIds },
+            user_id: parsed.userId,
+            source_type: { in: WON_INVENTORY_SOURCES as unknown as ("pack" | "battle")[] },
+            withdrawal_locked_at: null,
+          },
+        });
+        if (invDel.count !== inventoryIds.length) {
+          throw new Error("WAGER_GUARD: inventory changed concurrently — refresh and retry");
+        }
+      }
+
+      // (6) Delete the upgrader_games rows (raw SQL; table not in the Prisma
+      // client). Scoped to the user; the id is a bound parameter.
+      if (upgraderGameRows.length > 0) {
+        const deleted = await tx.$executeRawUnsafe(
+          `DELETE FROM upgrader_games WHERE user_id = $1`,
+          parsed.userId,
+        );
+        upgraderGamesDeleted = typeof deleted === "number" ? deleted : upgraderGameRows.length;
+      }
+
+      // (7) Reduce available_balance by the clamped PAYOUT clawback only,
+      // optimistic-locked. Wager (debit) legs leave the balance unchanged.
+      if (balanceReduction > 0) {
+        const updated = await tx.balances.updateMany({
+          where: { user_id: parsed.userId, version: lockVersion },
+          data: { available_balance: balanceAfter, version: { increment: 1 } },
+        });
+        if (updated.count !== 1) {
+          throw new Error("Balance changed concurrently — please retry");
+        }
+      }
+    });
+  } catch (err) {
+    // Main-DB tx failed → nothing deleted. Mark the snapshot 'failed' (terminal,
+    // restore refuses) rather than deleting it, for a reconcilable record.
+    await markWipeFailed("account", wipeId);
+    const message = err instanceof Error ? err.message : "Unknown error";
+    if (message.startsWith("WAGER_GUARD:")) {
+      return { success: false, error: message.replace(/^WAGER_GUARD:\s*/, "") };
+    }
+    if (message.includes("concurrently")) return { success: false, error: message };
+    console.error("[wipeWager] delete transaction failed:", err);
+    return { success: false, error: "Wipe failed — please try again (nothing deleted)" };
+  }
+
+  // Destructive delete COMMITTED → atomically (one admin-DB tx) flip the
+  // snapshot status → 'completed' AND write the audit event.
+  const finalized = await finalizeWipeSuccess({
+    store: "account",
+    wipeId,
+    audit: {
+      adminUserId: session.userId,
+      eventType: "user_wager_wiped",
+      targetUserId: parsed.userId,
+      ip: await resolveRequestIp(),
+      metadata: {
+        wipeId,
+        ledgerLegsDeleted: ledgerRows.length,
+        wagerMagnitude,
+        payoutMagnitude,
+        inventoryDeleted: inventoryRows.length,
+        inventoryValue,
+        provablyFairDeleted,
+        upgraderGamesDeleted,
+        upgraderTablePresent,
+        withdrawalLockedSkipped,
+        balanceBefore,
+        balanceAfter,
+        balanceReduced: balanceReduction,
+        balanceClamped: reduced < 0,
+        recoverable: true,
+        note: "Deleted the user's wager+payout ledger legs (pack/battle/upgrader) + won pack/battle inventory (+ their provably_fair_results) + upgrader_games. Balance reduced ONLY by the payout (credit) legs' clawback (clamped ≥0); wager (debit) legs left the balance unchanged (never inflate). game_sessions/battles shells LEFT intact (battle delete would cascade other participants); session bet pointer + balances.last_transaction_id nulled to break the FK cycle (self-heal). Withdrawal-locked won cards SKIPPED (back an in-flight withdrawal). Remaining ledger rows' balance_before/after not rewritten.",
+      },
+    },
+  });
+  if (!finalized.ok) {
+    invalidateMetricCaches(parsed.userId);
+    return {
+      success: false,
+      error:
+        "Wager / gameplay was wiped (recoverable), but the audit record could not be finalized — the wipe is logged as 'pending' for reconciliation. Please notify an administrator.",
+    };
+  }
+
+  // Bust the user page + global metric caches — the deleted legs + inventory +
+  // upgrader games feed GGR / wager / gaming-margin / P&L; restore reverses it.
+  revalidatePath(`/users/${parsed.userId}`);
+  invalidateMetricCaches(parsed.userId);
+  return {
+    success: true,
+    ledgerLegsDeleted: ledgerRows.length,
+    inventoryDeleted: inventoryRows.length,
+    provablyFairDeleted,
+    upgraderGamesDeleted,
+    withdrawalLockedSkipped,
+    balanceReduced: balanceReduction,
+  };
+}

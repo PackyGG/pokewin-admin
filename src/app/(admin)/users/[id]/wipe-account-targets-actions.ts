@@ -27,8 +27,9 @@ import {
   type VaultWipeSnapshot,
   type InventoryWipeSnapshot,
 } from "@/lib/account-wipes/snapshot";
-// NOTE: the `deposits` snapshot type's restore branch is handled below; the
-// type is part of the AccountWipeSnapshot union so no extra import is needed.
+// NOTE: the `deposits` + `wager` snapshot types' restore branches are handled
+// below; both are part of the AccountWipeSnapshot union so no extra import is
+// needed.
 
 // ───────────────────────────────────────────────────────────────────────────
 // PROTECTED-DATA NOTE (creator deals + real finance) — see
@@ -1055,9 +1056,17 @@ const restoreSchema = z.object({
  *   - inventory → re-insert the snapshotted user_inventory rows.
  *   - deposits  → re-insert the snapshotted `deposit` ledger rows + re-add the
  *                 recorded total_deposited reduction to the counter.
+ *   - wager     → re-insert the wager+payout ledger legs, the won pack/battle
+ *                 inventory rows, their provably_fair_results (AFTER the
+ *                 inventory — PF FK-references it), and the upgrader_games rows
+ *                 (raw SQL); re-add EXACTLY the recorded balance reduction
+ *                 (the payout clawback) to available_balance. Wager (debit)
+ *                 legs are NOT re-subtracted (they were deleted without giving
+ *                 the stake back; re-inserting the row + not touching the
+ *                 balance is the symmetric reverse).
  *
  * Idempotent-guarded: a record already marked restored_at cannot be restored
- * again (double-credit / double-insert). Balance/vault/deposit counter
+ * again (double-credit / double-insert). Balance/vault/deposit/wager counter
  * re-credits are optimistic-locked against the LIVE row (not the stale
  * wipe-time version) so the restore is additive to whatever the value is now.
  */
@@ -1194,6 +1203,99 @@ export async function restoreAccountWipe(
             where: { user_id: snapshot.userId, version: b.version },
             data: {
               total_deposited: toNumber(b.total_deposited) + addBackCounter,
+              version: { increment: 1 },
+            },
+          });
+          if (updated.count !== 1) throw new Error("Balance changed concurrently — please retry");
+        }
+      });
+    } else if (snapshot.type === "wager") {
+      // Re-insert the wager+payout ledger legs, the won pack/battle inventory,
+      // their provably_fair_results (AFTER the inventory — PF FK-references
+      // user_inventory), and the upgrader_games rows (raw SQL). Re-add EXACTLY
+      // the recorded balance reduction (the payout clawback). Best-effort
+      // reconstruction (the snapshot is the source of truth); the re-inserted
+      // rows' historical balance_before/after are NOT rewritten. The session
+      // bet pointer + balances.last_transaction_id we nulled on wipe are NOT
+      // restored — they self-heal.
+      const stripUndef = (r: Record<string, unknown>): Record<string, unknown> => {
+        const copy: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(r)) {
+          if (v === undefined) continue;
+          copy[k] = v;
+        }
+        return copy;
+      };
+      if (
+        !Array.isArray(snapshot.ledgerRows) ||
+        !Array.isArray(snapshot.inventoryRows) ||
+        !Array.isArray(snapshot.provablyFairRows) ||
+        !Array.isArray(snapshot.upgraderGameRows)
+      ) {
+        return { success: false, error: "Snapshot is malformed — cannot restore" };
+      }
+      const ledgerForInsert = snapshot.ledgerRows.map(stripUndef);
+      const inventoryForInsert = snapshot.inventoryRows.map(stripUndef);
+      const pfForInsert = snapshot.provablyFairRows.map(stripUndef);
+      const upgraderForInsert = snapshot.upgraderGameRows.map(stripUndef);
+      const addBackBalance = toNumber(snapshot.balanceReduction);
+
+      await db.$transaction(async (tx) => {
+        // (1) Ledger legs back first (skipDuplicates → retry-safe). Their
+        // game_session_id points at sessions that were never deleted, so the FK
+        // resolves.
+        if (ledgerForInsert.length > 0) {
+          await tx.ledger_transactions.createMany({
+            data: ledgerForInsert as unknown as Prisma.ledger_transactionsCreateManyInput[],
+            skipDuplicates: true,
+          });
+        }
+        // (2) Inventory back BEFORE the provably_fair_results (PF FK-references
+        // user_inventory.id).
+        if (inventoryForInsert.length > 0) {
+          await tx.user_inventory.createMany({
+            data: inventoryForInsert as unknown as Prisma.user_inventoryCreateManyInput[],
+            skipDuplicates: true,
+          });
+        }
+        // (3) provably_fair_results back (after the inventory they reference).
+        if (pfForInsert.length > 0) {
+          await tx.provably_fair_results.createMany({
+            data: pfForInsert as unknown as Prisma.provably_fair_resultsCreateManyInput[],
+            skipDuplicates: true,
+          });
+        }
+        // (4) upgrader_games back via raw SQL (table not in the Prisma client).
+        // Build a column list from each row's keys; values bound as params.
+        // Guarded by a regclass probe — if the DB lacks the table the rows
+        // can't be restored (best-effort: surfaced, not fatal).
+        if (upgraderForInsert.length > 0) {
+          const probe = await tx.$queryRawUnsafe<Array<{ exists: string | null }>>(
+            `SELECT to_regclass('public.upgrader_games')::text AS exists`,
+          );
+          if (probe?.[0]?.exists) {
+            for (const row of upgraderForInsert) {
+              const keys = Object.keys(row);
+              if (keys.length === 0) continue;
+              const cols = keys.map((k) => `"${k.replace(/"/g, '""')}"`).join(", ");
+              const placeholders = keys.map((_, i) => `$${i + 1}`).join(", ");
+              const values = keys.map((k) => row[k]);
+              // ON CONFLICT DO NOTHING keeps a retried restore safe (id PK).
+              await tx.$executeRawUnsafe(
+                `INSERT INTO upgrader_games (${cols}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`,
+                ...values,
+              );
+            }
+          }
+        }
+        // (5) Re-add EXACTLY the recorded balance clawback (payout legs only).
+        if (addBackBalance > 0) {
+          const b = await tx.balances.findUnique({ where: { user_id: snapshot.userId } });
+          if (!b) throw new Error("User balances not found");
+          const updated = await tx.balances.updateMany({
+            where: { user_id: snapshot.userId, version: b.version },
+            data: {
+              available_balance: toNumber(b.available_balance) + addBackBalance,
               version: { increment: 1 },
             },
           });

@@ -31,14 +31,17 @@ import {
 } from "@/lib/account-wipes/finalize";
 
 // ---------------------------------------------------------------------------
-// "Wipe content balance adjustments" — remove ONLY admin balance-adjustment
-// CREDIT rows the admin explicitly selected, reduce the user's balance by
-// the summed amount, and snapshot the deleted rows so the batch is
-// recoverable.
+// "Wipe content balance adjustments" — DELETE the admin balance-adjustment
+// rows the admin selected (CREDITS *and* DEBITS), reduce the user's balance
+// ONLY by the credits' summed amount (never raise it — see BALANCE RULE), and
+// snapshot the deleted rows so the batch is recoverable.
 //
-// WHY: the owner gives creators admin balance adjustments (CREDITS) so they
-// can make content (open packs / stream). This claws those credits back out
-// of a user's account WITHOUT touching real financial or gaming history.
+// WHY: the owner grants creators admin balance adjustments so they can make
+// content (open packs / stream), and occasionally posts DEBIT adjustments
+// (corrections). The owner needs to delete ANY of these records — including
+// the two stuck DEBIT adjustments that the old credit-only filter refused to
+// list. This claws the records out WITHOUT touching real financial or gaming
+// history.
 //
 // The ledger type that backs admin adjustments AND manual withdrawals is
 // the SAME enum value: `admin_balance_adjustment` (verified against
@@ -49,18 +52,18 @@ import {
 //   - "Manual withdrawal: <reason> …"  ← an off-platform payout (NEVER wiped)
 //
 // So the wipeable set is: type === ADJ_TYPE AND description starts with
-// ADJ_DESC_PREFIX AND amount > 0 (CREDIT only — see SIGN RULE). Manual
-// withdrawals are ALWAYS excluded (by the "Manual withdrawal:" prefix).
+// ADJ_DESC_PREFIX (and NOT "Manual withdrawal:"). Credits AND debits within
+// that set are deletable; manual withdrawals are ALWAYS excluded.
 //
 // CREATOR-CONDITIONAL CARVE-OUT (owner mandate, 2026-06-03): the two keyword
 // carve-outs (isCreatorRelatedAdjustment + isAffiliateRelatedAdjustment),
-// which drop any credit whose reason / metadata ties it to a creator deal OR
-// to ANY affiliate info (commission / referral / affiliate payout), are now
+// which drop any adjustment whose reason / metadata ties it to a creator deal
+// OR to ANY affiliate info (commission / referral / affiliate payout), are
 // applied ONLY when the target user IS or WAS a creator (the server-re-derived
 // `everCreator` flag — getCreatorProtectionStatus). For a user who was NEVER a
 // creator, a hand-typed "Admin adjustment: weekly deal" / "affiliate
-// commission" credit IS a wipeable content credit. The protected-LEDGER-TYPE
-// assertion + the "Manual withdrawal:" exclusion stay UNCONDITIONAL.
+// commission" row IS wipeable. The protected-LEDGER-TYPE assertion + the
+// "Manual withdrawal:" exclusion stay UNCONDITIONAL.
 //
 // ORDERING (CRITICAL, snapshot-first): the recovery snapshot is written to
 // the admin DB and confirmed BEFORE the main-DB delete + balance reduction.
@@ -78,33 +81,42 @@ const ADJ_DESC_PREFIX = "Admin adjustment: ";
 /** Description prefix the manual-withdrawal flow uses — must NOT be wiped. */
 const MANUAL_WD_DESC_PREFIX = "Manual withdrawal:";
 
-// SIGN RULE — only CREDITS are wipeable (CRITICAL).
+// BALANCE RULE — deleting NEVER raises the balance (CRITICAL, owner mandate).
 //
 // An `admin_balance_adjustment` row stores the SIGNED balance delta that was
 // applied (`adjustBalance`: `newBalance = currentBalance + amount`, with
 // `amount` written verbatim — actions.ts:158,179). So:
 //   - amount > 0  → CREDIT: the house GAVE the user balance (content money).
 //   - amount < 0  → DEBIT:  the house TOOK balance back (a clawback /
-//                            correction / manual withdrawal).
+//                            correction).
 //
-// This feature exists to claw BACK house-granted content credits — it must
-// only ever REDUCE a user's balance, never raise it. Wiping a DEBIT reverses
-// a past deduction, which ADDS money back to the user. That was the prod
-// incident: a batch that included a large negative adjustment computed
-// `balanceAfter = balanceBefore − Σsigned` and, because Σsigned was
-// negative, the balance went UP — "it added the money back as balance and
-// is still there." So the wipeable set is hard-restricted to amount > 0:
-// a DEBIT (or zero) row is never listed, never accepted, and never deleted.
-// Enforced in THREE places — the listing filter, the in-tx per-row guard,
-// and the deleteMany predicate — so a debit id can never be wiped even if
-// it is injected directly. With this restriction `totalRemoved` is always
-// > 0 and the balance can only ever go down.
+// When we DELETE a selected batch:
+//   - For each CREDIT (amount > 0): claw it back → reduce the balance by that
+//     amount (the reverse of how it was added). Clamp the result at ≥ 0.
+//   - For each DEBIT (amount < 0): delete the record but leave the balance
+//     UNCHANGED — do NOT restore the money the debit removed. Re-adding it
+//     would INFLATE the balance, which is exactly the prod incident the old
+//     credit-only filter was bolted on to avoid ("it added the money back as
+//     balance and is still there"). We now allow deleting the debit ROW while
+//     keeping its balance effect, so nothing inflates.
+//
+// Therefore the balance reduction = Σ(positive amounts only) = `creditClawback`,
+// clamped so the balance never goes negative. The balance can only ever go
+// DOWN or stay the same — never up. (For the owner's two stuck debits: the
+// records delete, creditClawback contributes 0 from them, the balance stays
+// put.)
+//
+// RESTORE symmetry: a restore re-inserts ALL deleted rows AND re-adds EXACTLY
+// the amount the wipe removed (`balance_before − balance_after`, which already
+// accounts for the clamp + is credit-only), so wipe→restore is a perfect
+// round-trip for the balance.
 
 /** Max rows we surface / accept in one wipe batch (sanity bound). */
 const MAX_BATCH = 500;
 
 export type WipeableAdjustment = {
   id: string;
+  /** Signed balance delta: > 0 = credit (clawed back on wipe), < 0 = debit (balance left unchanged). */
   amount: number;
   /** Raw admin reason — description with the "Admin adjustment: " prefix stripped. */
   reason: string;
@@ -154,18 +166,22 @@ const userIdSchema = z.string().min(1, "User id is required");
  * the dialog when it opens (the dialog is a hidden component — per the
  * active-data rule we do NOT preload these on page render). Read-only.
  *
- * Filters to the genuine "Admin adjustment:" CREDIT subset — manual
- * withdrawals (same ledger type, different prefix) AND debit adjustments
- * (amount <= 0, see SIGN RULE) are excluded so they can never be selected
- * for deletion (wiping a debit would re-credit the user). On top of that,
- * any credit whose reason / metadata ties it to a CREATOR DEAL / payout
- * (e.g. the real prod row "Admin adjustment: weekly deal") is excluded via
- * `isCreatorRelatedAdjustment`, AND any credit tied to ANY affiliate info
+ * Lists the genuine "Admin adjustment:" subset — BOTH credits and debits.
+ * Manual withdrawals (same ledger type, different prefix) are excluded so
+ * they can never be selected. On top of that, for an EVER-CREATOR only, any
+ * row whose reason / metadata ties it to a CREATOR DEAL / payout (e.g. the
+ * real prod row "Admin adjustment: weekly deal") is excluded via
+ * `isCreatorRelatedAdjustment`, AND any row tied to ANY affiliate info
  * (commission / referral / affiliate payout — e.g. "Admin adjustment:
  * affiliate commission") is excluded via `isAffiliateRelatedAdjustment`, so
  * neither deal money nor affiliate info entered by hand through the
- * Adjust-Balance dialog can ever be wiped (the wipe protects all creator-deal
- * AND all affiliate data — see src/lib/account-wipes/protected.ts).
+ * Adjust-Balance dialog can ever be wiped for a creator (the wipe protects all
+ * creator-deal AND all affiliate data — see src/lib/account-wipes/protected.ts).
+ *
+ * Debits ARE listed now (the old `amount > 0` filter is gone): deleting a
+ * debit removes the record but leaves the balance unchanged (BALANCE RULE), so
+ * it never inflates the balance. The signed `amount` lets the UI mark each row
+ * as a credit (+) or debit (−).
  */
 export async function listWipeableAdjustments(
   userId: string,
@@ -181,24 +197,23 @@ export async function listWipeableAdjustments(
 
   // CREATOR-CONDITIONAL: re-derive (server-side, dual-DB) whether this user
   // IS or WAS a creator. The deal/affiliate keyword carve-out below is applied
-  // ONLY for an ever-creator; for a never-creator every genuine admin credit
-  // is wipeable, including deal-tagged ones.
+  // ONLY for an ever-creator; for a never-creator every genuine admin
+  // adjustment is wipeable, including deal-tagged ones.
   const { everCreator } = await getCreatorProtectionStatus(parsed.data);
 
-  // Filter to genuine admin adjustment CREDITS only. `startsWith` on the
-  // description excludes "Manual withdrawal:" rows (same type) and any
-  // other future prefix; `amount > 0` excludes debit adjustments (SIGN
-  // RULE — wiping a debit reverses a deduction and re-adds money). status =
-  // completed mirrors how the rows are written (and how the insights
-  // surface counts them). `metadata` is pulled so the creator-deal carve-out
-  // can inspect structured deal tags, not just the reason text.
+  // List genuine admin adjustments (credits AND debits). `startsWith` on the
+  // description excludes "Manual withdrawal:" rows (same type) and any other
+  // future prefix. NO sign filter — debits are deletable (their balance effect
+  // is intentionally left in place per the BALANCE RULE). status = completed
+  // mirrors how the rows are written (and how the insights surface counts
+  // them). `metadata` is pulled so the creator-deal carve-out can inspect
+  // structured deal tags, not just the reason text.
   const rows = await db.ledger_transactions.findMany({
     where: {
       user_id: parsed.data,
       type: ADJ_TYPE,
       status: "completed",
       description: { startsWith: ADJ_DESC_PREFIX },
-      amount: { gt: 0 },
     },
     orderBy: { created_at: "desc" },
     take: MAX_BATCH,
@@ -313,24 +328,26 @@ const wipeSchema = z.object({
  *        - type === admin_balance_adjustment,
  *        - description starts with "Admin adjustment: " (NOT a manual
  *          withdrawal, NOT any other prefix),
- *        - status === completed,
- *        - amount > 0 (CREDIT only — SIGN RULE; a debit would re-credit).
- *      A single bad/foreign/tampered/debit id aborts the entire wipe.
+ *        - status === completed.
+ *      Credits AND debits are accepted (no sign filter). A single
+ *      bad/foreign/tampered/manual-withdrawal id aborts the entire wipe.
  *   4. SNAPSHOT FIRST: write the recovery copy to
  *      admin_balance_adjustment_wipes (admin DB) and get its id. If this
  *      throws → abort. NOTHING has been deleted, the balance is untouched,
  *      no money-back surprise.
  *   5. DELETE + REDUCE in ONE main-DB $transaction: re-guard + deleteMany
- *      EXACTLY those ids (scoped by id + user + type + prefix + amount > 0),
- *      then reduce available_balance by the summed amount (optimistic-locked
- *      on `version`). available_balance is never driven negative. Because
- *      the snapshot already exists, the committed delete is PERMANENT — no
+ *      EXACTLY those ids (scoped by id + user + type + prefix), then reduce
+ *      available_balance by the CREDIT clawback only (Σ positive amounts,
+ *      clamped ≥ 0; optimistic-locked on `version`). DEBITS delete but do
+ *      NOT change the balance (BALANCE RULE — never inflate). Because the
+ *      snapshot already exists, the committed delete is PERMANENT — no
  *      rollback re-adds money.
- *   6. If the main-DB tx FAILS, delete the orphan snapshot row (the recovery
- *      copy is unused because nothing was deleted) and report failure.
+ *   6. If the main-DB tx FAILS, mark the orphan snapshot 'failed' (the
+ *      recovery copy is unused because nothing was deleted) and report.
  *
- * The signed sum (`totalRemoved`) is always > 0 here because only credits
- * are wipeable, so the balance can only ever go DOWN.
+ * The balance reduction (`creditClawback`) is the sum of the POSITIVE amounts
+ * only (≥ 0), so the balance can only ever go DOWN or stay put — deleting a
+ * debit never raises it.
  *
  * CAVEAT (owner-accepted): hard-delete breaks balance_before/after
  * continuity on the user's REMAINING ledger rows. We correct the CURRENT
@@ -426,13 +443,10 @@ export async function wipeBalanceAdjustments(data: {
       if (row.status !== "completed") {
         throw new Error("WIPE_GUARD: a selected row is not a completed adjustment");
       }
-      // SIGN RULE: only credits (amount > 0) are wipeable. A debit reverses
-      // a past deduction and would re-add money to the user — never allowed.
-      if (toNumber(row.amount) <= 0) {
-        throw new Error(
-          "WIPE_GUARD: a selected row is a debit (clawback/withdrawal) — only credit adjustments can be wiped",
-        );
-      }
+      // NOTE: NO sign filter — credits AND debits are both deletable. A debit
+      // deletes the record but leaves the balance unchanged (BALANCE RULE,
+      // applied in the balance computation below), so deleting it can never
+      // re-add money.
       // CREATOR-DEAL CARVE-OUT (creator-conditional, fail-closed): for an
       // ever-creator, an admin adjustment whose reason / metadata ties it to a
       // creator deal / payout (e.g. "Admin adjustment: weekly deal") is
@@ -459,8 +473,11 @@ export async function wipeBalanceAdjustments(data: {
     }
 
     guardedRows = rows as unknown as Array<Record<string, unknown>>;
-    // Sum of the signed amounts — guaranteed > 0 because every row is a
-    // credit. This is the magnitude we subtract from the balance.
+    // Sum of the SIGNED amounts (credits + debits) — informational only
+    // (reported as `totalRemoved` + stored on the snapshot for the audit
+    // trail). The BALANCE reduction is computed separately below as the
+    // credit-only clawback (positive amounts), so a debit in the batch never
+    // raises the balance.
     totalRemoved = rows.reduce((acc, r) => acc + toNumber(r.amount), 0);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
@@ -497,7 +514,17 @@ export async function wipeBalanceAdjustments(data: {
   // the snapshot's recorded balance_before/after can never disagree with the
   // committed result (if the balance moved, STEP 5 aborts + cleans up).
   const lockVersion = preBalanceRow.version;
-  const reducedBalance = balanceBefore - totalRemoved;
+  // BALANCE RULE: reduce ONLY by the credits' summed amount (positive
+  // amounts). Debits in the batch delete their record but contribute 0 to the
+  // clawback, so the balance is never raised by deleting a debit.
+  const creditClawback = (guardedRows as Array<{ amount: unknown }>).reduce(
+    (acc, r) => {
+      const a = toNumber(r.amount as never);
+      return a > 0 ? acc + a : acc;
+    },
+    0,
+  );
+  const reducedBalance = balanceBefore - creditClawback;
   // Never drive spendable balance negative (a wager balance check elsewhere
   // would misbehave). A clamp means the user had already spent some of the
   // credited money; the shortfall is surfaced in the audit metadata.
@@ -572,9 +599,10 @@ export async function wipeBalanceAdjustments(data: {
           row.status !== "completed" ||
           !row.description.startsWith(ADJ_DESC_PREFIX) ||
           row.description.startsWith(MANUAL_WD_DESC_PREFIX) ||
-          toNumber(row.amount) <= 0 ||
+          // NO sign filter — credits AND debits are deletable (the debit's
+          // balance effect is intentionally left in place).
           // CREATOR-CONDITIONAL carve-outs: only protect deal/affiliate-tagged
-          // credits when the user is/was a creator (same flag as STEP 3).
+          // rows when the user is/was a creator (same flag as STEP 3).
           (everCreator && isCreatorRelatedAdjustment(row.description, row.metadata)) ||
           (everCreator && isAffiliateRelatedAdjustment(row.description, row.metadata))
         ) {
@@ -589,7 +617,6 @@ export async function wipeBalanceAdjustments(data: {
           type: ADJ_TYPE,
           status: "completed",
           description: { startsWith: ADJ_DESC_PREFIX },
-          amount: { gt: 0 },
         },
       });
       if (del.count !== ids.length) {
@@ -657,12 +684,13 @@ export async function wipeBalanceAdjustments(data: {
         deletedIds: ids,
         deletedCount: guardedRows.length,
         totalRemoved,
+        creditClawback,
         balanceBefore,
         balanceAfter,
         balanceClamped: reducedBalance < 0,
         recoverable: true,
         caveat:
-          "hard-delete: remaining ledger rows' balance_before/after are not rewritten; current balance corrected",
+          "hard-delete (credits AND debits): balance reduced ONLY by the credit clawback (Σ positive amounts, clamped ≥0); deleted debits leave the balance unchanged (never inflate). Remaining ledger rows' balance_before/after are not rewritten; current balance corrected.",
       },
     },
   });
@@ -746,6 +774,14 @@ export async function restoreBalanceAdjustmentWipe(
   if (!snapshot || !Array.isArray(snapshot.rows) || !snapshot.userId) {
     return { success: false, error: "Snapshot is malformed — cannot restore" };
   }
+  // The EXACT amount the wipe removed from the balance = balance_before −
+  // balance_after. This already accounts for the BALANCE RULE (credit-only
+  // clawback) AND the ≥0 clamp, so re-adding it is a perfect symmetric
+  // restore. NOTE: it is NOT `total_amount` (the SIGNED sum incl. debits) —
+  // debits were deleted without changing the balance, so they contribute 0
+  // here. A debit-only batch restores 0 to the balance (correct). The signed
+  // `total_amount` stays informational for the audit/listing.
+  const balanceReAdd = toNumber(wipe.balance_before) - toNumber(wipe.balance_after);
   const totalAmount = toNumber(wipe.total_amount);
 
   const db = await getDb();
@@ -770,18 +806,20 @@ export async function restoreBalanceAdjustmentWipe(
         skipDuplicates: true,
       });
 
-      // Re-add the summed amount to the balance (reverse of the wipe's
-      // reduction). Optimistic-locked. We do NOT attempt to rewrite the
-      // re-inserted rows' historical balance_before/after — they reflect
-      // the balance at their ORIGINAL time, same fidelity tradeoff the
-      // wipe documented.
+      // Re-add EXACTLY the amount the wipe removed (balance_before −
+      // balance_after = the credit-only, clamp-aware reduction), reversing the
+      // wipe's balance effect. Optimistic-locked. We do NOT attempt to rewrite
+      // the re-inserted rows' historical balance_before/after — they reflect
+      // the balance at their ORIGINAL time, same fidelity tradeoff the wipe
+      // documented. A debit-only batch re-adds 0 (the balance was never
+      // touched by the wipe).
       const b = await tx.balances.findUnique({ where: { user_id: snapshot.userId } });
       if (!b) throw new Error("User balances not found");
 
       const updated = await tx.balances.updateMany({
         where: { user_id: snapshot.userId, version: b.version },
         data: {
-          available_balance: toNumber(b.available_balance) + totalAmount,
+          available_balance: toNumber(b.available_balance) + balanceReAdd,
           version: { increment: 1 },
         },
       });
@@ -812,6 +850,7 @@ export async function restoreBalanceAdjustmentWipe(
       wipeId: parsed.data.wipeId,
       restoredCount: snapshot.rows.length,
       totalAmount,
+      balanceReAdded: balanceReAdd,
     },
   });
 

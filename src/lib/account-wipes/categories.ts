@@ -24,6 +24,21 @@
  * children that a delete would orphan — they are genuinely recoverable and
  * ship ENABLED.
  *
+ * The new `wager` category (the "Wipe wager / gameplay" target) is ALSO
+ * ENABLED: it deletes the user's wager + payout LEDGER legs (pack/battle/
+ * upgrader bets + battle payout legs), the won pack/battle `user_inventory`
+ * rows (+ their `provably_fair_results` children), and the `upgrader_games`
+ * rows — exactly the rows that drive GGR / wager / gaming-margin / P&L and the
+ * transaction list. Its inbound FK cycle (ledger ↔ game_sessions) is broken by
+ * nulling the cross pointers (`game_sessions.bet_ledger_tx_id`,
+ * `balances.last_transaction_id`) before the delete; the `game_sessions` /
+ * `battles` shells are deliberately LEFT intact (deleting a battle would
+ * cascade OTHER participants' rows — see the action's FK notes), and any
+ * withdrawal-locked won card is skipped + flagged (it backs an in-flight
+ * withdrawal). Snapshot-first + recoverable (best-effort for the gameplay
+ * graph). NOT creator-protected (gameplay is the user's own activity), but it
+ * never raises the balance (BALANCE RULE).
+ *
  * The remaining categories touch row sets with INBOUND foreign-key children
  * or denormalized cross-table state whose faithful recovery cannot be
  * GUARANTEED in this iteration (and could not be proven against the live DB):
@@ -63,8 +78,9 @@ export type WipeCategory =
   | "balance"
   | "vault"
   | "inventory"
-  // ── New recoverable category (ENABLED) ──
+  // ── New recoverable categories (ENABLED) ──
   | "deposits"
+  | "wager"
   // ── Expanded categories (shipped DISABLED — see reasons above) ──
   | "withdrawals"
   | "finances"
@@ -241,17 +257,29 @@ export const WIPE_CATEGORIES: readonly WipeCategoryMeta[] = [
 
   // ── Gaming ──
   {
+    key: "wager",
+    icon: "gamepad",
+    label: "Wager / gameplay",
+    blurb:
+      "Deletes the user's wager + payout ledger legs (pack/battle/upgrader bets + battle payouts), their won pack/battle inventory, and upgrader games — so their wager + wager-loss stop driving GGR / the gaming margin / P&L. Snapshotted + recoverable.",
+    group: "gaming",
+    creatorProtected: false,
+    liveFinancial: true,
+    enabled: true,
+    disabledReason: "",
+  },
+  {
     key: "gaming",
     icon: "gamepad",
     label: "Gaming logs",
     blurb:
-      "Deletes the user's gaming history — pack/battle/upgrader sessions and their ledger legs.",
+      "Deletes the user's gaming session shells (game_sessions / battles / provably-fair results).",
     group: "gaming",
     creatorProtected: false,
     liveFinancial: true,
     enabled: false,
     disabledReason:
-      "Gaming history spans a deep cross-table graph (battles, sessions, upgrader games, provably-fair results) — a fully-recoverable delete cannot yet be guaranteed.",
+      "The session/battle shells form a deep cross-table graph (battles cascade other participants) — a fully-recoverable delete of the shells cannot yet be guaranteed. The wager + payout legs + won inventory + upgrader games (what drives the margin) ARE deletable via “Wager / gameplay” above.",
   },
 
   // ── Affiliate ──

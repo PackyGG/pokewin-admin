@@ -12,6 +12,7 @@ import {
   Package,
   SlidersHorizontal,
   ArrowDownToLine,
+  Gamepad2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -47,7 +48,13 @@ const ROSE = "text-rose-500 dark:text-rose-400";
 // One unified entry across BOTH snapshot stores (legacy adjustments wipes +
 // the generalized balance/vault/inventory/deposits wipes). `source` tells the
 // Restore button which server action to call.
-type WipeKind = "adjustments" | "balance" | "vault" | "inventory" | "deposits";
+type WipeKind =
+  | "adjustments"
+  | "balance"
+  | "vault"
+  | "inventory"
+  | "deposits"
+  | "wager";
 
 type UnifiedWipe = {
   id: string;
@@ -69,6 +76,7 @@ const KIND_META: Record<WipeKind, { icon: LucideIcon; label: string }> = {
   vault: { icon: Archive, label: "Vault (locked)" },
   inventory: { icon: Package, label: "Inventory" },
   deposits: { icon: ArrowDownToLine, label: "Deposits" },
+  wager: { icon: Gamepad2, label: "Wager / gameplay" },
 };
 
 // ───────────────────────────────────────────────────────────────────────────

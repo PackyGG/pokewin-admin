@@ -13,6 +13,13 @@ import "server-only";
  *                   total_deposited counter delta, delete the rows + reduce
  *                   the counter. Restore re-inserts the rows + re-adds the
  *                   counter.
+ *   - "wager"     → snapshot the user's GAMEPLAY: the wager + payout ledger
+ *                   legs (pack/battle/upgrader bets + battle payout legs), the
+ *                   won pack/battle `user_inventory` rows (+ their
+ *                   `provably_fair_results` children), and the `upgrader_games`
+ *                   rows; delete them all (FK-safe) and claw the credit legs
+ *                   out of the balance (never inflate). Restore re-inserts
+ *                   everything + re-adds the exact balance delta removed.
  *
  * Mirrors the snapshot-FIRST recovery model of commit f4bfca0 exactly: the
  * recovery copy is written to the admin DB and confirmed BEFORE the
@@ -33,13 +40,19 @@ import "server-only";
  */
 
 /** The new wipe targets this store backs. Keyed in the DB column. */
-export type AccountWipeType = "balance" | "vault" | "inventory" | "deposits";
+export type AccountWipeType =
+  | "balance"
+  | "vault"
+  | "inventory"
+  | "deposits"
+  | "wager";
 
 export const ACCOUNT_WIPE_TYPES: readonly AccountWipeType[] = [
   "balance",
   "vault",
   "inventory",
   "deposits",
+  "wager",
 ] as const;
 
 export function isAccountWipeType(v: unknown): v is AccountWipeType {
@@ -111,11 +124,53 @@ export type DepositsWipeSnapshot = {
   totalDepositedReduction: string;
 };
 
+/**
+ * Snapshot payload for a "wager" (gameplay) wipe. Holds every row the wipe
+ * deletes so a restore can reconstruct the gameplay as faithfully as possible:
+ *   - `ledgerRows`        — the deleted wager + payout ledger legs (pack/battle/
+ *                           upgrader bets + battle payout legs), full rows.
+ *   - `inventoryRows`     — the deleted won pack/battle `user_inventory` rows.
+ *   - `provablyFairRows`  — the `provably_fair_results` children of the deleted
+ *                           inventory rows (deleted FIRST so the inventory
+ *                           delete doesn't cascade them silently; restored
+ *                           before the inventory? no — restored AFTER, since PF
+ *                           FK-references inventory; see the restore branch).
+ *   - `upgraderGameRows`  — the deleted `upgrader_games` rows (generic records;
+ *                           the table is not in the Prisma schema, so these are
+ *                           read/written via raw SQL). Empty `[]` when the
+ *                           connected DB lacks the table (the stale snapshot).
+ *   - `balanceReduction`  — the EXACT amount subtracted from available_balance
+ *                           = the credit (payout) legs' summed magnitude that
+ *                           moved the balance UP, clamped so the balance never
+ *                           went below 0. Restore re-adds EXACTLY this. Debit
+ *                           (wager) legs are NOT restored to the balance — they
+ *                           moved it DOWN and deleting them must not re-add the
+ *                           wagered money (BALANCE RULE — never inflate).
+ *
+ * BALANCE RULE detail (mirrors the adjustments wipe): a payout leg (battle_refund
+ * / battle_excess_to_voucher / upgrader_payout) is a CREDIT — it raised the
+ * balance — so deleting it claws that back (balance −= magnitude, clamp ≥0). A
+ * wager leg (pack_opening / battle_bet / battle_sponsorship / upgrader_bet) is a
+ * DEBIT — it lowered the balance — so deleting it leaves the balance UNCHANGED
+ * (we do NOT give the stake back). Net balance reduction = Σ payout magnitudes,
+ * clamped; never raises the balance.
+ */
+export type WagerWipeSnapshot = {
+  userId: string;
+  ledgerRows: Array<Record<string, unknown>>;
+  inventoryRows: Array<Record<string, unknown>>;
+  provablyFairRows: Array<Record<string, unknown>>;
+  upgraderGameRows: Array<Record<string, unknown>>;
+  /** Exact amount removed from available_balance (decimal string; ≥ 0). */
+  balanceReduction: string;
+};
+
 export type AccountWipeSnapshot =
   | ({ type: "balance" } & BalanceWipeSnapshot)
   | ({ type: "vault" } & VaultWipeSnapshot)
   | ({ type: "inventory" } & InventoryWipeSnapshot)
-  | ({ type: "deposits" } & DepositsWipeSnapshot);
+  | ({ type: "deposits" } & DepositsWipeSnapshot)
+  | ({ type: "wager" } & WagerWipeSnapshot);
 
 /**
  * JSON.stringify replacer that keeps Decimal.js / BigInt values addressable
