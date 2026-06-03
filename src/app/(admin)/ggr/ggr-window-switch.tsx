@@ -19,8 +19,8 @@ import { useGgrWindow } from "./ggr-window-shell";
  * period-selector pattern); the other chips dim while pending. Default
  * (`24h`) carries no `?window=` param so a bare `/ggr` deep-link lands on
  * it. "Lifetime" maps to the canonical `all` period value — the server
- * coerces it through `ggrWindowToMetricWindow("all")` to an unbounded
- * (capped, server-side) lookback.
+ * coerces it through `ggrWindowToMetricWindow("all")` to a BOUNDED 365-day
+ * capped lookback (not a full-history scan, which would time out).
  */
 
 const WINDOWS = [

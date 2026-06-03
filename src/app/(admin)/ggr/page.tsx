@@ -47,6 +47,7 @@ import {
   type GgrTopContributorRow,
 } from "@/lib/queries/ggr";
 import { describeLedgerType } from "@/lib/queries/_wager-payout-descriptions";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { ExportButton } from "@/components/export-button";
 
 import { GgrWindowSwitch } from "./ggr-window-switch";
@@ -56,9 +57,9 @@ export const metadata = { title: "GGR Breakdown" };
 
 // The /ggr page exposes the rolling 24h / 3d / 7d windows plus the
 // `all` (Lifetime) bucket from the canonical `DashboardPeriod` set.
-// `all` maps through `ggrWindowToMetricWindow("all")` to an unbounded
-// (server-side capped) lookback. Anything else on `?window=` normalises
-// to the default.
+// `all` maps through `ggrWindowToMetricWindow("all")` to a BOUNDED
+// 365-day capped lookback (a true unbounded scan times out the report).
+// Anything else on `?window=` normalises to the default.
 type GgrWindow = Extract<DashboardPeriod, "24h" | "3d" | "7d" | "all">;
 const SUPPORTED_WINDOWS = ["24h", "3d", "7d", "all"] as const satisfies readonly GgrWindow[];
 const DEFAULT_GGR_WINDOW: GgrWindow = "24h";
@@ -184,6 +185,14 @@ export default async function GgrPage({
  * Streaming body — fetches the canonical page payload and the top-10
  * contributor list for the active window in parallel, then renders the
  * KPI strip + the three breakdown groups + the contributor table.
+ *
+ * Resilience: `getGgrPageData` is internally leg-wrapped (it degrades a
+ * failed/slow leg to a 0/empty state and never throws). The heavier
+ * per-user `getGgrTopContributors` join is the one read still able to
+ * throw/time out, so it is wrapped here in `safeQuery` (15s bound, empty
+ * fallback → the contributors table shows its empty state) — so a slow
+ * contributor join degrades that ONE table instead of collapsing the whole
+ * report to the error boundary.
  */
 async function GgrBody({
   ggrWindow,
@@ -193,9 +202,14 @@ async function GgrBody({
   periodLabel: string;
 }) {
   const metricWindow = ggrWindowToMetricWindow(ggrWindow);
-  const [data, contributors] = await Promise.all([
+  const [data, { data: contributors }] = await Promise.all([
     getGgrPageData(metricWindow),
-    getGgrTopContributors(metricWindow, 10),
+    safeQuery(
+      () => getGgrTopContributors(metricWindow, 10),
+      [] as GgrTopContributorRow[],
+      "ggr.page.topContributors",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
   ]);
 
   return (

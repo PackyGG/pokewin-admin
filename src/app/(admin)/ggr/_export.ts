@@ -17,8 +17,8 @@ import {
 const AREA = "insights.export.ggr";
 
 /** Windows the /ggr page exposes — same coercion as the page. `all` is the
- * Lifetime bucket (mapped to an unbounded lookback by
- * `ggrWindowToMetricWindow`). */
+ * Lifetime bucket (mapped to a BOUNDED 365-day capped lookback by
+ * `ggrWindowToMetricWindow`, not a full-history scan). */
 export type GgrWindow = "24h" | "3d" | "7d" | "all";
 
 /** Supported `?window=` values for /ggr — mirrors the page's set. */
@@ -28,9 +28,9 @@ export const GGR_EXPORT_WINDOWS = ["24h", "3d", "7d", "all"] as const;
  * Coerce a raw `window` param to a valid {@link GgrWindow}. Mirrors the
  * page's `parseGgrWindow` so the export and the page agree on the window
  * for any URL — including the `all` (Lifetime) bucket, so an export taken
- * from the Lifetime view exports lifetime data rather than silently
- * falling back to 24h. Unknown values fall back to the page default
- * (`24h`).
+ * from the Lifetime view exports lifetime data (bounded to the same
+ * 365-day capped lookback the page uses) rather than silently falling back
+ * to 24h. Unknown values fall back to the page default (`24h`).
  */
 export function parseGgrExportWindow(value: string | undefined): GgrWindow {
   if (!value) return "24h";
