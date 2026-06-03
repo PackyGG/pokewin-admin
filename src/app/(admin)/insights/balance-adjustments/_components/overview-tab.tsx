@@ -14,7 +14,7 @@ import { FadeIn } from "@/components/fade-in";
 import { EmptyState } from "@/components/empty-state";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
@@ -42,6 +42,7 @@ export async function OverviewTab({
     () => getBalanceAdjustmentOverview(period),
     null,
     "insights-balance-adjustments.overview",
+    REWARD_QUERY_TIMEOUT_MS,
   );
 
   if (overviewRes.error || !overviewRes.data) {

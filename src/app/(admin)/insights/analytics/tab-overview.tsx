@@ -27,7 +27,7 @@ import {
 import { DeltaChip } from "./delta-chip";
 import { KpiSparkline } from "./kpi-sparkline";
 import { OverviewChart } from "./overview-chart";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
@@ -44,6 +44,7 @@ export async function OverviewInsightsTab({ period }: { period: InsightsPeriod }
     () => getInsightsOverview(period),
     null,
     "insights-analytics.overview",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (

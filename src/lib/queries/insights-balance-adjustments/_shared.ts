@@ -67,6 +67,18 @@ export function windowStartExpr(period: InsightsRewardsPeriod): string {
  * AND-fragment that filters `ledger_transactions` to the active window.
  * Defaults to the alias `lt`. Returns the empty string when the period is
  * lifetime — every helper unconditionally concatenates the result.
+ *
+ * LIFETIME BOUND (deliberate): unlike the deposit-bonus / cross-category
+ * sweeps over the FULL ledger, this surface filters to a SINGLE ledger
+ * type (`admin_balance_adjustment`) — rows written only by the admin
+ * adjust-balance / manual-withdrawal flows. That population is intrinsically
+ * bounded (orders of magnitude smaller than the gaming ledger), so the
+ * `all` window is left UNBOUNDED on purpose: this is an accountability /
+ * audit surface and capping it to a rolling year would hide older
+ * adjustments an admin may need to audit. The lifetime scan is kept safe
+ * instead by the REWARD_QUERY_TIMEOUT_MS wrapper on every tab's safeQuery
+ * (so a pathological case degrades to a fallback tile rather than hanging
+ * the segment) — see the balance-adjustments tab components.
  */
 export function windowDateFilter(
   period: InsightsRewardsPeriod,

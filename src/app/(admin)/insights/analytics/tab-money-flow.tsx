@@ -26,7 +26,7 @@ import {
 } from "./types";
 import { MoneyFlowChart, GapChart } from "./money-flow-chart";
 import { MoneyFlowRow } from "./money-flow-row";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
@@ -64,6 +64,7 @@ export async function MoneyFlowInsightsTab({
     () => getMoneyFlowDecomposition(period, periodLabel),
     null,
     "insights-analytics.moneyFlow",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (

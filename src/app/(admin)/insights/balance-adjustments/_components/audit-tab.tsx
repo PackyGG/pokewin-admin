@@ -22,7 +22,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency, formatDateTime, formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
@@ -51,6 +51,7 @@ export async function AuditTab({
     () => getBalanceAdjustmentAuditTrail(period),
     null,
     "insights-balance-adjustments.audit",
+    REWARD_QUERY_TIMEOUT_MS,
   );
 
   if (res.error || !res.data) {
