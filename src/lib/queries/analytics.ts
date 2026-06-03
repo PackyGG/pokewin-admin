@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
@@ -132,14 +133,22 @@ export type AnalyticsData = {
   }[];
 };
 
-export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
+/**
+ * Inner compute for {@link getAnalyticsData} — runs the full ~13-query
+ * aggregate bundle. The resolved blacklist is passed in (rather than
+ * fetched here) so it participates verbatim in the `unstable_cache` key
+ * of the public wrapper below; do not re-fetch it inside.
+ */
+async function computeAnalyticsData(
+  period: Period,
+  excluded: string[],
+): Promise<AnalyticsData> {
   const db = await getDb();
   const dateFilter = periodToDateFilter(period);
   // Per-request blacklist (cached via React cache) → build the staff
   // + blacklist SQL fragment once and re-use across every sub-query
   // below. Same trick `dashboard.ts` uses. EXCL_STAFF_FRAG now comes from
   // the central session-window scope (creators kept, on-session dropped).
-  const excluded = await getExcludedUserIds();
   const EXCL_STAFF_FRAG = await buildExclStaffFrag();
   // Inline `AND id NOT IN (...)` for queries that filter directly on
   // the user table (rather than on `user_id IN (subquery)`). Empty
@@ -574,6 +583,49 @@ export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
   };
 }
 
+/**
+ * Cross-request cache for the heavy {@link getAnalyticsData} bundle.
+ *
+ * `/analytics` polls via `<AutoRefresh intervalMs={300_000} />`, which
+ * fires `router.refresh()` every 5 minutes and re-runs the Overview
+ * server component for every viewer. Without a shared cache that re-ran
+ * the entire ~13-query aggregate bundle (PERCENTILE_CONT medians,
+ * multi-day GROUP BY, battle/pack scans, the lifetime realized-P&L
+ * snapshot) against the main game DB on every tick. (PRE-FLIGHT audit
+ * §6A SEV-1.)
+ *
+ * Same idiom as the `insights-rewards` helpers (see `_cache.ts` /
+ * `creator-withdrawals.ts`): two `unstable_cache` layers — 60s for the
+ * finite windows that move as new activity lands, 300s for the `all`
+ * lifetime view that barely shifts second-to-second — BOTH keyed on
+ * `(period, sortedBlacklist)` so an admin edit to the excluded-users
+ * list busts stale aggregates on the next tick (a different blacklist
+ * → a different cache key). Logic is byte-for-byte identical to
+ * `computeAnalyticsData`; this is perf/consistency only, no number
+ * change. The `unstable_cache` key cannot reuse `makeCachedPair` because
+ * that helper's key type is the insights `InsightsRewardsPeriod`
+ * (24h/3d/90d) which doesn't include the analytics `today` window.
+ */
+const cachedAnalyticsData = unstable_cache(
+  computeAnalyticsData,
+  ["analytics-data-v1"],
+  { revalidate: 60, tags: ["analytics"] },
+);
+
+const cachedAnalyticsDataLifetime = unstable_cache(
+  computeAnalyticsData,
+  ["analytics-data-lifetime-v1"],
+  { revalidate: 300, tags: ["analytics"] },
+);
+
+export async function getAnalyticsData(period: Period): Promise<AnalyticsData> {
+  const blacklist = await getExcludedUserIds();
+  const sorted = [...blacklist].sort();
+  return period === "all"
+    ? cachedAnalyticsDataLifetime(period, sorted)
+    : cachedAnalyticsData(period, sorted);
+}
+
 function parseDays(period: Period): number {
   switch (period) {
     case "today":
@@ -601,12 +653,12 @@ function parseDays(period: Period): number {
  * Pack & Battle tab consumes. Same per-request blacklist filter as
  * `getAnalyticsData` so the numbers stay consistent across pages.
  */
-export async function getPackAndBattleStats(
+async function computePackAndBattleStats(
   period: Period,
+  excluded: string[],
 ): Promise<{ battleStats: BattleModeStats; packStats: PackPopularityStats }> {
   const db = await getDb();
   const dateFilter = periodToDateFilter(period);
-  const excluded = await getExcludedUserIds();
   const blacklistIdNotIn = blacklistNotInClause("id", excluded);
   const battleStaffExcl = `user_id IN (SELECT id FROM "user" WHERE role != 'admin')`;
   const battleStaffExclAliased = `b.user_id IN (SELECT id FROM "user" WHERE role != 'admin')`;
@@ -744,4 +796,33 @@ export async function getPackAndBattleStats(
         .slice(0, 10),
     },
   };
+}
+
+/**
+ * Cross-request cache for the slim {@link getPackAndBattleStats} bundle
+ * (6 raws), so the `/analytics?tab=packs` view doesn't re-run the
+ * battle-mode / pack-popularity scans on every 5-minute `AutoRefresh`
+ * tick. Same 60s/300s + `(period, sortedBlacklist)`-keyed pair as
+ * {@link getAnalyticsData}; logic identical to `computePackAndBattleStats`.
+ */
+const cachedPackAndBattleStats = unstable_cache(
+  computePackAndBattleStats,
+  ["analytics-pack-battle-stats-v1"],
+  { revalidate: 60, tags: ["analytics"] },
+);
+
+const cachedPackAndBattleStatsLifetime = unstable_cache(
+  computePackAndBattleStats,
+  ["analytics-pack-battle-stats-lifetime-v1"],
+  { revalidate: 300, tags: ["analytics"] },
+);
+
+export async function getPackAndBattleStats(
+  period: Period,
+): Promise<{ battleStats: BattleModeStats; packStats: PackPopularityStats }> {
+  const blacklist = await getExcludedUserIds();
+  const sorted = [...blacklist].sort();
+  return period === "all"
+    ? cachedPackAndBattleStatsLifetime(period, sorted)
+    : cachedPackAndBattleStats(period, sorted);
 }
