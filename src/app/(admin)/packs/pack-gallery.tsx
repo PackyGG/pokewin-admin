@@ -123,6 +123,7 @@ function PackTile({
             canDelete={canDelete}
             canQuickEdit={canQuickEdit}
             onQuickEdit={onQuickEdit}
+            onOpenDetail={onOpenInspector}
           />
         </div>
       )}

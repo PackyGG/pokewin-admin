@@ -187,13 +187,14 @@ export function PacksList({
               canDelete={canDelete}
               canQuickEdit={canEdit}
               onQuickEdit={openQuickEdit}
+              onOpenDetail={openDetail}
               size="sm"
             />
           </div>
         ),
       },
     ],
-    [canToggle, canDelete, canEdit, openQuickEdit],
+    [canToggle, canDelete, canEdit, openQuickEdit, openDetail],
   );
 
   return (

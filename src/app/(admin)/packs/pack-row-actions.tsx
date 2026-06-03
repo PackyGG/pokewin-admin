@@ -38,7 +38,10 @@ import { deletePack, togglePackActive } from "./actions";
  *   - "Quick edit"  → opens the QuickEditDrawer (price + active) without
  *                     leaving the list (only shown when the viewer can edit
  *                     price or toggle active).
- *   - "Open detail" → the canonical /packs/[id] page (full editor lives there).
+ *   - "Open detail" → opens the centered detail MODAL on the list (via the
+ *                     `?inspect=` flow), the same as a row/tile click. There is
+ *                     no standalone full-page pack view — the modal is the only
+ *                     detail surface, so this never navigates away.
  *   - Activate/Deactivate → togglePackActive (capability-gated).
  *   - Delete        → confirmation dialog → deletePack (capability-gated).
  *
@@ -51,6 +54,7 @@ export function PackRowActions({
   canDelete,
   canQuickEdit,
   onQuickEdit,
+  onOpenDetail,
   /** Compact trigger for dense table rows (smaller hit target). */
   size = "default",
 }: {
@@ -60,6 +64,8 @@ export function PackRowActions({
   /** Whether the viewer may open the quick-edit drawer (edit price). */
   canQuickEdit: boolean;
   onQuickEdit: (pack: PackListItem) => void;
+  /** Opens the centered detail modal for this pack (sets `?inspect=`). */
+  onOpenDetail: (pack: PackListItem) => void;
   size?: "default" | "sm";
 }) {
   const router = useRouter();
@@ -139,7 +145,7 @@ export function PackRowActions({
           <DropdownMenuItem
             onClick={(e) => {
               stop(e);
-              router.push(`/packs/${pack.id}`);
+              onOpenDetail(pack);
             }}
           >
             <Pencil className="size-3.5" />

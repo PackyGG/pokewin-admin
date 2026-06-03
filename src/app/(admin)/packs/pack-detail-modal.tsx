@@ -1,12 +1,10 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import {
   Boxes,
   Coins,
   DollarSign,
-  ExternalLink,
   Gamepad2,
   Layers,
   Package,
@@ -21,7 +19,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CardImage } from "@/components/card-image";
 import { KpiTile } from "@/components/modern-panels";
@@ -59,9 +56,9 @@ import {
  *   - The Games tab's feed (an unindexed JSON scan) is itself only fetched when
  *     the operator switches to the Games tab — never on the default Cards view.
  *
- * The deep-link /packs/[id] page stays a working fallback for direct URLs /
- * external links; the modal header carries a small "Open full page" permalink
- * to it, but the in-app interaction from the list is THIS modal, not a nav.
+ * There is NO standalone full-page pack view anymore: this modal is the only
+ * detail surface. The /packs/[id] route just `redirect`s to /packs?inspect=<id>
+ * so any direct URL / external deep-link lands on the list with THIS modal open.
  */
 
 type ModalState =
@@ -167,7 +164,7 @@ function ModalInner({ pack, open }: { pack: PackListItem; open: boolean }) {
 
   return (
     <>
-      {/* ── Header: art + name + badges + permalink. Sticky so it stays in
+      {/* ── Header: art + name + badges. Sticky so it stays in
           view while the long body scrolls. ── */}
       <DialogHeader className="sticky top-0 z-10 -mx-0 border-b bg-background/95 px-4 py-4 backdrop-blur-sm supports-backdrop-filter:bg-background/80 sm:px-6">
         <div className="flex items-start gap-3 pr-10 sm:gap-4">
@@ -206,19 +203,6 @@ function ModalInner({ pack, open }: { pack: PackListItem; open: boolean }) {
               </DialogDescription>
             </div>
           </div>
-          {/* Permalink to the canonical deep-link page (kept as a fallback) —
-              a small affordance, not the primary interaction. */}
-          <div className="hidden shrink-0 sm:block">
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8"
-              render={<Link href={`/packs/${pack.id}`} />}
-            >
-              <ExternalLink className="size-3.5" />
-              Open full page
-            </Button>
-          </div>
         </div>
       </DialogHeader>
 
@@ -237,7 +221,7 @@ function ModalInner({ pack, open }: { pack: PackListItem; open: boolean }) {
         {state.status === "error" && (
           <InlineError
             title="Couldn't load this pack"
-            hint="The pack detail failed to load — a transient connection blip or a slow scan. Retry, or open the full page."
+            hint="The pack detail failed to load — a transient connection blip or a slow scan. Retry, or close this and reopen the pack."
             onRetry={() => load(pack.id)}
             compact
           />
@@ -297,7 +281,7 @@ function ReadyBody({
       ) : (
         <TileErrorFallback
           label="Pack stats"
-          hint="The pack stats scan timed out or failed. Open the full page to retry the charts."
+          hint="The pack stats scan timed out or failed. Close this and reopen the pack to retry the charts."
           size="panel"
         />
       )}
@@ -414,7 +398,7 @@ function ModalGamesTab({ packId }: { packId: string }) {
     return (
       <TileErrorFallback
         label="Games"
-        hint="The pack games feed timed out or failed. Open the full page to retry."
+        hint="The pack games feed timed out or failed. Switch tabs and back, or reopen the pack to retry."
         size="panel"
       />
     );

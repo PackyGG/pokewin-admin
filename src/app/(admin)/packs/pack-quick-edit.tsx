@@ -17,9 +17,8 @@ import { quickUpdatePack } from "./actions";
 
 /**
  * Quick-edit drawer for a pack — the low-friction price + active edit the
- * discovery asked for, so the most common tweak doesn't need the 3-hop
- * list → detail → editor navigation. The full card-pool / odds editor stays
- * on /packs/[id] (reachable via the inspector's "Open full page").
+ * discovery asked for, so the most common tweak (price / active) is one click
+ * from the list without opening the detail modal.
  *
  * Controlled by the parent list (open + which pack). The body is deferred by
  * QuickEditDrawer (mounts only when open). On save we call `quickUpdatePack`,
