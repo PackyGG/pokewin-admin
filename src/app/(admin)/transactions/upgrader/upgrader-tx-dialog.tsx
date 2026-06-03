@@ -5,7 +5,6 @@ import Link from "next/link";
 import {
   ChevronRight,
   ExternalLink,
-  Loader2,
   Sliders,
   Ticket,
   Trophy,
@@ -17,6 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { CardImage } from "@/components/card-image";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import {
@@ -142,12 +142,7 @@ export function UpgraderTxDialog({
           </DialogTitle>
         </DialogHeader>
 
-        {loading && (
-          <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
-            <Loader2 className="mr-2 size-4 animate-spin" />
-            Loading…
-          </div>
-        )}
+        {loading && <UpgraderTxDialogSkeleton />}
 
         {notFound && (
           <p className="py-8 text-center text-sm text-muted-foreground">
@@ -502,6 +497,81 @@ export function UpgraderTxDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * Loading shell for the dialog body. Mirrors the resolved layout —
+ * outcome panel (badge + card chip + 3 money tiles), configuration
+ * panel (3 tiles), and a provably-fair panel (2 ticket tiles + seed
+ * rows) — so the spinner→content swap doesn't pop or shift. Shimmer +
+ * reduced-motion are inherited from the base <Skeleton>; the wrapper is
+ * aria-hidden and the dialog title already announces the busy context.
+ */
+function UpgraderTxDialogSkeleton() {
+  return (
+    <div className="space-y-4" aria-hidden>
+      {/* Outcome panel */}
+      <div className="rounded-2xl border bg-gradient-to-br from-card via-card to-card/70 p-4">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="space-y-2">
+            <Skeleton className="h-2.5 w-16 rounded" />
+            <div className="flex items-center gap-2">
+              <Skeleton className="h-6 w-20 rounded-full" />
+              <Skeleton className="h-5 w-12 rounded" />
+            </div>
+          </div>
+          <div className="flex items-center gap-2 rounded-lg border bg-card p-2">
+            <Skeleton className="h-20 w-[3.33rem] rounded" />
+            <div className="space-y-1.5">
+              <Skeleton className="h-3 w-24 rounded" />
+              <Skeleton className="h-4 w-14 rounded" />
+              <Skeleton className="h-3 w-12 rounded" />
+            </div>
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="rounded-lg border bg-card/60 p-2 space-y-1.5">
+              <Skeleton className="h-2.5 w-12 rounded" />
+              <Skeleton className="h-4 w-16 rounded" />
+            </div>
+          ))}
+        </div>
+      </div>
+      {/* Configuration panel */}
+      <div className="rounded-xl border bg-muted/30 p-3 space-y-2.5">
+        <Skeleton className="h-3 w-28 rounded" />
+        <div className="grid grid-cols-3 gap-2">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="rounded-lg border bg-card/60 p-2 space-y-1.5">
+              <Skeleton className="h-2.5 w-14 rounded" />
+              <Skeleton className="h-4 w-12 rounded" />
+            </div>
+          ))}
+        </div>
+      </div>
+      {/* Provably-fair panel */}
+      <div className="rounded-xl border bg-muted/30 p-3 space-y-3">
+        <Skeleton className="h-3 w-24 rounded" />
+        <div className="grid grid-cols-2 gap-2">
+          {Array.from({ length: 2 }).map((_, i) => (
+            <div key={i} className="rounded-lg border bg-card/60 p-2 space-y-1.5">
+              <Skeleton className="h-2.5 w-12 rounded" />
+              <Skeleton className="h-5 w-16 rounded" />
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="space-y-1.5">
+              <Skeleton className="h-2.5 w-16 rounded" />
+              <Skeleton className="h-3 w-full rounded" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 

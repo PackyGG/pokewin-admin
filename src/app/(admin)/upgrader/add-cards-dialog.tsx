@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
   DialogContent,
@@ -25,6 +26,8 @@ import {
 } from "@/components/ui/select";
 import { CardImage } from "@/components/card-image";
 import { formatCurrency } from "@/lib/utils/format";
+import { cn } from "@/lib/utils";
+import { transition } from "@/components/ux";
 
 import {
   addUpgraderOutputs,
@@ -261,12 +264,44 @@ export function AddUpgraderCardsDialog({
 
         {/* Grid */}
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {cards.length === 0 && !isPending ? (
+          {/* First load (no cards yet, request in flight) → skeleton
+              tiles matching the picker grid so the dialog opens onto a
+              populated-looking surface instead of a blank gap that pops
+              when results land. */}
+          {cards.length === 0 && isPending ? (
+            <div
+              className="grid grid-cols-3 gap-3 py-2 sm:grid-cols-4 lg:grid-cols-5"
+              aria-hidden
+            >
+              {Array.from({ length: 10 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="rounded-lg border border-transparent p-2"
+                >
+                  <Skeleton className="w-full rounded" style={{ aspectRatio: "3 / 4" }} />
+                  <div className="mt-1.5 space-y-1">
+                    <Skeleton className="h-3 w-3/4 rounded" />
+                    <Skeleton className="h-2.5 w-1/2 rounded" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : cards.length === 0 && !isPending ? (
             <div className="flex h-32 items-center justify-center text-muted-foreground">
               No cards found.
             </div>
           ) : (
-            <div className="grid grid-cols-3 gap-3 py-2 sm:grid-cols-4 lg:grid-cols-5">
+            // On a filter/page change we keep the previous results
+            // mounted and only dim them while the next page streams in —
+            // a soft refresh reads as "updating", not "cleared". Pointer
+            // events stay live so the user can keep interacting.
+            <div
+              className={cn(
+                "grid grid-cols-3 gap-3 py-2 sm:grid-cols-4 lg:grid-cols-5",
+                transition("opacity", "fast"),
+                isPending && "opacity-50",
+              )}
+            >
               {cards.map((card) => {
                 const alreadyInPool = existing.has(card.id);
                 const isSelected = selectedIds.has(card.id);

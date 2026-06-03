@@ -2,9 +2,10 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTransition } from "react";
-import { Loader2, X, Crown, DollarSign } from "lucide-react";
+import { X, Crown, DollarSign } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { Spinner } from "@/components/ux";
 
 /**
  * One-click shortcuts to rank /transactions/upgrader by the biggest
@@ -66,7 +67,7 @@ function SortButton({
       title={title}
     >
       {isPending ? (
-        <Loader2 className="size-4 animate-spin" />
+        <Spinner size={16} label="Sorting…" />
       ) : (
         <Icon className="size-4" />
       )}
@@ -101,7 +102,7 @@ function ClearSortButton() {
       title="Reset to most recent first"
     >
       {isPending ? (
-        <Loader2 className="size-4 animate-spin" />
+        <Spinner size={16} label="Resetting…" />
       ) : (
         <X className="size-4" />
       )}

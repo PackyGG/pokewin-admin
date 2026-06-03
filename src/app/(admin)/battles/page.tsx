@@ -7,6 +7,10 @@ import { BattlesDataTable } from "./data-table";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  TableSkeleton,
+  PaginationSkeleton,
+} from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
@@ -43,15 +47,13 @@ export default async function BattlesPage({
   ) as BattleSortMode;
   const since = params.since === "24h" ? "24h" : undefined;
 
-  const result = await getBattles({
-    page,
-    perPage,
-    status: tab === "all" ? undefined : tab,
-    mode: params.mode,
-    search: params.search,
-    sortBy,
-    since,
-  });
+  // Suspense key — flips when any query input changes so the table
+  // skeleton re-shows on in-segment navigation (tab / mode / sort /
+  // period / page) instead of clearing the whole route. The hero,
+  // status tabs, and toolbar stay mounted across the refetch; only the
+  // table region streams behind the boundary. Mirrors the streaming
+  // pattern the sibling /transactions sub-pages already use.
+  const suspenseKey = `${tab}|${page}|${perPage}|${sortBy}|${params.mode ?? ""}|${params.search ?? ""}|${since ?? ""}`;
 
   return (
     <div className="space-y-6">
@@ -123,16 +125,74 @@ export default async function BattlesPage({
             ]}
           />
         </Suspense>
-        <FadeIn>
-          <BattlesDataTable data={result.data} />
-        </FadeIn>
-        <DataTablePagination
-          page={result.page}
-          totalPages={result.totalPages}
-          total={result.total}
-          perPage={result.perPage}
-        />
+        {/* getBattles joins battles → teams → players → cards to compute
+            per-row bet / house-edge — heavy enough to block the route
+            render on its own. Streamed inside a keyed Suspense so the
+            hero + tabs + toolbar flush immediately and survive filter
+            changes; the table region shows a row-matched skeleton while
+            the re-query is in flight rather than blanking the page. */}
+        <Suspense
+          key={suspenseKey}
+          fallback={
+            <>
+              <TableSkeleton rows={Math.min(perPage, 12)} columns={7} />
+              <PaginationSkeleton />
+            </>
+          }
+        >
+          <BattlesTableSection
+            page={page}
+            perPage={perPage}
+            status={tab === "all" ? undefined : tab}
+            mode={params.mode}
+            search={params.search}
+            sortBy={sortBy}
+            since={since}
+          />
+        </Suspense>
       </div>
     </div>
+  );
+}
+
+async function BattlesTableSection({
+  page,
+  perPage,
+  status,
+  mode,
+  search,
+  sortBy,
+  since,
+}: {
+  page: number;
+  perPage: number;
+  status: string | undefined;
+  mode: string | undefined;
+  search: string | undefined;
+  sortBy: BattleSortMode;
+  since: "24h" | undefined;
+}) {
+  const result = await getBattles({
+    page,
+    perPage,
+    status,
+    mode,
+    search,
+    sortBy,
+    since,
+  });
+
+  return (
+    <>
+      <FadeIn>
+        <BattlesDataTable data={result.data} />
+      </FadeIn>
+      <DataTablePagination
+        page={result.page}
+        totalPages={result.totalPages}
+        total={result.total}
+        perPage={result.perPage}
+      />
+    </>
   );
 }
