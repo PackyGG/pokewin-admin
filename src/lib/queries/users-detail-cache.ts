@@ -55,9 +55,19 @@ const cachedUserDetail = unstable_cache(
   { revalidate: REVALIDATE_SECONDS, tags: ["users-detail"] },
 );
 
+// Keypart bumped v1 → v2 (2026-06-03) to FORCE-DISCARD the pre-fix cached
+// rolling-P&L values across the deploy. The wipe-aware rolling-P&L correction
+// (commit c836684) changed the numbers `getUserPnlBreakdown` returns for any
+// user with recent admin wipes, but the Vercel data cache persists `unstable_cache`
+// entries ACROSS deployments (the key is the static keyParts + a closure hash,
+// not the deployment id). So the old code's value (e.g. FloridaManJeff's phantom
+// −$20,794 24h tile) kept being served stale-while-revalidate under the v1 key
+// after the corrected code shipped. A new keypart is a fresh cache namespace
+// with no pre-fix entry, so the corrected value computes on the first post-deploy
+// load — same force-invalidate-on-code-change pattern used in cards.ts (v2→v3).
 const cachedUserPnlBreakdown = unstable_cache(
   (userId: string): Promise<PnlBreakdown> => getUserPnlBreakdown(userId),
-  ["users-detail-pnl-v1"],
+  ["users-detail-pnl-v2"],
   { revalidate: REVALIDATE_SECONDS, tags: ["users-detail"] },
 );
 

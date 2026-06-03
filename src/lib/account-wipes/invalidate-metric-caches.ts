@@ -50,7 +50,15 @@ import { revalidatePath, revalidateTag } from "next/cache";
  * `getGgrTopContributors` (in `src/lib/queries/ggr.ts`) DIRECTLY in the
  * server component with no `unstable_cache` wrapper, so it is dynamically
  * rendered. For it, `revalidatePath('/ggr')` is what forces a fresh render
- * (there is no tag to bust). The same is true of the per-user page.
+ * (there is no tag to bust).
+ *
+ * The per-user page is NOT live-rendered for its P&L: `/users/[id]` reads its
+ * detail aggregate, Platform-P&L breakdown (incl. the rolling windowed-P&L
+ * tiles), and risk score through `unstable_cache` entries tagged `users-detail`
+ * (src/lib/queries/users-detail-cache.ts). `revalidatePath('/users/${id}')`
+ * clears the route's RENDER cache but does NOT invalidate those data-cache
+ * entries — only `revalidateTag('users-detail')` does. So both are needed for
+ * that page, and `users-detail` is in the tag list below.
  *
  * We therefore do BOTH: `revalidateTag(...)` for every tag bucket above, and
  * `revalidatePath(...)` for the dynamically-rendered surfaces + the user
@@ -107,13 +115,29 @@ const METRIC_CACHE_TAGS = [
   "insights-balance-adjustments",
   // /insights/streamers.
   "insights-streamers",
+  // /users/[id] — the per-user detail aggregate, Platform-P&L breakdown
+  // (which carries the rolling 12h/24h/3d/7d/14d windowed P&L tiles), and the
+  // fraud/risk score are ALL served from `unstable_cache` entries tagged
+  // `users-detail` (see src/lib/queries/users-detail-cache.ts). A wipe DELETES
+  // the rows those reads aggregate, so without busting this tag the per-user
+  // page keeps serving the STALE cached numbers — most visibly the rolling
+  // P&L tiles, which showed a phantom ~$20k house loss for a wiped user
+  // (FloridaManJeff) because the cached pre-wipe value survived. `revalidatePath`
+  // alone does NOT invalidate `unstable_cache` data entries — only a
+  // `revalidateTag` on a tag the entry declared does — so the path revalidation
+  // below is necessary for the route's render cache but insufficient for these
+  // tag-keyed reads. This tag closes that gap.
+  "users-detail",
 ] as const;
 
 /**
  * Dynamically-rendered metric surfaces (no tag to bust) + the user surfaces.
- * `/ggr` and the per-user page render their numbers live, so a path
- * revalidation is what refreshes them. `/insights` is revalidated at the
- * `layout` level so every nested insights route clears in a single call.
+ * `/ggr` renders its numbers live, so a path revalidation is what refreshes it.
+ * The per-user page's render cache is cleared here too, but its P&L/detail/risk
+ * numbers come from `users-detail`-tagged `unstable_cache` entries that the
+ * `revalidateTag('users-detail')` in the tag loop busts (a path revalidation
+ * alone would leave them stale). `/insights` is revalidated at the `layout`
+ * level so every nested insights route clears in a single call.
  */
 function revalidateMetricPaths(userId: string): void {
   // Dynamically-rendered surfaces.
