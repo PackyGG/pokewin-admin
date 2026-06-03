@@ -7,10 +7,12 @@ import { requirePageAccess, sessionHasRole } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import {
+  getPackDetail,
   getPackGames,
-  getPackInspector,
-  type PackInspectorData,
+  getPackStats,
+  type PackStats,
 } from "@/lib/queries/packs";
+import { safeQuery } from "@/lib/errors/safe-query";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { uploadImage } from "@/lib/imagekit";
 import { getCards, getRarities, getSets } from "@/lib/queries/cards";
@@ -344,17 +346,61 @@ export async function fetchPackGames(
   return getPackGames(packId, page, perPage, filters);
 }
 
+/** Full detail payload for the centered pack modal opened from the list. */
+export type PackFullDetail = {
+  /** The same shape the /packs/[id] page renders from `getPackDetail`. */
+  detail: NonNullable<Awaited<ReturnType<typeof getPackDetail>>>;
+  /**
+   * Below-the-fold chart stats (the same `getPackStats` the page defers behind
+   * <PackStatsLazy>). `null` when the two heavy JSON scans timed out / failed —
+   * the modal then shows a stats-error tile while detail + card pool still
+   * render. Never blocks the detail.
+   */
+  stats: PackStats | null;
+};
+
+// Mirror the page's deferred-stats timeout (PackStatsLazy.STATS_QUERY_TIMEOUT_MS):
+// the two getPackStats scans are unbounded JSON scans over provably_fair_results,
+// so bound the wait and degrade the stats block rather than hang the whole modal
+// fetch. cachedPackStatScans already caches the raw rows 60s.
+const MODAL_STATS_TIMEOUT_MS = 15_000;
+
 /**
- * Lazy-load the list inspector's preview for a pack. Called from inside the
- * <PackInspector> side-sheet's deferred body (so opening the inspector never
- * blocks on this fetch). Read-only + page-access gated; returns null on a
- * missing pack so the inspector renders an empty state.
+ * Lazy-load the FULL pack detail for the big centered modal opened from a
+ * /packs list row — the in-app replacement for navigating to /packs/[id]. It
+ * returns exactly the data the full page renders: the pack detail (identity +
+ * economics + complete card pool from `getPackDetail`) and the deferred chart
+ * stats (`getPackStats`). Called on the modal's FIRST open per pack and cached
+ * client-side, so the /packs list itself never eager-loads any pack's detail.
+ *
+ * Read-only + page-access gated (same `/packs` gate as the deep-link page).
+ * Returns null when the pack is missing or its detail read failed, so the
+ * modal can show a 404 / error state. The stats sub-fetch is wrapped in
+ * safeQuery+timeout so a slow scan degrades that block alone — detail + the
+ * card pool still render, mirroring the page's <PackStatsLazy> boundary.
  */
-export async function fetchPackInspector(
+export async function fetchPackFullDetail(
   packId: string,
-): Promise<PackInspectorData | null> {
+): Promise<PackFullDetail | null> {
   await requirePageAccess("/packs");
-  return getPackInspector(packId);
+
+  const detail = await getPackDetail(packId);
+  if (!detail) return null;
+
+  // Stats are the heavy, scan-backed part — fetch them resiliently so they can
+  // fail/timeout independently of the detail the modal already has in hand.
+  const { data: stats } = await safeQuery(
+    () =>
+      getPackStats(packId, detail.priceUsd, {
+        totalPayout: detail.totalPayout,
+        actualRtp: detail.actualRtp,
+      }),
+    null,
+    "packs.modal.stats",
+    MODAL_STATS_TIMEOUT_MS,
+  );
+
+  return { detail, stats };
 }
 
 /**

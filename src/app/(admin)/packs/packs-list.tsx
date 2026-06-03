@@ -17,16 +17,22 @@ import { toPercent } from "@/lib/house-pov";
 import type { PackListItem } from "@/lib/queries/packs";
 import { PackRowActions } from "./pack-row-actions";
 import { PackGallery } from "./pack-gallery";
-import { PackInspector } from "./pack-inspector";
+import { PackDetailModal } from "./pack-detail-modal";
 import { PackQuickEdit } from "./pack-quick-edit";
 
 /**
  * Client orchestrator for the rebuilt /packs list. Renders the dense, sortable
  * triage TABLE (default) or the art-browse GALLERY (one toggle away), and owns
- * the shared INSPECTOR (row preview, deep-linked via `?inspect=`) + the
- * QUICK-EDIT drawer (price + active). The server decides which view to render
- * via the `view` prop (read from `?view=`), so there's no wrong-view flash; the
- * inspector/quick-edit are pure client overlays that never lose list context.
+ * the big centered DETAIL MODAL (opened on row/tile click, deep-linked via
+ * `?inspect=`) + the QUICK-EDIT drawer (price + active). The server decides
+ * which view to render via the `view` prop (read from `?view=`), so there's no
+ * wrong-view flash; the modal/quick-edit are pure client overlays that never
+ * lose list context.
+ *
+ * Clicking a pack opens the centered modal with the FULL pack detail (stats,
+ * charts, card pool, games) lazy-loaded on first open and cached per pack — the
+ * in-app replacement for navigating to /packs/[id] (which stays a working
+ * deep-link fallback). There is no redirect on click.
  *
  * Capability gating (canToggle / canDelete / canEdit) is computed server-side
  * and passed down so the action surface matches what the server actions allow.
@@ -45,7 +51,9 @@ export function PacksList({
   /** Viewer can open the quick-edit drawer (edit price). */
   canEdit: boolean;
 }) {
-  // Inspector target lives in the URL so a preview deep-links + survives reload.
+  // Open-modal target lives in the URL (`?inspect=<id>`) so the detail modal
+  // deep-links + survives reload. (Param name kept for back-compat with any
+  // existing bookmarked links from the previous inspector.)
   const [inspectId, setInspectId] = useUrlParam("inspect");
   // Quick-edit is transient client state (an edit, not a shareable view).
   const [quickEditPack, setQuickEditPack] =
@@ -60,11 +68,11 @@ export function PacksList({
     [data, inspectId],
   );
 
-  const openInspector = React.useCallback(
+  const openDetail = React.useCallback(
     (pack: PackListItem) => setInspectId(pack.id),
     [setInspectId],
   );
-  const closeInspector = React.useCallback(
+  const onModalOpenChange = React.useCallback(
     (open: boolean) => {
       if (!open) setInspectId(null);
     },
@@ -196,7 +204,7 @@ export function PacksList({
           canToggle={canToggle}
           canDelete={canDelete}
           canQuickEdit={canEdit}
-          onOpenInspector={openInspector}
+          onOpenInspector={openDetail}
           onQuickEdit={openQuickEdit}
           activeId={inspectId || null}
         />
@@ -205,7 +213,7 @@ export function PacksList({
           rows={data}
           columns={columns}
           rowKey={(p) => p.id}
-          onRowClick={openInspector}
+          onRowClick={openDetail}
           activeRowKey={inspectId || null}
           emptyState={
             <EmptyState
@@ -218,10 +226,13 @@ export function PacksList({
         />
       )}
 
-      <PackInspector
+      {/* Big centered detail modal — opens on row/tile click with the full pack
+          detail lazy-loaded + cached per pack; no redirect. The previous side
+          inspector + its "Open full page" redirect-on-click are gone. */}
+      <PackDetailModal
         pack={inspectedPack}
         open={Boolean(inspectId) && inspectedPack != null}
-        onOpenChange={closeInspector}
+        onOpenChange={onModalOpenChange}
       />
 
       <PackQuickEdit
