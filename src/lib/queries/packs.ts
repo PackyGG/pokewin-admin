@@ -133,7 +133,21 @@ export async function getPacks(params: {
   if (packCardsWhere) where.pack_cards = packCardsWhere;
 
   const orderBy: Prisma.packsOrderByWithRelationInput = {};
-  const validSortFields = ["created_at", "name", "total_revenue", "total_openings", "actual_house_edge"];
+  // Whitelisted sortable columns — all first-class `packs` columns. `price`,
+  // `actual_rtp` and `total_payout` were added so the rebuilt list table can
+  // sort by the same economic signals it surfaces as columns (the old grid
+  // exposed no sort at all, which was the #1 triage gap). Anything outside the
+  // list falls back to created_at.
+  const validSortFields = [
+    "created_at",
+    "name",
+    "price",
+    "total_revenue",
+    "total_payout",
+    "total_openings",
+    "actual_rtp",
+    "actual_house_edge",
+  ];
   const field = validSortFields.includes(sortBy) ? sortBy : "created_at";
   const order = sortOrder === "asc" ? "asc" : "desc";
   (orderBy as Record<string, string>)[field] = order;
@@ -396,6 +410,141 @@ export async function getPackDetail(id: string) {
       color: pc.color,
       animation: pc.animation,
       order: pc.order,
+    })),
+  };
+}
+
+// ─── Lightweight inspector preview (master/detail side-sheet) ──────────
+//
+// Feeds the <PackInspector> opened from a row on the rebuilt /packs list.
+// The inspector is a FAST PREVIEW, not the full /packs/[id] page, so it
+// deliberately avoids the heavy provably_fair scans (getPackStats) and
+// returns ONLY the maintained `packs` columns + a bounded top-of-pool card
+// preview. The full card pool + charts + games feed stay behind the
+// "Open full page" deep link. No JSON scan, no unbounded payload.
+
+export type PackInspectorCard = {
+  cardId: string;
+  name: string;
+  imageUrl: string | null;
+  priceUsd: number;
+  rarity: string | null;
+  /** Drop chance as a percent (0–100), derived from pack_cards.weight. */
+  probability: number;
+};
+
+export type PackInspectorData = {
+  id: string;
+  name: string;
+  slug: string;
+  imageUrl: string | null;
+  description: string | null;
+  active: boolean;
+  packType: string;
+  priceUsd: number;
+  cardsPerOpen: number;
+  totalOpenings: number;
+  totalRevenue: number;
+  totalPayout: number;
+  /** RAW stored RTP — normalize with toPercent() at the edge. */
+  actualRtp: number;
+  /** RAW stored house edge — normalize with toPercent() at the edge. */
+  actualHouseEdge: number;
+  /** Total cards in the pool. */
+  totalCardCount: number;
+  /** Highest-drop-chance cards (preview only). */
+  topCards: PackInspectorCard[];
+};
+
+const INSPECTOR_PREVIEW_CARDS = 8;
+
+/**
+ * Lightweight pack summary for the list inspector. Two cheap round-trips:
+ *   1. the pack row (maintained economics columns) + the top-N pack_cards
+ *      by weight (the most-likely pulls) for the preview list,
+ *   2. the pool total weight + card count (so the preview's drop-chance
+ *      percentages are correct even though we only fetched the top N).
+ * No provably_fair scan, no full pool payload. Returns null on a missing
+ * pack so the caller can show an empty inspector state.
+ */
+export async function getPackInspector(
+  id: string,
+): Promise<PackInspectorData | null> {
+  const db = await getDb();
+
+  const [pack, weightAgg] = await Promise.all([
+    db.packs.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        image_url: true,
+        description: true,
+        active: true,
+        pack_type: true,
+        price: true,
+        cards_per_open: true,
+        total_openings: true,
+        total_revenue: true,
+        total_payout: true,
+        actual_rtp: true,
+        actual_house_edge: true,
+        pack_cards: {
+          select: {
+            card_id: true,
+            weight: true,
+            cards: {
+              select: {
+                name: true,
+                image_url: true,
+                price: true,
+                rarity: true,
+              },
+            },
+          },
+          orderBy: { weight: "desc" },
+          take: INSPECTOR_PREVIEW_CARDS,
+        },
+      },
+    }),
+    // Pool-wide weight + count so the preview's drop-chance % is accurate
+    // against the WHOLE pool, not just the previewed top-N slice.
+    db.pack_cards.aggregate({
+      where: { pack_id: id },
+      _sum: { weight: true },
+      _count: { _all: true },
+    }),
+  ]);
+
+  if (!pack) return null;
+
+  const totalWeight = Number(weightAgg._sum.weight ?? 0);
+  const totalCardCount = weightAgg._count._all;
+
+  return {
+    id: pack.id,
+    name: pack.name,
+    slug: pack.slug,
+    imageUrl: pack.image_url,
+    description: pack.description,
+    active: pack.active,
+    packType: pack.pack_type,
+    priceUsd: toNumber(pack.price),
+    cardsPerOpen: pack.cards_per_open,
+    totalOpenings: Number(pack.total_openings),
+    totalRevenue: toNumber(pack.total_revenue),
+    totalPayout: toNumber(pack.total_payout),
+    actualRtp: toNumber(pack.actual_rtp),
+    actualHouseEdge: toNumber(pack.actual_house_edge),
+    totalCardCount,
+    topCards: pack.pack_cards.map((pc) => ({
+      cardId: pc.card_id,
+      name: pc.cards.name,
+      imageUrl: pc.cards.image_url,
+      priceUsd: toNumber(pc.cards.price),
+      rarity: pc.cards.rarity,
+      probability: totalWeight > 0 ? (pc.weight / totalWeight) * 100 : 0,
     })),
   };
 }

@@ -6,7 +6,11 @@ import { adminDb } from "@/lib/admin-db";
 import { requirePageAccess, sessionHasRole } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
-import { getPackGames } from "@/lib/queries/packs";
+import {
+  getPackGames,
+  getPackInspector,
+  type PackInspectorData,
+} from "@/lib/queries/packs";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { uploadImage } from "@/lib/imagekit";
 import { getCards, getRarities, getSets } from "@/lib/queries/cards";
@@ -338,4 +342,120 @@ export async function fetchPackGames(
 ) {
   await requirePageAccess("/packs");
   return getPackGames(packId, page, perPage, filters);
+}
+
+/**
+ * Lazy-load the list inspector's preview for a pack. Called from inside the
+ * <PackInspector> side-sheet's deferred body (so opening the inspector never
+ * blocks on this fetch). Read-only + page-access gated; returns null on a
+ * missing pack so the inspector renders an empty state.
+ */
+export async function fetchPackInspector(
+  packId: string,
+): Promise<PackInspectorData | null> {
+  await requirePageAccess("/packs");
+  return getPackInspector(packId);
+}
+
+/**
+ * Focused quick-edit from the list drawer: set a pack's price and/or its
+ * active state without opening the full editor. Preserves every gate the
+ * full flow enforces:
+ *   - Changing PRICE requires `__can_update_pack` and, for a pack_creator
+ *     touching a LIVE pack, the same `__can_edit_live_packs` carve-out the
+ *     full `updatePack` enforces (price is a house-edge lever).
+ *   - Changing ACTIVE requires `__can_toggle_pack_active`.
+ * Each applied change writes its own audit event, mirroring the dedicated
+ * actions. No card-pool mutation happens here — that stays in the full editor.
+ */
+export async function quickUpdatePack(
+  packId: string,
+  data: { price?: number; active?: boolean },
+): Promise<void> {
+  const db = await getDb();
+  const session = await requirePageAccess("/packs");
+
+  const priceChanging = typeof data.price === "number";
+  const activeChanging = typeof data.active === "boolean";
+  if (!priceChanging && !activeChanging) return;
+
+  if (priceChanging && (!Number.isFinite(data.price) || data.price! <= 0)) {
+    throw new Error("Price must be greater than 0");
+  }
+
+  // Load the current pack once — needed for the live-pack gate, the audit
+  // before/after, and the no-op short-circuit.
+  const current = await db.packs.findUnique({
+    where: { id: packId },
+    select: { active: true, price: true, name: true },
+  });
+  if (!current) throw new Error("Pack not found");
+
+  // ── Capability gates ───────────────────────────────────────────────
+  if (priceChanging) {
+    await requireCapability(session, "__can_update_pack", "update packs");
+    // pack_creator live-pack carve-out: editing the price of an ACTIVE pack
+    // is a house-edge change, blocked for pack_creators without the explicit
+    // __can_edit_live_packs capability — identical to updatePack's gate.
+    if (sessionHasRole(session, "pack_creator") && current.active) {
+      const perms = await adminDb.admin_users.findUnique({
+        where: { id: session.userId },
+        select: { allowed_pages: true },
+      });
+      const canEditLive = perms
+        ? hasCapability(perms.allowed_pages, "__can_edit_live_packs")
+        : false;
+      if (!canEditLive) {
+        throw new Error(
+          "Live packs can only be edited by full admins or pack creators with the 'Edit Live Packs' capability. Ask an admin to grant the capability, or deactivate the pack first.",
+        );
+      }
+    }
+  }
+  if (activeChanging) {
+    await requireCapability(
+      session,
+      "__can_toggle_pack_active",
+      "toggle pack active state",
+    );
+  }
+
+  // ── Apply (only the fields that actually changed) ──────────────────
+  const update: { price?: number; active?: boolean; updated_at?: Date } = {};
+  const priceChanged =
+    priceChanging && Number(current.price) !== data.price;
+  const activeChanged = activeChanging && current.active !== data.active;
+  if (priceChanged) update.price = data.price;
+  if (activeChanged) update.active = data.active;
+  if (Object.keys(update).length === 0) return; // nothing actually changed
+  update.updated_at = new Date();
+
+  await db.packs.update({ where: { id: packId }, data: update });
+
+  // ── Audit each applied change (mirrors the dedicated actions) ──────
+  if (activeChanged) {
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: data.active ? "pack_activated" : "pack_deactivated",
+      metadata: { pack_id: packId, via: "quick_edit" },
+    });
+  }
+  if (priceChanged) {
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "pack_updated",
+      metadata: {
+        pack_id: packId,
+        name: current.name,
+        via: "quick_edit",
+        price_before: Number(current.price),
+        price_after: data.price,
+      },
+    });
+  }
+
+  reloadPacks();
+
+  revalidatePath("/packs");
+  revalidatePath(`/packs/${packId}`);
 }
