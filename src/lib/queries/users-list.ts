@@ -15,6 +15,228 @@ import { calculateUsersPnlBatch } from "./pnl";
 // sort branch, instead of an unchecked cast.
 const USER_ROLES = new Set<string>(Object.values(user_role));
 
+// These computed sorts need raw SQL because the displayed value combines
+// multiple tables (e.g. totalWithdrawn = balances.total_withdrawn +
+// card_withdrawal_requests; netHoldings = balances + user_inventory).
+// depositCount lives on ledger_transactions (not on balances) so it
+// also has to JOIN-and-COUNT before the ORDER BY can read it. Defined at
+// module scope so both getUsers and the cached ranking helper share one
+// source of truth for which sorts take the heavy raw-SQL path.
+const RAW_SQL_SORTS = new Set([
+  "pnl",
+  "totalWithdrawn",
+  "inventoryValue",
+  "netHoldings",
+  "depositCount",
+]);
+
+/**
+ * Inputs the raw-SQL ranking scan needs, all serializable so the result
+ * can be memoised with `unstable_cache` (which keys on the stringified
+ * args). The search-shape flags (isUuid / isEmailLike / isDiscordId) are
+ * computed once in getUsers and threaded through so the cached SQL build
+ * matches the Prisma-path routing exactly.
+ */
+type RankedUserIdsInput = {
+  sortBy: string;
+  order: "asc" | "desc";
+  page: number;
+  perPage: number;
+  searchTerm: string | undefined;
+  isUuid: boolean;
+  isEmailLike: boolean;
+  isDiscordId: boolean;
+  role: string | undefined;
+  status: string | undefined;
+};
+
+/**
+ * The expensive half of the computed-sort path: a global ORDER BY over the
+ * whole `user` table joined to per-user inventory / card-withdrawal /
+ * voucher (and optionally deposit-count) aggregate subqueries, returning
+ * just the ordered slice of user IDs + the total row count for the active
+ * filter. The main DB lacks the supporting indexes for these expressions,
+ * so on a prod-sized table this scan is the heaviest query on the page and
+ * was the source of the "/users timed out" failure — especially the
+ * "Top winners / Top losers" global PnL ranking, which orders every user
+ * by lifetime P&L before paginating.
+ *
+ * Kept separate from the row hydration (findMany + PnL batch + risk
+ * scores) on purpose: the ranking depends ONLY on the serializable
+ * (sort / filter / page) inputs, so it can be cached cross-request, while
+ * the hydration reads LIVE per-row values that must stay fresh. See
+ * cachedRankedUserIds below.
+ *
+ * Returns `{ ids, total }`; ids is already in display order.
+ */
+async function computeRankedUserIds(
+  input: RankedUserIdsInput,
+): Promise<{ ids: string[]; total: number }> {
+  const { sortBy, order, page, perPage, searchTerm, isUuid, isEmailLike, isDiscordId, role, status } =
+    input;
+  const db = await getDb();
+  const orderSql = order === "asc" ? "ASC" : "DESC";
+
+  const whereSql: string[] = [];
+  if (searchTerm) {
+    // Same fast-path routing as the Prisma path in getUsers — uuid /
+    // email-shape / discord-snowflake hit indexes directly; only
+    // free-form text falls back to the multi-column ILIKE OR. The
+    // safe-quoted literal is reused everywhere a substring isn't
+    // wrapped in % wildcards so apostrophes can't break out.
+    const safe = searchTerm.replace(/'/g, "''");
+    if (isUuid) {
+      whereSql.push(`u.id = '${safe}'`);
+    } else if (isEmailLike) {
+      whereSql.push(`LOWER(u.email) = LOWER('${safe}')`);
+    } else if (isDiscordId) {
+      whereSql.push(
+        `EXISTS (SELECT 1 FROM account a WHERE a."userId" = u.id AND a."providerId" = 'discord' AND a."accountId" = '${safe}')`,
+      );
+    } else {
+      whereSql.push(
+        `(u.username ILIKE '%${safe}%' OR u.display_username ILIKE '%${safe}%' OR u.name ILIKE '%${safe}%' OR u.email ILIKE '%${safe}%' OR u.id = '${safe}')`,
+      );
+    }
+  }
+  if (role && role !== "all" && USER_ROLES.has(role)) {
+    // role is validated against the user_role enum above, so it's a
+    // known alphanumeric member; inline it safely.
+    whereSql.push(`u.role = '${role}'::user_role`);
+  }
+  if (status === "banned") whereSql.push("u.is_banned = true");
+  else if (status === "locked") whereSql.push("u.is_locked = true");
+  else if (status === "active")
+    whereSql.push("u.is_banned = false AND u.is_locked = false");
+  const whereClause = whereSql.length ? `WHERE ${whereSql.join(" AND ")}` : "";
+
+  // depositCount sort is JOINed only when it's actually the active
+  // sort key — the COUNT(*) groupBy on ledger_transactions can be
+  // pricey on a large transactions table, so we skip the subquery for
+  // every other sort path.
+  const depositCountJoin =
+    sortBy === "depositCount"
+      ? `
+    LEFT JOIN (
+      SELECT user_id, COUNT(*)::bigint AS deposit_count
+      FROM ledger_transactions
+      WHERE type = 'deposit'::ledger_transaction_type
+        AND status = 'completed'::ledger_transaction_status
+      GROUP BY user_id
+    ) dc ON dc.user_id = u.id`
+      : "";
+
+  // Build a parameterized count of the same filtered set so total +
+  // ordered slice come from one consistent predicate. The page slice
+  // and the count share `whereClause`.
+  const orderExpr =
+    sortBy === "totalWithdrawn"
+      ? `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)`
+      : sortBy === "inventoryValue"
+        ? `COALESCE(inv.inv_value, 0)`
+        : sortBy === "depositCount"
+          ? `COALESCE(dc.deposit_count, 0)`
+          : sortBy === "netHoldings"
+            ? // Net on-platform position from the house POV: cash
+              // (available + locked) + open inventory + unclaimed
+              // vouchers. Vouchers count as inventory exactly like
+              // cards (cards + vouchers = inventory), so they belong
+              // in the on-site holdings snapshot. This is the "what
+              // the user has on-site RIGHT NOW" snapshot — ignores
+              // lifetime deposits/withdrawals/PnL so big holders
+              // surface even if they never wagered. Must stay in sync
+              // with the JS netHoldings computed in the data mapping.
+              `COALESCE(b.available_balance::numeric, 0)
+               + COALESCE(b.locked_balance::numeric, 0)
+               + COALESCE(inv.inv_value, 0)
+               + COALESCE(vc.voucher_value, 0)`
+            : `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)
+             + COALESCE(b.available_balance::numeric, 0)
+             + COALESCE(b.locked_balance::numeric, 0)
+             + COALESCE(inv.inv_value, 0)
+             + COALESCE(vc.voucher_value, 0)
+             - COALESCE(b.total_deposited::numeric, 0)`;
+
+  const [orderedRows, totalCount] = await Promise.all([
+    db.$queryRawUnsafe<{ id: string }[]>(`
+      SELECT u.id
+      FROM "user" u
+      LEFT JOIN balances b ON b.user_id = u.id
+      LEFT JOIN (
+        SELECT user_id, COALESCE(SUM(value_at_obtained::numeric), 0) AS inv_value
+        FROM user_inventory
+        -- Exclude cards locked for an in-flight withdrawal — their value is
+        -- carried by the withdrawals join below (pending/processing count
+        -- there). Matches calculateUsersPnlBatch so the pnl/inventoryValue/
+        -- netHoldings sorts agree with the displayed (lock-excluded) values.
+        WHERE sold_at IS NULL AND exchanged_at IS NULL AND withdrawal_locked_at IS NULL
+        GROUP BY user_id
+      ) inv ON inv.user_id = u.id
+      LEFT JOIN (
+        SELECT user_id, COALESCE(SUM(total_value_usd::numeric), 0) AS wd_value
+        FROM card_withdrawal_requests
+        -- In-flight (pending/processing) + done (shipped/completed) all count
+        -- as a house withdrawal liability so the pnl sort stays continuous
+        -- across the withdrawal lifecycle and matches the displayed
+        -- totalWithdrawn from calculateUsersPnlBatch.
+        WHERE status IN ('pending', 'processing', 'shipped', 'completed')
+        GROUP BY user_id
+      ) cw ON cw.user_id = u.id
+      LEFT JOIN (
+        SELECT user_id, COALESCE(SUM(value::numeric), 0) AS voucher_value
+        FROM vouchers
+        WHERE claimed_at IS NULL
+        GROUP BY user_id
+      ) vc ON vc.user_id = u.id${depositCountJoin}
+      ${whereClause}
+      ORDER BY (${orderExpr}) ${orderSql} NULLS LAST, u.id ${orderSql}
+      LIMIT ${perPage} OFFSET ${(page - 1) * perPage}
+    `),
+    // Count the same filtered set. Only the WHERE clause matters for the
+    // count, so the aggregate joins are dropped — this is a plain
+    // index/seq count over `user` with the active predicate.
+    db.$queryRawUnsafe<{ c: string }[]>(`
+      SELECT COUNT(*)::text AS c FROM "user" u ${whereClause}
+    `),
+  ]);
+
+  return {
+    ids: orderedRows.map((r) => r.id),
+    total: Number(totalCount[0]?.c ?? 0),
+  };
+}
+
+/**
+ * Cached wrapper around the heavy ranking scan.
+ *
+ * Why aggressive caching is correct here: the ranking is a GLOBAL order
+ * over the whole user base (especially the "Top winners / Top losers"
+ * lifetime-PnL sort), and that ordering moves slowly — a single user's
+ * play barely perturbs who the top-N net winners are. Re-running the
+ * full-table scan on every page load / every pagination click is what
+ * made `/users` time out. A 5-minute TTL means the first request after a
+ * cold cache pays the scan once and every request within the window —
+ * including paging deeper into the same sort — is served from cache.
+ *
+ * Keyed on the full input tuple (sort / order / page / perPage / search /
+ * role / status), so each distinct view caches independently and a
+ * different sort or page never returns another view's IDs. The hydration
+ * step in getUsers stays UNCACHED, so the per-row balances / PnL / risk
+ * the table renders are always live even when the ID ordering is served
+ * from cache.
+ *
+ * `getDb()` inside the cache callback resolves to the prod client (its
+ * cookie read falls back to prod outside a request scope — see
+ * readDbEnv), which is the right behaviour for a cross-request global
+ * ranking cache: it must not be keyed to one admin's dev-DB toggle. This
+ * mirrors the existing getUsersListStats cache below.
+ */
+const cachedRankedUserIds = unstable_cache(
+  computeRankedUserIds,
+  ["users-ranked-ids-v1"],
+  { revalidate: 300, tags: ["users-list"] },
+);
+
 type UserListItem = {
   id: string;
   username: string | null;
@@ -193,142 +415,33 @@ export async function getUsers(params: {
   let users: Array<Prisma.UserGetPayload<{ select: typeof userSelect }>>;
   let total: number;
 
-  // These computed sorts need raw SQL because the displayed value combines
-  // multiple tables (e.g. totalWithdrawn = balances.total_withdrawn +
-  // card_withdrawal_requests; netHoldings = balances + user_inventory).
-  // depositCount lives on ledger_transactions (not on balances) so it
-  // also has to JOIN-and-COUNT before the ORDER BY can read it.
-  const rawSqlSorts = new Set([
-    "pnl",
-    "totalWithdrawn",
-    "inventoryValue",
-    "netHoldings",
-    "depositCount",
-  ]);
-
-  if (rawSqlSorts.has(sortBy)) {
-    const orderSql = order === "asc" ? "ASC" : "DESC";
-    const whereSql: string[] = [];
-    if (searchTerm) {
-      // Same fast-path routing as the Prisma path above — uuid /
-      // email-shape / discord-snowflake hit indexes directly; only
-      // free-form text falls back to the multi-column ILIKE OR. The
-      // safe-quoted literal is reused everywhere a substring isn't
-      // wrapped in % wildcards so apostrophes can't break out.
-      const safe = searchTerm.replace(/'/g, "''");
-      if (isUuid) {
-        whereSql.push(`u.id = '${safe}'`);
-      } else if (isEmailLike) {
-        whereSql.push(`LOWER(u.email) = LOWER('${safe}')`);
-      } else if (isDiscordId) {
-        whereSql.push(
-          `EXISTS (SELECT 1 FROM account a WHERE a."userId" = u.id AND a."providerId" = 'discord' AND a."accountId" = '${safe}')`,
-        );
-      } else {
-        whereSql.push(
-          `(u.username ILIKE '%${safe}%' OR u.display_username ILIKE '%${safe}%' OR u.name ILIKE '%${safe}%' OR u.email ILIKE '%${safe}%' OR u.id = '${safe}')`,
-        );
-      }
-    }
-    if (role && role !== "all" && USER_ROLES.has(role)) {
-      // role is validated against the user_role enum above, so it's a
-      // known alphanumeric member; inline it safely.
-      whereSql.push(`u.role = '${role}'::user_role`);
-    }
-    if (status === "banned") whereSql.push("u.is_banned = true");
-    else if (status === "locked") whereSql.push("u.is_locked = true");
-    else if (status === "active")
-      whereSql.push("u.is_banned = false AND u.is_locked = false");
-    const whereClause = whereSql.length ? `WHERE ${whereSql.join(" AND ")}` : "";
-
-    // depositCount sort is JOINed only when it's actually the active
-    // sort key — the COUNT(*) groupBy on ledger_transactions can be
-    // pricey on a large transactions table, so we skip the subquery for
-    // every other sort path.
-    const depositCountJoin =
-      sortBy === "depositCount"
-        ? `
-      LEFT JOIN (
-        SELECT user_id, COUNT(*)::bigint AS deposit_count
-        FROM ledger_transactions
-        WHERE type = 'deposit'::ledger_transaction_type
-          AND status = 'completed'::ledger_transaction_status
-        GROUP BY user_id
-      ) dc ON dc.user_id = u.id`
-        : "";
-
-    const orderedRows = await db.$queryRawUnsafe<{ id: string }[]>(`
-      SELECT u.id
-      FROM "user" u
-      LEFT JOIN balances b ON b.user_id = u.id
-      LEFT JOIN (
-        SELECT user_id, COALESCE(SUM(value_at_obtained::numeric), 0) AS inv_value
-        FROM user_inventory
-        -- Exclude cards locked for an in-flight withdrawal — their value is
-        -- carried by the withdrawals join below (pending/processing count
-        -- there). Matches calculateUsersPnlBatch so the pnl/inventoryValue/
-        -- netHoldings sorts agree with the displayed (lock-excluded) values.
-        WHERE sold_at IS NULL AND exchanged_at IS NULL AND withdrawal_locked_at IS NULL
-        GROUP BY user_id
-      ) inv ON inv.user_id = u.id
-      LEFT JOIN (
-        SELECT user_id, COALESCE(SUM(total_value_usd::numeric), 0) AS wd_value
-        FROM card_withdrawal_requests
-        -- In-flight (pending/processing) + done (shipped/completed) all count
-        -- as a house withdrawal liability so the pnl sort stays continuous
-        -- across the withdrawal lifecycle and matches the displayed
-        -- totalWithdrawn from calculateUsersPnlBatch.
-        WHERE status IN ('pending', 'processing', 'shipped', 'completed')
-        GROUP BY user_id
-      ) cw ON cw.user_id = u.id
-      LEFT JOIN (
-        SELECT user_id, COALESCE(SUM(value::numeric), 0) AS voucher_value
-        FROM vouchers
-        WHERE claimed_at IS NULL
-        GROUP BY user_id
-      ) vc ON vc.user_id = u.id${depositCountJoin}
-      ${whereClause}
-      ORDER BY (${
-        sortBy === "totalWithdrawn"
-          ? `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)`
-          : sortBy === "inventoryValue"
-            ? `COALESCE(inv.inv_value, 0)`
-            : sortBy === "depositCount"
-              ? `COALESCE(dc.deposit_count, 0)`
-              : sortBy === "netHoldings"
-              ? // Net on-platform position from the house POV: cash
-                // (available + locked) + open inventory + unclaimed
-                // vouchers. Vouchers count as inventory exactly like
-                // cards (cards + vouchers = inventory), so they belong
-                // in the on-site holdings snapshot. This is the "what
-                // the user has on-site RIGHT NOW" snapshot — ignores
-                // lifetime deposits/withdrawals/PnL so big holders
-                // surface even if they never wagered. Must stay in sync
-                // with the JS netHoldings computed in the data mapping.
-                `COALESCE(b.available_balance::numeric, 0)
-                 + COALESCE(b.locked_balance::numeric, 0)
-                 + COALESCE(inv.inv_value, 0)
-                 + COALESCE(vc.voucher_value, 0)`
-              : `COALESCE(b.total_withdrawn::numeric, 0) + COALESCE(cw.wd_value, 0)
-               + COALESCE(b.available_balance::numeric, 0)
-               + COALESCE(b.locked_balance::numeric, 0)
-               + COALESCE(inv.inv_value, 0)
-               + COALESCE(vc.voucher_value, 0)
-               - COALESCE(b.total_deposited::numeric, 0)`
-      }) ${orderSql} NULLS LAST, u.id ${orderSql}
-      LIMIT ${perPage} OFFSET ${(page - 1) * perPage}
-    `);
-
-    const ids = orderedRows.map((r) => r.id);
-    const [unordered, totalCount] = await Promise.all([
+  if (RAW_SQL_SORTS.has(sortBy)) {
+    // Heavy computed-sort path. The global ORDER BY scan (the source of
+    // the "/users timed out" failure — most acutely the Top winners /
+    // Top losers lifetime-PnL ranking) is delegated to the cached
+    // ranking helper, which memoises the ordered ID slice + total for
+    // this (sort / filter / page) tuple with a long TTL. Page row
+    // HYDRATION stays here and stays UNCACHED so balances / PnL / risk
+    // are always live; only the slow ordering is served from cache.
+    const { ids, total: totalCount } = await cachedRankedUserIds({
+      sortBy,
+      order,
+      page,
+      perPage,
+      searchTerm,
+      isUuid,
+      isEmailLike,
+      isDiscordId,
+      role,
+      status,
+    });
+    const unordered =
       ids.length > 0
-        ? db.user.findMany({
+        ? await db.user.findMany({
             where: { id: { in: ids } },
             select: userSelect,
           })
-        : Promise.resolve([] as typeof users),
-      db.user.count({ where }),
-    ]);
+        : ([] as typeof users);
     const byId = new Map(unordered.map((u) => [u.id, u]));
     users = ids
       .map((id) => byId.get(id))
