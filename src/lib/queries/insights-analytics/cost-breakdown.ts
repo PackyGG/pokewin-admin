@@ -25,6 +25,13 @@ import {
   periodToCutoff,
   type InsightsPeriod,
 } from "@/app/(admin)/insights/analytics/types";
+import {
+  COUNTED_ADJUSTMENT_CATEGORY_KEYS,
+  BALANCE_ADJUSTMENT_CATEGORY_META,
+  adjustmentCategorySqlPredicate,
+  type BalanceAdjustmentCategory,
+} from "@/lib/balance-adjustment-categories";
+import { getMetricsScope } from "@/lib/metrics/scope";
 
 /**
  * Cost Breakdown — the full wager → P&L leakage waterfall, built on the
@@ -594,6 +601,64 @@ async function getCreatorIds(): Promise<string[]> {
 }
 
 /**
+ * Σ |amount| of COUNTED categorized balance-adjustment CREDITS, per
+ * category, over the window — through the SAME canonical scope as the
+ * gaming metrics (`getMetricsScope`). Used to itemize each counted
+ * category (Deposit problem / Giveaway / Bonus / Reload / Lossback) as its
+ * own reward-cost line, and to know how much of the
+ * `admin_balance_adjustment` residual is already counted as reward (so the
+ * residual admin-adjustment line can exclude it — no double-count).
+ *
+ * These credits were lifted into NGR by `getRewardCost` via the exact same
+ * `metadata->>'adjustment_category'` predicate, so the per-category sums
+ * here reconcile with the reward cost (GGR − NGR) by construction.
+ */
+async function getCountedAdjustmentSumsByCategory(
+  window: MetricWindow,
+): Promise<{ byCategory: Map<BalanceAdjustmentCategory, number>; total: number }> {
+  return withTiming("insights.costBreakdown.countedAdjustments", async () => {
+    const db = await getDb();
+    const scope = await getMetricsScope();
+    const since = window.since;
+    const sinceClause =
+      since === null
+        ? ""
+        : `AND created_at >= '${since.toISOString()}'::timestamptz`;
+
+    // One row per counted category — SUM(ABS(amount)) of credits carrying
+    // that category. Built from the single canonical per-category predicate
+    // so writer + metric + breakdown all agree on the key set.
+    const selects = COUNTED_ADJUSTMENT_CATEGORY_KEYS.map(
+      (key) =>
+        `COALESCE(SUM(CASE WHEN ${adjustmentCategorySqlPredicate(key)} THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS "${key}"`,
+    ).join(",\n         ");
+
+    type Row = Record<string, string>;
+    const rows = await db.$queryRawUnsafe<Row[]>(
+      `WITH ${scope.sessionWindowsCte}
+       SELECT
+         ${selects}
+       FROM ledger_transactions
+       WHERE status = 'completed'
+         AND type = 'admin_balance_adjustment'
+         AND user_id IN ${scope.userScopeSql}
+         AND ${scope.notInCreatorSession("user_id", "created_at")}
+         ${sinceClause}`,
+    );
+
+    const row = rows[0];
+    const byCategory = new Map<BalanceAdjustmentCategory, number>();
+    let total = 0;
+    for (const key of COUNTED_ADJUSTMENT_CATEGORY_KEYS) {
+      const v = toNumber(row?.[key]);
+      byCategory.set(key, v);
+      total += v;
+    }
+    return { byCategory, total };
+  });
+}
+
+/**
  * Assemble the full cost-breakdown waterfall for the period, entirely on
  * the canonical `@/lib/metrics` layer.
  *
@@ -630,14 +695,21 @@ export async function getCostBreakdown(
   // by adding the live creator-id list to the drop set.
   const dropUserIds = [...excluded, ...creatorIds];
 
-  const [metrics, windowedPnl, bridge, dailyMetrics, contributors] =
-    await Promise.all([
-      getWindowMetrics({ window }),
-      calculateWindowedPnl({ since: cutoff, excludeUserIds: dropUserIds }),
-      getBridgeTerms(cutoff, dropUserIds),
-      getDailyGamingMetrics(window),
-      getCostContributors(cutoff, contributorLimit),
-    ]);
+  const [
+    metrics,
+    windowedPnl,
+    bridge,
+    dailyMetrics,
+    contributors,
+    countedAdjustments,
+  ] = await Promise.all([
+    getWindowMetrics({ window }),
+    calculateWindowedPnl({ since: cutoff, excludeUserIds: dropUserIds }),
+    getBridgeTerms(cutoff, dropUserIds),
+    getDailyGamingMetrics(window),
+    getCostContributors(cutoff, contributorLimit),
+    getCountedAdjustmentSumsByCategory(window),
+  ]);
 
   const totalWager = metrics.wager;
   const gamingPayouts = metrics.gamingPayout;
@@ -708,6 +780,26 @@ export async function getCostBreakdown(
       types: ["rain_win"],
     });
   }
+  // Categorized balance-adjustment CREDITS — one reward line per COUNTED
+  // category (Deposit problem / Giveaway / Bonus / Reload / Lossback).
+  // These were lifted into NGR by `getRewardCost` (same canonical
+  // `metadata->>'adjustment_category'` predicate), so itemizing them here
+  // shows exactly where the money went and keeps the reward lines summing
+  // to the canonical reward cost (GGR − NGR). `other` adjustments are NOT
+  // here — they stay in the residual admin-adjustment line below.
+  for (const key of COUNTED_ADJUSTMENT_CATEGORY_KEYS) {
+    const total = countedAdjustments.byCategory.get(key) ?? 0;
+    if (total <= 0) continue;
+    const meta = BALANCE_ADJUSTMENT_CATEGORY_META[key];
+    rewardGroups.set(`adjustment_${key}`, {
+      label: meta.costLabel,
+      why: meta.why,
+      total,
+      // ledgerType stays the shared adjustment type; with one category per
+      // line `types.length === 1` keeps the existing single-type wiring.
+      types: ["admin_balance_adjustment"],
+    });
+  }
 
   const rewardLines: CostLine[] = [...rewardGroups.entries()]
     .map(([key, g]) => ({
@@ -728,10 +820,19 @@ export async function getCostBreakdown(
   // so the GGR/NGR → P&L gap is auditable, not a catch-all. Grouped by
   // residualGroup; `sign` is the row's house-POV effect on P&L.
   const residualSums = await Promise.all(
-    RESIDUAL_TYPES.map(async (type) => ({
-      type,
-      total: await sumLedgerTypes({ types: [type], window }),
-    })),
+    RESIDUAL_TYPES.map(async (type) => {
+      const raw = await sumLedgerTypes({ types: [type], window });
+      // admin_balance_adjustment: the COUNTED categorized credits are now
+      // their OWN reward lines (lifted into NGR). Subtract them from the
+      // residual admin-adjustment line so they are not double-counted —
+      // what remains is the uncounted slice (`other` + corrections +
+      // manual-withdrawal debits). Clamp ≥ 0 defensively.
+      const total =
+        type === "admin_balance_adjustment"
+          ? Math.max(0, raw - countedAdjustments.total)
+          : raw;
+      return { type, total };
+    }),
   );
   const residualGroups = new Map<
     string,

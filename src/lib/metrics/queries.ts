@@ -12,6 +12,7 @@ import {
   ledgerTypesToSqlList,
   type LedgerTransactionType,
 } from "./ledger-sets";
+import { countedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
 import {
   ggr as ggrFormula,
   ngr as ngrFormula,
@@ -297,6 +298,17 @@ export type RewardCost = {
  * redemption IS the house cost and is added to `reward_excl_rain` here.
  * Every other `voucher_redeemed` row (gameplay/borrow remainders, already
  * booked at production) stays neutral — no double-count.
+ *
+ * CATEGORIZED ADJUSTMENT CARVE-OUT (mirrors the voucher one): an
+ * `admin_balance_adjustment` is RESIDUAL by default (its type bucket is
+ * unchanged), but a CREDIT carrying a COUNTED category
+ * (`metadata->>'adjustment_category' IN (deposit_problem | giveaway |
+ * bonus | reload | lossback)`) is a house-funded promo cost — bonus /
+ * giveaway / reload / lossback / deposit-fix credits — so it is added to
+ * `reward_excl_rain` here exactly like the manual voucher. `other`
+ * adjustments (and corrections / manual-withdrawal debits) carry no
+ * counted category, so they stay RESIDUAL — no double-count. The predicate
+ * is the single canonical one from `@/lib/balance-adjustment-categories`.
  */
 export async function getRewardCost(window: MetricWindow): Promise<RewardCost> {
   return withTiming("metrics.rewardCost", async () => {
@@ -306,6 +318,7 @@ export async function getRewardCost(window: MetricWindow): Promise<RewardCost> {
     // creator-on-session reward rows excluded).
     const scope = await getMetricsScope();
     const since = window.since;
+    const countedAdj = countedAdjustmentSqlPredicate();
 
     type Row = {
       reward_excl_rain: string;
@@ -318,6 +331,7 @@ export async function getRewardCost(window: MetricWindow): Promise<RewardCost> {
          COALESCE(SUM(CASE
            WHEN (type IN ${REWARD_PAYOUT_TYPES_SQL} AND type <> 'rain_win')
              OR (type = 'voucher_redeemed' AND metadata->>'origin' = 'manual')
+             OR (${countedAdj})
            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS reward_excl_rain,
          COALESCE(SUM(CASE WHEN type = 'rain_win' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rain_win,
          COALESCE(SUM(CASE WHEN type = 'rain_tip' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rain_tip
@@ -569,6 +583,7 @@ export async function getDailyGamingMetrics(
     // Canonical session-window scope for the ledger + inventory legs.
     const scope = await getMetricsScope();
     const since = window.since;
+    const countedAdj = countedAdjustmentSqlPredicate();
 
     // Upgrader uses the wholesale-creator-drop scope (matching the shared
     // `upgraderMetrics` reader), so the daily upgrader figure here agrees
@@ -625,12 +640,15 @@ export async function getDailyGamingMetrics(
            -- daily merge). voucher_redeemed redemption is NEUTRAL, so the
            -- battle_excess_to_voucher win is counted once, at settlement.
            COALESCE(SUM(CASE WHEN type IN ${GAMING_PAYOUT_TYPES_SQL} THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_refund,
-           -- Reward cost (excl rain) + the manual-voucher carve-out: admin
-           -- house-granted vouchers (metadata->>'origin'='manual') whose
-           -- only ledger touchpoint is redemption. Mirrors getRewardCost.
+           -- Reward cost (excl rain) + the manual-voucher carve-out (admin
+           -- house-granted vouchers, metadata->>'origin'='manual') + the
+           -- counted-adjustment carve-out (admin_balance_adjustment credits
+           -- carrying a counted category). Mirrors getRewardCost exactly so
+           -- Σ daily reconciles with the headline.
            COALESCE(SUM(CASE
              WHEN (type IN ${REWARD_PAYOUT_TYPES_SQL} AND type <> 'rain_win')
                OR (type = 'voucher_redeemed' AND metadata->>'origin' = 'manual')
+               OR (${countedAdj})
              THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS reward_excl_rain,
            COALESCE(SUM(CASE WHEN type = 'rain_win' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rain_win,
            COALESCE(SUM(CASE WHEN type = 'rain_tip' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rain_tip
