@@ -14,6 +14,7 @@ import { RewardsAnalyticsTabSwitch } from "./_components/rewards-analytics-tab-s
 import {
   RewardsAnalyticsTabSkeleton,
   OverviewTabSkeleton,
+  DailyPacksTabSkeleton,
 } from "./_components/tab-skeleton";
 import { OverviewTab } from "./_components/overview-tab";
 import { DepositBonusTab } from "./_components/deposit-bonus-tab";
@@ -21,6 +22,7 @@ import { RakebackTab } from "./_components/rakeback-tab";
 import { RaceTab } from "./_components/race-tab";
 import { AffiliateTab } from "./_components/affiliate-tab";
 import { SignupTab } from "./_components/signup-tab";
+import { DailyPacksTab } from "./_components/daily-packs-tab";
 
 export const metadata = { title: "Rewards Analytics" };
 
@@ -30,7 +32,8 @@ type Category =
   | "rakeback"
   | "race"
   | "affiliate"
-  | "signup";
+  | "signup"
+  | "daily-packs";
 
 function parseCategory(value: string | undefined): Category {
   switch (value) {
@@ -39,6 +42,7 @@ function parseCategory(value: string | undefined): Category {
     case "race":
     case "affiliate":
     case "signup":
+    case "daily-packs":
       return value;
     default:
       return "overview";
@@ -116,6 +120,8 @@ export default async function RewardsAnalyticsPage({
         fallback={
           category === "overview" ? (
             <OverviewTabSkeleton />
+          ) : category === "daily-packs" ? (
+            <DailyPacksTabSkeleton />
           ) : (
             <RewardsAnalyticsTabSkeleton />
           )
@@ -136,6 +142,9 @@ export default async function RewardsAnalyticsPage({
         )}
         {category === "signup" && (
           <SignupTab period={period} periodLabel={label} />
+        )}
+        {category === "daily-packs" && (
+          <DailyPacksTab period={period} periodLabel={label} />
         )}
       </Suspense>
     </div>

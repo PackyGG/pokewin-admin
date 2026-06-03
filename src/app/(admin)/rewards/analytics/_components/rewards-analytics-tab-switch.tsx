@@ -9,6 +9,7 @@ import {
   Trophy,
   Share2,
   UserPlus,
+  PackageOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LinkPending } from "@/components/ux";
@@ -37,6 +38,7 @@ const TABS = [
   { value: "race", label: "Race", Icon: Trophy },
   { value: "affiliate", label: "Affiliate", Icon: Share2 },
   { value: "signup", label: "Sign Up", Icon: UserPlus },
+  { value: "daily-packs", label: "Daily Packs", Icon: PackageOpen },
 ] as const;
 
 export type RewardsAnalyticsCategory = (typeof TABS)[number]["value"];
@@ -49,7 +51,8 @@ export function RewardsAnalyticsTabSwitch() {
     rawCategory === "rakeback" ||
     rawCategory === "race" ||
     rawCategory === "affiliate" ||
-    rawCategory === "signup"
+    rawCategory === "signup" ||
+    rawCategory === "daily-packs"
       ? rawCategory
       : "overview";
   // Preserve the period param so flipping tabs doesn't reset the

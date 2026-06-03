@@ -67,6 +67,35 @@ export function DepositBonusCohortSkeleton() {
 }
 
 /**
+ * Fallback rendered while the Daily Packs tab is loading. Matches the
+ * tab's actual shape so the layout doesn't pop when the real content
+ * lands: section heading, KPI strip with 5 tiles, two side-by-side
+ * panels (summary + per-pack breakdown), and the daily-curve chart.
+ */
+export function DailyPacksTabSkeleton() {
+  return (
+    <div className="space-y-6">
+      <SectionHeadingSkeleton titleWidth={140} />
+      <KpiStripSkeleton count={5} />
+      <div className="grid gap-4 xl:grid-cols-2">
+        <div className="space-y-3">
+          <SectionHeadingSkeleton titleWidth={200} />
+          <StatPanelSkeleton rows={5} />
+        </div>
+        <div className="space-y-3">
+          <SectionHeadingSkeleton titleWidth={140} />
+          <Skeleton className="h-64 rounded-2xl" />
+        </div>
+      </div>
+      <div className="space-y-3">
+        <SectionHeadingSkeleton titleWidth={220} />
+        <ChartSkeleton height={260} title={false} />
+      </div>
+    </div>
+  );
+}
+
+/**
  * Bigger fallback for the Overview tab, which has more sections than
  * a per-category deep-stats tab. Matches the full shape: KPI strip,
  * chart, breakdown + summary side-by-side, platform leaderboards,
