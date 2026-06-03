@@ -19,6 +19,7 @@ import {
 import { DashboardPeriodSelector } from "./dashboard-period-selector";
 import { getUpgraderStats } from "@/lib/queries/dashboard-upgrader";
 import { getDailyPnl } from "@/lib/queries/pnl";
+import { getTodayPnl } from "@/lib/queries/dashboard-today-pnl";
 import { requirePageAccess } from "@/lib/dal";
 import { formatCurrency } from "@/lib/utils/format";
 import { LoadTimeIndicator } from "./load-time-indicator";
@@ -33,6 +34,7 @@ import {
   WithdrawalsStatCard,
   CreatorWithdrawalsStatCard,
 } from "./revenue-stat-card";
+import { TodayPnlStatCard } from "./today-pnl-stat-card";
 import { AutoRefresh } from "./auto-refresh";
 import {
   WagerChart,
@@ -147,6 +149,21 @@ export default async function DashboardPage({
       >
         <DashboardStatStrips period={period} />
       </Suspense>
+
+      {/* P&L Today — house P&L for the CURRENT CALENDAR DAY since 00:00
+          UTC (NOT a rolling past-24h window). Streams behind its OWN
+          Suspense + safeQuery so its today-window scan never blocks the
+          period KPI strips above and degrades to a tile fallback if it's
+          slow. Period-independent (always "today"), so it doesn't re-key
+          on the global period selector. Placed full-width-on-mobile, 4-up
+          at lg so it sits as its own compact KPI under the primary strip. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+        <Suspense
+          fallback={<Skeleton className="h-[148px] w-full rounded-xl" />}
+        >
+          <DashboardTodayPnl />
+        </Suspense>
+      </div>
 
       {/* Upgrader Stats + Wager Attribution — paired 50/50 row that
           sits between the KPI strips and the trend graphs. Each
@@ -449,6 +466,46 @@ async function DashboardStatStrips({ period }: { period: DashboardPeriod }) {
 async function DashboardUpgraderSection() {
   const stats = await getUpgraderStats();
   return <UpgraderStatsSection stats={stats} />;
+}
+
+/**
+ * P&L Today tile — house P&L for the current calendar day since 00:00
+ * UTC (NOT a rolling past-24h window). Its own standalone query
+ * (getTodayPnl, cached 60s + keyed on the UTC day boundary), wrapped in
+ * safeQuery so a slow today-window scan degrades to a tile fallback
+ * instead of crashing the dashboard. The query reuses the canonical
+ * windowed-delta P&L formula (calculateWindowedPnl), so this reconciles
+ * with the period-P&L card + daily-P&L chart.
+ */
+async function DashboardTodayPnl() {
+  const { data, error } = await safeQuery(
+    () => getTodayPnl(),
+    null,
+    "dashboard.todayPnl",
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="P&L Today"
+        hint="The today-window P&L scan timed out — refresh to retry."
+        size="compact"
+      />
+    );
+  }
+  // dayStartIso is "YYYY-MM-DDT00:00:00.000Z"; the YYYY-MM-DD slice is the
+  // UTC calendar day this P&L covers (matches the window boundary exactly).
+  const dayLabel = data.dayStartIso.slice(0, 10);
+  return (
+    <TodayPnlStatCard
+      pnl={data.pnl}
+      deposits={data.deposits}
+      withdrawals={data.withdrawals}
+      balanceChange={data.balanceChange}
+      inventoryChange={data.inventoryChange}
+      voucherChange={data.voucherChange}
+      dayLabel={dayLabel}
+    />
+  );
 }
 
 /**
