@@ -1,6 +1,9 @@
 import { unstable_cache } from "next/cache";
+import { getDb } from "@/lib/db";
+import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { blacklistNotInClause } from "./_blacklist";
 import { calculateWindowedPnl, type WindowedPnl } from "./pnl";
 
 /**
@@ -87,5 +90,112 @@ export async function getTodayPnl(): Promise<TodayPnl> {
 
     const pnl = await cachedTodayPnl(dayKey, sinceIso, excluded);
     return { ...pnl, dayStartIso: sinceIso };
+  });
+}
+
+// ─── Inventory-Δ drill-down: where the held inventory value comes from ──
+
+/**
+ * One row of the "where the inventory value comes from" breakdown shown
+ * by the lazy expander on the Inventory line of the P&L-Today popover.
+ *
+ * The `inventoryValue` is the user's CURRENTLY-HELD inventory snapshot —
+ * the same figure that feeds the `inventoryValue` liability term of
+ * `calculateUserPnl` (and the lifetime P&L `inventory` term in
+ * _realized-pnl.ts): the sum of `user_inventory.value_at_obtained` for
+ * rows that are neither sold nor exchanged and not locked for an
+ * in-flight withdrawal.
+ */
+export type InventoryHolderRow = {
+  userId: string;
+  username: string | null;
+  /** Currently-held inventory value (Σ value_at_obtained, held filter). */
+  inventoryValue: number;
+};
+
+/**
+ * Cached inner sweep — top-N current inventory holders. Keyed on the
+ * resolved limit + the serialized blacklist (so it re-fills when an
+ * admin edits the excluded-users list). `revalidate: 60` matches the
+ * P&L-Today cache cadence; the snapshot moves slowly and a minute of
+ * staleness is invisible to an operator.
+ *
+ * The blacklist is resolved OUTSIDE the cache scope and passed in as a
+ * serializable arg (same pattern as `cachedTodayPnl` above and the
+ * dashboard cache wrappers) — `getExcludedUserIds()` reads the admin DB
+ * and can't run inside `unstable_cache`.
+ *
+ * The held-inventory filter + the `real_users` scope are COPIED VERBATIM
+ * from `realizedPnlSnapshotInner` (_realized-pnl.ts) — the canonical
+ * lifetime-P&L `inventory` term — so the sum of these per-user rows
+ * reconciles with that snapshot by construction:
+ *   • held filter: sold_at IS NULL AND exchanged_at IS NULL AND
+ *     withdrawal_locked_at IS NULL, valued by value_at_obtained.
+ *   • scope: role NOT IN ('admin','support') + the blacklist. Creators
+ *     are KEPT — they're real users whose holdings are a real house
+ *     liability, consistent with the P&L liability terms everywhere
+ *     (_exclude-staff.ts).
+ * Ordered by held value DESC, capped at `safeLimit` (≤ 50). Only rows
+ * with a positive held value are returned so the list stays clean.
+ */
+const cachedInventoryTopHolders = unstable_cache(
+  async (
+    safeLimit: number,
+    excludeUserIds: string[],
+  ): Promise<InventoryHolderRow[]> => {
+    const db = await getDb();
+    const blacklistFrag = blacklistNotInClause("id", excludeUserIds);
+    type QueryRow = {
+      user_id: string;
+      username: string | null;
+      inventory_value: string;
+    };
+    const rows = await db.$queryRawUnsafe<QueryRow[]>(
+      `WITH real_users AS (
+         SELECT id, username
+         FROM "user"
+         WHERE role NOT IN ('admin', 'support') ${blacklistFrag}
+       )
+       SELECT
+         ru.id::text AS user_id,
+         ru.username,
+         SUM(ui.value_at_obtained::numeric)::text AS inventory_value
+       FROM user_inventory ui
+       JOIN real_users ru ON ru.id = ui.user_id
+       WHERE ui.sold_at IS NULL
+         AND ui.exchanged_at IS NULL
+         AND ui.withdrawal_locked_at IS NULL
+       GROUP BY ru.id, ru.username
+       HAVING SUM(ui.value_at_obtained::numeric) > 0
+       ORDER BY SUM(ui.value_at_obtained::numeric) DESC
+       LIMIT ${safeLimit}`,
+    );
+    return rows.map((r) => ({
+      userId: r.user_id,
+      username: r.username,
+      inventoryValue: toNumber(r.inventory_value),
+    }));
+  },
+  ["dashboard-inventory-top-holders-v1"],
+  { revalidate: 60, tags: ["dashboard-activity"] },
+);
+
+/**
+ * Top-N users by CURRENTLY-HELD inventory value — backs the lazy
+ * "show more" expander on the Inventory line of the P&L-Today popover,
+ * mirroring the GGR card's "top contributors" drill-down.
+ *
+ * NOT loaded with the tile — fired only when the admin opens the
+ * expander (via the today-pnl server action), so the per-user GROUP BY
+ * over `user_inventory` never runs on the initial dashboard render
+ * (active-timeframe / lazy-load rule). `limit` is clamped to [1, 50].
+ */
+export async function getInventoryTopHolders(
+  limit = 10,
+): Promise<InventoryHolderRow[]> {
+  return withTiming("pnl.today.inventoryHolders", async () => {
+    const safeLimit = Math.max(1, Math.min(Math.trunc(limit), 50));
+    const excluded = await getExcludedUserIds();
+    return cachedInventoryTopHolders(safeLimit, excluded);
   });
 }
