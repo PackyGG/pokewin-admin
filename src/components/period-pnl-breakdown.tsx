@@ -75,7 +75,7 @@ const FORMULA_ROWS: RowDef[] = [
     href: "/withdrawals",
   },
   {
-    label: "User Balance Δ",
+    label: "User Balance change",
     description: "Net change in user available + locked balance",
     contribution: (b) => -b.balanceDelta,
     icon: Wallet,
@@ -83,7 +83,7 @@ const FORMULA_ROWS: RowDef[] = [
     href: "/users?sortBy=balance&sortOrder=desc",
   },
   {
-    label: "Inventory Δ",
+    label: "Inventory change",
     description: "Cards obtained minus cards sold/exchanged",
     contribution: (b) => -b.inventoryDelta,
     icon: Box,
@@ -91,7 +91,7 @@ const FORMULA_ROWS: RowDef[] = [
     href: "/users?sortBy=inventoryValue&sortOrder=desc",
   },
   {
-    label: "Voucher Δ",
+    label: "Voucher change",
     description: "Vouchers issued minus vouchers claimed",
     contribution: (b) => -b.voucherDelta,
     icon: Ticket,

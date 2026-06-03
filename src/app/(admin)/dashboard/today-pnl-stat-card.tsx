@@ -211,21 +211,21 @@ function TodayPnlInfoPopover({
     },
     {
       id: "balance",
-      label: "User Balance Δ",
+      label: "User Balance change",
       description: "Net change in user available + locked balance",
       contribution: -balanceChange,
       icon: Wallet,
     },
     {
       id: "inventory",
-      label: "Inventory Δ",
+      label: "Inventory change",
       description: "Cards obtained minus cards sold/exchanged",
       contribution: -inventoryChange,
       icon: Box,
     },
     {
       id: "voucher",
-      label: "Voucher Δ",
+      label: "Voucher change",
       description: "Vouchers issued minus vouchers claimed",
       contribution: -voucherChange,
       icon: Ticket,
@@ -259,7 +259,8 @@ function TodayPnlInfoPopover({
             Since 00:00 today (UTC) — <strong>{dayLabel}</strong> — not a
             rolling 24h window. House P&amp;L ={" "}
             <span className="font-mono">
-              deposits − withdrawals − balanceΔ − inventoryΔ − voucherΔ
+              deposits − withdrawals − balance change − inventory change −
+              voucher change
             </span>{" "}
             over the day. Same formula as the period-P&amp;L card and the
             daily-P&amp;L chart. Real customers only (staff + excluded users

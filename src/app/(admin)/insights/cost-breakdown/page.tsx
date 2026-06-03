@@ -623,7 +623,7 @@ function SummaryFlow({
             sub={
               m.pnlPctOfWager !== null
                 ? `${m.pnlPctOfWager.toFixed(1)}% of wager · the true bottom line`
-                : "deposits − withdrawals − Δholdings"
+                : "deposits − withdrawals − holdings change"
             }
             icon={pnlPos ? TrendingUp : TrendingDown}
             tone={pnlPos ? "keep" : "cost"}
@@ -633,7 +633,7 @@ function SummaryFlow({
                 tone={pnlPos ? "keep" : "cost"}
                 label="What realized P&L means"
                 title="Net P&L · realized"
-                blurb="The true bottom line for the window: deposits − withdrawals − Δbalance − Δinventory − Δvouchers. The same canonical windowed P&L as the dashboard. 'Realized' = after settling every balance-sheet movement, including the held-inventory and voucher liabilities above — which is why it sits below NGR."
+                blurb="The true bottom line for the window: deposits − withdrawals − balance change − inventory change − voucher change. The same canonical windowed P&L as the dashboard. 'Realized' = after settling every balance-sheet movement, including the held-inventory and voucher liabilities above — which is why it sits below NGR."
               >
                 <ul className="space-y-0.5">
                   <InfoRow

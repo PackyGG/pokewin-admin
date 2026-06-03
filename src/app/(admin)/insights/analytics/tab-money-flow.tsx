@@ -182,11 +182,13 @@ function Intro({
             battle refunds, card conversions neutral). P&L is the
             balance-sheet identity{" "}
             <span className="font-mono">
-              deposits − withdrawals − Δbalance − Δinventory − Δvouchers
+              deposits − withdrawals − balance change − inventory change −
+              voucher change
             </span>
             . The gap is{" "}
             <span className="font-mono">
-              reward cost + card_wd + inventoryΔ + voucherΔ + residual
+              reward cost + card_wd + inventory change + voucher change +
+              residual
             </span>{" "}
             — house-funded rewards plus value that left GGR but is still our
             liability (cards shipped, cards held in inventory, vouchers held
@@ -356,7 +358,7 @@ function WaterfallPanel({
               ? "The NGR → P&L identity doesn't close to $0 — this is what's missing after every named term (reward cost, the three balance-sheet liabilities, and the RESIDUAL_TYPES ledger flows) is itemized. Usual causes: neutral card-conversion ↔ inventory-delta edge cases, off-window timing (a card sold the moment after a pack open spans the cutoff), and rounding. Investigate if it's a large share of GGR."
               : "What the named terms don't account for after reward cost, the three balance-sheet liabilities, and the RESIDUAL_TYPES ledger flows are itemized — neutral-conversion timing edges and rounding. Small relative to GGR — within expected noise. Shown honestly, not fudged to zero."
           }
-          deltaTooltip="residual = P&L − (NGR − inventoryΔ − cardWd − voucherΔ + Σ residual-type flows). Same identity as /insights/cost-breakdown."
+          deltaTooltip="residual = P&L − (NGR − inventory change − cardWd − voucher change + sum of residual-type flows). Same identity as /insights/cost-breakdown."
         />
 
         <div className="my-3 border-t" />
@@ -373,7 +375,7 @@ function WaterfallPanel({
               variant={data.pnl >= 0 ? "trend-up" : "trend-down"}
             />
           }
-          why="House P&L for the window using the canonical formula deposits − withdrawals − Δbalance − Δinventory − Δvouchers. Same number as the P&L card on /dashboard."
+          why="House P&L for the window using the canonical formula deposits − withdrawals − balance change − inventory change − voucher change. Same number as the P&L card on /dashboard."
           subRows={[
             { label: "Deposits", value: data.deposits, sign: "+" },
             {

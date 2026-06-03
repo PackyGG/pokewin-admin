@@ -546,12 +546,12 @@ function PnlTooltip({
         icon: ArrowUpFromLine,
       },
       {
-        label: "User Balance Δ",
+        label: "User Balance change",
         contribution: -p.balanceChange,
         icon: Wallet,
       },
-      { label: "Inventory Δ", contribution: -p.inventoryChange, icon: Box },
-      { label: "Voucher Δ", contribution: -p.voucherChange, icon: Ticket },
+      { label: "Inventory change", contribution: -p.inventoryChange, icon: Box },
+      { label: "Voucher change", contribution: -p.voucherChange, icon: Ticket },
     ];
   return (
     <div className="grid min-w-52 gap-1.5 rounded-lg border border-border/50 bg-background px-2.5 py-2 text-xs shadow-xl">
