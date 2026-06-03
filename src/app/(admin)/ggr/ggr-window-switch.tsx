@@ -1,40 +1,39 @@
 "use client";
 
-import Link from "next/link";
-import { useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { LinkPendingShell } from "@/components/ux";
+import { Spinner, transition } from "@/components/ux";
+import { useGgrWindow } from "./ggr-window-shell";
 
 /**
- * URL-driven window switcher for /ggr — 24h / 3d / 7d.
+ * Window switcher for /ggr — 24h / 3d / 7d / Lifetime.
  *
- * Mirrors the pattern on /creators (`creators-tab-switch.tsx`): plain
- * `<Link>` (not router.replace) so the active window survives reload and
- * ⌘-click into a new tab works. The active window is read from the
- * `?window=` URL param; the default (`24h`) carries no param so a bare
- * `/ggr` deep-link lands on it.
+ * Drives the shared `GgrWindowProvider` (in `ggr-window-shell.tsx`): a
+ * click runs a `useTransition` + `router.replace` to the new `?window=`,
+ * which the server reads to re-run `getGgrPageData(window)` for the NEW
+ * window only (active-timeframe-only — the other windows are never eager
+ * loaded). The same pending flag dims the body figures via
+ * `GgrBodyPending`, so the switch reads as responsive instead of frozen
+ * while the new numbers stream in.
  *
- * Each tab swap is a real navigation so the server component re-runs
- * `getGgrPageData(window)` + `getGgrTopContributors(window, 10)` (from
- * `@/lib/queries/ggr`) for the new window — the canonical metric reads
- * keep the round-trip cheap when admins flip between windows.
+ * The clicked chip flips active immediately and spins (the dashboard
+ * period-selector pattern); the other chips dim while pending. Default
+ * (`24h`) carries no `?window=` param so a bare `/ggr` deep-link lands on
+ * it. "Lifetime" maps to the canonical `all` period value — the server
+ * coerces it through `ggrWindowToMetricWindow("all")` to an unbounded
+ * (capped, server-side) lookback.
  */
 
 const WINDOWS = [
   { value: "24h", label: "Last 24h" },
   { value: "3d", label: "Last 3 days" },
   { value: "7d", label: "Last 7 days" },
+  { value: "all", label: "Lifetime" },
 ] as const;
 
 export type GgrWindowValue = (typeof WINDOWS)[number]["value"];
 
 export function GgrWindowSwitch() {
-  const searchParams = useSearchParams();
-  // Anything other than the three supported values normalises to the
-  // default — mirrors the server-side coercion in the page.
-  const raw = searchParams.get("window");
-  const current: GgrWindowValue =
-    raw === "3d" || raw === "7d" ? raw : "24h";
+  const { current, isPending, navigate } = useGgrWindow();
 
   return (
     <div
@@ -44,27 +43,34 @@ export function GgrWindowSwitch() {
     >
       {WINDOWS.map(({ value, label }) => {
         const active = current === value;
-        const href = value === "24h" ? "/ggr" : `/ggr?window=${value}`;
         return (
-          <Link
+          <button
             key={value}
-            href={href}
+            type="button"
             role="tab"
             aria-selected={active}
-            // `replace` so the window switch doesn't pollute browser
-            // history with every flip, but reload + ⌘-click still work
-            // because it's a real navigation.
-            replace
-            scroll={false}
+            // Disable the active chip (no-op navigation) and every chip
+            // while a switch is in flight so a double-click can't queue a
+            // second navigation mid-transition.
+            disabled={active || isPending}
+            onClick={() => navigate(value)}
             className={cn(
-              "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+              "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium",
+              transition("colors", "fast"),
               active
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground",
+              // Dim the non-active chips while pending so the busy state is
+              // legible without blanking the strip.
+              isPending && !active && "opacity-50",
             )}
+            title={`Switch GGR window to ${label}`}
           >
-            <LinkPendingShell>{label}</LinkPendingShell>
-          </Link>
+            {active && isPending && (
+              <Spinner size={14} label={`Loading ${label} GGR`} />
+            )}
+            {label}
+          </button>
         );
       })}
     </div>

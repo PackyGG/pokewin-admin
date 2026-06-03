@@ -23,6 +23,8 @@ import {
   PageHero,
   PageHeroIdentity,
   KpiTile,
+  StatPanel,
+  PanelRow,
   SectionHeading,
 } from "@/components/modern-panels";
 import {
@@ -48,15 +50,17 @@ import { describeLedgerType } from "@/lib/queries/_wager-payout-descriptions";
 import { ExportButton } from "@/components/export-button";
 
 import { GgrWindowSwitch } from "./ggr-window-switch";
+import { GgrWindowProvider, GgrBodyPending } from "./ggr-window-shell";
 
 export const metadata = { title: "GGR Breakdown" };
 
-// The /ggr page only exposes the rolling 24h / 3d / 7d windows from the
-// canonical `DashboardPeriod` set — admins who need a longer view drop
-// into the dashboard's full period selector. Anything else on
-// `?window=` normalises to the default.
-type GgrWindow = Extract<DashboardPeriod, "24h" | "3d" | "7d">;
-const SUPPORTED_WINDOWS = ["24h", "3d", "7d"] as const satisfies readonly GgrWindow[];
+// The /ggr page exposes the rolling 24h / 3d / 7d windows plus the
+// `all` (Lifetime) bucket from the canonical `DashboardPeriod` set.
+// `all` maps through `ggrWindowToMetricWindow("all")` to an unbounded
+// (server-side capped) lookback. Anything else on `?window=` normalises
+// to the default.
+type GgrWindow = Extract<DashboardPeriod, "24h" | "3d" | "7d" | "all">;
+const SUPPORTED_WINDOWS = ["24h", "3d", "7d", "all"] as const satisfies readonly GgrWindow[];
 const DEFAULT_GGR_WINDOW: GgrWindow = "24h";
 
 function parseGgrWindow(value: string | undefined): GgrWindow {
@@ -110,55 +114,67 @@ export default async function GgrPage({
   const periodLabel = DASHBOARD_PERIOD_LABELS[ggrWindow];
 
   return (
-    <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          icon={TrendingUp}
-          accent="cyan"
-          title="GGR Breakdown"
-          subtitle="Gaming margin decomposed into its canonical groups — gaming payouts, neutral conversions, and reward giveback. Upgrader included; all creator play excluded on both sides (same scope as Daily P&L)."
-          action={
-            <>
-              <GgrWindowSwitch />
-              <ExportButton page="ggr" params={{ window: ggrWindow }} />
-            </>
-          }
-        />
-      </PageHero>
+    <GgrWindowProvider defaultWindow={DEFAULT_GGR_WINDOW}>
+      <div className="space-y-6">
+        <PageHero>
+          <PageHeroIdentity
+            icon={TrendingUp}
+            accent="cyan"
+            title="GGR Breakdown"
+            subtitle="Gaming margin decomposed into its canonical groups — gaming payouts, neutral conversions, and reward giveback. Upgrader included; all creator play excluded on both sides (same scope as Daily P&L)."
+            action={
+              <>
+                <GgrWindowSwitch />
+                <ExportButton page="ggr" params={{ window: ggrWindow }} />
+              </>
+            }
+          />
+        </PageHero>
 
-      {/* Suspense key includes the window so a tab swap shows the
-          skeleton again instead of leaving stale numbers up while the
-          next window's data resolves. */}
-      <Suspense
-        key={ggrWindow}
-        fallback={
-          <div className="space-y-6">
-            <div className="space-y-3">
-              <KpiStripSkeleton count={6} />
-              <KpiStripSkeleton count={3} />
-            </div>
-            <div className="space-y-3">
-              <SectionHeadingSkeleton titleWidth={180} />
-              <LedgerTypeGridSkeleton count={3} />
-            </div>
-            <div className="space-y-3">
-              <SectionHeadingSkeleton titleWidth={200} />
-              <LedgerTypeGridSkeleton count={4} />
-            </div>
-            <div className="space-y-3">
-              <SectionHeadingSkeleton titleWidth={180} />
-              <LedgerTypeGridSkeleton count={6} />
-            </div>
-            <div className="space-y-3">
-              <SectionHeadingSkeleton titleWidth={220} />
-              <TableSkeleton rows={10} columns={5} />
-            </div>
-          </div>
-        }
-      >
-        <GgrBody ggrWindow={ggrWindow} periodLabel={periodLabel} />
-      </Suspense>
-    </div>
+        {/* The body is wrapped in `GgrBodyPending` so a window switch dims
+            the figures + shows a delay-gated overlay spinner (driven by the
+            shared `useTransition` pending flag) — the switch never looks
+            frozen. The Suspense key includes the window so the first load of
+            a window shows the shape-matched skeleton instead of leaving
+            stale numbers up while the next window's data resolves. */}
+        <GgrBodyPending>
+          <Suspense
+            key={ggrWindow}
+            fallback={
+              <div className="space-y-6">
+                <div className="space-y-3">
+                  <KpiStripSkeleton count={6} />
+                  <KpiStripSkeleton count={3} />
+                </div>
+                <div className="space-y-3">
+                  <SectionHeadingSkeleton titleWidth={180} />
+                  <LedgerTypeGridSkeleton count={3} />
+                </div>
+                {/* NGR panel skeleton — a single wide card. */}
+                <div className="space-y-3">
+                  <SectionHeadingSkeleton titleWidth={200} />
+                  <NgrPanelSkeleton />
+                </div>
+                <div className="space-y-3">
+                  <SectionHeadingSkeleton titleWidth={200} />
+                  <LedgerTypeGridSkeleton count={4} />
+                </div>
+                <div className="space-y-3">
+                  <SectionHeadingSkeleton titleWidth={180} />
+                  <LedgerTypeGridSkeleton count={6} />
+                </div>
+                <div className="space-y-3">
+                  <SectionHeadingSkeleton titleWidth={220} />
+                  <TableSkeleton rows={10} columns={5} />
+                </div>
+              </div>
+            }
+          >
+            <GgrBody ggrWindow={ggrWindow} periodLabel={periodLabel} />
+          </Suspense>
+        </GgrBodyPending>
+      </div>
+    </GgrWindowProvider>
   );
 }
 
@@ -218,6 +234,18 @@ async function GgrBody({
           title={`Reward giveback · ${periodLabel}`}
         />
         <RewardGroup data={data} />
+      </section>
+
+      {/* ── Net Gaming Revenue (NGR) — the bottom line ──────────────── */}
+      {/* Pulled out of the headline strip into its own clearly-separated
+          panel so the GGR → (minus reward giveback) → NGR flow reads
+          explicitly, instead of NGR being a thin tile lost in the strip. */}
+      <section className="space-y-3">
+        <SectionHeading
+          icon={Coins}
+          title={`Net Gaming Revenue · ${periodLabel}`}
+        />
+        <NgrPanel data={data} periodLabel={periodLabel} />
       </section>
 
       {/* ── Top contributors ────────────────────────────────────────── */}
@@ -570,6 +598,121 @@ function RewardGroup({
   );
 }
 
+// ─── Net Gaming Revenue (NGR) panel ──────────────────────────────────
+
+/**
+ * Dedicated NGR panel — the clearly-separated bottom line of the gaming
+ * margin, sitting below the reward-giveback group so the flow reads:
+ *
+ *   GGR  − reward giveback (applied to NGR)  =  NGR
+ *
+ * NGR was previously only a thin tile in the headline strip; here it gets
+ * its own `StatPanel` with the full GGR → minus rewards → NGR waterfall as
+ * breakdown rows, plus a margin readout (NGR ÷ wager).
+ *
+ * House-POV colouring (strict):
+ *   • GGR / NGR positive → house profit → emerald; negative → rose.
+ *   • Reward giveback is house cost (user received value) → rose, −$.
+ *
+ * Every figure is sourced from the canonical `getGgrPageData` payload
+ * (`headline.ggr`, `reward.appliedToNgr`, `reward.costExclRain`,
+ * `reward.rainHouseCost`, `headline.ngr`) so the panel reconciles with the
+ * headline NGR tile by construction.
+ */
+function NgrPanel({
+  data,
+  periodLabel,
+}: {
+  data: Awaited<ReturnType<typeof getGgrPageData>>;
+  periodLabel: string;
+}) {
+  const { headline, reward } = data;
+  const ggrUp = headline.ggr >= 0;
+  const ngrUp = headline.ngr >= 0;
+  // House-POV: a positive bottom line is house profit → emerald accent;
+  // a negative one is a house loss → rose.
+  const accent = ngrUp ? "emerald" : "rose";
+  const ngrColor = ngrUp
+    ? "text-emerald-600 dark:text-emerald-400"
+    : "text-rose-600 dark:text-rose-400";
+  const ggrColor = ggrUp
+    ? "text-emerald-600 dark:text-emerald-400"
+    : "text-rose-600 dark:text-rose-400";
+  // NGR as a share of wager — informational margin readout (blue).
+  const ngrPctOfWager =
+    headline.wager > 0 ? (headline.ngr / headline.wager) * 100 : null;
+  // Only surface the rain split when rain actually netted (gross win and
+  // tips both present), mirroring the reward group's reconciliation note.
+  const rainNetted = reward.rainWinTotal > 0 && reward.rainTipTotal > 0;
+
+  return (
+    <StatPanel title="Net Gaming Revenue (NGR)" icon={Coins} accent={accent}>
+      {/* Hero NGR figure + the GGR − rewards = NGR identity as a sub-line. */}
+      <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
+        <div className="min-w-0">
+          <p className={cn("truncate text-3xl font-bold tabular-nums sm:text-4xl", ngrColor)}>
+            {ngrUp ? "+" : "−"}
+            {formatCurrency(Math.abs(headline.ngr))}
+          </p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
+            {ngrUp ? "House profit after giveaways" : "House loss after giveaways"}
+            {" · "}
+            {periodLabel}
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            NGR margin
+          </p>
+          <p className="text-lg font-bold tabular-nums text-blue-600 dark:text-blue-400">
+            {ngrPctOfWager === null ? "n/a" : `${ngrPctOfWager.toFixed(2)}%`}
+          </p>
+          <p className="text-[10px] text-muted-foreground">of wager</p>
+        </div>
+      </div>
+
+      {/* The waterfall: GGR → minus reward giveback → NGR. */}
+      <div className="mt-3 border-t border-border/60 pt-2">
+        <PanelRow
+          label="Gross Gaming Revenue (GGR)"
+          value={`${ggrUp ? "+" : "−"}${formatCurrency(Math.abs(headline.ggr))}`}
+          valueClassName={ggrColor}
+        />
+        {reward.costExclRain > 0 && (
+          <PanelRow
+            label="− Reward giveback (excl. rain)"
+            value={`−${formatCurrency(reward.costExclRain)}`}
+            valueClassName="text-rose-600 dark:text-rose-400"
+          />
+        )}
+        {reward.rainHouseCost > 0 && (
+          <PanelRow
+            label={
+              rainNetted ? "− Rain (net house slice)" : "− Rain prizes"
+            }
+            value={`−${formatCurrency(reward.rainHouseCost)}`}
+            valueClassName="text-rose-600 dark:text-rose-400"
+          />
+        )}
+        {reward.appliedToNgr === 0 && (
+          <PanelRow
+            label="− Reward giveback"
+            value={formatCurrency(0)}
+            valueClassName="text-muted-foreground"
+          />
+        )}
+        <div className="mt-1 border-t border-border/60 pt-1">
+          <PanelRow
+            label="= Net Gaming Revenue (NGR)"
+            value={`${ngrUp ? "+" : "−"}${formatCurrency(Math.abs(headline.ngr))}`}
+            valueClassName={cn("font-bold", ngrColor)}
+          />
+        </div>
+      </div>
+    </StatPanel>
+  );
+}
+
 // ─── Per-type card (neutral / reward) ────────────────────────────────
 
 /**
@@ -687,6 +830,40 @@ function LedgerTypeGridSkeleton({ count }: { count: number }) {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * Skeleton mirror of the NGR panel — one wide `StatPanel`-shaped card with
+ * the hero figure + margin readout row and the GGR → rewards → NGR
+ * breakdown rows, so the swap into the real panel doesn't shift layout.
+ */
+function NgrPanelSkeleton() {
+  return (
+    <div className="rounded-xl border bg-card p-4 sm:rounded-2xl sm:p-5">
+      <div className="mb-3 flex items-center gap-2">
+        <Skeleton className="size-7 rounded-lg" />
+        <Skeleton className="h-3 w-40" />
+      </div>
+      <div className="flex items-end justify-between gap-4">
+        <div className="space-y-1.5">
+          <Skeleton className="h-9 w-44" />
+          <Skeleton className="h-3 w-52" />
+        </div>
+        <div className="space-y-1.5 text-right">
+          <Skeleton className="ml-auto h-3 w-20" />
+          <Skeleton className="ml-auto h-5 w-16" />
+        </div>
+      </div>
+      <div className="mt-3 space-y-2 border-t border-border/60 pt-3">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div key={i} className="flex items-center justify-between gap-3">
+            <Skeleton className="h-3.5 w-48" />
+            <Skeleton className="h-3.5 w-20" />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
