@@ -264,7 +264,7 @@ export const WIPE_CATEGORIES: readonly WipeCategoryMeta[] = [
     icon: "receipt",
     label: "PnL wipe",
     blurb:
-      "Removes ALL PnL-affecting events in the selected window (12h / 24h / 48h) — deposits, withdrawals, gameplay legs + won inventory, bonuses, vouchers, admin balance adjustments. Snapshotted + recoverable. LARGEST scope of the three windowed wipes.",
+      "Removes PnL-affecting events in the selected window (12h / 24h / 48h) — deposits, gameplay legs + won inventory, bonuses, vouchers, admin balance adjustments. Withdrawals are NOT touched. Snapshotted + recoverable. LARGEST scope of the three windowed wipes.",
     group: "gaming",
     creatorProtected: false,
     liveFinancial: true,

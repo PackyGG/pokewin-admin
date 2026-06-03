@@ -3,9 +3,12 @@
  * sweep that ships THREE independently-runnable windowed wipes:
  *
  *   • PnL wipe   × 12h / 24h / 48h — every PnL-affecting event in window
- *                                    (deposits, withdrawals ledger, gameplay
- *                                    legs + won inventory, rewards, vouchers,
- *                                    admin adjustments).
+ *                                    EXCEPT withdrawals (owner carve-out
+ *                                    2026-06-03): deposits, gameplay legs +
+ *                                    won inventory, rewards, vouchers, admin
+ *                                    adjustments. `card_withdrawal` ledger
+ *                                    legs are NOT touched and `total_withdrawn`
+ *                                    is NOT decremented.
  *   • Game wipe  × 12h / 24h / 48h — pure gameplay events in window (DISJOINT
  *                                    counter behaviour from Wager: decrements
  *                                    total_won only, not total_wagered).
@@ -26,11 +29,13 @@
  *   1. PURE (no DB) — always runs:
  *        • cutoff resolution + window normalization,
  *        • in/out-of-window row partition,
- *        • counter math (wagered / won / deposited / withdrawn),
+ *        • counter math (wagered / won / deposited),
  *        • balance clawback (credit-only, clamped ≥0),
  *        • restore symmetry (re-add == before − after),
  *        • disjoint-counter check (Game vs Wager),
- *        • PnL scope superset check (PnL ⊇ Game rows).
+ *        • PnL scope superset check (PnL ⊇ Game rows),
+ *        • WITHDRAWAL CARVE-OUT: PnL does NOT include card_withdrawal +
+ *          does NOT touch total_withdrawn.
  *   2. DB round-trip — runs ONLY when DATABASE_URL is set. Seeds a synthetic
  *      user with mixed in-window + out-of-window rows across every relevant
  *      table; replays each wipe inside a tx force-ROLLED BACK at the end, so
@@ -63,6 +68,10 @@ const WAGER_WIPE_LEDGER_TYPES = [
   ...(UPGRADER_IN_LEDGER ? UPGRADER_LEDGER_TYPES : []),
 ];
 const GAME_WIPE_LEDGER_TYPES = WAGER_WIPE_LEDGER_TYPES;
+// Owner carve-out (2026-06-03): `card_withdrawal` is intentionally NOT in the
+// PnL wipe set, and the wipe does NOT decrement `total_withdrawn`. The
+// `total_withdrawn` counter is left intact and `card_withdrawal` ledger legs
+// in window are left intact.
 const PNL_WIPE_LEDGER_TYPES = [
   ...WAGER_TYPES,
   ...GAMING_PAYOUT_TYPES,
@@ -70,7 +79,6 @@ const PNL_WIPE_LEDGER_TYPES = [
   ...REWARD_PAYOUT_TYPES,
   "admin_balance_adjustment",
   "deposit",
-  "card_withdrawal",
 ];
 
 const PAYOUT_SET = new Set<string>([
@@ -161,7 +169,12 @@ function gameCounterReductions(
   return { totalWonReduction: Math.min(payoutMag + invValue, wonBefore) };
 }
 
-/** PnL-wipe counter reductions — ALL FOUR counters. */
+/**
+ * PnL-wipe counter reductions — THREE counters (owner carve-out 2026-06-03:
+ * `total_withdrawn` is NOT touched by the PnL wipe, so it is not in the
+ * return shape). `card_withdrawal` legs are ignored even if a caller passes
+ * them in — they're not in the wipe scope and contribute no reduction.
+ */
 function pnlCounterReductions(
   legs: Leg[],
   invValue: number,
@@ -169,30 +182,26 @@ function pnlCounterReductions(
     wagered: number;
     won: number;
     deposited: number;
-    withdrawn: number;
   },
 ): {
   totalWageredReduction: number;
   totalWonReduction: number;
   totalDepositedReduction: number;
-  totalWithdrawnReduction: number;
 } {
   let wagerMag = 0;
   let payoutMag = 0;
   let depositSum = 0;
-  let withdrawalSum = 0;
   for (const l of legs) {
     const mag = Math.abs(l.amount);
     if (l.type === "deposit") depositSum += mag;
-    else if (l.type === "card_withdrawal") withdrawalSum += mag;
     else if (WAGER_SET.has(l.type)) wagerMag += mag;
     else if (PAYOUT_SET.has(l.type)) payoutMag += mag;
+    // card_withdrawal: ignored (owner carve-out).
   }
   return {
     totalWageredReduction: Math.min(wagerMag, before.wagered),
     totalWonReduction: Math.min(payoutMag + invValue, before.won),
     totalDepositedReduction: Math.min(depositSum, before.deposited),
-    totalWithdrawnReduction: Math.min(withdrawalSum, before.withdrawn),
   };
 }
 
@@ -260,6 +269,9 @@ async function pureChecks() {
     );
   }
   {
+    // Owner carve-out (2026-06-03): card_withdrawal is left in the input set to
+    // prove that PnL ignores it — the legs is what an upstream might pass, the
+    // function correctly does not contribute it to any counter.
     const legs: Leg[] = [
       { type: "deposit", amount: 200 },
       { type: "card_withdrawal", amount: 50 },
@@ -273,12 +285,20 @@ async function pureChecks() {
       wagered: 10_000,
       won: 10_000,
       deposited: 10_000,
-      withdrawn: 10_000,
     });
     check("PnL: total_wagered = 30 (the pack_opening)", pnlR.totalWageredReduction === 30);
     check("PnL: total_won = payout (60) + inv (20) = 80", pnlR.totalWonReduction === 80);
     check("PnL: total_deposited = 200", pnlR.totalDepositedReduction === 200);
-    check("PnL: total_withdrawn = 50", pnlR.totalWithdrawnReduction === 50);
+    check(
+      "PnL (CARVE-OUT): result has NO totalWithdrawnReduction key",
+      !("totalWithdrawnReduction" in pnlR),
+    );
+    check(
+      "PnL (CARVE-OUT): card_withdrawal contributes NO reduction to any returned counter",
+      pnlR.totalWageredReduction === 30 &&
+        pnlR.totalWonReduction === 80 &&
+        pnlR.totalDepositedReduction === 200,
+    );
   }
 
   // ── Balance-clawback math. ──
@@ -343,13 +363,39 @@ async function pureChecks() {
   for (const t of gameSet) if (!pnlSet.has(t)) allInPnl = false;
   check("Every Game ledger type is also in the PnL set", allInPnl);
   check("PnL set includes 'deposit'", pnlSet.has("deposit"));
-  check("PnL set includes 'card_withdrawal'", pnlSet.has("card_withdrawal"));
   check("PnL set includes 'admin_balance_adjustment'", pnlSet.has("admin_balance_adjustment"));
   check("PnL set includes at least one reward type", pnlSet.has("deposit_bonus"));
+  // ── WITHDRAWAL CARVE-OUT (owner mandate, 2026-06-03) ──
+  console.log("\n── PURE: PnL WITHDRAWAL CARVE-OUT ──");
+  check(
+    "PnL set EXCLUDES 'card_withdrawal' (owner carve-out)",
+    !pnlSet.has("card_withdrawal"),
+  );
   check(
     `Game set excludes deposit / withdrawal / adjustments (disjoint from PnL-only)`,
     !gameSet.has("deposit") && !gameSet.has("card_withdrawal") && !gameSet.has("admin_balance_adjustment"),
   );
+  // Carve-out: a card_withdrawal leg in a synthetic leg-set must contribute
+  // nothing to the PnL balance clawback (it never did because it's a debit)
+  // AND nothing to any counter reduction (the new carve-out).
+  {
+    const onlyWithdrawal: Leg[] = [{ type: "card_withdrawal", amount: 250 }];
+    check(
+      "PnL balance clawback: card_withdrawal alone contributes $0",
+      pnlBalanceReduction(onlyWithdrawal, 1000) === 0,
+    );
+    const r = pnlCounterReductions(onlyWithdrawal, 0, {
+      wagered: 10_000,
+      won: 10_000,
+      deposited: 10_000,
+    });
+    check(
+      "PnL counter reductions: card_withdrawal alone yields $0 wagered/won/deposited",
+      r.totalWageredReduction === 0 &&
+        r.totalWonReduction === 0 &&
+        r.totalDepositedReduction === 0,
+    );
+  }
 
   // ── Restore symmetry. ──
   console.log("\n── PURE: restore symmetry (re-add = before − after) ──");
@@ -436,21 +482,19 @@ async function pureChecks() {
           wagered: 10_000,
           won: 10_000,
           deposited: 10_000,
-          withdrawn: 10_000,
         });
         const expDep = inWinLegs
           .filter((l) => l.type === "deposit")
-          .reduce((a, l) => a + Math.abs(l.amount), 0);
-        const expWd = inWinLegs
-          .filter((l) => l.type === "card_withdrawal")
           .reduce((a, l) => a + Math.abs(l.amount), 0);
         check(
           `pnl-${windowHours}h: total_deposited reduction = windowed deposit sum (${expDep})`,
           r.totalDepositedReduction === expDep,
         );
+        // Carve-out: total_withdrawn is NEVER decremented even when an
+        // in-window card_withdrawal leg sits in the input set.
         check(
-          `pnl-${windowHours}h: total_withdrawn reduction = windowed withdrawal sum (${expWd})`,
-          r.totalWithdrawnReduction === expWd,
+          `pnl-${windowHours}h: no totalWithdrawnReduction key (carve-out)`,
+          !("totalWithdrawnReduction" in r),
         );
       }
     }

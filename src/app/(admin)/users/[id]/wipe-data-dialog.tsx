@@ -2238,10 +2238,10 @@ function PnlInline({
             <ShieldAlert className="mt-0.5 size-3.5 shrink-0" />
             <span>
               LARGEST scope of the three windowed wipes. Removes every
-              PnL-affecting event in the last {window}h — deposits, withdrawals
-              ledger legs, gameplay, rewards, vouchers, admin adjustments.
-              Counters: total_wagered / total_won / total_deposited /
-              total_withdrawn all decremented. Snapshotted + restorable.
+              PnL-affecting event in the last {window}h — deposits, gameplay
+              legs + won inventory, rewards, vouchers, admin adjustments.
+              Counters: total_wagered / total_won / total_deposited
+              decremented. Snapshotted + restorable.
             </span>
           </p>
           {state.data.ledgerLegCount === 0 &&
@@ -2258,14 +2258,6 @@ function PnlInline({
                   </span>
                   <span className={cn("tabular-nums font-medium", EMERALD)}>
                     {formatCurrency(state.data.depositSum)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between px-2.5 py-1.5 text-xs">
-                  <span className="text-muted-foreground">
-                    Withdrawals ledger (cash out)
-                  </span>
-                  <span className={cn("tabular-nums font-medium", ROSE)}>
-                    {formatCurrency(state.data.withdrawalSum)}
                   </span>
                 </div>
                 <div className="flex items-center justify-between px-2.5 py-1.5 text-xs">
@@ -2846,14 +2838,13 @@ function ConfirmPhase({
             icon={Receipt}
             label={`PnL wipe · last ${pnlData.windowHours}h (${pnlData.ledgerLegCount.toLocaleString()} leg${pnlData.ledgerLegCount === 1 ? "" : "s"})`}
             amount={pnlData.balanceClawback}
-            danger="LARGEST scope — deletes every PnL-affecting event in window (deposits, withdrawals ledger, gameplay, rewards, vouchers, admin adjustments). Counters: wagered/won/deposited/withdrawn all decremented. Recoverable via snapshot."
+            danger="LARGEST scope — deletes every PnL-affecting event in window (deposits, gameplay legs + won inventory, rewards, vouchers, admin adjustments). Counters: wagered/won/deposited decremented. Recoverable via snapshot."
           >
             <p className="text-xs text-muted-foreground">
               Last {pnlData.windowHours}h ·{" "}
               {pnlData.ledgerLegCount.toLocaleString()} ledger leg
               {pnlData.ledgerLegCount === 1 ? "" : "s"} (deposits{" "}
-              {formatCurrency(pnlData.depositSum)} · withdrawals{" "}
-              {formatCurrency(pnlData.withdrawalSum)} · gameplay payouts{" "}
+              {formatCurrency(pnlData.depositSum)} · gameplay payouts{" "}
               {formatCurrency(pnlData.payoutSum)} · rewards{" "}
               {formatCurrency(pnlData.rewardSum)}) ·{" "}
               {pnlData.inventoryCount.toLocaleString()} won item
@@ -3342,7 +3333,7 @@ function DangerWarning({ kind }: { kind: "deposits" | "wager" | "game" | "pnl" }
       "Deletes pure gameplay events in the selected window — pack openings, battles, upgrader, won pack/battle inventory + provably-fair children. Decrements total_won (not total_wagered — Wager wipe's territory). Recoverable via snapshot.";
   } else {
     copy =
-      "LARGEST scope. Deletes every PnL-affecting event in the selected window — deposits, withdrawals ledger legs, gameplay legs + won inventory, rewards, vouchers, admin balance adjustments. Decrements total_wagered / total_won / total_deposited / total_withdrawn by the deleted sums. Recoverable via snapshot.";
+      "LARGEST scope. Deletes every PnL-affecting event in the selected window — deposits, gameplay legs + won inventory, rewards, vouchers, admin balance adjustments. Decrements total_wagered / total_won / total_deposited by the deleted sums. Withdrawals are NOT touched. Recoverable via snapshot.";
   }
   return (
     <p className="flex items-start gap-1.5 rounded border border-rose-500/40 bg-rose-500/[0.07] px-2.5 py-1.5 text-xs text-rose-500">

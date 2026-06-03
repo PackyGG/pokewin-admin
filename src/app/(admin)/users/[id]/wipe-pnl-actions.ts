@@ -43,27 +43,27 @@ import {
 //
 //   • Wager wipe — gameplay legs + counters (`total_wagered` + `total_won`).
 //   • Game wipe  — gameplay legs + `total_won` only (counter-disjoint from Wager).
-//   • PNL WIPE   — gameplay + deposits + withdrawals (`card_withdrawal` ledger)
-//                  + rewards + admin balance adjustments + vouchers in the
-//                  window. Decrements `total_wagered` / `total_won` /
-//                  `total_deposited` / `total_withdrawn`.
+//   • PNL WIPE   — gameplay + deposits + rewards + admin balance adjustments +
+//                  vouchers in the window. Decrements `total_wagered` /
+//                  `total_won` / `total_deposited`.
+//
+// WITHDRAWAL CARVE-OUT (owner mandate, 2026-06-03): `card_withdrawal` ledger
+// legs and the `balances.total_withdrawn` counter are EXCLUDED from this wipe.
+// Withdrawals are not part of the PnL wipe scope. The on-ledger
+// `card_withdrawal` rows in window are left untouched; `total_withdrawn` is
+// never decremented. (Authoritative `card_withdrawal_requests` rows were
+// already out of scope — they carry shipping/tracking state.)
 //
 // SCOPE — derived against `src/lib/queries/pnl.ts`:
 //
 //   pnl = deposits − withdrawals − onSiteBalance − inventoryValue − unclaimedVouchers
 //
-// Every term moves when we delete its underlying rows:
+// Every term except `withdrawals` moves when we delete its underlying rows:
 //   • `deposits`         — `deposit` ledger legs (`ledger_transactions`),
 //                          plus the `balances.total_deposited` counter.
-//   • `withdrawals`      — `card_withdrawal` ledger legs (the on-ledger
-//                          shadow of card-withdrawals; `card_withdrawal_requests`
-//                          is the authoritative table but we do NOT delete
-//                          those rows — they carry shipping/tracking state and
-//                          are creator-protected when applicable). The
-//                          `balances.total_withdrawn` counter is decremented by
-//                          the sum of deleted `card_withdrawal` ledger
-//                          magnitudes — matches the same conceptual term in
-//                          pnl.ts.
+//   • `withdrawals`      — NOT TOUCHED. `card_withdrawal` ledger legs are left
+//                          intact; `total_withdrawn` is left intact. (Owner
+//                          carve-out.)
 //   • `onSiteBalance`    — `balances.available_balance` is decremented by the
 //                          payout (credit) legs' magnitude. Wager (debit) legs
 //                          delete without changing the balance (BALANCE RULE —
@@ -85,6 +85,7 @@ import {
 //   • upgrader_games rows in window (raw SQL, table-presence-guarded).
 //
 // EXCLUDED (intentionally — protect referential integrity):
+//   • `card_withdrawal` ledger legs — owner carve-out, see above.
 //   • `card_withdrawal_requests` table rows — they carry shipping / crypto /
 //                          tracking / fireblocks state and multiple admin FKs.
 //                          Deleting them is the disabled `withdrawals`
@@ -92,18 +93,18 @@ import {
 //   • Affiliate / creator-deal ledger legs (per protected.ts: deposit /
 //     card_withdrawal / affiliate_claim / creator_fill_* / etc. are protected
 //     for ever-creators). For non-creators these are NOT in WAGER /
-//     GAMING_PAYOUT / REWARD / our deposit / our withdrawal set, so they are
-//     STRUCTURALLY excluded from the delete filter, EXCEPT `deposit` and
-//     `card_withdrawal` which ARE in scope here intentionally.
+//     GAMING_PAYOUT / REWARD / our deposit set, so they are STRUCTURALLY
+//     excluded from the delete filter, EXCEPT `deposit` which IS in scope
+//     here intentionally.
 //   • `voucher_redeemed` ledger legs — those are NEUTRAL inventory/voucher
 //     conversions that don't move PnL; deleting the voucher row IS the
 //     authoritative change.
 //
 // CREATOR-PROTECTED — NOT YET. Owner mandate (per categories.ts): deposits are
-// creator-protected, withdrawals are creator-protected. The PnL wipe is a
-// SUPERSET of those, so it inherits creator protection: if the user IS or WAS
-// a creator, the PnL wipe is hard-rejected server-side (`creatorProtected:
-// true` in categories.ts). For a never-creator the full scope runs.
+// creator-protected. The PnL wipe is a SUPERSET of those, so it inherits
+// creator protection: if the user IS or WAS a creator, the PnL wipe is
+// hard-rejected server-side (`creatorProtected: true` in categories.ts). For
+// a never-creator the full scope runs.
 //
 // CONCURRENCY — same Pattern A (FOR UPDATE) + Pattern B (atomic GREATEST
 // clamp) as Wager / Game. NO optimistic version check.
@@ -113,9 +114,10 @@ import {
 
 /**
  * Build the PnL-wipe deletable ledger set. INCLUDES wager + gaming-payout +
- * reward + admin adjustment + deposit + card_withdrawal — every type that
- * directly moves a PnL term. Upgrader ledger legs only included when
- * `UPGRADER_IN_LEDGER` is on (mirrors the Wager wipe's enum-hygiene fix).
+ * reward + admin adjustment + deposit — every type that directly moves a PnL
+ * term that the wipe touches. `card_withdrawal` is EXCLUDED (owner carve-out
+ * 2026-06-03). Upgrader ledger legs only included when `UPGRADER_IN_LEDGER`
+ * is on (mirrors the Wager wipe's enum-hygiene fix).
  */
 const PNL_WIPE_LEDGER_TYPES: readonly LedgerTransactionType[] = [
   // Wager + gaming payouts.
@@ -126,9 +128,8 @@ const PNL_WIPE_LEDGER_TYPES: readonly LedgerTransactionType[] = [
   ...REWARD_PAYOUT_TYPES,
   // Admin balance adjustments (both credits + debits in window).
   "admin_balance_adjustment",
-  // Real cash flows.
+  // Real cash flows IN (deposits). Withdrawals are intentionally EXCLUDED.
   "deposit",
-  "card_withdrawal",
 ];
 
 const PNL_WIPE_TYPE_SET: ReadonlySet<string> = new Set(PNL_WIPE_LEDGER_TYPES);
@@ -139,9 +140,10 @@ const WON_INVENTORY_SOURCES = ["pack", "battle"] as const;
 // BALANCE RULE (documented below per-leg, not via a single set):
 //   • Credit legs (deposit, payout legs, reward legs, positive
 //     admin_balance_adjustment) → clawed back from available_balance.
-//   • Debit legs (wager, card_withdrawal, negative
-//     admin_balance_adjustment) → record deleted, balance unchanged
-//     (never inflate).
+//   • Debit legs (wager, negative admin_balance_adjustment) → record deleted,
+//     balance unchanged (never inflate).
+// `card_withdrawal` legs are NOT in the wipe scope (owner carve-out, 2026-06-03)
+// so they never enter this rule either way.
 // Implemented per-row at the reduction-computation site below — the type-set
 // abstraction was removed (unused) when the per-row split was inlined.
 
@@ -171,8 +173,6 @@ export type PnlWipePreview = {
   balanceClawback: number;
   /** Σ deposit ledger magnitudes in window. */
   depositSum: number;
-  /** Σ card_withdrawal ledger magnitudes in window. */
-  withdrawalSum: number;
   /** Σ wager-leg magnitudes (for total_wagered decrement). */
   wagerSum: number;
   /** Σ payout-leg magnitudes (for total_won decrement; inventory added separately). */
@@ -254,7 +254,6 @@ export async function previewPnlWipe(
 
   let ledgerLegCount = 0;
   let depositSum = 0;
-  let withdrawalSum = 0;
   let wagerSum = 0;
   let payoutSum = 0;
   let rewardSum = 0;
@@ -273,10 +272,6 @@ export async function previewPnlWipe(
     if (t === "deposit") {
       depositSum += mag;
       creditFromTypedLegs += mag;
-    } else if (t === "card_withdrawal") {
-      withdrawalSum += mag;
-      // card_withdrawal is a DEBIT (cash out). Does NOT add to balance
-      // clawback (the user did not gain balance from this row).
     } else if (WAGER_SET.has(t)) {
       wagerSum += mag;
     } else if (PAYOUT_SET.has(t)) {
@@ -286,6 +281,8 @@ export async function previewPnlWipe(
       rewardSum += mag;
       creditFromTypedLegs += mag;
     }
+    // Note: card_withdrawal is no longer in PNL_WIPE_LEDGER_TYPES (owner
+    // carve-out, 2026-06-03), so it never appears in this group.
   }
   // upgrader_bet: when UPGRADER_IN_LEDGER, it's in WAGER_SET? No — only
   // WAGER_TYPES (pack_opening, battle_bet, battle_sponsorship). upgrader_bet
@@ -346,7 +343,6 @@ export async function previewPnlWipe(
       ledgerLegCount,
       balanceClawback: creditFromTypedLegs + adjCreditClawback,
       depositSum,
-      withdrawalSum,
       wagerSum,
       payoutSum,
       rewardSum,
@@ -563,7 +559,6 @@ export async function wipePnl(data: {
   ]);
 
   let depositSum = 0;
-  let withdrawalSum = 0;
   let wagerMagnitude = 0;
   let payoutMagnitude = 0;
   let rewardMagnitude = 0;
@@ -572,7 +567,6 @@ export async function wipePnl(data: {
     const t = String(r.type);
     const mag = Math.abs(toNumber(r.amount));
     if (t === "deposit") depositSum += mag;
-    else if (t === "card_withdrawal") withdrawalSum += mag;
     else if (WAGER_SET.has(t)) wagerMagnitude += mag;
     else if (PAYOUT_SET.has(t)) payoutMagnitude += mag;
     else if (REWARD_SET.has(t)) rewardMagnitude += mag;
@@ -580,6 +574,7 @@ export async function wipePnl(data: {
       const signed = toNumber(r.amount);
       if (signed > 0) adjCreditClawback += signed;
     }
+    // card_withdrawal is no longer in scope (owner carve-out, 2026-06-03).
   }
 
   const inventoryValue = inventoryRows.reduce((acc, r) => acc + toNumber(r.value_at_obtained), 0);
@@ -600,7 +595,6 @@ export async function wipePnl(data: {
   const totalWageredBefore = toNumber(balanceRow.total_wagered);
   const totalWonBefore = toNumber(balanceRow.total_won);
   const totalDepositedBefore = toNumber(balanceRow.total_deposited);
-  const totalWithdrawnBefore = toNumber(balanceRow.total_withdrawn);
   const balanceBefore = toNumber(balanceRow.available_balance);
   const balanceAfter = Math.max(0, balanceBefore - availableBalanceClawback);
   const balanceReduction = balanceBefore - balanceAfter;
@@ -609,7 +603,10 @@ export async function wipePnl(data: {
   const totalWageredReduction = Math.min(wagerMagnitude, totalWageredBefore);
   const totalWonReduction = Math.min(wonDeleted, totalWonBefore);
   const totalDepositedReduction = Math.min(depositSum, totalDepositedBefore);
-  const totalWithdrawnReduction = Math.min(withdrawalSum, totalWithdrawnBefore);
+  // total_withdrawn is NOT decremented (owner carve-out, 2026-06-03). Kept at
+  // 0 in the snapshot so restore re-adds 0 (no-op) — preserves the symmetric
+  // snapshot shape required by PnlWipeSnapshot.
+  const totalWithdrawnReduction = 0;
 
   const userMeta = await db.user
     .findUnique({ where: { id: parsed.userId }, select: { username: true, email: true } })
@@ -753,15 +750,16 @@ export async function wipePnl(data: {
         }
       }
 
-      // (7) PATTERN B — atomic clamped UPDATE for ALL balance + lifetime
-      // counters at once. ONE raw SQL UPDATE; GREATEST(0, …) clamps each
-      // independently. NO optimistic version check.
+      // (7) PATTERN B — atomic clamped UPDATE for the balance + the three
+      // lifetime counters we touch. ONE raw SQL UPDATE; GREATEST(0, …) clamps
+      // each independently. NO optimistic version check. `total_withdrawn`
+      // is NOT in this UPDATE (owner carve-out 2026-06-03 — withdrawals are
+      // not part of the PnL wipe scope).
       if (
         balanceReduction > 0 ||
         totalWageredReduction > 0 ||
         totalWonReduction > 0 ||
-        totalDepositedReduction > 0 ||
-        totalWithdrawnReduction > 0
+        totalDepositedReduction > 0
       ) {
         const updated = await tx.$executeRaw`
           UPDATE "balances"
@@ -769,7 +767,6 @@ export async function wipePnl(data: {
               total_wagered = GREATEST(0::numeric, total_wagered - ${totalWageredReduction}::numeric),
               total_won = GREATEST(0::numeric, total_won - ${totalWonReduction}::numeric),
               total_deposited = GREATEST(0::numeric, total_deposited - ${totalDepositedReduction}::numeric),
-              total_withdrawn = GREATEST(0::numeric, total_withdrawn - ${totalWithdrawnReduction}::numeric),
               version = version + 1
           WHERE user_id = ${parsed.userId}
         `;
@@ -827,7 +824,6 @@ export async function wipePnl(data: {
         success: true,
         ledgerLegsDeleted: ledgerRows.length,
         depositSum,
-        withdrawalSum,
         wagerMagnitude,
         payoutMagnitude,
         rewardMagnitude,
@@ -849,10 +845,8 @@ export async function wipePnl(data: {
         totalWonReduced: totalWonReduction,
         totalDepositedBefore,
         totalDepositedReduced: totalDepositedReduction,
-        totalWithdrawnBefore,
-        totalWithdrawnReduced: totalWithdrawnReduction,
         recoverable: true,
-        note: `PnL wipe (${windowHours}h window): deleted every PnL-affecting event in window — deposits, card_withdrawal ledger legs, wager + payout legs (pack/battle/upgrader) + won pack/battle inventory + provably_fair_results + upgrader_games, reward-payout legs, in-window admin balance adjustments (credits clawed back, debits delete record only), vouchers created in window. Decremented total_wagered / total_won / total_deposited / total_withdrawn by the deleted sums (each clamped ≥0 via atomic UPDATE). available_balance reduced ONLY by credit legs' magnitude (deposits + payouts + rewards + adj credits) clamped ≥0; wager / withdrawal / debit-adjustments left balance unchanged. card_withdrawal_requests table NOT touched (separate withdrawals category covers it). Restore re-inserts all snapshotted rows + re-adds the recorded reductions (symmetric).`,
+        note: `PnL wipe (${windowHours}h window): deleted every PnL-affecting event in window — deposits, wager + payout legs (pack/battle/upgrader) + won pack/battle inventory + provably_fair_results + upgrader_games, reward-payout legs, in-window admin balance adjustments (credits clawed back, debits delete record only), vouchers created in window. Decremented total_wagered / total_won / total_deposited by the deleted sums (each clamped ≥0 via atomic UPDATE). available_balance reduced ONLY by credit legs' magnitude (deposits + payouts + rewards + adj credits) clamped ≥0; wager / debit-adjustments left balance unchanged. WITHDRAWALS CARVE-OUT (owner mandate 2026-06-03): card_withdrawal ledger legs are NOT in scope and total_withdrawn is NOT decremented; card_withdrawal_requests was already untouched. Restore re-inserts all snapshotted rows + re-adds the recorded reductions (symmetric).`,
       },
     },
   });

@@ -252,11 +252,16 @@ export type GameWipeSnapshot = {
  * Snapshot payload for a "pnl" (broadest PnL-affecting events) wipe.
  *
  * The largest scope of the three windowed wipes: deletes every PnL-affecting
- * ledger leg in the chosen window — deposits, the `card_withdrawal` ledger
- * legs, the wager + gaming-payout legs, the reward-payout legs, admin balance
- * adjustments (NOT manual-withdrawal debits — those touch `total_withdrawn`
- * differently), upgrader_games — PLUS the won pack/battle inventory rows in
- * window AND the vouchers created in window. Snapshot-first + restorable.
+ * ledger leg in the chosen window — deposits, the wager + gaming-payout legs,
+ * the reward-payout legs, admin balance adjustments, upgrader_games — PLUS the
+ * won pack/battle inventory rows in window AND the vouchers created in window.
+ * Snapshot-first + restorable.
+ *
+ * WITHDRAWAL CARVE-OUT (owner mandate 2026-06-03): `card_withdrawal` ledger
+ * legs are NOT in scope and the `balances.total_withdrawn` counter is NOT
+ * decremented. The `totalWithdrawnReduction` field is RETAINED for back-compat
+ * snapshot symmetry (older snapshots may have a non-zero value Restore must
+ * still re-add) and is written as "0.00" by the current wipe.
  *
  * COUNTER REDUCTIONS (clamped ≥0; each is the EXACT amount Restore re-adds):
  *   • `availableBalanceReduction` — payout (credit) legs' summed magnitude
@@ -267,13 +272,9 @@ export type GameWipeSnapshot = {
  *   • `totalWonReduction`         — Σ payout-leg magnitudes + Σ won-inventory
  *                                    `value_at_obtained`.
  *   • `totalDepositedReduction`   — Σ deleted `deposit` leg magnitudes.
- *   • `totalWithdrawnReduction`   — Σ deleted `card_withdrawal` ledger
- *                                    magnitudes (matches the
- *                                    `total_withdrawn` counter conceptually,
- *                                    even though the production site does not
- *                                    move that counter for card withdrawals —
- *                                    see pnl.ts; the reduction is what the
- *                                    wipe subtracts, restore re-adds exactly).
+ *   • `totalWithdrawnReduction`   — 0 for current wipes (carve-out). Older
+ *                                    snapshots may carry a non-zero value;
+ *                                    Restore re-adds it for back-compat.
  *
  * Withdrawal-locked inventory (cards bundled into an in-flight withdrawal) is
  * SKIPPED (corrupting an active withdrawal is unsafe); the count is surfaced.
@@ -295,6 +296,11 @@ export type PnlWipeSnapshot = {
   totalWageredReduction: string;
   totalWonReduction: string;
   totalDepositedReduction: string;
+  /**
+   * Always "0.00" for current wipes (owner carve-out 2026-06-03). Kept on the
+   * type for back-compat: pre-carve-out snapshots may store a non-zero
+   * decimal that Restore still re-adds, keeping wipe ↔ restore symmetric.
+   */
   totalWithdrawnReduction: string;
   /** Window the wipe ran for (12 / 24 / 48 hours). */
   windowHours: number;
