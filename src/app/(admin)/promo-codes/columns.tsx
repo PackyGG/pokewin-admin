@@ -2,12 +2,10 @@
 
 import { useState, useTransition } from "react";
 import { ColumnDef } from "@tanstack/react-table";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Activity, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils/format";
-import { EmptyState } from "@/components/empty-state";
+import { formatCurrency, formatDate } from "@/lib/utils/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -22,32 +20,9 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import type { PromoCodeListItem } from "@/lib/queries/promo-codes";
-import { deletePromoCode, getRedemptions } from "./actions";
-
-type Redemption = {
-  id: string;
-  userId: string;
-  username: string | null;
-  email: string | null;
-  image: string | null;
-  ipAddress: string;
-  redeemedAt: string;
-};
+import { deletePromoCode } from "./actions";
+import { PromoCodeDetailDialog } from "./promo-code-detail-dialog";
 
 function codeStatus(
   row: PromoCodeListItem,
@@ -71,132 +46,42 @@ function codeStatus(
   };
 }
 
-function RedemptionsCell({
-  row,
-}: {
-  row: PromoCodeListItem;
-}) {
+// The clickable code → opens the claim detail dialog (who claimed it,
+// summary, limits). Replaces the old navigate-to-/promo-codes/[id] link
+// per the reworked-page brief; the standalone detail route still exists
+// for deep-links but the in-table affordance is now a popup.
+function CodeCell({ row }: { row: PromoCodeListItem }) {
   const [open, setOpen] = useState(false);
-  const [data, setData] = useState<Redemption[] | null>(null);
-  const [isPending, startTransition] = useTransition();
-
-  function handleOpen() {
-    setOpen(true);
-    if (!data) {
-      startTransition(async () => {
-        const result = await getRedemptions(row.id);
-        setData(result);
-      });
-    }
-  }
-
-  const status = codeStatus(row);
-
   return (
     <>
       <button
-        onClick={handleOpen}
+        type="button"
+        onClick={() => setOpen(true)}
+        className="font-mono text-xs text-left hover:underline"
+        title="View claims"
+      >
+        {row.code ?? row.codeHash.slice(0, 16) + "…"}
+      </button>
+      <PromoCodeDetailDialog row={row} open={open} onOpenChange={setOpen} />
+    </>
+  );
+}
+
+// Redemptions count — same click-through target as the code cell, so an
+// admin can open the claim list from either column.
+function RedemptionsCell({ row }: { row: PromoCodeListItem }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
         className="font-medium tabular-nums hover:underline"
+        title="View claims"
       >
         {row.redemptionCount} / {row.maxUses}
       </button>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              Redemptions
-              <Badge variant="outline" className={status.cls}>
-                {status.label}
-              </Badge>
-            </DialogTitle>
-          </DialogHeader>
-          {/* Code summary */}
-          <div className="flex items-center gap-4 rounded-md border bg-muted/30 px-3 py-2 text-xs">
-            <div>
-              <span className="text-muted-foreground">Value</span>
-              <div className="font-semibold">{formatCurrency(row.value)}</div>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Uses</span>
-              <div className="font-semibold tabular-nums">
-                {row.redemptionCount} / {row.maxUses}
-              </div>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Expires</span>
-              <div className="font-semibold">
-                {row.expiresAt ? formatDate(row.expiresAt) : "Never"}
-              </div>
-            </div>
-          </div>
-          {isPending && (
-            <p className="py-4 text-center text-sm text-muted-foreground">
-              Loading…
-            </p>
-          )}
-          {data && data.length === 0 && (
-            <EmptyState
-              icon={Activity}
-              title="No redemptions yet"
-              description="Players who redeem this code will be listed here."
-              compact
-            />
-          )}
-          {data && data.length > 0 && (
-            <div className="max-h-[400px] overflow-y-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>User</TableHead>
-                    <TableHead>IP</TableHead>
-                    <TableHead>Date</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.map((r) => (
-                    <TableRow key={r.id}>
-                      <TableCell>
-                        <Link
-                          href={`/users/${r.userId}`}
-                          className="flex items-center gap-2 hover:underline"
-                          onClick={() => setOpen(false)}
-                        >
-                          <div className="size-6 shrink-0 overflow-hidden rounded-full bg-muted">
-                            {r.image &&
-                            (r.image.startsWith("https://") ||
-                              r.image.startsWith("http://")) ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={r.image}
-                                alt=""
-                                className="size-full object-cover"
-                                referrerPolicy="no-referrer"
-                              />
-                            ) : (
-                              <div className="flex size-full items-center justify-center text-[10px] font-bold text-muted-foreground">
-                                {(r.username ?? r.email ?? "?")[0].toUpperCase()}
-                              </div>
-                            )}
-                          </div>
-                          <span className="text-sm">
-                            {r.username ?? r.email ?? r.userId.slice(0, 8)}
-                          </span>
-                        </Link>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
-                        {r.ipAddress}
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {formatDateTime(r.redeemedAt)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+      <PromoCodeDetailDialog row={row} open={open} onOpenChange={setOpen} />
     </>
   );
 }
@@ -360,14 +245,7 @@ export const columns: ColumnDef<PromoCodeListItem>[] = [
   {
     accessorKey: "code",
     header: "Code",
-    cell: ({ row }) => (
-      <Link
-        href={`/promo-codes/${row.original.id}`}
-        className="font-mono text-xs hover:underline"
-      >
-        {row.original.code ?? row.original.codeHash.slice(0, 16) + "..."}
-      </Link>
-    ),
+    cell: ({ row }) => <CodeCell row={row.original} />,
   },
   {
     accessorKey: "region",

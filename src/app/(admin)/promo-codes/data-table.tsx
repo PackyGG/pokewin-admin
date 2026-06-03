@@ -38,6 +38,7 @@ import { formatCurrency } from "@/lib/utils/format";
 import { MobileCard } from "@/components/data-table/mobile-card-list";
 import { EmptyState } from "@/components/empty-state";
 import { deletePromoCodesBulk } from "./actions";
+import { PromoCodeDetailDialog } from "./promo-code-detail-dialog";
 
 function codeStatus(row: PromoCodeListItem): { label: string; cls: string } {
   const isExpired = row.expiresAt && new Date(row.expiresAt) < new Date();
@@ -89,13 +90,14 @@ function requirementsSummary(code: PromoCodeListItem): string | null {
 }
 
 function PromoMobileCard({ code }: { code: PromoCodeListItem }) {
-  const router = useRouter();
+  const [open, setOpen] = useState(false);
   const status = codeStatus(code);
   const display = code.code ?? code.codeHash.slice(0, 12) + "…";
   const reqs = requirementsSummary(code);
   return (
+    <>
     <MobileCard
-      onClick={() => router.push(`/promo-codes/${code.id}`)}
+      onClick={() => setOpen(true)}
       leading={
         <div className="flex size-9 items-center justify-center rounded-md bg-amber-500/10 shrink-0">
           <Ticket className="size-4 text-amber-500" />
@@ -125,8 +127,9 @@ function PromoMobileCard({ code }: { code: PromoCodeListItem }) {
           </div>
         </div>
       }
-      showChevron
     />
+    <PromoCodeDetailDialog row={code} open={open} onOpenChange={setOpen} />
+    </>
   );
 }
 

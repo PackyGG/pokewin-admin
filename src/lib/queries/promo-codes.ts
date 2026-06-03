@@ -164,6 +164,138 @@ export async function getPromoCodeDetail(id: string) {
   };
 }
 
+// ─── Per-code claim detail for the click-through dialog ───────────────
+//
+// Powers the "who claimed this code" popup on /promo-codes. Lazy-loaded
+// on dialog-open (NOT fetched for every row up-front) and cached per code
+// id (60s) so re-opening the same code is a cache hit. The claims list is
+// BOUNDED at CLAIMS_LIMIT so a heavily-redeemed code can't drag a huge
+// row-set into the dialog; `totalClaims` is the real unbounded count so
+// the header can show "showing 200 of N".
+//
+// There is NO per-redemption amount column on `promo_code_redemptions`
+// (schema: id, promo_code_id, user_id, ip_address, ledger_tx_id,
+// redeemed_at). Every redemption of a code credits the SAME `value` that
+// lives on the `promo_codes` row, so the credited amount per claim is the
+// code's `value` and the total value given is `value * totalClaims`.
+// House-POV: that value is house-paid credit → house cost → rendered rose
+// at the call site.
+
+const CLAIMS_LIMIT = 200;
+
+export type PromoCodeClaim = {
+  id: string;
+  userId: string;
+  username: string | null;
+  email: string | null;
+  image: string | null;
+  ipAddress: string;
+  redeemedAt: string;
+};
+
+export type PromoCodeClaimsDetail = {
+  id: string;
+  code: string | null;
+  codeHash: string;
+  /** Value credited per claim (USD). Same for every redemption of the code. */
+  value: number;
+  region: string;
+  maxUses: number;
+  requiresDiscord: boolean;
+  expiresAt: string | null;
+  createdAt: string;
+  /** Real unbounded redemption count for this code. */
+  totalClaims: number;
+  /** value * totalClaims — total house credit handed out via this code. */
+  totalValueGiven: number;
+  /** Whether the claims array was truncated by CLAIMS_LIMIT. */
+  truncated: boolean;
+  /** Most-recent-first, capped at CLAIMS_LIMIT. */
+  claims: PromoCodeClaim[];
+};
+
+const cachedPromoCodeClaims = unstable_cache(
+  async (id: string): Promise<PromoCodeClaimsDetail | null> => {
+    const db = await getDb();
+    const code = await db.promo_codes.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        code_hash: true,
+        value: true,
+        region: true,
+        max_uses: true,
+        requires_discord: true,
+        expires_at: true,
+        created_at: true,
+        metadata: true,
+      },
+    });
+    if (!code) return null;
+
+    // Real count (unbounded) + the bounded row slice in parallel — one
+    // count aggregate, one ordered LIMIT scan, both on the same indexed
+    // promo_code_id.
+    const [totalClaims, rows] = await Promise.all([
+      db.promo_code_redemptions.count({
+        where: { promo_code_id: id },
+      }),
+      db.promo_code_redemptions.findMany({
+        where: { promo_code_id: id },
+        select: {
+          id: true,
+          user_id: true,
+          ip_address: true,
+          redeemed_at: true,
+          user: { select: { username: true, email: true, image: true } },
+        },
+        orderBy: { redeemed_at: "desc" },
+        take: CLAIMS_LIMIT,
+      }),
+    ]);
+
+    const meta = code.metadata as Record<string, unknown> | null;
+    const value = toNumber(code.value);
+
+    return {
+      id: code.id,
+      code: (meta?.code as string) ?? null,
+      codeHash: code.code_hash,
+      value,
+      region: code.region,
+      maxUses: code.max_uses,
+      requiresDiscord: code.requires_discord,
+      expiresAt: code.expires_at?.toISOString() ?? null,
+      createdAt: code.created_at.toISOString(),
+      totalClaims,
+      totalValueGiven: value * totalClaims,
+      truncated: totalClaims > rows.length,
+      claims: rows.map((r) => ({
+        id: r.id,
+        userId: r.user_id,
+        username: r.user?.username ?? null,
+        email: r.user?.email ?? null,
+        image: r.user?.image ?? null,
+        ipAddress: r.ip_address,
+        redeemedAt: r.redeemed_at.toISOString(),
+      })),
+    };
+  },
+  ["promo-code-claims-v1"],
+  { revalidate: 60, tags: ["promo-code-claims"] },
+);
+
+/**
+ * Lazy-loaded claim detail for a single promo code, used by the
+ * click-through dialog on /promo-codes. Cached per id (60s). Returns
+ * `null` when the code id doesn't exist.
+ */
+export async function getPromoCodeClaims(
+  id: string,
+): Promise<PromoCodeClaimsDetail | null> {
+  return cachedPromoCodeClaims(id);
+}
+
 // ─── Global KPI stats for the /promo-codes page hero strip ────────────
 //
 // Counts that describe the WHOLE promo-codes pool independent of the

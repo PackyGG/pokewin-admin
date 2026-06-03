@@ -7,6 +7,11 @@ import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createHash } from "crypto";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { safeQuery } from "@/lib/errors/safe-query";
+import {
+  getPromoCodeClaims,
+  type PromoCodeClaimsDetail,
+} from "@/lib/queries/promo-codes";
 
 const createPromoCodeSchema = z.object({
   code: z.string().trim().min(1, "Code is required").max(64, "Code is too long"),
@@ -98,6 +103,40 @@ export async function createPromoCode(
   });
 
   revalidatePath("/promo-codes");
+}
+
+/**
+ * Lazy-loaded claim detail for the promo-code click-through dialog.
+ *
+ * Gated by `__can_view_promo_redemptions` (same capability the legacy
+ * `getRedemptions` uses). Wraps the cached query in `safeQuery` with a
+ * statement timeout so a slow/large claim scan degrades to an error
+ * payload the dialog can surface as a graceful error state instead of
+ * hanging the transition or throwing into the page boundary.
+ *
+ * The returned `error` is a boolean flag only — the raw query message is
+ * logged server-side by `safeQuery` and never shipped to the client (per
+ * the safe-query SECURITY note).
+ */
+export async function getPromoCodeClaimDetail(promoCodeId: string): Promise<{
+  data: PromoCodeClaimsDetail | null;
+  error: boolean;
+}> {
+  const session = await requirePageAccess("/promo-codes");
+  await requireCapability(
+    session,
+    "__can_view_promo_redemptions",
+    "view promo redemptions",
+  );
+
+  const result = await safeQuery(
+    () => getPromoCodeClaims(promoCodeId),
+    null,
+    "promo-codes.claims",
+    10_000,
+  );
+
+  return { data: result.data, error: result.error !== null };
 }
 
 export async function getRedemptions(promoCodeId: string) {
