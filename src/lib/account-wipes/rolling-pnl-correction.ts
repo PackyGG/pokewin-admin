@@ -1,6 +1,7 @@
 import "server-only";
 
 import { adminDb } from "@/lib/admin-db";
+import { getDb } from "@/lib/db";
 import type { AccountWipeType } from "./snapshot";
 
 /**
@@ -569,4 +570,243 @@ function readArray(
     );
   }
   return [];
+}
+
+// ─── GLOBAL balance-adjustment-wipe correction (the FloridaManJeff June-2
+//     phantom on the DASHBOARD Daily-P&L chart, 2026-06-03) ────────────────
+//
+// ─── THE BUG ──────────────────────────────────────────────────────────────
+//
+// The global P&L family (getDailyPnl → the Daily-P&L chart; calculateWindowedPnl
+// → getTodayPnl / getPnlBreakdownWindows; realizedPnlPeriod → the dashboard
+// period card) computes its "User Balance change" term as
+// `SUM(balance_after − balance_before)` over the SURVIVING `ledger_transactions`
+// rows in the window/day. The "wipe content balance adjustments" action
+// (src/app/(admin)/users/[id]/wipe-adjustments-actions.ts) reduces a user's
+// `available_balance` by the wiped CREDITS' summed amount with NO matching
+// ledger row, and records the batch — including a full copy of every deleted
+// `admin_balance_adjustment` row — in a SEPARATE admin-DB table,
+// `admin_balance_adjustment_wipes` (NOT `admin_account_wipes`). The
+// surviving-row balance-Δ sum therefore still carries the credit's original
+// `+amount` rise on the day the credit landed, while the wipe's atomic
+// clawback (a balance DROP with no ledger row) is invisible to the sum on the
+// day the wipe ran. Net: a fake credit that was later wiped still DRAGS that
+// original day's house P&L down by its full amount.
+//
+// Browser-verified incident: a fake +$17,017.88 admin credit hit FloridaManJeff
+// on 2026-06-02 and was wiped on 2026-06-03. The 2026-06-02 Daily-P&L bar read
+// −$11,987.04 with a "User Balance change −$20,212.35" term; the fake credit's
+// +$17,017.88 is buried in that term. Removing it makes the day's balance-Δ
+// term −$3,194.47 and the bar +$5,030.84 (house green).
+//
+// ─── THE CORRECTION (attributed to the ORIGINAL-EFFECTIVE DAY) ─────────────
+//
+// For each completed, un-restored balance-adjustment wipe we read the deleted
+// CREDIT rows out of the snapshot and, for each, take its original
+// `(balance_after − balance_before)` (= its `amount`, since these are credits)
+// and bucket it by the row's OWN `DATE(created_at)` — the day the credit
+// entered the balance (2026-06-02 for Jeff), NOT the wipe's `wiped_at` (the day
+// the clawback ran, 2026-06-03). Subtracting that per-day sum from the day's
+// balance-Δ term removes the inflation EXACTLY ONCE, so a fake-then-wiped credit
+// nets to ZERO house-P&L impact on the day it landed.
+//
+// WHY THIS IS NOT A DOUBLE-COUNT: the correction sources the amount-to-remove
+// SOLELY from the wipe snapshot's recorded credit rows and applies it ONCE per
+// (wipe, original-day). It is independent of, and does NOT touch, the
+// `admin_account_wipes` add-back used by the per-user rolling tiles
+// (getRollingPnlWipeCorrections) — that helper reads a DIFFERENT table and a
+// DIFFERENT surface. Restored wipes (`restored_at IS NOT NULL`) are SKIPPED:
+// a restore re-inserts the credit rows AND re-adds the balance, so the
+// surviving-row sum sees them again and no correction is owed. Only POSITIVE
+// per-row deltas are subtracted (the wipe's balance reduction is credit-only,
+// matching `balance_before − balance_after`); a deleted DEBIT row left the
+// balance unchanged on wipe, and its own day's surviving sum already excludes
+// it because the row is gone, so it must NOT be corrected.
+//
+// ─── ORTHOGONAL TO excludeUserIds / NO creator exclusion ───────────────────
+//
+// The correction is keyed only on the wiped USER's own snapshot rows and their
+// dates; it is applied for ALL users (FloridaManJeff, a creator, included — the
+// owner's mandate: creators keep their real raw activity). It composes additively
+// with whatever user scope the caller already applied (staff/blacklist or
+// `excludeUserIds`): the credit it removes was only ever in the surviving-row
+// sum if that user was in scope, so subtracting it is correct under any scope
+// and never interacts with the exclusion list.
+
+/** A balance-adjustment-wipe row we read for the global correction. */
+type RawAdjustmentWipeRow = {
+  user_id: string;
+  snapshot: unknown;
+};
+
+/**
+ * Options shared by the global daily / windowed correction. `excludeUserIds`
+ * MUST be the SAME drop-list the caller passed to its surviving-row scope, so
+ * the correction is exactly orthogonal to that exclusion (see the header note):
+ * a wiped credit is subtracted IFF its user was actually in the surviving-row
+ * sum that still carries the credit's rise.
+ */
+export type GlobalWipeCorrectionScope = {
+  /** Drop-list the caller already applied (admin blacklist, ± creator ids). */
+  excludeUserIds?: string[];
+};
+
+/** Staff roles every global P&L surviving-row scope drops by role. */
+const GLOBAL_STAFF_ROLES = ["admin", "support"] as const;
+
+/**
+ * Resolve the subset of `wipedUserIds` that are IN the caller's surviving-row
+ * scope — i.e. NOT staff (admin/support, which every global scope drops by
+ * role) and NOT in the caller's `excludeUserIds`. Only these users' wiped
+ * credits were ever in the surviving-row sum, so only their inflation is owed a
+ * correction. A main-DB role failure → empty set (no correction) so we never
+ * over-correct a surface that excluded the user.
+ */
+async function resolveInScopeWipedUsers(
+  wipedUserIds: string[],
+  excludeUserIds: string[],
+): Promise<Set<string>> {
+  const exclude = new Set(excludeUserIds);
+  const candidates = wipedUserIds.filter((id) => !exclude.has(id));
+  if (candidates.length === 0) return new Set();
+  try {
+    const db = await getDb();
+    const rows = await db.user.findMany({
+      where: {
+        id: { in: candidates },
+        role: { notIn: [...GLOBAL_STAFF_ROLES] },
+      },
+      select: { id: true },
+    });
+    return new Set(rows.map((r) => r.id));
+  } catch (err) {
+    console.error(
+      "[rolling-pnl-correction] in-scope wiped-user role lookup failed — no global P&L correction applied:",
+      err instanceof Error ? err.message : err,
+    );
+    return new Set();
+  }
+}
+
+/** One deleted wiped-CREDIT leg: its original timestamp + balance rise. */
+export type WipedCreditLeg = {
+  /** The credit row's original `created_at` (the original-effective instant). */
+  createdAt: Date;
+  /** `balance_after − balance_before` (> 0 — the rise the surviving sum carries). */
+  delta: number;
+};
+
+/**
+ * SINGLE SOURCE for the global correction: every deleted admin-balance-
+ * adjustment CREDIT leg, from completed + un-restored wipes, whose user is in
+ * the caller's surviving-row scope and whose original `created_at` is on/after
+ * `since`. Each leg carries the EXACT instant + the balance rise the
+ * surviving-row sum still wrongly counts. Both the daily-bucketed and the
+ * windowed-total public helpers below derive from this, so they reconcile by
+ * construction (one buckets by UTC day, the other sums by exact instant ≥
+ * cutoff). Admin/main-DB lookup failure → empty (no correction), logged.
+ */
+async function getInScopeWipedCreditLegs(
+  since: Date,
+  scope: GlobalWipeCorrectionScope,
+): Promise<WipedCreditLeg[]> {
+  let rows: RawAdjustmentWipeRow[];
+  try {
+    rows = await adminDb.admin_balance_adjustment_wipes.findMany({
+      where: {
+        status: "completed",
+        restored_at: null,
+      },
+      select: { user_id: true, snapshot: true },
+    });
+  } catch (err) {
+    console.error(
+      "[rolling-pnl-correction] balance-adjustment-wipe lookup failed — no global P&L correction applied:",
+      err instanceof Error ? err.message : err,
+    );
+    return [];
+  }
+  if (rows.length === 0) return [];
+
+  // Restrict to wiped users actually in the caller's surviving-row scope, so
+  // the correction is orthogonal to `excludeUserIds` (a surface that excluded
+  // the user never had the credit in its sum → it owes no correction).
+  const inScope = await resolveInScopeWipedUsers(
+    [...new Set(rows.map((r) => r.user_id))],
+    scope.excludeUserIds ?? [],
+  );
+  if (inScope.size === 0) return [];
+
+  const sinceMs = since.getTime();
+  const legs: WipedCreditLeg[] = [];
+  for (const row of rows) {
+    if (!inScope.has(row.user_id)) continue;
+    const snapshot = row.snapshot;
+    if (!snapshot || typeof snapshot !== "object") continue;
+    for (const lr of readArray(snapshot, "rows")) {
+      const createdAt = toDateSafe(lr["created_at"]);
+      if (!createdAt) continue;
+      // A credit older than the lower bound cannot be in any rendered window's
+      // surviving-row sum, so it owes no correction.
+      if (createdAt.getTime() < sinceMs) continue;
+      const delta =
+        toNumberSafe(lr["balance_after"]) - toNumberSafe(lr["balance_before"]);
+      // CREDIT rows only: a credit raised the balance (delta > 0) and is the
+      // inflation the surviving-row sum still carries. A wiped DEBIT left the
+      // balance untouched on wipe AND its own row is gone from the sum, so it
+      // owes no correction — skip non-positive deltas.
+      if (delta <= 0) continue;
+      legs.push({ createdAt, delta });
+    }
+  }
+  return legs;
+}
+
+/**
+ * Per-original-day credit inflation (USD, ≥ 0) to SUBTRACT from each calendar
+ * day's "User Balance change" term in `getDailyPnl`. Keyed `YYYY-MM-DD` (UTC,
+ * matching getDailyPnl's `dayKey`); a day with no wiped-credit inflation has no
+ * entry (caller treats a missing key as 0). The amount for a day is
+ * `Σ (balance_after − balance_before)` over the in-scope deleted CREDIT legs
+ * whose `created_at` falls on that day — i.e. the exact rise the surviving-row
+ * sum still carries for the now-wiped credit, attributed to the credit's OWN
+ * day (NOT the wipe's `wiped_at`).
+ *
+ * GENERAL for any wiped user (not hardcoded). Fail-soft to an EMPTY map.
+ */
+export async function getDailyBalanceAdjustmentWipeCorrections(
+  since: Date,
+  scope: GlobalWipeCorrectionScope = {},
+): Promise<Map<string, number>> {
+  const byDay = new Map<string, number>();
+  const legs = await getInScopeWipedCreditLegs(since, scope);
+  for (const leg of legs) {
+    const dayKey = leg.createdAt.toISOString().slice(0, 10);
+    byDay.set(dayKey, (byDay.get(dayKey) ?? 0) + leg.delta);
+  }
+  return byDay;
+}
+
+/**
+ * Total credit inflation (USD, ≥ 0) to SUBTRACT from a ROLLING/period window's
+ * balance-Δ term, summed by EXACT `created_at ≥ since` (instant-precise — the
+ * same membership the windowed SQL's `created_at >= cutoff` uses, so a rolling
+ * window reconciles with the daily bars it spans). The windowed analogue of
+ * `getDailyBalanceAdjustmentWipeCorrections` for `calculateWindowedPnl` (→
+ * getTodayPnl / money-flow / cost-breakdown), `getPnlBreakdownWindows`, and the
+ * dashboard period card, so all global P&L consumers stay consistent: a window
+ * includes the correction IFF the credit's original-effective instant is in the
+ * window AND its user is in scope — exactly when the window's surviving-row sum
+ * still includes the credit's rise.
+ *
+ * GENERAL for any wiped user. Fail-soft to 0 (no correction).
+ */
+export async function getWindowedBalanceAdjustmentWipeCorrection(
+  since: Date,
+  scope: GlobalWipeCorrectionScope = {},
+): Promise<number> {
+  const legs = await getInScopeWipedCreditLegs(since, scope);
+  let total = 0;
+  for (const leg of legs) total += leg.delta;
+  return total;
 }

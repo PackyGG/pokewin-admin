@@ -12,6 +12,7 @@ import {
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { getRealizedPnlSnapshot } from "./_realized-pnl";
 import { getCreatorSessionWindowsCte } from "./creator-session-windows";
+import { getWindowedBalanceAdjustmentWipeCorrection } from "@/lib/account-wipes/rolling-pnl-correction";
 // Canonical metric layer (single source of truth for GGR / wager / payout
 // / scope). The dashboard's headline GGR + the GGR breakdown popover are
 // migrated onto these — the inline `wager − Σ payout(19)` formula (which
@@ -1323,7 +1324,20 @@ async function dashboardStatsInner(period: DashboardPeriod) {
   const depositsPeriod = num(pa.revenue);
   const cardWdPeriod = Math.abs(num(pa.withdrawal));
   const manualWdPeriod = num(pa.manual_wd);
-  const balanceChangePeriod = num(pa.balance_change);
+  // Remove fake-then-wiped admin-credit inflation from the period balance-Δ
+  // term. A wiped admin credit still inflates `balance_change` for the period
+  // spanning its ORIGINAL-effective day, because its +amount rise survives in
+  // the ledger sum while the wipe's atomic clawback wrote no ledger row.
+  // Attributed by the credit's own `created_at ≥ periodCutoff` (NOT the wipe's
+  // `wiped_at`), scoped to the SAME surviving-row scope as periodAggregates
+  // (admin/support + blacklist dropped; creators IN). Keeps the period P&L
+  // card consistent with the Daily-P&L chart + the windowed P&L breakdown +
+  // the "P&L Today" tile. See getWindowedBalanceAdjustmentWipeCorrection.
+  const balanceChangeWipeFix = await getWindowedBalanceAdjustmentWipeCorrection(
+    periodCutoff,
+    { excludeUserIds: excluded },
+  );
+  const balanceChangePeriod = num(pa.balance_change) - balanceChangeWipeFix;
   const wd = windowedPeriodDelta[0] ?? {
     inv_obtained: "0",
     inv_disposed: "0",
