@@ -37,6 +37,20 @@ import { InlineError } from "@/components/entity-surface";
 
 export const metadata = { title: "Pack Detail" };
 
+// Wall-clock bound for the pack-detail read. `getPackDetail` issues a
+// `findUnique` that pulls the pack's ENTIRE `pack_cards` pool (ordered by
+// `order`) in one shot — there is no `take`, so a pathologically large pool
+// (or a stalled DB connection) makes the read hang. A bare try/catch only
+// degrades a query that THROWS, never one that's merely SLOW: an unbounded
+// hang would block this segment until the platform kills the whole request,
+// which surfaces as the route-level "packs query failed" boundary crash
+// (digest white-screen) rather than the inline fallback below. Racing the read
+// against this timeout means BOTH a throw (enum/column drift on the live game
+// DB, connection blip) AND a slow/unbounded scan degrade to the inline error
+// block. Matches the deferred-section pattern (PackStatsLazy / GamesTabSection)
+// and the reward-insights REWARD_QUERY_TIMEOUT_MS.
+const DETAIL_QUERY_TIMEOUT_MS = 15_000;
+
 export default async function PackDetailPage({
   params,
   searchParams,
@@ -60,15 +74,23 @@ export default async function PackDetailPage({
   // first paint). getUserPermissions still runs AFTER the back-fill so a
   // freshly-granted __can_update_pack is visible in this request's read.
   //
-  // getPackDetail is wrapped in safeQuery so a runtime DB fault (connection
-  // blip, or a stale Prisma column on the live `packs` table that the
-  // worktree schema is ahead of) degrades to an inline error block instead of
-  // throwing out of the page body into the (admin) route error boundary — the
-  // documented white-screen. A genuine 404 (query OK, row absent) still falls
+  // getPackDetail is wrapped in safeQuery (with a wall-clock timeout) so a
+  // runtime DB fault (connection blip, or a stale Prisma column / enum value on
+  // the live `packs` table that the worktree schema is ahead of) OR a
+  // slow/unbounded `pack_cards` read degrades to an inline error block instead
+  // of throwing — or hanging — out of the page body into the (admin) route
+  // error boundary — the documented "packs query failed" white-screen (this
+  // segment has no [id]/error.tsx of its own, so a [id] failure surfaces on the
+  // parent /packs boundary). A genuine 404 (query OK, row absent) still falls
   // through to notFound() below. ensurePackCreatorCapabilities never re-throws
   // (it self-catches), so it stays a bare await.
   const [{ data, error: detailError }] = await Promise.all([
-    safeQuery(() => getPackDetail(id), null, "packs.detail"),
+    safeQuery(
+      () => getPackDetail(id),
+      null,
+      "packs.detail",
+      DETAIL_QUERY_TIMEOUT_MS,
+    ),
     ensurePackCreatorCapabilities(),
   ]);
   // Query threw → degrade in place (keep the back button + retry usable)
