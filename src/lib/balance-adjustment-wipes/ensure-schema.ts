@@ -37,8 +37,29 @@ let ensured = false;
  *   - balance_after    NUMERIC(20,2) NOT NULL
  *   - adjustment_count INT NOT NULL
  *   - snapshot         JSONB NOT NULL ({ userId, rows: ledger rows[] })
+ *   - status           VARCHAR(16) NOT NULL DEFAULT 'completed' (lifecycle: 'pending' | 'completed' | 'failed')
  *   - restored_at      TIMESTAMP(6) NULL
  *   - restored_by      VARCHAR(36) NULL
+ *
+ * LIFECYCLE STATUS (dual-DB consistency, added 2026-06-03) — same rationale
+ * and semantics as admin_account_wipes.status (see
+ * src/lib/account-wipes/ensure-schema.ts): the hard-delete commits to the
+ * MAIN game DB while the snapshot + the audit event are admin-DB writes that
+ * cannot share an atomic transaction. The status column makes a committed
+ * wipe reconcilable so a committed delete can never be left with a snapshot
+ * row but no audit row.
+ *   - 'pending'   — snapshot written, finalize (status→completed + audit) not
+ *                   yet confirmed in the admin DB.
+ *   - 'completed' — main-DB delete committed AND (in one admin-DB tx) the
+ *                   snapshot flipped to 'completed' + the audit row was
+ *                   written.
+ *   - 'failed'    — main-DB delete failed/rolled back (nothing deleted); the
+ *                   snapshot is kept in this terminal state instead of being
+ *                   silently dropped, and restore refuses it.
+ *
+ * BACK-COMPAT: DEFAULT 'completed' back-fills existing rows so listing +
+ * restore behave exactly as before for historical batches. The ALTER is
+ * additive + idempotent (ADD COLUMN IF NOT EXISTS).
  *
  * Indexes: user_id (per-user listing), wiped_at DESC (recent-first feed).
  *
@@ -62,9 +83,17 @@ export async function ensureBalanceAdjustmentWipesSchema(): Promise<void> {
         "balance_after"    NUMERIC(20, 2) NOT NULL,
         "adjustment_count" INTEGER NOT NULL,
         "snapshot"         JSONB NOT NULL,
+        "status"           VARCHAR(16) NOT NULL DEFAULT 'completed',
         "restored_at"      TIMESTAMP(6),
         "restored_by"      VARCHAR(36)
       )
+    `);
+    // Idempotent additive ALTER for the lifecycle status column (picks it up on
+    // an already-existing prod table; no-op once present). DEFAULT 'completed'
+    // back-fills every pre-existing batch to the back-compatible value.
+    await adminDb.$executeRawUnsafe(`
+      ALTER TABLE "admin_balance_adjustment_wipes"
+        ADD COLUMN IF NOT EXISTS "status" VARCHAR(16) NOT NULL DEFAULT 'completed'
     `);
     await adminDb.$executeRawUnsafe(`
       CREATE INDEX IF NOT EXISTS "admin_balance_adjustment_wipes_user_id_idx"

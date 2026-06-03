@@ -41,8 +41,37 @@ let ensured = false;
  *   - amount           NUMERIC(20,2) NOT NULL  (money removed; 0 for inventory)
  *   - item_count       INT NOT NULL DEFAULT 0  (rows removed; 0 for balance/vault)
  *   - snapshot         JSONB NOT NULL  (type-specific recovery payload)
+ *   - status           VARCHAR(16) NOT NULL DEFAULT 'completed'  (lifecycle: 'pending' | 'completed' | 'failed')
  *   - restored_at      TIMESTAMP(6) NULL
  *   - restored_by      VARCHAR(36) NULL
+ *
+ * LIFECYCLE STATUS (dual-DB consistency, added 2026-06-03) — the destructive
+ * delete commits to the MAIN game DB while the snapshot AND the audit event
+ * are written to the ADMIN DB. Those two DBs cannot share one atomic
+ * transaction, so a committed delete could previously be left with a snapshot
+ * row but NO audit-trail row if the post-commit audit write was interrupted
+ * (a real occurrence: a 678-row inventory wipe snapshot with no matching
+ * admin_audit_events row). The `status` column makes the wipe reconcilable:
+ *   - 'pending'   — snapshot written, destructive main-DB delete not yet
+ *                   confirmed-finalized in the admin DB. A row left in this
+ *                   state is the clearly-detectable "needs reconciliation"
+ *                   marker (NEVER a silently-missing audit row).
+ *   - 'completed' — the main-DB delete committed AND, in ONE admin-DB
+ *                   transaction, the snapshot was flipped to 'completed' and
+ *                   the admin_audit_events row was written. "committed delete
+ *                   ⇒ audit present" holds because both admin-DB writes are
+ *                   atomic together.
+ *   - 'failed'    — the main-DB delete failed/rolled back (nothing was
+ *                   deleted). The snapshot is kept (not silently dropped) in
+ *                   this terminal state so a spurious 'completed'+audit is
+ *                   never produced for a delete that did not happen; restore
+ *                   refuses it.
+ *
+ * BACK-COMPAT: the column DEFAULTs to 'completed' so EXISTING rows (which
+ * predate the column and were all successful committed wipes) keep their
+ * current restore/listing behaviour exactly. New wipes insert 'pending'
+ * explicitly and flip to 'completed'/'failed' per the lifecycle above. The
+ * ALTER is idempotent (ADD COLUMN IF NOT EXISTS) and additive only.
  *
  * Indexes: user_id (per-user listing), wiped_at DESC (recent-first feed).
  *
@@ -66,9 +95,21 @@ export async function ensureAccountWipesSchema(): Promise<void> {
         "amount"      NUMERIC(20, 2) NOT NULL DEFAULT 0,
         "item_count"  INTEGER NOT NULL DEFAULT 0,
         "snapshot"    JSONB NOT NULL,
+        "status"      VARCHAR(16) NOT NULL DEFAULT 'completed',
         "restored_at" TIMESTAMP(6),
         "restored_by" VARCHAR(36)
       )
+    `);
+    // Idempotent additive ALTER for the lifecycle status column. The CREATE
+    // above only fires when the table is absent, so an ALREADY-EXISTING table
+    // (every prod admin DB that ran an earlier build) needs this to pick up
+    // the new column. ADD COLUMN IF NOT EXISTS is a no-op once present. The
+    // DEFAULT 'completed' back-fills every pre-existing row to the
+    // back-compatible value (they were all successful committed wipes), so
+    // listing + restore behave exactly as before for historical rows.
+    await adminDb.$executeRawUnsafe(`
+      ALTER TABLE "admin_account_wipes"
+        ADD COLUMN IF NOT EXISTS "status" VARCHAR(16) NOT NULL DEFAULT 'completed'
     `);
     await adminDb.$executeRawUnsafe(`
       CREATE INDEX IF NOT EXISTS "admin_account_wipes_user_id_idx"

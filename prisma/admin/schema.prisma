@@ -786,6 +786,9 @@ model admin_balance_adjustment_wipes {
   // JSONB blob — { userId, rows: ledger_transactions[] }. Each row is the
   // full deleted ledger_transactions row, Decimal/Date → canonical string.
   snapshot         Json      @db.JsonB
+  // Lifecycle status (dual-DB audit consistency) — same semantics as
+  // admin_account_wipes.status. DEFAULT 'completed' back-fills existing rows.
+  status           String    @default("completed") @db.VarChar(16)
   // Null until restoreBalanceAdjustmentWipe runs. Once set the batch is
   // immutable + cannot be re-restored.
   restored_at      DateTime? @db.Timestamp(6)
@@ -831,6 +834,13 @@ model admin_account_wipes {
   // JSONB recovery payload — shape depends on wipe_type (see
   // src/lib/account-wipes/snapshot.ts). Decimal/Date → canonical string.
   snapshot    Json      @db.JsonB
+  // Lifecycle status (dual-DB audit consistency). 'pending' = snapshot
+  // written, finalize not yet confirmed; 'completed' = main-DB delete
+  // committed AND (atomically in the admin DB) status flipped + audit row
+  // written; 'failed' = main-DB delete failed, snapshot kept as a terminal
+  // marker (restore refuses it). DEFAULT 'completed' back-fills existing rows.
+  // See src/lib/account-wipes/ensure-schema.ts + finalize.ts.
+  status      String    @default("completed") @db.VarChar(16)
   // Null until the matching restore runs. Once set the wipe is immutable +
   // cannot be re-restored.
   restored_at DateTime? @db.Timestamp(6)
