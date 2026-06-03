@@ -11,6 +11,7 @@ import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { toNumber } from "@/lib/utils/decimal";
 import type { Prisma } from "@/generated/prisma/client";
 import { ensureAccountWipesSchema } from "@/lib/account-wipes/ensure-schema";
+import { invalidateMetricCaches } from "@/lib/account-wipes/invalidate-metric-caches";
 import {
   accountWipeSnapshotToJsonValue,
   type AccountWipeType,
@@ -375,7 +376,11 @@ export async function wipeBalance(data: {
     },
   });
 
+  // Refresh the user page AND bust the global metric caches so the now-zeroed
+  // balance drops out of the cached dashboard / P&L / analytics figures
+  // immediately (the live balance pool feeds the P&L on-site term).
   revalidatePath(`/users/${parsed.userId}`);
+  invalidateMetricCaches(parsed.userId);
   return { success: true, amountRemoved: balanceBefore, balanceBefore };
 }
 
@@ -518,7 +523,11 @@ export async function wipeVault(data: {
     },
   });
 
+  // Refresh the user page AND bust the global metric caches so the zeroed
+  // vault (locked_balance) drops out of the cached dashboard / P&L / analytics
+  // figures immediately (locked_balance feeds the P&L on-site term).
   revalidatePath(`/users/${parsed.userId}`);
+  invalidateMetricCaches(parsed.userId);
   return { success: true, amountRemoved: lockedBefore, lockedBefore };
 }
 
@@ -706,7 +715,13 @@ export async function wipeInventory(data: {
     },
   });
 
+  // Refresh the user page AND bust the global metric caches. The deleted
+  // rows' `value_at_obtained` feeds the canonical GGR inventory-payout leg
+  // (ggr.ts inv_leg) + the P&L inventory term — both are live-computed from
+  // user_inventory, so busting their caches makes the wipe count in the
+  // dashboard / GGR / analytics figures immediately.
   revalidatePath(`/users/${parsed.userId}`);
+  invalidateMetricCaches(parsed.userId);
   return { success: true, deletedCount: rows.length, totalValue };
 }
 
@@ -905,6 +920,10 @@ export async function restoreAccountWipe(
     },
   });
 
+  // Restore re-adds the balance / vault / inventory rows, so the global metric
+  // caches must be busted too — the restored value re-enters GGR / P&L /
+  // analytics, the exact reverse of the wipe.
   revalidatePath(`/users/${snapshot.userId}`);
+  invalidateMetricCaches(snapshot.userId);
   return { success: true };
 }

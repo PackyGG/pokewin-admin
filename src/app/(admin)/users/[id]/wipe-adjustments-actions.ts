@@ -19,6 +19,7 @@ import {
   isProtectedLedgerType,
   isCreatorRelatedAdjustment,
 } from "@/lib/account-wipes/protected";
+import { invalidateMetricCaches } from "@/lib/account-wipes/invalidate-metric-caches";
 
 // ---------------------------------------------------------------------------
 // "Wipe content balance adjustments" — remove ONLY admin balance-adjustment
@@ -592,7 +593,12 @@ export async function wipeBalanceAdjustments(data: {
     },
   });
 
+  // Refresh the user page AND bust the global metric caches. Deleting the
+  // admin_balance_adjustment rows + reducing available_balance changes the
+  // balance-adjustments insight surface AND the P&L on-site term, so the
+  // cached dashboard / analytics / insights figures must refresh immediately.
   revalidatePath(`/users/${parsed.userId}`);
+  invalidateMetricCaches(parsed.userId);
   return {
     success: true,
     deletedCount: guardedRows.length,
@@ -713,6 +719,9 @@ export async function restoreBalanceAdjustmentWipe(
     },
   });
 
+  // Restore re-inserts the adjustment rows + re-adds the balance, so the
+  // global metric caches must be busted too — the exact reverse of the wipe.
   revalidatePath(`/users/${snapshot.userId}`);
+  invalidateMetricCaches(snapshot.userId);
   return { success: true };
 }
