@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
+import { safeQueryOrNull } from "@/lib/errors/safe-query";
 import { FadeIn } from "@/components/fade-in";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
@@ -61,8 +62,10 @@ import {
   getLeaderboard2wkCostByUser,
   type Lb2wkInfo,
 } from "./_queries/leaderboard-cost";
+import { getTipsSponsorSpend } from "./_queries/tips-sponsor-spend";
 import { type CreatorWithSocials } from "./_components/creator-card-grid";
 import { LeaderboardSpendPanel } from "./_components/leaderboard-spend-tile";
+import { TipsSponsorSpendPanel } from "./_components/tips-sponsor-spend-tile";
 import { AddCreatorDialog } from "./_components/add-creator-dialog";
 import { CreatorsSearchProvider } from "./_components/creators-search-context";
 import { CreatorsSearchInput } from "./_components/creators-search-input";
@@ -119,9 +122,8 @@ export default async function CreatorsPage({
           freezing the page on stale numbers. The single tab-aware
           tile inside (Fill Creators / Multiplier Creators) flips
           label, value, and icon from the active tab's cached count.
-          Layout: 4 compact KPI tiles + a wider Leaderboard Spend panel
-          that spans 2 columns (its per-board mini-breakdown earns the
-          extra room). */}
+          Layout: 4 compact KPI tiles + two wider panels (Leaderboard
+          Spend + Tips & Sponsor Spend) that each span 2 columns. */}
       <Suspense
         key={`kpi-${params.tab}-${params.filter ?? ""}`}
         fallback={<CreatorsKpiStripSkeleton />}
@@ -220,12 +222,13 @@ export default async function CreatorsPage({
 // Tab-aware: ONE swap tile (Fill Creators / Multiplier Creators) — its
 // value, label, and icon flip from the cached per-tab count. The other
 // figures (Net Code-User GGR, Global PnL, Converted) stay tab-
-// independent. The Leaderboard Spend panel is the wide member of the
-// row — it spans 2 columns and carries a per-board mini-breakdown.
+// independent. Two wide panels (Leaderboard Spend + Tips & Sponsor
+// Spend) round out the strip — each spans 2 columns.
 //
 // Layout: 4 compact KpiTiles (swap / Net GGR / Global PnL / Converted)
-// + the 2-column Leaderboard Spend panel = 6 column-units on a 6-col
-// grid at xl, collapsing cleanly to a 4-col then 2-col grid below.
+// + the two 2-column panels (Leaderboard Spend + Tips & Sponsor Spend)
+// = 8 column-units on an 8-col grid at xl, collapsing cleanly to a
+// 4-col then 2-col grid below.
 
 async function CreatorsKpiStrip({
   tab,
@@ -273,29 +276,38 @@ async function CreatorsKpiStrip({
       ? getMultiplierCreatorCount()
       : getFillCreatorCount();
 
-  const [tabCount, stats, leaderboardCost] = await Promise.all([
-    tabCountPromise.catch((e) => {
-      console.error(
-        `[creators] ${tab} count fetch failed (tile renders '—'):`,
-        e,
-      );
-      return null;
-    }),
-    getCreatorsGlobalStats().catch((e) => {
-      console.error(
-        "[creators] global stats fetch failed (rendering tiles empty):",
-        e,
-      );
-      return null;
-    }),
-    getLeaderboardCostTotal().catch((e) => {
-      console.error(
-        "[creators] leaderboard cost fetch failed (box renders '—'):",
-        e,
-      );
-      return null;
-    }),
-  ]);
+  const [tabCount, stats, leaderboardCost, tipsSponsorSpendResult] =
+    await Promise.all([
+      tabCountPromise.catch((e) => {
+        console.error(
+          `[creators] ${tab} count fetch failed (tile renders '—'):`,
+          e,
+        );
+        return null;
+      }),
+      getCreatorsGlobalStats().catch((e) => {
+        console.error(
+          "[creators] global stats fetch failed (rendering tiles empty):",
+          e,
+        );
+        return null;
+      }),
+      getLeaderboardCostTotal().catch((e) => {
+        console.error(
+          "[creators] leaderboard cost fetch failed (box renders '—'):",
+          e,
+        );
+        return null;
+      }),
+      // Tips & sponsor spend — lifetime house cost of the creator-funded
+      // tips/sponsor pool (creator_fill_spend_tip + creator_fill_spend_battle).
+      // The query already filters via `type::text` so a not-yet-populated
+      // enum value can't error (the box reads $0 until the fill system is
+      // live); the safeQueryOrNull wrapper degrades any OTHER failure to
+      // null → the panel renders "—" instead of crashing the strip.
+      safeQueryOrNull(() => getTipsSponsorSpend(), "creators.tips-sponsor-spend"),
+    ]);
+  const tipsSponsorSpend = tipsSponsorSpendResult.data;
 
   // Tab-aware tile contents — flips label, icon, and accent based on
   // which tab program the user is viewing. Matches the icon set used
@@ -320,7 +332,7 @@ async function CreatorsKpiStrip({
         };
 
   return (
-    <div className="grid grid-cols-2 items-start gap-3 sm:grid-cols-4 xl:grid-cols-6">
+    <div className="grid grid-cols-2 items-start gap-3 sm:grid-cols-4 xl:grid-cols-8">
       {/* Swap tile — flips between Fill and Multiplier counts based on
           the active tab. Replaces the previous Fill + Multiplier pair
           of tiles (one of which always rendered "—" on the inactive
@@ -406,6 +418,19 @@ async function CreatorsKpiStrip({
           houseCoveredUsd={leaderboardCost?.houseCoveredUsd ?? null}
           boardCount={leaderboardCost?.boardCount ?? null}
           boards={leaderboardCost?.boards ?? []}
+        />
+      </div>
+      {/* Tips & Sponsor Spend — the second wide member of the strip (spans
+          2 cols at xl, alongside Leaderboard Spend; full width below). The
+          lifetime house cost of the creator-funded tips/sponsor pool, split
+          into its tip + battle-sponsorship legs (§3 of the creator model).
+          House-POV: house-funded → house cost → rose. Reads $0 until the
+          fill system is live (the underlying query is enum-safe). */}
+      <div className="col-span-2 sm:col-span-4 xl:col-span-2">
+        <TipsSponsorSpendPanel
+          tipSpendUsd={tipsSponsorSpend?.tipSpendUsd ?? null}
+          sponsorSpendUsd={tipsSponsorSpend?.sponsorSpendUsd ?? null}
+          totalUsd={tipsSponsorSpend?.totalUsd ?? null}
         />
       </div>
     </div>
@@ -733,7 +758,7 @@ async function CreatorsGridSection({
  */
 function CreatorsKpiStripSkeleton() {
   return (
-    <div className="grid grid-cols-2 items-start gap-3 sm:grid-cols-4 xl:grid-cols-6">
+    <div className="grid grid-cols-2 items-start gap-3 sm:grid-cols-4 xl:grid-cols-8">
       {Array.from({ length: 4 }).map((_, i) => (
         <div
           key={i}
@@ -746,10 +771,13 @@ function CreatorsKpiStripSkeleton() {
           <Skeleton className="mt-1.5 h-5 w-16 sm:mt-2 sm:h-6 sm:w-20" />
         </div>
       ))}
-      {/* Wider Leaderboard Spend panel — taller to reserve room for the
-          hero figure + the headline rows + the per-board mini-list. */}
+      {/* Two wider panels — Leaderboard Spend + Tips & Sponsor Spend. Taller
+          to reserve room for each hero figure + its breakdown rows. */}
       <div className="col-span-2 sm:col-span-4 xl:col-span-2">
         <Skeleton className="h-56 w-full rounded-xl sm:rounded-2xl" />
+      </div>
+      <div className="col-span-2 sm:col-span-4 xl:col-span-2">
+        <Skeleton className="h-40 w-full rounded-xl sm:rounded-2xl" />
       </div>
     </div>
   );
