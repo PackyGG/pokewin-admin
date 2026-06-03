@@ -1,14 +1,58 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { ArrowLeft, Wallet } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { adminDb } from "@/lib/admin-db";
 import { PageHero, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { TableSkeleton } from "@/components/loading-skeletons";
 import { Button } from "@/components/ui/button";
 import { BalanceLimitsOverview } from "./balance-limits-overview";
+import type { limit_period_type } from "@/generated/admin-prisma/client";
 
 export const metadata = { title: "Balance Limits" };
+
+type LimitRow = {
+  id: string;
+  adminUserId: string;
+  adminUsername: string;
+  adminEmail: string;
+  adminRole: string;
+  periodType: limit_period_type;
+  maxAmount: number;
+  setByUsername: string | null;
+  updatedAt: string;
+};
+
+/**
+ * Deferred table section. The cap `rows` are already shaped on the server
+ * (cheap — derived from the limits fetch the page already ran), but the
+ * "Add limit" dialog needs the full active-admin roster, which is the one
+ * extra query worth not blocking the hero/KPIs on. Streamed under its own
+ * Suspense so the hero + KPI strip paint immediately while this resolves.
+ */
+async function BalanceLimitsTableSection({ rows }: { rows: LimitRow[] }) {
+  // Every active admin — used by the "Add limit" dialog so a cap can be
+  // placed on any target, not only ones that already have one.
+  const allAdmins = await adminDb.admin_users.findMany({
+    where: { is_active: true },
+    select: { id: true, username: true, email: true, role: true },
+    orderBy: { username: "asc" },
+  });
+
+  return (
+    <BalanceLimitsOverview
+      rows={rows}
+      allAdmins={allAdmins.map((a) => ({
+        id: a.id,
+        username: a.username,
+        email: a.email,
+        role: a.role,
+      }))}
+    />
+  );
+}
 
 /**
  * Single-page audit + edit surface for every admin_balance_limits row
@@ -51,14 +95,6 @@ export default async function BalanceLimitsOverviewPage() {
       : [];
 
   const adminMap = new Map(admins.map((a) => [a.id, a]));
-
-  // Pull every admin user too — used for the "Add limit" dialog so the
-  // admin can pick any target, not just ones who already have caps.
-  const allAdmins = await adminDb.admin_users.findMany({
-    where: { is_active: true },
-    select: { id: true, username: true, email: true, role: true },
-    orderBy: { username: "asc" },
-  });
 
   const rows = limits.map((l) => {
     const target = adminMap.get(l.admin_user_id);
@@ -148,15 +184,12 @@ export default async function BalanceLimitsOverviewPage() {
       </div>
 
       <FadeIn>
-        <BalanceLimitsOverview
-          rows={rows}
-          allAdmins={allAdmins.map((a) => ({
-            id: a.id,
-            username: a.username,
-            email: a.email,
-            role: a.role,
-          }))}
-        />
+        <Suspense
+          key="balance-limits-table"
+          fallback={<TableSkeleton rows={6} columns={7} />}
+        >
+          <BalanceLimitsTableSection rows={rows} />
+        </Suspense>
       </FadeIn>
     </div>
   );

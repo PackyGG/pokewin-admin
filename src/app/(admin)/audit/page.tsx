@@ -5,7 +5,7 @@ import { requirePageAccess } from "@/lib/dal";
 import { AuditActivityTable } from "./audit-activity-table";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ToolbarSkeleton } from "@/components/loading-skeletons";
 import {
   PageHero,
   PageHeroIdentity,
@@ -121,7 +121,7 @@ export default async function AuditPage({
       <div className="space-y-3">
         <SectionHeading icon={ScrollText} title="Event Stream" />
         <FadeIn className="space-y-4">
-          <Suspense fallback={<Skeleton className="h-10 w-full" />}>
+          <Suspense fallback={<ToolbarSkeleton filters={1} />}>
             <DataTableToolbar
               searchPlaceholder="Search by admin or user username, user ID, or IP..."
               filters={[
