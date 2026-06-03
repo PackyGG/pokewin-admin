@@ -10,6 +10,7 @@ import {
   Globe2,
   Shield,
   Split,
+  FlaskConical,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LinkPendingShell } from "@/components/ux";
@@ -42,6 +43,7 @@ const TABS = [
   { value: "roi", label: "ROI & Geo", Icon: TrendingUp },
   { value: "risk", label: "Top & Risk", Icon: Shield },
   { value: "impact", label: "Impact", Icon: Split },
+  { value: "forecast", label: "Forecast", Icon: FlaskConical },
 ] as const;
 
 export type DepositBonusTab = (typeof TABS)[number]["value"];
