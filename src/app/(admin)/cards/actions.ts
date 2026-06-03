@@ -18,6 +18,7 @@ import {
   ONEPIECE_RARITY_VALUES,
   isOnePieceSetName,
 } from "./_constants/onepiece";
+import { TCGPLAYER_LINK_ERROR } from "./_constants/tcgplayer";
 
 // Pokemon rarities accepted by the create dialog. Kept in sync with
 // the POKEMON_RARITIES array in `create-card-button.tsx` — when one
@@ -142,6 +143,17 @@ export async function createCard(data: {
   if (isOnePiece) {
     if (!ONEPIECE_RARITY_VALUES.includes(input.rarity as never)) {
       return fail("Invalid OnePiece rarity", "VALIDATION");
+    }
+    // OnePiece cards require a TCGplayer product reference. The client form
+    // captures it as a product LINK and parses the numeric product id out
+    // of the URL before calling this action, so what arrives here is the
+    // integer id (there is no url/text column — only `tcgplayer_id Int?`,
+    // so the link is the INPUT/OUTPUT format and the id is what persists).
+    // Re-validate authoritatively: a present, positive integer id. A non-OP
+    // client tampering past the UI still can't create an OnePiece card
+    // without a valid product id.
+    if (input.tcgplayerId == null || input.tcgplayerId <= 0) {
+      return fail(TCGPLAYER_LINK_ERROR, "VALIDATION");
     }
   } else {
     if (!POKEMON_RARITY_VALUES.includes(input.rarity as never)) {

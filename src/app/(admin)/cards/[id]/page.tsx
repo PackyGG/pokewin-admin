@@ -39,6 +39,8 @@ import { DeleteCardButton } from "./delete-card-button";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { InlineError } from "@/components/entity-surface";
 import { isOnePieceSetName } from "../_constants/onepiece";
+import { tcgplayerProductUrl } from "../_constants/tcgplayer";
+import { ExternalLink } from "lucide-react";
 
 export const metadata = { title: "Card Detail" };
 
@@ -280,9 +282,30 @@ export default async function CardDetailPage({
                   label="Card #"
                   value={data.cardNumber ?? dash}
                 />
+                {/* TCGplayer reference. The product LINK is the operator
+                    input format, but only the integer product id is stored
+                    (no url column exists). We reconstruct the canonical
+                    product URL from the stored id — the original slug is not
+                    retained (accepted no-migration tradeoff) — and render it
+                    as a clickable link. Applies to OnePiece and any card
+                    with a tcgplayer_id set; falls back to a dash otherwise. */}
                 <PanelRow
-                  label="TCGPlayer ID"
-                  value={data.tcgplayerId != null ? String(data.tcgplayerId) : dash}
+                  label="TCGplayer"
+                  value={
+                    data.tcgplayerId != null ? (
+                      <a
+                        href={tcgplayerProductUrl(data.tcgplayerId)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-primary hover:underline"
+                      >
+                        View on TCGplayer
+                        <ExternalLink className="size-3" />
+                      </a>
+                    ) : (
+                      dash
+                    )
+                  }
                 />
                 <PanelRow
                   label="Card ID"

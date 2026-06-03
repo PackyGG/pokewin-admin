@@ -32,6 +32,10 @@ import {
   ONEPIECE_CARD_TYPE_OPTIONS,
   isOnePieceSetName,
 } from "./_constants/onepiece";
+import {
+  parseTcgplayerProductId,
+  TCGPLAYER_LINK_ERROR,
+} from "./_constants/tcgplayer";
 
 /**
  * Heavy body of the "Create Card" dialog, split out of <CreateCardButton>
@@ -265,6 +269,15 @@ export function CreateCardForm({
   const [opRarity, setOpRarity] = useState<string>("C");
   const [opType, setOpType] = useState<string>("Character");
 
+  // OnePiece TCGplayer reference is captured as the full product LINK (the
+  // operator pastes the tcgplayer.com URL). We parse the numeric product id
+  // out of it and store that in the existing `cards.tcgplayer_id Int?`
+  // column — there is no url/text column to keep the full URL, so the slug
+  // is dropped and the canonical link is reconstructed from the id on the
+  // detail page. Required for OnePiece. The Pokemon branch keeps using the
+  // numeric `tcgplayerId` state below (optional, raw id).
+  const [tcgLink, setTcgLink] = useState("");
+
   // Both variants use the ImageKit upload flow (file → CDN URL). We
   // track the selected file and its object-URL preview here.
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -310,6 +323,7 @@ export function CreateCardForm({
     setPower("");
     setOpRarity("C");
     setOpType("Character");
+    setTcgLink("");
 
     setImageFile(null);
     setImagePreview(null);
@@ -317,10 +331,16 @@ export function CreateCardForm({
 
   // Form validity — the submit button stays disabled until the required
   // fields are filled. Both variants now upload a file via ImageKit, so
-  // an uploaded image is required for either.
+  // an uploaded image is required for either. OnePiece additionally
+  // requires a valid TCGplayer product LINK (parsed to a product id on
+  // submit); Pokemon's TCGplayer id stays optional.
   const canSubmit = (() => {
     if (!name.trim()) return false;
-    return Boolean(imageFile);
+    if (!imageFile) return false;
+    if (variant === "onepiece" && parseTcgplayerProductId(tcgLink) == null) {
+      return false;
+    }
+    return true;
   })();
 
   function handleSubmit() {
@@ -331,6 +351,10 @@ export function CreateCardForm({
         let payloadHp: number;
         let payloadCost: number | null;
         let payloadPower: number | null;
+        // TCGplayer reference stored as a product id (Int). For OnePiece
+        // it's parsed from the pasted product LINK and is required; for
+        // Pokemon it's the optional raw numeric id.
+        let payloadTcgplayerId: number | null;
 
         // Both variants upload the selected file to ImageKit and submit
         // the resulting hosted URL.
@@ -338,7 +362,6 @@ export function CreateCardForm({
           toast.error("Image is required");
           return;
         }
-        const imageUrl = await uploadImageClient(imageFile, "/cards");
 
         if (variant === "pokemon") {
           payloadRarity = pokemonRarity;
@@ -346,6 +369,7 @@ export function CreateCardForm({
           payloadHp = parseInt(hp) || 0;
           payloadCost = null;
           payloadPower = null;
+          payloadTcgplayerId = tcgplayerId ? parseInt(tcgplayerId) : null;
         } else {
           payloadRarity = opRarity;
           payloadType = opType;
@@ -356,7 +380,19 @@ export function CreateCardForm({
           payloadHp = parseInt(opLife) || 0;
           payloadCost = null;
           payloadPower = power.trim() === "" ? null : parseInt(power);
+          // OnePiece requires a valid TCGplayer product LINK. Parse the
+          // product id out of the URL before we spend an ImageKit upload;
+          // the server re-validates this (authoritative). The slug is not
+          // kept — only the integer id is stored in `tcgplayer_id`.
+          const parsedTcg = parseTcgplayerProductId(tcgLink);
+          if (parsedTcg == null) {
+            toast.error(TCGPLAYER_LINK_ERROR);
+            return;
+          }
+          payloadTcgplayerId = parsedTcg;
         }
+
+        const imageUrl = await uploadImageClient(imageFile, "/cards");
 
         const result = await createCard({
           name,
@@ -365,7 +401,7 @@ export function CreateCardForm({
           hp: payloadHp,
           rarity: payloadRarity,
           artist,
-          tcgplayerId: tcgplayerId ? parseInt(tcgplayerId) : null,
+          tcgplayerId: payloadTcgplayerId,
           type: payloadType,
           cardNumber: cardNumber || null,
           setId: setId || null,
@@ -623,16 +659,49 @@ export function CreateCardForm({
                 step="0.01"
               />
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="create-card-tcg">TCGPlayer ID</Label>
-              <Input
-                id="create-card-tcg"
-                type="number"
-                value={tcgplayerId}
-                onChange={(e) => setTcgplayerId(e.target.value)}
-                placeholder="Optional"
-              />
-            </div>
+            {variant === "onepiece" ? (
+              // OnePiece: a REQUIRED TCGplayer product link. The product id
+              // is parsed out of the URL on submit and stored in
+              // `tcgplayer_id`; only the id is kept (slug is dropped).
+              <div className="space-y-1.5">
+                <Label htmlFor="create-card-tcg-link">TCGplayer Link</Label>
+                <Input
+                  id="create-card-tcg-link"
+                  type="url"
+                  inputMode="url"
+                  value={tcgLink}
+                  onChange={(e) => setTcgLink(e.target.value)}
+                  placeholder="https://www.tcgplayer.com/product/517800/..."
+                  aria-required="true"
+                  aria-invalid={
+                    tcgLink.trim() !== "" &&
+                    parseTcgplayerProductId(tcgLink) == null
+                  }
+                />
+                {tcgLink.trim() !== "" &&
+                parseTcgplayerProductId(tcgLink) == null ? (
+                  <p className="text-[11px] text-rose-600 dark:text-rose-400">
+                    {TCGPLAYER_LINK_ERROR}
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground">
+                    Paste the TCGplayer product URL. Required for OnePiece.
+                  </p>
+                )}
+              </div>
+            ) : (
+              // Pokemon: unchanged — optional raw numeric TCGplayer id.
+              <div className="space-y-1.5">
+                <Label htmlFor="create-card-tcg">TCGPlayer ID</Label>
+                <Input
+                  id="create-card-tcg"
+                  type="number"
+                  value={tcgplayerId}
+                  onChange={(e) => setTcgplayerId(e.target.value)}
+                  placeholder="Optional"
+                />
+              </div>
+            )}
           </div>
         </Section>
       </div>

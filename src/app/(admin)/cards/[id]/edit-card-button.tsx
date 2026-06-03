@@ -34,6 +34,12 @@ import { cn } from "@/lib/utils";
 import { updateCard } from "../actions";
 import { uploadImageClient } from "@/lib/upload-image-client";
 import { toastActionError } from "@/lib/utils/action-error";
+import { isOnePieceSetName } from "../_constants/onepiece";
+import {
+  parseTcgplayerProductId,
+  tcgplayerProductUrl,
+  TCGPLAYER_LINK_ERROR,
+} from "../_constants/tcgplayer";
 
 type CardData = {
   id: string;
@@ -224,6 +230,15 @@ export function EditCardButton({
   const [tcgplayerId, setTcgplayerId] = useState(
     card.tcgplayerId ? String(card.tcgplayerId) : "",
   );
+  // OnePiece cards edit the TCGplayer reference as a product LINK (same as
+  // the create form). Seed it from the stored id by reconstructing the
+  // canonical product URL — the original slug isn't stored, so this is the
+  // bare `/product/<id>` form. On save we re-parse the id out of the link
+  // and write it to `tcgplayer_id`. Pokemon keeps the raw numeric field
+  // (`tcgplayerId` state above) unchanged.
+  const [tcgLink, setTcgLink] = useState(
+    card.tcgplayerId ? tcgplayerProductUrl(card.tcgplayerId) : "",
+  );
   const [type, setType] = useState(card.type);
   const [cardNumber, setCardNumber] = useState(card.cardNumber ?? "");
   const [setId, setSetId] = useState(card.setId ?? "");
@@ -244,12 +259,33 @@ export function EditCardButton({
 
   const imageCleared = imagePreview === null && imageFile === null;
 
+  // OnePiece edit forks the TCGplayer field to a product LINK (like create).
+  // Driven by the card's current set name — the single source of truth used
+  // across the cards surfaces (isOnePieceSetName).
+  const isOnePiece = isOnePieceSetName(card.setName);
+
   function handleSubmit() {
     startTransition(async () => {
       try {
         if (imageCleared) {
           toast.error("Please select a new image");
           return;
+        }
+
+        // Resolve the TCGplayer product id to persist. OnePiece parses it
+        // from the pasted/edited LINK and requires a valid one; Pokemon
+        // keeps the optional raw numeric id. Only the integer reaches the
+        // DB column `tcgplayer_id` (no url column exists).
+        let payloadTcgplayerId: number | null;
+        if (isOnePiece) {
+          const parsedTcg = parseTcgplayerProductId(tcgLink);
+          if (parsedTcg == null) {
+            toast.error(TCGPLAYER_LINK_ERROR);
+            return;
+          }
+          payloadTcgplayerId = parsedTcg;
+        } else {
+          payloadTcgplayerId = tcgplayerId ? parseInt(tcgplayerId) : null;
         }
 
         let imageUrl = card.imageUrl;
@@ -265,7 +301,7 @@ export function EditCardButton({
           hp: parseInt(hp) || 0,
           rarity,
           artist,
-          tcgplayerId: tcgplayerId ? parseInt(tcgplayerId) : null,
+          tcgplayerId: payloadTcgplayerId,
           type,
           cardNumber: cardNumber || null,
           setId: setId || null,
@@ -465,16 +501,49 @@ export function EditCardButton({
                   step="0.01"
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="edit-card-tcg">TCGPlayer ID</Label>
-                <Input
-                  id="edit-card-tcg"
-                  type="number"
-                  value={tcgplayerId}
-                  onChange={(e) => setTcgplayerId(e.target.value)}
-                  placeholder="Optional"
-                />
-              </div>
+              {isOnePiece ? (
+                // OnePiece: edit as a REQUIRED TCGplayer product link. The
+                // product id is parsed from the URL on save and stored in
+                // `tcgplayer_id` (slug dropped, id only).
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-card-tcg-link">TCGplayer Link</Label>
+                  <Input
+                    id="edit-card-tcg-link"
+                    type="url"
+                    inputMode="url"
+                    value={tcgLink}
+                    onChange={(e) => setTcgLink(e.target.value)}
+                    placeholder="https://www.tcgplayer.com/product/517800/..."
+                    aria-required="true"
+                    aria-invalid={
+                      tcgLink.trim() !== "" &&
+                      parseTcgplayerProductId(tcgLink) == null
+                    }
+                  />
+                  {tcgLink.trim() !== "" &&
+                  parseTcgplayerProductId(tcgLink) == null ? (
+                    <p className="text-[11px] text-rose-600 dark:text-rose-400">
+                      {TCGPLAYER_LINK_ERROR}
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-muted-foreground">
+                      Paste the TCGplayer product URL. Required for OnePiece.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                // Pokemon: unchanged — optional raw numeric TCGplayer id.
+                <div className="space-y-1.5">
+                  <Label htmlFor="edit-card-tcg">TCGPlayer ID</Label>
+                  <Input
+                    id="edit-card-tcg"
+                    type="number"
+                    value={tcgplayerId}
+                    onChange={(e) => setTcgplayerId(e.target.value)}
+                    placeholder="Optional"
+                  />
+                </div>
+              )}
             </div>
           </Section>
         </div>
@@ -489,7 +558,12 @@ export function EditCardButton({
           </Button>
           <Button
             onClick={handleSubmit}
-            disabled={isPending || !name || imageCleared}
+            disabled={
+              isPending ||
+              !name ||
+              imageCleared ||
+              (isOnePiece && parseTcgplayerProductId(tcgLink) == null)
+            }
           >
             {isPending ? (
               <>
