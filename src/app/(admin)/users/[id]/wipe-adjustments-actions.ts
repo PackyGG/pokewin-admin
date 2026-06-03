@@ -15,6 +15,10 @@ import {
   wipeSnapshotToJsonValue,
   type BalanceAdjustmentWipeSnapshot,
 } from "@/lib/balance-adjustment-wipes/snapshot";
+import {
+  isProtectedLedgerType,
+  isCreatorRelatedAdjustment,
+} from "@/lib/account-wipes/protected";
 
 // ---------------------------------------------------------------------------
 // "Wipe content balance adjustments" — remove ONLY admin balance-adjustment
@@ -129,7 +133,12 @@ const userIdSchema = z.string().min(1, "User id is required");
  * Filters to the genuine "Admin adjustment:" CREDIT subset — manual
  * withdrawals (same ledger type, different prefix) AND debit adjustments
  * (amount <= 0, see SIGN RULE) are excluded so they can never be selected
- * for deletion (wiping a debit would re-credit the user).
+ * for deletion (wiping a debit would re-credit the user). On top of that,
+ * any credit whose reason / metadata ties it to a CREATOR DEAL / payout
+ * (e.g. the real prod row "Admin adjustment: weekly deal") is also excluded
+ * via `isCreatorRelatedAdjustment` so deal money entered by hand through the
+ * Adjust-Balance dialog can never be wiped (the wipe protects all
+ * creator-deal data — see src/lib/account-wipes/protected.ts).
  */
 export async function listWipeableAdjustments(
   userId: string,
@@ -147,7 +156,8 @@ export async function listWipeableAdjustments(
   // other future prefix; `amount > 0` excludes debit adjustments (SIGN
   // RULE — wiping a debit reverses a deduction and re-adds money). status =
   // completed mirrors how the rows are written (and how the insights
-  // surface counts them).
+  // surface counts them). `metadata` is pulled so the creator-deal carve-out
+  // can inspect structured deal tags, not just the reason text.
   const rows = await db.ledger_transactions.findMany({
     where: {
       user_id: parsed.data,
@@ -158,17 +168,23 @@ export async function listWipeableAdjustments(
     },
     orderBy: { created_at: "desc" },
     take: MAX_BATCH,
-    select: { id: true, amount: true, description: true, created_at: true },
+    select: { id: true, amount: true, description: true, metadata: true, created_at: true },
   });
 
   return {
     success: true,
-    rows: rows.map((r) => ({
-      id: r.id,
-      amount: toNumber(r.amount),
-      reason: r.description.slice(ADJ_DESC_PREFIX.length),
-      createdAt: r.created_at.toISOString(),
-    })),
+    rows: rows
+      // CREATOR-DEAL CARVE-OUT: never list a credit tied to a creator deal /
+      // payout. The user-facing wipe protects all creator-deal data, so a
+      // deal credit entered via Adjust-Balance is filtered out here AND
+      // hard-rejected by the in-tx guard below if its id is injected.
+      .filter((r) => !isCreatorRelatedAdjustment(r.description, r.metadata))
+      .map((r) => ({
+        id: r.id,
+        amount: toNumber(r.amount),
+        reason: r.description.slice(ADJ_DESC_PREFIX.length),
+        createdAt: r.created_at.toISOString(),
+      })),
   };
 }
 
@@ -334,6 +350,16 @@ export async function wipeBalanceAdjustments(data: {
       if (row.user_id !== parsed.userId) {
         throw new Error("WIPE_GUARD: a selected row does not belong to this user");
       }
+      // PROTECTED-TYPE GUARD (fail-closed): a deposit / withdrawal /
+      // affiliate_claim / any creator-deal or affiliate-leaderboard ledger
+      // type must NEVER be deletable by a wipe. None of these is an
+      // `admin_balance_adjustment`, so the `row.type !== ADJ_TYPE` check
+      // below already rejects them — but assert the protected set
+      // explicitly so the protection is obvious and can't regress if the
+      // type filter is ever loosened.
+      if (isProtectedLedgerType(row.type)) {
+        throw new Error("WIPE_GUARD: a selected row is protected financial/creator data and cannot be wiped");
+      }
       if (row.type !== ADJ_TYPE) {
         throw new Error("WIPE_GUARD: a selected row is not a balance adjustment");
       }
@@ -351,6 +377,15 @@ export async function wipeBalanceAdjustments(data: {
       if (toNumber(row.amount) <= 0) {
         throw new Error(
           "WIPE_GUARD: a selected row is a debit (clawback/withdrawal) — only credit adjustments can be wiped",
+        );
+      }
+      // CREATOR-DEAL CARVE-OUT (fail-closed): an admin adjustment whose
+      // reason / metadata ties it to a creator deal / payout (e.g. "Admin
+      // adjustment: weekly deal") is protected even though it is an
+      // admin_balance_adjustment credit. A single such id aborts the batch.
+      if (isCreatorRelatedAdjustment(row.description, row.metadata)) {
+        throw new Error(
+          "WIPE_GUARD: a selected adjustment is tied to a creator deal / payout and is protected — it cannot be wiped",
         );
       }
     }
@@ -441,6 +476,37 @@ export async function wipeBalanceAdjustments(data: {
   // credit set even under a race.
   try {
     await db.$transaction(async (tx) => {
+      // RE-GUARD INSIDE THE TX (authoritative): re-read the exact rows and
+      // re-run the full per-row guard — protected-type + genuine-credit +
+      // SIGN RULE + creator-deal carve-out — on the live data before
+      // deleting. The deleteMany predicate below can encode type/prefix/sign
+      // in SQL but NOT the keyword-based creator-deal carve-out, so this
+      // in-tx re-check is what makes that carve-out fail-closed against a
+      // concurrent edit (e.g. a reason changed to "weekly deal" between the
+      // STEP 3 read and now). Any violation aborts the whole tx → nothing
+      // deleted, orphan snapshot cleaned up in STEP 6.
+      const live = await tx.ledger_transactions.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, user_id: true, type: true, status: true, description: true, amount: true, metadata: true },
+      });
+      if (live.length !== ids.length) {
+        throw new Error("WIPE_GUARD: delete count mismatch — refresh and retry");
+      }
+      for (const row of live) {
+        if (
+          row.user_id !== parsed.userId ||
+          isProtectedLedgerType(row.type) ||
+          row.type !== ADJ_TYPE ||
+          row.status !== "completed" ||
+          !row.description.startsWith(ADJ_DESC_PREFIX) ||
+          row.description.startsWith(MANUAL_WD_DESC_PREFIX) ||
+          toNumber(row.amount) <= 0 ||
+          isCreatorRelatedAdjustment(row.description, row.metadata)
+        ) {
+          throw new Error("WIPE_GUARD: a selected row is protected and cannot be wiped — refresh and retry");
+        }
+      }
+
       const del = await tx.ledger_transactions.deleteMany({
         where: {
           id: { in: ids },

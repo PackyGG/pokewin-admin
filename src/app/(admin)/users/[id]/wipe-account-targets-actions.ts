@@ -20,6 +20,30 @@ import {
   type InventoryWipeSnapshot,
 } from "@/lib/account-wipes/snapshot";
 
+// ───────────────────────────────────────────────────────────────────────────
+// PROTECTED-DATA NOTE (creator deals + real finance) — see
+// src/lib/account-wipes/protected.ts for the full, shared definition.
+//
+//  • BALANCE / VAULT wipes zero a FUNGIBLE pool (`available_balance` /
+//    `locked_balance`). There is no per-dollar tag, so if a creator-deal
+//    payout has been redeemed/converted into spendable or locked balance it
+//    is part of that pool and WOULD be included. The model does not tag deal
+//    balance separately, so per the task we DISCLOSE this in the preview
+//    (`dealBalanceDisclosure` below) rather than silently separating it.
+//
+//  • INVENTORY wipe deletes `user_inventory` rows. `user_inventory.source_type`
+//    is the enum { pack, reward, battle, exchange, raffle, upgrader } — there
+//    is NO creator-deal source. Creator-deal payouts materialize as VOUCHERS
+//    (`voucher_origin` includes creator_fill_conversion / creator_multiplier_
+//    payout), never as inventory rows, and this wipe never touches the
+//    `vouchers` table. So inventory is purely the user's own won/granted
+//    cards — there is no creator-deal item subset to exclude. The preview
+//    surfaces the per-source breakdown so the admin can see exactly that.
+//
+//  • The ADJUSTMENTS wipe (separate file) is the only mode that deletes
+//    ledger rows; its protected-type + creator-deal guards live there.
+// ───────────────────────────────────────────────────────────────────────────
+
 // ---------------------------------------------------------------------------
 // Generalized account-wipe targets — three NEW recoverable wipes that sit
 // alongside the existing "content balance adjustments" wipe
@@ -77,16 +101,39 @@ const userIdSchema = z.string().min(1, "User id is required");
 
 export type BalanceWipePreview = {
   availableBalance: number;
+  /**
+   * True when there is a non-zero fungible balance that will be zeroed. The
+   * dialog uses this to show the "any creator-deal balance sitting in
+   * spendable balance is INCLUDED (fungible — can't be separated)"
+   * disclosure before approval (Task 2 / protected.ts note).
+   */
+  dealBalanceDisclosure: boolean;
 };
 
 export type VaultWipePreview = {
   lockedBalance: number;
   unlockAt: string | null;
+  /** Same fungible-balance disclosure flag as balance, for the vault pool. */
+  dealBalanceDisclosure: boolean;
+};
+
+/** One row of the inventory source breakdown shown in the preview. */
+export type InventorySourceBreakdown = {
+  source: string;
+  count: number;
+  value: number;
 };
 
 export type InventoryWipePreview = {
   itemCount: number;
   totalValue: number;
+  /**
+   * Per-`source_type` breakdown of the rows that will be deleted. Lets the
+   * admin see EXACTLY what is being removed and confirms there is no
+   * creator-deal source in inventory (deal payouts are vouchers, never
+   * inventory) — every row is a won/granted card (pack/battle/reward/…).
+   */
+  bySource: InventorySourceBreakdown[];
 };
 
 /** Current spendable balance the "wipe balance" action would zero. */
@@ -104,7 +151,11 @@ export async function previewBalanceWipe(
     select: { available_balance: true },
   });
   if (!b) return { success: false, error: "User balances not found" };
-  return { success: true, preview: { availableBalance: toNumber(b.available_balance) } };
+  const availableBalance = toNumber(b.available_balance);
+  return {
+    success: true,
+    preview: { availableBalance, dealBalanceDisclosure: availableBalance > 0 },
+  };
 }
 
 /** Current vault (locked_balance) + unlock window the "wipe vault" action would clear. */
@@ -122,16 +173,24 @@ export async function previewVaultWipe(
     select: { locked_balance: true, unlock_at: true },
   });
   if (!b) return { success: false, error: "User balances not found" };
+  const lockedBalance = toNumber(b.locked_balance);
   return {
     success: true,
     preview: {
-      lockedBalance: toNumber(b.locked_balance),
+      lockedBalance,
       unlockAt: b.unlock_at?.toISOString() ?? null,
+      dealBalanceDisclosure: lockedBalance > 0,
     },
   };
 }
 
-/** Count + summed value_at_obtained of the user_inventory rows the wipe would delete. */
+/**
+ * Count + summed value_at_obtained of the user_inventory rows the wipe would
+ * delete, plus a per-source breakdown. The breakdown is itemized for the
+ * pre-approval preview and confirms the inventory holds only won/granted
+ * cards (source_type ∈ pack/battle/reward/exchange/raffle/upgrader) — there
+ * is no creator-deal source, so nothing protected is in inventory.
+ */
 export async function previewInventoryWipe(
   userId: string,
 ): Promise<{ success: true; preview: InventoryWipePreview } | { success: false; error: string }> {
@@ -141,16 +200,29 @@ export async function previewInventoryWipe(
     return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid user id" };
   }
   const db = await getDb();
-  const [count, agg] = await Promise.all([
-    db.user_inventory.count({ where: { user_id: parsed.data } }),
-    db.user_inventory.aggregate({
-      where: { user_id: parsed.data },
-      _sum: { value_at_obtained: true },
-    }),
-  ]);
+  const grouped = await db.user_inventory.groupBy({
+    by: ["source_type"],
+    where: { user_id: parsed.data },
+    _count: { _all: true },
+    _sum: { value_at_obtained: true },
+  });
+
+  let itemCount = 0;
+  let totalValue = 0;
+  const bySource: InventorySourceBreakdown[] = [];
+  for (const g of grouped) {
+    const count = g._count._all;
+    const value = toNumber(g._sum.value_at_obtained);
+    itemCount += count;
+    totalValue += value;
+    bySource.push({ source: String(g.source_type), count, value });
+  }
+  // Newest/largest groups first so the preview reads cleanly.
+  bySource.sort((a, b) => b.count - a.count);
+
   return {
     success: true,
-    preview: { itemCount: count, totalValue: toNumber(agg._sum.value_at_obtained) },
+    preview: { itemCount, totalValue, bySource },
   };
 }
 
@@ -537,6 +609,16 @@ export async function wipeInventory(data: {
   const inventoryIds = rows.map((r) => r.id);
   const totalValue = rows.reduce((acc, r) => acc + toNumber(r.value_at_obtained), 0);
 
+  // Per-source breakdown (from the rows we already read — no extra query) for
+  // the audit trail. Confirms the deleted set is only won/granted cards
+  // (source_type ∈ pack/battle/reward/exchange/raffle/upgrader); there is no
+  // creator-deal source in inventory (deal payouts are vouchers).
+  const countBySource: Record<string, number> = {};
+  for (const r of rows) {
+    const s = String(r.source_type);
+    countBySource[s] = (countBySource[s] ?? 0) + 1;
+  }
+
   const userMeta = await db.user
     .findUnique({ where: { id: parsed.userId }, select: { username: true, email: true } })
     .catch(() => null);
@@ -618,8 +700,9 @@ export async function wipeInventory(data: {
       wipeId,
       deletedCount: rows.length,
       totalValue,
+      countBySource,
       recoverable: true,
-      note: "user_inventory rows deleted (their provably_fair_results cascade-delete and are NOT re-created on restore — historical PF leaf data, same tradeoff as deleted-user restore); value_at_obtained feeds GGR inv-leg (restorable)",
+      note: "user_inventory rows deleted (their provably_fair_results cascade-delete and are NOT re-created on restore — historical PF leaf data, same tradeoff as deleted-user restore); value_at_obtained feeds GGR inv-leg (restorable). Inventory has no creator-deal source — deal payouts are vouchers, not inventory, and are untouched.",
     },
   });
 

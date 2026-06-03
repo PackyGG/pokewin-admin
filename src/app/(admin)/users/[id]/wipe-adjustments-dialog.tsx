@@ -7,6 +7,7 @@ import {
   Eraser,
   Loader2,
   ShieldAlert,
+  ShieldCheck,
   Search,
   RotateCcw,
   ArrowRight,
@@ -36,6 +37,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { formatCurrency, formatDateTime, formatRelative } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { WIPE_PRESERVED_SUMMARY } from "@/lib/account-wipes/protected";
 import {
   listWipeableAdjustments,
   listBalanceAdjustmentWipes,
@@ -392,7 +394,7 @@ function WipeAdjustmentsDialog({
               </p>
             </div>
 
-            {/* Compact recap of the selected rows */}
+            {/* WILL DELETE — itemized recap of the exact selected rows. */}
             <div className="max-h-44 overflow-y-auto rounded-md border divide-y">
               {selectedRows.map((r) => (
                 <div
@@ -415,6 +417,18 @@ function WipeAdjustmentsDialog({
                   </span>
                 </div>
               ))}
+            </div>
+
+            {/* WILL NOT TOUCH — explicit preserved reassurance (same promise
+                the server-side protected-type + creator-deal guards enforce). */}
+            <div className="rounded-md border border-emerald-500/30 bg-emerald-500/[0.05] p-3 text-sm">
+              <p className="flex items-start gap-2 text-emerald-600 dark:text-emerald-400">
+                <ShieldCheck className="mt-0.5 size-4 shrink-0" />
+                <span>
+                  <span className="font-semibold">Will NOT be touched.</span>{" "}
+                  {WIPE_PRESERVED_SUMMARY}
+                </span>
+              </p>
             </div>
 
             <div className="space-y-1">
