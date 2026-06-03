@@ -68,6 +68,12 @@ export function ExcludedUsersClient({
           userId: trimmed,
           reason: reason.trim() || undefined,
         });
+        // Validation failures come back as a structured result (HTTP 200)
+        // rather than a thrown 500 — surface the message as an error toast.
+        if (!result.ok) {
+          toast.error(result.error);
+          return;
+        }
         if (result.inserted === 0) {
           toast.info("That user ID is already excluded");
         } else {
@@ -254,7 +260,12 @@ function RemoveButton({
   function handleRemove() {
     startTransition(async () => {
       try {
-        await removeExcludedUser(userId);
+        const result = await removeExcludedUser(userId);
+        if (!result.ok) {
+          toast.error(result.error);
+          setOpen(false);
+          return;
+        }
         toast.success("User un-excluded — metrics will include their activity again");
         setOpen(false);
         router.refresh();
