@@ -18,6 +18,7 @@ export function DataTablePagination({
   perPage,
   pageKey = "page",
   perPageKey = "perPage",
+  degraded = false,
 }: {
   page: number;
   totalPages: number;
@@ -27,6 +28,15 @@ export function DataTablePagination({
   pageKey?: string;
   /** URL search-param key holding the rows-per-page value. */
   perPageKey?: string;
+  /**
+   * Set when the list query failed/timed out (e.g. via safeQuery, which
+   * returns an empty fallback with `total = 0`). In that case "0 results"
+   * is misleading — it reads as "the filter matched nothing" right next to
+   * an error notice that says the query couldn't load. When `degraded` is
+   * true the count line shows "Results unavailable" instead. Defaults to
+   * false so existing callers keep their exact behavior.
+   */
+  degraded?: boolean;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -41,7 +51,9 @@ export function DataTablePagination({
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-4">
       <p className="text-xs sm:text-sm text-muted-foreground">
-        {total} result{total !== 1 ? "s" : ""}
+        {degraded
+          ? "Results unavailable"
+          : `${total} result${total !== 1 ? "s" : ""}`}
       </p>
       {/* Mobile: simple Prev / Page X of Y / Next */}
       <div className="flex items-center gap-2 sm:hidden">

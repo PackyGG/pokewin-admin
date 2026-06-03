@@ -256,12 +256,15 @@ export default async function UsersPage({
             </div>
           )}
           <UsersDataTable data={result.data} />
-          <DataTablePagination
-            page={result.page}
-            totalPages={result.totalPages}
-            total={result.total}
-            perPage={result.perPage}
-          />
+          <FadeIn speed="fast">
+            <DataTablePagination
+              page={result.page}
+              totalPages={result.totalPages}
+              total={result.total}
+              perPage={result.perPage}
+              degraded={listFailed}
+            />
+          </FadeIn>
         </FadeIn>
       </div>
     </div>
