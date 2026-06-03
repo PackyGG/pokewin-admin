@@ -14,15 +14,17 @@ import {
   ListOrdered,
   Activity,
   Users,
+  Wallet,
+  PiggyBank,
+  Layers,
+  HandCoins,
+  type LucideIcon,
 } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import {
   PageHero,
   PageHeroIdentity,
   SectionHeading,
-  KpiTile,
-  TILE_COLORS,
-  type AccentColor,
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { ExportButton } from "@/components/export-button";
@@ -42,37 +44,52 @@ import {
 } from "@/lib/queries/insights-analytics/cost-breakdown";
 import { CostBreakdownPeriodFilter } from "./period-filter";
 import { CostTrendChart } from "./trend-chart";
-import { WaterfallRow } from "./waterfall-row";
+import { WaterfallRow, WaterfallBand } from "./waterfall-row";
+import {
+  MetricInfoPopover,
+  InfoRow,
+  InfoTotal,
+  ValueChip,
+  SEMANTIC_TONES,
+  type SemanticTone,
+} from "./_components";
 
 export const metadata = { title: "Cost Breakdown" };
 
 /**
- * /insights/cost-breakdown — THE money-leakage page.
+ * /insights/cost-breakdown — THE money-leakage page, rebuilt
+ * comprehension-first.
  *
- * Answers the operator's recurring question: "$2.5M wagered but only
- * $17k P&L — where does all the money go?" One waterfall ties total
- * wager → GGR → NGR → realized P&L, itemizing every cost / leakage
- * category in between, each with its dollar amount, %-of-GGR, and
- * %-of-wager so the biggest leak is obvious.
+ * It answers, at a glance, the operator's recurring question — "$2.5M
+ * wagered but only $17k P&L, where does the money go?" — in a strict
+ * reading order:
  *
- * Every gaming-margin number comes from the canonical `@/lib/metrics`
- * layer (getCostBreakdown → getWindowMetrics + sumLedgerTypes +
- * calculateWindowedPnl), so the figures reconcile by construction with
- * /ggr, /dashboard, and every other migrated surface — there is exactly
- * one definition of GGR/NGR site-wide and this page calls it. GGR is the
- * verified inventory-delta model (card conversions are NEUTRAL, not a
- * payout); NGR nets house-funded rewards (creator tips are a RESIDUAL
- * pass-through, not a cost; affiliate-leaderboard prizes ARE a cost).
+ *   1. A plain-language STORY LEAD (the headline answer + biggest leak +
+ *      the realized-vs-held distinction, chunked into scannable lines).
+ *   2. A SUMMARY grouped into semantic sections — Incoming value → Paid
+ *      back & costs → Held / unrealized → Realized outcome — where the
+ *      realized result and the biggest driver stand out most.
+ *   3. The WATERFALL (wager → GGR → −costs → NGR → −held → realized P&L)
+ *      as grouped bands with emphasised checkpoints, not a flat list.
+ *   4. Detail rows (ranked leaks, margin health, contributors, trend)
+ *      only AFTER the high-level story.
  *
- * House-POV throughout (CLAUDE.md): money flowing BACK to users (every
- * cost line) is rose; the house's gross/net margin (GGR/NGR) and
- * realized P&L are emerald when positive, rose when negative. Inventory
- * + voucher liability are surfaced as prominent first-class lines because
- * they're the big "hidden" leaks the operator keeps not seeing — GGR can
- * be positive while P&L is thin precisely because users are holding cards
- * (unrealized winnings the house still owes). Every RESIDUAL_TYPES ledger
- * flow is itemized as a named bridge row, so the old catch-all "residual"
- * shrinks to a small honest rounding/timing remainder.
+ * The financial logic is UNCHANGED: every figure still comes from
+ * `getCostBreakdown` (an assembly of the canonical `@/lib/metrics` layer:
+ * getWindowMetrics + sumLedgerTypes + calculateWindowedPnl), so the page
+ * reconciles by construction with /ggr, /dashboard and every migrated
+ * surface. GGR is the verified inventory-delta model; NGR nets
+ * house-funded rewards; the contributors net comes from the authoritative
+ * `balances` counters. This remake is presentation/IA only.
+ *
+ * House-POV throughout (CLAUDE.md), but with a colour HIERARCHY:
+ *   • base wager → blue;
+ *   • money the house keeps (GGR/NGR/P&L positive) → emerald;
+ *   • realized money-back (gaming payouts, rewards, shipped cards) → rose;
+ *   • HELD / unrealized liability (inventory still held, unclaimed
+ *     vouchers) → amber — deliberately NOT the same red as a realized
+ *     loss, because it can still come back; and
+ *   • the honest leftover → muted.
  */
 export default async function CostBreakdownPage({
   searchParams,
@@ -98,7 +115,7 @@ export default async function CostBreakdownPage({
             icon={TrendingDown}
             accent="rose"
             title="Cost Breakdown"
-            subtitle="Where the wager goes — full P&L leakage analysis"
+            subtitle="Where the wager goes — wager → realized P&L, every leak named"
           />
           <div className="flex flex-wrap items-center gap-2">
             <CostBreakdownPeriodFilter />
@@ -116,13 +133,20 @@ export default async function CostBreakdownPage({
       ) : (
         <FadeIn>
           <div className="space-y-6">
-            <Narrative data={data} periodLabel={periodLabel} />
-            <HeroKpis data={data} periodLabel={periodLabel} />
+            <StoryLead data={data} periodLabel={periodLabel} />
+
+            <section className="space-y-3">
+              <SectionHeading
+                icon={Layers}
+                title={`The story in four moves · ${periodLabel}`}
+              />
+              <SummaryFlow data={data} periodLabel={periodLabel} />
+            </section>
 
             <section className="space-y-3">
               <SectionHeading
                 icon={Scale}
-                title={`The waterfall — wager → P&L · ${periodLabel}`}
+                title={`The waterfall — wager → realized P&L · ${periodLabel}`}
               />
               <WaterfallPanel data={data} />
             </section>
@@ -130,7 +154,7 @@ export default async function CostBreakdownPage({
             <section className="space-y-3">
               <SectionHeading
                 icon={ListOrdered}
-                title={`Cost categories ranked · ${periodLabel}`}
+                title={`Cost categories ranked — biggest leak first · ${periodLabel}`}
               />
               <RankedCosts data={data} />
             </section>
@@ -169,142 +193,497 @@ export default async function CostBreakdownPage({
   );
 }
 
-// ─── Narrative ──────────────────────────────────────────────────────
+// ─── Story lead ─────────────────────────────────────────────────────
 
 /**
- * The headline answer in plain English. Names the gross margin, the
- * total handed back, the share tied up in inventory/vouchers, the
- * realized P&L, and the single biggest leak.
+ * The headline answer in plain English, chunked into short scannable
+ * lines instead of one dense wall: the gross margin captured, what went
+ * back to users, what's held/unrealized, the realized P&L, then the
+ * single biggest leak + the held-liability caveat (why GGR can look
+ * healthy while realized P&L stays thin).
  */
-function Narrative({
+function StoryLead({
   data,
   periodLabel,
 }: {
   data: CostBreakdown;
   periodLabel: string;
 }) {
-  const heldUp = data.inventoryDelta + data.voucherDelta;
+  const held = data.inventoryDelta + data.voucherDelta;
   const backToUsers =
     data.gamingPayouts + data.rewardPayouts + data.cardWithdrawals;
   const leak = data.biggestLeak;
+  const pnlPos = data.pnl >= 0;
+  const ggrPos = data.ggr >= 0;
   return (
-    <div className="rounded-2xl border border-rose-500/20 bg-rose-500/[0.04] p-4 sm:p-5">
-      <div className="flex items-start gap-3">
+    <div className="overflow-hidden rounded-2xl border bg-card ring-1 ring-foreground/10">
+      <div className="flex items-start gap-3 border-b bg-muted/30 px-4 py-3 sm:px-5">
         <div className="shrink-0 rounded-lg border border-rose-500/30 bg-rose-500/10 p-2">
           <TrendingDown className="size-4 text-rose-500" />
         </div>
-        <div className="space-y-1.5 text-sm leading-relaxed">
-          <p>
-            Of{" "}
-            <span className="font-semibold">
-              {formatCurrency(data.totalWager)}
-            </span>{" "}
-            wagered in {periodLabel.toLowerCase()}, the house edge captured{" "}
-            <span className="font-semibold text-emerald-600 dark:text-emerald-400">
-              {formatCurrency(data.ggr)}
-            </span>{" "}
-            in gaming margin (GGR).{" "}
-            <span className="font-semibold text-rose-600 dark:text-rose-400">
-              {formatCurrency(backToUsers)}
-            </span>{" "}
-            went back to users as winnings, bonuses, prizes and shipped cards;{" "}
-            <span className="font-semibold text-rose-600 dark:text-rose-400">
-              {formatCurrency(heldUp)}
-            </span>{" "}
-            is tied up in cards and vouchers users still hold — leaving{" "}
-            <span
-              className={cn(
-                "font-semibold",
-                data.pnl >= 0
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-rose-600 dark:text-rose-400",
-              )}
-            >
-              {formatCurrency(data.pnl)}
-            </span>{" "}
-            realized.
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold sm:text-base">
+            Where the {formatCurrency(data.totalWager)} wagered ended up
+          </h2>
+          <p className="text-xs text-muted-foreground">
+            {periodLabel} · house perspective — every dollar a user keeps is
+            a dollar we owe.
           </p>
-          {leak && (
-            <p className="text-xs text-muted-foreground">
-              The biggest leak is{" "}
-              <span className="font-medium text-foreground">{leak.label}</span>{" "}
-              at{" "}
-              <span className="font-semibold text-rose-600 dark:text-rose-400">
-                {formatCurrency(leak.amount)}
-              </span>
-              {data.ggr > 0 && (
-                <>
-                  {" "}
-                  ({((leak.amount / data.ggr) * 100).toFixed(1)}% of GGR)
-                </>
-              )}
-              . Inventory + voucher liability —{" "}
-              <span className="font-medium text-foreground">
-                {formatCurrency(heldUp)}
-              </span>{" "}
-              — is the hidden cost most easily missed: it&apos;s why GGR can be
-              healthy while realized P&L stays thin.
-            </p>
-          )}
         </div>
+      </div>
+
+      <div className="grid gap-x-6 gap-y-2.5 p-4 text-sm leading-relaxed sm:p-5 lg:grid-cols-2">
+        <p className="lg:col-span-2">
+          Customers staked{" "}
+          <ValueChip tone="base">{formatCurrency(data.totalWager)}</ValueChip>{" "}
+          across packs and battles. The house edge turned that into{" "}
+          <ValueChip tone={ggrPos ? "keep" : "cost"}>
+            {ggrPos ? "+" : "−"}
+            {formatCurrency(Math.abs(data.ggr))}
+          </ValueChip>{" "}
+          of gross gaming margin (GGR).
+        </p>
+        <p>
+          <span className="font-medium text-foreground">Paid straight back:</span>{" "}
+          <ValueChip tone="cost">{formatCurrency(backToUsers)}</ValueChip> left
+          as gameplay winnings, bonuses, prizes and shipped cards — money the
+          house no longer holds.
+        </p>
+        <p>
+          <span className="font-medium text-foreground">Still held:</span>{" "}
+          <ValueChip tone="held">{formatCurrency(held)}</ValueChip> sits in
+          cards and vouchers users own but haven&apos;t cashed — an unrealized
+          liability, not yet a loss.
+        </p>
+        <p className="lg:col-span-2">
+          After everything settles, the realized bottom line is{" "}
+          <ValueChip tone={pnlPos ? "keep" : "cost"} className="text-[15px]">
+            {pnlPos ? "+" : "−"}
+            {formatCurrency(Math.abs(data.pnl))}
+          </ValueChip>
+          {data.margin.pnlPctOfWager !== null && (
+            <span className="text-muted-foreground">
+              {" "}
+              — {data.margin.pnlPctOfWager.toFixed(1)}% of every dollar wagered.
+            </span>
+          )}
+        </p>
+
+        {leak && (
+          <div className="mt-1 rounded-xl border border-border/70 bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground lg:col-span-2">
+            <span className="font-medium text-foreground">Biggest leak:</span>{" "}
+            <span className="font-medium text-foreground">{leak.label}</span> at{" "}
+            <span className="font-semibold text-rose-600 dark:text-rose-400">
+              {formatCurrency(leak.amount)}
+            </span>
+            {data.ggr > 0 && (
+              <> ({((leak.amount / data.ggr) * 100).toFixed(1)}% of GGR)</>
+            )}
+            . And watch the{" "}
+            <span className="font-semibold text-amber-600 dark:text-amber-400">
+              {formatCurrency(held)}
+            </span>{" "}
+            held in inventory + vouchers: it&apos;s the cost most easily
+            missed, and it&apos;s why GGR can look healthy while realized P&L
+            stays thin.
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-// ─── Hero KPIs ──────────────────────────────────────────────────────
+// ─── Summary flow (the four moves) ──────────────────────────────────
 
-function HeroKpis({
+/**
+ * One summary value tile — a tinted face with a hairline ring in its
+ * tone, an icon chip, a label with an optional "i" breakdown popover, a
+ * hero value, and an optional sub-line. `size="hero"` makes the realized
+ * outcome read loudest; `size="lead"` is a slightly heavier driver tile.
+ */
+function SummaryTile({
+  label,
+  value,
+  sub,
+  icon: Icon,
+  tone,
+  size = "base",
+  info,
+}: {
+  label: string;
+  value: string;
+  sub?: React.ReactNode;
+  icon: LucideIcon;
+  tone: SemanticTone;
+  size?: "base" | "lead" | "hero";
+  info?: React.ReactNode;
+}) {
+  const t = SEMANTIC_TONES[tone];
+  return (
+    <div
+      className={cn(
+        "surface-sheen relative flex flex-col overflow-hidden rounded-xl ring-1 ring-inset",
+        t.face,
+        t.ring,
+        size === "hero" ? "p-4 sm:p-5" : "p-3 sm:p-4",
+      )}
+    >
+      <div
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute inset-y-0 left-0 w-0.5",
+          t.bar,
+        )}
+      />
+      <div className="flex items-center gap-1.5">
+        <span
+          className={cn(
+            "flex shrink-0 items-center justify-center rounded-md",
+            size === "hero" ? "size-7" : "size-6",
+            t.chip,
+          )}
+        >
+          <Icon className={size === "hero" ? "size-4" : "size-3.5"} />
+        </span>
+        <span className="truncate text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:text-[11px]">
+          {label}
+        </span>
+        {info}
+      </div>
+      <p
+        className={cn(
+          "mt-1.5 truncate font-bold leading-tight tracking-tight tabular-nums",
+          t.text,
+          size === "hero"
+            ? "text-2xl sm:text-3xl"
+            : size === "lead"
+              ? "text-xl sm:text-2xl"
+              : "text-lg sm:text-xl",
+        )}
+      >
+        {value}
+      </p>
+      {sub && (
+        <p className="mt-0.5 truncate text-[10px] text-muted-foreground sm:text-[11px]">
+          {sub}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** A labelled group header above a cluster of summary tiles. */
+function SummaryGroup({
+  step,
+  title,
+  children,
+}: {
+  step: number;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-bold tabular-nums text-muted-foreground">
+          {step}
+        </span>
+        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          {title}
+        </span>
+        <span aria-hidden className="h-px flex-1 bg-border/60" />
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * The summary grouped into the four-move reading order:
+ *   1 Incoming value (wager) → 2 Paid back & costs (gaming + rewards) →
+ *   3 Held / unrealized (inventory + vouchers + shipped) → 4 Realized
+ *   outcome (NGR checkpoint + the loud realized P&L).
+ * Each headline metric carries the "i" breakdown popover the owner likes.
+ */
+function SummaryFlow({
   data,
   periodLabel,
 }: {
   data: CostBreakdown;
   periodLabel: string;
 }) {
+  const m = data.margin;
   const ggrPos = data.ggr >= 0;
+  const ngrPos = data.ngr >= 0;
   const pnlPos = data.pnl >= 0;
+  const held = data.inventoryDelta + data.voucherDelta;
+
   return (
-    <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
-      <KpiTile
-        label="Total wager"
-        value={formatCurrency(data.totalWager)}
-        sub={`${periodLabel} · customer wager`}
-        icon={Coins}
-        accent="blue"
-      />
-      <KpiTile
-        label="GGR (gaming margin)"
-        value={`${ggrPos ? "+" : "−"}${formatCurrency(Math.abs(data.ggr))}`}
-        sub={
-          data.margin.ggrPctOfWager !== null
-            ? `${data.margin.ggrPctOfWager.toFixed(1)}% of wager`
-            : "wager − payouts"
-        }
-        icon={ggrPos ? TrendingUp : TrendingDown}
-        accent={ggrPos ? "emerald" : "rose"}
-      />
-      <KpiTile
-        label="Total cost (back to users)"
-        value={`−${formatCurrency(data.totalCost)}`}
-        sub={
-          data.margin.costPctOfGgr !== null
-            ? `${data.margin.costPctOfGgr.toFixed(0)}% of GGR consumed`
-            : "wager − P&L"
-        }
-        icon={ArrowUpFromLine}
-        accent="rose"
-      />
-      <KpiTile
-        label="Net P&L (realized)"
-        value={`${pnlPos ? "+" : "−"}${formatCurrency(Math.abs(data.pnl))}`}
-        sub={
-          data.margin.pnlPctOfWager !== null
-            ? `${data.margin.pnlPctOfWager.toFixed(1)}% of wager`
-            : periodLabel
-        }
-        icon={pnlPos ? TrendingUp : TrendingDown}
-        accent={pnlPos ? "emerald" : "rose"}
-      />
+    <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
+      {/* 1 — Incoming */}
+      <SummaryGroup step={1} title="Incoming value">
+        <div className="grid gap-3">
+          <SummaryTile
+            label="Total wager"
+            value={formatCurrency(data.totalWager)}
+            sub={`${periodLabel} · customer stake`}
+            icon={Coins}
+            tone="base"
+            info={
+              <MetricInfoPopover
+                tone="base"
+                label="What total wager means"
+                title="Total wager"
+                blurb="What customers staked across packs and battles in this window. Creator on-stream sponsored play and borrow-mode plays are excluded. This is the top of the funnel — every other number below is carved out of it."
+              />
+            }
+          />
+          <SummaryTile
+            label="GGR — gross gaming margin"
+            value={`${ggrPos ? "+" : "−"}${formatCurrency(Math.abs(data.ggr))}`}
+            sub={
+              m.ggrPctOfWager !== null
+                ? `${m.ggrPctOfWager.toFixed(1)}% of wager (house edge)`
+                : "wager − gameplay winnings"
+            }
+            icon={ggrPos ? TrendingUp : TrendingDown}
+            tone={ggrPos ? "keep" : "cost"}
+            info={
+              <MetricInfoPopover
+                tone={ggrPos ? "keep" : "cost"}
+                label="What GGR means"
+                title="GGR · gross gaming margin"
+                blurb="Wager minus the gameplay winnings paid back (inventory-delta + battle refunds). The gross house edge on gaming alone, before any marketing/reward cost. Same canonical GGR as /ggr and /dashboard. Card sales/exchanges are NEUTRAL conversions — they never touch this."
+              >
+                <ul className="space-y-0.5">
+                  <InfoRow
+                    icon={Coins}
+                    label="Total wager"
+                    amount={data.totalWager}
+                    sign="+"
+                    tone="base"
+                  />
+                  <InfoRow
+                    icon={ArrowDownToLine}
+                    label="Gameplay winnings paid back"
+                    sub="inventory value + battle refunds"
+                    amount={data.gamingPayouts}
+                    sign="−"
+                    tone="cost"
+                  />
+                </ul>
+                <InfoTotal
+                  label="GGR"
+                  amount={data.ggr}
+                  sign={ggrPos ? "+" : "−"}
+                  tone={ggrPos ? "keep" : "cost"}
+                />
+              </MetricInfoPopover>
+            }
+          />
+        </div>
+      </SummaryGroup>
+
+      {/* 2 — Paid back & costs */}
+      <SummaryGroup step={2} title="Paid back & costs">
+        <div className="grid gap-3">
+          <SummaryTile
+            label="Gameplay winnings"
+            value={`−${formatCurrency(data.gamingPayouts)}`}
+            sub={
+              m.rtp !== null
+                ? `${(m.rtp * 100).toFixed(1)}% RTP · won & kept`
+                : "cards kept + battle refunds"
+            }
+            icon={ArrowDownToLine}
+            tone="cost"
+            info={
+              <MetricInfoPopover
+                tone="cost"
+                label="What gameplay winnings means"
+                title="Gameplay winnings paid back"
+                blurb="The cards users won and kept (inventory value at obtained) plus battle cash refunds — the user's own gameplay winnings. The verified inventory-delta payout; card sales/exchanges are neutral conversions and are not counted here."
+              />
+            }
+          />
+          <SummaryTile
+            label="Reward & marketing"
+            value={`−${formatCurrency(data.rewardPayouts)}`}
+            sub={
+              data.ggr > 0
+                ? `${((data.rewardPayouts / data.ggr) * 100).toFixed(0)}% of GGR given away`
+                : "GGR − NGR"
+            }
+            icon={Gift}
+            tone="cost"
+            info={
+              <MetricInfoPopover
+                tone="cost"
+                label="What reward & marketing cost means"
+                title="Reward & marketing giveaways"
+                blurb="All house-funded giveaways that turn GGR into NGR: deposit bonuses, rakeback, promo/gift cards, race & leaderboard prizes, affiliate commissions, the net house slice of rain, and counted balance adjustments. Equals GGR − NGR. Itemised per category in the waterfall and ranked-leaks list below."
+              />
+            }
+          />
+        </div>
+      </SummaryGroup>
+
+      {/* 3 — Held / unrealized */}
+      <SummaryGroup step={3} title="Held / unrealized">
+        <div className="grid gap-3">
+          <SummaryTile
+            label="Held by users (unrealized)"
+            value={formatCurrency(held)}
+            sub="inventory + unclaimed vouchers"
+            icon={PiggyBank}
+            tone="held"
+            info={
+              <MetricInfoPopover
+                tone="held"
+                label="What held / unrealized means"
+                title="Held by users · unrealized liability"
+                blurb="Value users own but haven't cashed out — a future liability, NOT a realized loss. It can still flip back to the house if they let cards or vouchers expire, so it's shown in amber, not red. This is the gap that keeps realized P&L below GGR."
+              >
+                <ul className="space-y-0.5">
+                  <InfoRow
+                    icon={Package}
+                    label="Inventory still held"
+                    sub="cards won & kept (obtained − sold)"
+                    amount={data.inventoryDelta}
+                    tone="held"
+                  />
+                  <InfoRow
+                    icon={Ticket}
+                    label="Unclaimed voucher liability"
+                    sub="issued − claimed"
+                    amount={data.voucherDelta}
+                    tone="held"
+                  />
+                </ul>
+                <InfoTotal
+                  label="Held (unrealized)"
+                  amount={held}
+                  tone="held"
+                  note="Separate from shipped cards, which have already left the house and count as a realized cost."
+                />
+              </MetricInfoPopover>
+            }
+          />
+          <SummaryTile
+            label="Cards shipped (realized)"
+            value={`−${formatCurrency(data.cardWithdrawals)}`}
+            sub="left the house entirely"
+            icon={ArrowUpFromLine}
+            tone="cost"
+            info={
+              <MetricInfoPopover
+                tone="cost"
+                label="What shipped cards means"
+                title="Card withdrawals (shipped)"
+                blurb="Physical cards shipped out in the window (completed/shipped withdrawal requests). Unlike held inventory, this value has left the house entirely — so it's a realized cost (rose), not an unrealized hold (amber)."
+              />
+            }
+          />
+        </div>
+      </SummaryGroup>
+
+      {/* 4 — Realized outcome */}
+      <SummaryGroup step={4} title="Realized outcome">
+        <div className="grid gap-3">
+          <SummaryTile
+            label="NGR — net gaming margin"
+            value={`${ngrPos ? "+" : "−"}${formatCurrency(Math.abs(data.ngr))}`}
+            sub={
+              m.ngrPctOfWager !== null
+                ? `${m.ngrPctOfWager.toFixed(1)}% of wager · after rewards`
+                : "GGR − reward cost"
+            }
+            icon={Scale}
+            tone={ngrPos ? "keep" : "cost"}
+            size="lead"
+            info={
+              <MetricInfoPopover
+                tone={ngrPos ? "keep" : "cost"}
+                label="What NGR means"
+                title="NGR · net gaming margin"
+                blurb="GGR minus all house-funded reward / marketing spend (bonuses, rakeback, prizes, the net house slice of rain, affiliate-leaderboard prizes, …). What the gaming business kept after giveaways — still before balance-sheet held liabilities."
+              />
+            }
+          />
+          <SummaryTile
+            label="Net P&L — realized"
+            value={`${pnlPos ? "+" : "−"}${formatCurrency(Math.abs(data.pnl))}`}
+            sub={
+              m.pnlPctOfWager !== null
+                ? `${m.pnlPctOfWager.toFixed(1)}% of wager · the true bottom line`
+                : "deposits − withdrawals − Δholdings"
+            }
+            icon={pnlPos ? TrendingUp : TrendingDown}
+            tone={pnlPos ? "keep" : "cost"}
+            size="hero"
+            info={
+              <MetricInfoPopover
+                tone={pnlPos ? "keep" : "cost"}
+                label="What realized P&L means"
+                title="Net P&L · realized"
+                blurb="The true bottom line for the window: deposits − withdrawals − Δbalance − Δinventory − Δvouchers. The same canonical windowed P&L as the dashboard. 'Realized' = after settling every balance-sheet movement, including the held-inventory and voucher liabilities above — which is why it sits below NGR."
+              >
+                <ul className="space-y-0.5">
+                  <InfoRow
+                    icon={Scale}
+                    label="NGR (net gaming margin)"
+                    amount={data.ngr}
+                    sign={ngrPos ? "+" : "−"}
+                    tone={ngrPos ? "keep" : "cost"}
+                  />
+                  <InfoRow
+                    icon={Package}
+                    label="Inventory still held"
+                    amount={data.inventoryDelta}
+                    sign="−"
+                    tone="held"
+                  />
+                  <InfoRow
+                    icon={ArrowUpFromLine}
+                    label="Cards shipped"
+                    amount={data.cardWithdrawals}
+                    sign="−"
+                    tone="cost"
+                  />
+                  <InfoRow
+                    icon={Ticket}
+                    label="Unclaimed vouchers"
+                    amount={data.voucherDelta}
+                    sign="−"
+                    tone="held"
+                  />
+                  <InfoRow
+                    icon={Wallet}
+                    label="Residual ledger flows (net)"
+                    sub="deposits in, transfers, adjustments"
+                    amount={Math.abs(data.residualNamedTotal + data.residual)}
+                    sign={
+                      data.residualNamedTotal + data.residual >= 0 ? "+" : "−"
+                    }
+                    tone={
+                      data.residualNamedTotal + data.residual >= 0
+                        ? "base"
+                        : "cost"
+                    }
+                  />
+                </ul>
+                <InfoTotal
+                  label="Realized P&L"
+                  amount={data.pnl}
+                  sign={pnlPos ? "+" : "−"}
+                  tone={pnlPos ? "keep" : "cost"}
+                  note="NGR minus held & shipped liabilities, plus net residual ledger flows, equals realized P&L."
+                />
+              </MetricInfoPopover>
+            }
+          />
+        </div>
+      </SummaryGroup>
     </div>
   );
 }
@@ -312,51 +691,48 @@ function HeroKpis({
 // ─── Waterfall ──────────────────────────────────────────────────────
 
 /**
- * Maps a cost line to an accent + a server-rendered lucide icon node.
- * House-POV: money flowing BACK to users (gaming payout / reward /
- * liability) is rose; the base wager is blue; the GGR + NGR subtotals
- * and the final P&L flip emerald/rose on sign. Named RESIDUAL_TYPES
- * bridge rows colour by their effect on P&L (inflow emerald, outflow
- * rose, net-zero transfer blue); the honest leftover is amber when
- * material. Keeping the icon resolution server-side keeps lucide off the
- * client WaterfallRow bundle and the accent token deterministic.
+ * Maps a cost line to its SEMANTIC tone + a server-rendered lucide icon.
+ * The tone language (not one flat rose): the base wager is blue; money
+ * the house keeps (GGR/NGR/P&L subtotals when positive) is emerald;
+ * realized money-back (gaming payout, rewards, shipped cards) is rose;
+ * HELD / unrealized liabilities (inventory, unclaimed vouchers) are amber
+ * so they never read as a realized loss; named RESIDUAL_TYPES rows colour
+ * by their effect on P&L (inflow blue, outflow rose, net-zero transfer
+ * muted); the honest leftover is muted. Resolving the icon server-side
+ * keeps lucide off the client WaterfallRow bundle.
  */
 function lineVisual(line: CostLine): {
-  accent: AccentColor;
+  tone: SemanticTone;
   sign: "+" | "−" | "=";
-  icon: React.ElementType;
+  icon: LucideIcon;
 } {
   switch (line.kind) {
     case "base":
-      return { accent: "blue", sign: "+", icon: Coins };
+      return { tone: "base", sign: "+", icon: Coins };
     case "gaming-payout":
-      return { accent: "rose", sign: "−", icon: ArrowDownToLine };
+      return { tone: "cost", sign: "−", icon: ArrowDownToLine };
     case "reward":
-      return { accent: "rose", sign: "−", icon: Gift };
+      return { tone: "cost", sign: "−", icon: Gift };
     case "liability":
-      return {
-        accent: "rose",
-        sign: "−",
-        icon:
-          line.key === "inventory"
-            ? Package
-            : line.key === "voucher-liability"
-              ? Ticket
-              : ArrowUpFromLine,
-      };
+      // Inventory + unclaimed vouchers are HELD / unrealized → amber.
+      // Shipped cards have left the house → realized cost → rose.
+      if (line.key === "inventory")
+        return { tone: "held", sign: "−", icon: Package };
+      if (line.key === "voucher-liability")
+        return { tone: "held", sign: "−", icon: Ticket };
+      return { tone: "cost", sign: "−", icon: ArrowUpFromLine };
     case "residual":
-      // Named RESIDUAL_TYPES bridge row. signedAmount > 0 = a cash
-      // inflow to the house (deposits) → emerald; < 0 = an outflow
-      // (card-withdrawal leg, rain-pool funding, admin debit) → rose;
-      // == 0 = a net-zero transfer (vault, creator-tip pass-through,
-      // escrow, creator-fill) → blue (informational).
+      // signedAmount > 0 = cash inflow to the house (deposits) → blue;
+      // < 0 = an outflow (card-withdrawal leg, rain funding, admin debit)
+      // → rose; == 0 = a net-zero transfer (vault, creator-tip, escrow,
+      // creator-fill) → muted (informational).
       return {
-        accent:
+        tone:
           line.signedAmount > 0
-            ? "emerald"
+            ? "base"
             : line.signedAmount < 0
-              ? "rose"
-              : "blue",
+              ? "cost"
+              : "muted",
         sign:
           line.signedAmount > 0
             ? "+"
@@ -372,22 +748,48 @@ function lineVisual(line: CostLine): {
       };
     case "unexplained":
       return {
-        accent: line.label.startsWith("Unexplained") ? "amber" : "blue",
+        tone: line.label.startsWith("Unexplained") ? "held" : "muted",
         sign: line.signedAmount < 0 ? "−" : "+",
         icon: AlertCircle,
       };
     case "subtotal":
       return {
-        accent: line.signedAmount >= 0 ? "emerald" : "rose",
+        tone: line.signedAmount >= 0 ? "keep" : "cost",
         sign: "=",
         icon: line.signedAmount >= 0 ? TrendingUp : TrendingDown,
       };
     case "result":
       return {
-        accent: line.signedAmount >= 0 ? "emerald" : "rose",
+        tone: line.signedAmount >= 0 ? "keep" : "cost",
         sign: "=",
         icon: line.signedAmount >= 0 ? TrendingUp : TrendingDown,
       };
+  }
+}
+
+/**
+ * Bands the ordered waterfall lines into labelled chapters so the running
+ * total reads as distinct moves. Returns, for each line, the band header
+ * (if this line opens a new band) to render above it.
+ */
+function bandFor(line: CostLine): { label: string; hint?: string } | null {
+  switch (line.kind) {
+    case "base":
+      return { label: "Incoming", hint: "what customers staked" };
+    case "gaming-payout":
+      return { label: "Less gameplay winnings", hint: "the user's own wins" };
+    case "reward":
+      return null; // rewards open their own band via the NGR-side header
+    case "liability":
+      return null;
+    case "residual":
+      return null;
+    case "unexplained":
+      return null;
+    case "subtotal":
+      return null;
+    case "result":
+      return null;
   }
 }
 
@@ -403,35 +805,63 @@ function WaterfallPanel({ data }: { data: CostBreakdown }) {
     if (l.amount > 0) topLeakRank.set(l.key, i + 1);
   });
 
+  // Insert band headers ahead of the first reward line and ahead of the
+  // first liability/held line so the three middle chapters
+  // (givebacks → rewards → held) read distinctly without hard-coding
+  // indices.
+  const firstRewardKey = data.lines.find((l) => l.kind === "reward")?.key;
+  const firstHeldKey = data.lines.find(
+    (l) => l.kind === "liability" || l.kind === "residual",
+  )?.key;
+
   return (
     <Card>
-      <CardContent className="space-y-1 p-4 sm:p-5">
-        {data.lines.map((line, i) => {
+      <CardContent className="space-y-0.5 p-3 sm:p-4">
+        {data.lines.map((line) => {
           const v = lineVisual(line);
-          const colors = TILE_COLORS[v.accent];
+          const colors = SEMANTIC_TONES[v.tone];
           const Icon = v.icon;
-          const isSubtotalOrResult =
-            line.kind === "subtotal" || line.kind === "result";
+          const emphasis: "normal" | "subtotal" | "result" =
+            line.kind === "result"
+              ? "result"
+              : line.kind === "subtotal"
+                ? "subtotal"
+                : "normal";
+
+          // Band header above this row, if it opens a chapter.
+          let band = bandFor(line);
+          if (line.key === firstRewardKey)
+            band = {
+              label: "Less reward & marketing",
+              hint: "house-funded giveaways",
+            };
+          else if (line.key === firstHeldKey)
+            band = {
+              label: "Less held & balance-sheet flows",
+              hint: "held liabilities, transfers, residual",
+            };
+
           return (
             <div key={line.key}>
-              {/* Divider before the GGR subtotal and before the P&L
-                  result so the three bands (givebacks → GGR →
-                  liabilities → P&L) read distinctly. */}
-              {(line.kind === "subtotal" || line.kind === "result") &&
-                i > 0 && <div className="my-2 border-t" />}
+              {band && <WaterfallBand label={band.label} hint={band.hint} />}
               <WaterfallRow
                 label={line.label}
-                why={line.why}
                 signedAmount={line.signedAmount}
                 sign={v.sign}
                 maxMag={maxMag}
-                accent={v.accent}
+                tone={v.tone}
                 pctOfGgr={line.pctOfGgr}
                 pctOfWager={line.pctOfWager}
-                emphasis={isSubtotalOrResult ? "strong" : "normal"}
+                emphasis={emphasis}
                 rank={topLeakRank.get(line.key)}
-                iconNode={
-                  <Icon className={cn("size-3.5", colors.icon)} />
+                iconNode={<Icon className={cn("size-3.5", colors.icon)} />}
+                info={
+                  <MetricInfoPopover
+                    tone={v.tone}
+                    label={`What ${line.label} means`}
+                    title={line.label}
+                    blurb={line.why}
+                  />
                 }
               />
             </div>
@@ -448,6 +878,8 @@ function WaterfallPanel({ data }: { data: CostBreakdown }) {
  * Every leakage category sorted biggest-first, each with amount +
  * %-of-GGR + %-of-wager and a proportional bar. The "which leak is
  * biggest" view, decoupled from the waterfall's running-total order.
+ * Held / unrealized liabilities are tinted amber here too, so an
+ * unrealized hold is never mistaken for realized money-back.
  */
 function RankedCosts({ data }: { data: CostBreakdown }) {
   const visible = data.rankedCosts.filter((l) => l.amount > 0);
@@ -465,6 +897,8 @@ function RankedCosts({ data }: { data: CostBreakdown }) {
     <Card>
       <CardContent className="space-y-2.5 p-4 sm:p-5">
         {visible.map((line, i) => {
+          const v = lineVisual(line);
+          const t = SEMANTIC_TONES[v.tone];
           const widthPct = Math.min(
             100,
             Math.max(2, (line.amount / maxMag) * 100),
@@ -479,15 +913,25 @@ function RankedCosts({ data }: { data: CostBreakdown }) {
                   <span className="truncate text-sm font-medium">
                     {line.label}
                   </span>
+                  {v.tone === "held" && (
+                    <span className="shrink-0 rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                      held
+                    </span>
+                  )}
                 </div>
-                <span className="shrink-0 font-mono text-sm font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+                <span
+                  className={cn(
+                    "shrink-0 font-mono text-sm font-semibold tabular-nums",
+                    t.text,
+                  )}
+                >
                   −{formatCurrency(line.amount)}
                 </span>
               </div>
               <div className="ml-7 flex items-center gap-2">
                 <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted/60">
                   <div
-                    className="h-full rounded-full bg-rose-500/60"
+                    className={cn("h-full rounded-full", t.bar)}
                     style={{ width: `${widthPct}%` }}
                   />
                 </div>
@@ -496,13 +940,23 @@ function RankedCosts({ data }: { data: CostBreakdown }) {
                     <span>{Math.abs(line.pctOfGgr).toFixed(1)}% GGR</span>
                   )}
                   {line.pctOfWager !== null && (
-                    <span>{Math.abs(line.pctOfWager).toFixed(1)}% wager</span>
+                    <span className="hidden sm:inline">
+                      {Math.abs(line.pctOfWager).toFixed(1)}% wager
+                    </span>
                   )}
                 </div>
               </div>
             </div>
           );
         })}
+        <p className="border-t border-border/60 pt-2.5 text-[10px] leading-snug text-muted-foreground">
+          <span className="font-medium text-amber-600 dark:text-amber-400">
+            Amber &ldquo;held&rdquo;
+          </span>{" "}
+          lines are unrealized liabilities (inventory + vouchers users still
+          own) — they erode realized P&L but can still flip back to the house.
+          Everything else has already left the house.
+        </p>
       </CardContent>
     </Card>
   );
@@ -510,70 +964,96 @@ function RankedCosts({ data }: { data: CostBreakdown }) {
 
 // ─── Margin health ──────────────────────────────────────────────────
 
+/**
+ * Compact ratio tiles. House-POV: a higher house edge / GGR%-of-wager is
+ * good (emerald); a higher RTP / cost-of-GGR means more flowed back to
+ * users (rose); P&L survival is emerald when positive. These read lighter
+ * than the summary tiles on purpose — they're supporting detail.
+ */
 function MarginHealth({ data }: { data: CostBreakdown }) {
   const m = data.margin;
   const pct = (v: number | null) => (v === null ? "—" : `${v.toFixed(1)}%`);
   const ratio = (v: number | null) =>
     v === null ? "—" : `${(v * 100).toFixed(1)}%`;
-  // House-POV: a HIGHER house edge / GGR%-of-wager is good for the house
-  // (emerald); a higher RTP / cost-of-GGR means more flowed back to
-  // users (rose). P&L survival is emerald when positive.
+  const tiles: Array<{
+    label: string;
+    value: string;
+    sub: string;
+    icon: LucideIcon;
+    tone: SemanticTone;
+  }> = [
+    {
+      label: "RTP",
+      value: ratio(m.rtp),
+      sub: "Gaming payouts ÷ wager",
+      icon: ArrowDownToLine,
+      tone: "cost",
+    },
+    {
+      label: "House edge",
+      value: ratio(m.houseEdge),
+      sub: "GGR ÷ wager",
+      icon: Scale,
+      tone: m.houseEdge !== null && m.houseEdge >= 0 ? "keep" : "cost",
+    },
+    {
+      label: "GGR % of wager",
+      value: pct(m.ggrPctOfWager),
+      sub: "Gross margin rate",
+      icon: Coins,
+      tone: m.ggrPctOfWager !== null && m.ggrPctOfWager >= 0 ? "keep" : "cost",
+    },
+    {
+      label: "P&L % of wager",
+      value: pct(m.pnlPctOfWager),
+      sub: "Realized margin rate",
+      icon: Trophy,
+      tone: m.pnlPctOfWager !== null && m.pnlPctOfWager >= 0 ? "keep" : "cost",
+    },
+    {
+      label: "Cost % of GGR",
+      value: pct(m.costPctOfGgr),
+      sub: "Gross margin consumed",
+      icon: HandCoins,
+      tone: "cost",
+    },
+    {
+      label: "P&L % of GGR",
+      value: pct(m.pnlPctOfGgr),
+      sub: "Gross margin survived",
+      icon: TrendingUp,
+      tone: m.pnlPctOfGgr !== null && m.pnlPctOfGgr >= 0 ? "keep" : "cost",
+    },
+  ];
   return (
-    <div className="grid gap-3 grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-      <KpiTile
-        label="RTP"
-        value={ratio(m.rtp)}
-        sub="Gaming payouts ÷ wager"
-        icon={ArrowDownToLine}
-        accent="rose"
-      />
-      <KpiTile
-        label="House edge"
-        value={ratio(m.houseEdge)}
-        sub="GGR ÷ wager"
-        icon={Scale}
-        accent={
-          m.houseEdge !== null && m.houseEdge >= 0 ? "emerald" : "rose"
-        }
-      />
-      <KpiTile
-        label="GGR % of wager"
-        value={pct(m.ggrPctOfWager)}
-        sub="Gross margin rate"
-        icon={Coins}
-        accent={
-          m.ggrPctOfWager !== null && m.ggrPctOfWager >= 0
-            ? "emerald"
-            : "rose"
-        }
-      />
-      <KpiTile
-        label="P&L % of wager"
-        value={pct(m.pnlPctOfWager)}
-        sub="Realized margin rate"
-        icon={Trophy}
-        accent={
-          m.pnlPctOfWager !== null && m.pnlPctOfWager >= 0
-            ? "emerald"
-            : "rose"
-        }
-      />
-      <KpiTile
-        label="Cost % of GGR"
-        value={pct(m.costPctOfGgr)}
-        sub="Gross margin consumed"
-        icon={ArrowUpFromLine}
-        accent="rose"
-      />
-      <KpiTile
-        label="P&L % of GGR"
-        value={pct(m.pnlPctOfGgr)}
-        sub="Gross margin survived"
-        icon={TrendingUp}
-        accent={
-          m.pnlPctOfGgr !== null && m.pnlPctOfGgr >= 0 ? "emerald" : "rose"
-        }
-      />
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
+      {tiles.map((tile) => {
+        const t = SEMANTIC_TONES[tile.tone];
+        return (
+          <div
+            key={tile.label}
+            className="surface-sheen relative overflow-hidden rounded-xl border bg-card p-3 ring-1 ring-foreground/10"
+          >
+            <div className="flex items-center gap-1.5">
+              <tile.icon className={cn("size-3.5 shrink-0", t.icon)} />
+              <span className="truncate text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                {tile.label}
+              </span>
+            </div>
+            <p
+              className={cn(
+                "mt-1 truncate text-lg font-bold tabular-nums sm:text-xl",
+                t.text,
+              )}
+            >
+              {tile.value}
+            </p>
+            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
+              {tile.sub}
+            </p>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -588,16 +1068,19 @@ function MarginHealth({ data }: { data: CostBreakdown }) {
  * cumulative; the main DB has no windowed `won`), so this list does not
  * track the page's period chip. House-POV: net > 0 (user net-lost) =
  * emerald; net < 0 (user up) = rose.
+ *
+ * On phones the wager/payout columns are dropped (they overflow a 360px
+ * row); the net stays since it's the headline. They return at sm+.
  */
 function Contributors({ data }: { data: CostBreakdown }) {
   return (
     <Card>
       <CardContent className="p-0">
-        <div className="grid grid-cols-[2rem_1fr_repeat(3,_minmax(0,_7rem))] items-center gap-3 border-b bg-muted/30 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <div className="grid grid-cols-[1.75rem_1fr_minmax(0,_6rem)] items-center gap-2 border-b bg-muted/30 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground sm:grid-cols-[2rem_1fr_repeat(3,_minmax(0,_7rem))] sm:gap-3 sm:px-4">
           <span className="text-right">#</span>
           <span>User</span>
-          <span className="text-right">Wager</span>
-          <span className="text-right">Payouts</span>
+          <span className="hidden text-right sm:block">Wager</span>
+          <span className="hidden text-right sm:block">Payouts</span>
           <span className="text-right">Net (house)</span>
         </div>
         <ul>
@@ -605,7 +1088,7 @@ function Contributors({ data }: { data: CostBreakdown }) {
             <li key={c.userId}>
               <Link
                 href={`/users/${c.userId}`}
-                className="grid grid-cols-[2rem_1fr_repeat(3,_minmax(0,_7rem))] items-center gap-3 border-b border-border/60 px-4 py-2.5 text-xs transition-colors last:border-b-0 hover:bg-muted/30"
+                className="grid grid-cols-[1.75rem_1fr_minmax(0,_6rem)] items-center gap-2 border-b border-border/60 px-3 py-2.5 text-xs transition-colors last:border-b-0 hover:bg-muted/30 sm:grid-cols-[2rem_1fr_repeat(3,_minmax(0,_7rem))] sm:gap-3 sm:px-4"
               >
                 <span className="text-right text-muted-foreground tabular-nums">
                   {i + 1}
@@ -617,10 +1100,10 @@ function Contributors({ data }: { data: CostBreakdown }) {
                     </span>
                   )}
                 </span>
-                <span className="text-right font-mono tabular-nums text-muted-foreground">
+                <span className="hidden text-right font-mono tabular-nums text-muted-foreground sm:block">
                   {formatCurrency(c.wagerTotal)}
                 </span>
-                <span className="text-right font-mono tabular-nums text-muted-foreground">
+                <span className="hidden text-right font-mono tabular-nums text-muted-foreground sm:block">
                   {formatCurrency(c.payoutTotal)}
                 </span>
                 <span
@@ -638,13 +1121,13 @@ function Contributors({ data }: { data: CostBreakdown }) {
             </li>
           ))}
         </ul>
-        <p className="px-4 py-2 text-[10px] text-muted-foreground">
+        <p className="px-3 py-2 text-[10px] leading-snug text-muted-foreground sm:px-4">
           Lifetime Wager = Total Wagered, Payouts = Total Won (the
           authoritative per-user counters shown on each user&apos;s detail
           page). Net is house-POV: positive (emerald) = the user net-lost
           (house up); negative (rose) = the user is up. Top{" "}
-          {formatNumber(data.contributors.length)} by absolute lifetime
-          wager loss.
+          {formatNumber(data.contributors.length)} by absolute lifetime wager
+          loss — always lifetime, independent of the period above.
         </p>
       </CardContent>
     </Card>
