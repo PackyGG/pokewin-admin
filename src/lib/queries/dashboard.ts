@@ -772,34 +772,130 @@ export async function getActivityCounts24h(): Promise<{
 }
 
 /**
+ * Dedicated 30-min (`revalidate: 1800`) cache for the admin top-bar house
+ * pills. ONE indexed query returns all four lifetime totals so the pills
+ * read a single cached value on every admin page.
+ *
+ * WHY ITS OWN CACHE (not the dashboard's 5-min `cachedBalanceAggregates`):
+ *   1. The owner wants the pills cached for 30 minutes — "load it once when
+ *      you enter the site and then refetch all 30 min; even on reload don't
+ *      fetch it instantly." `unstable_cache` is a SHARED server cache, so a
+ *      page reload / new request inside the 30-min window serves the cached
+ *      value with no DB hit — exactly that behaviour. The dashboard's own
+ *      aggregate stays on its 5-min TTL (its numbers move faster), so the
+ *      two caches don't fight.
+ *   2. The withdrawal total here is NOT `balances.total_withdrawn` (that
+ *      column under-counts — it misses the entire `card_withdrawal_requests`
+ *      pipeline, which is why the pill read ~$1K). It is the AUTHORITATIVE
+ *      site-wide "money out" figure: Σ `card_withdrawal_requests.total_value_usd`
+ *      where `status IN ('completed','shipped')`, real users only. This is
+ *      the SAME source the dashboard's "Withdrawals" StatCard and the
+ *      Analytics → Revenue withdrawal breakdown use, so the pill reconciles
+ *      with both. (Indexed by `idx_cwr_status_completed_at`, so it stays a
+ *      cheap scan even on the cold miss.)
+ *
+ * The other three legs come from the `balances` table — the SAME columns the
+ * lifetime realized-P&L snapshot trusts (`_realized-pnl.ts`:
+ * `Σ total_deposited`, and the dashboard financials block reads
+ * `total_wagered` / `total_won`), so deposits / wager / GGR reconcile with
+ * the dashboard's lifetime figures.
+ *
+ * The cache key is the serialized blacklist clause (same key shape the
+ * dashboard's cached aggregates use) so an excluded-user change becomes
+ * visible within the TTL.
+ */
+const cachedLifetimeHouseTotals = unstable_cache(
+  async (blacklistIdNotIn: string) => {
+    const db = await getDb();
+    // Single round-trip: the three `balances` accumulators in one scan,
+    // plus the authoritative card-withdrawal "money out" total as a
+    // correlated subquery. Both are filtered to the same real-user
+    // population (role NOT IN ('admin','support') + blacklist). Raw SQL
+    // (not Prisma aggregate) so the cache-key argument stays a plain
+    // serializable string — same reason as `cachedBalanceAggregates`.
+    const rows = await db.$queryRaw<
+      {
+        total_deposited: string;
+        total_wagered: string;
+        total_won: string;
+        card_withdrawn: string;
+      }[]
+    >`
+      SELECT
+        COALESCE((
+          SELECT SUM(total_deposited::numeric) FROM balances
+          WHERE user_id IN (
+            SELECT id FROM "user"
+            WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+          )
+        ), 0)::text AS total_deposited,
+        COALESCE((
+          SELECT SUM(total_wagered::numeric) FROM balances
+          WHERE user_id IN (
+            SELECT id FROM "user"
+            WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+          )
+        ), 0)::text AS total_wagered,
+        COALESCE((
+          SELECT SUM(total_won::numeric) FROM balances
+          WHERE user_id IN (
+            SELECT id FROM "user"
+            WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+          )
+        ), 0)::text AS total_won,
+        -- AUTHORITATIVE all-time withdrawals: card_withdrawal_requests
+        -- (status IN completed/shipped) — value that actually left the
+        -- house. Matches the dashboard's Withdrawals StatCard + the
+        -- Analytics Revenue withdrawal breakdown. NOT balances.total_withdrawn,
+        -- which under-counts (misses this pipeline).
+        COALESCE((
+          SELECT SUM(cwr.total_value_usd::numeric)
+          FROM card_withdrawal_requests cwr
+          WHERE cwr.status IN ('completed', 'shipped')
+            AND cwr.user_id IN (
+              SELECT id FROM "user"
+              WHERE role NOT IN ('admin', 'support') ${Prisma.raw(blacklistIdNotIn)}
+            )
+        ), 0)::text AS card_withdrawn
+    `;
+    return rows[0] ?? null;
+  },
+  ["dashboard-lifetime-house-totals-v1"],
+  // 30-min TTL per the owner's ask — these all-time figures barely move,
+  // and the pills should "load once on entry, refetch every 30 min, and
+  // not refetch instantly on reload". A 30-min shared-cache window does
+  // exactly that.
+  { revalidate: 1800, tags: ["dashboard-lifetime"] },
+);
+
+/**
  * Lifetime house headline totals (all-time wager / deposit / withdrawal +
  * gaming margin) for the admin top-bar pills.
  *
- * Like `getActivityCounts24h`, this is a thin accessor that PIGGY-BACKS on
- * a cache the dashboard already fills — here `cachedBalanceAggregates`,
- * the 5-min (`revalidate: 300`) `unstable_cache`d `balances`-table SUM.
- * It is called with the SAME `blacklistIdNotIn` cache-key the dashboard
- * uses, so once the dashboard (or one prior top-bar render) has warmed
- * the entry every other admin page load reads it for free; a cold miss
- * costs one indexed `SUM` over `balances`, capped at one per 5 minutes
- * across all admins. No new query, no extra window — all-time barely
- * moves, so a 5-min cap is invisible.
+ * Reads a SINGLE 30-min-cached row (`cachedLifetimeHouseTotals`) so the
+ * pills — which render on EVERY admin page — never trigger a per-request
+ * scan. A reload / new request inside the 30-min window serves the cached
+ * value with no DB hit (the owner's "don't refetch instantly on reload"
+ * requirement). A cold miss costs one indexed aggregate, capped at one per
+ * 30 minutes across all admins.
  *
- * The top-bar renders on EVERY admin page, so the cheapness here is the
- * whole point: this must never become a per-request scan. If the cached
- * row is unavailable the fields come back as 0 (the caller wraps the call
- * in `safeQuery` + `<Suspense>` so a slow/failed read degrades to "—"
- * pills instead of blocking the shell).
+ * If the cached row is unavailable the fields come back as 0 (the caller
+ * wraps the call in `safeQuery` + `<Suspense>` so a slow/failed read
+ * degrades to "—" pills instead of blocking the shell).
  *
- * All four numbers are derived from the single cached row:
+ * Sources (all reconcile with the dashboard's lifetime figures):
  *   • wager       = Σ balances.total_wagered
  *   • deposits    = Σ balances.total_deposited
- *   • withdrawals = Σ balances.total_withdrawn
+ *   • withdrawals = Σ card_withdrawal_requests.total_value_usd
+ *                   (status IN completed/shipped) — the AUTHORITATIVE
+ *                   site-wide "money out" total (same source as the
+ *                   dashboard Withdrawals StatCard + Analytics Revenue tab),
+ *                   NOT balances.total_withdrawn (which under-counts).
  *   • ggr         = wager − Σ balances.total_won  (house gaming margin,
  *                   house POV: positive = house up)
  *
  * Staff + blacklisted users are excluded (same filter the dashboard uses),
- * so the figures match the dashboard's lifetime balance aggregates.
+ * so the figures match the dashboard's lifetime aggregates.
  */
 export async function getLifetimeHouseTotals(): Promise<{
   wager: number;
@@ -811,17 +907,17 @@ export async function getLifetimeHouseTotals(): Promise<{
     "id",
     await getExcludedUserIds(),
   );
-  const ba = await cachedBalanceAggregates(blacklistIdNotIn);
-  const wager = toNumber(ba?.total_wagered);
-  const deposits = toNumber(ba?.total_deposited);
-  const withdrawals = toNumber(ba?.total_withdrawn);
-  const won = toNumber(ba?.total_won);
+  const row = await cachedLifetimeHouseTotals(blacklistIdNotIn);
+  const wager = toNumber(row?.total_wagered);
+  const deposits = toNumber(row?.total_deposited);
+  const withdrawals = toNumber(row?.card_withdrawn);
+  const won = toNumber(row?.total_won);
   return {
     wager,
     deposits,
     withdrawals,
     // House gaming margin (GGR) = total staked − total paid out in wins.
-    // Both legs come from the same cached `balances` row, so this is free.
+    // Both legs come from the same cached row, so this is free.
     ggr: wager - won,
   };
 }

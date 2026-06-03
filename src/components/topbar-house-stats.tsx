@@ -9,13 +9,14 @@ import { cn } from "@/lib/utils";
  * deposit, withdrawal, and gaming margin (GGR), shown to the RIGHT of the
  * sidebar toggle + breadcrumbs.
  *
- * DATA: a single accessor (`getLifetimeHouseTotals`) that piggy-backs on
- * the dashboard's already-cached `balances` SUM (`unstable_cache`,
- * `revalidate: 300` — a 5-min TTL). The top bar renders on every admin
- * page, so the read MUST stay cheap: there is no new query and no extra
- * window here — it reuses the same cached row (same blacklist cache key)
- * the dashboard fills, capped at one indexed SUM per 5 minutes across all
- * admins. See `getLifetimeHouseTotals` for the booking model.
+ * DATA: a single accessor (`getLifetimeHouseTotals`) backed by a dedicated
+ * 30-min (`unstable_cache`, `revalidate: 1800`) cache. The top bar renders
+ * on every admin page, so the read MUST stay cheap: it is ONE indexed
+ * aggregate, capped at one run per 30 minutes across all admins. Because
+ * `unstable_cache` is a shared server cache, a reload / new request inside
+ * the window serves the cached value with no DB hit — the data loads once
+ * on entry and only refetches every 30 minutes. See `getLifetimeHouseTotals`
+ * for the booking model + sources.
  *
  * RESILIENCE: wrapped in `safeQuery`, and the layout renders this inside
  * its own `<Suspense>` boundary, so a slow or failed read degrades to "—"
@@ -25,7 +26,9 @@ import { cn } from "@/lib/utils";
  * perspective, NEVER the user's):
  *   • Wager       — user risking their money, the house takes it → emerald
  *   • Deposit     — capital into the house                       → emerald
- *   • Withdrawal  — money leaving the house                      → rose
+ *   • Withdrawal  — money leaving the house (card_withdrawal_requests,
+ *                   status completed/shipped — the authoritative
+ *                   site-wide "money out" total)                 → rose
  *   • GGR         — house gaming margin; positive = house up     → emerald,
  *                   negative = house down                        → rose
  *
