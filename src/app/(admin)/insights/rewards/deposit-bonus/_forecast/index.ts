@@ -61,15 +61,18 @@ export {
   clampBonus,
   conversionLossFromTightening,
   effectiveCapForSegment,
+  effectiveDailyCeilingForSegment,
+  effectiveDailyCeilingUsd,
   frictionScore,
   nominalCapUsd,
   normalizeSegmentMix,
+  payoutRetentionFromCeiling,
   safeDiv,
+  scaleResultMoney,
   simulate,
   simulateSet,
   tightnessVsBaseline,
-  windowMultiplier,
-  windowsInHorizon,
+  windowsPerDay,
 } from "./engine";
 
 // Recommendations

@@ -104,8 +104,42 @@ export const DEFAULT_SEGMENT_MIX: Record<SegmentId, number> = {
  * dollars enforced over a SHORTER window pace out: the velocity-driven leakage
  * component is multiplied by this (<1) vs the same dollars in one 24h lump.
  * 0.65 = a ~35% reduction in burst leakage for tightly-spaced caps.
+ *
+ * NOTE: this discounts ABUSE LEAKAGE only — it never inflates total bonus COST.
+ * (See {@link SPLIT_CAP_BURST_DAMPING}'s use in `leakageBurstDamping`.) The cost
+ * channel is bounded by deposit behaviour, NOT by how many cap windows fit the
+ * horizon — see {@link EFFECTIVE_CEILING_MODEL}.
  */
 export const SPLIT_CAP_BURST_DAMPING = 0.65;
+
+/**
+ * EFFECTIVE-CEILING COST MODEL — the directional truth the cost channel encodes.
+ *
+ * Total claims/payout over the horizon is bounded by DEPOSIT BEHAVIOUR
+ * (`eligibleUsers × depositsPerDay × days × P(claim)`), NOT by the number of
+ * cap windows in the horizon. Shrinking the cap window does NOT multiply the
+ * modeled claim count — it is an anti-abuse / velocity control.
+ *
+ * Cost differences between policies therefore come from the per-claim PAID
+ * bonus, which a tighter cap reduces by truncating the upper tail of the bonus
+ * distribution. We summarize each policy by its EFFECTIVE DAILY-EQUIVALENT
+ * CEILING (see `effectiveDailyCeilingUsd`) — the most a realistically-depositing
+ * user can pull in a day — and reduce the average paid bonus by a monotone,
+ * concave "payout retention factor" of that ceiling vs the baseline ceiling:
+ *
+ *   r = clamp01(dailyCeiling(policy) / dailyCeiling(baseline))   // 1 at baseline
+ *   payoutRetentionFactor = 2r − r²                              // = mean of a
+ *     truncated Uniform[0, baselineCeiling] at ceiling c, divided by the
+ *     untruncated mean — 1.0 at r=1, 0 at r=0, monotone↑, concave.
+ *
+ * Consequences (the spec's directional contract):
+ *   • a strictly-lower effective ceiling ⇒ lower paid bonus ⇒ lower cost ⇒
+ *     POSITIVE gross savings (cost is monotone in the ceiling),
+ *   • a modest trim (e.g. $75/24h) bites modestly; an aggressive cap
+ *     (e.g. $5/1h, which a 1.4-deposit/day user can only reach ~$7/day on)
+ *     bites hard — but NEVER blows cost above the baseline.
+ */
+export const EFFECTIVE_CEILING_MODEL = "truncated-uniform-mean (2r − r²)" as const;
 
 /**
  * Above this cap ($), the program starts paying users who'd have deposited
@@ -131,14 +165,18 @@ export const CONFIDENCE_BAND_SPREAD = 0.15;
 export const WEEKLY_POOL_DAYS = 7;
 
 /**
- * Number of windows over the horizon is computed from this. A "window" for a
- * split/fixed cap is `windowHours`; the horizon is `windowDays × HOURS_PER_DAY`.
+ * Hours per day. Used to convert a cap's `windowHours` into a windows-per-day
+ * figure (`HOURS_PER_DAY / windowHours`) for the effective daily-equivalent
+ * ceiling, and to convert the horizon (`windowDays`) into the day count the
+ * behaviour-bounded claim volume spans.
  */
 export const HOURS_PER_DAY = 24;
 
 /**
- * Reference window-count per day at the baseline (24h window → 1/day). Used to
- * scale per-window caps to a daily-equivalent headroom before burst damping.
+ * Reference window-count per day at the baseline (24h window → 1/day). The
+ * baseline's effective daily-equivalent ceiling uses this, so the baseline
+ * scenario reads exactly its nominal cap per day and `payoutRetentionFactor`
+ * returns 1.0 (baseline cost is unchanged / anchors on the real total).
  */
 export const BASELINE_WINDOWS_PER_DAY =
   HOURS_PER_DAY / BASELINE_WINDOW_HOURS; // = 1

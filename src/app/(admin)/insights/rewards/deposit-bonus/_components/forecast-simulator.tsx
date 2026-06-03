@@ -166,6 +166,11 @@ export function ForecastSimulator({
   }, [scenarioSet, scenarioId]);
 
   // ── THE ENGINE CALL — recompute the whole set on any lever change ──
+  // ANCHOR the set on the active baseline's REAL total cost so the baseline
+  // scenario reads the production number ($439,998.53 in real mode) in every
+  // view, with the other scenarios as coherent fractions of it. In DEMO mode
+  // the anchor is the deterministic demo total (same path, self-consistent).
+  const anchorCostUsd = baseline.totalCost;
   const results = React.useMemo<SimulationResult[]>(
     () =>
       simulateSet(
@@ -173,8 +178,9 @@ export function ForecastSimulator({
         assumptions,
         { days: assumptions.windowDays },
         BASELINE_SCENARIO_ID,
+        anchorCostUsd,
       ),
-    [scenarioSet, assumptions],
+    [scenarioSet, assumptions, anchorCostUsd],
   );
 
   const recommendations = React.useMemo<Recommendation[]>(
@@ -191,9 +197,25 @@ export function ForecastSimulator({
     [results],
   );
 
+  // Fixed anchor scale (real total ÷ raw slider-derived baseline cost), so the
+  // sensitivity sweep plots on the SAME anchored scale as the rest of the page.
+  // Computed from the unanchored baseline at the current sliders; constant
+  // across the sweep so the curve's value at the current avg matches the active
+  // scenario's displayed cost.
+  const anchorScale = React.useMemo(() => {
+    const rawBaseline = simulateSet(
+      [scenarioSet.find((s) => s.id === BASELINE_SCENARIO_ID) ?? scenarioSet[0]],
+      assumptions,
+      { days: assumptions.windowDays },
+      BASELINE_SCENARIO_ID,
+    )[0];
+    const rawCost = rawBaseline?.bonusCost ?? 0;
+    return anchorCostUsd > 0 && rawCost > 0 ? anchorCostUsd / rawCost : 1;
+  }, [scenarioSet, assumptions, anchorCostUsd]);
+
   // Sensitivity sweep: vary the avg-bonus lever ±60% around its current value,
   // recompute the ACTIVE scenario's cost at each step. Pure engine calls — the
-  // chart just plots the response curve.
+  // chart just plots the response curve, rescaled by the fixed anchor scale.
   const sensitivity = React.useMemo<SensitivityPoint[]>(() => {
     const activeScenario = scenarioSet.find((s) => s.id === scenarioId);
     if (!activeScenario) return [];
@@ -209,10 +231,10 @@ export function ForecastSimulator({
         { days: assumptions.windowDays },
         activeScenario.id,
       )[0];
-      out.push({ x, label: `$${x.toFixed(0)}`, bonusCost: res.bonusCost });
+      out.push({ x, label: `$${x.toFixed(0)}`, bonusCost: res.bonusCost * anchorScale });
     }
     return out;
-  }, [scenarioSet, scenarioId, assumptions]);
+  }, [scenarioSet, scenarioId, assumptions, anchorScale]);
 
   // Sync the serialized state onto the URL (replaceState, no navigation) so the
   // current scenario is shareable without re-rendering the server tree.

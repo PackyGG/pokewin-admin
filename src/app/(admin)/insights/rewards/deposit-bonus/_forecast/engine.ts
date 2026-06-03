@@ -226,36 +226,110 @@ export function clampBonus(avgBonus: number, effectiveCap: number): number {
 }
 
 /**
- * Number of cap WINDOWS that fit in the horizon — converts a per-window cap
- * to a horizon-total exposure. This is where "10/hr" vs "100/24h" diverge:
- * 1h windows give 24×/day of theoretical headroom vs 1×/day for a 24h window.
- * The raw headroom is later burst-damped for split caps so it does not blow
- * up linearly (real users don't max every hourly tranche).
+ * How many cap windows reset in a day for this rule (`24 / windowHours`),
+ * clamped ≥1. A 24h window → 1/day; a 6h window → 4/day; a 1h window → 24/day.
+ * weekly_pooled has no daily reset wall (the ceiling is the weekly pool), so it
+ * reports the baseline cadence (1/day) — its real per-day allowance is handled
+ * by amortizing the pool in {@link effectiveDailyCeilingUsd}.
  */
-export function windowsInHorizon(cap: CapRule, days: number): number {
-  const horizonHours = Math.max(0, finite(days)) * HOURS_PER_DAY;
-  // Volume scales with CLAIM CADENCE, not cap-geometry window (so weekly_pooled
-  // claims at a daily cadence, not once a week).
-  const wh = claimCadenceHours(cap);
-  return Math.max(1, safeDiv(horizonHours, wh));
+export function windowsPerDay(cap: CapRule): number {
+  if (cap.kind === "weekly_pooled") return BASELINE_WINDOWS_PER_DAY;
+  const wh = capWindowHours(cap);
+  return Math.max(1, safeDiv(HOURS_PER_DAY, wh));
 }
 
 /**
- * The horizon multiplier applied to per-window claim volume. Split caps with
- * many short windows get extra headroom but DAMPED (BURST_DAMPING) because
- * users don't actually saturate every tranche. Fixed/long windows pass through
- * at their natural per-day cadence.
+ * The EFFECTIVE DAILY-EQUIVALENT CEILING ($) — the most a realistically-
+ * depositing user can actually pull under this policy in a single day.
  *
- * Normalized so the BASELINE (24h window) returns exactly `days` (one window
- * per day), making baseline volume independent of this multiplier.
+ * This is the crux of the cost model (see `EFFECTIVE_CEILING_MODEL` in
+ * constants): a per-window dollar cap only bites to the extent a user has
+ * deposits to spend it on. A 1h window theoretically allows 24 tranches/day,
+ * but a user depositing `depositsPerDay` times can fill at most that many —
+ * so the daily ceiling is `perWindowCap × min(depositsPerDay, windowsPerDay)`,
+ * NOT `perWindowCap × windowsPerDay`. This is why a $10/1h cap is FAR tighter
+ * than $100/24h for a ~1.4-deposit/day user (~$14/day vs $100/day), and why
+ * shrinking the window LOWERS the effective ceiling instead of inflating cost.
+ *
+ *   • fixed/split        — capUsd × min(depositsPerDay, windowsPerDay).
+ *   • weekly_pooled      — min(pool ÷ 7 [amortized daily share],
+ *                              perDayCeiling at a daily cadence). The pool is
+ *                              the binding wall when it is tighter than the
+ *                              daily fill.
+ *   • progressive_decay  — base cap × deposits (the first claim is generous,
+ *                          later same-day claims decay — captured via the
+ *                          representative effective cap elsewhere); the daily
+ *                          ceiling uses the base cap × min(deposits, 1) since a
+ *                          24h decay window resets daily.
+ *   • dynamic_segment    — mean per-segment cap × min(deposits, windowsPerDay).
+ *
+ * Always ≥0 and finite.
  */
-export function windowMultiplier(cap: CapRule, days: number): number {
-  const windows = windowsInHorizon(cap, days);
-  const baselineWindows = Math.max(1, finite(days)) * BASELINE_WINDOWS_PER_DAY;
-  // Excess windows beyond the baseline cadence are damped.
-  if (windows <= baselineWindows) return windows;
-  const excess = windows - baselineWindows;
-  return baselineWindows + excess * SPLIT_CAP_BURST_DAMPING;
+export function effectiveDailyCeilingUsd(cap: CapRule, depositsPerDay: number): number {
+  const deposits = Math.max(0, finite(depositsPerDay));
+  const wpd = windowsPerDay(cap);
+  const fillsPerDay = Math.min(deposits, wpd);
+  switch (cap.kind) {
+    case "fixed_window":
+    case "split_window":
+      return Math.max(0, finite(cap.capUsd)) * fillsPerDay;
+    case "weekly_pooled": {
+      const dailyAmortized = Math.max(0, safeDiv(finite(cap.capUsd), WEEKLY_POOL_DAYS));
+      // The per-claim ceiling at a daily cadence is the amortized share; a user
+      // can fill it across `min(deposits, 1)` daily windows. The pool itself is
+      // the wall, so the daily-equivalent ceiling is the amortized daily share.
+      return dailyAmortized * Math.min(deposits, BASELINE_WINDOWS_PER_DAY) || dailyAmortized;
+    }
+    case "progressive_decay":
+      // 24h-style decay window resets daily; the first (generous) base claim
+      // dominates the daily ceiling. Later same-day claims decay (modeled in
+      // the representative effective cap), so the daily ceiling uses the base.
+      return Math.max(0, finite(cap.baseCapUsd)) * Math.min(deposits, windowsPerDay(cap));
+    case "dynamic_segment": {
+      const vals = SEGMENTS.map((s) => Math.max(0, finite(cap.perSegmentCapUsd[s.id])));
+      const meanCap = safeDiv(vals.reduce((a, b) => a + b, 0), vals.length);
+      return meanCap * fillsPerDay;
+    }
+  }
+}
+
+/**
+ * Per-SEGMENT effective daily-equivalent ceiling — like
+ * {@link effectiveDailyCeilingUsd} but resolving the dynamic_segment per-segment
+ * cap for one segment (other rules are segment-agnostic, so they fall through to
+ * the same value). Lets the dynamic policy give low-risk segments a high daily
+ * ceiling (retention) and high-risk segments a tiny one (kills leakage).
+ */
+export function effectiveDailyCeilingForSegment(
+  cap: CapRule,
+  segmentId: SegmentId,
+  depositsPerDay: number,
+): number {
+  if (cap.kind !== "dynamic_segment") return effectiveDailyCeilingUsd(cap, depositsPerDay);
+  const deposits = Math.max(0, finite(depositsPerDay));
+  const fillsPerDay = Math.min(deposits, windowsPerDay(cap));
+  const segCap = Math.max(0, finite(cap.perSegmentCapUsd[segmentId]));
+  return segCap * fillsPerDay;
+}
+
+/**
+ * Monotone, concave PAYOUT-RETENTION FACTOR (0-1) for a daily-equivalent
+ * ceiling vs the baseline ceiling. Models how much of the average paid bonus
+ * SURVIVES once a tighter cap truncates the upper tail of the bonus
+ * distribution. Derived as the mean of `min(x, c)` for x ~ Uniform[0, B]
+ * divided by the untruncated mean (B/2):
+ *
+ *   r = clamp01(ceiling / baselineCeiling)
+ *   factor = 2r − r²
+ *
+ * factor(1) = 1 (at/above baseline → no truncation), factor(0) = 0, strictly
+ * increasing and concave in between, so moderate trims bite modestly and
+ * aggressive caps bite hard — but the factor never exceeds 1, so a policy can
+ * never cost MORE than the baseline through this channel.
+ */
+export function payoutRetentionFromCeiling(ceiling: number, baselineCeiling: number): number {
+  const r = clamp01(safeDiv(Math.max(0, finite(ceiling)), Math.max(0, finite(baselineCeiling))));
+  return clamp01(2 * r - r * r);
 }
 
 /**
@@ -375,7 +449,10 @@ export function simulate(
 
   const mix = normalizeSegmentMix(assumptions.segmentMix);
   const eligible = Math.max(0, finite(assumptions.eligibleUsers));
-  const depositsPerWindow = Math.max(0, finite(assumptions.depositsPerUserPerWindow));
+  // `depositsPerUserPerWindow` is anchored to the BASELINE (24h) window, i.e. a
+  // PER-DAY deposit frequency — a property of the user, not the cap geometry.
+  // Volume must NOT scale with how many cap windows fit the horizon.
+  const depositsPerDay = Math.max(0, finite(assumptions.depositsPerUserPerWindow));
   const claimProb = clamp01(assumptions.claimProbability);
   const avgBonus = Math.max(0, finite(assumptions.avgBonusUsd));
   const breakage = clamp01(assumptions.breakageRate);
@@ -387,16 +464,16 @@ export function simulate(
   const cannRate = cannibalizationAtCap(cap, assumptions.cannibalizationRate);
   const retentionUplift = Math.max(0, finite(assumptions.retentionUplift));
 
-  // Volume: claimants over the horizon. Per window = eligible × deposits ×
-  // P(claim). Scaled to the horizon by the (burst-damped) window multiplier.
-  const claimantsPerWindow = eligible * depositsPerWindow * claimProb;
-  const horizonClaimants = claimantsPerWindow * windowMultiplier(cap, days);
+  // ── Volume — bounded by DEPOSIT BEHAVIOUR, identical across every policy ──
+  // Claims over the horizon = population × deposits/day × days × P(claim).
+  // This is the SAME for every cap rule: shrinking the cap window does not
+  // create more claims (a user deposits at their own cadence, not the cap's).
+  const horizonClaimants = eligible * depositsPerDay * Math.max(1, days) * claimProb;
 
-  // Abuse-leakage volume is scaled at the BASELINE cadence (one window/day),
-  // NOT the policy's theoretical window count: finer cap slices do not create
-  // more abuse opportunities. Spaced caps then get the burst-damping discount.
-  const baselineCadenceClaimants =
-    claimantsPerWindow * Math.max(1, days) * BASELINE_WINDOWS_PER_DAY;
+  // ── Effective-ceiling truncation — where policies actually diverge on cost ──
+  // The baseline daily-equivalent ceiling (the reference for payout retention).
+  const baselineDailyCeiling = BASELINE_CAP_USD * Math.min(depositsPerDay, BASELINE_WINDOWS_PER_DAY);
+  // Spaced caps suppress burst abuse on top of the dollar/window tightness.
   const leakDamping = leakageBurstDamping(cap);
 
   // The first deposit of any day enjoys the dynamic first-of-day multiplier;
@@ -404,34 +481,45 @@ export function simulate(
   // window every claim is effectively a first-of-day; shorter windows dilute
   // it. claimIndex models serial claiming for the decay rules.
   const firstOfDayShare = clamp01(safeDiv(BASELINE_WINDOW_HOURS, claimCadenceHours(cap)));
-  const representativeClaimIndex = Math.max(0, Math.round(depositsPerWindow));
+  const representativeClaimIndex = Math.max(0, Math.round(depositsPerDay));
 
   const perSegment: PerSegment[] = SEGMENTS.map((seg) => {
     const segFrac = mix[seg.id];
     const segClaimants = horizonClaimants * segFrac;
 
-    // Effective cap blends a first-of-day claim and a later claim.
+    // Per-claim HARD ceiling (binds when the avg bonus exceeds the cap): blends
+    // a first-of-day claim and a later claim. Kept so the dynamic per-segment
+    // caps still differentiate segments and a high avg bonus is clamped.
     const capFirst = effectiveCapForSegment(cap, seg.id, true, 0);
     const capLater = effectiveCapForSegment(cap, seg.id, false, representativeClaimIndex);
     const effectiveCapUsd = capFirst * firstOfDayShare + capLater * (1 - firstOfDayShare);
+    const hardClamped = clampBonus(avgBonus, effectiveCapUsd);
 
-    const cappedBonus = clampBonus(avgBonus, effectiveCapUsd);
+    // Per-claim PAID bonus = hard-clamped average, reduced by the distribution-
+    // tail truncation a tighter daily-equivalent ceiling imposes. This is the
+    // channel that makes a lower ceiling cost LESS even when the avg bonus sits
+    // below every nominal cap (the real-baseline case: ~$4.22 avg, $100 cap).
+    // High-risk segments under the dynamic policy get a tiny ceiling → strong
+    // truncation; low-risk segments keep a generous ceiling → ~no truncation.
+    const segDailyCeiling = effectiveDailyCeilingForSegment(cap, seg.id, depositsPerDay);
+    const payoutFactor = payoutRetentionFromCeiling(segDailyCeiling, baselineDailyCeiling);
+    const paidBonus = hardClamped * payoutFactor;
 
-    // Bonus cost: claimants × per-claim capped bonus. Breakage does NOT reduce
+    // Bonus cost: claimants × per-claim PAID bonus. Breakage does NOT reduce
     // cost (the bonus is still AWARDED/credited) — it reduces the wager that
     // backs downstream GGR (handled below). House-POV outflow.
-    const segBonusCost = segClaimants * cappedBonus;
+    const segBonusCost = segClaimants * paidBonus;
 
-    // Abuse leakage: the abusive share of THIS segment's bonus, net of capture
-    // and net of spaced-cap burst damping. High-risk segments carry their
-    // baseline abuse share; others a fraction. Computed on the BASELINE-cadence
-    // volume (so finer cap slices don't inflate abuse) × the per-claim capped
-    // bonus the abuser pockets. Tighter caps reduce it via BOTH higher capture
-    // AND (for spaced caps) the burst-damping discount.
+    // Abuse leakage: the abusive share of THIS segment's PAID bonus, net of
+    // capture and net of spaced-cap burst damping. High-risk segments carry
+    // their baseline abuse share; others a fraction. Volume is the SAME
+    // behaviour-bounded claimant count (finer cap slices do not hand an abuser
+    // more opportunities). Tighter caps reduce leakage via THREE reinforcing
+    // channels: a lower paid bonus, higher capture, and (for spaced caps) the
+    // burst-damping discount — so it is monotone-decreasing in tightness.
     const segAbuseShare = seg.id === "high_risk_abuse" ? Math.max(abuseShare, 0) : abuseShare * 0.4;
-    const segLeakClaimants = baselineCadenceClaimants * segFrac;
     const segAbuseLeakage =
-      segLeakClaimants * cappedBonus * clamp01(segAbuseShare) * (1 - capture) * leakDamping;
+      segClaimants * paidBonus * clamp01(segAbuseShare) * (1 - capture) * leakDamping;
 
     // Retained revenue: legit (non-abusive, non-cannibalized) bonus × uplift,
     // reduced by conversion lost to tightening. Only the WAGERED fraction of
@@ -560,25 +648,83 @@ export function buildDailySeries(
 }
 
 /**
+ * Uniformly scale every MONEY field of a result by `scale` (the segment mix,
+ * claimant counts, friction, effective caps and the dimensionless NGR/savings
+ * ratios are preserved). Used to ANCHOR the whole set on a real baseline total
+ * without distorting any relative ratio: scaling the baseline to the real cost
+ * scales every other scenario by the same factor, so the savings RANKING and
+ * the segment-cost composition are untouched and segment costs still sum to the
+ * scenario total. Pure; `scale ≤ 0` or non-finite is a no-op.
+ */
+export function scaleResultMoney(res: SimulationResult, scale: number): SimulationResult {
+  const k = finite(scale);
+  if (!(k > 0) || k === 1) return res;
+  return {
+    ...res,
+    bonusCost: finite(res.bonusCost * k),
+    marginImpact: finite(res.marginImpact * k),
+    netLoss: finite(res.netLoss * k),
+    abuseLeakage: finite(res.abuseLeakage * k),
+    retainedRevenue: finite(res.retainedRevenue * k),
+    ngrImpact: finite(res.ngrImpact * k),
+    confidenceBand: {
+      low: finite(res.confidenceBand.low * k),
+      mid: finite(res.confidenceBand.mid * k),
+      high: finite(res.confidenceBand.high * k),
+    },
+    perSegment: res.perSegment.map((s) => ({
+      ...s,
+      // claimants & effectiveCapUsd are NOT money totals — leave them intact.
+      bonusCost: finite(s.bonusCost * k),
+      abuseLeakage: finite(s.abuseLeakage * k),
+      retainedRevenue: finite(s.retainedRevenue * k),
+      ngrImpact: finite(s.ngrImpact * k),
+    })),
+    // dailySeries is rebuilt from the scaled totals by the caller, so leave it.
+    dailySeries: res.dailySeries,
+  };
+}
+
+/**
  * Run a SET of scenarios and patch in savings-vs-baseline (gross + net) and
  * the daily savings series relative to the designated baseline scenario.
+ *
+ * When `anchorBaselineCostUsd` is supplied (the REAL production total bonus
+ * cost), the whole set is uniformly scaled so the BASELINE scenario's projected
+ * cost equals that anchor EXACTLY — every view (KPI, table, charts, segment
+ * bars) then reads the real baseline, and other scenarios stay coherent
+ * fractions/multiples of it (their cost ÷ ceiling ratios are unchanged by a
+ * uniform scale). Omit the anchor (or pass null) to keep the slider-derived
+ * absolute scale (DEMO mode anchors on the demo total via the same path).
  *
  * @param scenarios    the scenarios to run (the first matching `baselineId`,
  *                     or the first entry, is the reference)
  * @param assumptions  shared levers
  * @param window       horizon
  * @param baselineId   id of the reference scenario (default: scenarios[0].id)
+ * @param anchorBaselineCostUsd  optional real baseline total cost to anchor on
  */
 export function simulateSet(
   scenarios: ScenarioConfig[],
   assumptions: Assumptions,
   window: { days: number },
   baselineId?: string,
+  anchorBaselineCostUsd?: number | null,
 ): SimulationResult[] {
   if (scenarios.length === 0) return [];
   const refId = baselineId ?? scenarios[0].id;
 
-  const raw = scenarios.map((sc) => ({ sc, res: simulate(sc, assumptions, window) }));
+  const rawResults = scenarios.map((sc) => ({ sc, res: simulate(sc, assumptions, window) }));
+  const rawBaselineCost =
+    (rawResults.find((r) => r.sc.id === refId)?.res ?? rawResults[0].res).bonusCost;
+
+  // Anchor: scale the whole set so the baseline cost == the real total. Only
+  // when a positive anchor AND a positive computed baseline both exist (else a
+  // 0/0 would wipe the set) — otherwise keep the slider-derived scale.
+  const anchor = finite(anchorBaselineCostUsd ?? 0);
+  const scale = anchor > 0 && rawBaselineCost > 0 ? anchor / rawBaselineCost : 1;
+  const raw = rawResults.map(({ sc, res }) => ({ sc, res: scaleResultMoney(res, scale) }));
+
   const baseline = raw.find((r) => r.sc.id === refId)?.res ?? raw[0].res;
   const baseCost = baseline.bonusCost;
 
