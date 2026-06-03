@@ -86,11 +86,15 @@ export default async function DeletedUsersPage() {
           icon={Clock}
           accent="blue"
         />
+        {/* Retention Window is an informational config value (how long
+            snapshots survive), not a money-loss metric — amber (neutral
+            warning) keeps the house-POV color convention, where rose is
+            reserved for actual losses / user gains. */}
         <KpiTile
           label="Retention Window"
           value={`${SNAPSHOT_RETENTION_DAYS} days`}
           icon={Trash2}
-          accent="rose"
+          accent="amber"
         />
       </div>
 
