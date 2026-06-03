@@ -84,7 +84,13 @@ export default async function DashboardPage({
   // own snapshots on the client (SSE / polling), so the dashboard's 60s
   // refresh stays scoped to KPI numbers only.
   return (
-    <div className="space-y-6">
+    // `pr-*` reserves a comfortable gutter on the right so the KPI strips,
+    // charts, and cards never run flush under the fixed right-edge docked
+    // rail (Live / Recent / Chat tabs sit at `right-0`). The gutter widens
+    // at wide breakpoints — where there's room — so an open 320px rail panel
+    // doesn't crowd the card edge; on smaller laptops it stays a small
+    // clearance for the always-present collapsed tab.
+    <div className="space-y-6 pr-10 xl:pr-12 2xl:pr-16">
       {/* Dashboard polls at 60s for the KPI numbers only — KPIs settle
           slowly and the docked widgets own their own data on the client,
           so this refresh no longer re-queries any of the live feeds. */}

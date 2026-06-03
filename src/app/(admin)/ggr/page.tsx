@@ -116,13 +116,33 @@ export default async function GgrPage({
 
   return (
     <GgrWindowProvider defaultWindow={DEFAULT_GGR_WINDOW}>
-      <div className="space-y-6">
+      {/* `pr-*` reserves a comfortable gutter on the right so the page
+          content never runs flush under the fixed right-edge docked rail
+          (Live / Recent / Chat tabs sit at `right-0`). The gutter widens at
+          wide breakpoints — where there's room — so an open 320px rail
+          panel doesn't crowd the cards' right edge; on smaller laptops it
+          stays a small clearance for the always-present collapsed tab. */}
+      <div className="space-y-6 pr-10 xl:pr-12 2xl:pr-16">
         <PageHero>
           <PageHeroIdentity
             icon={TrendingUp}
             accent="cyan"
             title="GGR Breakdown"
-            subtitle="Gaming margin decomposed into its canonical groups — gaming payouts, neutral conversions, and reward giveback. Upgrader included; all creator play excluded on both sides (same scope as Daily P&L)."
+            // Concise single-line subtitle (matches the hero-copy convention
+            // used across the Insights pages). The previous ~240-char sentence
+            // was squeezed into an ultra-narrow column by the wide action
+            // cluster + the docked rail and wrapped nearly one word per line.
+            // The full methodology still lives in the per-group intro boxes,
+            // the NGR panel, and the GGR breakdown popover — so no detail is
+            // lost from the page, just lifted out of the cramped header.
+            // `max-w-prose` caps the measure so it never re-collapses to a
+            // narrow strip on a constrained row.
+            subtitle={
+              <span className="block max-w-prose">
+                Gaming margin by group — payouts, neutral conversions, reward
+                giveback. Upgrader included; creator play excluded.
+              </span>
+            }
             action={
               <>
                 <GgrWindowSwitch />
