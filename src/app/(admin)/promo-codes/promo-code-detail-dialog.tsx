@@ -1,6 +1,13 @@
 "use client";
 
-import { useState, useTransition, type ElementType } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useTransition,
+  type ElementType,
+} from "react";
 import Link from "next/link";
 import {
   Activity,
@@ -8,12 +15,14 @@ import {
   CalendarClock,
   DollarSign,
   ExternalLink,
+  RefreshCw,
   Ticket,
   Users,
 } from "lucide-react";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils/format";
 import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -177,28 +186,70 @@ export function PromoCodeDetailDialog({
 }) {
   const [detail, setDetail] = useState<PromoCodeClaimsDetail | null>(null);
   const [errored, setErrored] = useState(false);
-  const [loaded, setLoaded] = useState(false);
+  // Which code id the currently-held `detail` belongs to. Re-opening the
+  // SAME code keeps the cached client result (the server query is cached
+  // 60s too); opening a DIFFERENT code clears this so the effect refetches.
+  const [loadedId, setLoadedId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  function handleOpenChange(next: boolean) {
-    onOpenChange(next);
-    if (next && !loaded && !isPending) {
+  const loaded = loadedId === row.id;
+
+  // The claim detail is fetched ON OPEN. This MUST be driven off the `open`
+  // prop, not the Dialog's `onOpenChange` — the dialog is opened by the
+  // parent (table row / mobile card) flipping `open` to `true`, and base-ui
+  // only fires `onOpenChange` for its OWN dismiss triggers (Esc / backdrop /
+  // close button), never for an externally-controlled open. Wiring the
+  // fetch to `onOpenChange` meant it never ran on open, so "Who claimed it"
+  // stayed blank with no skeleton. Keying the effect on `row.id` also makes
+  // re-opening a *different* code refetch instead of showing stale claims.
+  const fetchClaims = useCallback(
+    (id: string) => {
       startTransition(async () => {
         try {
-          const res = await getPromoCodeClaimDetail(row.id);
+          const res = await getPromoCodeClaimDetail(id);
           if (res.error) {
+            setDetail(null);
             setErrored(true);
           } else {
             setDetail(res.data);
+            setErrored(false);
           }
         } catch {
+          setDetail(null);
           setErrored(true);
         } finally {
-          setLoaded(true);
+          setLoadedId(id);
         }
       });
+    },
+    [startTransition],
+  );
+
+  // Guard so React 18 StrictMode's double-invoked effect (dev) doesn't fire
+  // two concurrent fetches for the same open. Cleared whenever the dialog
+  // closes or the code changes.
+  const inFlightFor = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      inFlightFor.current = null;
+      return;
     }
-  }
+    // Already have this code's detail loaded, or a fetch for it is already
+    // running — nothing to do.
+    if (loadedId === row.id || inFlightFor.current === row.id) return;
+    inFlightFor.current = row.id;
+    fetchClaims(row.id);
+  }, [open, row.id, loadedId, fetchClaims]);
+
+  // Retry after an error — re-arm the in-flight guard and refetch the same
+  // code (a 60s-cached miss still degrades to the error state via safeQuery).
+  const retry = useCallback(() => {
+    setErrored(false);
+    setLoadedId(null);
+    inFlightFor.current = row.id;
+    fetchClaims(row.id);
+  }, [row.id, fetchClaims]);
 
   const status = codeStatus(row);
   const codeLabel = row.code ?? row.codeHash.slice(0, 16) + "…";
@@ -213,7 +264,7 @@ export function PromoCodeDetailDialog({
   const expiresAt = detail?.expiresAt ?? row.expiresAt;
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex flex-wrap items-center gap-2">
@@ -280,7 +331,10 @@ export function PromoCodeDetailDialog({
             )}
           </div>
 
-          {isPending && !loaded && (
+          {/* Loading — shown until THIS code's claims resolve. The header
+              summary above already rendered instantly from row data; only
+              this section waits behind the skeleton. */}
+          {!loaded && (
             <div className="space-y-2 rounded-md border p-3">
               {Array.from({ length: 4 }).map((_, i) => (
                 <div key={i} className="flex items-center gap-3">
@@ -289,6 +343,7 @@ export function PromoCodeDetailDialog({
                   <Skeleton className="h-4 w-24" />
                 </div>
               ))}
+              <span className="sr-only">Loading claims…</span>
             </div>
           )}
 
@@ -297,8 +352,22 @@ export function PromoCodeDetailDialog({
               icon={AlertTriangle}
               accent="rose"
               title="Couldn’t load claims"
-              description="The claim list timed out or failed to load. Close and reopen to try again."
+              description="The claim list timed out or failed to load."
               compact
+              action={
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={retry}
+                  disabled={isPending}
+                  className="gap-1.5"
+                >
+                  <RefreshCw
+                    className={"size-3.5 " + (isPending ? "animate-spin" : "")}
+                  />
+                  {isPending ? "Retrying…" : "Retry"}
+                </Button>
+              }
             />
           )}
 
