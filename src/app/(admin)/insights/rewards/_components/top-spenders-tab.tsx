@@ -21,7 +21,7 @@ import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
@@ -45,6 +45,7 @@ export async function TopSpendersTab({
     () => getRewardsTopRecipients(period),
     [] as Awaited<ReturnType<typeof getRewardsTopRecipients>>,
     "insights-rewards.topSpenders",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error) {
     return (

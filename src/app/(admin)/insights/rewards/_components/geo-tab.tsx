@@ -18,7 +18,7 @@ import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
@@ -40,6 +40,7 @@ export async function GeoTab({
     () => getRewardsGeoSourceBreakdown(period),
     null,
     "insights-rewards.geo",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (

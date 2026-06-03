@@ -5,7 +5,7 @@ import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
 import { resolveRainHouseCost } from "@/lib/metrics";
 import {
-  daysForInsightsPeriod,
+  daysForInsightsPeriodCapped,
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "./_period";
@@ -93,9 +93,12 @@ async function computeCategorySpendBreakdown(
   blacklistIds: string[],
 ): Promise<CategorySpendBreakdown> {
   const db = await getDb();
-  const days = daysForInsightsPeriod(period);
-  const dateFilter =
-    days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";
+  // Lifetime (`all`) CAPPED to INSIGHTS_LIFETIME_LOOKBACK_DAYS (365d) via
+  // daysForInsightsPeriodCapped so the per-category ledger rollup + daily
+  // series never scan the full ledger unbounded (CLAUDE.md "Performance &
+  // Daten-Laden"). Matches the capped cross-category-summary so grandTotal
+  // keeps reconciling with its totalCost on the lifetime window too.
+  const dateFilter = `AND lt.created_at >= NOW() - INTERVAL '${daysForInsightsPeriodCapped(period)} days'`;
   const blacklistSubquery = blacklistNotInClause("id", blacklistIds);
 
   // Two parallel sweeps:

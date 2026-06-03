@@ -17,7 +17,7 @@ import {
   type CohortRow,
 } from "@/lib/queries/insights-rewards/cohort-matrix";
 import { type InsightsRewardsPeriod } from "@/lib/queries/insights-rewards/_period";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
@@ -50,6 +50,7 @@ export async function CohortTab({
     () => getRewardsCohortMatrix(period),
     null,
     "insights-rewards.cohort",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (

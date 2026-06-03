@@ -9,7 +9,7 @@ import {
 } from "@/lib/queries/insights-games/_shared";
 import { getCreatorSessionWindowsCte } from "@/lib/queries/creator-session-windows";
 import {
-  daysForInsightsPeriod,
+  daysForInsightsPeriodCapped,
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "./_period";
@@ -116,12 +116,12 @@ async function computeDailyPacksGiveaway(
     const db = await getDb();
     const scope = await realCustomersScopeSql();
     const sessionWindowsCte = await getCreatorSessionWindowsCte();
-    const days = daysForInsightsPeriod(period);
 
-    const uiCutoff =
-      days !== null
-        ? `AND ui.obtained_at >= NOW() - INTERVAL '${days} days'`
-        : "";
+    // Lifetime (`all`) CAPPED to INSIGHTS_LIFETIME_LOOKBACK_DAYS (365d) via
+    // daysForInsightsPeriodCapped so the giveaway sweep over the full
+    // user_inventory history never runs unbounded (CLAUDE.md "Performance
+    // & Daten-Laden"). Finite windows are unchanged.
+    const uiCutoff = `AND ui.obtained_at >= NOW() - INTERVAL '${daysForInsightsPeriodCapped(period)} days'`;
 
     // The not-on-stream guard: drop cards a creator obtained while live
     // on a deal (house-funded promo play). Applied to obtained_at, the

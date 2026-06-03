@@ -10,6 +10,7 @@ import {
 } from "@/lib/metrics";
 import {
   daysForInsightsPeriod,
+  daysForInsightsPeriodCapped,
   cacheTtlForInsightsPeriod,
   type InsightsRewardsPeriod,
 } from "./_period";
@@ -150,8 +151,13 @@ async function computeCrossCategorySummary(
       ${dateClause}
   `;
 
-  const currentDateClause =
-    days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";
+  // Lifetime (`all`) is CAPPED to INSIGHTS_LIFETIME_LOOKBACK_DAYS (365d)
+  // via daysForInsightsPeriodCapped so the headline reward-cost / GGR scan
+  // never runs unbounded over the full ledger (CLAUDE.md "Performance &
+  // Daten-Laden" — Lifetime-Fenster bounden). Finite windows are
+  // unchanged. The prior-window comparison below only runs for finite
+  // windows, so it is never unbounded.
+  const currentDateClause = `AND lt.created_at >= NOW() - INTERVAL '${daysForInsightsPeriodCapped(period)} days'`;
 
   // Single round-trip — rewards / wagers / payouts side by side via
   // FILTER on the same scan. The status + user-scope filter is

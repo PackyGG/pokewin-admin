@@ -20,7 +20,7 @@ import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
@@ -52,6 +52,7 @@ export async function RoiTab({
     () => getRewardsROI(period, 14),
     null,
     "insights-rewards.roi",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (

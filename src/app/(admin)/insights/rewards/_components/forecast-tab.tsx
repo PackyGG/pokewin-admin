@@ -16,7 +16,7 @@ import {
 } from "@/lib/queries/insights-rewards/forecasting";
 import { type InsightsRewardsPeriod } from "@/lib/queries/insights-rewards/_period";
 import { ForecastLineChart } from "./forecast-line-chart";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
@@ -45,6 +45,7 @@ export async function ForecastTab({
     () => getRewardsForecasting(),
     null,
     "insights-rewards.forecast",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (

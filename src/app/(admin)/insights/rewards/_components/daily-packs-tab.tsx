@@ -18,7 +18,7 @@ import { EmptyState } from "@/components/empty-state";
 import { AnimatedNumber } from "@/components/animated-number";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import {
   getDailyPacksGiveaway,
   type DailyPackRow,
@@ -51,6 +51,7 @@ export async function DailyPacksTab({
     () => getDailyPacksGiveaway(period),
     null,
     "insights-rewards.dailyPacks",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (

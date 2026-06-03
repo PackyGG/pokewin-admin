@@ -35,7 +35,7 @@ import {
   insightsRewardsPeriodLabel,
   type InsightsRewardsPeriod,
 } from "@/lib/queries/insights-rewards/_period";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
@@ -62,11 +62,13 @@ export async function OverviewTab({
       () => getRewardsCrossCategorySummary(period),
       null,
       "insights-rewards.summary",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
       () => getRewardsCategorySpendBreakdown(period),
       null,
       "insights-rewards.spend",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
     // Creator-funded withdrawal volume for the window — own safeQuery so
     // a failure degrades to a single TileErrorFallback in the dedicated
@@ -76,6 +78,7 @@ export async function OverviewTab({
       () => getCreatorWithdrawalsSummary(period),
       null,
       "insights-rewards.creatorWithdrawals",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
   ]);
   if (summaryRes.error || !summaryRes.data || spendRes.error || !spendRes.data) {

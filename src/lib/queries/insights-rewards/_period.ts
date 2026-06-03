@@ -83,6 +83,28 @@ export function daysForInsightsPeriod(
 }
 
 /**
+ * Lifetime lookback cap (days) for HEAVY reward sweeps whose `all` window
+ * would otherwise scan the entire ledger_transactions / user_inventory
+ * history with no lower bound — the unbounded-lifetime pattern CLAUDE.md
+ * ("Performance & Daten-Laden") forbids. Mirrors the deposit-bonus
+ * `LIFETIME_PAIRING_LOOKBACK_DAYS` (365d) one folder over so the two stay
+ * aligned. Covers effectively all currently-relevant reward activity while
+ * keeping the cold/first cache fill tractable.
+ */
+export const INSIGHTS_LIFETIME_LOOKBACK_DAYS = 365;
+
+/**
+ * Like {@link daysForInsightsPeriod}, but the lifetime (`all`) window
+ * resolves to {@link INSIGHTS_LIFETIME_LOOKBACK_DAYS} instead of `null`
+ * (unbounded). Use this for the heavy headline reward-cost / daily-pack
+ * scans so a lifetime view does not trigger a full-history table scan.
+ * Finite windows return the same value as `daysForInsightsPeriod`.
+ */
+export function daysForInsightsPeriodCapped(p: InsightsRewardsPeriod): number {
+  return daysForInsightsPeriod(p) ?? INSIGHTS_LIFETIME_LOOKBACK_DAYS;
+}
+
+/**
  * Map an InsightsRewardsPeriod onto the closest `RewardsPeriod` used by
  * the existing per-category helpers (`rewards-category-analytics.ts` and
  * `rewards-category-extras.ts`). The /rewards/analytics page only exposes
