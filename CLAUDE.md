@@ -501,6 +501,12 @@ Pattern: `"bg-{color}-500/15 text-{color}-600 dark:text-{color}-400 border-{colo
 - **Niemals direkt `balances.update()` ohne dazugehörigen Ledger-Eintrag** — das würde die Audit-Chain brechen.
 - Für Multi-Step Mutations: `db.$transaction([...])` verwenden (Referenz: Battle-Cancellation in `src/app/(admin)/battles/actions.ts`).
 
+#### Voucher = Card (gleiches Item, kein Unterschied) — CRITICAL Modell-Regel
+
+- **Ein Voucher ist dasselbe wie eine Card: ein Item, kein Unterschied.** Gleiche Behandlung in Wert, Inventar, PnL/GGR und Anzeige. Niemals als eigene "Voucher-Klasse" behandeln, die anders zählt als eine Card.
+- **`battle_excess_to_voucher` ist Teil eines ganz normalen Battle-Wins** (der Voucher-Rest, den die Inventory-Card untercountet — Card-Value + Voucher-Value = voller Win). `battle_refund` ist die Cash-Leg desselben normalen Wins. **Beide bekommen KEINE separate Anzeige** in GGR-/Cost-Breakdowns — in die normale **"Pack & battle wins"**-Zeile mergen. Es ist ein normaler Win, kein Sonderfall.
+- **Voucher/Card exchangen oder redeemen ist eine normale User-Aktion und KEIN House-Verlust.** Der Wert wurde bereits beim Entstehen des Items verbucht; das spätere Exchange/Redeem ist neutral (kein Cost, kein Loss, keine GGR-/PnL-Bewegung). Niemals einen Exchange als Verlust/Cost zählen oder anzeigen.
+
 ### Admin Audit
 
 - Admin-Aktionen werden über `createAdminAuditEvent()` geloggt.
