@@ -1,7 +1,5 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import Link from "next/link";
 import {
   Info,
   TrendingUp,
@@ -11,8 +9,6 @@ import {
   Wallet,
   Box,
   Ticket,
-  ChevronDown,
-  Loader2,
   type LucideIcon,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,8 +20,6 @@ import {
 import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
-import type { InventoryHolderRow } from "@/lib/queries/dashboard-today-pnl";
-import { fetchInventoryTopHolders } from "./today-pnl-actions";
 
 /**
  * "P&L Today" dashboard tile — house P&L for the CURRENT CALENDAR DAY
@@ -194,8 +188,6 @@ function TodayPnlInfoPopover({
   // Signed contribution to house P&L per the canonical formula:
   //   pnl = deposits − withdrawals − balanceΔ − inventoryΔ − voucherΔ
   // Deposits add; every other term subtracts. These five sum to `pnl`.
-  // `id` discriminates the Inventory row so it can host the lazy
-  // "where the held inventory value comes from" expander.
   const rows: Array<{
     id: "deposits" | "withdrawals" | "balance" | "inventory" | "voucher";
     label: string;
@@ -276,29 +268,17 @@ function TodayPnlInfoPopover({
         </div>
 
         {/* Component rows — each shows its SIGNED contribution to house
-            P&L, House-POV colored (positive emerald, negative rose). The
-            Inventory row additionally hosts a lazy "show more" expander
-            that reveals where the held inventory value comes from. */}
+            P&L, House-POV colored (positive emerald, negative rose). */}
         <ul className="space-y-0.5">
-          {rows.map((r) =>
-            r.id === "inventory" ? (
-              <TodayInventoryBreakdownRow
-                key={r.id}
-                label={r.label}
-                description={r.description}
-                contribution={r.contribution}
-                icon={r.icon}
-              />
-            ) : (
-              <TodayBreakdownRow
-                key={r.id}
-                label={r.label}
-                description={r.description}
-                contribution={r.contribution}
-                icon={r.icon}
-              />
-            ),
-          )}
+          {rows.map((r) => (
+            <TodayBreakdownRow
+              key={r.id}
+              label={r.label}
+              description={r.description}
+              contribution={r.contribution}
+              icon={r.icon}
+            />
+          ))}
         </ul>
 
         {/* Bottom math: the five contributions sum to the total. House-POV
@@ -368,174 +348,5 @@ function TodayBreakdownRow({
         {formatCurrency(Math.abs(contribution))}
       </span>
     </li>
-  );
-}
-
-/**
- * The Inventory Δ row inside the today-P&L popover, plus a lazy
- * "show more" expander that reveals WHERE the held inventory value comes
- * from — the top users by currently-held inventory value. Mirrors the
- * GGR card's "Show top contributors" drill-down (revenue-stat-card.tsx):
- * the expander is collapsed by default and the heavier per-user GROUP BY
- * fires only on the FIRST open (via `fetchInventoryTopHolders`); the
- * fetched rows are reused on subsequent toggles within the same popover
- * instance, so closing → reopening doesn't re-hit the DB.
- *
- * The top row itself still shows the signed Δ contribution (House-POV
- * colored), identical to a plain `TodayBreakdownRow`.
- */
-function TodayInventoryBreakdownRow({
-  label,
-  description,
-  contribution,
-  icon: Icon,
-}: {
-  label: string;
-  description: string;
-  contribution: number;
-  icon: LucideIcon;
-}) {
-  const positive = contribution >= 0;
-  const sign = positive ? "+" : "−";
-  const amountColor = positive
-    ? "text-emerald-600 dark:text-emerald-400"
-    : "text-rose-600 dark:text-rose-400";
-
-  // Expander state lives in this client component so the server action
-  // only runs when the admin actually opens the drill-down — keeps the
-  // tile's initial render free of the per-user inventory sweep
-  // (active-timeframe / lazy-load rule).
-  const [holderState, setHolderState] = useState<{
-    open: boolean;
-    rows: InventoryHolderRow[] | null;
-    error: string | null;
-  }>({ open: false, rows: null, error: null });
-  const [isPending, startTransition] = useTransition();
-
-  const handleToggle = () => {
-    if (holderState.open) {
-      setHolderState((s) => ({ ...s, open: false }));
-      return;
-    }
-    // Reuse already-fetched rows on a re-open instead of hammering the DB.
-    if (holderState.rows) {
-      setHolderState((s) => ({ ...s, open: true }));
-      return;
-    }
-    startTransition(async () => {
-      try {
-        const rows = await fetchInventoryTopHolders(10);
-        setHolderState({ open: true, rows, error: null });
-      } catch (err) {
-        setHolderState({
-          open: true,
-          rows: null,
-          error:
-            err instanceof Error ? err.message : "Failed to load breakdown",
-        });
-      }
-    });
-  };
-
-  return (
-    <li className="rounded px-1 py-0.5 hover:bg-muted/40">
-      <div className="flex items-center justify-between gap-2 text-[11px]">
-        <span className="flex min-w-0 items-center gap-1.5">
-          <span className="flex size-5 shrink-0 items-center justify-center rounded bg-muted text-muted-foreground">
-            <Icon className="size-3" />
-          </span>
-          <span className="min-w-0">
-            <span className="block truncate font-medium text-foreground/90">
-              {label}
-            </span>
-            <span className="block truncate text-[10px] text-muted-foreground">
-              {description}
-            </span>
-          </span>
-        </span>
-        <span
-          className={cn("shrink-0 font-semibold tabular-nums", amountColor)}
-        >
-          {sign}
-          {formatCurrency(Math.abs(contribution))}
-        </span>
-      </div>
-
-      {/* Lazy expander toggle — fires the per-user inventory sweep on
-          first open, mirroring the GGR contributors expander. */}
-      <button
-        type="button"
-        onClick={handleToggle}
-        disabled={isPending}
-        className="mt-0.5 flex w-full items-center justify-between rounded px-1 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:opacity-60"
-      >
-        <span>
-          {holderState.open ? "Hide" : "Show"} top holders — where it&apos;s
-          held
-        </span>
-        {isPending ? (
-          <Loader2 className="size-3 animate-spin" />
-        ) : (
-          <ChevronDown
-            className={cn(
-              "size-3 transition-transform",
-              holderState.open && "rotate-180",
-            )}
-          />
-        )}
-      </button>
-      {holderState.open && (
-        <div className="mt-1">
-          {holderState.error ? (
-            <p className="px-1 py-1.5 text-[10px] text-rose-400">
-              {holderState.error}
-            </p>
-          ) : holderState.rows && holderState.rows.length > 0 ? (
-            <InventoryHolderList rows={holderState.rows} />
-          ) : (
-            <p className="px-1 py-1.5 text-[10px] text-muted-foreground">
-              No held inventory to break down.
-            </p>
-          )}
-        </div>
-      )}
-    </li>
-  );
-}
-
-/**
- * Top inventory-holders list inside the Inventory Δ expander. Each row
- * links to /users/<id>, shows rank + username + the user's currently-held
- * inventory value. House-POV per CLAUDE.md: a user HOLDING inventory is a
- * house liability (every dollar they hold is a dollar we owe) — i.e. the
- * user is "up" on that value — so the held value reads ROSE, matching the
- * Inventory Δ row's negative contribution when inventory grows. Mirrors
- * the GGR card's ContributorList layout.
- */
-function InventoryHolderList({ rows }: { rows: InventoryHolderRow[] }) {
-  return (
-    <ul className="space-y-0.5">
-      {rows.map((r, idx) => {
-        const username = r.username ?? `${r.userId.slice(0, 6)}…`;
-        return (
-          <li key={r.userId}>
-            <Link
-              href={`/users/${r.userId}`}
-              className="flex items-center justify-between gap-2 rounded px-1 py-1 text-[11px] transition-colors hover:bg-muted/60"
-            >
-              <span className="flex min-w-0 items-center gap-1.5">
-                <span className="w-4 shrink-0 text-right text-muted-foreground/60 tabular-nums">
-                  {idx + 1}.
-                </span>
-                <span className="truncate font-medium">{username}</span>
-              </span>
-              <span className="shrink-0 font-semibold tabular-nums text-rose-600 dark:text-rose-400">
-                {formatCurrency(r.inventoryValue)}
-              </span>
-            </Link>
-          </li>
-        );
-      })}
-    </ul>
   );
 }
