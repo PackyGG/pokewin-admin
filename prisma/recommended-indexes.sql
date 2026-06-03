@@ -297,14 +297,38 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pf_result_metadata_pack_id_created_a
 
 -- -------------------------------------------------------------------
 -- ADMIN DB (separate database — apply against ADMIN_DATABASE_URL, NOT
--- the main game DB). Lower priority: admin_audit_events is a small
--- staff-action log.
+-- the main game DB).
 -- -------------------------------------------------------------------
--- getRecentActivity (dashboard.ts) also orders admin_audit_events by
--- created_at DESC with no index on that column. Cheap to add; only worth
--- it once the audit log grows large.
--- CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_admin_audit_created_at
---   ON admin_audit_events (created_at DESC);
+-- A1 ----------------------------------------------------------------
+-- admin_audit_events single-column indexes
+-- ===================================================================
+-- LANDED 2026-06-03 via migration 20260603000000_admin_audit_events_indexes.
+-- Kept here as documentation for the audit / cost-of-each-index trail.
+--
+-- Existing composites (from 20260429100000_perf_indexes):
+--   • (admin_user_id, created_at DESC)
+--   • (event_type, created_at DESC)
+-- Neither satisfies a bare unfiltered ORDER BY created_at DESC scan
+-- (no leading filter), nor any access by target_user_id (totally
+-- uncovered before this migration).
+--
+-- The /audit viewer (src/lib/queries/audit.ts getAuditEvents) orders by
+-- created_at DESC and filters by event_type / admin_user_id /
+-- target_user_id from the toolbar; the /audit Event Types KPI runs a
+-- groupBy on event_type. Each of these indexes serves at least one of
+-- those access patterns when its leading key isn't covered by a
+-- composite.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS admin_audit_events_created_at_idx
+  ON admin_audit_events (created_at DESC);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS admin_audit_events_event_type_idx
+  ON admin_audit_events (event_type);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS admin_audit_events_admin_user_id_idx
+  ON admin_audit_events (admin_user_id);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS admin_audit_events_target_user_id_idx
+  ON admin_audit_events (target_user_id);
 
 -- =============================================================================
 -- Verification queries (run AFTER each index creation)

@@ -225,6 +225,34 @@ model admin_audit_events {
   metadata       Json?
   created_at     DateTime     @default(now()) @db.Timestamptz(6)
   admin_user     admin_users? @relation(fields: [admin_user_id], references: [id])
+
+  // Indexes for the /audit viewer + admin/user detail audit tabs. The
+  // viewer's headline ordering is `ORDER BY created_at DESC` (no filter on
+  // an unfiltered list page), and the toolbar filters by `event_type IN
+  // (...)`, `admin_user_id`, and `target_user_id`. Pre-existing composite
+  // perf indexes — admin_audit_events_admin_user_created_idx
+  // (admin_user_id, created_at DESC) and admin_audit_events_event_type_created_idx
+  // (event_type, created_at DESC) — were added in 20260429100000_perf_indexes
+  // and remain in place (managed outside this schema with `@@index([col],
+  // map: …)` declarations would risk renaming them; we leave the composites
+  // unmodeled in Prisma since they were created by raw SQL).
+  //
+  // The single-column indexes below cover the access patterns the composites
+  // don't:
+  //   • created_at DESC alone — bare ORDER BY DESC with no filter (the
+  //     composites lead with admin_user_id / event_type, so neither
+  //     satisfies an unfiltered recency scan).
+  //   • event_type — `event_type IN (...)` (multi-value, no following
+  //     created_at ordering); also covers groupBy() on event_type for the
+  //     /audit Event Types KPI.
+  //   • admin_user_id — covers the cross-DB join into admin_users without
+  //     leading the composite, and partial filters without created_at.
+  //   • target_user_id — currently has zero coverage; powers the
+  //     target-user filter on /audit and the per-user audit drill-down.
+  @@index([created_at(sort: Desc)], map: "admin_audit_events_created_at_idx")
+  @@index([event_type], map: "admin_audit_events_event_type_idx")
+  @@index([admin_user_id], map: "admin_audit_events_admin_user_id_idx")
+  @@index([target_user_id], map: "admin_audit_events_target_user_id_idx")
 }
 
 model admin_gift_card_actions {
