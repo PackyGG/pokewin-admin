@@ -60,7 +60,18 @@ export function ActiveRainChip({ rain }: { rain: ActiveRainSummary }) {
         ·
       </span>
       <Timer className="size-3.5 shrink-0" aria-hidden />
-      {drawing ? <span>drawing</span> : <RainCountdown endsAt={rain.endsAt} />}
+      {drawing ? (
+        <span>drawing</span>
+      ) : (
+        // initialRemainingMs is computed server-side here (once, at request
+        // time) and serialized to the client so RainCountdown's first paint is
+        // byte-identical to the SSR markup — no #418. The client then re-syncs
+        // to the live clock on mount.
+        <RainCountdown
+          endsAt={rain.endsAt}
+          initialRemainingMs={new Date(rain.endsAt).getTime() - Date.now()}
+        />
+      )}
     </span>
   );
 }

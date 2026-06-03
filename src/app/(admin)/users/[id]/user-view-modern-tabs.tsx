@@ -58,11 +58,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/empty-state";
 import { SkeletonTable } from "@/components/ux";
 import { cn } from "@/lib/utils";
-import {
-  formatCurrency,
-  formatRelative,
-  formatDateTime,
-} from "@/lib/utils/format";
+import { formatCurrency, formatDateTime } from "@/lib/utils/format";
+import { RelativeTime } from "@/components/relative-time";
 import {
   amountColorFor,
   amountSignFor,
@@ -319,7 +316,7 @@ function TipPanel({
                             </span>
                           )}
                           <span className="ml-1 text-muted-foreground/70">
-                            · {formatRelative(t.createdAt)}
+                            · <RelativeTime date={t.createdAt} />
                           </span>
                         </span>
                         {leaderboardHref ? (
@@ -359,7 +356,7 @@ function TipPanel({
                           </span>
                         )}
                         <span className="ml-1 text-muted-foreground/70">
-                          · {formatRelative(t.createdAt)}
+                          · <RelativeTime date={t.createdAt} />
                         </span>
                       </span>
                     )}
@@ -803,7 +800,7 @@ function AttributionJourneySection({ userId }: { userId: string }) {
                           </>
                         )}
                         <span className="ml-1 text-muted-foreground/70">
-                          · {formatRelative(row.firstUsedAt)}
+                          · <RelativeTime date={row.firstUsedAt} />
                         </span>
                       </p>
                     </div>
@@ -1185,7 +1182,7 @@ function OwnedCodeRow({
         </span>
       </div>
       <span className="text-[11px] text-muted-foreground">
-        added {formatRelative(createdAt)}
+        added <RelativeTime date={createdAt} />
       </span>
     </Link>
   );
@@ -1485,9 +1482,10 @@ function RecentActivityTimeline({
                     <span className="text-sm font-medium capitalize">
                       {tx.type.replace(/_/g, " ")}
                     </span>
-                    <span className="text-xs text-muted-foreground">
-                      {formatRelative(tx.createdAt)}
-                    </span>
+                    <RelativeTime
+                      className="text-xs text-muted-foreground"
+                      date={tx.createdAt}
+                    />
                   </div>
                   <span
                     className={cn(

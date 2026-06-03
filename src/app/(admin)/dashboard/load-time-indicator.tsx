@@ -15,17 +15,29 @@ import { formatRelative } from "@/lib/utils/format";
  * the page's 60s server refreshes — without that tick the label would
  * freeze at "less than a minute ago" until the next router.refresh().
  *
- * Both props are plain serializable primitives, so this stays safe to hand
+ * `initialRelative` is the relative string formatted ONCE on the server (in
+ * the dashboard page) and serialized down. The first client paint renders
+ * that exact string, so it is byte-identical to the SSR markup — no hydration
+ * mismatch. Deriving the string from `Date.now()` during render instead (the
+ * previous approach) made the server-formatted value and the first
+ * client-formatted value disagree, which React surfaces as a recoverable
+ * hydration error (minified #418) in production even with
+ * `suppressHydrationWarning`. The post-mount effect re-derives from
+ * `generatedAt` and keeps the 30s tick going.
+ *
+ * All props are plain serializable primitives, so this stays safe to hand
  * down from the streamed Server Component that reads the cached stats.
  */
 export function LoadTimeIndicator({
   queryMs,
   generatedAt,
+  initialRelative,
 }: {
   queryMs: number;
   generatedAt: string;
+  initialRelative: string;
 }) {
-  const [relative, setRelative] = useState(() => formatRelative(generatedAt));
+  const [relative, setRelative] = useState(initialRelative);
 
   useEffect(() => {
     // Re-sync immediately when a fresh generatedAt arrives (after a server
@@ -47,12 +59,7 @@ export function LoadTimeIndicator({
       <span aria-hidden className="text-muted-foreground/50">
         ·
       </span>
-      {/* `relative` is derived from a wall-clock diff (formatRelative), so
-          the server-rendered string and the first client render can differ
-          by a tick — a latent React #418 hydration mismatch. suppressHydration
-          Warning lets the client reconcile the relative-time text without a
-          warning; the 30s tick + per-generatedAt re-sync keep it honest. */}
-      <span suppressHydrationWarning>updated {relative}</span>
+      <span>updated {relative}</span>
     </span>
   );
 }

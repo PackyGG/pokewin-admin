@@ -23,7 +23,7 @@ import { getTodayPnl } from "@/lib/queries/dashboard-today-pnl";
 import { getRewardCostsToday } from "@/lib/queries/dashboard-reward-costs-today";
 import { getCreatorCostsToday } from "@/lib/queries/dashboard-creator-costs-today";
 import { requirePageAccess } from "@/lib/dal";
-import { formatCurrency } from "@/lib/utils/format";
+import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import { LoadTimeIndicator } from "./load-time-indicator";
 import { StatCard } from "./stat-card";
 import { safeQuery } from "@/lib/errors/safe-query";
@@ -296,6 +296,9 @@ async function DashboardLoadTime({ period }: { period: DashboardPeriod }) {
     <LoadTimeIndicator
       queryMs={stats.queryMs}
       generatedAt={stats.generatedAt}
+      // Formatted server-side so the first client paint is byte-identical to
+      // the SSR markup (no #418); the client re-derives it after mount.
+      initialRelative={formatRelative(stats.generatedAt)}
     />
   );
 }

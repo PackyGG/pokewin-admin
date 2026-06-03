@@ -47,7 +47,8 @@ import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
-import { formatCurrency, formatRelative } from "@/lib/utils/format";
+import { formatCurrency } from "@/lib/utils/format";
+import { RelativeTime } from "@/components/relative-time";
 import { ROLE_COLORS, USER_STATUS_COLORS } from "@/lib/constants";
 import {
   type UserDetail,
@@ -437,7 +438,7 @@ export function UserViewModern({
                   </span>
                   <span className="inline-flex items-center gap-0.5">
                     <Calendar className="size-2.5" />
-                    {formatRelative(user.createdAt)}
+                    <RelativeTime date={user.createdAt} />
                   </span>
                   <span className="font-mono">{user.id.slice(0, 8)}</span>
                 </div>

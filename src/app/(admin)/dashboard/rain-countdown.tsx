@@ -20,9 +20,25 @@ function format(ms: number): string {
   return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`;
 }
 
-export function RainCountdown({ endsAt }: { endsAt: string }) {
+/**
+ * `initialRemainingMs` is computed ONCE on the server (in ActiveRainChip,
+ * `endsAt − Date.now()` at request time) and serialized down. The first client
+ * paint renders from that SAME number, so it is byte-identical to the SSR
+ * markup — no hydration mismatch. Reading `Date.now()` during render instead
+ * (the previous approach) made the server tick and the first client tick
+ * disagree by a second, which React surfaces as a recoverable hydration error
+ * (minified #418) in production even with `suppressHydrationWarning`. The
+ * post-mount effect re-syncs to the live clock and starts the 1s tick.
+ */
+export function RainCountdown({
+  endsAt,
+  initialRemainingMs,
+}: {
+  endsAt: string;
+  initialRemainingMs: number;
+}) {
   const target = new Date(endsAt).getTime();
-  const [remaining, setRemaining] = useState(() => target - Date.now());
+  const [remaining, setRemaining] = useState(initialRemainingMs);
 
   useEffect(() => {
     setRemaining(target - Date.now());
@@ -30,11 +46,5 @@ export function RainCountdown({ endsAt }: { endsAt: string }) {
     return () => clearInterval(id);
   }, [target]);
 
-  // suppressHydrationWarning: the value is clock-derived, so the server-
-  // rendered tick and the first client tick can differ by a second.
-  return (
-    <span className="tabular-nums" suppressHydrationWarning>
-      {format(remaining)}
-    </span>
-  );
+  return <span className="tabular-nums">{format(remaining)}</span>;
 }
