@@ -27,12 +27,31 @@ import {
  * excluded. Read-only sweep. Cached per window.
  */
 
+// Canonical reward set. `creator_tip` EXCLUDED (RESIDUAL user→user
+// pass-through, $0 net house cost) so it does not fabricate reward $ in
+// the geo/source distribution. `rain_tip` included so each group's rain
+// house slice can be netted (`GREATEST(0, Σrain_win − Σrain_tip)`); it is
+// never counted as a reward itself. Matches the corrected
+// cross-category-summary / category-spend-breakdown on this page.
 const ALL_REWARD_TYPES_SQL = `(
   'deposit_bonus','promo_code_redeemed','gift_card_redeemed',
   'rakeback_claim','affiliate_claim',
-  'rain_win','race_prize','balance_reward_claim','creator_tip',
+  'rain_win','rain_tip','race_prize','balance_reward_claim',
   'waitlist_prize'
 )`;
+
+// Per-group netted reward $ expression: non-rain reward legs + the rain
+// house slice (GREATEST(0, Σ|rain_win| − Σ|rain_tip|)). `col` is the
+// ABS(amount) column reference (inlined, trusted). Used identically in the
+// SELECT and ORDER BY of each grouped query so the ordering matches the
+// displayed total. rain_tip never adds to the total (funding leg).
+const NETTED_REWARD_SQL = (typeCol: string, amtCol: string): string =>
+  `COALESCE(SUM(CASE WHEN ${typeCol} NOT IN ('rain_win','rain_tip') THEN ABS(${amtCol}::numeric) ELSE 0 END), 0)
+   + GREATEST(
+       0,
+       COALESCE(SUM(CASE WHEN ${typeCol} = 'rain_win' THEN ABS(${amtCol}::numeric) ELSE 0 END), 0)
+       - COALESCE(SUM(CASE WHEN ${typeCol} = 'rain_tip' THEN ABS(${amtCol}::numeric) ELSE 0 END), 0)
+     )`;
 
 const COUNTRY_LIMIT = 12;
 const SOURCE_LIMIT = 10;
@@ -71,8 +90,10 @@ async function computeGeoSource(
     >(`
       SELECT
         COALESCE(u.country_code, '??') AS code,
-        COUNT(DISTINCT lt.user_id)::text AS user_count,
-        COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total
+        -- Distinct claimants exclude rain_tip-only rows (funding leg is
+        -- not a reward claim).
+        COUNT(DISTINCT CASE WHEN lt.type::text <> 'rain_tip' THEN lt.user_id END)::text AS user_count,
+        (${NETTED_REWARD_SQL("lt.type::text", "lt.amount")})::text AS total
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
@@ -80,14 +101,16 @@ async function computeGeoSource(
         AND u.role NOT IN ('admin', 'support') ${blacklistJoin}
         ${dateFilter}
       GROUP BY COALESCE(u.country_code, '??')
-      ORDER BY SUM(ABS(lt.amount::numeric)) DESC
+      ORDER BY (${NETTED_REWARD_SQL("lt.type::text", "lt.amount")}) DESC
       LIMIT ${COUNTRY_LIMIT}
     `),
     db.$queryRawUnsafe<
       { provider: string; user_count: string; total: string }[]
     >(`
       WITH claim_users AS (
-        SELECT DISTINCT lt.user_id, lt.amount, lt.created_at
+        -- Carry the row id + type so the per-provider rain netting below
+        -- can distinguish rain legs. id keeps DISTINCT one-row-per-ledger.
+        SELECT DISTINCT lt.id, lt.user_id, lt.type::text AS type, lt.amount
         FROM ledger_transactions lt
         JOIN "user" u ON u.id = lt.user_id
         WHERE lt.status = 'completed'
@@ -105,16 +128,16 @@ async function computeGeoSource(
       )
       SELECT
         COALESCE(pp.provider, 'unknown') AS provider,
-        COUNT(DISTINCT cu.user_id)::text AS user_count,
-        COALESCE(SUM(ABS(cu.amount::numeric)), 0)::text AS total
+        COUNT(DISTINCT CASE WHEN cu.type <> 'rain_tip' THEN cu.user_id END)::text AS user_count,
+        (${NETTED_REWARD_SQL("cu.type", "cu.amount")})::text AS total
       FROM claim_users cu
       LEFT JOIN primary_provider pp ON pp.user_id = cu.user_id
       GROUP BY COALESCE(pp.provider, 'unknown')
-      ORDER BY SUM(ABS(cu.amount::numeric)) DESC
+      ORDER BY (${NETTED_REWARD_SQL("cu.type", "cu.amount")}) DESC
       LIMIT ${SOURCE_LIMIT}
     `),
     db.$queryRawUnsafe<{ total: string }[]>(`
-      SELECT COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total
+      SELECT (${NETTED_REWARD_SQL("lt.type::text", "lt.amount")})::text AS total
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'

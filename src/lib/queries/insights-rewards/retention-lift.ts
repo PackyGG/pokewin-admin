@@ -50,11 +50,16 @@ const WAGER_TYPES_SQL = `(
   'pack_opening','battle_bet','battle_sponsorship','upgrader_bet'
 )`;
 
-// Same canonical list used elsewhere on this page. Vouchers omitted.
+// Same canonical reward list used elsewhere on this page. Vouchers
+// omitted. `creator_tip` is EXCLUDED — it is a verified user→user
+// pass-through (RESIDUAL, $0 net house cost; ledger-sets.ts), not a
+// reward, so a creator_tip recipient must NOT count as a reward
+// "claimant" in the non-claimant exclusion below. Matches the corrected
+// cross-category-summary / category-spend-breakdown / roi on this page.
 const ALL_REWARD_TYPES_SQL = `(
   'deposit_bonus','promo_code_redeemed','gift_card_redeemed',
   'rakeback_claim','affiliate_claim',
-  'rain_win','race_prize','balance_reward_claim','creator_tip',
+  'rain_win','race_prize','balance_reward_claim',
   'waitlist_prize'
 )`;
 
@@ -65,7 +70,6 @@ const CATEGORIES: Array<{
     | "affiliate"
     | "rainRace"
     | "signupPack"
-    | "creatorTip"
     | "waitlist";
   label: string;
   types: string[];
@@ -91,7 +95,9 @@ const CATEGORIES: Array<{
     label: "Signup / Balance Rewards",
     types: ["balance_reward_claim"],
   },
-  { key: "creatorTip", label: "Creator Tips", types: ["creator_tip"] },
+  // `creator_tip` is NOT a reward category — verified user→user
+  // pass-through (RESIDUAL); dropping it matches the corrected sibling
+  // files on this page.
   { key: "waitlist", label: "Waitlist Prizes", types: ["waitlist_prize"] },
 ];
 
@@ -106,7 +112,6 @@ export type RetentionRow = {
     | "affiliate"
     | "rainRace"
     | "signupPack"
-    | "creatorTip"
     | "waitlist"
     | "nonClaimant";
   label: string;

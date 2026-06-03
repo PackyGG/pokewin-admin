@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { toNumber } from "@/lib/utils/decimal";
+import { resolveRainHouseCost } from "@/lib/metrics";
 import {
   daysForInsightsPeriod,
   cacheTtlForInsightsPeriod,
@@ -40,10 +41,16 @@ import {
  * platform.
  */
 
+// Canonical reward set. `creator_tip` EXCLUDED (RESIDUAL user→user
+// pass-through, $0 net house cost; ledger-sets.ts) so it neither counts
+// as a stacking category nor inflates reward $. `rain_tip` included so
+// the rain house slice can be netted (`max(0, rain_win − rain_tip)`)
+// before folding into the reward total; it is never a category itself.
+// Matches the corrected cross-category-summary / category-spend-breakdown.
 const ALL_REWARD_TYPES_SQL = `(
   'deposit_bonus','promo_code_redeemed','gift_card_redeemed',
   'rakeback_claim','affiliate_claim',
-  'rain_win','race_prize','balance_reward_claim','creator_tip',
+  'rain_win','rain_tip','race_prize','balance_reward_claim',
   'waitlist_prize'
 )`;
 
@@ -107,7 +114,9 @@ async function computeStackingAnalysis(
       user_id: string;
       username: string | null;
       categories: string;
-      reward_total: string;
+      reward_excl_rain: string;
+      rain_win: string;
+      rain_tip: string;
       wager_total: string;
       payout_total: string;
     }[]
@@ -121,10 +130,15 @@ async function computeStackingAnalysis(
           WHEN lt.type::text = 'affiliate_claim' THEN 'affiliate'
           WHEN lt.type::text IN ('rain_win','race_prize') THEN 'rainRace'
           WHEN lt.type::text = 'balance_reward_claim' THEN 'signupPack'
-          WHEN lt.type::text = 'creator_tip' THEN 'creatorTip'
           WHEN lt.type::text = 'waitlist_prize' THEN 'waitlist'
+          -- rain_tip / creator_tip are NOT categories: rain_tip is the
+          -- pool FUNDING leg, creator_tip is a RESIDUAL pass-through.
         END)::int AS categories,
-        COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS reward_total
+        -- Reward $ split so rain can be netted: everything except rain
+        -- legs, plus rain_win / rain_tip captured separately.
+        COALESCE(SUM(CASE WHEN lt.type::text NOT IN ('rain_win','rain_tip') THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS reward_excl_rain,
+        COALESCE(SUM(CASE WHEN lt.type::text = 'rain_win' THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS rain_win,
+        COALESCE(SUM(CASE WHEN lt.type::text = 'rain_tip' THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS rain_tip
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
       WHERE lt.status = 'completed'
@@ -161,7 +175,9 @@ async function computeStackingAnalysis(
       puc.user_id,
       u.username,
       puc.categories::text AS categories,
-      puc.reward_total::text AS reward_total,
+      puc.reward_excl_rain::text AS reward_excl_rain,
+      puc.rain_win::text AS rain_win,
+      puc.rain_tip::text AS rain_tip,
       COALESCE(puw.wager_total, 0)::text AS wager_total,
       COALESCE(pup.payout_total, 0)::text AS payout_total
     FROM per_user_categories puc
@@ -184,7 +200,15 @@ async function computeStackingAnalysis(
   const topStackerInput: TopStacker[] = [];
   for (const r of userRows) {
     const cats = Math.max(1, Number(r.categories));
-    const reward = toNumber(r.reward_total);
+    // Reward $ = non-rain reward legs + the NET rain house slice
+    // (max(0, rain_win − rain_tip)), owner-confirmed — never gross rain.
+    const reward =
+      toNumber(r.reward_excl_rain) +
+      resolveRainHouseCost({
+        kind: "net",
+        rainWinTotal: toNumber(r.rain_win),
+        rainTipTotal: toNumber(r.rain_tip),
+      });
     const wager = toNumber(r.wager_total);
     const payout = toNumber(r.payout_total);
     const ltv = wager - payout;

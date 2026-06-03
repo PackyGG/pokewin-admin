@@ -39,10 +39,16 @@ import type { InsightsRewardsPeriod } from "./_period";
  *     than the per-category tab. Better as a follow-up popover.
  */
 
+// Canonical reward set. `creator_tip` EXCLUDED (RESIDUAL user→user
+// pass-through, $0 net house cost) so a creator_tip-only user is NOT
+// counted as a reward claimer and reward $ is not inflated. `rain_tip`
+// included so the rain house slice can be netted (`max(0, rain_win −
+// rain_tip)`); it is never a category itself. Matches the corrected
+// cross-category-summary / category-spend-breakdown on this page.
 const ALL_REWARD_TYPES_SQL = `(
   'deposit_bonus','promo_code_redeemed','gift_card_redeemed',
   'rakeback_claim','affiliate_claim',
-  'rain_win','race_prize','balance_reward_claim','creator_tip',
+  'rain_win','rain_tip','race_prize','balance_reward_claim',
   'waitlist_prize'
 )`;
 
@@ -119,7 +125,21 @@ async function computeCohortMatrix(
         AND u.created_at >= DATE_TRUNC('month', NOW()) - INTERVAL '${COHORT_MONTHS - 1} months'
     ),
     user_rewards AS (
-      SELECT cu.user_id, COALESCE(SUM(ABS(lt.amount::numeric)), 0) AS reward_total
+      -- Reward $ NETS rain to its house slice per user
+      -- (GREATEST(0, rain_win − rain_tip)); rain_tip is the funding leg,
+      -- never the house's money. reward_total is the netted house cost.
+      -- has_reward marks a genuine reward EVENT (any non-rain reward OR a
+      -- rain_win), so a user whose rain nets to 0 is still a claimer.
+      SELECT
+        cu.user_id,
+        COALESCE(SUM(CASE WHEN lt.type::text NOT IN ('rain_win','rain_tip') THEN ABS(lt.amount::numeric) ELSE 0 END), 0)
+          + GREATEST(
+              0,
+              COALESCE(SUM(CASE WHEN lt.type::text = 'rain_win' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)
+              - COALESCE(SUM(CASE WHEN lt.type::text = 'rain_tip' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)
+            ) AS reward_total,
+        (COALESCE(SUM(CASE WHEN lt.type::text NOT IN ('rain_win','rain_tip') THEN ABS(lt.amount::numeric) ELSE 0 END), 0) > 0
+         OR COALESCE(SUM(CASE WHEN lt.type::text = 'rain_win' THEN ABS(lt.amount::numeric) ELSE 0 END), 0) > 0) AS has_reward
       FROM cohort_users cu
       LEFT JOIN ledger_transactions lt
         ON lt.user_id = cu.user_id
@@ -149,7 +169,11 @@ async function computeCohortMatrix(
       SELECT
         cu.cohort_month,
         cu.user_id,
-        ur.reward_total > 0 AS is_claimer,
+        -- Claimer = received a genuine reward event (non-rain reward or a
+        -- rain_win), NOT "netted reward > 0" — a rain that nets to 0 is
+        -- still a claim. creator_tip is not in the set, so it never marks
+        -- a claimer.
+        ur.has_reward AS is_claimer,
         ur.reward_total,
         uw.wager_total - up.payout_total AS ggr
       FROM cohort_users cu

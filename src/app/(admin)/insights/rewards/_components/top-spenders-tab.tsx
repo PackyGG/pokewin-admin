@@ -208,7 +208,6 @@ const CATEGORY_LABELS: Record<keyof TopRecipientRow["perCategory"], string> = {
   affiliate: "Affiliate",
   rainRace: "Rain/Race",
   signupPack: "Signup",
-  creatorTip: "Creator tip",
   waitlist: "Waitlist",
 };
 
