@@ -20,6 +20,8 @@ import { FadeIn } from "@/components/fade-in";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
+import { safeQuery } from "@/lib/errors/safe-query";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 
@@ -27,6 +29,7 @@ import {
   getUpgraderPickerFilters,
   listUpgraderOutputs,
 } from "./actions";
+import type { UpgraderOutputCard } from "@/lib/backend-api";
 import { AddUpgraderCardsDialog } from "./add-cards-dialog";
 import {
   UPGRADER_OUTPUT_COLORS,
@@ -118,10 +121,63 @@ export default async function UpgraderAdminPage({
   const statusFilter = params.status ?? "all";
   const tierFilter = params.tier ?? "all";
 
-  const [outputs, filters] = await Promise.all([
-    listUpgraderOutputs(),
-    getUpgraderPickerFilters(),
+  // Both fetches are wrapped in safeQuery so a backend-API blip
+  // (listUpgraderOutputs calls the website backend over HTTP; default
+  // 8s timeout, can also throw on auth/network) or a transient main-DB
+  // fault (getUpgraderPickerFilters reads `cards`+`sets`) degrades to a
+  // panel-level error instead of taking the whole route down to the
+  // /upgrader/error.tsx boundary — which is what was happening in prod:
+  // a single bare-await throw on these two calls bubbled past the
+  // page's chrome and rendered the umbrella error page. 12s timeout
+  // matches the entity-surface PRIMARY_QUERY_TIMEOUT_MS used on
+  // /cards + /packs for the same purpose.
+  const [outputsResult, filtersResult] = await Promise.all([
+    safeQuery(
+      () => listUpgraderOutputs(),
+      [] as UpgraderOutputCard[],
+      "upgrader.list",
+      12_000,
+    ),
+    safeQuery(
+      () => getUpgraderPickerFilters(),
+      { sets: [], rarities: [] } as Awaited<
+        ReturnType<typeof getUpgraderPickerFilters>
+      >,
+      "upgrader.filters",
+      12_000,
+    ),
   ]);
+
+  // If the canonical pool fetch failed there is nothing to derive the
+  // KPI strip, tier panel, or grid from — render the hero + a single
+  // panel-level error tile so the admin still sees the chrome (and
+  // can refresh) instead of the route-level "Couldn't load" page. The
+  // AddCards dialog is hidden because it needs an `existingCardIds`
+  // list we can't trust.
+  if (outputsResult.error) {
+    return (
+      <div className="space-y-6">
+        <PageHero>
+          <PageHeroIdentity
+            icon={Zap}
+            accent="amber"
+            title="Upgrader"
+            subtitle="The output card pool the upgrader wheel can pay out."
+          />
+        </PageHero>
+        <TileErrorFallback
+          label="Upgrader output pool"
+          hint="The output-pool fetch failed (backend API timed out or returned an error). Refresh to retry."
+          size="panel"
+        />
+      </div>
+    );
+  }
+
+  const outputs = outputsResult.data;
+  // Filters feed the AddCards dialog only; an empty fallback is the safe
+  // degraded state (the dialog renders no options instead of crashing).
+  const filters = filtersResult.data;
 
   // KPI strip + tier panel read the FULL pool so they stay stable
   // while admins refine the grid filters below — same principle as
