@@ -3,6 +3,10 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { AdminHeader } from "@/components/admin-header";
 import { TopProgressBar } from "@/components/top-progress-bar";
+import {
+  TopbarHouseStats,
+  TopbarHouseStatsSkeleton,
+} from "@/components/topbar-house-stats";
 import { DockedChat } from "@/components/docked-chat";
 import { DockedRecentActivity } from "@/components/docked-recent-activity";
 import { LiveMoneyChat } from "@/components/live-money-chat";
@@ -96,6 +100,20 @@ export default async function AdminLayout({
             roles={session.roles ?? [session.role]}
             dbEnv={dbEnv}
             canSwitchDbEnv={canSwitchDbEnv}
+            // Admin-only top-bar house pills (all-time wager/deposit/
+            // withdrawal/GGR). Reuses the dashboard's 5-min-cached balances
+            // aggregate (no new query), and is wrapped in its OWN Suspense
+            // boundary so it streams independently and never blocks the
+            // header/shell — a slow read shows skeleton pills, then "—" on
+            // failure. Rendered only for the `admin` role; every other role
+            // sees the bar unchanged.
+            houseStatsSlot={
+              session.role === "admin" ? (
+                <Suspense fallback={<TopbarHouseStatsSkeleton />}>
+                  <TopbarHouseStats />
+                </Suspense>
+              ) : undefined
+            }
           />
           {/* `min-w-0` is required so flex children can shrink below their
               intrinsic content width — without it, a wide table or chart

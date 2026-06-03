@@ -772,6 +772,61 @@ export async function getActivityCounts24h(): Promise<{
 }
 
 /**
+ * Lifetime house headline totals (all-time wager / deposit / withdrawal +
+ * gaming margin) for the admin top-bar pills.
+ *
+ * Like `getActivityCounts24h`, this is a thin accessor that PIGGY-BACKS on
+ * a cache the dashboard already fills — here `cachedBalanceAggregates`,
+ * the 5-min (`revalidate: 300`) `unstable_cache`d `balances`-table SUM.
+ * It is called with the SAME `blacklistIdNotIn` cache-key the dashboard
+ * uses, so once the dashboard (or one prior top-bar render) has warmed
+ * the entry every other admin page load reads it for free; a cold miss
+ * costs one indexed `SUM` over `balances`, capped at one per 5 minutes
+ * across all admins. No new query, no extra window — all-time barely
+ * moves, so a 5-min cap is invisible.
+ *
+ * The top-bar renders on EVERY admin page, so the cheapness here is the
+ * whole point: this must never become a per-request scan. If the cached
+ * row is unavailable the fields come back as 0 (the caller wraps the call
+ * in `safeQuery` + `<Suspense>` so a slow/failed read degrades to "—"
+ * pills instead of blocking the shell).
+ *
+ * All four numbers are derived from the single cached row:
+ *   • wager       = Σ balances.total_wagered
+ *   • deposits    = Σ balances.total_deposited
+ *   • withdrawals = Σ balances.total_withdrawn
+ *   • ggr         = wager − Σ balances.total_won  (house gaming margin,
+ *                   house POV: positive = house up)
+ *
+ * Staff + blacklisted users are excluded (same filter the dashboard uses),
+ * so the figures match the dashboard's lifetime balance aggregates.
+ */
+export async function getLifetimeHouseTotals(): Promise<{
+  wager: number;
+  deposits: number;
+  withdrawals: number;
+  ggr: number;
+}> {
+  const blacklistIdNotIn = blacklistNotInClause(
+    "id",
+    await getExcludedUserIds(),
+  );
+  const ba = await cachedBalanceAggregates(blacklistIdNotIn);
+  const wager = toNumber(ba?.total_wagered);
+  const deposits = toNumber(ba?.total_deposited);
+  const withdrawals = toNumber(ba?.total_withdrawn);
+  const won = toNumber(ba?.total_won);
+  return {
+    wager,
+    deposits,
+    withdrawals,
+    // House gaming margin (GGR) = total staked − total paid out in wins.
+    // Both legs come from the same cached `balances` row, so this is free.
+    ggr: wager - won,
+  };
+}
+
+/**
  * Per-request memoized. The dashboard page streams several independent
  * Suspense segments (KPI strips, charts, the activity count strip) that
  * each read these stats; `cache()` ensures the heavy aggregate runs

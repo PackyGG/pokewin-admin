@@ -246,6 +246,7 @@ export function AdminHeader({
   roles,
   dbEnv,
   canSwitchDbEnv,
+  houseStatsSlot,
 }: {
   adminId: string;
   username: string;
@@ -260,6 +261,16 @@ export function AdminHeader({
   roles: string[];
   dbEnv: DbEnv;
   canSwitchDbEnv: boolean;
+  /**
+   * Admin-only "house at a glance" pills (all-time wager / deposit /
+   * withdrawal / GGR). Passed as a server-rendered slot from the layout —
+   * wrapped there in its own <Suspense> so it streams independently and
+   * never blocks the header shell. `undefined` for non-admins, so the bar
+   * renders unchanged for every other role. Sits to the RIGHT of the
+   * breadcrumbs + sidebar toggle and is `ml-auto`-pushed alongside the
+   * profile cluster; it self-collapses on narrow screens.
+   */
+  houseStatsSlot?: React.ReactNode;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -337,6 +348,13 @@ export function AdminHeader({
         <RotateCw className="size-4 sm:size-3.5" />
       </Button>
       <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-3">
+        {/* Admin-only house-stats pills (all-time wager / deposit /
+            withdrawal / GGR). Server-rendered + Suspense-streamed by the
+            layout, so it's a no-op node for non-admins and never blocks
+            the header. It collapses progressively on narrow screens (its
+            own responsive `hidden md/lg/xl:flex` rules), so it can't push
+            the avatar off-screen on a phone. */}
+        {houseStatsSlot}
         {/* Avatar + name now opens a dropdown with quick-access theme +
             timezone pickers alongside the profile link and logout. The
             whole cluster is the trigger so the click target stays as
