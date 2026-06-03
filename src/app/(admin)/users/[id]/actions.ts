@@ -18,6 +18,11 @@ import {
   hasCapability,
 } from "@/app/(admin)/settings/roles/permissions-utils";
 import { usdAmountSchema } from "@/lib/utils/money";
+import {
+  BALANCE_ADJUSTMENT_CATEGORY_KEYS,
+  type BalanceAdjustmentCategory,
+} from "@/lib/balance-adjustment-categories";
+import { ensureBalanceAdjustmentMetaSchema } from "@/lib/balance-adjustment-meta/ensure-schema";
 
 // Hosts we accept as a "Giveaway" source URL. Anything else is rejected
 // at the action boundary so the giveaway log can't be polluted with
@@ -62,6 +67,38 @@ function classifyGiveawaySourceUrl(rawUrl: string): {
   return { url: parsed.toString(), sourceType };
 }
 
+// ── Strict categorized balance adjustment ──────────────────────────
+//
+// Every adjustment now requires a CATEGORY and category-specific inputs
+// (Zod-validated below). The chosen category key is stamped onto the
+// MAIN-DB ledger row's `metadata` JSON (`metadata.adjustment_category`)
+// so the GGR / NGR / cost queries (which read the main DB) can classify
+// each adjustment with NO cross-DB join. The rich, admin-only inputs
+// (coin type, tx hash, social link, exact reason, lossback %, 7d PnL,
+// note) go to the admin-DB `admin_balance_adjustment_meta` table.
+//
+// Counting: every category EXCEPT `other` is COUNTED — lifted into the
+// reward-cost / NGR side at the query layer. `other` stays RESIDUAL /
+// EXCLUDED (mainly for content-creator bookkeeping). See
+// `src/lib/balance-adjustment-categories.ts` (the single canonical set).
+
+/** Per-category extra inputs the dialog collects. All optional at the */
+/** schema level; required-ness is enforced per category in code below. */
+const adjustmentDetailsSchema = z
+  .object({
+    // deposit_problem
+    coinType: z.string().trim().min(1).max(64).optional(),
+    txHash: z.string().trim().min(1).max(255).optional(),
+    // giveaway — a Twitter OR Discord link
+    socialLink: z.string().trim().min(1).max(2048).optional(),
+    // bonus (exact reason, ≥20 chars) / lossback (optional note)
+    reasonText: z.string().trim().max(5000).optional(),
+    // lossback
+    lossbackPercent: z.number().finite().optional(),
+    pnl7dUsd: z.number().finite().optional(),
+  })
+  .optional();
+
 const adjustBalanceSchema = z.object({
   userId: z.string(),
   // Finite, cent-precise amount (may be +/-). The server never trusts
@@ -71,20 +108,146 @@ const adjustBalanceSchema = z.object({
   amount: usdAmountSchema().refine((n) => n !== 0, {
     message: "Amount can't be zero",
   }),
-  reason: z.string().min(1),
-  // Optional giveaway payload — required iff the reason category was
-  // "giveaway" on the client. The client always sends the source URL
-  // when that's true; missing source on a Giveaway reason → reject so
-  // the giveaway log isn't missing rows.
-  giveawaySourceUrl: z.string().trim().min(1).optional(),
+  // The strict category. Drives both the conditional inputs and whether
+  // the adjustment is counted in GGR/NGR/cost.
+  category: z.enum(BALANCE_ADJUSTMENT_CATEGORY_KEYS),
+  // Human-readable description text. Kept so the existing
+  // description-prefix classification ("Admin adjustment: <reason>") on
+  // the insights-balance-adjustments surface + the adjustments-wipe flow
+  // keep working unchanged. Derived from the category on the client.
+  reason: z.string().trim().min(1).max(5000),
+  // Category-specific inputs (validated per-category below).
+  details: adjustmentDetailsSchema,
 });
+
+/**
+ * Resolved, validated rich-metadata for the admin-DB row, plus the
+ * giveaway-feed classification when the category is `giveaway`. Returned
+ * by the per-category validator so the action can persist it after the
+ * ledger write succeeds.
+ */
+type ResolvedAdjustmentMeta = {
+  coinType: string | null;
+  txHash: string | null;
+  socialLink: string | null;
+  reasonText: string | null;
+  lossbackPercent: number | null;
+  pnl7dUsd: number | null;
+  /** Set only for `giveaway` — drives the legacy /marketing/giveaway feed. */
+  giveawaySource: { url: string; sourceType: "twitter" | "discord" | "other" } | null;
+};
+
+/**
+ * Enforce the per-category required inputs (the table in CLAUDE/spec):
+ *   deposit_problem → coin type + tx hash
+ *   giveaway        → a Twitter OR Discord link
+ *   bonus           → exact reason, min 20 chars
+ *   reload          → (no input)
+ *   lossback        → 7d PnL value + % lossback + OPTIONAL explanation
+ *   other           → free-text, min 20 chars (NOT counted)
+ *
+ * Returns either the resolved metadata or a human error string. This is
+ * the SINGLE server-side source of truth — the dialog mirrors it for a
+ * friendlier inline toast, but never replaces it.
+ */
+function validateAdjustmentCategory(
+  category: BalanceAdjustmentCategory,
+  details: z.infer<typeof adjustmentDetailsSchema>,
+): { ok: true; meta: ResolvedAdjustmentMeta } | { ok: false; error: string } {
+  const d = details ?? {};
+  const base: ResolvedAdjustmentMeta = {
+    coinType: null,
+    txHash: null,
+    socialLink: null,
+    reasonText: null,
+    lossbackPercent: null,
+    pnl7dUsd: null,
+    giveawaySource: null,
+  };
+
+  switch (category) {
+    case "deposit_problem": {
+      if (!d.coinType) return { ok: false, error: "Deposit problem requires a coin type" };
+      if (!d.txHash) return { ok: false, error: "Deposit problem requires a transaction hash" };
+      return { ok: true, meta: { ...base, coinType: d.coinType, txHash: d.txHash } };
+    }
+    case "giveaway": {
+      if (!d.socialLink) {
+        return {
+          ok: false,
+          error: "Giveaway requires a Twitter or Discord link",
+        };
+      }
+      let giveawaySource: ResolvedAdjustmentMeta["giveawaySource"];
+      try {
+        giveawaySource = classifyGiveawaySourceUrl(d.socialLink);
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : "Invalid giveaway link",
+        };
+      }
+      return {
+        ok: true,
+        meta: { ...base, socialLink: giveawaySource.url, giveawaySource },
+      };
+    }
+    case "bonus": {
+      const reasonText = (d.reasonText ?? "").trim();
+      if (reasonText.length < 20) {
+        return { ok: false, error: "Bonus requires an exact reason of at least 20 characters" };
+      }
+      return { ok: true, meta: { ...base, reasonText } };
+    }
+    case "reload": {
+      // No required inputs.
+      return { ok: true, meta: base };
+    }
+    case "lossback": {
+      if (d.pnl7dUsd === undefined || !Number.isFinite(d.pnl7dUsd)) {
+        return { ok: false, error: "Lossback requires a 7-day PnL value" };
+      }
+      if (d.lossbackPercent === undefined || !Number.isFinite(d.lossbackPercent)) {
+        return { ok: false, error: "Lossback requires a lossback %" };
+      }
+      if (d.lossbackPercent < 0 || d.lossbackPercent > 100) {
+        return { ok: false, error: "Lossback % must be between 0 and 100" };
+      }
+      const note = (d.reasonText ?? "").trim();
+      return {
+        ok: true,
+        meta: {
+          ...base,
+          lossbackPercent: d.lossbackPercent,
+          pnl7dUsd: d.pnl7dUsd,
+          reasonText: note.length > 0 ? note : null,
+        },
+      };
+    }
+    case "other": {
+      const reasonText = (d.reasonText ?? "").trim();
+      if (reasonText.length < 20) {
+        return { ok: false, error: "Other requires a reason of at least 20 characters" };
+      }
+      return { ok: true, meta: { ...base, reasonText } };
+    }
+  }
+}
 
 export async function adjustBalance(data: {
   userId: string;
   amount: number;
+  category: BalanceAdjustmentCategory;
   reason: string;
   totpCode: string;
-  giveawaySourceUrl?: string;
+  details?: {
+    coinType?: string;
+    txHash?: string;
+    socialLink?: string;
+    reasonText?: string;
+    lossbackPercent?: number;
+    pnl7dUsd?: number;
+  };
 }): Promise<{ success: true } | { success: false; error: string }> {
   const db = await getDb();
   const session = await requirePageAccess("/users");
@@ -94,6 +257,13 @@ export async function adjustBalance(data: {
     return { success: false, error: parseResult.error.issues[0]?.message ?? "Invalid input" };
   }
   const parsed = parseResult.data;
+
+  // Per-category required-input validation (single source of truth).
+  const categoryResult = validateAdjustmentCategory(parsed.category, parsed.details);
+  if (!categoryResult.ok) {
+    return { success: false, error: categoryResult.error };
+  }
+  const meta = categoryResult.meta;
 
   // Admins can always adjust; non-admins need the __can_adjust_balance capability
   if (session.role !== "admin") {
@@ -118,30 +288,6 @@ export async function adjustBalance(data: {
     return { success: false, error: err instanceof Error ? err.message : "Balance limit exceeded" };
   }
 
-  // If this adjustment is tagged as a Giveaway, the source URL is
-  // required AND must point at a recognized host (Twitter / Discord
-  // for now; anything else is rejected so we don't pollute the
-  // giveaway feed with junk links). The classifier is the single
-  // source of truth — no parallel validation in the UI.
-  const isGiveaway = parsed.reason.trim().toLowerCase() === "giveaway";
-  let giveawaySource: { url: string; sourceType: "twitter" | "discord" | "other" } | null = null;
-  if (isGiveaway) {
-    if (!parsed.giveawaySourceUrl) {
-      return {
-        success: false,
-        error: "Giveaway adjustments require a source URL (tweet or Discord message)",
-      };
-    }
-    try {
-      giveawaySource = classifyGiveawaySourceUrl(parsed.giveawaySourceUrl);
-    } catch (err) {
-      return {
-        success: false,
-        error: err instanceof Error ? err.message : "Invalid giveaway source URL",
-      };
-    }
-  }
-
   // Optimistic-locking transaction. The previous (non-locking) version
   // could double-write if two admin actions on the same balance row
   // raced — both reading the same `currentBalance`, both computing
@@ -151,7 +297,7 @@ export async function adjustBalance(data: {
   // version still matches; on mismatch we abort + return a friendly retry.
   let currentBalance = 0;
   let newBalance = 0;
-  // Capture the ledger row id so the giveaway-side write below can
+  // Capture the ledger row id so the admin-side metadata write below can
   // cross-reference it.
   const ledgerTxId = crypto.randomUUID();
   try {
@@ -187,6 +333,13 @@ export async function adjustBalance(data: {
           balance_before: currentBalance,
           balance_after: newBalance,
           description: `Admin adjustment: ${parsed.reason}`,
+          // Stamp the canonical category key onto the ledger row so the
+          // GGR/NGR/cost queries can classify this adjustment with NO
+          // cross-DB join. Counted categories (everything but `other`)
+          // are lifted into the reward-cost side via this exact field
+          // (`metadata->>'adjustment_category'`), mirroring the existing
+          // manual-voucher carve-out (`metadata->>'origin'`).
+          metadata: { adjustment_category: parsed.category },
           status: "completed",
         },
       });
@@ -210,23 +363,50 @@ export async function adjustBalance(data: {
     adminUserId: session.userId,
     eventType: "balance_adjustment",
     targetUserId: parsed.userId,
-    metadata: { amount: parsed.amount, reason: parsed.reason },
+    metadata: { amount: parsed.amount, reason: parsed.reason, category: parsed.category },
   });
 
-  // Persist the giveaway-side metadata in the admin DB. Best-effort —
-  // we already wrote the ledger row, so a giveaway-row failure here
-  // shouldn't fail the whole adjustment (the user got their balance
-  // either way). The admin gets a separate console.error so the
-  // server logs surface a row-write failure without blocking the toast.
-  if (isGiveaway && giveawaySource) {
+  // Persist the RICH admin-side metadata (category-specific inputs) to the
+  // admin DB. Best-effort — we already wrote the ledger row + the canonical
+  // category onto it, so a metadata-row failure here shouldn't fail the
+  // whole adjustment (the user got their balance, and the GGR/cost
+  // classification reads the ledger metadata, not this table). A separate
+  // console.error surfaces a row-write failure without blocking the toast.
+  try {
+    await ensureBalanceAdjustmentMetaSchema();
+    await adminDb.admin_balance_adjustment_meta.create({
+      data: {
+        admin_user_id: session.userId,
+        target_user_id: parsed.userId,
+        ledger_tx_id: ledgerTxId,
+        category: parsed.category,
+        amount_usd: parsed.amount,
+        coin_type: meta.coinType,
+        tx_hash: meta.txHash,
+        social_link: meta.socialLink,
+        reason_text: meta.reasonText,
+        lossback_pct: meta.lossbackPercent,
+        pnl_7d_usd: meta.pnl7dUsd,
+      },
+    });
+  } catch (err) {
+    console.error(
+      "[adjustBalance] meta-row write failed (ledger already committed):",
+      err,
+    );
+  }
+
+  // Keep the legacy giveaway-feed row so /marketing/giveaway keeps working
+  // unchanged. Best-effort, same as above.
+  if (parsed.category === "giveaway" && meta.giveawaySource) {
     try {
       await adminDb.admin_giveaway_actions.create({
         data: {
           admin_user_id: session.userId,
           target_user_id: parsed.userId,
           amount_usd: parsed.amount,
-          source_url: giveawaySource.url,
-          source_type: giveawaySource.sourceType,
+          source_url: meta.giveawaySource.url,
+          source_type: meta.giveawaySource.sourceType,
           reason: parsed.reason,
           ledger_tx_id: ledgerTxId,
         },
