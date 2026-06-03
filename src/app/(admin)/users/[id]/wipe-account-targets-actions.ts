@@ -141,6 +141,28 @@ export type InventorySourceBreakdown = {
   value: number;
 };
 
+/** A single high-value item shown in the "top items" preview list. */
+export type InventoryTopItem = {
+  /** user_inventory.id (stable key; not shown). */
+  id: string;
+  /** Resolved card name (falls back to "Unknown card" if the card row is gone). */
+  name: string;
+  /** value_at_obtained for this row. */
+  value: number;
+};
+
+/** One value-tier bucket: how many items fall in [min, max) and their summed value. */
+export type InventoryValueTier = {
+  /** Stable key / label id for the tier (e.g. "100+"). */
+  label: string;
+  /** Inclusive lower bound (USD). */
+  min: number;
+  /** Exclusive upper bound (USD), or null for the open-ended top tier. */
+  max: number | null;
+  count: number;
+  value: number;
+};
+
 export type InventoryWipePreview = {
   itemCount: number;
   totalValue: number;
@@ -151,7 +173,36 @@ export type InventoryWipePreview = {
    * inventory) — every row is a won/granted card (pack/battle/reward/…).
    */
   bySource: InventorySourceBreakdown[];
+  /**
+   * The highest-value items (top ≤10 by value_at_obtained, resolved to card
+   * names) so the admin sees WHAT the headline value actually is — e.g. that
+   * $38k is one $30k card + a long tail, not thousands of cheap commons —
+   * before the 2FA approve. Derived from a single bounded orderBy query.
+   */
+  topItems: InventoryTopItem[];
+  /**
+   * Value-tier distribution (count + summed value per price band) over ALL
+   * rows being deleted, so the admin sees the shape of the wipe (how many
+   * high-value vs cheap items). Buckets are fixed bands aggregated per-user.
+   * Only non-empty tiers are returned.
+   */
+  valueTiers: InventoryValueTier[];
 };
+
+// Fixed value-tier bands (USD) for the inventory wipe preview distribution.
+// Ascending, contiguous, half-open [min, max). The top band is open-ended
+// (max = null). Chosen to span the realistic card-value range (cents → $1k+)
+// so a $38k inventory's shape (e.g. mostly one big card vs a long cheap tail)
+// is legible. Aggregated per-user (the `user_id`-indexed row set is small),
+// so the fixed handful of per-tier aggregates is cheap.
+const INVENTORY_VALUE_TIER_BANDS: ReadonlyArray<{ label: string; min: number; max: number | null }> = [
+  { label: "$0–$1", min: 0, max: 1 },
+  { label: "$1–$10", min: 1, max: 10 },
+  { label: "$10–$50", min: 10, max: 50 },
+  { label: "$50–$100", min: 50, max: 100 },
+  { label: "$100–$500", min: 100, max: 500 },
+  { label: "$500+", min: 500, max: null },
+];
 
 /** Current spendable balance the "wipe balance" action would zero. */
 export async function previewBalanceWipe(
@@ -203,10 +254,21 @@ export async function previewVaultWipe(
 
 /**
  * Count + summed value_at_obtained of the user_inventory rows the wipe would
- * delete, plus a per-source breakdown. The breakdown is itemized for the
- * pre-approval preview and confirms the inventory holds only won/granted
- * cards (source_type ∈ pack/battle/reward/exchange/raffle/upgrader) — there
- * is no creator-deal source, so nothing protected is in inventory.
+ * delete, plus three views the admin reviews before the 2FA approve:
+ *   1. a per-`source_type` breakdown (count + value) — confirms the inventory
+ *      holds only won/granted cards (source_type ∈ pack/battle/reward/
+ *      exchange/raffle/upgrader); there is no creator-deal source, so nothing
+ *      protected is in inventory;
+ *   2. the top ≤10 items by value (resolved to card names) — so the admin
+ *      sees WHAT the headline value actually is (e.g. one big card vs a long
+ *      cheap tail), not just a count;
+ *   3. a fixed-band value-tier distribution over ALL rows — the shape of the
+ *      wipe (how many high-value vs cheap items).
+ *
+ * All scoped strictly to this user. Read-only; reuses the same row set the
+ * wipe snapshots/deletes. The card-name resolution mirrors getUserInventory
+ * (separate cards lookup keyed by card_id — user_inventory has no `cards`
+ * relation, so this is two same-DB reads, not a cross-DB join).
  */
 export async function previewInventoryWipe(
   userId: string,
@@ -217,12 +279,44 @@ export async function previewInventoryWipe(
     return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid user id" };
   }
   const db = await getDb();
-  const grouped = await db.user_inventory.groupBy({
-    by: ["source_type"],
-    where: { user_id: parsed.data },
-    _count: { _all: true },
-    _sum: { value_at_obtained: true },
-  });
+  const userWhere = { user_id: parsed.data } satisfies Prisma.user_inventoryWhereInput;
+
+  // Run the three reads together — each is scoped by the indexed `user_id`, so
+  // this is the single user's (small) inventory only, no global scan. Kept as
+  // separate awaited values (not one mixed Promise.all tuple) so each keeps
+  // its own precise type.
+  const [grouped, topRows, tierAggregates] = await Promise.all([
+    // (1) per-source breakdown.
+    db.user_inventory.groupBy({
+      by: ["source_type"],
+      where: userWhere,
+      _count: { _all: true },
+      _sum: { value_at_obtained: true },
+    }),
+    // (2) top items by value — single bounded orderBy, only the columns we
+    // need (value + card_id for the name lookup).
+    db.user_inventory.findMany({
+      where: userWhere,
+      orderBy: { value_at_obtained: "desc" },
+      take: 10,
+      select: { id: true, card_id: true, value_at_obtained: true },
+    }),
+    // (3) one aggregate per fixed value band (count + summed value). A fixed
+    // handful of aggregates over one user's rows is cheap.
+    Promise.all(
+      INVENTORY_VALUE_TIER_BANDS.map((band) =>
+        db.user_inventory.aggregate({
+          where: {
+            ...userWhere,
+            value_at_obtained:
+              band.max == null ? { gte: band.min } : { gte: band.min, lt: band.max },
+          },
+          _count: { _all: true },
+          _sum: { value_at_obtained: true },
+        }),
+      ),
+    ),
+  ]);
 
   let itemCount = 0;
   let totalValue = 0;
@@ -234,12 +328,38 @@ export async function previewInventoryWipe(
     totalValue += value;
     bySource.push({ source: String(g.source_type), count, value });
   }
-  // Newest/largest groups first so the preview reads cleanly.
+  // Largest groups first so the preview reads cleanly.
   bySource.sort((a, b) => b.count - a.count);
+
+  // Resolve card names for the top items (same pattern as getUserInventory —
+  // user_inventory has no `cards` relation, so we look the names up by id).
+  const cardIds = [...new Set(topRows.map((r) => r.card_id))];
+  const cards =
+    cardIds.length > 0
+      ? await db.cards.findMany({ where: { id: { in: cardIds } }, select: { id: true, name: true } })
+      : [];
+  const cardNameById = new Map(cards.map((c) => [c.id, c.name]));
+  const topItems: InventoryTopItem[] = topRows.map((r) => ({
+    id: r.id,
+    name: cardNameById.get(r.card_id) ?? "Unknown card",
+    value: toNumber(r.value_at_obtained),
+  }));
+
+  // Keep only non-empty tiers, preserving the ascending band order.
+  const valueTiers: InventoryValueTier[] = INVENTORY_VALUE_TIER_BANDS.map((band, i) => {
+    const agg = tierAggregates[i];
+    return {
+      label: band.label,
+      min: band.min,
+      max: band.max,
+      count: agg?._count._all ?? 0,
+      value: toNumber(agg?._sum.value_at_obtained),
+    };
+  }).filter((t) => t.count > 0);
 
   return {
     success: true,
-    preview: { itemCount, totalValue, bySource },
+    preview: { itemCount, totalValue, bySource, topItems, valueTiers },
   };
 }
 

@@ -36,6 +36,8 @@ import {
   wipeVault,
   wipeInventory,
   type InventorySourceBreakdown,
+  type InventoryTopItem,
+  type InventoryValueTier,
 } from "./wipe-account-targets-actions";
 
 // House-POV (CLAUDE.md): the user's spendable balance, their vault, and their
@@ -51,7 +53,14 @@ type WipeTarget = "balance" | "vault" | "inventory";
 type LoadedPreview =
   | { kind: "balance"; amount: number; dealBalanceDisclosure: boolean }
   | { kind: "vault"; amount: number; unlockAt: string | null; dealBalanceDisclosure: boolean }
-  | { kind: "inventory"; count: number; value: number; bySource: InventorySourceBreakdown[] };
+  | {
+      kind: "inventory";
+      count: number;
+      value: number;
+      bySource: InventorySourceBreakdown[];
+      topItems: InventoryTopItem[];
+      valueTiers: InventoryValueTier[];
+    };
 
 type TargetConfig = {
   icon: LucideIcon;
@@ -135,6 +144,8 @@ const TARGETS: Record<WipeTarget, TargetConfig> = {
           count: res.preview.itemCount,
           value: res.preview.totalValue,
           bySource: res.preview.bySource,
+          topItems: res.preview.topItems,
+          valueTiers: res.preview.valueTiers,
         },
       };
     },
@@ -477,25 +488,72 @@ function WillDeletePanel({ preview }: { preview: LoadedPreview }) {
       )}
 
       {preview.kind === "inventory" && (
-        <div className="space-y-1.5">
+        <div className="space-y-3">
+          {/* Grand total — items + value being removed. */}
           <div className="flex items-center justify-between">
             <span className="text-muted-foreground">
               {preview.count.toLocaleString()} item{preview.count === 1 ? "" : "s"} · total value
             </span>
             <span className={`font-semibold tabular-nums ${ROSE}`}>{formatCurrency(preview.value)}</span>
           </div>
+
           {/* Per-source itemization — proves every row is a won/granted card
               (no creator-deal source exists in inventory). */}
-          <div className="rounded border bg-background/50 divide-y">
-            {preview.bySource.map((s) => (
-              <div key={s.source} className="flex items-center justify-between px-2.5 py-1.5 text-xs">
-                <span className="text-muted-foreground">{sourceLabel(s.source)}</span>
-                <span className="tabular-nums text-foreground/80">
-                  {s.count.toLocaleString()} · {formatCurrency(s.value)}
-                </span>
-              </div>
-            ))}
+          <div className="space-y-1">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">By source</p>
+            <div className="rounded border bg-background/50 divide-y">
+              {preview.bySource.map((s) => (
+                <div key={s.source} className="flex items-center justify-between px-2.5 py-1.5 text-xs">
+                  <span className="text-muted-foreground">{sourceLabel(s.source)}</span>
+                  <span className="tabular-nums text-foreground/80">
+                    {s.count.toLocaleString()} · {formatCurrency(s.value)}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
+
+          {/* Top items by value — so the admin sees WHAT the headline value is
+              (e.g. one big card vs a long cheap tail), not just a count. */}
+          {preview.topItems.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Top items by value
+              </p>
+              <div className="max-h-40 overflow-y-auto rounded border bg-background/50 divide-y">
+                {preview.topItems.map((it, i) => (
+                  <div key={it.id} className="flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs">
+                    <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                      <span className="tabular-nums text-foreground/50">{i + 1}.</span> {it.name}
+                    </span>
+                    <span className={`shrink-0 tabular-nums font-medium ${ROSE}`}>
+                      {formatCurrency(it.value)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Value-tier distribution — the shape of the wipe (how many
+              high-value vs cheap items) across all rows. */}
+          {preview.valueTiers.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Value distribution
+              </p>
+              <div className="rounded border bg-background/50 divide-y">
+                {preview.valueTiers.map((t) => (
+                  <div key={t.label} className="flex items-center justify-between px-2.5 py-1.5 text-xs">
+                    <span className="text-muted-foreground">{t.label}</span>
+                    <span className="tabular-nums text-foreground/80">
+                      {t.count.toLocaleString()} item{t.count === 1 ? "" : "s"} · {formatCurrency(t.value)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
