@@ -12,7 +12,7 @@ import {
 import { FadeIn } from "@/components/fade-in";
 import { EmptyState } from "@/components/empty-state";
 import { cn } from "@/lib/utils";
-import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { formatCurrency } from "@/lib/utils/format";
 import {
   getRewardsTopRecipients,
   type TopRecipientRow,
