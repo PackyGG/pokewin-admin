@@ -468,6 +468,53 @@ export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
          GROUP BY DATE(lt.created_at)`,
       ),
       db.$queryRawUnsafe<CardRow[]>(
+        // CLOSED-DAY FINALITY — the withdrawal term is the ONLY one that can
+        // retroactively flip a CLOSED day green→loss, so it is bucketed by
+        // the realized money-out timestamp (NOT requested_at/created_at) and
+        // kept consistent with the rest of the P&L family.
+        //
+        // Why only THIS term moves a closed day:
+        // • deposits self-cancel: a late-completing deposit adds +amount to
+        //   `deposits` AND +amount to `balance_change` (it credits the user's
+        //   balance), so net 0 on that day's P&L — a closed day can't move.
+        // • admin balance adjustments are written atomically as
+        //   status='completed' (users/[id]/actions.ts), so they never appear
+        //   in a past day after the fact.
+        // • inventory (obtained_at / sold_at / exchanged_at) and voucher
+        //   (created_at / claimed_at) legs are stamped at the event instant,
+        //   so a next-day sell/redeem carries a next-day stamp.
+        // • a card withdrawal writes NO offsetting ledger row (there is no
+        //   `card_withdrawal` ledger type and `total_withdrawn` is not moved
+        //   — see WITHDRAWAL_LIABILITY_STATUSES). So its `total_value_usd`
+        //   lands with no counterweight: if it slips into a closed day after
+        //   the fact, that day drops by the FULL amount.
+        //
+        // Bucketing key: COALESCE(shipped_at, completed_at) — the same key
+        // the windowed P&L (calculateWindowedPnl) and the "P&L Today" tile
+        // (getTodayPnl) use, so the daily bar reconciles with them.
+        //   • shipped_at is stamped new Date() the instant the admin ships
+        //     (withdrawals/actions.ts:shipWithdrawal) — immutable + never
+        //     backdated — so a PHYSICAL withdrawal is pinned to its ship-day
+        //     and never drifts to the later complete-day (that is why this
+        //     order, not completed-first, is the finality-correct one: a
+        //     shipped row already counts on its ship-day and must stay there).
+        //   • a CRYPTO withdrawal has shipped_at = NULL, so it is bucketed by
+        //     completed_at.
+        //
+        // KNOWN RESIDUAL — backend-owned, NOT fixable in this main-DB query:
+        // a CRYPTO withdrawal whose `completed_at` the backend records as the
+        // ON-CHAIN SETTLEMENT instant (which can fall LATE inside a day D)
+        // while the row is only transitioned to status='completed' AFTER D
+        // has closed will still attribute to D — and the dashboard's 60s
+        // auto-refresh then re-renders the (now-closed) D bar with it
+        // included, flipping it. The row carries NO timestamp recording the
+        // later status transition (the panel does not stamp completion;
+        // completeWithdrawal delegates to the remote `/admin/complete`), and
+        // the only panel-stamped record of the transition lives in the ADMIN
+        // DB audit log, which this main-DB query cannot join (dual-DB rule).
+        // Closing this fully requires the backend to either set
+        // completed_at = now() at completion, or add a separate
+        // completion-recorded-at column to bucket on. Flagged to the owner.
         `SELECT DATE(COALESCE(cwr.shipped_at, cwr.completed_at)) AS d,
            COALESCE(SUM(cwr.total_value_usd::numeric), 0)::float8 AS card_wd
          FROM card_withdrawal_requests cwr
