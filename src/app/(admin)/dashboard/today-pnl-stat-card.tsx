@@ -63,9 +63,18 @@ export function TodayPnlStatCard({
 }) {
   const isProfit = pnl >= 0;
   return (
-    <Card className={cn(isProfit ? "bg-emerald-500/10" : "bg-rose-500/10")}>
-      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+    <Card
+      className={cn(
+        // House-POV tinted face + a matching hairline ring so the state
+        // reads at a glance: house in profit → emerald, house in the red →
+        // rose. The ring deepens the tint into a defined panel edge.
+        isProfit
+          ? "bg-emerald-500/10 ring-emerald-500/20"
+          : "bg-rose-500/10 ring-rose-500/20",
+      )}
+    >
+      <CardHeader className="flex flex-row items-start justify-between gap-2 pb-1.5">
+        <div className="flex min-w-0 flex-col gap-0.5">
           <CardTitle className="text-card-title text-muted-foreground inline-flex items-center gap-1">
             P&amp;L Today
             <TodayPnlInfoPopover
@@ -83,17 +92,28 @@ export function TodayPnlStatCard({
               today" semantic visually (matches the referenced daily P&L
               card's date header). */}
           <span className="text-tiny text-muted-foreground tabular-nums">
-            {dayLabel}
+            Since 00:00 · {dayLabel}
           </span>
         </div>
-        {isProfit ? (
-          <TrendingUp className="size-4 shrink-0 text-emerald-400" />
-        ) : (
-          <TrendingDown className="size-4 shrink-0 text-rose-400" />
-        )}
+        {/* Trend glyph in a tinted chip so it reads as a status badge, not a
+            loose icon — the headline color cue for the whole tile. */}
+        <span
+          className={cn(
+            "flex size-7 shrink-0 items-center justify-center rounded-lg",
+            isProfit
+              ? "bg-emerald-500/15 text-emerald-400"
+              : "bg-rose-500/15 text-rose-400",
+          )}
+        >
+          {isProfit ? (
+            <TrendingUp className="size-4" />
+          ) : (
+            <TrendingDown className="size-4" />
+          )}
+        </span>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="text-stat-value truncate">
+        <div className="text-stat-value truncate leading-none">
           <span className={isProfit ? "text-emerald-400" : "text-rose-400"}>
             {isProfit ? "+" : "−"}
             <AnimatedNumber value={Math.abs(pnl)} format="currency" />
@@ -101,8 +121,10 @@ export function TodayPnlStatCard({
         </div>
         {/* Deposits / Withdrawals chips — the two headline components of
             the day, mirroring the referenced card. Deposits = capital in
-            (emerald, good for house); Withdrawals = money out (rose). */}
-        <div className="grid grid-cols-2 gap-1.5 -mx-0.5">
+            (emerald, good for house); Withdrawals = money out (rose).
+            Sits below a hairline divider so the headline P&L and its two
+            drivers read as a clear two-tier hierarchy. */}
+        <div className="grid grid-cols-2 gap-1.5 border-t border-border/50 pt-3">
           <TodayComponentChip
             label="Deposits"
             value={deposits}
@@ -143,14 +165,19 @@ function TodayComponentChip({
   return (
     <div
       className={cn(
-        "rounded-md border bg-background/40 px-2 py-1.5 min-w-0",
+        "rounded-lg border bg-background/40 px-2.5 py-2 min-w-0",
         border,
       )}
     >
       <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground truncate">
         {label}
       </p>
-      <p className={cn("text-xs font-semibold tabular-nums truncate", valueColor)}>
+      <p
+        className={cn(
+          "mt-0.5 text-sm font-semibold tabular-nums truncate",
+          valueColor,
+        )}
+      >
         <AnimatedNumber value={value} format="currency" />
       </p>
     </div>
