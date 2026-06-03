@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis, Cell } from "recharts";
 import {
   ArrowDownToLine,
@@ -24,6 +25,7 @@ import {
 } from "@/components/ui/chart";
 import { formatCompactUsd, formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { DailyPnlBreakdownModal } from "./daily-pnl-breakdown-modal";
 
 const wagerConfig = {
   packs: {
@@ -794,12 +796,32 @@ export function PnlChart({
     voucherChange: number;
   }[];
 }) {
+  // The clicked day's YYYY-MM-DD key — drives the drilldown modal. null when
+  // closed. The day's full breakdown is fetched lazily INSIDE the modal (a
+  // server action on first open), so the dashboard's initial render never
+  // loads it — only the click does (CLAUDE.md active-timeframe / lazy rule).
+  const [openDay, setOpenDay] = useState<string | null>(null);
+
+  // Recharts hands the Bar's click handler the bar datum; its `payload`
+  // carries the row we render (`{ date, pnl, … }`). Pull the day key off it
+  // and open the modal. Defensive: only open when a string date is present.
+  const handleBarClick = (entry: unknown) => {
+    const date =
+      entry && typeof entry === "object" && "payload" in entry
+        ? (entry as { payload?: { date?: unknown } }).payload?.date
+        : (entry as { date?: unknown })?.date;
+    if (typeof date === "string" && date.length > 0) setOpenDay(date);
+  };
+
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-sm font-medium">
           Daily P&amp;L (30 days)
         </CardTitle>
+        <CardDescription className="text-xs">
+          Click a bar for that day&apos;s full breakdown.
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <ChartContainer config={pnlConfig} className="h-[220px] w-full md:h-[260px] lg:h-[300px]">
@@ -820,19 +842,30 @@ export function PnlChart({
               tickFormatter={formatCompactUsd}
             />
             <ChartTooltip content={<PnlTooltip />} />
+            {/* Clickable bars — onClick opens the per-day drilldown modal.
+                `cursor-pointer` on each Cell is the affordance; the shared
+                ChartTooltip already provides the hover highlight. Reduced-
+                motion is unaffected (no extra animation introduced). */}
             <Bar
               dataKey="pnl"
               radius={[4, 4, 0, 0]}
               animationDuration={700}
               animationEasing="ease-out"
+              onClick={handleBarClick}
+              className="cursor-pointer"
             >
               {data.map((d) => (
-                <Cell key={d.date} fill={d.pnl >= 0 ? PNL_UP : PNL_DOWN} />
+                <Cell
+                  key={d.date}
+                  fill={d.pnl >= 0 ? PNL_UP : PNL_DOWN}
+                  className="cursor-pointer transition-opacity hover:opacity-80"
+                />
               ))}
             </Bar>
           </BarChart>
         </ChartContainer>
       </CardContent>
+      <DailyPnlBreakdownModal day={openDay} onClose={() => setOpenDay(null)} />
     </Card>
   );
 }
