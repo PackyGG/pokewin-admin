@@ -1,7 +1,6 @@
 import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getUserWindowedPnlMulti } from "./users-windowed-pnl";
-import { getWipedWindows } from "@/lib/account-wipes/rolling-pnl-correction";
 
 export type PnlBreakdown = {
   // Gambling revenue (platform perspective, positive = platform earned)
@@ -43,20 +42,6 @@ export type PnlBreakdown = {
   pnl3d: number;
   pnl7d: number;
   pnl14d: number;
-  // Wipe-in-window flags (the GUARANTEED FloridaManJeff phantom-loss fix,
-  // 2026-06-03 — take 3). True when an admin wipe (completed, not restored)
-  // lands inside that rolling window: the windowed-P&L formula is then
-  // mathematically undefined across the wipe (it deletes ledger/inventory/
-  // voucher rows AND drops available_balance with no ledger row, so the
-  // surviving-row Δbalance can't reconcile → a phantom house loss). When a
-  // flag is true the tile renders "—" (reset) instead of the bogus number;
-  // the lifetime Platform-P&L is unaffected and remains the source of truth.
-  // See getWipedWindows in src/lib/account-wipes/rolling-pnl-correction.ts.
-  wiped12h: boolean;
-  wiped24h: boolean;
-  wiped3d: boolean;
-  wiped7d: boolean;
-  wiped14d: boolean;
 };
 
 export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown> {
@@ -70,17 +55,7 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
   const since3d = new Date(nowMs - 3 * 24 * 60 * 60 * 1000);
   const since7d = new Date(nowMs - 7 * 24 * 60 * 60 * 1000);
   const since14d = new Date(nowMs - 14 * 24 * 60 * 60 * 1000);
-  // Window list shared by the windowed-P&L formula AND the wipe-in-window
-  // detector, so both reason over the identical cutoffs (keys must match the
-  // pnlXX / wipedXX mapping in the return below).
-  const rollingWindows = [
-    { key: "h12", since: since12h },
-    { key: "h24", since: since24h },
-    { key: "d3", since: since3d },
-    { key: "d7", since: since7d },
-    { key: "d14", since: since14d },
-  ];
-  const [rows, inventoryValue, windowed, wipedWindows] = await Promise.all([
+  const [rows, inventoryValue, windowed] = await Promise.all([
     db.$queryRaw<{ type: string; net: string }[]>`
       SELECT type,
              COALESCE(SUM(
@@ -116,13 +91,13 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
     // window — see `getUserWindowedPnlMulti`. The helper packs all
     // windows into one SELECT per table via CASE-WHEN-per-window so
     // adding the 14d rung does not increase the round-trip count.
-    getUserWindowedPnlMulti(userId, rollingWindows),
-    // Wipe-in-window detector (the GUARANTEED phantom-loss fix). Returns a
-    // per-window boolean keyed by the same window keys. When true the tile
-    // renders "—" (reset) instead of the undefined windowed value. On an
-    // admin-DB lookup failure it defaults every window to true (reset) so the
-    // phantom can never surface — see getWipedWindows.
-    getWipedWindows(userId, rollingWindows),
+    getUserWindowedPnlMulti(userId, [
+      { key: "h12", since: since12h },
+      { key: "h24", since: since24h },
+      { key: "d3", since: since3d },
+      { key: "d7", since: since7d },
+      { key: "d14", since: since14d },
+    ]),
   ]);
 
   const byType = new Map(rows.map((r) => [r.type, parseFloat(r.net) || 0]));
@@ -187,11 +162,6 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
     pnl3d: windowed.d3.pnl,
     pnl7d: windowed.d7.pnl,
     pnl14d: windowed.d14.pnl,
-    wiped12h: wipedWindows.h12,
-    wiped24h: wipedWindows.h24,
-    wiped3d: wipedWindows.d3,
-    wiped7d: wipedWindows.d7,
-    wiped14d: wipedWindows.d14,
   };
 }
 

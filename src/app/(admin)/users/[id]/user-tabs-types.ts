@@ -435,28 +435,7 @@ export type PnlBreakdown = {
   pnl3d: number;
   pnl7d: number;
   pnl14d: number;
-  // Wipe-in-window flags — true when an admin wipe lands inside that rolling
-  // window, making the windowed-P&L formula undefined across the wipe. The
-  // tile then renders "—" (reset) instead of a phantom number; the lifetime
-  // Platform-P&L stays authoritative. Mirror of the server-side PnlBreakdown
-  // in src/lib/queries/users-financial.ts (keep in sync).
-  wiped12h: boolean;
-  wiped24h: boolean;
-  wiped3d: boolean;
-  wiped7d: boolean;
-  wiped14d: boolean;
 };
-
-/**
- * Muted sub-label / tooltip shown on a rolling-P&L tile that has been RESET to
- * "—" because an admin wipe lands inside that window (the windowed-P&L formula
- * is mathematically undefined across a wipe). Shared by both render surfaces —
- * the Overview Rolling-P&L panel rows and the Account-tab windowed-P&L strip —
- * so the copy stays identical. Defers the admin to the lifetime Platform-P&L,
- * which is unaffected by wipes.
- */
-export const ROLLING_PNL_WIPE_HINT =
-  "reset — windowed P&L can't be computed across an admin wipe (see Platform P&L)";
 
 export type AdminNote = {
   id: string;

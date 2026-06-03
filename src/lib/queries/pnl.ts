@@ -3,10 +3,6 @@ import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { blacklistNotInClause } from "./_blacklist";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import {
-  getDailyBalanceAdjustmentWipeCorrections,
-  getWindowedBalanceAdjustmentWipeCorrection,
-} from "@/lib/account-wipes/rolling-pnl-correction";
 
 /**
  * Canonical P&L formula — single source of truth.
@@ -286,26 +282,7 @@ export async function calculateWindowedPnl(opts: {
     const deposits = toNumber(ledger[0]?.deposits);
     const withdrawals =
       toNumber(ledger[0]?.manual_wd) + toNumber(card[0]?.card_wd);
-    const rawBalanceChange = toNumber(ledger[0]?.balance_change);
-    // Wiped-balance-adjustment correction (global windowed surfaces only). A
-    // fake admin CREDIT that was later wiped still inflates `balanceChange`
-    // because its +amount rise survives in the ledger sum on its
-    // original-effective day while the wipe's atomic clawback wrote no ledger
-    // row. Subtract that inflation IFF the credit's original day is in the
-    // window AND its user is in this scope — so a window includes the
-    // correction exactly when its surviving-row sum still includes the credit.
-    // Orthogonal to `excludeUserIds`: a surface that excluded the wiped user
-    // (e.g. money-flow / cost-breakdown drop creators) never had the credit in
-    // its sum, so the helper subtracts nothing for it. Per-user calls (userId
-    // set) use the separate getRollingPnlWipeCorrections path and are NOT
-    // affected here — but no caller passes userId today, so this stays a
-    // global-only correction. See getWindowedBalanceAdjustmentWipeCorrection.
-    const wipeCorrection = userId
-      ? 0
-      : await getWindowedBalanceAdjustmentWipeCorrection(since, {
-          excludeUserIds,
-        });
-    const balanceChange = rawBalanceChange - wipeCorrection;
+    const balanceChange = toNumber(ledger[0]?.balance_change);
     const inventoryChange =
       toNumber(inv[0]?.obtained) - toNumber(inv[0]?.disposed);
     const voucherChange = toNumber(vch[0]?.issued) - toNumber(vch[0]?.claimed);
@@ -465,9 +442,6 @@ export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
     const excluded = await getExcludedUserIds();
     const blacklist = blacklistNotInClause("u.id", excluded);
     const usersScope = `(SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist})`;
-    // 30-day lower bound matching the SQL `NOW() - INTERVAL '30 days'`, used to
-    // bound the wiped-balance-adjustment correction to the rendered window.
-    const since30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
     type LedgerRow = {
       d: Date;
@@ -478,18 +452,6 @@ export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
     type CardRow = { d: Date; card_wd: number };
     type InvRow = { d: Date; obtained: number; disposed: number };
     type VchRow = { d: Date; issued: number; claimed: number };
-
-    // Per-original-day inflation from wiped admin balance-adjustment CREDITS
-    // (a fake-then-wiped credit still drags its ORIGINAL day's balance-Δ term
-    // because the surviving-row sum carries its +amount rise while the wipe's
-    // atomic clawback wrote no ledger row). Scoped to the SAME surviving-row
-    // scope as the SQL above (admin/support + blacklist dropped; creators IN),
-    // and attributed to each credit's own `created_at` day — NOT `wiped_at`.
-    // See getDailyBalanceAdjustmentWipeCorrections.
-    const wipeCorrectionByDay = await getDailyBalanceAdjustmentWipeCorrections(
-      since30d,
-      { excludeUserIds: excluded },
-    );
 
     const [ledger, card, inv, vch] = await Promise.all([
       db.$queryRawUnsafe<LedgerRow[]>(
@@ -633,46 +595,34 @@ export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
       acc(dayKey(r.d)).voucherChange += r.issued - r.claimed;
 
     return [...byDay.entries()]
-      .map(([date, a]) => {
-        // Wiped-balance-adjustment correction for THIS day: subtract the fake-
-        // then-wiped CREDIT inflation that the surviving-row sum still carries
-        // on the credit's original-effective day (attributed by the credit's
-        // own created_at, not the wipe's wiped_at). Removing it from
-        // balanceChange makes the day's "User Balance change" term — and the
-        // pnl it feeds — net the wiped credit to ZERO house impact. 0 for a
-        // day with no wiped credit.
-        const balanceChange =
-          a.balanceChange - (wipeCorrectionByDay.get(date) ?? 0);
-        return {
-          date,
-          // Exact per-day form of the windowed formula (manualWd carries its
-          // stored sign here so the daily values sum to the windowed total).
-          // Upgrader is fully covered by balanceChange (the ledger carries
-          // both upgrader_bet debits and upgrader_payout credits); a prior
-          // trailing upgraderWon term was based on a stale assumption that
-          // the backend skipped upgrader_payout rows, which double-counted
-          // every upgrader payout and produced ~$100k phantom loss bars.
-          pnl:
-            a.deposits -
-            (a.manualWd + a.cardWd) -
-            balanceChange -
-            a.inventoryChange -
-            a.voucherChange,
-          deposits: a.deposits,
-          // Gross money-out for the hover (clean positive regardless of how
-          // the manual-withdrawal sign is stored).
-          withdrawals: Math.abs(a.manualWd) + a.cardWd,
-          // Already-derived windowed-delta components for the hover breakdown
-          // — surfaced (not recomputed) so the tooltip can show where each
-          // day's net deposit inflow actually went (balance / inventory /
-          // voucher liability growth). These four terms + deposits −
-          // withdrawals reconcile to `pnl` above by construction (balanceChange
-          // is the wipe-corrected term so the hover matches the bar).
-          balanceChange,
-          inventoryChange: a.inventoryChange,
-          voucherChange: a.voucherChange,
-        };
-      })
+      .map(([date, a]) => ({
+        date,
+        // Exact per-day form of the windowed formula (manualWd carries its
+        // stored sign here so the daily values sum to the windowed total).
+        // Upgrader is fully covered by balanceChange (the ledger carries
+        // both upgrader_bet debits and upgrader_payout credits); a prior
+        // trailing upgraderWon term was based on a stale assumption that
+        // the backend skipped upgrader_payout rows, which double-counted
+        // every upgrader payout and produced ~$100k phantom loss bars.
+        pnl:
+          a.deposits -
+          (a.manualWd + a.cardWd) -
+          a.balanceChange -
+          a.inventoryChange -
+          a.voucherChange,
+        deposits: a.deposits,
+        // Gross money-out for the hover (clean positive regardless of how
+        // the manual-withdrawal sign is stored).
+        withdrawals: Math.abs(a.manualWd) + a.cardWd,
+        // Already-derived windowed-delta components for the hover breakdown
+        // — surfaced (not recomputed) so the tooltip can show where each
+        // day's net deposit inflow actually went (balance / inventory /
+        // voucher liability growth). These four terms + deposits −
+        // withdrawals reconcile to `pnl` above by construction.
+        balanceChange: a.balanceChange,
+        inventoryChange: a.inventoryChange,
+        voucherChange: a.voucherChange,
+      }))
       .sort((x, y) => x.date.localeCompare(y.date));
   });
 }
@@ -766,27 +716,6 @@ export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
     const blacklist = blacklistNotInClause("u.id", excluded);
     // Real-user scope used identically in every query below.
     const scope = `user_id IN (SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist})`;
-
-    // Per-window wiped-balance-adjustment CREDIT inflation to remove from each
-    // window's balance-Δ term. A fake admin credit that was later wiped still
-    // inflates `balanceDelta` because its +amount rise survives in the ledger
-    // sum on its original-effective day while the wipe's atomic clawback wrote
-    // no ledger row. Each window's correction sums the in-scope wiped credits
-    // whose ORIGINAL `created_at` is in that window (instant-precise, matching
-    // the SQL's `created_at >= cutoff`) — NOT the wipe's `wiped_at`. Scoped to
-    // the SAME surviving-row scope as the queries below (admin/support +
-    // blacklist dropped; creators IN). See
-    // getWindowedBalanceAdjustmentWipeCorrection.
-    const [wipeFixH24, wipeFixD3, wipeFixD7] = await Promise.all([
-      getWindowedBalanceAdjustmentWipeCorrection(h24, { excludeUserIds: excluded }),
-      getWindowedBalanceAdjustmentWipeCorrection(d3, { excludeUserIds: excluded }),
-      getWindowedBalanceAdjustmentWipeCorrection(d7, { excludeUserIds: excluded }),
-    ]);
-    const wipeFixByKey: Record<"h24" | "d3" | "d7", number> = {
-      h24: wipeFixH24,
-      d3: wipeFixD3,
-      d7: wipeFixD7,
-    };
 
     type LedgerRow = {
       type: string;
@@ -884,23 +813,18 @@ export async function getPnlBreakdownWindows(): Promise<PnlBreakdownWindows> {
 
     function buildRow(w: (typeof windows)[number]): PnlBreakdownRow {
       // Sum balance delta + manual-withdrawal across all type rows.
-      let rawBalanceDelta = 0;
+      let balanceDelta = 0;
       let manualWd = 0;
       let deposits = 0;
       // Map type → credit amount in this window — used for payout cats.
       const creditByType = new Map<string, number>();
       for (const r of ledger) {
-        rawBalanceDelta += toNumber(r[w.dlKey]);
+        balanceDelta += toNumber(r[w.dlKey]);
         manualWd += toNumber(r[w.mwdKey]);
         const cr = toNumber(r[w.crKey]);
         creditByType.set(r.type, cr);
         if (r.type === "deposit") deposits = cr;
       }
-      // Remove fake-then-wiped admin-credit inflation from this window's
-      // balance-Δ term (attributed to the credit's original-effective instant;
-      // 0 if no in-scope wiped credit falls in the window). Keeps this window
-      // consistent with the daily chart + the windowed P&L card.
-      const balanceDelta = rawBalanceDelta - wipeFixByKey[w.key];
       const cardWdAmount = toNumber(cardWd[0]?.[w.cwdKey]);
       const withdrawals = manualWd + cardWdAmount;
       const inventoryDelta =

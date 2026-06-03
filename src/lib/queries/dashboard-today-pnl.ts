@@ -71,12 +71,7 @@ const cachedTodayPnl = unstable_cache(
       excludeUserIds,
     });
   },
-  // v2: calculateWindowedPnl now folds the wiped-balance-adjustment correction
-  // (a fake-then-wiped admin credit no longer inflates the windowed balance-Δ
-  // term on its original-effective day). Bumped so cached v1 entries don't
-  // serve the pre-correction value across the deploy. The `dashboard-activity`
-  // tag is already busted by invalidateMetricCaches on every wipe/restore.
-  ["dashboard-today-pnl-v2"],
+  ["dashboard-today-pnl-v1"],
   { revalidate: 60, tags: ["dashboard-activity"] },
 );
 

@@ -2,7 +2,6 @@ import { getDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import type { WindowedPnl } from "./pnl";
-import { getRollingPnlWipeCorrections } from "@/lib/account-wipes/rolling-pnl-correction";
 
 /**
  * Multi-window per-user windowed P&L — single round-trip per source
@@ -33,25 +32,6 @@ import { getRollingPnlWipeCorrections } from "@/lib/account-wipes/rolling-pnl-co
  * Result is keyed by the `key` the caller passed in (e.g. "12h",
  * "24h", "3d", "7d"). Missing keys never occur — every input window
  * gets an entry, zeroed if no rows match.
- *
- * WIPE-AWARE CORRECTION (the FloridaManJeff phantom-loss fix, 2026-06-03)
- * ───────────────────────────────────────────────────────────────────────
- * When an admin wipes a user mid-window the ledger / inventory / voucher
- * rows the wipe DELETED are no longer in the source tables — so the
- * formula's surviving-row sums under-count Δbalance / Δinventory /
- * Δvoucher contributions from those rows. The wipe also atomically
- * subtracts from `available_balance` without writing a ledger row, so the
- * formula can never see the artificial drop. Together this produced a
- * phantom HOUSE LOSS on `/users/[id]` rolling tiles for users with recent
- * wipes (FloridaManJeff showed −$20k Rolling P&L 24h while every actual
- * balance/inventory/voucher/ledger had been reset to $0). We read the wipe
- * snapshots (the recovery copy of every deleted row) and ADD BACK each
- * row's contribution to the window's component aggregates — restricted
- * to rows whose original `created_at`/`obtained_at`/etc. falls inside the
- * window — so the rolling tile reads as the user's REAL trading outcome
- * over the window, treating the wipe as if it never happened. See
- * `src/lib/account-wipes/rolling-pnl-correction.ts` for the full
- * derivation. The Platform-P&L (lifetime balance-sheet) is unaffected.
  */
 export async function getUserWindowedPnlMulti(
   userId: string,
@@ -140,7 +120,7 @@ export async function getUserWindowedPnlMulti(
     type InvRow = Record<string, string>;
     type VchRow = Record<string, string>;
 
-    const [ledger, card, inv, vch, wipeCorrections] = await Promise.all([
+    const [ledger, card, inv, vch] = await Promise.all([
       db.$queryRawUnsafe<LedgerRow[]>(
         `SELECT ${ledgerDepositCase}, ${ledgerManualWdCase}, ${ledgerBalanceChangeCase}
          FROM ledger_transactions lt
@@ -169,15 +149,6 @@ export async function getUserWindowedPnlMulti(
            AND v.user_id = $1`,
         ...params,
       ),
-      // Wipe-aware add-back: any deleted ledger / inventory / voucher rows
-      // whose original event timestamp fell inside the window are added back
-      // to the formula's component aggregates so the rolling tile shows the
-      // user's REAL trading outcome, treating the wipe as never-happened.
-      // The helper itself swallows admin-DB lookup failures and returns
-      // zeroed corrections, so a transient admin-DB hiccup degrades the
-      // rolling tile to its pre-correction (post-wipe-phantom) value rather
-      // than throwing — same fallback shape as the main reads above.
-      getRollingPnlWipeCorrections(userId, windows),
     ]);
 
     const lRow = ledger[0];
@@ -187,18 +158,14 @@ export async function getUserWindowedPnlMulti(
 
     for (let i = 0; i < windows.length; i++) {
       const w = windows[i];
-      const correction = wipeCorrections[w.key];
-      const deposits = toNumber(lRow?.[`deposits_${i}`]) + correction.deposits;
-      const manualWd = toNumber(lRow?.[`manual_wd_${i}`]) + correction.manualWd;
-      const balanceChange =
-        toNumber(lRow?.[`balance_change_${i}`]) + correction.balanceDelta;
+      const deposits = toNumber(lRow?.[`deposits_${i}`]);
+      const manualWd = toNumber(lRow?.[`manual_wd_${i}`]);
+      const balanceChange = toNumber(lRow?.[`balance_change_${i}`]);
       const cardWd = toNumber(cRow?.[`card_wd_${i}`]);
-      const obtained =
-        toNumber(iRow?.[`obtained_${i}`]) + correction.invObtained;
-      const disposed =
-        toNumber(iRow?.[`disposed_${i}`]) + correction.invDisposed;
-      const issued = toNumber(vRow?.[`issued_${i}`]) + correction.vchIssued;
-      const claimed = toNumber(vRow?.[`claimed_${i}`]) + correction.vchClaimed;
+      const obtained = toNumber(iRow?.[`obtained_${i}`]);
+      const disposed = toNumber(iRow?.[`disposed_${i}`]);
+      const issued = toNumber(vRow?.[`issued_${i}`]);
+      const claimed = toNumber(vRow?.[`claimed_${i}`]);
 
       const withdrawals = manualWd + cardWd;
       const inventoryChange = obtained - disposed;

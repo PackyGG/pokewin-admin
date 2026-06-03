@@ -196,14 +196,6 @@ function DailyPnlBreakdownBody({ data }: { data: DailyPnlBreakdown }) {
             {formatCurrency(Math.abs(summary.pnl))}
           </span>
         </div>
-        {summary.wipeCorrection > 0 && (
-          <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
-            Includes a −{formatCurrency(summary.wipeCorrection)} wiped
-            balance-adjustment correction applied to the User Balance change
-            term (a fake-then-wiped admin credit on its original day), matching
-            the chart.
-          </p>
-        )}
       </div>
 
       {/* ── Underlying records, sectioned by component. ── */}

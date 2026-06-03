@@ -5,7 +5,6 @@ import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { blacklistNotInClause } from "./_blacklist";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { getDailyBalanceAdjustmentWipeCorrections } from "@/lib/account-wipes/rolling-pnl-correction";
 
 /**
  * dashboard-daily-pnl-breakdown.ts — the click-to-load drilldown behind ONE
@@ -18,16 +17,14 @@ import { getDailyBalanceAdjustmentWipeCorrections } from "@/lib/account-wipes/ro
  *
  *   pnl(D) = deposits(D)
  *          − ( |manualWd(D)| + cardWd(D) )
- *          − balanceChange(D)            ← wipe-corrected (see below)
+ *          − balanceChange(D)
  *          − inventoryChange(D)
  *          − voucherChange(D)
  *
  * with the SAME scope (`role NOT IN ('admin','support')` + the admin-managed
  * excluded-users blacklist — NOT the creator-dropping `getMetricsScope`),
- * the SAME per-component event-date bucketing, the SAME ledger event types,
- * and the SAME wiped-balance-adjustment correction
- * (`getDailyBalanceAdjustmentWipeCorrections`, attributed to each wiped
- * credit's ORIGINAL `created_at` day).
+ * the SAME per-component event-date bucketing, and the SAME ledger event
+ * types.
  *
  * This module re-expresses that math for a SINGLE day D so the modal's
  * summary RECONCILES to the bar height by construction:
@@ -38,10 +35,6 @@ import { getDailyBalanceAdjustmentWipeCorrections } from "@/lib/account-wipes/ro
  *     filtering `DATE(<eventCol>) = $1::date` on the SAME event column per
  *     component. Both queries hit the same DB session, so `DATE()` buckets
  *     identically and the row set for D is identical.
- *   • Wipe correction: same `getDailyBalanceAdjustmentWipeCorrections`
- *     keyed `YYYY-MM-DD` (UTC), looked up for D. Subtracted from the raw
- *     balance-Δ sum exactly as `getDailyPnl` does, so a fake-then-wiped
- *     admin credit nets to ZERO house impact on its original day here too.
  *
  * NOT cached and NOT called on the dashboard's initial render — it runs ONLY
  * when an admin clicks a bar (the modal fires a server action that calls
@@ -90,9 +83,8 @@ export type DailyPnlBreakdownSummary = {
    */
   withdrawals: number;
   /**
-   * Net change in user available + locked balance that day (signed),
-   * AFTER the wiped-balance-adjustment correction — identical to the bar's
-   * `balanceChange`. A liability that GREW is positive.
+   * Net change in user available + locked balance that day (signed) —
+   * identical to the bar's `balanceChange`. A liability that GREW is positive.
    */
   balanceChange: number;
   /** Cards obtained − cards sold/exchanged that day (signed). */
@@ -104,12 +96,6 @@ export type DailyPnlBreakdownSummary = {
    * canonical formula. Equals the bar height by construction.
    */
   pnl: number;
-  /**
-   * The wiped-balance-adjustment correction subtracted from the raw
-   * balance-Δ sum for this day (≥ 0). Surfaced for transparency so the
-   * modal can footnote it when non-zero; 0 on a normal day.
-   */
-  wipeCorrection: number;
 };
 
 /** A single underlying ledger/inventory/voucher record in the drill. */
@@ -194,12 +180,6 @@ export async function getDailyPnlBreakdown(
     // matches getDailyPnl's bucketing exactly.
     const dayLit = `'${dayUtc}'::date`;
 
-    // 30-day lower bound matching getDailyPnl's `NOW() - INTERVAL '30 days'`,
-    // used only to bound the wiped-balance-adjustment correction the same way
-    // the chart does. The day requested is always inside the rendered 30-day
-    // window, so this bound never drops the day's own correction.
-    const since30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-
     // ─── SUMMARY aggregates (un-capped — these reconcile to the bar) ────────
     type LedgerAggRow = {
       deposits: number;
@@ -252,7 +232,6 @@ export async function getDailyPnlBreakdown(
     };
 
     const [
-      wipeByDay,
       ledgerAgg,
       cardAgg,
       invAgg,
@@ -270,10 +249,6 @@ export async function getDailyPnlBreakdown(
       vchRows,
       vchCount,
     ] = await Promise.all([
-      // Same wipe correction the chart applies, keyed YYYY-MM-DD (UTC).
-      getDailyBalanceAdjustmentWipeCorrections(since30d, {
-        excludeUserIds: excluded,
-      }),
       // Ledger aggregate — deposits, manual-withdrawal, signed balance-Δ.
       db.$queryRawUnsafe<LedgerAggRow[]>(
         `SELECT
@@ -469,15 +444,13 @@ export async function getDailyPnlBreakdown(
     // ─── Assemble the summary using the IDENTICAL getDailyPnl math ──────────
     const depositsTotal = ledgerAgg[0]?.deposits ?? 0;
     const manualWd = ledgerAgg[0]?.manual_wd ?? 0;
-    const rawBalanceChange = ledgerAgg[0]?.balance_change ?? 0;
+    const balanceChange = ledgerAgg[0]?.balance_change ?? 0;
     const cardWd = cardAgg[0]?.card_wd ?? 0;
     const obtained = invAgg[0]?.obtained ?? 0;
     const disposed = invAgg[0]?.disposed ?? 0;
     const issued = vchAgg[0]?.issued ?? 0;
     const claimed = vchAgg[0]?.claimed ?? 0;
 
-    const wipeCorrection = wipeByDay.get(dayUtc) ?? 0;
-    const balanceChange = rawBalanceChange - wipeCorrection;
     const inventoryChange = obtained - disposed;
     const voucherChange = issued - claimed;
     // Gross money-out — abs the manual-withdrawal leg so it reads positive
@@ -498,7 +471,6 @@ export async function getDailyPnlBreakdown(
       inventoryChange,
       voucherChange,
       pnl,
-      wipeCorrection,
     };
 
     // ─── Map the record rows into the serializable shape ────────────────────

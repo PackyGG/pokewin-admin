@@ -26,7 +26,6 @@ export {
   FINANCIAL_TX_TYPES,
   CARD_SALE_TX_TYPES,
   EXCHANGE_TX_TYPES,
-  ROLLING_PNL_WIPE_HINT,
 } from "./user-tabs-types";
 export {
   BalanceSummaryCard,
