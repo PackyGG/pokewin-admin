@@ -33,28 +33,69 @@ async function buildExclStaffFrag(): Promise<string> {
 type Period = "today" | "7d" | "30d" | "90d" | "all";
 
 /**
+ * UTC start-of-current-day boundary. The "Today" chip on this page means
+ * the CURRENT CALENDAR DAY since midnight UTC, NOT a rolling past-24h
+ * window — same convention as `dashboard-today-pnl.ts` / the daily-P&L
+ * chart's most-recent bar / `users.today` in dashboard.ts. Anchoring to UTC
+ * keeps the figure identical regardless of which region the serverless
+ * function runs in.
+ */
+function utcStartOfDay(): Date {
+  const d = new Date();
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
+}
+
+/**
  * Convert an analytics `Period` to a metric-window `since` Date for the
  * canonical `@/lib/metrics` builders. `all` → null (lifetime, no lower
- * bound). The day-count mirrors `periodToDateFilter` / `parseDays` so the
- * canonical window matches the rest of the page's date filter exactly.
+ * bound). `today` uses the UTC start-of-day boundary (see `utcStartOfDay`);
+ * the other windows are rolling N-day from `now` — matching
+ * `periodToDateFilter` exactly so the canonical and ledger-aggregate
+ * windows agree.
  */
 function periodToMetricWindow(period: Period): MetricWindow {
   if (period === "all") return { since: null };
+  if (period === "today") return { since: utcStartOfDay() };
   const days = parseDays(period);
   return { since: new Date(Date.now() - days * 24 * 60 * 60 * 1000) };
 }
 
 function periodToDateFilter(period: Period): string {
-  // Values are hardcoded — no injection risk with $queryRawUnsafe
+  // Values are hardcoded — no injection risk with $queryRawUnsafe.
+  // `today` binds the boundary as an ISO timestamp literal cast to
+  // timestamptz so the window is "since midnight UTC today" (matching
+  // `periodToMetricWindow` above), not a rolling 24-hour interval.
   switch (period) {
     case "today":
-      return "AND created_at >= NOW() - INTERVAL '1 day'";
+      return `AND created_at >= '${utcStartOfDay().toISOString()}'::timestamptz`;
     case "7d":
       return "AND created_at >= NOW() - INTERVAL '7 days'";
     case "30d":
       return "AND created_at >= NOW() - INTERVAL '30 days'";
     case "90d":
       return "AND created_at >= NOW() - INTERVAL '90 days'";
+    case "all":
+      return "";
+  }
+}
+
+/**
+ * Bounded since-predicate fragment for the battle queries: emits
+ * `{col} >= <boundary>` (no leading AND), with `{col}` as a placeholder
+ * for the caller to substitute the table-qualified column name (e.g.
+ * `created_at` or `b.created_at`). Empty string for `all`. `today`
+ * anchors at midnight UTC of the current calendar day, matching the
+ * page's other "today" predicates.
+ */
+function battleSinceFragment(period: Period): string {
+  switch (period) {
+    case "today":
+      return `{col} >= '${utcStartOfDay().toISOString()}'::timestamptz`;
+    case "7d":
+    case "30d":
+    case "90d":
+      return `{col} >= NOW() - INTERVAL '${parseDays(period)} days'`;
     case "all":
       return "";
   }
@@ -159,14 +200,18 @@ async function computeAnalyticsData(
   const battleStaffExcl = `user_id IN (SELECT id FROM "user" WHERE role != 'admin')`;
   const battleStaffExclAliased = `b.user_id IN (SELECT id FROM "user" WHERE role != 'admin')`;
 
+  // `today` anchors at midnight UTC of the current calendar day (matching
+  // `periodToDateFilter` / `periodToMetricWindow`); the other windows are
+  // rolling N-day from `now`. `all` has no date clause.
+  const battleSinceClause = battleSinceFragment(period);
   const battleDateWhere =
-    period === "all"
+    battleSinceClause === ""
       ? `WHERE ${battleStaffExcl}`
-      : `WHERE created_at >= NOW() - INTERVAL '${parseDays(period)} days' AND ${battleStaffExcl}`;
+      : `WHERE ${battleSinceClause.replace(/{col}/g, "created_at")} AND ${battleStaffExcl}`;
   const battleDateWhereAliased =
-    period === "all"
+    battleSinceClause === ""
       ? `WHERE ${battleStaffExclAliased}`
-      : `WHERE b.created_at >= NOW() - INTERVAL '${parseDays(period)} days' AND ${battleStaffExclAliased}`;
+      : `WHERE ${battleSinceClause.replace(/{col}/g, "b.created_at")} AND ${battleStaffExclAliased}`;
 
   // Canonical gaming-margin metrics come from `@/lib/metrics`: the daily
   // GGR/NGR series (`getDailyGamingMetrics`) and the upgrader figure from
@@ -662,14 +707,17 @@ async function computePackAndBattleStats(
   const blacklistIdNotIn = blacklistNotInClause("id", excluded);
   const battleStaffExcl = `user_id IN (SELECT id FROM "user" WHERE role != 'admin')`;
   const battleStaffExclAliased = `b.user_id IN (SELECT id FROM "user" WHERE role != 'admin')`;
+  // `today` anchors at midnight UTC of the current calendar day, matching
+  // the page's other "today" predicates (see `battleSinceFragment`).
+  const battleSinceClause = battleSinceFragment(period);
   const battleDateWhere =
-    period === "all"
+    battleSinceClause === ""
       ? `WHERE ${battleStaffExcl}`
-      : `WHERE created_at >= NOW() - INTERVAL '${parseDays(period)} days' AND ${battleStaffExcl}`;
+      : `WHERE ${battleSinceClause.replace(/{col}/g, "created_at")} AND ${battleStaffExcl}`;
   const battleDateWhereAliased =
-    period === "all"
+    battleSinceClause === ""
       ? `WHERE ${battleStaffExclAliased}`
-      : `WHERE b.created_at >= NOW() - INTERVAL '${parseDays(period)} days' AND ${battleStaffExclAliased}`;
+      : `WHERE ${battleSinceClause.replace(/{col}/g, "b.created_at")} AND ${battleStaffExclAliased}`;
 
   const [
     battleModeRows,

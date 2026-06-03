@@ -2,16 +2,31 @@ import { getDb } from "@/lib/db";
 
 export type Period = "today" | "7d" | "30d" | "90d" | "all";
 
-const periodToDays: Record<Exclude<Period, "all">, number> = {
-  today: 1,
+const periodToDays: Record<Exclude<Period, "all" | "today">, number> = {
   "7d": 7,
   "30d": 30,
   "90d": 90,
 };
 
-// Hardcoded values — no injection risk when used with $queryRawUnsafe
+/**
+ * UTC start-of-current-day boundary. The "Today" chip means the CURRENT
+ * CALENDAR DAY since midnight UTC, NOT a rolling past-24h window — same
+ * convention as `dashboard-today-pnl.ts` and `src/lib/queries/analytics.ts`.
+ */
+function utcStartOfDay(): Date {
+  const d = new Date();
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
+}
+
+// Hardcoded values — no injection risk when used with $queryRawUnsafe.
+// `today` binds an ISO timestamp literal cast to timestamptz so the window
+// is "since midnight UTC today", not a rolling 24-hour interval.
 function periodToDateFilter(period: Period): string {
   if (period === "all") return "";
+  if (period === "today") {
+    return `AND created_at >= '${utcStartOfDay().toISOString()}'::timestamptz`;
+  }
   const days = periodToDays[period];
   return `AND created_at >= NOW() - INTERVAL '${days} days'`;
 }
@@ -45,11 +60,15 @@ export async function getUsersByCountry(period: Period): Promise<MapData> {
 
   // dateFilter above is phrased as "AND created_at >= ...", works for both
   // u.created_at (signups) and lt.created_at (tx) because each query
-  // unambiguously owns the column name. For the tx query we rename it.
+  // unambiguously owns the column name. For the tx query we re-derive the
+  // boundary on lt.created_at so the period semantics stay consistent —
+  // `today` anchored at midnight UTC, the others rolling N days.
   const txDateFilter =
     period === "all"
       ? ""
-      : `AND lt.created_at >= NOW() - INTERVAL '${periodToDays[period]} days'`;
+      : period === "today"
+        ? `AND lt.created_at >= '${utcStartOfDay().toISOString()}'::timestamptz`
+        : `AND lt.created_at >= NOW() - INTERVAL '${periodToDays[period]} days'`;
 
   const [byCountryRaw, financialsRaw, totalRaw, withoutLocationRaw] =
     await Promise.all([
