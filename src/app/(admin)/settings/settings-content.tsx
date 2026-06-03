@@ -20,7 +20,8 @@ import { Pencil, Trash2, X, Check, ChevronDown, Globe, Timer, Plus } from "lucid
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SectionHeading } from "@/components/modern-panels";
 import { EmptyState } from "@/components/empty-state";
-import { Spinner } from "@/components/ux";
+import { Spinner, transition } from "@/components/ux";
+import { cn } from "@/lib/utils";
 
 type SettingsData = {
   vaultLockTimes: {
@@ -70,110 +71,202 @@ export function SettingsContent({ data }: { data: SettingsData }) {
       {/* Country Restrictions */}
       <div className="space-y-3">
         <SectionHeading icon={Globe} title="Country Restrictions" />
-        <div className="rounded-md border overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Country</TableHead>
-                <TableHead>Physical</TableHead>
-                <TableHead>Digital</TableHead>
-                <TableHead>Gift Card</TableHead>
-                <TableHead>Promo Code</TableHead>
-                <TableHead>Blocked</TableHead>
-                <TableHead>Locked Deposits Crypto</TableHead>
-                <TableHead>Locked Deposits Fiat</TableHead>
-                <TableHead>Locked Withdrawals Crypto</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+
+        {data.countryRestrictions.length === 0 ? (
+          <div className="rounded-xl border">
+            <EmptyState
+              icon={Globe}
+              title="No country restrictions configured"
+              description="Every country is unrestricted until a row is added."
+              compact
+            />
+          </div>
+        ) : (
+          <>
+            {/* Desktop table (>=md). The 9-column grid overflows badly on
+                phones, so it stays behind a horizontal-scroll guard here and
+                is replaced by a stacked card list below md. */}
+            <div className="hidden rounded-xl border overflow-x-auto md:block">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Country</TableHead>
+                    <TableHead>Physical</TableHead>
+                    <TableHead>Digital</TableHead>
+                    <TableHead>Gift Card</TableHead>
+                    <TableHead>Promo Code</TableHead>
+                    <TableHead>Blocked</TableHead>
+                    <TableHead>Locked Deposits Crypto</TableHead>
+                    <TableHead>Locked Deposits Fiat</TableHead>
+                    <TableHead>Locked Withdrawals Crypto</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.countryRestrictions.map((c) => (
+                    <TableRow key={c.countryCode}>
+                      <TableCell className="font-medium">{c.countryCode}</TableCell>
+                      <TableCell>
+                        <Switch
+                          checked={c.physicalWithdrawal}
+                          onCheckedChange={() => handleCountryToggle(c.countryCode, "physical_withdrawal", c.physicalWithdrawal)}
+                          disabled={isPending}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Switch
+                          checked={c.digitalWithdrawal}
+                          onCheckedChange={() => handleCountryToggle(c.countryCode, "digital_withdrawal", c.digitalWithdrawal)}
+                          disabled={isPending}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Switch
+                          checked={c.giftCardDeposit}
+                          onCheckedChange={() => handleCountryToggle(c.countryCode, "gift_card_deposit", c.giftCardDeposit)}
+                          disabled={isPending}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Switch
+                          checked={c.promoCodeDeposit}
+                          onCheckedChange={() => handleCountryToggle(c.countryCode, "promo_code_deposit", c.promoCodeDeposit)}
+                          disabled={isPending}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Switch
+                          checked={c.blocked}
+                          onCheckedChange={() => handleCountryToggle(c.countryCode, "blocked", c.blocked)}
+                          disabled={isPending}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <CurrencyMultiSelect
+                          countryCode={c.countryCode}
+                          field="locked_deposits_crypto"
+                          values={c.lockedDepositsCrypto}
+                          options={CRYPTO_OPTIONS}
+                          disabled={isPending}
+                          startTransition={startTransition}
+                          router={router}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <CurrencyMultiSelect
+                          countryCode={c.countryCode}
+                          field="locked_deposits_fiat"
+                          values={c.lockedDepositsFiat}
+                          options={FIAT_OPTIONS}
+                          disabled={isPending}
+                          startTransition={startTransition}
+                          router={router}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <CurrencyMultiSelect
+                          countryCode={c.countryCode}
+                          field="locked_withdrawals_crypto"
+                          values={c.lockedWithdrawalsCrypto}
+                          options={CRYPTO_OPTIONS}
+                          disabled={isPending}
+                          startTransition={startTransition}
+                          router={router}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+
+            {/* Mobile card list (<md) — the 9-col table is unusable at 360px,
+                so each country renders as a stacked card mirroring the
+                admin-users mobile fallback: header + grouped toggle rows +
+                the three currency multi-selects. */}
+            <div className="space-y-2 md:hidden">
               {data.countryRestrictions.map((c) => (
-                <TableRow key={c.countryCode}>
-                  <TableCell className="font-medium">{c.countryCode}</TableCell>
-                  <TableCell>
-                    <Switch
-                      checked={c.physicalWithdrawal}
-                      onCheckedChange={() => handleCountryToggle(c.countryCode, "physical_withdrawal", c.physicalWithdrawal)}
-                      disabled={isPending}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Switch
-                      checked={c.digitalWithdrawal}
-                      onCheckedChange={() => handleCountryToggle(c.countryCode, "digital_withdrawal", c.digitalWithdrawal)}
-                      disabled={isPending}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Switch
-                      checked={c.giftCardDeposit}
-                      onCheckedChange={() => handleCountryToggle(c.countryCode, "gift_card_deposit", c.giftCardDeposit)}
-                      disabled={isPending}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Switch
-                      checked={c.promoCodeDeposit}
-                      onCheckedChange={() => handleCountryToggle(c.countryCode, "promo_code_deposit", c.promoCodeDeposit)}
-                      disabled={isPending}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Switch
-                      checked={c.blocked}
-                      onCheckedChange={() => handleCountryToggle(c.countryCode, "blocked", c.blocked)}
-                      disabled={isPending}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <CurrencyMultiSelect
-                      countryCode={c.countryCode}
-                      field="locked_deposits_crypto"
-                      values={c.lockedDepositsCrypto}
-                      options={CRYPTO_OPTIONS}
-                      disabled={isPending}
-                      startTransition={startTransition}
-                      router={router}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <CurrencyMultiSelect
-                      countryCode={c.countryCode}
-                      field="locked_deposits_fiat"
-                      values={c.lockedDepositsFiat}
-                      options={FIAT_OPTIONS}
-                      disabled={isPending}
-                      startTransition={startTransition}
-                      router={router}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <CurrencyMultiSelect
-                      countryCode={c.countryCode}
-                      field="locked_withdrawals_crypto"
-                      values={c.lockedWithdrawalsCrypto}
-                      options={CRYPTO_OPTIONS}
-                      disabled={isPending}
-                      startTransition={startTransition}
-                      router={router}
-                    />
-                  </TableCell>
-                </TableRow>
+                <div
+                  key={c.countryCode}
+                  className="rounded-xl border bg-card p-3"
+                >
+                  <div className="flex items-center gap-2">
+                    <Globe className="size-4 shrink-0 text-muted-foreground" />
+                    <span className="font-medium">{c.countryCode}</span>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    {(
+                      [
+                        ["Physical", "physical_withdrawal", c.physicalWithdrawal],
+                        ["Digital", "digital_withdrawal", c.digitalWithdrawal],
+                        ["Gift Card", "gift_card_deposit", c.giftCardDeposit],
+                        ["Promo Code", "promo_code_deposit", c.promoCodeDeposit],
+                        ["Blocked", "blocked", c.blocked],
+                      ] as const
+                    ).map(([label, field, value]) => (
+                      <div
+                        key={field}
+                        className="flex items-center justify-between gap-2 rounded-lg border bg-background/40 px-3 py-2"
+                      >
+                        <span className="text-sm text-muted-foreground">
+                          {label}
+                        </span>
+                        <Switch
+                          checked={value}
+                          onCheckedChange={() =>
+                            handleCountryToggle(c.countryCode, field, value)
+                          }
+                          disabled={isPending}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {(
+                      [
+                        [
+                          "Locked Deposits Crypto",
+                          "locked_deposits_crypto",
+                          c.lockedDepositsCrypto,
+                          CRYPTO_OPTIONS,
+                        ],
+                        [
+                          "Locked Deposits Fiat",
+                          "locked_deposits_fiat",
+                          c.lockedDepositsFiat,
+                          FIAT_OPTIONS,
+                        ],
+                        [
+                          "Locked Withdrawals Crypto",
+                          "locked_withdrawals_crypto",
+                          c.lockedWithdrawalsCrypto,
+                          CRYPTO_OPTIONS,
+                        ],
+                      ] as const
+                    ).map(([label, field, values, options]) => (
+                      <div
+                        key={field}
+                        className="flex items-center justify-between gap-3"
+                      >
+                        <span className="text-sm text-muted-foreground">
+                          {label}
+                        </span>
+                        <CurrencyMultiSelect
+                          countryCode={c.countryCode}
+                          field={field}
+                          values={values}
+                          options={options}
+                          disabled={isPending}
+                          startTransition={startTransition}
+                          router={router}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
               ))}
-              {data.countryRestrictions.length === 0 && (
-                <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={9} className="p-0">
-                    <EmptyState
-                      icon={Globe}
-                      title="No country restrictions configured"
-                      description="Every country is unrestricted until a row is added."
-                      compact
-                    />
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -341,7 +434,7 @@ function VaultLockTimesCard({
   return (
     <div className="space-y-3">
       <SectionHeading icon={Timer} title="Vault Lock Times" />
-      <div className="space-y-4 rounded-md border p-4">
+      <div className="space-y-4 rounded-xl border p-4">
         <div className="overflow-x-auto">
         <Table>
           <TableHeader>
@@ -354,7 +447,7 @@ function VaultLockTimesCard({
           <TableBody>
             {vaultLockTimes.map((v) =>
               editingId === v.id ? (
-                <TableRow key={v.id}>
+                <TableRow key={v.id} className={cn(transition("all", "base"))}>
                   <TableCell>
                     <Input
                       type="number"
@@ -393,7 +486,7 @@ function VaultLockTimesCard({
                   </TableCell>
                 </TableRow>
               ) : (
-                <TableRow key={v.id}>
+                <TableRow key={v.id} className={cn(transition("all", "base"))}>
                   <TableCell>{v.hours}h</TableCell>
                   <TableCell>{v.label}</TableCell>
                   <TableCell>
