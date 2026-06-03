@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { usePathname, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,6 +19,8 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  Gamepad2,
+  Layers,
   LayoutGrid,
   Loader2,
   Rows3,
@@ -87,31 +89,83 @@ type PackCard = {
   order: number;
 };
 
-type PackDetailData = {
-  id: string;
-  name: string;
-  active: boolean;
-  cards: PackCard[];
-};
+// ─── Pack content tab nav (URL-driven, lazy) ───────────────────────
+//
+// The pack-detail page has two content surfaces: the Cards pool (cheap,
+// already loaded with the pack via getPackDetail) and the Games feed
+// (heavy — unindexed JSON full-scans over provably_fair_results keyed on
+// result_metadata->>'pack_id'). The old client `<Tabs>` defaulted to
+// Cards but still had the *server page* eager-fetch the Games data on
+// mount so it could hand <GamesTable> its `initialGames` — meaning a
+// hidden tab paid for its scans on every page load, violating the
+// Active-Tab-Only rule in CLAUDE.md.
+//
+// This nav switches the active tab via the `?packTab=` URL param
+// (mirroring the /insights/games tab nav) so the server page can parse
+// the active tab and render ONLY that tab's content. The Games data is
+// then fetched inside a server <Suspense> boundary that only mounts when
+// packTab === "games" — i.e. on click, never on the initial Cards view.
+// Same fade-mask + horizontal-scroll affordance as the insights/analytics
+// tab strips so the visual language stays consistent.
 
-export function PackTabs({ data, initialGames }: { data: PackDetailData; initialGames: PaginatedGames }) {
+export type PackContentTab = "cards" | "games";
+
+export function parsePackContentTab(value: string | undefined): PackContentTab {
+  return value === "games" ? "games" : "cards";
+}
+
+const PACK_TABS: {
+  value: PackContentTab;
+  label: string;
+  icon: typeof Layers;
+}[] = [
+  { value: "cards", label: "Cards", icon: Layers },
+  { value: "games", label: "Games", icon: Gamepad2 },
+];
+
+export function PackContentTabsNav({ cardCount }: { cardCount: number }) {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const current = parsePackContentTab(searchParams.get("packTab") ?? undefined);
+
+  function hrefFor(tab: PackContentTab): string {
+    const p = new URLSearchParams(searchParams.toString());
+    if (tab === "cards") p.delete("packTab");
+    else p.set("packTab", tab);
+    const qs = p.toString();
+    return qs ? `${pathname}?${qs}` : pathname;
+  }
+
   return (
-    <div className="space-y-4">
-      <Tabs defaultValue="cards">
-        <TabsList>
-          <TabsTrigger value="cards">Cards ({data.cards.length})</TabsTrigger>
-          <TabsTrigger value="games">Games</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="cards">
-          <PackCardsView cards={data.cards} />
-        </TabsContent>
-
-        <TabsContent value="games">
-          <GamesTable packId={data.id} initialGames={initialGames} />
-        </TabsContent>
-
-      </Tabs>
+    <div
+      className={cn(
+        "flex gap-1 overflow-x-auto overscroll-x-contain rounded-lg border bg-muted/50 p-1",
+        "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+        "[mask-image:linear-gradient(to_right,transparent,black_1.5rem,black_calc(100%-1.5rem),transparent)]",
+        "lg:[mask-image:none]",
+      )}
+    >
+      {PACK_TABS.map(({ value, label, icon: Icon }) => (
+        <Link
+          key={value}
+          href={hrefFor(value)}
+          replace
+          prefetch={false}
+          aria-current={current === value ? "page" : undefined}
+          className={cn(
+            "flex shrink-0 scroll-mx-4 items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+            current === value
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <Icon className="size-3.5" />
+          {label}
+          {value === "cards" && (
+            <span className="text-xs text-muted-foreground">({cardCount})</span>
+          )}
+        </Link>
+      ))}
     </div>
   );
 }
@@ -181,7 +235,7 @@ function rarityBadgeClass(rarity: string | null): string {
   );
 }
 
-function PackCardsView({ cards }: { cards: PackCard[] }) {
+export function PackCardsView({ cards }: { cards: PackCard[] }) {
   const [view, setView] = useState<"table" | "grid">("table");
   const [searchInput, setSearchInput] = useState("");
   const [sort, setSort] = useState<CardSort>("prob-desc");
@@ -495,7 +549,7 @@ const SORT_OPTIONS = [
   { label: "Payout ↓", value: "payout-desc" },
 ];
 
-function GamesTable({ packId, initialGames }: { packId: string; initialGames: PaginatedGames }) {
+export function GamesTable({ packId, initialGames }: { packId: string; initialGames: PaginatedGames }) {
   const [games, setGames] = useState(initialGames);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);

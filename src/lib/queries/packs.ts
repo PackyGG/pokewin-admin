@@ -1,5 +1,6 @@
 import { unstable_cache } from "next/cache";
-import { getDb } from "@/lib/db";
+import { getDb, getDevDb, getProdDb } from "@/lib/db";
+import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
@@ -419,28 +420,47 @@ export type PackStats = {
   battleBreakdown: { label: string; count: number }[];
 };
 
-export async function getPackStats(
-  packId: string,
-  packPrice: number,
-  dbTotals: { totalPayout: number; actualRtp: number },
-): Promise<PackStats> {
-  const db = await getDb();
-  // The single source of truth: provably_fair_results.result_metadata->>'pack_id'
-  // tells us exactly which pack produced each card in both solo and battle openings.
-  // Fetch the daily breakdown and the borrow/sponsor breakdown in parallel —
-  // they're independent queries against the same base table.
-  const [rows, breakdownRows] = await Promise.all([
-    db.$queryRawUnsafe<
-      {
-        date: Date;
-        openings: string;
-        solo: string;
-        battle: string;
-        borrowed: string;
-        sponsored: string;
-        payout: string;
-      }[]
-    >(`
+/**
+ * The two heavy scans behind getPackStats — the daily opening breakdown
+ * and the borrow/sponsor pie breakdown. Both filter
+ * `provably_fair_results` on `result_metadata->>'pack_id'`, an unindexed
+ * JSON predicate that forces a full scan, so they're cached cross-request
+ * (60s) keyed on the pack id. The pack-detail page re-renders on every
+ * `?packTab=` toggle (URL-driven Cards/Games tabs); without this cache
+ * each toggle would re-pay for both scans even though only the hidden tab
+ * changed. Only the raw scan rows are cached — the cheap per-call
+ * arithmetic (price × openings, RTP/edge normalisation) stays outside so
+ * a price/total change reflects immediately. 60s revalidate mirrors
+ * getPacksListStats; opening data is append-only so brief staleness only
+ * delays the newest rows, and admin pack edits don't touch these counts.
+ *
+ * The DB env (prod / admin's dev toggle) is resolved OUTSIDE the cache
+ * and mixed into the cache key — `cookies()` can't be read inside an
+ * `unstable_cache` callback, and a single un-keyed slot would otherwise
+ * pin every viewer to whichever env filled it first. Inside the callback
+ * we pick the client straight from the resolved env (never re-reading the
+ * cookie) so the prod and dev results stay in separate slots.
+ */
+const cachedPackStatScans = (packId: string, env: DbEnv) =>
+  unstable_cache(
+    async () => {
+      const db = env === "dev" ? getDevDb() : getProdDb();
+      // The single source of truth: provably_fair_results.result_metadata->>'pack_id'
+      // tells us exactly which pack produced each card in both solo and battle openings.
+      // Fetch the daily breakdown and the borrow/sponsor breakdown in parallel —
+      // they're independent queries against the same base table.
+      return Promise.all([
+        db.$queryRawUnsafe<
+          {
+            date: Date;
+            openings: string;
+            solo: string;
+            battle: string;
+            borrowed: string;
+            sponsored: string;
+            payout: string;
+          }[]
+        >(`
       SELECT
         DATE(pf.created_at) AS date,
         COUNT(*)::text AS openings,
@@ -456,19 +476,19 @@ export async function getPackStats(
       GROUP BY DATE(pf.created_at)
       ORDER BY date
     `, packId),
-    // Breakdown for pie charts: borrow% / sponsored% per mode.
-    // For battles: borrow_percentage / sponsorship_percentage from battles table.
-    // For solo: borrow% from ledger_transactions description (e.g. "90% borrowed").
-    // result_metadata contains borrow_percentage for BOTH solo and battle results.
-    // For battles, sponsorship_percentage comes from the battles table.
-    db.$queryRawUnsafe<
-      {
-        is_battle: boolean;
-        borrow_pct: number;
-        sponsor_pct: number;
-        count: string;
-      }[]
-    >(`
+        // Breakdown for pie charts: borrow% / sponsored% per mode.
+        // For battles: borrow_percentage / sponsorship_percentage from battles table.
+        // For solo: borrow% from ledger_transactions description (e.g. "90% borrowed").
+        // result_metadata contains borrow_percentage for BOTH solo and battle results.
+        // For battles, sponsorship_percentage comes from the battles table.
+        db.$queryRawUnsafe<
+          {
+            is_battle: boolean;
+            borrow_pct: number;
+            sponsor_pct: number;
+            count: string;
+          }[]
+        >(`
       SELECT
         (pf.battle_id IS NOT NULL) AS is_battle,
         CASE
@@ -483,7 +503,21 @@ export async function getPackStats(
       GROUP BY is_battle, borrow_pct, sponsor_pct
       ORDER BY count DESC
     `, packId),
-  ]);
+      ]);
+    },
+    ["pack-stat-scans-v1", packId, env],
+    { revalidate: 60, tags: ["pack-stats"] },
+  );
+
+export async function getPackStats(
+  packId: string,
+  packPrice: number,
+  dbTotals: { totalPayout: number; actualRtp: number },
+): Promise<PackStats> {
+  // Resolve the env from the request cookie HERE (outside the cache), then
+  // hand it to the cached scan helper so prod / dev get separate slots.
+  const env = await readDbEnv();
+  const [rows, breakdownRows] = await cachedPackStatScans(packId, env)();
 
   const now = new Date();
   const since1 = new Date(now.getTime() - 1 * MS_PER_DAY);

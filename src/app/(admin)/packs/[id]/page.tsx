@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import {
   Package,
@@ -9,7 +10,7 @@ import {
   Boxes,
 } from "lucide-react";
 import { BackButton } from "@/components/back-button";
-import { getPackDetail, getPackStats, getPackGames } from "@/lib/queries/packs";
+import { getPackDetail, getPackStats } from "@/lib/queries/packs";
 import { getUserPermissions, requirePageAccess, sessionHasRole } from "@/lib/dal";
 import { isUuid } from "@/lib/utils/ids";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
@@ -17,23 +18,36 @@ import { ensurePackCreatorCapabilities } from "@/lib/pack-creator/ensure-capabil
 import { Badge } from "@/components/ui/badge";
 import { CardImage } from "@/components/card-image";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { PackTabs } from "./pack-tabs";
+import {
+  PackContentTabsNav,
+  PackCardsView,
+  parsePackContentTab,
+} from "./pack-tabs";
+import { GamesTabSection } from "./games-tab-section";
 import { PackStatsSection } from "./revenue-chart";
 import { TogglePackButton } from "./toggle-pack-button";
 import { EditPackButton } from "./edit-pack-button";
 import { DeletePackButton } from "./delete-pack-button";
 import { PageHero, KpiTile, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export const metadata = { title: "Pack Detail" };
 
 export default async function PackDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const session = await requirePageAccess("/packs");
   const { id } = await params;
+  // Active content tab — parsed server-side so we render ONLY the active
+  // tab's data. The "games" tab's feed is a heavy unindexed JSON scan
+  // over provably_fair_results, so it's loaded lazily (on click) inside a
+  // Suspense boundary below — never eagerly on the default Cards view.
+  const packTab = parsePackContentTab((await searchParams).packTab);
   // Shape-check UUID before any DB call — see src/lib/utils/ids.ts.
   if (!isUuid(id)) notFound();
   const data = await getPackDetail(id);
@@ -74,13 +88,13 @@ export default async function PackDetailPage({
       !data.active ||
       canEditLive);
 
-  const [packStats, initialGames] = await Promise.all([
-    getPackStats(id, data.priceUsd, {
-      totalPayout: data.totalPayout,
-      actualRtp: data.actualRtp,
-    }),
-    getPackGames(id, 1, 20),
-  ]);
+  // Only the always-visible stats are fetched upfront. The Games tab's
+  // feed is loaded lazily in <GamesTabSection> when that tab is active —
+  // see the Suspense boundary in "Pack Contents" below.
+  const packStats = await getPackStats(id, data.priceUsd, {
+    totalPayout: data.totalPayout,
+    actualRtp: data.actualRtp,
+  });
 
   // RTP computed from actual revenue/payout data, not DB pre-computed field
   const rtp = packStats.rtp;
@@ -199,7 +213,24 @@ export default async function PackDetailPage({
       <FadeIn>
         <div className="space-y-3">
           <SectionHeading icon={Boxes} title="Pack Contents" />
-          <PackTabs data={data} initialGames={initialGames} />
+          <div className="space-y-4">
+            <PackContentTabsNav cardCount={data.cards.length} />
+            {packTab === "games" ? (
+              // Heavy JSON-scan feed — only mounted when the Games tab is
+              // active, so the scan runs on click, not on initial load.
+              // Keyed by pack id so navigating between packs re-fetches.
+              <Suspense
+                key={`games-${id}`}
+                fallback={<Skeleton className="h-96 rounded-xl" />}
+              >
+                <GamesTabSection packId={id} />
+              </Suspense>
+            ) : (
+              // Cards pool is already in hand from getPackDetail — no extra
+              // query, renders instantly.
+              <PackCardsView cards={data.cards} />
+            )}
+          </div>
         </div>
       </FadeIn>
     </div>
