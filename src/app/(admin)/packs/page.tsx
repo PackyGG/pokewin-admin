@@ -10,8 +10,10 @@ import {
 import {
   getPacks,
   getPacksListStats,
+  parsePackCategory,
   type PackListItem,
   type PackSetFilter,
+  type PackCategoryFilter,
 } from "@/lib/queries/packs";
 import { getUserPermissions, requirePageAccess } from "@/lib/dal";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
@@ -83,6 +85,7 @@ async function PacksContent({
   perPage,
   search,
   active,
+  tag,
   sortBy,
   sortOrder,
   set,
@@ -95,6 +98,7 @@ async function PacksContent({
   perPage: number;
   search?: string;
   active?: string;
+  tag?: PackCategoryFilter;
   sortBy?: string;
   sortOrder: "asc" | "desc";
   set: PackSetFilter;
@@ -105,7 +109,7 @@ async function PacksContent({
 }) {
   const { data: result, error } = await loadPrimary(
     () =>
-      getPacks({ page, perPage, search, active, sortBy, sortOrder, set }),
+      getPacks({ page, perPage, search, active, tag, sortBy, sortOrder, set }),
     EMPTY_PACKS,
     "packs.list",
   );
@@ -208,6 +212,11 @@ export default async function PacksPage({
 
   const activeFilter = readActiveFilter(params);
 
+  // Category filter (1% / 5% / 10% tag, or daily/reward pack type) — read +
+  // whitelisted server-side, then applied in getPacks. Unknown/garbage values
+  // coerce to undefined (no filter).
+  const categoryFilter = parsePackCategory(params.tag);
+
   const suspenseKey = boundaryKey([
     activeSet,
     view,
@@ -215,6 +224,7 @@ export default async function PacksPage({
     perPage,
     search,
     activeFilter,
+    categoryFilter,
     sortBy,
     sortOrder,
   ]);
@@ -332,6 +342,7 @@ export default async function PacksPage({
             perPage={perPage}
             search={search}
             active={activeFilter}
+            tag={categoryFilter}
             sortBy={sortBy}
             sortOrder={sortOrder}
             set={activeSet}

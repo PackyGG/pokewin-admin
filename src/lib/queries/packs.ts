@@ -4,7 +4,72 @@ import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import { Prisma } from "@/generated/prisma/client";
+import { pack_tag } from "@/generated/prisma/enums";
 import { MS_PER_DAY } from "@/lib/utils/time";
+
+/**
+ * Category filter for the /packs list.
+ *
+ * The values map onto the TWO structured `packs` columns that carry a
+ * pack's taxonomy (verified against the schema + the create/edit forms +
+ * the ~15 metric queries that key off `pack_type`):
+ *
+ *   • `tags pack_tag[]`  — the battle-odds enum, members
+ *     `pct1 / pct5 / pct10 / fifty50` (DB @map: %1 / %5 / %10 / 50/50).
+ *     The 1% / 5% / 10% filters are an exact `tags.has` match on the
+ *     corresponding enum member — a real STRUCTURED predicate, not a
+ *     name-substring guess.
+ *   • `pack_type String` (default "official"; known values official /
+ *     custom / promo / reward) — `reward` is the canonical free / daily
+ *     reward-pack type used everywhere in the metrics layer
+ *     (`packs.pack_type = 'reward'`). "Daily level packs" → that type.
+ *
+ * NOTE on "sign-up packs": there is NO distinct catalog representation
+ * for an onboarding/welcome pack. Welcome-reward grants are themselves
+ * `pack_type = 'reward'` (same as daily packs — see
+ * insights-rewards/daily-packs.ts), and the "Signup Packs" analytics
+ * metric is a *ledger* concept (`balance_reward_claim`), not a `packs`
+ * row. So no `signup` option is exposed here — adding one would either
+ * collide with the daily/reward filter or invent a relationship that
+ * doesn't exist in the data.
+ */
+export type PackCategoryFilter = "pct1" | "pct5" | "pct10" | "reward";
+
+const PACK_CATEGORY_FILTERS: readonly PackCategoryFilter[] = [
+  "pct1",
+  "pct5",
+  "pct10",
+  "reward",
+] as const;
+
+/** Whitelist + coerce a raw `?tag=` param to a known category, else undefined. */
+export function parsePackCategory(
+  raw: string | undefined,
+): PackCategoryFilter | undefined {
+  return raw && (PACK_CATEGORY_FILTERS as readonly string[]).includes(raw)
+    ? (raw as PackCategoryFilter)
+    : undefined;
+}
+
+/**
+ * Translate a category filter into its `packs` where-clause fragment.
+ *   • pct1 / pct5 / pct10 → structured `tags.has` enum predicate.
+ *   • reward              → `pack_type = 'reward'` (free / daily packs).
+ */
+function buildPackCategoryWhere(
+  category: PackCategoryFilter,
+): Prisma.packsWhereInput {
+  switch (category) {
+    case "pct1":
+      return { tags: { has: pack_tag.pct1 } };
+    case "pct5":
+      return { tags: { has: pack_tag.pct5 } };
+    case "pct10":
+      return { tags: { has: pack_tag.pct10 } };
+    case "reward":
+      return { pack_type: "reward" };
+  }
+}
 
 export type PackListCard = {
   id: string;
@@ -100,6 +165,7 @@ export async function getPacks(params: {
   perPage?: number;
   search?: string;
   active?: string;
+  tag?: PackCategoryFilter;
   sortBy?: string;
   sortOrder?: string;
   set?: PackSetFilter;
@@ -109,6 +175,7 @@ export async function getPacks(params: {
     perPage = 20,
     search,
     active,
+    tag,
     sortBy = "created_at",
     sortOrder = "desc",
     set = "pokemon",
@@ -126,6 +193,12 @@ export async function getPacks(params: {
 
   if (active === "active") where.active = true;
   else if (active === "inactive") where.active = false;
+
+  // Category filter (1% / 5% / 10% tag, or daily/reward pack type). Combines
+  // with status + search + pool + sort — Object.assign merges the fragment's
+  // top-level keys (`tags` or `pack_type`) onto the where without clobbering
+  // the others.
+  if (tag) Object.assign(where, buildPackCategoryWhere(tag));
 
   // Scope to the Pokemon / OnePiece pool via the card→set linkage.
   const onePieceSetIds = await cachedOnePieceSetIds();
