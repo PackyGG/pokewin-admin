@@ -80,6 +80,9 @@ export const ModelName = {
   employee_managers: 'employee_managers',
   employee_manager_workspaces: 'employee_manager_workspaces',
   admin_deleted_users: 'admin_deleted_users',
+  admin_balance_adjustment_wipes: 'admin_balance_adjustment_wipes',
+  admin_account_wipes: 'admin_account_wipes',
+  admin_balance_adjustment_meta: 'admin_balance_adjustment_meta',
   admin_leaderboard_sponsorship: 'admin_leaderboard_sponsorship',
   admin_changelog_entries: 'admin_changelog_entries'
 } as const
@@ -528,6 +531,62 @@ export const Admin_deleted_usersScalarFieldEnum = {
 } as const
 
 export type Admin_deleted_usersScalarFieldEnum = (typeof Admin_deleted_usersScalarFieldEnum)[keyof typeof Admin_deleted_usersScalarFieldEnum]
+
+
+export const Admin_balance_adjustment_wipesScalarFieldEnum = {
+  id: 'id',
+  user_id: 'user_id',
+  username: 'username',
+  email: 'email',
+  wiped_at: 'wiped_at',
+  wiped_by: 'wiped_by',
+  total_amount: 'total_amount',
+  balance_before: 'balance_before',
+  balance_after: 'balance_after',
+  adjustment_count: 'adjustment_count',
+  snapshot: 'snapshot',
+  restored_at: 'restored_at',
+  restored_by: 'restored_by'
+} as const
+
+export type Admin_balance_adjustment_wipesScalarFieldEnum = (typeof Admin_balance_adjustment_wipesScalarFieldEnum)[keyof typeof Admin_balance_adjustment_wipesScalarFieldEnum]
+
+
+export const Admin_account_wipesScalarFieldEnum = {
+  id: 'id',
+  wipe_type: 'wipe_type',
+  user_id: 'user_id',
+  username: 'username',
+  email: 'email',
+  wiped_at: 'wiped_at',
+  wiped_by: 'wiped_by',
+  amount: 'amount',
+  item_count: 'item_count',
+  snapshot: 'snapshot',
+  restored_at: 'restored_at',
+  restored_by: 'restored_by'
+} as const
+
+export type Admin_account_wipesScalarFieldEnum = (typeof Admin_account_wipesScalarFieldEnum)[keyof typeof Admin_account_wipesScalarFieldEnum]
+
+
+export const Admin_balance_adjustment_metaScalarFieldEnum = {
+  id: 'id',
+  admin_user_id: 'admin_user_id',
+  target_user_id: 'target_user_id',
+  ledger_tx_id: 'ledger_tx_id',
+  category: 'category',
+  amount_usd: 'amount_usd',
+  coin_type: 'coin_type',
+  tx_hash: 'tx_hash',
+  social_link: 'social_link',
+  reason_text: 'reason_text',
+  lossback_pct: 'lossback_pct',
+  pnl_7d_usd: 'pnl_7d_usd',
+  created_at: 'created_at'
+} as const
+
+export type Admin_balance_adjustment_metaScalarFieldEnum = (typeof Admin_balance_adjustment_metaScalarFieldEnum)[keyof typeof Admin_balance_adjustment_metaScalarFieldEnum]
 
 
 export const Admin_leaderboard_sponsorshipScalarFieldEnum = {

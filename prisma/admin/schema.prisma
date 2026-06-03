@@ -840,6 +840,57 @@ model admin_account_wipes {
   @@index([wiped_at(sort: Desc)], map: "admin_account_wipes_wiped_at_idx")
 }
 
+// Rich, admin-only metadata for a STRICT categorized balance adjustment.
+//
+// The canonical CATEGORY KEY also lives on the MAIN-DB ledger row
+// (`metadata.adjustment_category`) — that is what the GGR/NGR/cost queries
+// read with NO cross-DB join. THIS table is the audit/detail companion: it
+// holds the category-specific inputs (coin type + tx hash, social link,
+// exact bonus reason, lossback % + 7d PnL + note) that only make sense in
+// the admin panel and never need to be in the main DB. It powers the
+// /insights/balance-adjustments detail/audit views.
+//
+// Provisioned at runtime via the IF-NOT-EXISTS ensure-schema fallback
+// (src/lib/balance-adjustment-meta/ensure-schema.ts) — NOT a Prisma
+// migration, because the admin DB has a drifted migration history. This
+// model only mirrors the table so typed queries via
+// `adminDb.admin_balance_adjustment_meta.*` work; keep the two in sync.
+model admin_balance_adjustment_meta {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // admin_users.id of whoever made the adjustment. Plain column — no Prisma
+  // relation so adding this table doesn't touch admin_users.
+  admin_user_id  String   @db.VarChar(36)
+  // Main-DB user the balance landed on (better-auth nanoid).
+  target_user_id String   @db.VarChar(36)
+  // Main-DB ledger_transactions row id this metadata describes. Loose
+  // cross-DB reference (separate Postgres — can't be a real FK).
+  ledger_tx_id   String   @db.VarChar(36)
+  // Canonical category key (BalanceAdjustmentCategory) — also stamped onto
+  // the ledger row's metadata. One of:
+  // deposit_problem | giveaway | bonus | reload | lossback | other.
+  category       String   @db.VarChar(40)
+  // Signed USD amount that landed on the user (mirrors the ledger amount)
+  // so the detail view doesn't need a cross-DB lookup.
+  amount_usd     Decimal  @db.Decimal(20, 2)
+  // deposit_problem: the coin + on-chain tx hash that was under-credited.
+  coin_type      String?  @db.VarChar(64)
+  tx_hash        String?  @db.VarChar(255)
+  // giveaway: the Twitter / Discord link the giveaway was sourced from.
+  social_link    String?  @db.VarChar(2048)
+  // bonus: exact reason (≥20 chars). lossback: optional free-text note.
+  reason_text    String?
+  // lossback: the % of recent losses credited back.
+  lossback_pct   Decimal? @db.Decimal(7, 2)
+  // lossback: the user's 7-day PnL value the % was applied against.
+  pnl_7d_usd     Decimal? @db.Decimal(20, 2)
+  created_at     DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([target_user_id], map: "admin_balance_adjustment_meta_target_user_id_idx")
+  @@index([created_at(sort: Desc)], map: "admin_balance_adjustment_meta_created_at_idx")
+  @@index([ledger_tx_id], map: "admin_balance_adjustment_meta_ledger_tx_id_idx")
+  @@index([category], map: "admin_balance_adjustment_meta_category_idx")
+}
+
 // Admin-side "sponsored %" annotation on a creator (affiliate)
 // leaderboard. Purely a cost-accounting input — it does NOT touch the
 // backend leaderboard in any way. The /creators "Leaderboard Cost" KPI

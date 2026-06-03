@@ -212,6 +212,21 @@ export type employee_manager_workspaces = Prisma.employee_manager_workspacesMode
  */
 export type admin_deleted_users = Prisma.admin_deleted_usersModel
 /**
+ * Model admin_balance_adjustment_wipes
+ * 
+ */
+export type admin_balance_adjustment_wipes = Prisma.admin_balance_adjustment_wipesModel
+/**
+ * Model admin_account_wipes
+ * 
+ */
+export type admin_account_wipes = Prisma.admin_account_wipesModel
+/**
+ * Model admin_balance_adjustment_meta
+ * 
+ */
+export type admin_balance_adjustment_meta = Prisma.admin_balance_adjustment_metaModel
+/**
  * Model admin_leaderboard_sponsorship
  * 
  */

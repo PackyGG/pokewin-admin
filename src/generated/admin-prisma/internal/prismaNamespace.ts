@@ -413,6 +413,9 @@ export const ModelName = {
   employee_managers: 'employee_managers',
   employee_manager_workspaces: 'employee_manager_workspaces',
   admin_deleted_users: 'admin_deleted_users',
+  admin_balance_adjustment_wipes: 'admin_balance_adjustment_wipes',
+  admin_account_wipes: 'admin_account_wipes',
+  admin_balance_adjustment_meta: 'admin_balance_adjustment_meta',
   admin_leaderboard_sponsorship: 'admin_leaderboard_sponsorship',
   admin_changelog_entries: 'admin_changelog_entries'
 } as const
@@ -430,7 +433,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "admin_users" | "admin_giveaway_actions" | "admin_user_tags" | "excluded_users" | "admin_roles" | "admin_sessions" | "admin_notes" | "admin_audit_events" | "admin_gift_card_actions" | "admin_voucher_actions" | "creator_webhooks" | "creator_deals" | "creator_socials" | "webhook_deliveries" | "creator_balance_fills" | "admin_balance_limits" | "expenses" | "recurring_expenses" | "admin_settings" | "admin_shifts" | "admin_shift_assignments" | "salary_employees" | "salary_payouts" | "salary_payments" | "employee_workspaces" | "employee_board_placements" | "employee_managers" | "employee_manager_workspaces" | "admin_deleted_users" | "admin_leaderboard_sponsorship" | "admin_changelog_entries"
+    modelProps: "admin_users" | "admin_giveaway_actions" | "admin_user_tags" | "excluded_users" | "admin_roles" | "admin_sessions" | "admin_notes" | "admin_audit_events" | "admin_gift_card_actions" | "admin_voucher_actions" | "creator_webhooks" | "creator_deals" | "creator_socials" | "webhook_deliveries" | "creator_balance_fills" | "admin_balance_limits" | "expenses" | "recurring_expenses" | "admin_settings" | "admin_shifts" | "admin_shift_assignments" | "salary_employees" | "salary_payouts" | "salary_payments" | "employee_workspaces" | "employee_board_placements" | "employee_managers" | "employee_manager_workspaces" | "admin_deleted_users" | "admin_balance_adjustment_wipes" | "admin_account_wipes" | "admin_balance_adjustment_meta" | "admin_leaderboard_sponsorship" | "admin_changelog_entries"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -2580,6 +2583,228 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         }
       }
     }
+    admin_balance_adjustment_wipes: {
+      payload: Prisma.$admin_balance_adjustment_wipesPayload<ExtArgs>
+      fields: Prisma.admin_balance_adjustment_wipesFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.admin_balance_adjustment_wipesFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_balance_adjustment_wipesPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.admin_balance_adjustment_wipesFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_balance_adjustment_wipesPayload>
+        }
+        findFirst: {
+          args: Prisma.admin_balance_adjustment_wipesFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_balance_adjustment_wipesPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.admin_balance_adjustment_wipesFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_balance_adjustment_wipesPayload>
+        }
+        findMany: {
+          args: Prisma.admin_balance_adjustment_wipesFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_balance_adjustment_wipesPayload>[]
+        }
+        create: {
+          args: Prisma.admin_balance_adjustment_wipesCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_balance_adjustment_wipesPayload>
+        }
+        createMany: {
+          args: Prisma.admin_balance_adjustment_wipesCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.admin_balance_adjustment_wipesCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_balance_adjustment_wipesPayload>[]
+        }
+        delete: {
+          args: Prisma.admin_balance_adjustment_wipesDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_balance_adjustment_wipesPayload>
+        }
+        update: {
+          args: Prisma.admin_balance_adjustment_wipesUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_balance_adjustment_wipesPayload>
+        }
+        deleteMany: {
+          args: Prisma.admin_balance_adjustment_wipesDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.admin_balance_adjustment_wipesUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.admin_balance_adjustment_wipesUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_balance_adjustment_wipesPayload>[]
+        }
+        upsert: {
+          args: Prisma.admin_balance_adjustment_wipesUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_balance_adjustment_wipesPayload>
+        }
+        aggregate: {
+          args: Prisma.Admin_balance_adjustment_wipesAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateAdmin_balance_adjustment_wipes>
+        }
+        groupBy: {
+          args: Prisma.admin_balance_adjustment_wipesGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Admin_balance_adjustment_wipesGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.admin_balance_adjustment_wipesCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Admin_balance_adjustment_wipesCountAggregateOutputType> | number
+        }
+      }
+    }
+    admin_account_wipes: {
+      payload: Prisma.$admin_account_wipesPayload<ExtArgs>
+      fields: Prisma.admin_account_wipesFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.admin_account_wipesFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_account_wipesPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.admin_account_wipesFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_account_wipesPayload>
+        }
+        findFirst: {
+          args: Prisma.admin_account_wipesFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_account_wipesPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.admin_account_wipesFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_account_wipesPayload>
+        }
+        findMany: {
+          args: Prisma.admin_account_wipesFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_account_wipesPayload>[]
+        }
+        create: {
+          args: Prisma.admin_account_wipesCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_account_wipesPayload>
+        }
+        createMany: {
+          args: Prisma.admin_account_wipesCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.admin_account_wipesCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_account_wipesPayload>[]
+        }
+        delete: {
+          args: Prisma.admin_account_wipesDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_account_wipesPayload>
+        }
+        update: {
+          args: Prisma.admin_account_wipesUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_account_wipesPayload>
+        }
+        deleteMany: {
+          args: Prisma.admin_account_wipesDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.admin_account_wipesUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.admin_account_wipesUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_account_wipesPayload>[]
+        }
+        upsert: {
+          args: Prisma.admin_account_wipesUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_account_wipesPayload>
+        }
+        aggregate: {
+          args: Prisma.Admin_account_wipesAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateAdmin_account_wipes>
+        }
+        groupBy: {
+          args: Prisma.admin_account_wipesGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Admin_account_wipesGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.admin_account_wipesCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Admin_account_wipesCountAggregateOutputType> | number
+        }
+      }
+    }
+    admin_balance_adjustment_meta: {
+      payload: Prisma.$admin_balance_adjustment_metaPayload<ExtArgs>
+      fields: Prisma.admin_balance_adjustment_metaFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.admin_balance_adjustment_metaFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_balance_adjustment_metaPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.admin_balance_adjustment_metaFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_balance_adjustment_metaPayload>
+        }
+        findFirst: {
+          args: Prisma.admin_balance_adjustment_metaFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_balance_adjustment_metaPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.admin_balance_adjustment_metaFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_balance_adjustment_metaPayload>
+        }
+        findMany: {
+          args: Prisma.admin_balance_adjustment_metaFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_balance_adjustment_metaPayload>[]
+        }
+        create: {
+          args: Prisma.admin_balance_adjustment_metaCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_balance_adjustment_metaPayload>
+        }
+        createMany: {
+          args: Prisma.admin_balance_adjustment_metaCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.admin_balance_adjustment_metaCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_balance_adjustment_metaPayload>[]
+        }
+        delete: {
+          args: Prisma.admin_balance_adjustment_metaDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_balance_adjustment_metaPayload>
+        }
+        update: {
+          args: Prisma.admin_balance_adjustment_metaUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_balance_adjustment_metaPayload>
+        }
+        deleteMany: {
+          args: Prisma.admin_balance_adjustment_metaDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.admin_balance_adjustment_metaUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.admin_balance_adjustment_metaUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_balance_adjustment_metaPayload>[]
+        }
+        upsert: {
+          args: Prisma.admin_balance_adjustment_metaUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$admin_balance_adjustment_metaPayload>
+        }
+        aggregate: {
+          args: Prisma.Admin_balance_adjustment_metaAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateAdmin_balance_adjustment_meta>
+        }
+        groupBy: {
+          args: Prisma.admin_balance_adjustment_metaGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Admin_balance_adjustment_metaGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.admin_balance_adjustment_metaCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.Admin_balance_adjustment_metaCountAggregateOutputType> | number
+        }
+      }
+    }
     admin_leaderboard_sponsorship: {
       payload: Prisma.$admin_leaderboard_sponsorshipPayload<ExtArgs>
       fields: Prisma.admin_leaderboard_sponsorshipFieldRefs
@@ -3197,6 +3422,62 @@ export const Admin_deleted_usersScalarFieldEnum = {
 export type Admin_deleted_usersScalarFieldEnum = (typeof Admin_deleted_usersScalarFieldEnum)[keyof typeof Admin_deleted_usersScalarFieldEnum]
 
 
+export const Admin_balance_adjustment_wipesScalarFieldEnum = {
+  id: 'id',
+  user_id: 'user_id',
+  username: 'username',
+  email: 'email',
+  wiped_at: 'wiped_at',
+  wiped_by: 'wiped_by',
+  total_amount: 'total_amount',
+  balance_before: 'balance_before',
+  balance_after: 'balance_after',
+  adjustment_count: 'adjustment_count',
+  snapshot: 'snapshot',
+  restored_at: 'restored_at',
+  restored_by: 'restored_by'
+} as const
+
+export type Admin_balance_adjustment_wipesScalarFieldEnum = (typeof Admin_balance_adjustment_wipesScalarFieldEnum)[keyof typeof Admin_balance_adjustment_wipesScalarFieldEnum]
+
+
+export const Admin_account_wipesScalarFieldEnum = {
+  id: 'id',
+  wipe_type: 'wipe_type',
+  user_id: 'user_id',
+  username: 'username',
+  email: 'email',
+  wiped_at: 'wiped_at',
+  wiped_by: 'wiped_by',
+  amount: 'amount',
+  item_count: 'item_count',
+  snapshot: 'snapshot',
+  restored_at: 'restored_at',
+  restored_by: 'restored_by'
+} as const
+
+export type Admin_account_wipesScalarFieldEnum = (typeof Admin_account_wipesScalarFieldEnum)[keyof typeof Admin_account_wipesScalarFieldEnum]
+
+
+export const Admin_balance_adjustment_metaScalarFieldEnum = {
+  id: 'id',
+  admin_user_id: 'admin_user_id',
+  target_user_id: 'target_user_id',
+  ledger_tx_id: 'ledger_tx_id',
+  category: 'category',
+  amount_usd: 'amount_usd',
+  coin_type: 'coin_type',
+  tx_hash: 'tx_hash',
+  social_link: 'social_link',
+  reason_text: 'reason_text',
+  lossback_pct: 'lossback_pct',
+  pnl_7d_usd: 'pnl_7d_usd',
+  created_at: 'created_at'
+} as const
+
+export type Admin_balance_adjustment_metaScalarFieldEnum = (typeof Admin_balance_adjustment_metaScalarFieldEnum)[keyof typeof Admin_balance_adjustment_metaScalarFieldEnum]
+
+
 export const Admin_leaderboard_sponsorshipScalarFieldEnum = {
   id: 'id',
   leaderboard_id: 'leaderboard_id',
@@ -3605,6 +3886,9 @@ export type GlobalOmitConfig = {
   employee_managers?: Prisma.employee_managersOmit
   employee_manager_workspaces?: Prisma.employee_manager_workspacesOmit
   admin_deleted_users?: Prisma.admin_deleted_usersOmit
+  admin_balance_adjustment_wipes?: Prisma.admin_balance_adjustment_wipesOmit
+  admin_account_wipes?: Prisma.admin_account_wipesOmit
+  admin_balance_adjustment_meta?: Prisma.admin_balance_adjustment_metaOmit
   admin_leaderboard_sponsorship?: Prisma.admin_leaderboard_sponsorshipOmit
   admin_changelog_entries?: Prisma.admin_changelog_entriesOmit
 }
