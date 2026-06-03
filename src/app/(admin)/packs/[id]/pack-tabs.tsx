@@ -36,6 +36,7 @@ import {
 import { EmptyState } from "@/components/empty-state";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
+import { toast } from "sonner";
 import { fetchPackGames } from "../actions";
 
 // Legacy rarity palette — still used by the games-table rows (not the
@@ -578,6 +579,15 @@ export function GamesTable({ packId, initialGames }: { packId: string; initialGa
     try {
       const res = await fetchPackGames(packId, p, 20, filters);
       setGames(res);
+    } catch (err) {
+      // Keep the currently-shown games in place and surface the failure as a
+      // toast (mirrors the sibling client action handlers) instead of leaving
+      // an uncaught client-promise rejection + a stuck spinner. The initial
+      // Games load is server-hardened by GamesTabSection (safeQuery+timeout);
+      // this guards the client-side pagination/filter refetches.
+      toast.error(
+        err instanceof Error ? err.message : "Couldn't load games",
+      );
     } finally {
       setLoading(false);
     }
