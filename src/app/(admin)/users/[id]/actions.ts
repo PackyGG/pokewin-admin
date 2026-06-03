@@ -210,8 +210,12 @@ function validateAdjustmentCategory(
       if (d.lossbackPercent === undefined || !Number.isFinite(d.lossbackPercent)) {
         return { ok: false, error: "Lossback requires a lossback %" };
       }
-      if (d.lossbackPercent < 0 || d.lossbackPercent > 100) {
-        return { ok: false, error: "Lossback % must be between 0 and 100" };
+      // Cap the lossback rate at 35% — the dialog offers 5/10/15/20 quick
+      // picks plus a custom box that's also capped at 35. This is the
+      // server-side source of truth; the client mirror is only a friendlier
+      // inline toast.
+      if (d.lossbackPercent < 0 || d.lossbackPercent > 35) {
+        return { ok: false, error: "Lossback % must be between 0 and 35" };
       }
       const note = (d.reasonText ?? "").trim();
       return {

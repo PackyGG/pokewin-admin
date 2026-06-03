@@ -157,11 +157,18 @@ export function PanelRow({
 export function ModernBalancePanel({
   balances,
   userId,
+  pnl7d,
   canAdjustBalance = false,
   canRecordManualWithdrawal = false,
 }: {
   balances: UserDetail["balances"];
   userId?: string;
+  // The user's rolling 7-day house P&L — the SAME value shown in the
+  // "Past 7d" rung of the P&L panel (`pnlBreakdown.pnl7d`). Threaded into
+  // the Adjust-Balance dialog so the Lossback section auto-fills it (no
+  // drift vs the Accounts tab). Serializable number — safe across the
+  // server→client boundary.
+  pnl7d?: number;
   canAdjustBalance?: boolean;
   canRecordManualWithdrawal?: boolean;
 }) {
@@ -265,6 +272,7 @@ export function ModernBalancePanel({
         <BalanceAdjustDialog
           userId={userId}
           availableBalance={balances.availableBalance}
+          pnl7d={pnl7d}
           open={adjustOpen}
           onOpenChange={setAdjustOpen}
         />

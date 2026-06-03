@@ -168,9 +168,16 @@ const BALANCE_ADJUST_CATEGORIES = BALANCE_ADJUSTMENT_CATEGORY_KEYS.map(
   (key) => ({ value: key, label: BALANCE_ADJUSTMENT_CATEGORY_META[key].label }),
 );
 
+// Lossback quick-pick rates + the hard cap on any custom rate. The cap is
+// mirrored server-side in `validateAdjustmentCategory` (actions.ts) — keep
+// the two in sync.
+const LOSSBACK_QUICK_PERCENTS = [5, 10, 15, 20] as const;
+const LOSSBACK_MAX_PERCENT = 35;
+
 export function BalanceAdjustDialog({
   userId,
   availableBalance,
+  pnl7d,
   open,
   onOpenChange,
 }: {
@@ -179,6 +186,13 @@ export function BalanceAdjustDialog({
   // balance" preview. Optional so existing call sites that don't have it
   // still render (the preview just omits the resulting-balance line).
   availableBalance?: number;
+  // The user's rolling 7-day house P&L — the SAME derived value the
+  // Accounts tab shows (`pnlBreakdown.pnl7d`, computed once on the server
+  // via `getUserWindowedPnlMulti`). Passed in as a plain number so the
+  // Lossback section can auto-fill it instead of asking the admin to
+  // re-type it (no drift vs the Accounts tab). Optional: legacy call sites
+  // that don't have the breakdown in scope fall back to a manual input.
+  pnl7d?: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -194,10 +208,19 @@ export function BalanceAdjustDialog({
   const [reasonText, setReasonText] = useState("");
   // lossback
   const [lossbackPercent, setLossbackPercent] = useState("");
-  const [pnl7d, setPnl7d] = useState("");
+  // Only used as a manual fallback when the derived `pnl7d` isn't supplied
+  // (legacy call sites). When `pnl7d` is provided, the 7d PnL is read-only
+  // and this state is unused.
+  const [pnl7dManual, setPnl7dManual] = useState("");
   const [totpCode, setTotpCode] = useState("");
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
+
+  // Whether the 7d PnL is auto-supplied (derived, read-only) vs typed in.
+  const hasDerivedPnl7d = pnl7d !== undefined;
+  // The effective 7d-PnL string sent to the action: the derived value when
+  // present, else whatever the admin typed in the manual fallback.
+  const pnl7dValue = hasDerivedPnl7d ? String(pnl7d) : pnl7dManual;
 
   function resetFields() {
     setAmount("");
@@ -207,7 +230,7 @@ export function BalanceAdjustDialog({
     setSocialLink("");
     setReasonText("");
     setLossbackPercent("");
-    setPnl7d("");
+    setPnl7dManual("");
     setTotpCode("");
   }
 
@@ -252,7 +275,7 @@ export function BalanceAdjustDialog({
     } else if (category === "bonus") {
       if (reasonText.trim().length < 20) return void toast.error("Bonus needs an exact reason (min 20 chars)");
     } else if (category === "lossback") {
-      if (!pnl7d.trim()) return void toast.error("Lossback needs a 7-day PnL value");
+      if (!pnl7dValue.trim()) return void toast.error("Lossback needs a 7-day PnL value");
       if (!lossbackPercent.trim()) return void toast.error("Lossback needs a lossback %");
     } else if (category === "other") {
       if (reasonText.trim().length < 20) return void toast.error("Other needs a reason (min 20 chars)");
@@ -268,9 +291,13 @@ export function BalanceAdjustDialog({
     let pnl7dNum: number | undefined;
     if (category === "lossback") {
       lossbackPercentNum = Number(lossbackPercent.trim());
-      pnl7dNum = Number(pnl7d.trim());
+      pnl7dNum = Number(pnl7dValue.trim());
       if (!Number.isFinite(lossbackPercentNum)) return void toast.error("Lossback % must be a number");
       if (!Number.isFinite(pnl7dNum)) return void toast.error("7-day PnL must be a number");
+      // Mirror the server cap (0–35%) for a friendlier inline toast.
+      if (lossbackPercentNum < 0 || lossbackPercentNum > LOSSBACK_MAX_PERCENT) {
+        return void toast.error(`Lossback % must be between 0 and ${LOSSBACK_MAX_PERCENT}`);
+      }
     }
 
     startTransition(async () => {
@@ -321,6 +348,37 @@ export function BalanceAdjustDialog({
   const newBalance =
     previewValue !== null && availableBalance !== undefined
       ? availableBalance + previewValue
+      : null;
+
+  // ── Lossback derivations (house POV) ──────────────────────────────
+  // `pnl7d` is the rolling 7-day house P&L: POSITIVE = the house gained =
+  // the user LOST that much over the window; NEGATIVE = the house is down
+  // (the user is up) so there's no loss to rebate. The user's 7d loss is
+  // therefore `max(0, pnl7d)`. A lossback credits back a % of that loss.
+  const pnl7dNumPreview = hasDerivedPnl7d
+    ? (pnl7d as number)
+    : Number(pnl7dManual.trim());
+  const hasPnl7dPreview =
+    hasDerivedPnl7d || (pnl7dManual.trim().length > 0 && Number.isFinite(pnl7dNumPreview));
+  const user7dLoss =
+    hasPnl7dPreview && Number.isFinite(pnl7dNumPreview)
+      ? Math.max(0, pnl7dNumPreview)
+      : 0;
+  const lossbackPercentPreview = Number(lossbackPercent.trim());
+  const lossbackPercentValid =
+    lossbackPercent.trim().length > 0 &&
+    Number.isFinite(lossbackPercentPreview) &&
+    lossbackPercentPreview >= 0 &&
+    lossbackPercentPreview <= LOSSBACK_MAX_PERCENT;
+  const lossbackPercentOver =
+    lossbackPercent.trim().length > 0 &&
+    Number.isFinite(lossbackPercentPreview) &&
+    lossbackPercentPreview > LOSSBACK_MAX_PERCENT;
+  // Suggested credit = % × the user's 7d loss. Only meaningful when both
+  // the rate is valid and the user actually lost over the window.
+  const lossbackCredit =
+    lossbackPercentValid && user7dLoss > 0
+      ? (lossbackPercentPreview / 100) * user7dLoss
       : null;
 
   return (
@@ -456,37 +514,124 @@ export function BalanceAdjustDialog({
               </div>
             )}
 
-            {/* Lossback: 7d PnL value + % lossback + OPTIONAL note. */}
+            {/* Lossback: auto-filled 7d PnL + % lossback (quick picks +
+                custom, capped at 35%) + OPTIONAL note. */}
             {category === "lossback" && (
-              <div className="mt-2 space-y-2">
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-1">
-                    <Label className="text-[10px] text-muted-foreground">
-                      7-day PnL (USD)
-                    </Label>
+              <div className="mt-2 space-y-2.5">
+                {/* 7-day PnL. Auto-filled read-only from the SAME derived
+                    value the Accounts tab shows when supplied; manual
+                    fallback only on legacy call sites without the
+                    breakdown. House POV: pnl ≥ 0 = house gained (user
+                    lost) = emerald; pnl < 0 = house down (user up) =
+                    rose. */}
+                <div className="space-y-1">
+                  <Label className="text-[10px] text-muted-foreground">
+                    7-day PnL (USD)
+                  </Label>
+                  {hasDerivedPnl7d ? (
+                    <div className="rounded-md border bg-muted/30 px-2.5 py-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] text-muted-foreground">
+                          Auto-filled · matches Accounts tab
+                        </span>
+                        <span
+                          className={`text-sm font-semibold tabular-nums ${
+                            (pnl7d as number) >= 0
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : "text-rose-600 dark:text-rose-400"
+                          }`}
+                        >
+                          {(pnl7d as number) >= 0 ? "+" : ""}
+                          {formatCurrency(pnl7d as number)}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
                     <Input
                       type="text"
                       inputMode="decimal"
                       placeholder="e.g. -500"
-                      value={pnl7d}
-                      onChange={(e) => setPnl7d(e.target.value)}
+                      value={pnl7dManual}
+                      onChange={(e) => setPnl7dManual(e.target.value)}
                       autoComplete="off"
                     />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-[10px] text-muted-foreground">
-                      Lossback %
-                    </Label>
+                  )}
+                  {hasPnl7dPreview && (
+                    <p className="text-[10px] text-muted-foreground">
+                      {user7dLoss > 0 ? (
+                        <>
+                          User lost{" "}
+                          <span className="font-semibold tabular-nums text-foreground">
+                            {formatCurrency(user7dLoss)}
+                          </span>{" "}
+                          over the past 7 days.
+                        </>
+                      ) : (
+                        "User is up (or flat) over the past 7 days — no loss to rebate."
+                      )}
+                    </p>
+                  )}
+                </div>
+
+                {/* Lossback % — 4 quick picks + a custom box, capped at
+                    35%. Clicking a pick sets the % directly. */}
+                <div className="space-y-1.5">
+                  <Label className="text-[10px] text-muted-foreground">
+                    Lossback %
+                  </Label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {LOSSBACK_QUICK_PERCENTS.map((p) => {
+                      const active = lossbackPercentPreview === p;
+                      return (
+                        <Button
+                          key={p}
+                          type="button"
+                          variant={active ? "default" : "outline"}
+                          size="sm"
+                          className="h-7 px-2.5 text-xs tabular-nums"
+                          onClick={() => setLossbackPercent(String(p))}
+                        >
+                          {p}%
+                        </Button>
+                      );
+                    })}
                     <Input
                       type="text"
                       inputMode="decimal"
-                      placeholder="e.g. 10"
+                      placeholder="Custom"
                       value={lossbackPercent}
                       onChange={(e) => setLossbackPercent(e.target.value)}
                       autoComplete="off"
+                      aria-label="Custom lossback percent"
+                      className="h-7 w-20 text-xs"
                     />
                   </div>
+                  {lossbackPercentOver ? (
+                    <p className="text-[10px] text-rose-600 dark:text-rose-400">
+                      Max lossback is {LOSSBACK_MAX_PERCENT}%.
+                    </p>
+                  ) : (
+                    <p className="text-[10px] text-muted-foreground">
+                      Quick picks or a custom rate up to {LOSSBACK_MAX_PERCENT}%.
+                    </p>
+                  )}
                 </div>
+
+                {/* Suggested credit = % × the user's 7d loss. Rose =
+                    crediting the user (our liability), per house POV. */}
+                {lossbackCredit !== null && (
+                  <div className="rounded-md border bg-muted/30 px-2.5 py-1.5 text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-muted-foreground">
+                        {lossbackPercentPreview}% of {formatCurrency(user7dLoss)}
+                      </span>
+                      <span className="font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+                        +{formatCurrency(lossbackCredit)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
                 <Textarea
                   placeholder="Optional explanation..."
                   value={reasonText}
