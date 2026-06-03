@@ -203,13 +203,20 @@ export function PromoCodesDataTable({ data }: { data: PromoCodeListItem[] }) {
   }
 
   return (
-    <>
+    // Stacked layout: each block (quick-select toolbar, bulk-action bar,
+    // table) is its own row with consistent vertical spacing. Without this
+    // wrapper the bare fragment let the quick-select toolbar sit flush
+    // against the bulk-action bar / table with no gap, so the buttons
+    // looked like they were nested inside the bulk box.
+    <div className="space-y-3">
       {/* Quick-select bar — one-click select of the spent codes on this
           page so the owner can hand them straight to the existing
           bulk-delete. Each button replaces the current selection with
           exactly its set; the live count makes clear what gets selected
-          before the click. Only renders when there's at least one such
-          code on the page so the row stays clean otherwise. */}
+          before the click. Its own distinct row above the table — sits
+          separately from the bulk-action bar (which only appears once rows
+          are selected). Only renders when there's at least one such code
+          on the page so the row stays clean otherwise. */}
       {data.length > 0 && (exhaustedIds.length > 0 || expiredIds.length > 0) && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-muted-foreground">Quick select:</span>
@@ -328,7 +335,7 @@ export function PromoCodesDataTable({ data }: { data: PromoCodeListItem[] }) {
           </TableBody>
         </Table>
       </div>
-    </>
+    </div>
   );
 }
 
