@@ -20,11 +20,15 @@ import { CardsGrid } from "./cards-grid";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PaginationSkeleton } from "@/components/loading-skeletons";
+import {
+  PaginationSkeleton,
+  ToolbarSkeleton,
+} from "@/components/loading-skeletons";
 import { CreateCardButton } from "./create-card-button";
 import { PriceFilter } from "./price-filter";
 import { SetFilter } from "./set-filter";
 import { CardsTabSwitch, type CardSetTab } from "./_components/cards-tab-switch";
+import { CardGridSkeleton } from "./_skeletons";
 import {
   PageHero,
   PageHeroIdentity,
@@ -363,7 +367,7 @@ export default async function CardsPage({
           icon={Layers}
           title={activeSet ? activeSet.label : "Catalog"}
         />
-        <Suspense fallback={<Skeleton className="h-10 w-full" />}>
+        <Suspense fallback={<ToolbarSkeleton filters={activeSet ? 2 : 3} />}>
           <DataTableToolbar
             searchPlaceholder="Search by name..."
             filters={[
@@ -390,16 +394,9 @@ export default async function CardsPage({
           key={suspenseKey}
           fallback={
             <>
+              {/* Count-summary line ("Showing N of M cards") placeholder. */}
               <Skeleton className="h-4 w-48" />
-              <div className="grid gap-3 grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10">
-                {Array.from({ length: 40 }).map((_, i) => (
-                  <Skeleton
-                    key={i}
-                    className="rounded-lg"
-                    style={{ aspectRatio: "3/4" }}
-                  />
-                ))}
-              </div>
+              <CardGridSkeleton count={perPage} />
               <PaginationSkeleton />
             </>
           }

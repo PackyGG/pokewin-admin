@@ -18,10 +18,13 @@ import { ensurePackCreatorCapabilities } from "@/lib/pack-creator/ensure-capabil
 import { PacksGrid } from "./packs-grid";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
-import { Skeleton } from "@/components/ui/skeleton";
-import { PaginationSkeleton } from "@/components/loading-skeletons";
+import {
+  PaginationSkeleton,
+  ToolbarSkeleton,
+} from "@/components/loading-skeletons";
 import { CreatePackButton } from "./create-pack-button";
 import { PacksTabSwitch } from "./_components/packs-tab-switch";
+import { PackGridSkeleton } from "./_skeletons";
 import {
   KpiTile,
   PageHero,
@@ -226,7 +229,7 @@ export default async function PacksPage({
           icon={Coins}
           title={activeSet === "onepiece" ? "OnePiece Catalog" : "Pokemon Catalog"}
         />
-        <Suspense fallback={<Skeleton className="h-10 w-full" />}>
+        <Suspense fallback={<ToolbarSkeleton filters={1} />}>
           <DataTableToolbar
             searchPlaceholder="Search by name or slug..."
             filters={[
@@ -245,15 +248,7 @@ export default async function PacksPage({
           key={suspenseKey}
           fallback={
             <>
-              <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-                {Array.from({ length: 18 }).map((_, i) => (
-                  <Skeleton
-                    key={i}
-                    className="rounded-xl"
-                    style={{ aspectRatio: "3/4" }}
-                  />
-                ))}
-              </div>
+              <PackGridSkeleton count={perPage} />
               <PaginationSkeleton />
             </>
           }

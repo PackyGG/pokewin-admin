@@ -4,8 +4,9 @@ import { getSetsList, getSeriesList, getSetsStats } from "@/lib/queries/sets";
 import { requirePageAccess } from "@/lib/dal";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ToolbarSkeleton } from "@/components/loading-skeletons";
 import { SetsContent } from "./sets-content";
+import { SetsTableSkeleton } from "./_skeletons";
 import { SetFormDialog } from "./set-form-dialog";
 import { SeedInitialSetsButton } from "./seed-initial-sets-button";
 import { ForceAbsorbIntoPokemonButton } from "./force-absorb-into-pokemon-button";
@@ -119,7 +120,7 @@ export default async function SetsPage({
       <div className="space-y-3">
         <SectionHeading icon={Library} title="All Sets" />
         <FadeIn className="space-y-4">
-          <Suspense fallback={<Skeleton className="h-10 w-full" />}>
+          <Suspense fallback={<ToolbarSkeleton filters={1} />}>
             <DataTableToolbar
               searchPlaceholder="Search by name..."
               filters={[
@@ -136,7 +137,7 @@ export default async function SetsPage({
 
           <Suspense
             key={suspenseKey}
-            fallback={<Skeleton className="h-64 w-full" />}
+            fallback={<SetsTableSkeleton />}
           >
             <SetsListContent
               page={page}
