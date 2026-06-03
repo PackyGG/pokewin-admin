@@ -167,12 +167,14 @@ async function PackTxTableSection({
       <FadeIn>
         <TransactionsDataTable data={result.data} columns={packColumns} />
       </FadeIn>
-      <DataTablePagination
-        page={result.page}
-        totalPages={result.totalPages}
-        total={result.total}
-        perPage={result.perPage}
-      />
+      <FadeIn speed="fast">
+        <DataTablePagination
+          page={result.page}
+          totalPages={result.totalPages}
+          total={result.total}
+          perPage={result.perPage}
+        />
+      </FadeIn>
     </>
   );
 }

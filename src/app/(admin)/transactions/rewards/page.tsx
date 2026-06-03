@@ -134,12 +134,14 @@ async function RewardTxTableSection({
       <FadeIn>
         <TransactionsDataTable data={result.data} />
       </FadeIn>
-      <DataTablePagination
-        page={result.page}
-        totalPages={result.totalPages}
-        total={result.total}
-        perPage={result.perPage}
-      />
+      <FadeIn speed="fast">
+        <DataTablePagination
+          page={result.page}
+          totalPages={result.totalPages}
+          total={result.total}
+          perPage={result.perPage}
+        />
+      </FadeIn>
     </>
   );
 }

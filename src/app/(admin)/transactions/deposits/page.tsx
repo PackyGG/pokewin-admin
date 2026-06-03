@@ -229,12 +229,14 @@ async function DepositsTableSection({
       <FadeIn>
         <TransactionsDataTable data={result.data} columns={depositsColumns} />
       </FadeIn>
-      <DataTablePagination
-        page={result.page}
-        totalPages={result.totalPages}
-        total={result.total}
-        perPage={result.perPage}
-      />
+      <FadeIn speed="fast">
+        <DataTablePagination
+          page={result.page}
+          totalPages={result.totalPages}
+          total={result.total}
+          perPage={result.perPage}
+        />
+      </FadeIn>
     </>
   );
 }
@@ -352,12 +354,14 @@ async function WithdrawalsTableSection({
       <FadeIn>
         <WithdrawalsDataTable columns={withdrawalsColumns} data={result.data} />
       </FadeIn>
-      <DataTablePagination
-        page={result.page}
-        totalPages={result.totalPages}
-        total={result.total}
-        perPage={result.perPage}
-      />
+      <FadeIn speed="fast">
+        <DataTablePagination
+          page={result.page}
+          totalPages={result.totalPages}
+          total={result.total}
+          perPage={result.perPage}
+        />
+      </FadeIn>
     </>
   );
 }
