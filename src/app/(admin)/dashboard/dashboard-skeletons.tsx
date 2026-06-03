@@ -62,7 +62,7 @@ export function ChartRowSkeleton({
  */
 export function UpgraderPanelSkeleton() {
   return (
-    <div className="surface-sheen relative h-full min-h-[400px] overflow-hidden rounded-xl ring-1 ring-inset ring-cyan-500/20 bg-gradient-to-br from-cyan-500/5 via-card to-card">
+    <div className="relative h-full min-h-[400px] overflow-hidden rounded-xl border border-cyan-500/20 bg-gradient-to-br from-cyan-500/5 via-card to-card">
       <div
         aria-hidden
         className="pointer-events-none absolute -right-12 -top-12 size-40 rounded-full bg-cyan-500/15 blur-3xl"
@@ -84,17 +84,15 @@ export function UpgraderPanelSkeleton() {
           <Skeleton className="h-5 w-16 shrink-0 rounded-full" />
         </div>
 
-        {/* Hero row — House P&L / House Edge. Matches the real tiles'
-            ring-1 edge + size-5 rounded-md icon chip so the swap is
-            shift-free. */}
+        {/* Hero row — House P&L / House Edge */}
         <div className="grid grid-cols-2 gap-3">
           {Array.from({ length: 2 }).map((_, i) => (
             <div
               key={i}
-              className="rounded-xl bg-background/30 px-3 py-2.5 ring-1 ring-inset ring-border/60"
+              className="rounded-xl border bg-background/30 px-3 py-2.5"
             >
               <div className="flex items-center gap-1.5">
-                <Skeleton className="size-5 shrink-0 rounded-md" />
+                <Skeleton className="size-3.5 rounded" />
                 <Skeleton className="h-2.5 w-16 rounded" />
               </div>
               <Skeleton className="mt-2 h-6 w-24 rounded" />

@@ -2,17 +2,8 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import {
-  ChevronDown,
-  Info,
-  Loader2,
-  TrendingUp,
-  TrendingDown,
-  Coins,
-  ArrowDownToLine,
-  ArrowUpFromLine,
-  Trophy,
-} from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ChevronDown, Info, Loader2, TrendingUp, TrendingDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
@@ -27,14 +18,6 @@ import type {
   GgrTopContributorRow,
 } from "@/lib/queries/dashboard";
 import { fetchGgrTopContributors } from "./ggr-actions";
-import {
-  DashboardHeroBox,
-  DashboardStatusChip,
-  DashboardFaceChip,
-  DashboardInfoPopover,
-  DashboardPopoverHeader,
-  DashboardBreakdownTotal,
-} from "./_boxes";
 
 /**
  * Period-aware stat cards used in the dashboard's primary KPI strip.
@@ -46,12 +29,6 @@ import {
  * period's value. Each card receives the resolved scalar value plus a
  * `periodLabel` (e.g. "Last 24h") so the title strip explains what the
  * dollar number is scoped to.
- *
- * They compose the shared dashboard box primitives (./_boxes) so the
- * whole primary strip reads as the same family as the polished P&L Today
- * tile: a tinted face + matching hairline ring, a header (title ·
- * info-popover · status chip), the hero value, and an optional sub-chip
- * row under a hairline divider.
  *
  * House-POV color rules per CLAUDE.md:
  *   • House profit (positive PnL / positive GGR / positive Edge) →
@@ -73,7 +50,7 @@ import {
 //     rather than pretending the snapshot is a time series.
 //
 // Colors follow CLAUDE.md's house-POV rule: house profit = emerald,
-// house loss = rose. The face + ring + value flip with the SELECTED
+// house loss = rose. The card tint + value color flip with the SELECTED
 // value, so switching to the period view recolors the card if the
 // window was a loss.
 export function PnlStatCard({
@@ -91,21 +68,19 @@ export function PnlStatCard({
   const [mode, setMode] = useState<"lifetime" | "period">("lifetime");
   const value = mode === "lifetime" ? pnl : pnlPeriod;
   const isProfit = value >= 0;
-  const accent = isProfit ? "emerald" : "rose";
 
   return (
-    <DashboardHeroBox
-      accent={accent}
-      title={
-        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          PnL
-          <span className="flex gap-0.5">
-            {(
-              [
-                { key: "lifetime" as const, label: "lifetime" },
-                { key: "period" as const, label: periodLabel },
-              ]
-            ).map((m) => (
+    <Card className={cn(isProfit ? "bg-emerald-500/10" : "bg-rose-500/10")}>
+      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <CardTitle className="text-card-title text-muted-foreground">
+            PnL
+          </CardTitle>
+          <div className="flex gap-0.5">
+            {([
+              { key: "lifetime" as const, label: "lifetime" },
+              { key: "period" as const, label: periodLabel },
+            ]).map((m) => (
               <button
                 key={m.key}
                 onClick={() => setMode(m.key)}
@@ -119,29 +94,30 @@ export function PnlStatCard({
                 {m.label}
               </button>
             ))}
+          </div>
+        </div>
+        {isProfit ? (
+          <TrendingUp className="size-4 shrink-0 text-emerald-400" />
+        ) : (
+          <TrendingDown className="size-4 shrink-0 text-rose-400" />
+        )}
+      </CardHeader>
+      <CardContent>
+        <div className="text-stat-value truncate">
+          <span className={isProfit ? "text-emerald-400" : "text-rose-400"}>
+            {isProfit ? "+" : ""}
+            <AnimatedNumber value={value} format="currency" />
           </span>
-        </span>
-      }
-      chip={
-        <DashboardStatusChip
-          icon={isProfit ? TrendingUp : TrendingDown}
-          accent={accent}
-        />
-      }
-      value={
-        <span className={isProfit ? "text-emerald-400" : "text-rose-400"}>
-          {isProfit ? "+" : ""}
-          <AnimatedNumber value={value} format="currency" />
-        </span>
-      }
-    />
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
 // Gaming margin (GGR = wagers − payouts) for the selected period. Keeps
-// emerald/rose for the value sign so direction is readable at a glance.
-// Card identity colour is cyan so it's visually distinct from the rest
-// of the row.
+// emerald/rose for sign so direction is readable at a glance. Card
+// identity colour is cyan so it's visually distinct from the rest of
+// the row.
 //
 // A GGR → P&L reconciliation popover was attempted in 8e1e835 (round 5
 // of GGR work) but the bridge it surfaced — `P&L ≈ GGR − inventoryΔ −
@@ -191,32 +167,36 @@ export function GgrStatCard({
 }) {
   const isProfit = ggr >= 0;
   return (
-    <DashboardHeroBox
-      accent="cyan"
-      title="GGR"
-      caption={periodLabel}
-      info={
-        breakdown && (
-          <GgrBreakdownPopover
-            breakdown={breakdown}
-            periodLabel={periodLabel}
-            periodParam={periodParam}
-          />
-        )
-      }
-      chip={
-        <DashboardStatusChip
-          icon={isProfit ? TrendingUp : TrendingDown}
-          accent={isProfit ? "emerald" : "rose"}
-        />
-      }
-      value={
-        <span className={isProfit ? "text-emerald-400" : "text-rose-400"}>
-          {isProfit ? "+" : ""}
-          <AnimatedNumber value={ggr} format="currency" />
-        </span>
-      }
-    />
+    <Card className="bg-cyan-500/10">
+      <CardHeader className="flex flex-col gap-2 pb-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <CardTitle className="text-card-title text-muted-foreground inline-flex items-center gap-1">
+            GGR
+            {breakdown && (
+              <GgrBreakdownPopover
+                breakdown={breakdown}
+                periodLabel={periodLabel}
+                periodParam={periodParam}
+              />
+            )}
+          </CardTitle>
+          <span className="text-tiny text-muted-foreground">{periodLabel}</span>
+        </div>
+        {isProfit ? (
+          <TrendingUp className="size-4 shrink-0 text-emerald-400" />
+        ) : (
+          <TrendingDown className="size-4 shrink-0 text-rose-400" />
+        )}
+      </CardHeader>
+      <CardContent>
+        <div className="text-stat-value truncate">
+          <span className={isProfit ? "text-emerald-400" : "text-rose-400"}>
+            {isProfit ? "+" : ""}
+            <AnimatedNumber value={ggr} format="currency" />
+          </span>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -288,87 +268,124 @@ function GgrBreakdownPopover({
   };
 
   return (
-    <DashboardInfoPopover accent="cyan" label="Show GGR breakdown">
-      <DashboardPopoverHeader title="GGR breakdown">
-        {periodLabel}. GGR = wager − (pack/battle wins + battle refunds +
-        upgrader payout). Wins are valued from inventory (the cards kept), not
-        a ledger payout; upgrader comes from its own table. Card/voucher
-        conversions are neutral and excluded. Real customers only (staff +
-        excluded users dropped, all creator play removed, borrow plays
-        removed) — so this matches the headline.
-      </DashboardPopoverHeader>
+    <Popover>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            aria-label="Show GGR breakdown"
+            title="Show GGR breakdown"
+            className="rounded text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/40"
+          />
+        }
+      >
+        <Info className="size-3.5" />
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        sideOffset={6}
+        className="w-[340px] max-w-[calc(100vw-2rem)] space-y-2 p-3"
+      >
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            GGR breakdown
+          </p>
+          <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
+            {periodLabel}. GGR = wager − (pack/battle wins + battle
+            refunds + upgrader payout). Wins are valued from inventory
+            (the cards kept), not a ledger payout; upgrader comes from
+            its own table. Card/voucher conversions are neutral and
+            excluded. Real customers only (staff + excluded users dropped,
+            all creator play removed, borrow plays removed) — so
+            this matches the headline.
+          </p>
+        </div>
 
-      {/* Wager-side rows. Section header carries the bucket total so the
-          admin can compare buckets at a glance without scrolling to the
-          bottom math. Muted-foreground tint — wagers aren't a house gain on
-          their own, just flow in. */}
-      <BreakdownSection
-        title="Wagers"
-        total={breakdown.wagersTotal}
-        rows={wagers}
-        tone="wager"
-      />
+        {/* Wager-side rows. Section header carries the bucket total so
+            the admin can compare buckets at a glance without scrolling
+            to the bottom math. Muted-foreground tint — wagers aren't a
+            house gain on their own, just flow in. */}
+        <BreakdownSection
+          title="Wagers"
+          total={breakdown.wagersTotal}
+          rows={wagers}
+          tone="wager"
+        />
 
-      {/* Payout-side rows. Rose tint — money flowing OUT of the house. The
-          headline number's "negative" component is here. */}
-      <BreakdownSection
-        title="Payouts"
-        total={breakdown.payoutsTotal}
-        rows={payouts}
-        tone="payout"
-      />
+        {/* Payout-side rows. Rose tint — money flowing OUT of the
+            house. The headline number's "negative" component is here. */}
+        <BreakdownSection
+          title="Payouts"
+          total={breakdown.payoutsTotal}
+          rows={payouts}
+          tone="payout"
+        />
 
-      {/* Bottom math: wagersTotal − payoutsTotal = ggr. House-POV colour on
-          the final line (positive → emerald, negative → rose) per CLAUDE.md.
-          The breakdown's ggr is used directly (not the headline `ggr` prop)
-          so this number matches the row totals above by construction. */}
-      <DashboardBreakdownTotal
-        label="GGR"
-        amount={breakdown.ggr}
-        sign={ggrIsProfit ? "+" : "−"}
-        tone={ggrIsProfit ? "emerald" : "rose"}
-      />
-
-      {/* Contributors expander. Click loads the lazy GROUP BY user_id query
-          via a server action and toggles open. A single render of the rows
-          is reused on subsequent toggles — no re-fetch on close→open within
-          the same popover instance. */}
-      <div className="border-t border-border/60 pt-2">
-        <button
-          type="button"
-          onClick={handleToggleContributors}
-          disabled={isPending}
-          className="flex w-full items-center justify-between rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground disabled:opacity-60"
-        >
-          <span>{contribState.open ? "Hide" : "Show"} top 10 contributors</span>
-          {isPending ? (
-            <Loader2 className="size-3 animate-spin" />
-          ) : (
-            <ChevronDown
+        {/* Bottom math: wagersTotal − payoutsTotal = ggr. House-POV
+            colour on the final line (positive → emerald, negative →
+            rose) per CLAUDE.md. The breakdown's ggr is used directly
+            (not the headline `ggr` prop) so this number matches the
+            row totals above by construction. */}
+        <div className="border-t border-border/60 pt-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-semibold uppercase tracking-wider">
+              GGR
+            </span>
+            <span
               className={cn(
-                "size-3 transition-transform",
-                contribState.open && "rotate-180",
+                "font-bold tabular-nums",
+                ggrIsProfit ? "text-emerald-400" : "text-rose-400",
               )}
-            />
-          )}
-        </button>
-        {contribState.open && (
-          <div className="mt-1.5">
-            {contribState.error ? (
-              <p className="px-1.5 py-2 text-[10px] text-rose-400">
-                {contribState.error}
-              </p>
-            ) : contribState.rows && contribState.rows.length > 0 ? (
-              <ContributorList rows={contribState.rows} />
-            ) : (
-              <p className="px-1.5 py-2 text-[10px] text-muted-foreground">
-                No contributing activity in this window.
-              </p>
-            )}
+            >
+              {ggrIsProfit ? "+" : "−"}
+              {formatCurrency(Math.abs(breakdown.ggr))}
+            </span>
           </div>
-        )}
-      </div>
-    </DashboardInfoPopover>
+        </div>
+
+        {/* Contributors expander. Click loads the lazy GROUP BY user_id
+            query via a server action and toggles open. A single render
+            of the rows is reused on subsequent toggles — no re-fetch
+            on close→open within the same popover instance. */}
+        <div className="border-t border-border/60 pt-2">
+          <button
+            type="button"
+            onClick={handleToggleContributors}
+            disabled={isPending}
+            className="flex w-full items-center justify-between rounded-md px-1.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground disabled:opacity-60"
+          >
+            <span>
+              {contribState.open ? "Hide" : "Show"} top 10 contributors
+            </span>
+            {isPending ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : (
+              <ChevronDown
+                className={cn(
+                  "size-3 transition-transform",
+                  contribState.open && "rotate-180",
+                )}
+              />
+            )}
+          </button>
+          {contribState.open && (
+            <div className="mt-1.5">
+              {contribState.error ? (
+                <p className="px-1.5 py-2 text-[10px] text-rose-400">
+                  {contribState.error}
+                </p>
+              ) : contribState.rows && contribState.rows.length > 0 ? (
+                <ContributorList rows={contribState.rows} />
+              ) : (
+                <p className="px-1.5 py-2 text-[10px] text-muted-foreground">
+                  No contributing activity in this window.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -395,7 +412,8 @@ function BreakdownSection({
   rows: GgrBreakdownRow[];
   tone: "wager" | "payout";
 }) {
-  const totalColor = tone === "payout" ? "text-rose-400" : "text-foreground";
+  const totalColor =
+    tone === "payout" ? "text-rose-400" : "text-foreground";
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -413,7 +431,9 @@ function BreakdownSection({
         </span>
       </div>
       {rows.length === 0 ? (
-        <p className="px-1 text-[10px] text-muted-foreground/60">No activity.</p>
+        <p className="px-1 text-[10px] text-muted-foreground/60">
+          No activity.
+        </p>
       ) : (
         <ul className="space-y-0.5">
           {rows.map((r) => (
@@ -421,7 +441,9 @@ function BreakdownSection({
               key={r.type}
               className="flex items-center justify-between gap-2 rounded px-1 py-0.5 text-[11px] hover:bg-muted/40"
             >
-              <span className="truncate text-muted-foreground">{r.type}</span>
+              <span className="truncate text-muted-foreground">
+                {r.type}
+              </span>
               <span
                 className={cn(
                   "shrink-0 tabular-nums",
@@ -470,8 +492,8 @@ function ContributorList({ rows }: { rows: GgrTopContributorRow[] }) {
               </span>
               <span className="flex shrink-0 items-center gap-2 tabular-nums">
                 <span className="text-muted-foreground/60">
-                  W {formatNumber(Math.round(r.wagerTotal))} · P{" "}
-                  {formatNumber(Math.round(r.payoutTotal))}
+                  W {formatNumber(Math.round(r.wagerTotal))} ·{" "}
+                  P {formatNumber(Math.round(r.payoutTotal))}
                 </span>
                 <span
                   className={cn(
@@ -526,39 +548,61 @@ export function WagerStatCard({
   };
 }) {
   return (
-    <DashboardHeroBox
-      accent="purple"
-      title={title}
-      caption={caption ? `${periodLabel} · ${caption}` : periodLabel}
-      chip={<DashboardStatusChip icon={Coins} accent="purple" />}
-      value={<AnimatedNumber value={wager} format="currency" />}
-      chipColumns={3}
-      // 3 chip-style mini-boxes — Packs · Battles · Upgrader — for the
-      // SELECTED window. Each chip carries its own label and a small
-      // dollar amount so admins can see at a glance where the window's
-      // wager volume comes from.
-      chips={
-        breakdown ? (
-          <>
-            <DashboardFaceChip
-              label="Packs"
-              value={breakdown.packs}
-              tone="purple"
-            />
-            <DashboardFaceChip
-              label="Battles"
-              value={breakdown.battles}
-              tone="purple"
-            />
-            <DashboardFaceChip
-              label="Upgrader"
-              value={breakdown.upgrader}
-              tone="purple"
-            />
-          </>
-        ) : undefined
-      }
-    />
+    <Card className="bg-purple-500/10">
+      <CardHeader className="flex flex-col gap-2 pb-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <CardTitle className="text-card-title text-muted-foreground">
+            {title}
+          </CardTitle>
+          <span className="text-tiny text-muted-foreground">
+            {periodLabel}
+            {caption ? ` · ${caption}` : ""}
+          </span>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="text-stat-value truncate">
+          <AnimatedNumber value={wager} format="currency" />
+        </div>
+        {breakdown && (
+          // 3 chip-style mini-boxes — Packs · Battles · Upgrader — for
+          // the SELECTED window. Each chip carries its own label and a
+          // small dollar amount so admins can see at a glance where the
+          // window's wager volume comes from.
+          <div className="grid grid-cols-3 gap-1.5 -mx-0.5">
+            <WagerSourceChip label="Packs" value={breakdown.packs} />
+            <WagerSourceChip label="Battles" value={breakdown.battles} />
+            <WagerSourceChip label="Upgrader" value={breakdown.upgrader} />
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Small chip showing one of the wager sources (Packs / Battles /
+ * Upgrader) under the Total Wager card. Compact: a tiny uppercase
+ * label and a dollar value, sized so 3 chips fit on a phone-width
+ * card. Uses the same purple identity color as the parent card with a
+ * weaker fill so the chips read as a "secondary" row.
+ */
+function WagerSourceChip({
+  label,
+  value,
+}: {
+  label: string;
+  value: number;
+}) {
+  return (
+    <div className="rounded-md border border-purple-500/15 bg-background/40 px-2 py-1.5 min-w-0">
+      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground truncate">
+        {label}
+      </p>
+      <p className="text-xs font-semibold tabular-nums truncate">
+        <AnimatedNumber value={value} format="currency" />
+      </p>
+    </div>
   );
 }
 
@@ -588,35 +632,37 @@ export function DepositsStatCard({
     typeof depositCount === "number" && depositCount > 0
       ? formatCurrency(deposits / depositCount)
       : "—";
-  const hasCount = typeof depositCount === "number";
   return (
-    <DashboardHeroBox
-      accent="emerald"
-      title={
-        <span className="inline-flex items-baseline gap-1">
-          Deposits
-          {hasCount && (
-            // Inline transaction-count chip next to the title — keeps the
-            // count visible even when the user scrolls past the sub-line.
-            // Muted so it doesn't compete with the dollar hero value.
-            <span className="text-xs font-normal text-muted-foreground tabular-nums">
-              · {formatNumber(depositCount!)}
-            </span>
-          )}
-        </span>
-      }
-      caption={periodLabel}
-      chip={<DashboardStatusChip icon={ArrowDownToLine} accent="emerald" />}
-      value={<AnimatedNumber value={deposits} format="currency" />}
-      footer={
-        hasCount ? (
-          <p className="text-stat-label">
-            <AnimatedNumber value={depositCount!} format="number" />{" "}
+    <Card className="bg-emerald-500/10">
+      <CardHeader className="flex flex-col gap-2 pb-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <CardTitle className="text-card-title text-muted-foreground">
+            Deposits
+            {typeof depositCount === "number" && (
+              // Inline transaction-count chip next to the title — keeps
+              // the count visible even when the user scrolls past the
+              // sub-line. Muted so it doesn't compete with the dollar
+              // hero value. formatNumber gives "1,234" for big windows.
+              <span className="ml-1 text-xs font-normal text-muted-foreground tabular-nums">
+                · {formatNumber(depositCount)}
+              </span>
+            )}
+          </CardTitle>
+          <span className="text-tiny text-muted-foreground">{periodLabel}</span>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="text-stat-value truncate">
+          <AnimatedNumber value={deposits} format="currency" />
+        </div>
+        {typeof depositCount === "number" && (
+          <p className="text-stat-label mt-0.5">
+            <AnimatedNumber value={depositCount} format="number" />{" "}
             {depositCount === 1 ? "deposit" : "deposits"} · ~{avgDeposit} avg
           </p>
-        ) : undefined
-      }
-    />
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -636,27 +682,30 @@ export function WithdrawalsStatCard({
   withdrawalCount?: number;
   periodLabel: string;
 }) {
-  const hasCount = typeof withdrawalCount === "number";
   return (
-    <DashboardHeroBox
-      accent="pink"
-      title={
-        <span className="inline-flex items-baseline gap-1">
-          Withdrawals
-          {hasCount && (
-            // Inline transaction-count chip — matches the Deposits card so
-            // admins can compare flow counts at a glance without reading the
-            // dollar amounts.
-            <span className="text-xs font-normal text-muted-foreground tabular-nums">
-              · {formatNumber(withdrawalCount!)}
-            </span>
-          )}
-        </span>
-      }
-      caption={periodLabel}
-      chip={<DashboardStatusChip icon={ArrowUpFromLine} accent="pink" />}
-      value={<AnimatedNumber value={withdrawals} format="currency" />}
-    />
+    <Card className="bg-pink-500/10">
+      <CardHeader className="flex flex-col gap-2 pb-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <CardTitle className="text-card-title text-muted-foreground">
+            Withdrawals
+            {typeof withdrawalCount === "number" && (
+              // Inline transaction-count chip — matches the Deposits
+              // card so admins can compare flow counts at a glance
+              // without reading the dollar amounts.
+              <span className="ml-1 text-xs font-normal text-muted-foreground tabular-nums">
+                · {formatNumber(withdrawalCount)}
+              </span>
+            )}
+          </CardTitle>
+          <span className="text-tiny text-muted-foreground">{periodLabel}</span>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="text-stat-value truncate">
+          <AnimatedNumber value={withdrawals} format="currency" />
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -689,60 +738,61 @@ export function CreatorWithdrawalsStatCard({
   periodLabel: string;
 }) {
   return (
-    <DashboardHeroBox
-      accent="rose"
-      title="Creator Deal Payouts (withdrawn)"
-      caption={periodLabel}
-      info={
-        <Popover>
-          <PopoverTrigger
-            render={
-              <button
-                type="button"
-                aria-label="What this counts"
-                title="What this counts"
-                className="rounded text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/40"
-              />
-            }
-          >
-            <Info className="size-3.5" />
-          </PopoverTrigger>
-          <PopoverContent
-            align="start"
-            sideOffset={6}
-            className="w-[320px] max-w-[calc(100vw-2rem)] p-3 text-[11px] leading-snug text-muted-foreground"
-          >
-            <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-foreground">
-              Creator deal payouts (withdrawn)
-            </p>
-            <p>
-              Dollar value of creator <strong>deal-payout vouchers</strong> (
-              <code className="font-mono">creator_fill_conversion</code> +{" "}
-              <code className="font-mono">creator_multiplier_payout</code>) that
-              have left the house via a completed/shipped withdrawal request —
-              deal money the house funded that the creator actually cashed out.
-            </p>
-            <p className="mt-1.5">
-              This is a real <strong>house creator cost</strong>, not a
-              creator&apos;s personal balance cash-out (their own deposited
-              money). The count is the number of withdrawal requests that cashed
-              out at least one deal-payout voucher in this period.
-            </p>
-          </PopoverContent>
-        </Popover>
-      }
-      chip={<DashboardStatusChip icon={Trophy} accent="rose" />}
-      value={
-        <span className="text-rose-400">
+    <Card className="bg-rose-500/10">
+      <CardHeader className="flex flex-col gap-2 pb-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <CardTitle className="text-card-title text-muted-foreground inline-flex items-center gap-1">
+            Creator Deal Payouts (withdrawn)
+            <Popover>
+              <PopoverTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label="What this counts"
+                    title="What this counts"
+                    className="rounded text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/40"
+                  />
+                }
+              >
+                <Info className="size-3.5" />
+              </PopoverTrigger>
+              <PopoverContent
+                align="start"
+                sideOffset={6}
+                className="w-[320px] max-w-[calc(100vw-2rem)] p-3 text-[11px] leading-snug text-muted-foreground"
+              >
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-foreground">
+                  Creator deal payouts (withdrawn)
+                </p>
+                <p>
+                  Dollar value of creator <strong>deal-payout vouchers</strong>{" "}
+                  (<code className="font-mono">creator_fill_conversion</code> +{" "}
+                  <code className="font-mono">creator_multiplier_payout</code>)
+                  that have left the house via a completed/shipped withdrawal
+                  request — deal money the house funded that the creator
+                  actually cashed out.
+                </p>
+                <p className="mt-1.5">
+                  This is a real <strong>house creator cost</strong>, not a
+                  creator&apos;s personal balance cash-out (their own deposited
+                  money). The count is the number of withdrawal requests that
+                  cashed out at least one deal-payout voucher in this period.
+                </p>
+              </PopoverContent>
+            </Popover>
+          </CardTitle>
+          <span className="text-tiny text-muted-foreground">{periodLabel}</span>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="text-stat-value truncate text-rose-400">
           <AnimatedNumber value={amount} format="currency" />
-        </span>
-      }
-      footer={
-        <p className="text-stat-label">
+        </div>
+        <p className="text-stat-label mt-0.5">
           <AnimatedNumber value={count} format="number" />{" "}
           {count === 1 ? "withdrawal" : "withdrawals"} · deal payouts cashed out
         </p>
-      }
-    />
+      </CardContent>
+    </Card>
   );
 }

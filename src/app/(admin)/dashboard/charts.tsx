@@ -1,6 +1,5 @@
 "use client";
 
-import * as React from "react";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis, Cell } from "recharts";
 import {
   ArrowDownToLine,
@@ -24,51 +23,7 @@ import {
   ChartTooltipContent,
 } from "@/components/ui/chart";
 import { formatCompactUsd, formatCurrency } from "@/lib/utils/format";
-import { prefersReducedMotion } from "@/components/ux/motion";
 import { cn } from "@/lib/utils";
-
-// ─── Shared chart styling tokens ────────────────────────────────────────────
-// Centralized so every dashboard chart renders the same restrained, shadcn-
-// style frame: a soft dashed grid pinned to the theme `--border` token (light
-// in both light/dark), compact axis-tick typography that reads as secondary,
-// and a faint muted hover band instead of recharts' heavy default cursor.
-// Pure presentation — none of these touch data, series, labels, or hover info.
-
-/** Axis tick typography — small + muted, so the bars stay the focal point. */
-const AXIS_TICK = { fontSize: 11 } as const;
-
-/** Faint muted hover band behind the focused bar (shadcn-style cursor). */
-const BAR_CURSOR = { fill: "var(--color-muted)", opacity: 0.5 } as const;
-
-/**
- * Soft dashed cartesian grid — horizontal lines only, dashed, on the theme
- * border token. One element reused by every chart so the grid never drifts
- * between cards. (Defined as a component so each chart gets its own instance.)
- */
-function ChartGrid() {
-  return (
-    <CartesianGrid
-      vertical={false}
-      strokeDasharray="3 3"
-      stroke="var(--color-border)"
-    />
-  );
-}
-
-/**
- * Reduced-motion-aware flag for recharts bar animations. Charts mount with
- * animation ON to match SSR output, then flip OFF in an effect if the user
- * has `prefers-reduced-motion: reduce` — so reduced-motion users land on the
- * final bars with no grow tween, while everyone else keeps the 700ms ease-out
- * entrance. Mirrors the SSR-safe approach in AnimatedNumber.
- */
-function useChartAnimation(): boolean {
-  const [animate, setAnimate] = React.useState(true);
-  React.useEffect(() => {
-    if (prefersReducedMotion()) setAnimate(false);
-  }, []);
-  return animate;
-}
 
 const wagerConfig = {
   packs: {
@@ -224,25 +179,22 @@ export function WagerChart({
 }: {
   data: { date: string; packs: number; battles: number; upgrader: number }[];
 }) {
-  const animate = useChartAnimation();
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-card-title text-muted-foreground">
+        <CardTitle className="text-sm font-medium">
           Wagers (30 days)
         </CardTitle>
       </CardHeader>
       <CardContent>
         <ChartContainer config={wagerConfig} className="h-[220px] w-full md:h-[260px] lg:h-[300px]">
           <BarChart data={data} accessibilityLayer>
-            <ChartGrid />
+            <CartesianGrid vertical={false} />
             <XAxis
               dataKey="date"
               tickLine={false}
               axisLine={false}
               tickMargin={8}
-              minTickGap={16}
-              tick={AXIS_TICK}
               tickFormatter={(v) => v.slice(5)}
             />
             <YAxis
@@ -250,10 +202,9 @@ export function WagerChart({
               axisLine={false}
               tickMargin={8}
               width={70}
-              tick={AXIS_TICK}
               tickFormatter={formatCompactUsd}
             />
-            <ChartTooltip cursor={BAR_CURSOR} content={<WagerTooltipContent />} />
+            <ChartTooltip content={<WagerTooltipContent />} />
             {/* Stacked bars: Packs at the bottom, Battles in the
                 middle, Upgrader on top. Only the top segment gets the
                 rounded corner so the stack reads as one bar. */}
@@ -262,7 +213,6 @@ export function WagerChart({
               stackId="wager"
               fill="var(--color-packs)"
               radius={[0, 0, 0, 0]}
-              isAnimationActive={animate}
               animationDuration={700}
               animationEasing="ease-out"
             />
@@ -271,7 +221,6 @@ export function WagerChart({
               stackId="wager"
               fill="var(--color-battles)"
               radius={[0, 0, 0, 0]}
-              isAnimationActive={animate}
               animationDuration={700}
               animationEasing="ease-out"
             />
@@ -280,7 +229,6 @@ export function WagerChart({
               stackId="wager"
               fill="var(--color-upgrader)"
               radius={[4, 4, 0, 0]}
-              isAnimationActive={animate}
               animationDuration={700}
               animationEasing="ease-out"
             />
@@ -296,25 +244,22 @@ export function DepositsChart({
 }: {
   data: { date: string; amount: number }[];
 }) {
-  const animate = useChartAnimation();
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-card-title text-muted-foreground">
+        <CardTitle className="text-sm font-medium">
           Deposits (30 days)
         </CardTitle>
       </CardHeader>
       <CardContent>
         <ChartContainer config={depositsConfig} className="h-[220px] w-full md:h-[260px] lg:h-[300px]">
           <BarChart data={data} accessibilityLayer>
-            <ChartGrid />
+            <CartesianGrid vertical={false} />
             <XAxis
               dataKey="date"
               tickLine={false}
               axisLine={false}
               tickMargin={8}
-              minTickGap={16}
-              tick={AXIS_TICK}
               tickFormatter={(v) => v.slice(5)}
             />
             <YAxis
@@ -322,15 +267,13 @@ export function DepositsChart({
               axisLine={false}
               tickMargin={8}
               width={70}
-              tick={AXIS_TICK}
               tickFormatter={formatCompactUsd}
             />
-            <ChartTooltip cursor={BAR_CURSOR} content={<DepositsTooltipContent />} />
+            <ChartTooltip content={<DepositsTooltipContent />} />
             <Bar
               dataKey="amount"
               fill="var(--color-amount)"
               radius={[4, 4, 0, 0]}
-              isAnimationActive={animate}
               animationDuration={700}
               animationEasing="ease-out"
             />
@@ -387,34 +330,28 @@ export function SignupsChart({
 }: {
   data: { date: string; count: number }[];
 }) {
-  const animate = useChartAnimation();
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-card-title text-muted-foreground">
-          Signups (30 days)
-        </CardTitle>
+        <CardTitle className="text-sm font-medium">Signups (30 days)</CardTitle>
       </CardHeader>
       <CardContent>
         <ChartContainer config={signupsConfig} className="h-[220px] w-full md:h-[260px] lg:h-[300px]">
           <BarChart data={data} accessibilityLayer>
-            <ChartGrid />
+            <CartesianGrid vertical={false} />
             <XAxis
               dataKey="date"
               tickLine={false}
               axisLine={false}
               tickMargin={8}
-              minTickGap={16}
-              tick={AXIS_TICK}
               tickFormatter={(v) => v.slice(5)}
             />
-            <YAxis tickLine={false} axisLine={false} tickMargin={8} tick={AXIS_TICK} />
-            <ChartTooltip cursor={BAR_CURSOR} content={<ChartTooltipContent />} />
+            <YAxis tickLine={false} axisLine={false} tickMargin={8} />
+            <ChartTooltip content={<ChartTooltipContent />} />
             <Bar
               dataKey="count"
               fill="var(--color-count)"
               radius={[4, 4, 0, 0]}
-              isAnimationActive={animate}
               animationDuration={700}
               animationEasing="ease-out"
             />
@@ -430,34 +367,30 @@ export function ActiveDepositorsChart({
 }: {
   data: { date: string; count: number }[];
 }) {
-  const animate = useChartAnimation();
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-card-title text-muted-foreground">
+        <CardTitle className="text-sm font-medium">
           Active Depositors (30 days)
         </CardTitle>
       </CardHeader>
       <CardContent>
         <ChartContainer config={activeDepositorsConfig} className="h-[220px] w-full md:h-[260px] lg:h-[300px]">
           <BarChart data={data} accessibilityLayer>
-            <ChartGrid />
+            <CartesianGrid vertical={false} />
             <XAxis
               dataKey="date"
               tickLine={false}
               axisLine={false}
               tickMargin={8}
-              minTickGap={16}
-              tick={AXIS_TICK}
               tickFormatter={(v) => v.slice(5)}
             />
-            <YAxis tickLine={false} axisLine={false} tickMargin={8} tick={AXIS_TICK} />
-            <ChartTooltip cursor={BAR_CURSOR} content={<ChartTooltipContent />} />
+            <YAxis tickLine={false} axisLine={false} tickMargin={8} />
+            <ChartTooltip content={<ChartTooltipContent />} />
             <Bar
               dataKey="count"
               fill="var(--color-count)"
               radius={[4, 4, 0, 0]}
-              isAnimationActive={animate}
               animationDuration={700}
               animationEasing="ease-out"
             />
@@ -501,34 +434,28 @@ export function FtdsChart({
 }: {
   data: { date: string; count: number; total: number; avg: number }[];
 }) {
-  const animate = useChartAnimation();
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-card-title text-muted-foreground">
-          FTDs (30 days)
-        </CardTitle>
+        <CardTitle className="text-sm font-medium">FTDs (30 days)</CardTitle>
       </CardHeader>
       <CardContent>
         <ChartContainer config={ftdsConfig} className="h-[220px] w-full md:h-[260px] lg:h-[300px]">
           <BarChart data={data} accessibilityLayer>
-            <ChartGrid />
+            <CartesianGrid vertical={false} />
             <XAxis
               dataKey="date"
               tickLine={false}
               axisLine={false}
               tickMargin={8}
-              minTickGap={16}
-              tick={AXIS_TICK}
               tickFormatter={(v) => v.slice(5)}
             />
-            <YAxis tickLine={false} axisLine={false} tickMargin={8} tick={AXIS_TICK} />
-            <ChartTooltip cursor={BAR_CURSOR} content={<FtdsTooltip />} />
+            <YAxis tickLine={false} axisLine={false} tickMargin={8} />
+            <ChartTooltip content={<FtdsTooltip />} />
             <Bar
               dataKey="count"
               fill="var(--color-count)"
               radius={[4, 4, 0, 0]}
-              isAnimationActive={animate}
               animationDuration={700}
               animationEasing="ease-out"
             />
@@ -758,7 +685,6 @@ export function WagerAttributionChart({
   const periodTotal = organicTotal + creatorCodedTotal;
   const organicPct = periodTotal > 0 ? (organicTotal / periodTotal) * 100 : 0;
   const creatorCodedPct = periodTotal > 0 ? (creatorCodedTotal / periodTotal) * 100 : 0;
-  const animate = useChartAnimation();
   return (
     // `h-full` stretches the card to fill the grid row in the 50/50
     // pair with Upgrader Stats so the two cards always align at the
@@ -766,7 +692,7 @@ export function WagerAttributionChart({
     <Card className="h-full">
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle className="text-card-title text-muted-foreground">
+          <CardTitle className="text-sm font-medium">
             Wager Attribution (30 days)
           </CardTitle>
           <span className="font-mono text-xs font-semibold tabular-nums text-foreground">
@@ -812,14 +738,12 @@ export function WagerAttributionChart({
           className="h-[220px] w-full md:h-[260px] lg:h-[300px]"
         >
           <BarChart data={data} accessibilityLayer>
-            <ChartGrid />
+            <CartesianGrid vertical={false} />
             <XAxis
               dataKey="date"
               tickLine={false}
               axisLine={false}
               tickMargin={8}
-              minTickGap={16}
-              tick={AXIS_TICK}
               tickFormatter={(v) => v.slice(5)}
             />
             <YAxis
@@ -827,10 +751,9 @@ export function WagerAttributionChart({
               axisLine={false}
               tickMargin={8}
               width={70}
-              tick={AXIS_TICK}
               tickFormatter={formatCompactUsd}
             />
-            <ChartTooltip cursor={BAR_CURSOR} content={<WagerAttributionTooltipContent />} />
+            <ChartTooltip content={<WagerAttributionTooltipContent />} />
             {/* Organic at the bottom, Creator-coded on top — same
                 visual logic the Wagers chart uses (only the top
                 segment gets the rounded corner so the stack reads as
@@ -840,7 +763,6 @@ export function WagerAttributionChart({
               stackId="wagerAttribution"
               fill="var(--color-organic)"
               radius={[0, 0, 0, 0]}
-              isAnimationActive={animate}
               animationDuration={700}
               animationEasing="ease-out"
             />
@@ -849,7 +771,6 @@ export function WagerAttributionChart({
               stackId="wagerAttribution"
               fill="var(--color-creatorCoded)"
               radius={[4, 4, 0, 0]}
-              isAnimationActive={animate}
               animationDuration={700}
               animationEasing="ease-out"
             />
@@ -873,25 +794,22 @@ export function PnlChart({
     voucherChange: number;
   }[];
 }) {
-  const animate = useChartAnimation();
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-card-title text-muted-foreground">
+        <CardTitle className="text-sm font-medium">
           Daily P&amp;L (30 days)
         </CardTitle>
       </CardHeader>
       <CardContent>
         <ChartContainer config={pnlConfig} className="h-[220px] w-full md:h-[260px] lg:h-[300px]">
           <BarChart data={data} accessibilityLayer>
-            <ChartGrid />
+            <CartesianGrid vertical={false} />
             <XAxis
               dataKey="date"
               tickLine={false}
               axisLine={false}
               tickMargin={8}
-              minTickGap={16}
-              tick={AXIS_TICK}
               tickFormatter={(v) => v.slice(5)}
             />
             <YAxis
@@ -899,14 +817,12 @@ export function PnlChart({
               axisLine={false}
               tickMargin={8}
               width={70}
-              tick={AXIS_TICK}
               tickFormatter={formatCompactUsd}
             />
-            <ChartTooltip cursor={BAR_CURSOR} content={<PnlTooltip />} />
+            <ChartTooltip content={<PnlTooltip />} />
             <Bar
               dataKey="pnl"
               radius={[4, 4, 0, 0]}
-              isAnimationActive={animate}
               animationDuration={700}
               animationEasing="ease-out"
             >
