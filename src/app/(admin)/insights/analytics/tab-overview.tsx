@@ -27,7 +27,7 @@ import {
 import { DeltaChip } from "./delta-chip";
 import { KpiSparkline } from "./kpi-sparkline";
 import { OverviewChart } from "./overview-chart";
-import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
+import { safeQuery } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 
 /**
@@ -40,11 +40,20 @@ import { TileErrorFallback } from "@/components/tile-error-fallback";
  * meaningful prior window).
  */
 export async function OverviewInsightsTab({ period }: { period: InsightsPeriod }) {
+  // `getInsightsOverview` is now internally resilient — each of its four
+  // heavy reads is wrapped in its own safeQuery (15s bound, neutral
+  // fallback), so a single slow/failed leg (in practice the unbounded
+  // canonical GGR/NGR reads) degrades to 0/empty and the rest of the KPIs
+  // still render rather than collapsing the whole tab. This outer safeQuery
+  // is therefore a backstop for an unexpected synchronous throw only — NOT a
+  // wall-clock timeout on the whole batch (that lived here before and would
+  // have discarded a partially-degraded-but-valid result the instant any
+  // single leg was slow, re-collapsing the section). The per-leg bounds own
+  // the degradation now, matching the /ggr getGgrPageData pattern.
   const { data, error } = await safeQuery(
     () => getInsightsOverview(period),
     null,
     "insights-analytics.overview",
-    REWARD_QUERY_TIMEOUT_MS,
   );
   if (error || !data) {
     return (

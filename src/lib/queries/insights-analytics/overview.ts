@@ -22,7 +22,10 @@ import {
   getWindowMetrics,
   getDailyGamingMetrics,
   type MetricWindow,
+  type WindowMetrics,
+  type DailyGamingMetricPoint,
 } from "@/lib/metrics/queries";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import {
   periodToCutoff,
   previousPeriodCutoff,
@@ -86,11 +89,70 @@ export type OverviewDay = {
   active: number;
 };
 
+// ─── Per-leg degraded fallbacks ──────────────────────────────────────
+//
+// The Overview tab fans out into four independent heavy reads (the
+// deposits/withdrawals/wager window query, its cached daily series, and
+// the two CANONICAL gaming-margin reads `getWindowMetrics` /
+// `getDailyGamingMetrics` — full `ledger_transactions` + `user_inventory`
+// scans with correlated borrow/reward-pack sub-selects). Previously they
+// ran in a bare `Promise.all`, so if ANY one threw or — after the
+// safeQuery-timeout migration — exceeded the wall-clock bound, the whole
+// `getInsightsOverview` rejected and the tab collapsed to a single
+// "Couldn't load this section" tile, discarding the legs that DID succeed.
+//
+// Each leg is now wrapped in `safeQuery` with the canonical heavy-read
+// timeout and a NEUTRAL fallback (all-zero metrics, empty series), exactly
+// like `getGgrPageData` in `@/lib/queries/ggr.ts`. A single slow/failed leg
+// (in practice the unbounded-lifetime canonical GGR/NGR reads) degrades to
+// 0/empty and the REST of the Overview KPIs still render. This is a pure
+// resilience change — no metric formula, scope, or query shape is altered;
+// the fallbacks are just the empty-state value of each reader's return
+// type.
+
+/** Neutral all-zero fallback for the deposits/withdrawals/wager window. */
+const EMPTY_RAW_WINDOW_ROW: RawWindowRow = {
+  deposits: "0",
+  deposit_count: "0",
+  withdrawals: "0",
+  wager: "0",
+  wager_organic: "0",
+  wager_creator_coded: "0",
+  signups: "0",
+  active: "0",
+};
+
+const EMPTY_WINDOWS: { current: RawWindowRow; previous: RawWindowRow } = {
+  current: EMPTY_RAW_WINDOW_ROW,
+  previous: EMPTY_RAW_WINDOW_ROW,
+};
+
+/** Neutral all-zero fallback for the canonical window metrics (GGR/NGR). */
+const EMPTY_WINDOW_METRICS: WindowMetrics = {
+  wager: 0,
+  gamingPayout: 0,
+  ggr: 0,
+  ngr: 0,
+  rtp: null,
+  houseEdge: null,
+  bets: 0,
+  rainWinTotal: 0,
+  rainTipTotal: 0,
+  rainHouseCost: 0,
+};
+
 /**
  * Period scopes the cutoff for the current window (and an identical-width
  * prior window for comparisons). Lifetime skips the prior-window
  * comparison and the sparkline horizon is capped at 180d so the query
  * stays bounded.
+ *
+ * RESILIENCE: each of the four parallel reads is wrapped in `safeQuery`
+ * (15s bound, neutral fallback) so this function NEVER throws — a single
+ * slow or failing leg degrades to its empty/0 state and the rest of the
+ * Overview still renders, instead of one leg propagating through the
+ * `Promise.all` and collapsing the whole tab to its error tile. Mirrors
+ * the `getGgrPageData` resilience pattern.
  */
 export async function getInsightsOverview(
   period: InsightsPeriod,
@@ -126,24 +188,58 @@ export async function getInsightsOverview(
     return previous && previous.start < sparkSince ? previous.start : sparkSince;
   })();
 
-  const [windows, daily, currentMetrics, dailyMetrics] = await Promise.all([
-    runWindowQuery({
-      currentCutoff: cutoff,
-      previousStart: previous?.start ?? null,
-      previousEnd: previous?.end ?? null,
-      blacklistIdNotIn,
-      sessionWindowsCte,
-    }),
-    cachedDailyOverview(
-      // sparkline horizon = lifetime caps at 180d, otherwise the full
-      // period plus one mirror window so the chart can visually separate
-      // "this period" from "last period".
-      sparkSinceForPeriod(period, now).toISOString(),
-      blacklistIdNotIn,
-      sessionWindowsCte,
+  // Each leg wrapped so one failure/timeout degrades only that leg to its
+  // neutral fallback (the rest of the KPIs still render). `error` fields are
+  // intentionally ignored here — a degraded leg simply shows its 0/empty
+  // state inline — but they are still logged inside `safeQuery` with the
+  // per-leg context tag for diagnosis. Timeout = the canonical heavy-read
+  // bound so a pathological leg degrades well before the platform kills the
+  // request.
+  const [
+    { data: windows },
+    { data: daily },
+    { data: currentMetrics },
+    { data: dailyMetrics },
+  ] = await Promise.all([
+    safeQuery(
+      () =>
+        runWindowQuery({
+          currentCutoff: cutoff,
+          previousStart: previous?.start ?? null,
+          previousEnd: previous?.end ?? null,
+          blacklistIdNotIn,
+          sessionWindowsCte,
+        }),
+      EMPTY_WINDOWS,
+      "insights-analytics.overview.window",
+      REWARD_QUERY_TIMEOUT_MS,
     ),
-    getWindowMetrics({ window: currentWindow }),
-    getDailyGamingMetrics({ since: metricsSince }),
+    safeQuery(
+      () =>
+        cachedDailyOverview(
+          // sparkline horizon = lifetime caps at 180d, otherwise the full
+          // period plus one mirror window so the chart can visually separate
+          // "this period" from "last period".
+          sparkSinceForPeriod(period, now).toISOString(),
+          blacklistIdNotIn,
+          sessionWindowsCte,
+        ),
+      [] as Awaited<ReturnType<typeof cachedDailyOverview>>,
+      "insights-analytics.overview.daily",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () => getWindowMetrics({ window: currentWindow }),
+      EMPTY_WINDOW_METRICS,
+      "insights-analytics.overview.windowMetrics",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () => getDailyGamingMetrics({ since: metricsSince }),
+      [] as DailyGamingMetricPoint[],
+      "insights-analytics.overview.dailyMetrics",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
   ]);
 
   // Daily GGR/NGR keyed by date for both the sparkline merge and the
