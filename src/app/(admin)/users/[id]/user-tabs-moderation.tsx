@@ -41,12 +41,7 @@ import type { UserDetail } from "./user-tabs-types";
 import { banUser, unbanUser, lockUser, unlockUser } from "../actions";
 import { moveBalanceToVault } from "./actions";
 import { DeleteUserDialog, WipeAccountButton, EditIdentityButton } from "./user-tabs-dialogs";
-import { WipeAdjustmentsButton } from "./wipe-adjustments-dialog";
-import {
-  WipeBalanceButton,
-  WipeVaultButton,
-  WipeInventoryButton,
-} from "./wipe-targets-dialog";
+import { WipeDataButton } from "./wipe-data-dialog";
 
 /**
  * Moderation toolbar — the action buttons that used to live at the top of
@@ -115,16 +110,17 @@ export function UserAdminActions({
           unlockAt={unlockAt ?? null}
         />
       )}
-      {/* Targeted, snapshot-first RECOVERABLE wipes. Same gate as the full
-          account wipe (admin / __can_wipe_accounts) — each one hard-deletes
-          money rows / items, so they're grouped with the destructive actions.
-          Every one snapshots to the admin DB first and is restorable from the
-          Moderation-tab wipe audit log. */}
-      {canWipe && <WipeAdjustmentsButton userId={user.id} />}
-      {canWipe && <WipeBalanceButton userId={user.id} />}
-      {canWipe && <WipeVaultButton userId={user.id} />}
-      {canWipe && <WipeInventoryButton userId={user.id} />}
+      {/* ONE unified, customizable "Wipe data" panel — a checklist where the
+          admin ticks any combination of Content balance adjustments / Balance /
+          Vault / Inventory and runs them with a single 2FA confirm. Same gate
+          as the full account wipe (admin / __can_wipe_accounts). Each ticked
+          category maps onto its existing snapshot-first RECOVERABLE action and
+          is individually restorable from the Moderation-tab wipe audit log. */}
+      {canWipe && <WipeDataButton userId={user.id} />}
       {canDelete && <DeleteUserDialog user={user} isPending={false} />}
+      {/* The OLD full-account wipe stays SEPARATE — it's the nuclear,
+          NON-recoverable wipe (deletes everything, can't be undone), a
+          different beast from the targeted recoverable panel above. */}
       {canWipe && (
         <WipeAccountButton
           userId={user.id}
