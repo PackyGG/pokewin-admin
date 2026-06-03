@@ -160,13 +160,33 @@ export async function getPacks(params: {
   // The `pack_cards` parent rows themselves are unneeded — we only render
   // the related `cards` fields — so narrow the select to skip pack_cards
   // own columns from the wire payload.
+  //
+  // Explicit top-level `select` listing only the columns the list mapper
+  // consumes — mirrors the `getCards` pattern. Switching off `findMany`'s
+  // default "all columns" behaviour means a newly-added `packs` field that
+  // hasn't reached the live game DB (which the website backend owns and can
+  // be migration-lagged vs this admin repo's schema) cannot crash this query
+  // on production with P2022. Same defense-in-depth `getCardDetail` /
+  // `getCards` apply for the `cards.cost` / `cards.power` columns.
   const [packs, total] = await Promise.all([
     db.packs.findMany({
       where,
       orderBy,
       skip: (page - 1) * perPage,
       take: perPage,
-      include: {
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        image_url: true,
+        price: true,
+        cards_per_open: true,
+        total_openings: true,
+        total_revenue: true,
+        total_payout: true,
+        actual_rtp: true,
+        actual_house_edge: true,
+        active: true,
         pack_cards: {
           select: {
             cards: { select: { id: true, name: true, image_url: true, rarity: true } },
@@ -347,12 +367,34 @@ export async function getPacksListStats(
 
 export async function getPackDetail(id: string) {
   const db = await getDb();
-  // Narrow the select on cards/sets — the page only renders a handful of
+  // Explicit top-level `select` listing only the columns the detail mapper
+  // consumes. Mirrors `getCardDetail`'s defense-in-depth pattern (commit
+  // dfe8af1): switching off `findUnique`'s default "all columns" behaviour
+  // means a newly-added `packs` field that hasn't reached the live game DB
+  // (which the website backend owns and can be migration-lagged vs this
+  // admin repo's schema) cannot crash this query on production with P2022.
+  // Narrow the select on cards/sets too — the page only renders a handful of
   // fields per card (name/image/rarity/price/setName) so pulling every
   // column from `cards` (and every column from `sets`) is wasted bytes.
   const pack = await db.packs.findUnique({
     where: { id },
-    include: {
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      description: true,
+      image_url: true,
+      price: true,
+      cards_per_open: true,
+      total_openings: true,
+      total_revenue: true,
+      total_payout: true,
+      actual_rtp: true,
+      actual_house_edge: true,
+      active: true,
+      pack_type: true,
+      tags: true,
+      difficulty: true,
       pack_cards: {
         select: {
           id: true,
