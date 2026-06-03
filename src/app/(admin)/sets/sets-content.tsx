@@ -27,12 +27,11 @@ export function SetsContent({
       {/* Mobile card list (<lg) */}
       <div className="lg:hidden">
         {data.length === 0 ? (
-          <div className="rounded-md border">
+          <div className="rounded-2xl border border-dashed bg-card/30">
             <EmptyState
               icon={Library}
               title="No sets found"
               description="Create a set to group cards into a series (e.g. One Piece)."
-              compact
             />
           </div>
         ) : (
@@ -120,13 +119,14 @@ export function SetsContent({
             ))}
             {data.length === 0 && (
               <TableRow className="hover:bg-transparent">
-                <TableCell colSpan={4} className="p-0">
-                  <EmptyState
-                    icon={Library}
-                    title="No sets found"
-                    description="Create a set to group cards into a series (e.g. One Piece)."
-                    compact
-                  />
+                <TableCell colSpan={4} className="p-3">
+                  <div className="rounded-2xl border border-dashed bg-card/30">
+                    <EmptyState
+                      icon={Library}
+                      title="No sets found"
+                      description="Create a set to group cards into a series (e.g. One Piece)."
+                    />
+                  </div>
                 </TableCell>
               </TableRow>
             )}

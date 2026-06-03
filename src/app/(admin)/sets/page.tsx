@@ -2,10 +2,12 @@ import { Suspense } from "react";
 import { Library, Layers, FolderTree } from "lucide-react";
 import { getSetsList, getSeriesList, getSetsStats } from "@/lib/queries/sets";
 import { requirePageAccess } from "@/lib/dal";
-import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
-import { ToolbarSkeleton } from "@/components/loading-skeletons";
+import { FilterBarSkeleton } from "@/components/entity-surface";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
+import { loadPrimary } from "@/lib/entity-surface/loader";
 import { SetsContent } from "./sets-content";
+import { SetsFilterBar } from "./sets-filter-bar";
 import { SetsTableSkeleton } from "./_skeletons";
 import { SetFormDialog } from "./set-form-dialog";
 import { SeedInitialSetsButton } from "./seed-initial-sets-button";
@@ -38,14 +40,25 @@ async function SetsListContent({
   sortOrder?: string;
   isAdmin: boolean;
 }) {
-  const result = await getSetsList({
-    page,
-    perPage,
-    search,
-    series,
-    sortBy,
-    sortOrder,
-  });
+  // `getSetsList` runs through `loadPrimary` (safeQuery + timeout) so a Prisma
+  // column drift or a pathological scan degrades to an inline error tile
+  // instead of crashing the whole `(admin)` route group via error.tsx — the
+  // same resilience /cards already has on its list call-site.
+  const { data: result, error } = await loadPrimary(
+    () => getSetsList({ page, perPage, search, series, sortBy, sortOrder }),
+    null,
+    "sets.list",
+  );
+
+  if (error || !result) {
+    return (
+      <TileErrorFallback
+        label="Sets list"
+        hint="The sets query failed — most likely a Prisma schema field that hasn't reached the live DB yet. Server logs hold the digest."
+        size="panel"
+      />
+    );
+  }
 
   return (
     <>
@@ -120,18 +133,11 @@ export default async function SetsPage({
       <div className="space-y-3">
         <SectionHeading icon={Library} title="All Sets" />
         <FadeIn className="space-y-4">
-          <Suspense fallback={<ToolbarSkeleton filters={1} />}>
-            <DataTableToolbar
-              searchPlaceholder="Search by name..."
-              filters={[
-                {
-                  name: "Series",
-                  paramKey: "series",
-                  options: series
-                    .filter((s): s is string => s != null)
-                    .map((s) => ({ label: s, value: s })),
-                },
-              ]}
+          <Suspense fallback={<FilterBarSkeleton filters={1} withTrailing={false} />}>
+            <SetsFilterBar
+              seriesOptions={series
+                .filter((s): s is string => s != null)
+                .map((s) => ({ label: s, value: s }))}
             />
           </Suspense>
 
