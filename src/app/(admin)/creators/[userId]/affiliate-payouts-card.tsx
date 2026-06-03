@@ -20,12 +20,20 @@ import { InfoHint } from "../_components/info-hint";
  * House POV: every figure is money the house owes / has paid the creator
  * (or gifted the cohort) → 🔴 rose.
  *
- * NOTE on the relationship to the Creator Cost breakdown above: the cost
- * breakdown's "Referral commission" line is `total_paid_out_usd` — the
- * SAME source as "Paid out" here. This panel surrounds it with the rest
- * of the account state (earned / available / bonus) so the operator sees
- * the full commission picture, without double-counting (the headline net
- * uses the cost-breakdown commission, not these display rows).
+ * HEADLINE = Earned (lifetime). The card leads with the lifetime referral
+ * commission ACCRUED to this creator (`totalEarnedUsd`) — the house's full
+ * commission cost / liability for their referrals (= paid out + still
+ * unpaid). "Paid out" alone is a poor headline: on a creator who hasn't
+ * withdrawn yet it's $0 even though real commission was earned, so the
+ * meaningful number would be buried. Earned ⊇ {paid out, available}, so it
+ * leads; the three (available / paid out / bonus) stay as breakdown rows.
+ *
+ * RELATIONSHIP TO THE CREATOR NET PANEL: the Creator Net (P&L) panel on
+ * this page EXCLUDES affiliate commission entirely — its house-cost
+ * breakdown is leaderboard / fill / tips / multiplier only, and its
+ * footnote points the commission here ("Excludes affiliate commission —
+ * that's on the Financials card"). So this card is the sole home of the
+ * commission figure; nothing here is double-counted into the net.
  */
 export function AffiliatePayoutsCard({
   earnedUsd,
@@ -49,7 +57,7 @@ export function AffiliatePayoutsCard({
       accent={anySpend ? "rose" : "blue"}
       action={
         <InfoHint
-          text="This creator's referral-commission account (lifetime): earned, still-unpaid (available), already paid out, and promo bonus distributed to their cohort. 'Paid out' is the same figure as the net's separate commission line — shown here for the full picture, not double-counted."
+          text="This creator's referral-commission account (lifetime): earned (the full house cost for their referrals), still-unpaid (available), already paid out, and promo bonus distributed to their cohort. The Creator Net panel excludes affiliate commission — it's accounted here, on this Financials card."
           side="left"
         />
       }
@@ -57,27 +65,30 @@ export function AffiliatePayoutsCard({
       <div className="space-y-1">
         <div
           className={`text-2xl font-bold tabular-nums leading-none sm:text-3xl ${
-            paidOutUsd > 0 ? rose : "text-muted-foreground"
+            earnedUsd > 0 ? rose : "text-muted-foreground"
           }`}
-          title="Commission already disbursed to this creator (lifetime)"
+          title="Lifetime referral commission accrued to this creator — the house's full commission cost/liability for their referrals (paid out + still-unpaid)."
         >
-          {paidOutUsd === 0 ? "—" : formatCurrency(paidOutUsd)}
+          {earnedUsd === 0 ? "—" : formatCurrency(earnedUsd)}
         </div>
         <p className="text-[11px] text-muted-foreground">
-          Commission paid out — the figure folded into the net&apos;s
-          commission line
+          Commission earned (lifetime) — the house&apos;s full commission
+          cost for this creator&apos;s referrals
         </p>
       </div>
+      {/* Breakdown of the Earned headline: Available (still unpaid) +
+          Paid out = Earned. Bonus distributed is a separate house outflow
+          (promo bonus to the cohort), shown beneath. */}
       <div className="mt-3 space-y-0.5">
-        <PanelRow
-          label="Earned (lifetime)"
-          value={earnedUsd === 0 ? "—" : formatCurrency(earnedUsd)}
-          valueClassName={earnedUsd > 0 ? rose : undefined}
-        />
         <PanelRow
           label="Available (unpaid)"
           value={availableUsd === 0 ? "—" : formatCurrency(availableUsd)}
           valueClassName={availableUsd > 0 ? rose : undefined}
+        />
+        <PanelRow
+          label="Paid out"
+          value={paidOutUsd === 0 ? "—" : formatCurrency(paidOutUsd)}
+          valueClassName={paidOutUsd > 0 ? rose : undefined}
         />
         <PanelRow
           label="Bonus distributed"
@@ -92,9 +103,11 @@ export function AffiliatePayoutsCard({
       <div className="mt-3 flex items-start gap-2 rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 text-[10px] text-muted-foreground">
         <Info className="size-3 shrink-0 mt-0.5" />
         <span>
-          Commission accrued / paid to the creator. &quot;Paid out&quot; is
-          the same source as the Net&apos;s separate commission line — shown
-          here for the full account picture, not re-added to the net.
+          Commission accrued / paid to the creator. The headline is the
+          lifetime earned commission — the house&apos;s full cost for this
+          creator&apos;s referrals (= paid out + still-unpaid). The Creator
+          Net panel excludes affiliate commission, so it&apos;s accounted
+          here on this Financials card, not in the net.
         </span>
       </div>
     </StatPanel>
