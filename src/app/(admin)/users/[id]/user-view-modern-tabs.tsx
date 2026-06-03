@@ -26,7 +26,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { assignAffiliateCode } from "./actions";
+import { assignAffiliateCode, fetchUserAttributionJourney } from "./actions";
+import type { AttributionJourneyEntry } from "@/lib/queries/users";
 import { SetAffiliateCodeDialog } from "./user-tabs-creator";
 import {
   Wallet,
@@ -48,11 +49,18 @@ import {
   Dices,
   Percent,
   Award,
+  Waypoints,
+  Loader2,
+  Coins as CoinsIcon,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/empty-state";
 import { cn } from "@/lib/utils";
-import { formatCurrency, formatRelative } from "@/lib/utils/format";
+import {
+  formatCurrency,
+  formatRelative,
+  formatDateTime,
+} from "@/lib/utils/format";
 import {
   amountColorFor,
   amountSignFor,
@@ -533,6 +541,15 @@ export function AffiliateTab({ data }: { data: UserDetail }) {
       />
       <ReferrerCard user={user} />
 
+      {/* Attribution journey — the codes this user hopped through over
+          time + the economics booked under each. Lazy-loaded on mount so
+          it never burdens the always-rendered page payload. Sits right
+          under the referrer card because it's the same side of the
+          relationship: how THIS user was attributed to creators (not the
+          codes they own, which the next section covers). */}
+      <SectionHeading icon={Waypoints} title="Attribution Journey" />
+      <AttributionJourneySection userId={user.id} />
+
       <SectionHeading icon={Sparkles} title="Their Own Affiliate Code" />
       <OwnCodeCard user={user} affiliate={affiliate} />
 
@@ -583,6 +600,213 @@ export function AffiliateTab({ data }: { data: UserDetail }) {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  ATTRIBUTION JOURNEY — the codes this user hopped through over time,
+//  with per-code deposits + wager. Sourced from affiliate_code_usages
+//  (the SAME canonical attribution table the /creators surfaces read),
+//  grouped by code for this one user, ordered chronologically.
+//
+//  House-POV colors (CLAUDE.md): deposits = capital flowing IN → emerald;
+//  wager = the user risking their money → emerald. Both are house-gain
+//  side, so both render emerald (NOT the user-perspective green/red).
+// ───────────────────────────────────────────────────────────────────
+
+function AttributionJourneySection({ userId }: { userId: string }) {
+  const [state, setState] = useState<{
+    status: "loading" | "ready" | "error";
+    rows: AttributionJourneyEntry[];
+    error: string | null;
+  }>({ status: "loading", rows: [], error: null });
+
+  // Lazy-load on mount. The affiliate tab only renders when active
+  // (parent gates `activeTab === "affiliate"`), so this fires exactly
+  // when the section becomes visible — no eager work on the other tabs.
+  React.useEffect(() => {
+    let alive = true;
+    fetchUserAttributionJourney(userId)
+      .then((res) => {
+        if (!alive) return;
+        setState({
+          status: res.error ? "error" : "ready",
+          rows: res.data,
+          error: res.error,
+        });
+      })
+      .catch((e: unknown) => {
+        if (!alive) return;
+        setState({
+          status: "error",
+          rows: [],
+          error: e instanceof Error ? e.message : "Failed to load journey",
+        });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [userId]);
+
+  if (state.status === "loading") {
+    return (
+      <Card>
+        <CardContent className="flex items-center justify-center gap-2 p-8 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" />
+          Loading attribution journey…
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (state.status === "error") {
+    return (
+      <Card>
+        <CardContent className="p-4 sm:p-6">
+          <p className="text-sm text-muted-foreground">
+            Couldn&apos;t load the attribution journey
+            {state.error ? ` (${state.error})` : ""}.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (state.rows.length === 0) {
+    return (
+      <Card>
+        <CardContent className="p-0">
+          <EmptyState
+            icon={Waypoints}
+            title="No code attribution yet"
+            description="This user hasn't used any affiliate / creator code. Codes they enter (and the deposits + wager booked under each) will appear here in the order they used them."
+            compact
+          />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Journey totals across every code the user passed through — gives the
+  // admin the headline before the per-code breakdown. Both emerald
+  // (house-gain side per the section's color note).
+  const totalDeposits = state.rows.reduce(
+    (acc, r) => acc + r.depositAmountUsd,
+    0,
+  );
+  const totalWager = state.rows.reduce((acc, r) => acc + r.wagerAmountUsd, 0);
+  const codeCount = state.rows.length;
+
+  return (
+    <div className="space-y-3 sm:space-y-4">
+      {/* Headline strip — distinct-codes count + lifetime deposits/wager
+          booked across the whole journey. */}
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-3">
+        <ModernMetricTile
+          label="Codes Used"
+          value={codeCount.toLocaleString()}
+          accent={codeCount >= 2 ? "amber" : "purple"}
+          icon={Waypoints}
+        />
+        <ModernMetricTile
+          label="Deposited Under Codes"
+          value={formatCurrency(totalDeposits)}
+          accent="emerald"
+          icon={ArrowDownToLine}
+        />
+        <ModernMetricTile
+          label="Wagered Under Codes"
+          value={formatCurrency(totalWager)}
+          accent="emerald"
+          icon={CoinsIcon}
+        />
+      </div>
+
+      {/* Per-code timeline. Ordered chronologically (oldest first) so the
+          list reads as the actual hop sequence. The leading index + the
+          "switched" caption on rows past the first make the code-hopping
+          explicit. */}
+      <Card>
+        <CardContent className="p-0">
+          <ul className="divide-y divide-border">
+            {state.rows.map((row, i) => {
+              const isSwitch = i > 0;
+              const sameDay = row.firstUsedAt.slice(0, 10) ===
+                row.lastUsedAt.slice(0, 10);
+              return (
+                <li
+                  key={`${row.code}-${row.firstUsedAt}`}
+                  className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5"
+                >
+                  <div className="flex min-w-0 items-start gap-3">
+                    <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold tabular-nums text-primary">
+                      {i + 1}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-sm font-semibold">
+                          {row.code}
+                        </span>
+                        <Link
+                          href={`/creators/${row.creatorUserId}`}
+                          className="text-xs text-blue-500 hover:underline"
+                        >
+                          {row.creatorName ??
+                            `${row.creatorUserId.slice(0, 8)}…`}
+                        </Link>
+                        {isSwitch && (
+                          <Badge
+                            variant="outline"
+                            className="border-amber-500/30 bg-amber-500/15 text-[10px] text-amber-600 dark:text-amber-400"
+                          >
+                            switched
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="mt-0.5 text-[11px] text-muted-foreground">
+                        {sameDay ? (
+                          <>Used {formatDateTime(row.firstUsedAt)}</>
+                        ) : (
+                          <>
+                            {formatDateTime(row.firstUsedAt)} →{" "}
+                            {formatDateTime(row.lastUsedAt)}
+                          </>
+                        )}
+                        <span className="ml-1 text-muted-foreground/70">
+                          · {formatRelative(row.firstUsedAt)}
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Per-code economics. Deposits + wager both emerald
+                      (house-gain side). Aligned right on desktop, stacked
+                      under the code on phones. */}
+                  <div className="flex shrink-0 items-center gap-5 pl-10 sm:pl-0">
+                    <div className="text-right">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        Deposited
+                      </p>
+                      <p className="text-sm font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                        {formatCurrency(row.depositAmountUsd)}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        Wagered
+                      </p>
+                      <p className="text-sm font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                        {formatCurrency(row.wagerAmountUsd)}
+                      </p>
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </CardContent>
+      </Card>
     </div>
   );
 }

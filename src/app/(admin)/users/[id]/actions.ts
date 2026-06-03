@@ -1,14 +1,16 @@
 "use server";
 
 import crypto from "crypto";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, unstable_cache } from "next/cache";
 import { z } from "zod";
 import { getDb } from "@/lib/db";
 import { adminDb } from "@/lib/admin-db";
 import { requireAdmin, requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { user_role } from "@/generated/prisma/client";
-import { getUserInventory, getUserTransactions, getCreatorReferralClicks, getCreatorCodeUsages, getCreatorWithdrawalLimits, getProvablyFairResults, getSeedRotationHistory, getUserBalanceHistory } from "@/lib/queries/users";
+import { getUserInventory, getUserTransactions, getCreatorReferralClicks, getCreatorCodeUsages, getCreatorWithdrawalLimits, getUserAttributionJourney, getProvablyFairResults, getSeedRotationHistory, getUserBalanceHistory } from "@/lib/queries/users";
+import type { AttributionJourneyEntry } from "@/lib/queries/users";
+import { safeQuery } from "@/lib/errors/safe-query";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { require2FA } from "@/lib/require-2fa";
 import { checkBalanceAdjustmentLimit } from "@/lib/balance-limits";
@@ -1236,6 +1238,31 @@ export async function fetchCreatorCodeUsages(
 ) {
   await requirePageAccess("/users");
   return getCreatorCodeUsages(userId, page, perPage);
+}
+
+/**
+ * Lazy fetch of a user's attribution journey (the affiliate/creator codes
+ * they hopped through + per-code deposits & wager). Loaded on demand when
+ * the affiliate tab mounts so it never burdens the always-rendered page
+ * payload. `unstable_cache` keyed per user (60s) collapses repeat renders /
+ * refreshes; `safeQuery` (4s) degrades a slow acu scan to an empty journey
+ * + error flag instead of blocking the tab. Read-only Main-DB query.
+ */
+export async function fetchUserAttributionJourney(
+  userId: string,
+): Promise<{ data: AttributionJourneyEntry[]; error: string | null }> {
+  await requirePageAccess("/users");
+  return safeQuery(
+    () =>
+      unstable_cache(
+        () => getUserAttributionJourney(userId),
+        ["user-attribution-journey-v1", userId],
+        { revalidate: 60, tags: [`user-attribution-${userId}`] },
+      )(),
+    [] as AttributionJourneyEntry[],
+    `users.attribution-journey.${userId}`,
+    4000,
+  );
 }
 
 export async function assignAffiliateCode(userId: string, affiliateCode: string | null) {
