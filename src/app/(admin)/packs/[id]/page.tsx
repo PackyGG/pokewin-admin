@@ -32,6 +32,8 @@ import { DeletePackButton } from "./delete-pack-button";
 import { PageHero, KpiTile, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { Skeleton } from "@/components/ui/skeleton";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { InlineError } from "@/components/entity-surface";
 
 export const metadata = { title: "Pack Detail" };
 
@@ -57,10 +59,39 @@ export default async function PackDetailPage({
   // so run them together instead of serially (was 4 sequential awaits before
   // first paint). getUserPermissions still runs AFTER the back-fill so a
   // freshly-granted __can_update_pack is visible in this request's read.
-  const [data] = await Promise.all([
-    getPackDetail(id),
+  //
+  // getPackDetail is wrapped in safeQuery so a runtime DB fault (connection
+  // blip, or a stale Prisma column on the live `packs` table that the
+  // worktree schema is ahead of) degrades to an inline error block instead of
+  // throwing out of the page body into the (admin) route error boundary — the
+  // documented white-screen. A genuine 404 (query OK, row absent) still falls
+  // through to notFound() below. ensurePackCreatorCapabilities never re-throws
+  // (it self-catches), so it stays a bare await.
+  const [{ data, error: detailError }] = await Promise.all([
+    safeQuery(() => getPackDetail(id), null, "packs.detail"),
     ensurePackCreatorCapabilities(),
   ]);
+  // Query threw → degrade in place (keep the back button + retry usable)
+  // rather than crash the whole route. Never notFound() on an error — the
+  // pack may well exist; only the read failed.
+  if (detailError) {
+    return (
+      <div className="space-y-6">
+        <PageHero>
+          <div className="flex items-center gap-3">
+            <BackButton />
+            <h1 className="text-xl font-semibold leading-tight tracking-tight">
+              Pack
+            </h1>
+          </div>
+        </PageHero>
+        <InlineError
+          title="Couldn't load this pack"
+          hint="The pack query failed — most likely a stale Prisma field that hasn't reached the live DB yet, or a transient connection blip. Retry, or head back to the catalog. Server logs hold the digest."
+        />
+      </div>
+    );
+  }
   if (!data) notFound();
 
   // Gate the action buttons by capability so restricted roles (e.g.
@@ -72,7 +103,15 @@ export default async function PackDetailPage({
   let canEditLive = isAdmin;
   let canDelete = isAdmin;
   if (!isAdmin) {
-    const perms = await getUserPermissions(session.userId);
+    // safeQuery defaulting to [] so an Admin-DB blip can't crash a
+    // pack_creator's detail view — it degrades to "no capabilities", i.e.
+    // the action buttons stay hidden (the safe default). Real admins skip
+    // this branch entirely.
+    const { data: perms } = await safeQuery(
+      () => getUserPermissions(session.userId),
+      [] as string[],
+      "packs.detail.perms",
+    );
     canToggle = hasCapability(perms, "__can_toggle_pack_active");
     canEdit = hasCapability(perms, "__can_update_pack");
     canEditLive = hasCapability(perms, "__can_edit_live_packs");

@@ -180,7 +180,14 @@ export default async function PacksPage({
   let canDelete = isAdmin;
   let canEdit = isAdmin;
   if (!isAdmin) {
-    const perms = await getUserPermissions(session.userId);
+    // safeQuery defaulting to [] so an Admin-DB blip can't crash a
+    // pack_creator's catalog view — it degrades to "no capabilities" (create /
+    // edit buttons hidden), the safe default. Real admins skip this branch.
+    const { data: perms } = await safeQuery(
+      () => getUserPermissions(session.userId),
+      [] as string[],
+      "packs.list.perms",
+    );
     canCreate = hasCapability(perms, "__can_create_pack");
     canToggle = hasCapability(perms, "__can_toggle_pack_active");
     canDelete = hasCapability(perms, "__can_delete_pack");

@@ -36,6 +36,8 @@ import {
 import { FadeIn } from "@/components/fade-in";
 import { EditCardButton } from "./edit-card-button";
 import { DeleteCardButton } from "./delete-card-button";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { InlineError } from "@/components/entity-surface";
 
 export const metadata = { title: "Card Detail" };
 
@@ -56,8 +58,44 @@ export default async function CardDetailPage({
   const { id } = await params;
   // Shape-check UUID before any DB call — see src/lib/utils/ids.ts.
   if (!isUuid(id)) notFound();
-  const [data, sets] = await Promise.all([getCardDetail(id), getSets()]);
+  // Both fetches wrapped in safeQuery so a runtime DB fault (connection blip,
+  // or a stale Prisma column on the live cards/sets table the worktree schema
+  // is ahead of) degrades in place instead of rejecting the page-body
+  // Promise.all and bubbling to the (admin) route error boundary — the
+  // documented white-screen. A genuine 404 (detail query OK, row absent) still
+  // falls through to notFound() below. The sets list only feeds the edit
+  // dialog's set picker, so an empty fallback ([]) is harmless — EditCardButton
+  // tolerates it.
+  const [{ data, error: detailError }, { data: sets }] = await Promise.all([
+    safeQuery(() => getCardDetail(id), null, "cards.detail"),
+    safeQuery(
+      () => getSets(),
+      [] as Awaited<ReturnType<typeof getSets>>,
+      "cards.detail.sets",
+    ),
+  ]);
 
+  // Detail query threw → degrade in place (keep the back button + retry
+  // usable) rather than crash the whole route. Never notFound() on an error —
+  // the card may well exist; only the read failed.
+  if (detailError) {
+    return (
+      <div className="space-y-6">
+        <PageHero>
+          <div className="flex items-center gap-3">
+            <BackButton />
+            <h1 className="text-xl font-semibold leading-tight tracking-tight">
+              Card
+            </h1>
+          </div>
+        </PageHero>
+        <InlineError
+          title="Couldn't load this card"
+          hint="The card query failed — most likely a stale Prisma field that hasn't reached the live DB yet, or a transient connection blip. Retry, or head back to the catalog. Server logs hold the digest."
+        />
+      </div>
+    );
+  }
   if (!data) notFound();
 
   // OnePiece game-design stats. `cost` / `power` are only meaningful for
