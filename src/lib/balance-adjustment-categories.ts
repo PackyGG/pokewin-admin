@@ -24,11 +24,22 @@
  *
  * A categorized CREDIT adjustment that GIVES a user money is a house COST
  * (bonus / giveaway / reload / lossback / deposit-fix credit). Every
- * category EXCEPT `other` is COUNTED: it is lifted into the reward-cost
- * side so it reduces NGR / P&L and appears as its own line in the cost
- * breakdown. `other` stays RESIDUAL / EXCLUDED (mainly for content-creator
- * bookkeeping) — exactly the treatment `admin_balance_adjustment` had for
- * EVERY reason before this feature.
+ * CREDIT category EXCEPT `other` is COUNTED: it is lifted into the
+ * reward-cost side so it reduces NGR / P&L and appears as its own line in
+ * the cost breakdown. `other` stays RESIDUAL / EXCLUDED (mainly for
+ * content-creator bookkeeping) — exactly the treatment
+ * `admin_balance_adjustment` had for EVERY reason before this feature.
+ *
+ * `leaderboard` is the ONE category that goes the other way: it is a
+ * REMOVAL-ONLY DEBIT (admin REMOVING balance from a user, linked to a
+ * creator). Because the counted-credit predicates pin `amount > 0` (money
+ * GIVEN to users), a debit must never be summed there — so `leaderboard`
+ * is deliberately kept OUT of {@link COUNTED_ADJUSTMENT_CATEGORY_KEYS} and
+ * tracked separately in {@link REMOVAL_ONLY_ADJUSTMENT_CATEGORY_KEYS}. Its
+ * downstream cost-accounting wiring (feeding the dashboard "Creators
+ * Costs" / leaderboard-spend boxes) is intentionally NOT done here — the
+ * adjustment only persists the creator link cleanly; the accounting lift
+ * is a deliberate follow-up.
  *
  * IMPORTANT — the type partition in `src/lib/metrics/ledger-sets.ts` does
  * NOT change: `admin_balance_adjustment` stays in RESIDUAL_TYPES (so the
@@ -51,6 +62,7 @@ export const BALANCE_ADJUSTMENT_CATEGORY_KEYS = [
   "bonus",
   "reload",
   "lossback",
+  "leaderboard",
   "other",
 ] as const;
 
@@ -58,20 +70,50 @@ export type BalanceAdjustmentCategory =
   (typeof BALANCE_ADJUSTMENT_CATEGORY_KEYS)[number];
 
 /**
- * The COUNTED categories — everything except `other`. These are lifted
- * into the reward-cost / NGR side (they reduce NGR/P&L and get their own
- * cost-breakdown line). `other` is intentionally absent: it stays
- * RESIDUAL/EXCLUDED.
+ * The REMOVAL-ONLY (debit) categories — the admin is REMOVING balance from
+ * the user, not crediting it. Currently just `leaderboard` (balance pulled
+ * from a user and linked to a creator). These are deliberately EXCLUDED
+ * from {@link COUNTED_ADJUSTMENT_CATEGORY_KEYS} because the counted-credit
+ * predicates pin `amount > 0`; a debit is a house gain, not a reward cost,
+ * and must never be summed into the reward-cost side. The dialog uses this
+ * set to gate the option to the REMOVE-balance direction only.
+ */
+export const REMOVAL_ONLY_ADJUSTMENT_CATEGORY_KEYS = ["leaderboard"] as const;
+
+export type RemovalOnlyAdjustmentCategory =
+  (typeof REMOVAL_ONLY_ADJUSTMENT_CATEGORY_KEYS)[number];
+
+/** Type-guard: is this category a removal-only (debit) category? */
+export function isRemovalOnlyAdjustmentCategory(
+  category: BalanceAdjustmentCategory,
+): category is RemovalOnlyAdjustmentCategory {
+  return (REMOVAL_ONLY_ADJUSTMENT_CATEGORY_KEYS as readonly string[]).includes(
+    category,
+  );
+}
+
+/**
+ * The COUNTED categories — every CREDIT category except `other`, and
+ * EXCLUDING the removal-only debit categories. These are lifted into the
+ * reward-cost / NGR side (they reduce NGR/P&L and get their own
+ * cost-breakdown line). `other` is intentionally absent (RESIDUAL/EXCLUDED)
+ * and so is `leaderboard` (a debit — see
+ * {@link REMOVAL_ONLY_ADJUSTMENT_CATEGORY_KEYS}).
  */
 export const COUNTED_ADJUSTMENT_CATEGORY_KEYS = BALANCE_ADJUSTMENT_CATEGORY_KEYS.filter(
-  (k) => k !== "other",
-) as readonly Exclude<BalanceAdjustmentCategory, "other">[];
+  (k) => k !== "other" && !isRemovalOnlyAdjustmentCategory(k),
+) as readonly Exclude<
+  BalanceAdjustmentCategory,
+  "other" | RemovalOnlyAdjustmentCategory
+>[];
 
 /**
  * The SELECTABLE categories — the set an admin may pick in the
  * Adjust-Balance dialog dropdown GOING FORWARD. `other` is intentionally
  * excluded from the picker (it was an uncategorized residual escape hatch
- * that we no longer want admins choosing).
+ * that we no longer want admins choosing). Removal-only categories (e.g.
+ * `leaderboard`) STAY selectable — the dialog gates them to the
+ * remove-balance direction at render time rather than removing them here.
  *
  * IMPORTANT — this is a PICKER-ONLY filter, not a removal from the model:
  * `other` stays a fully valid `BalanceAdjustmentCategory` and stays in
@@ -95,11 +137,15 @@ export function isBalanceAdjustmentCategory(
   );
 }
 
-/** Is this category COUNTED in GGR/NGR/cost (i.e. not `other`)? */
+/**
+ * Is this category COUNTED in GGR/NGR/cost? Counted = a credit category
+ * other than `other`. `other` (residual) and removal-only debit categories
+ * (e.g. `leaderboard`) are NOT counted.
+ */
 export function isCountedAdjustmentCategory(
   category: BalanceAdjustmentCategory,
 ): boolean {
-  return category !== "other";
+  return category !== "other" && !isRemovalOnlyAdjustmentCategory(category);
 }
 
 /**
@@ -158,6 +204,13 @@ export const BALANCE_ADJUSTMENT_CATEGORY_META: Record<
     costLabel: "Lossback credits",
     why: "Loss-rebate credited back to a user (a % of their recent losses). A house-funded retention cost.",
     counted: true,
+  },
+  leaderboard: {
+    key: "leaderboard",
+    label: "Leaderboard",
+    costLabel: "Leaderboard debits",
+    why: "Balance REMOVED from a user and linked to a creator's leaderboard. A removal (debit) — NOT counted in the reward-cost / NGR side here (the counted-credit predicates only sum money given to users). Creator-leaderboard cost accounting is a separate follow-up.",
+    counted: false,
   },
   other: {
     key: "other",
