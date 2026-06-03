@@ -4,6 +4,7 @@ import {
   useState,
   useEffect,
   useMemo,
+  useRef,
   useTransition,
   useCallback,
 } from "react";
@@ -188,12 +189,22 @@ type SelectableCategory =
   | "pnl";
 
 // ───────────────────────────────────────────────────────────────────────────
-// Entry button — the SINGLE "Wipe data" button that replaces the four separate
-// per-category buttons in the moderation toolbar. The OLD full-account
-// `WipeAccountButton` (nuclear, non-recoverable) stays a separate button — this
-// is the recoverable, targeted, customizable one. Admin-gated upstream; every
-// underlying server action re-checks (requireAdmin + __can_wipe_accounts + 2FA)
-// regardless.
+// Entry buttons — the granular "Wipe data" button (the customizable per-category
+// checklist) PLUS the one-click "Wipe everything" button restored next to it.
+// Both open the SAME `WipeDataDialog`: "Wipe data" lands on the select checklist,
+// "Wipe everything" pre-selects every wipeable category at the "All" window and
+// jumps straight to the confirm step (the recoverable WIPE ALL path) — it does
+// NOT introduce a new wipe path, raw balance update, or ledger bypass; it reuses
+// the existing snapshot-first, recoverable, audited per-category actions behind
+// the existing single-2FA gate. Admin-gated upstream; every underlying server
+// action re-checks (requireAdmin + __can_wipe_accounts + 2FA) regardless.
+//
+// HISTORY: the old standalone `WipeAccountButton` (commit 6823a41 removed it)
+// triggered the NON-recoverable `wipeUserAccount` hard-delete. That nuclear path
+// is intentionally NOT restored — per the recoverable/audited mandate the
+// one-click button now drives the existing recoverable WIPE ALL flow instead,
+// so a one-click "wipe everything" stays restorable + audited like the granular
+// wipe.
 //
 // `everCreator` / `wasCreator` are surfaced from the user-detail page so the
 // panel can DISABLE the creator-protected categories ("Protected — creator").
@@ -212,16 +223,39 @@ export function WipeDataButton({
   wasCreator?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  // Which mode the dialog opens in: the granular select checklist ("Wipe data")
+  // or the pre-selected-everything confirm step ("Wipe everything"). Captured
+  // when a button is clicked and read once on open.
+  const [mode, setMode] = useState<WipeOpenMode>("select");
+
+  function openIn(next: WipeOpenMode) {
+    setMode(next);
+    setOpen(true);
+  }
+
   return (
     <>
       <Button
         variant="outline"
         size="sm"
         className="gap-1.5 border-rose-500/40 text-rose-500 hover:bg-rose-500/10 hover:text-rose-500 dark:text-rose-400"
-        onClick={() => setOpen(true)}
+        onClick={() => openIn("select")}
       >
         <Eraser className="size-3.5" />
         Wipe data
+      </Button>
+      {/* One-click "Wipe everything" — restored next to "Wipe data". Loud,
+          unmistakably destructive (solid rose + Skull), but it still routes
+          through the same recoverable confirm step (full WILL-DELETE summary +
+          single-2FA gate) — never a no-confirm fire. */}
+      <Button
+        variant="destructive"
+        size="sm"
+        className="gap-1.5 bg-rose-600 text-white hover:bg-rose-700 hover:text-white focus-visible:ring-rose-600/40 dark:bg-rose-600 dark:text-white dark:hover:bg-rose-700"
+        onClick={() => openIn("everything")}
+      >
+        <Skull className="size-3.5" />
+        Wipe everything
       </Button>
       <WipeDataDialog
         userId={userId}
@@ -229,10 +263,15 @@ export function WipeDataButton({
         wasCreator={wasCreator}
         open={open}
         onOpenChange={setOpen}
+        initialMode={mode}
       />
     </>
   );
 }
+
+/** How the wipe dialog opens: granular select checklist, or pre-selected-all
+ *  "wipe everything" landing straight on the confirm step. */
+type WipeOpenMode = "select" | "everything";
 
 type Phase = "select" | "confirm" | "running";
 
@@ -255,12 +294,17 @@ function WipeDataDialog({
   wasCreator,
   open,
   onOpenChange,
+  initialMode = "select",
 }: {
   userId: string;
   everCreator: boolean;
   wasCreator: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** "select" → land on the checklist. "everything" → pre-tick every wipeable
+   *  category at the "All" window and jump to the confirm step (the recoverable
+   *  WIPE ALL path). */
+  initialMode?: WipeOpenMode;
 }) {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>("select");
@@ -319,9 +363,14 @@ function WipeDataDialog({
   // Per-category run results in the execute phase.
   const [results, setResults] = useState<RunResult[]>([]);
 
+  // Guards the one-time "wipe everything" pre-selection so it runs exactly once
+  // per open (not on every render). Reset when the dialog closes.
+  const everythingPrimed = useRef(false);
+
   // Reset everything on close.
   useEffect(() => {
     if (open) return;
+    everythingPrimed.current = false;
     setPhase("select");
     setTotpCode("");
     setChecked({
@@ -580,20 +629,46 @@ function WipeDataDialog({
       );
   }, [userId]);
 
-  function toggleCategory(cat: SelectableCategory, v: boolean) {
-    if (v && isCategoryLocked(cat)) return; // can't tick a locked category
-    setChecked((prev) => ({ ...prev, [cat]: v }));
-    if (!v) return;
-    // Kick off the lazy load the first time the category is ticked.
-    if (cat === "balance" && balance === null) loadBalance();
-    if (cat === "vault" && vault === null) loadVault();
-    if (cat === "inventory" && inventory === null) loadInventory();
-    if (cat === "deposits" && deposits === null) loadDeposits();
-    if (cat === "wager" && wager === null) loadWager();
-    if (cat === "game" && game === null) loadGame();
-    if (cat === "pnl" && pnl === null) loadPnl();
-    if (cat === "adjustments" && adjState === null) loadAdjustments();
-  }
+  // Wrapped in useCallback so it has a stable identity across renders — the
+  // "wipe everything" priming effect lists it as a dependency, and a fresh
+  // function each render would otherwise re-fire that effect every render
+  // (the everythingPrimed ref already guards re-entry, but a stable callback
+  // keeps the dep array honest + avoids the exhaustive-deps churn warning).
+  const toggleCategory = useCallback(
+    (cat: SelectableCategory, v: boolean) => {
+      if (v && isCategoryLocked(cat)) return; // can't tick a locked category
+      setChecked((prev) => ({ ...prev, [cat]: v }));
+      if (!v) return;
+      // Kick off the lazy load the first time the category is ticked.
+      if (cat === "balance" && balance === null) loadBalance();
+      if (cat === "vault" && vault === null) loadVault();
+      if (cat === "inventory" && inventory === null) loadInventory();
+      if (cat === "deposits" && deposits === null) loadDeposits();
+      if (cat === "wager" && wager === null) loadWager();
+      if (cat === "game" && game === null) loadGame();
+      if (cat === "pnl" && pnl === null) loadPnl();
+      if (cat === "adjustments" && adjState === null) loadAdjustments();
+    },
+    [
+      isCategoryLocked,
+      balance,
+      vault,
+      inventory,
+      deposits,
+      wager,
+      game,
+      pnl,
+      adjState,
+      loadBalance,
+      loadVault,
+      loadInventory,
+      loadDeposits,
+      loadWager,
+      loadGame,
+      loadPnl,
+      loadAdjustments,
+    ],
+  );
 
   // ── Derived selection / totals ───────────────────────────────────────────
   const adjRows = useMemo(
@@ -1043,16 +1118,68 @@ function WipeDataDialog({
     });
   }, [totpCode, allEnabledCategories, adjState, userId, runSequence]);
 
+  // ── "Wipe everything" priming ────────────────────────────────────────────
+  // When the dialog opens in "everything" mode (the one-click button next to
+  // "Wipe data"), pre-select EVERY enabled, non-locked, non-creator-protected
+  // category at the "All" window and jump straight to the confirm step. This
+  // adds NO new run path: it just primes the existing checklist + advances to
+  // the same Review → single-2FA → recoverable WIPE ALL flow. The admin still
+  // sees the full WILL-DELETE summary + the WIPE ALL panel and must enter their
+  // 2FA code before anything runs (no no-confirm fire). Runs once per open.
+  useEffect(() => {
+    if (!open || initialMode !== "everything") return;
+    if (everythingPrimed.current) return;
+    everythingPrimed.current = true;
+
+    // Windowed wipes (wager / game / pnl) run for ALL history — the full
+    // "treat as freshly created" reset the owner expects from "wipe everything"
+    // (counters reset, not just decremented). Set the windows BEFORE ticking so
+    // the lazy previews load against the All window.
+    setWagerWindow(null);
+    setGameWindow(null);
+    setPnlWindow(null);
+
+    // Tick every enabled (non-locked) category. toggleCategory kicks off each
+    // category's lazy preview load — but wager/game/pnl read `wagerWindow`/etc.
+    // from a stale closure (still 24h this render), so load them explicitly at
+    // the All window to keep the preview + the run window consistent.
+    for (const c of allEnabledCategories) {
+      toggleCategory(c, true);
+    }
+    if (allEnabledCategories.includes("wager")) loadWager(null);
+    if (allEnabledCategories.includes("game")) loadGame(null);
+    if (allEnabledCategories.includes("pnl")) loadPnl(null);
+
+    // Jump to the confirm step — the WIPE ALL panel there runs every enabled
+    // category server-side (re-reading at the All window), so it does not wait
+    // on the previews above; they only enrich the on-screen summary.
+    setPhase("confirm");
+  }, [
+    open,
+    initialMode,
+    allEnabledCategories,
+    toggleCategory,
+    loadWager,
+    loadGame,
+    loadPnl,
+  ]);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl max-h-[88vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Eraser className="size-4 text-rose-500" />
+            {phase === "confirm" && initialMode === "everything" ? (
+              <Skull className="size-4 text-rose-600 dark:text-rose-400" />
+            ) : (
+              <Eraser className="size-4 text-rose-500" />
+            )}
             {phase === "select"
               ? "Wipe data"
               : phase === "confirm"
-                ? "Confirm wipe"
+                ? initialMode === "everything"
+                  ? "Wipe everything"
+                  : "Confirm wipe"
                 : "Wiping…"}
           </DialogTitle>
           <DialogDescription>
@@ -1067,10 +1194,21 @@ function WipeDataDialog({
                   : ""}
               </>
             ) : phase === "confirm" ? (
-              <>
-                Review the combined summary, then enter your 2FA code once to run
-                the selected wipes.
-              </>
+              initialMode === "everything" ? (
+                <>
+                  Every wipeable category is pre-selected at the{" "}
+                  <span className="font-medium text-foreground">All</span>{" "}
+                  window. Enter your 2FA code once, then press{" "}
+                  <span className="font-medium text-foreground">WIPE ALL</span>{" "}
+                  below. Each category is snapshotted first and is independently
+                  recoverable from the wipe history.
+                </>
+              ) : (
+                <>
+                  Review the combined summary, then enter your 2FA code once to
+                  run the selected wipes.
+                </>
+              )
             ) : (
               <>
                 Running the selected wipes in order. Each is its own recoverable
@@ -1185,22 +1323,29 @@ function WipeDataDialog({
               >
                 Back
               </Button>
-              <Button
-                size="sm"
-                variant="destructive"
-                className="w-full sm:w-auto"
-                onClick={handleRun}
-                disabled={isPending || !totpCode.trim()}
-              >
-                {isPending ? (
-                  <Loader2 className="mr-1.5 size-3.5 animate-spin" />
-                ) : (
-                  <Trash2 className="mr-1.5 size-3.5" />
-                )}
-                {isPending
-                  ? "Wiping…"
-                  : `Wipe selected (${runnableCategories.length})`}
-              </Button>
+              {/* In "everything" mode the run action is the WIPE ALL panel
+                  inside ConfirmPhase (it resets counters at the All window) —
+                  hide the per-selection "Wipe selected" button so the one-click
+                  intent is unambiguous. In granular mode, "Wipe selected" runs
+                  exactly the ticked, non-empty categories. */}
+              {initialMode !== "everything" && (
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  className="w-full sm:w-auto"
+                  onClick={handleRun}
+                  disabled={isPending || !totpCode.trim()}
+                >
+                  {isPending ? (
+                    <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="mr-1.5 size-3.5" />
+                  )}
+                  {isPending
+                    ? "Wiping…"
+                    : `Wipe selected (${runnableCategories.length})`}
+                </Button>
+              )}
             </>
           )}
           {phase === "running" && (
