@@ -15,20 +15,17 @@ Der User feuert mehrere Tasks nacheinander rein und erwartet, dass jeder sofort 
 **Was zählt als "eine User-Aufgabe":** Alles, was der User in einer Message anfragt — auch wenn er mehrere Sub-Punkte aufzählt. Eine Message = ein Agent (mit allen Sub-Punkten im Prompt). Mehrere unabhängige Sub-Punkte in einer Message können in mehrere parallele Agents aufgeteilt werden, wenn sie unterschiedliche Files anfassen.
 
 **Erlaubte Ausnahmen (eng definiert, nicht großzügig interpretieren):**
-
 - Reine Fragen zur Codebasis ohne Edit ("wo ist X definiert?", "wie funktioniert Y?") — max. 1–3 Tool-Calls (Read/Grep/Glob), keine Edits.
 - Live-Troubleshooting im Dialog mit Log-Snippets vom User.
 - Ein **einziger** trivialer Fix (1 File, 1 Edit, < 60 Sekunden Gesamtarbeit inkl. tsc+lint).
 - Wenn der User explizit "inline machen" / "selbst machen" / "nicht delegieren" sagt.
 
 **Verboten:**
-
 - Mehrere zusammengehörige Pages/Files inline durcheditieren ("Audit-Sweep", "5 Surfaces fixen") — das ist immer mehrere parallele Agents wert, nie inline.
 - Lange Recherchen-Antworten zur User-Aufgabe schreiben, bevor du den Agent startest. **Erst delegieren, dann erklären** (in der 1–2-zeiligen Ack).
 - Auf das Ergebnis eines Agents warten, bevor du den nächsten startest. Wenn zwischenzeitlich eine neue User-Message kommt, sofort den nächsten Agent starten.
 
 **Ack-Protokoll (genau einhalten):**
-
 Nach dem `Agent`-Tool-Call antwortest du dem User mit max. 2 Zeilen:
 1. Was dispatched wurde (kurze Aufgaben-Bezeichnung).
 2. Welche Files / Routen der Agent anfasst + ob Hotspot-Kollision mit gerade laufenden Agents besteht (falls ja: PROPOSED-Patch reporten lassen, siehe Hotspot-Liste unten).
@@ -37,19 +34,154 @@ Danach: **Stille bis zur nächsten User-Message oder Agent-Completion**. Keine z
 
 **Selbst-Check vor jeder Antwort:**
 
-> "Tippe ich gerade eine Inline-Lösung für etwas, das der User mir gerade geschickt hat?"
+> "Tippe ich gerade eine Inline-Lösung für etwas, das der User mir gerade geschickt hat?"  
 > Wenn ja → STOP, `Agent` dispatchen, 1–2-zeilige Ack, fertig.
 
-> "Habe ich gerade > 2 File-Edits hintereinander für eine einzige User-Message gemacht?"
+> "Habe ich gerade > 2 File-Edits hintereinander für eine einzige User-Message gemacht?"  
 > Wenn ja → die Regel ist bereits gebrochen. Stop, was übrig ist an einen Agent geben, nicht weiter inline.
 
 Die volle Mechanik (Scope, Hotspots, Commit-Disziplin, Honest-Reporting) steht weiter unten unter § Agent-Parallelisierung. Diese Top-Regel überschreibt alles andere — wenn du dich fragst "soll ich inline oder Agent?" → immer Agent.
 
 ---
 
+## 🔁 Persistent Parallel Workflow Mode (always active)
+
+_Added per user instruction. This generalizes and reinforces the ABSOLUTE PRIORITÄTSREGEL above. Where this section and the repo-specific mechanics (Hotspot-Liste, Commit-/Push-Disziplin, Browser-Verifikation, Dual-DB, Active-Timeframe-Only) differ on specifics, the repo-specific rules win on those specifics — this section governs the overall operating posture._
+
+Operate as a continuously-listening project agent, not a one-shot responder.
+
+### Core behavior
+- Treat every new user message as a possible new task, refinement, correction, continuation, or priority change. Read the newest message carefully and integrate it with the current project state before acting.
+- Do not assume the previous plan is still correct if the new message changes scope, priorities, or constraints. New work → update the plan and continue. A newer instruction overrides an older one → follow the newest and adjust. Stay responsive to newly added tasks at all times.
+
+### Parallel execution
+- For every non-trivial request, use a parallel-agent workflow whenever possible. Break work into independent streams and run them in parallel — e.g. codebase audit, architecture/design decisions, backend/data analysis, frontend/UI implementation, testing/QA, documentation/changelog.
+- Delegate separate subproblems to parallel agents for speed and coverage. If a task is too coupled for full parallelization, still parallelize the safely-separable parts, then merge carefully (respecting the Hotspot-Liste — never two agents on the same hotspot file).
+
+### Workflow for each new task
+1. **Interpret the input** — new task / modification / bug report / follow-up / reprioritization. Extract explicit requirements and infer implied ones.
+2. **Update the active plan** — merge the new instruction; identify what stays valid, what must change, what to pause or discard.
+3. **Split into parallel workstreams** — separate into independent units; assign to parallel agents when concurrency is safe (no hotspot collision).
+4. **Execute with coordination** — focused work per stream; periodically reconcile outputs so final changes stay consistent across the codebase.
+5. **Validate globally** — do not stop at local success; check downstream impact across UI, backend, shared utilities, stats/derived metrics, exports, tests, and docs.
+6. **Report clearly** — what changed, what is in progress, what assumptions were made, recommended follow-ups. (On *dispatch*, keep the ack to the 1–2 lines per the Ack-Protokoll above; the full structured report is for substantial *completed* work.)
+
+### Quality standard
+- Prefer multi-file reasoning over isolated edits; source-of-truth fixes over cosmetic patches; reusable architecture over one-off exceptions.
+- Always look for affected pages, shared logic, derived metrics, API consumers, and edge cases. Always check whether the request should also update tests, admin tools, analytics, docs, and related dashboard surfaces.
+
+### Persistence (internal working memory)
+Keep track of: current objective · active sub-tasks · completed work · pending validations · open risks · latest user priority. Each new message updates this active working state — not an unrelated fresh chat, unless the user clearly starts a totally separate topic.
+
+### Task-intake shorthands
+Short follow-ups like "also do this", "change that", "same for this page", "fix this too", "make it more detailed", "now check mobile" = instructions to continue the current workflow and expand the plan accordingly.
+
+### Use parallel agents by default when a task includes two or more of:
+repo scanning · implementation · refactoring · debugging · test writing · UI polish · analytics/stat logic · documentation.
+
+### Non-negotiables
+- Never ignore a newer user instruction. Never treat follow-up messages as optional context. Never stop at one file if the task obviously affects multiple systems. Never ship partial logic while shared calculations, filters, metrics, or dashboard surfaces remain inconsistent. Never use parallel agents blindly — coordinate and reconcile their outputs before finalizing.
+
+### Output style (substantial tasks)
+Updated objective · Parallel workstreams · Changes made · Cross-system impacts checked · Remaining risks · Next recommended actions.
+
+### Final
+Always watch for new inputs, merge them into the active workflow, use parallel agents when they improve speed/coverage/quality, and optimize for the best final project outcome — not just the fastest single reply.
+
+---
+
+## 🔒 Browser-Verifikation & Done-Kriterien (CRITICAL)
+
+Für jede Aufgabe, die UI, Routing, Rendering, Interaktionen, Filter, Search, Pagination, Tabs, Drawers, Modals, Charts, KPI-Panels oder sichtbare Daten im Admin betrifft, gilt:
+
+### 1. Browser-Verifikation ist Pflicht
+- Eine Aufgabe gilt **nicht** als erledigt, nur weil Code geschrieben wurde, `tsc` grün ist oder `lint` grün ist.
+- Wenn die betroffene Änderung im Browser sichtbar oder testbar ist, muss sie **im Browser verifiziert** werden, bevor "fertig", "fixed" oder "done" gesagt wird.
+- "Sollte funktionieren", "likely fixed", "wahrscheinlich", "bitte hard refreshen" sind **verbotene Abschlussformulierungen**, wenn keine echte Browser-Prüfung gemacht wurde.
+- Wenn Browser-Zugriff verfügbar ist, ist Browser-Verifikation der Standard, nicht die Ausnahme.
+
+### 2. Definition of Done (verbindlich)
+Eine Aufgabe ist nur dann `DONE`, wenn **alle** Punkte erfüllt sind:
+1. Relevanter Code ist umgesetzt.
+2. `tsc --noEmit` ist grün.
+3. `npm run lint` ist grün.
+4. Der betroffene Flow / die betroffene Route wurde real validiert.
+5. Bei UI-/Admin-Aufgaben: Browser-Verifikation erfolgt.
+6. Keine offensichtliche Regression in direkt betroffenen Nachbar-Flows.
+
+Wenn einer dieser Punkte fehlt:
+- Status = `IN PROGRESS`, `PARTIAL`, `PROPOSED` oder `BLOCKED`, **nicht** `DONE`.
+
+### 3. Regression-Sweep bei Shared Changes
+Wenn eine Änderung eine Shared-Datei betrifft (z. B. Hooks, Query-Utilities, Layout, Table-Komponenten, Filter-Bar, Panels, gemeinsame UI-Komponenten, gemeinsame Server-Queries), dann reicht die Verifikation der Ursprungsseite nicht aus.
+
+Dann müssen zusätzlich alle offensichtlichen Consumer geprüft werden:
+- gleiche Komponente auf anderen Seiten,
+- gleiche Query-/Filter-Logik in Schwester-Routen,
+- gleiche Layout-/Toolbar-Struktur,
+- gleiche KPI-/Chart-/Table-Container.
+
+### 4. Incident-Modus bei "still broken"
+Wenn der User Formulierungen benutzt wie:
+- "still broken"
+- "immer noch kaputt"
+- "in browser noch falsch"
+- "fix live"
+- oder konkrete Live-URL / Route + Bug meldet,
+
+dann gilt automatisch Incident-Modus:
+- kein nice-to-have scope creep,
+- kein vorzeitiges Zusammenfassen,
+- kein Wechsel auf Nebenthemen,
+- Fokus auf reproduzieren → fixen → browser-verifizieren → nochmal prüfen.
+
+In Incident-Modus ist die Aufgabe erst abgeschlossen, wenn das Problem auf der betroffenen Live-/Admin-Route im Browser nicht mehr reproduzierbar ist.
+
+### 5. Performance-Verifikation für Tabs / Timespans
+Bei Seiten mit Perioden-/Timeframe-/Tab-Umschaltung gilt zusätzlich:
+- Initial darf nur der aktive Tab + aktive Zeitraum laden.
+- Versteckte Tabs oder andere Zeitfenster dürfen nicht eager geladen werden.
+- Nach Änderungen an solchen Seiten muss geprüft werden, dass dieses Verhalten eingehalten wird.
+
+### 6. Honest Completion Reporting
+Erlaubte Status-Wörter:
+- `DONE` = vollständig umgesetzt und verifiziert
+- `PARTIAL` = teils umgesetzt, aber noch nicht vollständig verifiziert oder noch offene Punkte
+- `PROPOSED` = nur analysiert / Patch vorgeschlagen, nicht angewendet
+- `BLOCKED` = konnte nicht abgeschlossen werden, Grund nennen
+
+**"DONE" ohne Verifikation ist verboten.**
+
+---
+
+## ⚠️ Shared-File Collision Escalation (CRITICAL)
+
+Wenn ein Agent eine Hotspot-Datei oder eine klar shared genutzte Datei anfassen muss, die:
+- bereits von einem anderen laufenden Agent bearbeitet wird,
+- oder sehr wahrscheinlich mehrere Surfaces gleichzeitig beeinflusst,
+
+dann gilt standardmäßig:
+- kein blindes Direkt-Edit parallel,
+- stattdessen PROPOSED-Patch + kurze Impact-Notiz,
+- danach Konsolidierung auf dem neuesten Stand,
+- erst dann final anwenden, testen, committen, pushen.
+
+Beispiele für shared-risk Dateien:
+- globale Query-Utilities
+- `src/lib/queries/**`
+- zentrale Table-/Filter-/Toolbar-Komponenten
+- `src/app/(admin)/layout.tsx`
+- gemeinsame modern panels / KPI primitives
+- gemeinsame auth / DAL / permissions utilities
+
+Merkregel:
+Je stärker eine Datei cross-route reused wird, desto höher die Pflicht zur Kollisionsvermeidung und Regression-Prüfung.
+
+---
+
 ## Teil 1 — Arbeitsregeln (verbindlich)
 
-Du arbeitest an einer bestehenden Codebasis.
+Du arbeitest an einer bestehenden Codebasis.  
 Dein Ziel ist es, sicher, sauber, nachvollziehbar und effizient zu arbeiten — nicht schnell um jeden Preis.
 
 ### Grundregeln
@@ -136,7 +268,7 @@ Wenn etwas nicht klar in der Codebasis oder durch den User bestätigt ist, frage
 
 ### Datenbank-Regel
 
-Wenn du für eine Aufgabe Datenbankinformationen brauchst, frag den User zuerst.
+Wenn du für eine Aufgabe Datenbankinformationen brauchst, frag den User zuerst.  
 Der User gibt die nötigen Daten dann direkt.
 
 Das gilt insbesondere für:
@@ -159,6 +291,7 @@ Das gilt insbesondere für:
 - Wenn der User mehrere Dinge verlangt und du push willst: **erst ALLE durcharbeiten**, dann pushen. Kein "push now, finish later" ohne das klar zu benennen.
 - Wenn etwas ausgelassen oder vergessen wurde: **direkt und ungefragt flaggen**, bevor der User danach fragen muss.
 - Wenn etwas nicht gemacht werden konnte (blocked, unklare Anforderung, fehlende Info): sag es **bevor du pushst**, nicht hinterher.
+- Wenn Browser-Verifikation erforderlich war und nicht durchgeführt wurde, muss das explizit als unvollständig genannt werden.
 
 ### Kommunikation
 
@@ -213,6 +346,9 @@ Der User arbeitet in einem "Task-Spam"-Modus: er wirft Aufgaben nacheinander rei
    - `src/app/(admin)/layout.tsx`
    - `package.json` / `next.config.ts`
    - Jede Datei in `src/generated/` (nie direkt bearbeiten — Prisma regeneriert)
+   - `src/lib/queries/**`
+   - zentrale Table-/Filter-/Toolbar-Komponenten
+   - gemeinsame modern panel / KPI primitive Dateien
 
    Wenn zwei Agents dieselbe Hotspot-Datei brauchen: den zweiten mit einem PROPOSED-Patch reporten lassen, dann nach dem Konsolidieren selbst anwenden.
 
@@ -220,15 +356,17 @@ Der User arbeitet in einem "Task-Spam"-Modus: er wirft Aufgaben nacheinander rei
    - Jeder Agent committet in **kleinen logischen Chunks** (nicht eine Riesen-Commit am Ende).
    - `git commit --only <paths>` wenn andere Agents gleichzeitig staged Changes haben.
    - `tsc --noEmit` + `npm run lint` **nach jedem Commit**, nicht erst am Ende.
-   - **Agents dürfen und sollen direkt pushen** sobald tsc + lint grün sind. Der User will nicht auf eine Konsolidierungsphase warten. Jeder Agent pushed seine eigenen Commits sobald seine Arbeit fertig und verifiziert ist.
+   - **Agents dürfen und sollen direkt pushen** sobald tsc + lint grün sind, **außer** eine Shared-/Hotspot-Datei ist betroffen oder eine Kollisionsgefahr besteht.
+   - Bei Shared-/Hotspot-Dateien gilt: erst Konsolidierung / Rebase / Regression-Sweep, dann push.
    - Wenn ein Push wegen Divergenz (`non-fast-forward`) scheitert: zuerst `git pull --rebase`, dann nochmal pushen. Keine destruktiven Operationen ohne User-Zustimmung.
 
 5. **Konsolidierungs-Phase ist optional** und passiert nur wenn offene Issues quer durch mehrere Agents zu fixen sind (orphan references, inkonsistente API-Shapes, TSC/Lint-Failures die keiner Agent alleine verursacht hat). Sonst: einfach pushen und weiter.
 
 6. **Honest-Reporting** pro Agent:
-   - "FIXED" = wirklich gemacht + im Commit.
-   - "PROPOSED" = analysiert + Patch bereit, aber nicht angewendet (meist weil off-limits).
-   - "DEFERRED" = nicht bearbeitet, Grund nennen.
+   - `FIXED` = wirklich gemacht + im Commit + verifiziert
+   - `PROPOSED` = analysiert + Patch bereit, aber nicht angewendet (meist weil off-limits)
+   - `DEFERRED` = nicht bearbeitet, Grund nennen
+   - `BLOCKED` = konnte nicht abgeschlossen werden, Grund nennen
    - **Keine Zeile im Summary darf eine Unwahrheit sein.** (Siehe Ehrlichkeits-Regel oben.)
 
 7. **Aufgaben, die du NICHT an Agents delegierst** (Liste ist abschließend, nicht großzügig erweitern):
@@ -238,7 +376,7 @@ Der User arbeitet in einem "Task-Spam"-Modus: er wirft Aufgaben nacheinander rei
    - User sagt explizit "inline machen" / "selbst" / "nicht delegieren".
 
 8. **Wenn der User zu schnell Tasks reinwirft:**
-   - Nicht zögern — sofort agent starten.
+   - Nicht zögern — sofort Agent starten.
    - Kurz bestätigen welche Files der neue Agent anfasst + ob/wo Kollisionsrisiko.
    - Nicht auf vorherige Agents warten, wenn die Arbeit unabhängig ist.
 
@@ -284,7 +422,6 @@ Das Projekt hat ein **cleanes, konsistentes UI** — dieser Stil ist verbindlich
 | Theme | `next-themes` | Dark Mode ist Default — nicht eigenständig umbauen |
 
 **Verbindliche Regeln:**
-
 - **Keine anderen UI-Frameworks mischen.** Kein Material UI, kein Chakra, kein Ant Design, kein Mantine, kein DaisyUI, kein Radix direkt (nur über shadcn/base-ui).
 - **Keine neuen Design-Systeme einführen.** Wenn shadcn/ui bereits eine passende Komponente hat → diese verwenden.
 - **Clean bleiben:** Keine überladenen UIs, keine unnötigen Animationen, keine dekorativen Elemente ohne Funktion. Das bestehende Design ist zurückhaltend und funktional — das gilt als Maßstab.
@@ -293,6 +430,7 @@ Das Projekt hat ein **cleanes, konsistentes UI** — dieser Stil ist verbindlich
 - **Komponenten-Struktur spiegeln:** Neue Komponenten folgen den Patterns in `src/components/` und den Feature-Ordnern. Kein alternatives Layout-System.
 - **Aurora-Background** (WebGL via `ogl`) nur dort, wo bereits im Einsatz — nicht ohne Absprache ausweiten.
 - **Bevor neue UI-Dependencies hinzugefügt werden: nachfragen.** Keine stillschweigenden `npm install`s von UI-Libraries.
+- **Tremor nicht zusätzlich einführen**, wenn die bestehende shadcn/base-nova + Recharts + Data-Table-Kombination den Bedarf bereits abdeckt. Bestehende Haus-Patterns haben Vorrang.
 
 **Merkregel:** Wenn du etwas gestaltest, das aussieht wie aus einem anderen Projekt → falsch. Es muss aussehen wie der Rest von pokewin-admin.
 
@@ -313,7 +451,6 @@ Jede neue Admin-Seite muss dem modernen Stil von `/users/[id]` folgen. Das ist d
 | `FadeIn` | `src/components/fade-in.tsx` | Weiches Reinfaden für große Content-Blöcke |
 
 **Regeln:**
-
 - **Kein reiner `<h1>` als Seitenkopf** mehr — immer `PageHero` mit Icon + Gradient.
 - **Keine blanken `<Card>` Stat-Kacheln** — die modernen `KpiTile` / `StatPanel` aus dem oben genannten Set nutzen. Accent-Farbe bewusst aus `TILE_COLORS` wählen (blue / emerald / rose / cyan / amber / purple / orange / pink).
 - **Tabellen** bleiben `@tanstack/react-table` + `src/components/data-table/`, aber eingebettet in einen modernen Container mit `SectionHeading` darüber.
@@ -322,8 +459,8 @@ Jede neue Admin-Seite muss dem modernen Stil von `/users/[id]` folgen. Das ist d
 - **Finanz-Farben IMMER aus House-Perspektive — STRIKT, KEINE AUSNAHMEN.** Gilt für die gesamte Site. Jeder Geldbetrag, jeder Badge, jede Kennzahl, jedes Chart, jede Zelle, jede Zahl. Niemals User-Perspektive.
 
   **Die EINE Regel:**
-  > **User gewinnt / macht Profit → 🔴 ROT**
-  > **User verliert Geld → 🟢 GRÜN**
+  > **User gewinnt / macht Profit → 🔴 ROT**  
+  > **User verliert Geld → 🟢 GRÜN**  
   > **Neutraler Event (Signup etc.) → 🔵 BLUE**
 
   Warum: jeder Dollar den der User hat, ist ein Dollar den wir schulden. User-Gewinn = unser Verlust = rot. User-Verlust = unser Gewinn = grün. Das ist das einzige Prinzip — alles andere ist davon abgeleitet.
@@ -345,26 +482,26 @@ Jede neue Admin-Seite muss dem modernen Stil von `/users/[id]` folgen. Das ist d
   | Signup / Status-Event / Info-Event | neutral | 🔵 blue |
 
   **P&L-Formel (pro User UND global):**
-  ```
-  pnl = deposits − withdrawals − onSiteBalance − inventoryValue − unclaimedVouchers
-  ```
-  Wenn der User mehr on-site + Inventar hat als er deposited hat → `pnl < 0` → 🔴 ROT.
+pnl = deposits − withdrawals − onSiteBalance − inventoryValue − unclaimedVouchers
 
-  **Quick test vor jedem Commit:** "Wenn der User diesen Event feiert — ist die Farbe rot?" Ja → korrekt. Nein → Farbe flippen.
+text
+Wenn der User mehr on-site + Inventar hat als er deposited hat → `pnl < 0` → 🔴 ROT.
 
-  Gilt für (checklist beim Neu-Bau oder Refactor):
-  - Recent-Activity Feeds
-  - Stat-Panels mit P&L (Dashboard, User-Detail, Creator-Detail, Battle-Detail, Pack-Detail)
-  - Amount-Labels + Vorzeichen (+ / −) — aus Haus-POV
-  - Charts mit Gewinn/Verlust-Differenzierung
-  - Transaction-Detail Seiten
-  - Battle-Detail "House Profit" Zahlen
-  - Jede Tabelle mit einer Spalte "Amount" / "PnL" / "Profit"
-  - Wager-Leaderboards (falls welche existieren)
+**Quick test vor jedem Commit:** "Wenn der User diesen Event feiert — ist die Farbe rot?" Ja → korrekt. Nein → Farbe flippen.
+
+Gilt für (checklist beim Neu-Bau oder Refactor):
+- Recent-Activity Feeds
+- Stat-Panels mit P&L (Dashboard, User-Detail, Creator-Detail, Battle-Detail, Pack-Detail)
+- Amount-Labels + Vorzeichen (+ / −) — aus Haus-POV
+- Charts mit Gewinn/Verlust-Differenzierung
+- Transaction-Detail Seiten
+- Battle-Detail "House Profit" Zahlen
+- Jede Tabelle mit einer Spalte "Amount" / "PnL" / "Profit"
+- Wager-Leaderboards (falls welche existieren)
+
 - **Keine Funktions-Props von Server → Client Component.** Serialisierbare Primitives / String-Enums nutzen. Next.js 15 crasht sonst.
 
 **Verbindlich für jede neue Page unter `src/app/(admin)/...`:**
-
 1. Server Component als `page.tsx` mit `requirePageAccess(key)` zuerst.
 2. `PageHero` als erstes rendertes Element.
 3. KPI-Strip (3–6 Tiles) direkt darunter.
@@ -435,6 +572,7 @@ Rollen in `src/lib/admin-roles.ts`: `admin`, `support`, `marketing`, `creator`.
 - **Kein Laden versteckter Komponenten.** Drawer, Modals, Drilldowns, expandierte Rows, collapsed Sections: keine Heavy-Queries bevor sie geöffnet werden.
 - **Lifetime-Fenster bounden.** Unbounded Lifetime-Scans vermeiden — gecappte Lookbacks nutzen (`windowDateFilterCapped`, Referenz: deposit-bonus / rakeback ROI), sonst hängt die Query.
 - **Caching + Timeout:** Heavy Queries via `unstable_cache` keyed auf `(period, …)` (60s/300s), und über die `safeQuery`-Timeout-Wrapper laufen lassen, damit langsame Queries zu einem Fallback degradieren statt die Seite zu blocken.
+- **Search/Filter/Pagination dürfen keine Full-Table-Loads triggern**, wenn serverseitige Einschränkung möglich ist.
 
 Referenz-Pattern: `src/lib/queries/insights-rewards/_period.ts` + die lazy-tab-Struktur der Insights-Seiten + der Dashboard-Period-Selector. Jede neue Seite mit Timespan-/Tab-Auswahl folgt diesem Muster.
 
@@ -452,13 +590,13 @@ Standard-Pattern aus der Codebase (z.B. `src/app/(admin)/admin-users/create-dial
 
 ```typescript
 try {
-  await someServerAction({...});
-  toast.success("...");
-  setOpen(false);
+await someServerAction({...});
+toast.success("...");
+setOpen(false);
 } catch (err) {
-  toast.error(err instanceof Error ? err.message : "Fallback message");
+toast.error(err instanceof Error ? err.message : "Fallback message");
 } finally {
-  setLoading(false);
+setLoading(false);
 }
 ```
 
@@ -493,6 +631,7 @@ Pattern: `"bg-{color}-500/15 text-{color}-600 dark:text-{color}-400 border-{colo
 - Alle Geldbeträge: `Decimal(20,2)` in der DB.
 - Decimal-Operationen über die bestehenden Decimal-Utilities, **nicht** JS-Number-Arithmetik.
 - Bei Analytics / GGR / NGR / PnL Berechnungen: **bestehende Query-Funktionen in `src/lib/queries/` referenzieren**, nicht von Hand neu implementieren.
+- PnL-/Revenue-/Cost-Logik niemals “zur schnellen UI-Reparatur” lokal im Frontend nachbauen, wenn bereits Query- oder Aggregationslogik existiert.
 
 ### Ledger-basierte Transaktionen (CRITICAL)
 
@@ -520,12 +659,12 @@ Pattern: `"bg-{color}-500/15 text-{color}-600 dark:text-{color}-400 border-{colo
 
 ### File Organization (Feature-Based)
 
-```
+```text
 src/app/(admin)/{feature}/
-  ├── page.tsx           # Server Component (async default export)
-  ├── actions.ts         # Server Actions ("use server")
-  ├── {component}.tsx    # Client Components ("use client")
-  └── [id]/              # Dynamic routes
+├── page.tsx           # Server Component (async default export)
+├── actions.ts         # Server Actions ("use server")
+├── {component}.tsx    # Client Components ("use client")
+└── [id]/              # Dynamic routes
 ```
 
 **Bei neuen Features: gleiche Struktur spiegeln, keine alternativen Layouts erfinden.**
@@ -597,3 +736,4 @@ npm run admin:seed       # Admin DB Seed
 3. **DB-Info gebraucht?** → User fragen, niemals annehmen.
 4. **Verifiziert?** → Wenn nein: Problem benennen, nicht umgehen.
 5. **Fertig?** → Erst nach Verifikation, nicht nach bloßem Code-Schreiben.
+6. **Im Browser sichtbar/testbar?** → Browser prüfen, bevor du `DONE` sagst.
