@@ -114,6 +114,23 @@ const SHOW_PAGINATION: boolean = false;
 // single call still lands, while a truly unreachable backend degrades fast.
 const BACKEND_READ_TIMEOUT_MS = 10_000;
 
+// Wall-clock bound for the two heavy Main-DB attribution tiles — Net
+// Code-User GGR (getAllCreatorsNetGgr) and Fill/Multiplier-Segment Net
+// (getAllCreatorsLifetimePnl). Both are now SET-BASED (one pass, not N
+// correlated subqueries) AND cross-request `unstable_cache`d (300s / 900s),
+// so the heavy scan runs at most once per TTL and every other render is
+// instant. The catch: the cache only helps once the COLD run completes and
+// populates the slot — abandoning it at the 10s backend budget would leave
+// the tile stuck on "—" forever, never warming the cache. So these two get
+// a more generous cold-run budget: long enough for the once-per-TTL cold
+// scan to finish and fill the slot (then every later render serves the
+// cached value in <1ms), but still BELOW the DB's 30s global
+// `statement_timeout` (db.ts) so a genuinely pathological scan still
+// degrades to "—" via safeQuery instead of pinning the streamed tile. These
+// run once per 5–15 min, so the occasional longer cold render is fine — it
+// only ever blocks the streamed tile, never the already-painted page shell.
+const HEAVY_ATTRIBUTION_TILE_TIMEOUT_MS = 25_000;
+
 export default async function CreatorsPage({
   searchParams,
 }: {
@@ -1006,7 +1023,7 @@ async function GlobalPnlTile({ tab }: { tab: CreatorsTab }) {
   const { data: lifetimePnl } = await safeQueryOrNull(
     () => getAllCreatorsLifetimePnl(tab),
     "creators.global-lifetime-pnl",
-    BACKEND_READ_TIMEOUT_MS,
+    HEAVY_ATTRIBUTION_TILE_TIMEOUT_MS,
   );
 
   const pnl = lifetimePnl?.pnl;
@@ -1080,7 +1097,7 @@ async function NetGgrTile({
   const { data } = await safeQueryOrNull(
     () => getAllCreatorsNetGgr(period),
     "creators.roster-net-ggr",
-    BACKEND_READ_TIMEOUT_MS,
+    HEAVY_ATTRIBUTION_TILE_TIMEOUT_MS,
   );
 
   const total = data?.totalGgr;

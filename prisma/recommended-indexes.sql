@@ -120,6 +120,41 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_acu_referred_user_code_usage
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_acu_upper_code_usage_created_at
   ON affiliate_code_usages (UPPER(code), usage_type, created_at);
 
+-- #5b ----------------------------------------------------------------
+-- affiliate_code_usages (referred_user_id, created_at DESC) — COVERAGE
+-- ===================================================================
+-- Added by the 2026-06-03 /creators-list P&L perf pass.
+--
+-- The creator coverage-attribution model ("which creator's code covered
+-- user U at event time T") probes acu with
+--   referred_user_id = U AND created_at <= T AND created_at >= T - 7d
+--   ORDER BY created_at DESC LIMIT 1
+-- This is the access pattern of:
+--   • src/app/(admin)/creators/_queries/all-creators-net-pnl.ts
+--     getAllCreatorsNetGgr — the covering-creator LEFT JOIN LATERAL on
+--     every ledger / inventory / upgrader event row (Net Code-User GGR tile)
+--   • src/app/(admin)/creators/_queries/all-creators-lifetime-pnl.ts
+--     getAllCreatorsLifetimePnl — the covered_deposits DISTINCT ON LEFT
+--     JOIN (Fill/Multiplier-Segment Net tile)
+--   • src/lib/queries/creators-pnl.ts COVERING_CREATOR_SQL — the single-
+--     creator detail page (same shape, per-creator)
+--
+-- #5's idx_acu_referred_user_code_usage leads with referred_user_id but
+-- its SECOND column is `code`, not `created_at`, so it can satisfy the
+-- equality on referred_user_id but must then scan ALL of that user's acu
+-- rows to apply the created_at range + DESC ordering. This index puts
+-- created_at DESC immediately after referred_user_id, turning the coverage
+-- probe into a bounded index range scan (and the LATERAL's LIMIT 1 / the
+-- DISTINCT ON's top-1 into an index seek). Without it, both list tiles run
+-- the coverage join as a per-user seq scan of an UNINDEXED table — the
+-- reason the cold (uncached) scan can exceed the tile timeout on prod-sized
+-- affiliate_code_usages. The set-based rewrite + unstable_cache reduce HOW
+-- OFTEN the cold scan runs (once per 5–15 min TTL) and let one pass serve
+-- every creator at once, but this index is what makes that single cold pass
+-- cheap rather than merely infrequent.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_acu_referred_user_created_at
+  ON affiliate_code_usages (referred_user_id, created_at DESC);
+
 -- #6 -----------------------------------------------------------------
 -- battles (user_id, status, created_at DESC)
 -- ===================================================================

@@ -1,16 +1,15 @@
 import "server-only";
 
 import { cache } from "react";
+import { unstable_cache } from "next/cache";
 
-import { getDb } from "@/lib/db";
+import { getDevDb, getProdDb } from "@/lib/db";
+import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import {
-  type DashboardPeriod,
-  periodToCutoff,
-} from "@/lib/queries/dashboard-period";
+import { type DashboardPeriod } from "@/lib/queries/dashboard-period";
 import {
   WAGER_TYPES_SQL,
   GAMING_PAYOUT_TYPES_SQL,
@@ -126,11 +125,172 @@ export type AllCreatorsNetGgr = {
 };
 
 /**
+ * Map a `DashboardPeriod` to a Postgres `INTERVAL` literal, or `null` for
+ * the lifetime ("all") window. Hardcoded literals only (no interpolation
+ * risk). Used inside the cached scan so the cutoff is computed at FILL
+ * time from `NOW()` rather than threaded in as a timestamp — keeping the
+ * cache key the coarse `period` label, not a per-render timestamp that
+ * would never hit.
+ */
+function periodToIntervalLiteral(period: DashboardPeriod): string | null {
+  switch (period) {
+    case "1h": return "1 hour";
+    case "3h": return "3 hours";
+    case "6h": return "6 hours";
+    case "12h": return "12 hours";
+    case "24h": return "24 hours";
+    case "3d": return "3 days";
+    case "7d": return "7 days";
+    case "30d": return "30 days";
+    case "all": return null;
+  }
+}
+
+type LedgerRow = {
+  creator_id: string;
+  wager: string;
+  ledger_payout: string;
+};
+type InvRow = { creator_id: string; inv_payout: string };
+type UpgRow = { creator_id: string; upg_wager: string; upg_payout: string };
+type NetGgrScans = {
+  ledgerRows: LedgerRow[];
+  invRows: InvRow[];
+  upgRows: UpgRow[];
+};
+
+/**
+ * The three heavy attribution scans behind `getAllCreatorsNetGgr`, wrapped
+ * in `unstable_cache` so a cold run populates a cross-request slot and
+ * every subsequent render (any viewer, any tab, the strip tile + the
+ * per-row GGR merge) serves the cached rows instantly. Revalidate 300s:
+ * the 24h GGR moves as new gameplay lands, but a ≤5-min staleness is fine
+ * for a roster KPI, and it means the heavy ledger/inventory scan runs at
+ * most once per 5 min per (window × scope) instead of on every request —
+ * the fix for the tile timing out to "—" on a cold render.
+ *
+ * ── Set-based attribution (was: N correlated scalar subqueries) ──────
+ *
+ * The covering creator per event row is resolved by a `LEFT JOIN LATERAL`
+ * against `affiliate_code_usages` (most-recent covering acu in the 7-day
+ * window wins, the creator's own play dropped) — the SAME semantics as the
+ * prior `(SELECT … ORDER BY acu.created_at DESC LIMIT 1)` scalar subquery,
+ * but expressed as ONE join the planner resolves in a single pass per leg
+ * rather than re-running a correlated subquery for every scanned row. The
+ * `LIMIT 1` inside the lateral preserves the exact "latest acu wins" tie-
+ * break on code-hopping. Source tables stay UNALIASED so the shared
+ * `WAGER_LEG_FILTER` / `PAYOUT_LEG_FILTER` bare-column predicates drop in
+ * verbatim.
+ *
+ * The window cutoff is computed at fill time via `NOW() - INTERVAL` from
+ * the `period` label (not threaded in as a timestamp) so the cache key
+ * stays the coarse window, not a per-render instant.
+ *
+ * Scope/env/probe inputs are resolved OUTSIDE this cache (they read the
+ * backend session windows + admin-DB blacklist + the request cookie) and
+ * passed in — `cookies()` cannot be read inside an `unstable_cache`
+ * callback, and threading the resolved fragments + env as arguments folds
+ * them into the cache key automatically (Next serializes the args), so a
+ * changed scope (new blacklist entry, refreshed session windows) or a
+ * dev-toggled admin lands in a separate slot. Inside, the client is
+ * selected straight from the resolved `env` (never re-reading the cookie).
+ */
+const cachedNetGgrScans = (
+  period: DashboardPeriod,
+  env: DbEnv,
+  exclLedger: string,
+  exclInventory: string,
+  upgBlacklist: string,
+  hasUpgrader: boolean,
+) =>
+  unstable_cache(
+    async (): Promise<NetGgrScans> => {
+      const db = env === "dev" ? getDevDb() : getProdDb();
+      const interval = periodToIntervalLiteral(period);
+      const sinceClause = (col: string): string =>
+        interval === null ? "" : `AND ${col} >= NOW() - INTERVAL '${interval}'`;
+
+      // Covering-creator lateral: the most-recent acu whose 7-day window
+      // covers this event row, the creator's own play dropped. `userCol` /
+      // `tsCol` are bare unaliased columns of the outer source row —
+      // inlined verbatim, hardcoded identifiers only.
+      const coveringLateral = (userCol: string, tsCol: string): string =>
+        `LEFT JOIN LATERAL (
+           SELECT acu.affiliate_user_id AS creator_id
+             FROM affiliate_code_usages acu
+            WHERE acu.referred_user_id = ${userCol}
+              AND acu.referred_user_id <> acu.affiliate_user_id
+              AND acu.created_at <= ${tsCol}
+              AND acu.created_at >= ${tsCol} - INTERVAL '7 days'
+            ORDER BY acu.created_at DESC
+            LIMIT 1
+         ) cov ON TRUE`;
+
+      const [ledgerRows, invRows, upgRows] = await Promise.all([
+        // Ledger wager + ledger gaming payout, attributed per covering
+        // creator via the lateral. UNALIASED `ledger_transactions` so
+        // WAGER_LEG_FILTER drops in verbatim; outer GROUPs by the lateral's
+        // creator_id, keeping only attributed rows.
+        db.$queryRawUnsafe<LedgerRow[]>(
+          `SELECT cov.creator_id,
+                  COALESCE(SUM(CASE WHEN ledger_transactions.type IN ${WAGER_TYPES_SQL} THEN ABS(ledger_transactions.amount::numeric) ELSE 0 END), 0)::text AS wager,
+                  COALESCE(SUM(CASE WHEN ledger_transactions.type IN ${GAMING_PAYOUT_TYPES_SQL} THEN ABS(ledger_transactions.amount::numeric) ELSE 0 END), 0)::text AS ledger_payout
+             FROM ledger_transactions
+             ${coveringLateral("user_id", "created_at")}
+            WHERE status = 'completed'
+              ${sinceClause("created_at")}
+              AND ${WAGER_LEG_FILTER}
+              ${exclLedger}
+              AND cov.creator_id IS NOT NULL
+            GROUP BY cov.creator_id`,
+        ),
+        // Inventory pack/battle payout, attributed per covering creator
+        // keyed on obtained_at (symmetric with the wager side). UNALIASED
+        // `user_inventory` so PAYOUT_LEG_FILTER drops in verbatim.
+        db.$queryRawUnsafe<InvRow[]>(
+          `SELECT cov.creator_id,
+                  COALESCE(SUM(user_inventory.value_at_obtained::numeric), 0)::text AS inv_payout
+             FROM user_inventory
+             ${coveringLateral("user_id", "obtained_at")}
+            WHERE source_type IN ('pack','battle')
+              ${sinceClause("obtained_at")}
+              AND ${PAYOUT_LEG_FILTER}
+              ${exclInventory}
+              AND cov.creator_id IS NOT NULL
+            GROUP BY cov.creator_id`,
+        ),
+        // Upgrader plays, attributed per covering creator. Wholesale-
+        // creator-drop real-customer scope (matching the shared
+        // upgraderMetrics reader). Skipped (empty) on a pre-upgrader DB.
+        hasUpgrader
+          ? db.$queryRawUnsafe<UpgRow[]>(
+              `SELECT cov.creator_id,
+                      COALESCE(SUM(upgrader_games.bet_amount::numeric), 0)::text AS upg_wager,
+                      COALESCE(SUM(upgrader_games.won_amount::numeric), 0)::text AS upg_payout
+                 FROM upgrader_games
+                 ${coveringLateral("user_id", "created_at")}
+                WHERE user_id IN (
+                    SELECT u_ug.id FROM "user" u_ug
+                     WHERE u_ug.role NOT IN ('admin', 'support', 'creator') ${upgBlacklist}
+                  )
+                  ${sinceClause("created_at")}
+                  AND cov.creator_id IS NOT NULL
+                GROUP BY cov.creator_id`,
+            )
+          : Promise.resolve([] as UpgRow[]),
+      ]);
+
+      return { ledgerRows, invRows, upgRows };
+    },
+    ["creators-net-ggr-scans-v1", period, env, exclLedger, exclInventory, upgBlacklist, String(hasUpgrader)],
+    { revalidate: 300, tags: ["creators-net-ggr"] },
+  );
+
+/**
  * Batch attribution-windowed code-user GGR for EVERY creator over a window.
  *
- * Three parallel reads, each an inner SELECT that tags every event row
- * with its covering creator (the scalar subquery above) and an outer
- * SELECT that GROUPs by it (keeping only attributed rows):
+ * Three reads (see {@link cachedNetGgrScans}), each attributing every event
+ * row to its covering creator via a `LEFT JOIN LATERAL` and grouping by it:
  *   • ledger wager + ledger gaming-payout legs (keyed on created_at),
  *   • inventory pack/battle payout (keyed on obtained_at),
  *   • upgrader plays (keyed on created_at) when `upgrader_games` exists,
@@ -142,29 +302,29 @@ export type AllCreatorsNetGgr = {
  * session-window drop are identical to the CTE form — they resolve from
  * the same `getMetricsScope` snapshot.
  *
- * Wrapped in React `cache()` keyed on `period` so a single page render
- * that consults it from more than one boundary (e.g. the /creators KPI
- * strip's roster-wide GGR tile + the per-row GGR merge in the grid
- * section) runs the 3 heavy ledger scans exactly ONCE per window. Same
- * per-request dedup the underlying `getMetricsScope` / `getExcludedUserIds`
- * already use; no cross-request caching, so a window's figure is always
- * recomputed on the next request.
+ * Two cache layers stack: the heavy SQL scans are `unstable_cache`d
+ * cross-request (300s, keyed on window × scope × env) so the cold run
+ * populates a shared slot and every later render is instant — the fix for
+ * the tile timing out to "—". This outer `cache()` then dedupes the merge
+ * within a single render (the KPI strip's roster-wide GGR tile + the
+ * per-row GGR merge in the grid both consult it).
  */
 export const getAllCreatorsNetGgr = cache(async function getAllCreatorsNetGgr(
   period: DashboardPeriod,
 ): Promise<AllCreatorsNetGgr> {
   return withTiming("creators.allNetGgr", async () => {
-    const db = await getDb();
+    // Resolve scope/env/probe in REQUEST scope (cookie + backend + admin-DB
+    // reads that can't run inside the unstable_cache callback), then hand
+    // them to the cached scan so prod/dev and each scope land in their own
+    // cross-request slot.
+    const env = await readDbEnv();
+    const probeDb = env === "dev" ? getDevDb() : getProdDb();
     const scope = await getMetricsScope();
     const excluded = await getExcludedUserIds();
-    const since = period === "all" ? null : periodToCutoff(period, new Date());
-
-    const sinceClause = (col: string): string =>
-      since === null ? "" : `AND ${col} >= '${since.toISOString()}'::timestamptz`;
 
     // Self-contained staff + blacklist + creator-on-session fragment, in
     // the DEFAULT bare-column form (`user_id` / the given ts column). The
-    // source tables below are deliberately UNALIASED so the shared
+    // source tables are deliberately UNALIASED so the shared
     // `WAGER_LEG_FILTER` / `PAYOUT_LEG_FILTER` fragments (which reference
     // bare `type` / `game_session_id` / `source_type` / `source_id`, and
     // embed their own table-qualified sub-selects) drop in verbatim —
@@ -175,98 +335,19 @@ export const getAllCreatorsNetGgr = cache(async function getAllCreatorsNetGgr(
     const exclInventory = scope.exclStaffSessionFrag({ tsCol: "obtained_at" });
 
     // Probe upgrader_games once — pre-upgrader snapshot returns NULL.
-    const upgProbe = await db.$queryRaw<{ exists: string | null }[]>`
+    const upgProbe = await probeDb.$queryRaw<{ exists: string | null }[]>`
       SELECT to_regclass('public.upgrader_games')::text AS exists`;
     const hasUpgrader = upgProbe[0]?.exists != null;
     const upgBlacklist = blacklistNotInClause("u_ug.id", excluded);
 
-    // Correlated scalar subquery → the covering creator for ONE event row:
-    // the most-recent covering acu in the 7-day window, dropping the
-    // creator's own play (`referred_user_id <> affiliate_user_id`). NULL
-    // when the event falls outside every creator's coverage window.
-    // `userCol` / `tsCol` are bare (unaliased) columns of the enclosing
-    // table — inlined verbatim, hardcoded identifiers only.
-    const coveringCreator = (userCol: string, tsCol: string): string => `(
-      SELECT acu.affiliate_user_id
-        FROM affiliate_code_usages acu
-       WHERE acu.referred_user_id = ${userCol}
-         AND acu.referred_user_id <> acu.affiliate_user_id
-         AND acu.created_at <= ${tsCol}
-         AND acu.created_at >= ${tsCol} - INTERVAL '7 days'
-       ORDER BY acu.created_at DESC
-       LIMIT 1
-    )`;
-
-    type LedgerRow = {
-      creator_id: string;
-      wager: string;
-      ledger_payout: string;
-    };
-    type InvRow = { creator_id: string; inv_payout: string };
-    type UpgRow = { creator_id: string; upg_wager: string; upg_payout: string };
-
-    const [ledgerRows, invRows, upgRows] = await Promise.all([
-      // Ledger wager + ledger gaming payout, attributed per covering
-      // creator. Inner SELECT computes the covering creator per row over
-      // the UNALIASED `ledger_transactions` (so WAGER_LEG_FILTER drops in
-      // verbatim); outer GROUPs by it, keeping only attributed rows.
-      db.$queryRawUnsafe<LedgerRow[]>(
-        `SELECT creator_id,
-                COALESCE(SUM(CASE WHEN type IN ${WAGER_TYPES_SQL} THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS wager,
-                COALESCE(SUM(CASE WHEN type IN ${GAMING_PAYOUT_TYPES_SQL} THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS ledger_payout
-           FROM (
-             SELECT type, amount,
-                    ${coveringCreator("user_id", "created_at")} AS creator_id
-               FROM ledger_transactions
-              WHERE status = 'completed'
-                ${sinceClause("created_at")}
-                AND ${WAGER_LEG_FILTER}
-                ${exclLedger}
-           ) attributed
-          WHERE creator_id IS NOT NULL
-          GROUP BY creator_id`,
-      ),
-      // Inventory pack/battle payout, attributed per covering creator keyed
-      // on obtained_at (symmetric with the wager side). UNALIASED
-      // `user_inventory` so PAYOUT_LEG_FILTER drops in verbatim.
-      db.$queryRawUnsafe<InvRow[]>(
-        `SELECT creator_id,
-                COALESCE(SUM(value_at_obtained::numeric), 0)::text AS inv_payout
-           FROM (
-             SELECT value_at_obtained,
-                    ${coveringCreator("user_id", "obtained_at")} AS creator_id
-               FROM user_inventory
-              WHERE source_type IN ('pack','battle')
-                ${sinceClause("obtained_at")}
-                AND ${PAYOUT_LEG_FILTER}
-                ${exclInventory}
-           ) attributed
-          WHERE creator_id IS NOT NULL
-          GROUP BY creator_id`,
-      ),
-      // Upgrader plays, attributed per covering creator. Wholesale-creator-
-      // drop real-customer scope (matching the shared upgraderMetrics
-      // reader). Skipped (empty) on a pre-upgrader DB.
-      hasUpgrader
-        ? db.$queryRawUnsafe<UpgRow[]>(
-            `SELECT creator_id,
-                    COALESCE(SUM(bet_amount::numeric), 0)::text AS upg_wager,
-                    COALESCE(SUM(won_amount::numeric), 0)::text AS upg_payout
-               FROM (
-                 SELECT bet_amount, won_amount,
-                        ${coveringCreator("user_id", "created_at")} AS creator_id
-                   FROM upgrader_games
-                  WHERE user_id IN (
-                      SELECT u_ug.id FROM "user" u_ug
-                       WHERE u_ug.role NOT IN ('admin', 'support', 'creator') ${upgBlacklist}
-                    )
-                    ${sinceClause("created_at")}
-               ) attributed
-              WHERE creator_id IS NOT NULL
-              GROUP BY creator_id`,
-          )
-        : Promise.resolve([] as UpgRow[]),
-    ]);
+    const { ledgerRows, invRows, upgRows } = await cachedNetGgrScans(
+      period,
+      env,
+      exclLedger,
+      exclInventory,
+      upgBlacklist,
+      hasUpgrader,
+    )();
 
     // Merge the three creator-keyed sets.
     type Acc = {
@@ -326,7 +407,7 @@ export const getAllCreatorsNetGgr = cache(async function getAllCreatorsNetGgr(
     // skipped below. Only ids with attributed activity are looked up, so
     // the query stays small regardless of the total creator count.
     const ids = [...byId.keys()];
-    const users = await db.user.findMany({
+    const users = await probeDb.user.findMany({
       where: { id: { in: ids }, role: "creator" },
       select: { id: true, username: true, image: true },
     });

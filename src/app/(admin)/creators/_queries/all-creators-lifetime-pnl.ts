@@ -1,7 +1,11 @@
 import "server-only";
 
-import { getDb } from "@/lib/db";
+import { unstable_cache } from "next/cache";
+
+import { getDevDb, getProdDb } from "@/lib/db";
+import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
 import type { CreatorsTab } from "../_lib/search-params";
 import { getFillCreatorIds } from "./fill-creator-count";
 import { getMultiplierCreatorIds } from "./multiplier-creator-count";
@@ -80,36 +84,51 @@ async function resolveTabCreatorIds(
   return undefined;
 }
 
-export async function getAllCreatorsLifetimePnl(
-  tab?: CreatorsTab,
-): Promise<AllCreatorsLifetimePnl> {
-  const db = await getDb();
-  const excluded = await getExcludedUserIds();
-  // Resolve the tab-scoped creator id set BEFORE running the heavy
-  // ledger SQL — saves a round-trip when the id set already cached
-  // (5-min unstable_cache / in-memory). When the lookup fails (null),
-  // we still run the SQL (best-effort) and just don't post-filter.
-  const tabCreatorIds = await resolveTabCreatorIds(tab);
-  // Blacklist guard applied as an extra AND on every WHERE that aliases
-  // the referred user as `u`. Inlined per query because we can't share
-  // a binding across CTE definitions in raw SQL cleanly.
-  const blacklistAnd =
-    excluded.length > 0
-      ? ` AND u.id NOT IN (${excluded
-          .map((id) => `'${id.replace(/'/g, "''")}'`)
-          .join(",")})`
-      : "";
+type LifetimePnlRow = {
+  creator_user_id: string;
+  username: string | null;
+  image: string | null;
+  total_deposits: string;
+  total_wagered: string;
+  total_card_withdrawals: string;
+};
 
-  const rows = await db.$queryRawUnsafe<
-    {
-      creator_user_id: string;
-      username: string | null;
-      image: string | null;
-      total_deposits: string;
-      total_wagered: string;
-      total_card_withdrawals: string;
-    }[]
-  >(`
+/**
+ * The heavy lifetime-coverage SQL behind `getAllCreatorsLifetimePnl`,
+ * wrapped in `unstable_cache`. Returns the FULL per-creator breakdown
+ * (every `role = 'creator'` row) — tab-independent, so the tab filter is
+ * applied in code afterwards and one cached slot serves the Fill, the
+ * Multiplier, and the un-tabbed callers alike.
+ *
+ * Revalidate 900s (15 min): this is a LIFETIME aggregate (an unbounded
+ * scan of every completed deposit + the 7-day acu coverage join + the
+ * card/voucher withdrawal UNNEST join), and a lifetime P&L barely moves
+ * minute-to-minute — so the cold scan runs at most once per 15 min per
+ * (env × blacklist) and every other render is instant. This is what lets
+ * the tile show a number: the cold fill completes once and populates the
+ * slot, instead of every request re-paying for the scan and timing out to
+ * "—".
+ *
+ * Env + blacklist are resolved OUTSIDE (cookie + admin-DB reads that can't
+ * run inside the callback) and threaded in as arguments so they fold into
+ * the cache key (prod/dev and each blacklist get a separate slot). Inside,
+ * the client is picked straight from `env` (never re-reading the cookie).
+ * The blacklist `AND u.id NOT IN (...)` is rebuilt from the sorted id list
+ * via the canonical `escapeBlacklistIds`.
+ */
+const cachedLifetimePnlRows = (env: DbEnv, blacklistIds: string[]) =>
+  unstable_cache(
+    async (): Promise<LifetimePnlRow[]> => {
+      const db = env === "dev" ? getDevDb() : getProdDb();
+      // Blacklist guard applied as an extra AND on every WHERE that aliases
+      // the referred user as `u`. Inlined per query because we can't share
+      // a binding across CTE definitions in raw SQL cleanly.
+      const blacklistAnd =
+        blacklistIds.length > 0
+          ? ` AND u.id NOT IN (${escapeBlacklistIds(blacklistIds)})`
+          : "";
+
+      return db.$queryRawUnsafe<LifetimePnlRow[]>(`
     WITH covered_deposits AS (
       -- DISTINCT ON picks the most recent acu row per ledger deposit
       -- whose created_at falls in the 7-day pre-deposit window.
@@ -224,6 +243,26 @@ export async function getAllCreatorsLifetimePnl(
       JOIN "user" cu ON cu.id = COALESCE(cd.creator_id, cw.creator_id, ccw.creator_id)
      WHERE cu.role = 'creator'
   `);
+    },
+    ["creators-lifetime-pnl-rows-v1", env, ...blacklistIds],
+    { revalidate: 900, tags: ["creators-lifetime-pnl"] },
+  );
+
+export async function getAllCreatorsLifetimePnl(
+  tab?: CreatorsTab,
+): Promise<AllCreatorsLifetimePnl> {
+  // Resolve env + blacklist + tab id-set in REQUEST scope (cookie +
+  // admin-DB + backend reads that can't run inside the unstable_cache
+  // callback). The blacklist is sorted so it forms a stable cache key.
+  const env = await readDbEnv();
+  const blacklistIds = [...(await getExcludedUserIds())].sort();
+  // Resolve the tab-scoped creator id set — the heavy SQL is tab-
+  // independent (one cached slot for all tabs); the tab narrowing is a
+  // post-filter in code below. When the lookup fails (null), we keep
+  // every creator (best-effort).
+  const tabCreatorIds = await resolveTabCreatorIds(tab);
+
+  const rows = await cachedLifetimePnlRows(env, blacklistIds)();
 
   const byCreator: CreatorLifetimePnlBreakdownRow[] = [];
   let totalDeposits = 0;
