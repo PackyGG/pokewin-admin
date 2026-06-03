@@ -296,7 +296,7 @@ function GgrBreakdownPopover({
             (the cards kept), not a ledger payout; upgrader comes from
             its own table. Card/voucher conversions are neutral and
             excluded. Real customers only (staff + excluded users dropped,
-            creator on-stream play removed, borrow plays removed) — so
+            all creator play removed, borrow plays removed) — so
             this matches the headline.
           </p>
         </div>

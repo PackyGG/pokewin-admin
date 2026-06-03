@@ -12,20 +12,28 @@ import { getCreatorSessionWindowsCte } from "@/lib/queries/creator-session-windo
  * ─── THE SCOPE (verified, house-POV gaming economics) ────────────────
  *
  * A row counts toward the canonical metrics iff ALL of:
- *   1. The user is NOT staff — `role NOT IN ('admin','support')`.
- *      NOTE: creators are NO LONGER dropped wholesale (the old foundation
- *      did `role NOT IN ('admin','support','creator')`). A creator's
- *      OFF-stream personal play is real customer economics and must
- *      count; only their ON-stream / on-deal play is house-funded
- *      "sponsored" balance and must be excluded — see (3).
+ *   1. The user is NOT staff AND NOT a creator —
+ *      `role NOT IN ('admin','support','creator')`. Creators are dropped
+ *      WHOLESALE (like staff): a creator's play — even OFF-stream,
+ *      house-funded "for content" play (e.g. an admin-adjustment balance
+ *      they gamble on stream) — is NOT real customer revenue and must not
+ *      enter customer GGR/NGR/P&L on EITHER side (their wager AND their
+ *      inventory wins are excluded). This REVERSES the earlier
+ *      "creators kept as real customers" decision, per the owner's
+ *      current direction (2026-06-03): a creator who got house-funded
+ *      balance to play for content was inflating the dashboard GGR
+ *      breakdown (won ~$20.6k of cards off a ~$3.4k wager ≈ 600%), which
+ *      is content, not customer gambling.
  *   2. The user is NOT on the admin-managed excluded-users blacklist.
  *   3. The row is NOT a creator-on-session row — its timestamp does not
  *      fall inside one of that creator's deal/stream session windows
- *      (`getCreatorSessionWindowsCte`). This is the SAME mechanism the
- *      dashboard's headline GGR uses (the `in_session` CASE in
- *      `dashboard.ts getPeriodAggregates`). Applied SYMMETRICALLY — the
- *      wager side AND the payout side drop the same creator-on-session
- *      rows (an asymmetric filter would skew P&L by the surviving leg).
+ *      (`getCreatorSessionWindowsCte`). This predicate is now REDUNDANT
+ *      with (1) — once every creator is dropped wholesale, no creator row
+ *      survives to (3) anyway — but it is kept (harmless, a no-op for the
+ *      now-excluded creators) so the CTE-injection contract the consumers
+ *      rely on (`sessionWindowsCte` + `notInCreatorSession`) stays intact
+ *      and the borrow/blacklist plumbing is untouched. It still guards the
+ *      best-effort caveat below for any non-creator edge case.
  *   4. Borrow plays are excluded on both sides — handled by the borrow
  *      fragments in `queries.ts` (`NON_BORROW_*`), not here, because
  *      borrow correction is per-game-session, not per-user.
@@ -33,10 +41,13 @@ import { getCreatorSessionWindowsCte } from "@/lib/queries/creator-session-windo
  * BEST-EFFORT CAVEAT (inherited from `getCreatorSessionWindowsCte`): the
  * session windows are fetched from the backend creators API and cached
  * 5 min; on a backend failure the helper yields an EMPTY relation, so the
- * creator-on-session exclusion degrades to a NO-OP (creator on-stream
- * play would then leak in until the backend recovers). This matches the
- * dashboard's existing headline-GGR behaviour exactly. The staff +
- * blacklist drop in (1)/(2) is NOT best-effort — it always applies.
+ * creator-on-session exclusion (3) degrades to a NO-OP. This used to mean
+ * creator on-stream play could leak in until the backend recovered — but
+ * that leak is now CLOSED because the wholesale creator drop in (1) is the
+ * primary exclusion and is NOT best-effort: it always applies (a plain
+ * `role NOT IN (...)` on `"user"`, no backend dependency). The
+ * staff + creator + blacklist drop in (1)/(2) always holds; (3) is the
+ * now-redundant belt-and-braces layer.
  *
  * ─── TWO CONSUMPTION SHAPES ──────────────────────────────────────────
  *
@@ -57,13 +68,26 @@ import { getCreatorSessionWindowsCte } from "@/lib/queries/creator-session-windo
  */
 
 /**
- * Staff roles dropped wholesale from the canonical scope. Creators are
- * intentionally NOT here — their on-session play is excluded per-row via
- * the session-window predicate, their off-session play counts.
+ * Staff roles dropped wholesale from the canonical scope. Kept as the
+ * "staff" concept (used by callers that mean strictly admin/support).
  */
 export const STAFF_ROLES = ["admin", "support"] as const;
 
-const STAFF_ROLES_SQL = `(${STAFF_ROLES.map((r) => `'${r}'`).join(", ")})`;
+/**
+ * Roles dropped wholesale from the CUSTOMER scope = staff PLUS `creator`.
+ * Creators are now excluded entirely (not just on-session): a creator's
+ * play — including off-stream, house-funded "for content" play — is not
+ * real customer revenue, so it must not count in customer GGR/NGR/P&L on
+ * either the wager or the payout side. `role` (the scalar `user_role`
+ * enum on `"user"`) is the canonical, cheap creator signal; the codebase
+ * already uses `role NOT IN ('admin','support','creator')` for the
+ * upgrader-leg scope, so this brings the ledger/inventory legs in line.
+ */
+export const CUSTOMER_EXCLUDED_ROLES = ["admin", "support", "creator"] as const;
+
+const CUSTOMER_EXCLUDED_ROLES_SQL = `(${CUSTOMER_EXCLUDED_ROLES.map(
+  (r) => `'${r}'`,
+).join(", ")})`;
 
 /**
  * Extract the inner relation expression from the
@@ -89,10 +113,10 @@ function sessionWindowsInner(cte: string): string {
 
 export type MetricsScope = {
   /**
-   * `(SELECT id FROM "user" u WHERE role NOT IN ('admin','support')
-   * <blacklist>)` — staff + blacklist dropped, creators KEPT. Use as
-   * `user_id IN ${userScopeSql}`. The session-window predicate below
-   * removes creator-on-session rows.
+   * `(SELECT id FROM "user" u WHERE role NOT IN ('admin','support','creator')
+   * <blacklist>)` — staff + creator + blacklist dropped wholesale. Use as
+   * `user_id IN ${userScopeSql}`. The session-window predicate below is
+   * now redundant (no creator row survives) but kept harmless.
    */
   userScopeSql: string;
   /**
@@ -143,7 +167,12 @@ export async function getMetricsScope(): Promise<MetricsScope> {
     getCreatorSessionWindowsCte(),
   ]);
   const blacklist = blacklistNotInClause("u.id", excluded);
-  const userScopeSql = `(SELECT id FROM "user" u WHERE u.role NOT IN ${STAFF_ROLES_SQL} ${blacklist})`;
+  // Customer scope: drop staff + creators wholesale (+ blacklist). The
+  // creator drop here is what keeps creators' off-stream, house-funded
+  // "for content" play out of customer GGR/NGR/P&L on BOTH sides (wager
+  // and inventory wins) — the session-window predicate below is now a
+  // redundant no-op for creators but is left intact (harmless).
+  const userScopeSql = `(SELECT id FROM "user" u WHERE u.role NOT IN ${CUSTOMER_EXCLUDED_ROLES_SQL} ${blacklist})`;
   const inner = sessionWindowsInner(sessionWindowsCte);
 
   const notInCreatorSession = (userCol: string, tsCol: string): string =>

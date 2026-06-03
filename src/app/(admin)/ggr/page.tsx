@@ -116,7 +116,7 @@ export default async function GgrPage({
           icon={TrendingUp}
           accent="cyan"
           title="GGR Breakdown"
-          subtitle="Gaming margin decomposed into its canonical groups — gaming payouts, neutral conversions, and reward giveback. Upgrader included; creator on-stream sessions excluded on both sides (same scope as Daily P&L)."
+          subtitle="Gaming margin decomposed into its canonical groups — gaming payouts, neutral conversions, and reward giveback. Upgrader included; all creator play excluded on both sides (same scope as Daily P&L)."
           action={
             <>
               <GgrWindowSwitch />

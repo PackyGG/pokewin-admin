@@ -104,8 +104,8 @@ export function NetGgrBreakdownPopover({
             windows). Wins are valued from inventory (the cards kept), not
             a ledger payout; upgrader comes from its own table.
             Card/voucher conversions are neutral and excluded. Real
-            customers only (staff + excluded users dropped, creator
-            on-stream play removed, borrow plays removed).
+            customers only (staff + excluded users dropped, all creator
+            play removed, borrow plays removed).
           </p>
         </div>
 
